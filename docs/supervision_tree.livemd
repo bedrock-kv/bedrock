@@ -1,0 +1,34 @@
+# Supervision Tree
+
+## Section
+
+```mermaid
+graph TD;
+  Worker --> Coordinator;
+  Worker --> Log;
+  Worker --> Storage;
+
+  subgraph Coordinator
+  ControlPlane.Coordinator -.-> ControlPlane.ClusterController;
+  ControlPlane.ClusterController --> DataPlane.Sequencer;
+  ControlPlane.ClusterController --> ControlPlane.DataDistributor;
+  ControlPlane.ClusterController --> ControlPlane.RateKeeper;
+  end;
+
+  subgraph Log
+  DataPlane.LogSystem --> DataPlane.LogSystem.LogEngineSupervisor[LogEngineSupervisor];
+  DataPlane.LogSystem.LogEngineSupervisor -.-> DataPlane.LogSystem.LimestoneEngine[LimestoneEngine #1];
+  DataPlane.LogSystem.LogEngineSupervisor -.-> DataPlane.LogSystem.LimestoneEngine[LimestoneEngine #2];
+  DataPlane.LogSystem-->LogEngineController;
+  end;
+
+  subgraph Storage
+  DataPlane.StorageSystem --> DataPlane.StorageSystem.StorageEngineSupervisor[StorageEngineSupervisor];
+  DataPlane.StorageSystem --> DataPlane.StorageSystem.StorageEngineController[StorageEngineController];
+  DataPlane.StorageSystem.StorageEngineSupervisor --> DataPlane.StorageSystem.BasaltEngine[BasaltEngine];
+  end;
+```
+
+```elixir
+
+```

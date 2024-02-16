@@ -1,0 +1,31 @@
+defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.InitTest do
+  use ExUnit.Case, async: true
+
+  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt
+
+  def with_id(context) do
+    id = Faker.UUID.v4()
+    {:ok, context |> Map.put(:id, id)}
+  end
+
+  describe "Basalt.child_spec/1" do
+    setup :with_id
+
+    @tag :tmp_dir
+    test "starts properly", %{id: id, tmp_dir: tmp_dir} do
+      pid =
+        start_supervised!(
+          Basalt.child_spec(
+            cluster: "test",
+            path: tmp_dir,
+            id: id,
+            otp_name: :test_storage_engine,
+            controller: self()
+          )
+        )
+
+      assert Process.alive?(pid)
+      assert File.exists?(Path.join(tmp_dir, "dets"))
+    end
+  end
+end

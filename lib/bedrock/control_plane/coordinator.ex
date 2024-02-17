@@ -40,6 +40,13 @@ defmodule Bedrock.ControlPlane.Coordinator do
     :exit, _ -> {:error, :unavailable}
   end
 
+  @spec join_cluster(any(), any(), any()) :: :ok | {:error, :unavailable}
+  def join_cluster(coordinator, worker_otp_name, services) do
+    GenServer.call(coordinator, {:join_cluster, worker_otp_name, services})
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     otp_name = cluster.otp_name(:coordinator)
@@ -94,11 +101,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
     {:reply, :ok, state |> update_controller(controller)}
   end
 
-  def handle_call(:get_configuration, _from, state) do
-    {:reply, state.configuration, state}
-  end
+  def handle_call(:get_configuration, _from, state),
+    do: {:reply, state.configuration, state}
 
-  def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+  def handle_call(:ping, _from, state),
+    do: {:reply, :pong, state}
 
   def handle_call(:get_controller, _from, state) do
     state.controller
@@ -144,7 +151,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
               state.supervisor_otp_name,
               {ClusterController,
                [
-                 cluster_name: cluster_name,
+                 cluster: state.cluster,
                  epoch: epoch,
                  coordinator: state.otp_name,
                  otp_name: state.controller_otp_name

@@ -1,31 +1,22 @@
 defmodule Bedrock.DataPlane.Sequencer do
   use GenServer
-  alias Bedrock.Cluster
 
-  defstruct [:cluster_name, :controller, epoch: 0, latest_committed_version: <<>>]
-
-  @spec otp_name(binary()) :: atom()
-  def otp_name(cluster_name),
-    do: Cluster.otp_name(cluster_name, :sequencer)
+  defstruct [:cluster, :controller, epoch: 0, latest_committed_version: <<>>]
 
   def start_link(opts) do
-    cluster_name = Keyword.get(opts, :cluster_name) || raise "Missing :cluster_name option"
-
-    controller =
-      Keyword.get(opts, :controller) || raise "Missing :controller option"
-
+    cluster = opts[:cluster] || raise "Missing :cluster option"
+    controller = opts[:controller] || raise "Missing :controller option"
     epoch = Keyword.get(opts, :epoch, 0)
+    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
-    GenServer.start_link(__MODULE__, {cluster_name, controller, epoch},
-      name: otp_name(cluster_name)
-    )
+    GenServer.start_link(__MODULE__, {cluster, controller, epoch}, name: otp_name)
   end
 
   @impl GenServer
-  def init({cluster_name, controller, epoch}) do
+  def init({cluster, controller, epoch}) do
     {:ok,
      %__MODULE__{
-       cluster_name: cluster_name,
+       cluster: cluster,
        controller: controller,
        epoch: epoch
      }}

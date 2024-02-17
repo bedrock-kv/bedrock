@@ -3,17 +3,22 @@ defmodule Bedrock.Engine.Controller do
 
   alias Bedrock.Engine
   alias Bedrock.Engine.Manifest
+  alias Bedrock.ControlPlane.ClusterController
+
+  require Logger
 
   defstruct ~w[
     cluster
+    subsystem
+    cluster_controller
+    default_engine
+    engine_supervisor_otp_name
+    engines
+    health
     otp_name
     otp_scope
     path
-    default_engine
     registry
-    engine_supervisor_otp_name
-    health
-    engines
     waiting_for_healthy
   ]a
   @type t :: %__MODULE__{}
@@ -52,6 +57,7 @@ defmodule Bedrock.Engine.Controller do
 
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
+    subsystem = opts[:subsystem] || raise "Missing :subsystem option"
     path = opts[:path] || raise "Missing :path option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
     otp_scope = opts[:otp_scope] || raise "Missing :otp_scope option"
@@ -68,6 +74,7 @@ defmodule Bedrock.Engine.Controller do
          [
            __MODULE__,
            {
+             subsystem,
              cluster,
              path,
              default_engine,
@@ -82,6 +89,7 @@ defmodule Bedrock.Engine.Controller do
 
   @impl GenServer
   def init({
+        subsystem,
         cluster,
         path,
         default_engine,
@@ -91,6 +99,7 @@ defmodule Bedrock.Engine.Controller do
       }) do
     state =
       %__MODULE__{
+        subsystem: subsystem,
         cluster: cluster,
         path: path,
         default_engine: default_engine,
@@ -108,6 +117,8 @@ defmodule Bedrock.Engine.Controller do
 
   @impl GenServer
   def handle_continue(:sync_existing, state) do
+    Logger.debug("Syncing existing engines")
+
     engines =
       state.engine_supervisor_otp_name
       |> DynamicSupervisor.which_children()
@@ -137,6 +148,8 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue(:spin_up, state) do
+    Logger.debug("Find existing persistent engines")
+
     engine_ids_to_start =
       state.path
       |> Path.join("*")
@@ -152,6 +165,8 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue(:setup_first_instance, state) do
+    Logger.debug("Configuring first instance of engine")
+
     new_engine(state)
     |> case do
       {:ok, engine_id} -> {:noreply, state, {:continue, {:start_engines, [engine_id]}}}
@@ -160,6 +175,8 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue({:start_engines, instance_ids}, state) do
+    Logger.debug("Starting engines: #{inspect(instance_ids)}: #{instance_ids |> Enum.join(", ")}")
+
     engines =
       instance_ids
       |> Enum.into(state.engines, fn instance_id ->
@@ -177,7 +194,50 @@ defmodule Bedrock.Engine.Controller do
         end
       end)
 
-    {:noreply, %{state | engines: engines} |> recompute_controller_health()}
+    {:noreply, %{state | engines: engines} |> recompute_controller_health(),
+     {:continue, :find_cluster_controller}}
+  end
+
+  def handle_continue(:find_cluster_controller, state) do
+    Logger.debug("Looking for a cluster controller...")
+
+    state.cluster.controller()
+    |> case do
+      {:ok, cluster_controller} ->
+        Logger.debug("Found cluster controller #{inspect(cluster_controller)}")
+
+        {:noreply, %{state | cluster_controller: cluster_controller},
+         {:continue, :report_for_duty}}
+
+      {:error, _} ->
+        Logger.debug("Cluster controller not found, retrying in 1 second")
+        Process.send_after(self(), :find_cluster_controller, 1_000)
+        {:noreply, state}
+    end
+  end
+
+  def handle_continue(:report_for_duty, state) do
+    Logger.debug("Reporting for duty...")
+
+    report_for_duty(state)
+    |> case do
+      :ok ->
+        Logger.debug("Engine controller #{state.otp_name} reported for duty")
+        {:noreply, state}
+
+      {:error, :unavailable} ->
+        Logger.debug("Reporting for duty failed, retrying in 1 second")
+        Process.send_after(self(), :report_for_duty, 1_000)
+        {:noreply, state}
+    end
+  end
+
+  def report_for_duty(state) do
+    state.cluster_controller
+    |> ClusterController.report_for_duty(
+      state.subsystem,
+      {state.otp_name, Node.self()}
+    )
   end
 
   @impl GenServer
@@ -211,6 +271,16 @@ defmodule Bedrock.Engine.Controller do
      state
      |> update_engine_health(engine_id, health)}
   end
+
+  @impl GenServer
+  def handle_info(:find_cluster_controller, %{cluster_controller: nil} = state),
+    do: {:noreply, state, {:continue, :find_cluster_controller}}
+
+  def handle_info(:find_cluster_controller, state),
+    do: {:noreply, state, {:continue, :find_cluster_controller}}
+
+  def handle_info(:report_for_duty, state),
+    do: {:noreply, state, {:continue, :report_for_duty}}
 
   def update_engine_health(state, engine_id, health) do
     %{

@@ -46,6 +46,7 @@ defmodule Bedrock.DataPlane.LogSystem do
       {Bedrock.Engine.Controller,
        [
          cluster: cluster,
+         subsystem: :log_system,
          default_engine: default_engine,
          engine_supervisor_otp_name: engine_supervisor_otp_name,
          path: path,

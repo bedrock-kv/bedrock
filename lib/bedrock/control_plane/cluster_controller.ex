@@ -6,23 +6,20 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   use GenServer
 
-  alias Bedrock.Cluster
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
-  alias Bedrock.DataPlane.StorageSystem
-  alias Bedrock.DataPlane.LogSystem
 
   @type service :: GenServer.name()
 
   @type t :: %__MODULE__{
-          cluster_name: String.t(),
+          cluster: Module.t(),
           sequencer: Sequencer.name(),
           data_distributor: DataDistributor.name(),
           coordinator: String.t()
         }
   defstruct [
     :otp_name,
-    :cluster_name,
+    :cluster,
     :sequencer,
     :data_distributor,
     :coordinator,
@@ -31,7 +28,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   ]
 
   def child_spec(opts) do
-    cluster_name = Keyword.get(opts, :cluster_name) || raise "Missing :cluster_name option"
+    cluster = Keyword.get(opts, :cluster) || raise "Missing :cluster option"
     epoch = Keyword.get(opts, :epoch) || raise "Missing :epoch option"
     coordinator = Keyword.get(opts, :coordinator) || raise "Missing :coordinator option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
@@ -42,37 +39,55 @@ defmodule Bedrock.ControlPlane.ClusterController do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster_name, epoch, coordinator, otp_name},
+           {cluster, epoch, coordinator, otp_name},
            [name: otp_name]
          ]},
       restart: :temporary
     }
   end
 
-  @spec get_sequencer(service()) :: pid()
-  def get_sequencer(controller),
-    do: GenServer.call(controller, :get_sequencer)
+  @spec get_sequencer(service()) :: pid() | {:error, :unavailable}
+  def get_sequencer(controller) do
+    GenServer.call(controller, :get_sequencer)
+  catch
+    :exit, {:noproc, {GenServer, :cast, _}} ->
+      {:error, :unavailable}
+  end
 
-  @spec get_data_distributor(service()) :: pid()
-  def get_data_distributor(controller),
-    do: GenServer.call(controller, :get_data_distributor)
+  @spec get_data_distributor(service()) :: pid() | {:error, :unavailable}
+  def get_data_distributor(controller) do
+    GenServer.call(controller, :get_data_distributor)
+  catch
+    :exit, {:noproc, {GenServer, :cast, _}} ->
+      {:error, :unavailable}
+  end
+
+  @spec report_for_duty(service(), subsystem :: atom(), subsystem_controller :: GenServer.name()) ::
+          :ok | {:error, :unavailable}
+  def report_for_duty(controller, subsystem, subsystem_controller),
+    do: GenServer.cast(controller, {:report_for_duty, subsystem, subsystem_controller})
 
   @impl GenServer
-  def init({cluster_name, epoch, coordinator, otp_name}) do
-    log_system_controller_otp_name = LogSystem.otp_name(cluster_name, :controller)
-    storage_controller_otp_name = StorageSystem.otp_name(cluster_name, :controller)
+  def init({cluster, epoch, coordinator, otp_name}) do
+    log_system_controller_otp_name = cluster.otp_name(:log_system_controller)
+    storage_controller_otp_name = cluster.otp_name(:storage_system_controller)
 
     with {:ok, sequencer} <-
-           Sequencer.start_link(controller: self(), cluster_name: cluster_name, epoch: epoch),
+           Sequencer.start_link(
+             controller: self(),
+             cluster: cluster,
+             epoch: epoch,
+             otp_name: cluster.otp_name(:sequencer)
+           ),
          {:ok, data_distributor} <-
            DataDistributor.start_link(
              controller: self(),
              storage_controller_otp_name: storage_controller_otp_name,
-             otp_name: Cluster.otp_name(cluster_name, :data_distributor)
+             otp_name: cluster.otp_name(:data_distributor)
            ) do
       {:ok,
        %__MODULE__{
-         cluster_name: cluster_name,
+         cluster: cluster,
          otp_name: otp_name,
          sequencer: sequencer,
          data_distributor: data_distributor,
@@ -88,7 +103,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
     {responses, failing_nodes} =
       GenServer.multi_call(
         Node.list(),
-        state.storage_controller_otp_name,
+        state.log_system_controller_otp_name,
         {:cluster_controller_replaced, {state.otp_name, Node.self()}}
       )
 
@@ -103,4 +118,15 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   def handle_call(:get_data_distributor, _from, state),
     do: {:reply, state.data_distributor, state}
+
+  @impl GenServer
+  def handle_cast({:report_for_duty, subsystem, _subsystem_controller}, state) do
+    case subsystem do
+      :log_system ->
+        {:noreply, state}
+
+      :storage_system ->
+        {:noreply, state}
+    end
+  end
 end

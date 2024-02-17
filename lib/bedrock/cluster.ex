@@ -1,9 +1,10 @@
 defmodule Bedrock.Cluster do
   use GenServer
+  use Bedrock, :types
+
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
-
-  use Bedrock, :types
+  alias Bedrock.ControlPlane.Coordinator
 
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
@@ -72,7 +73,10 @@ defmodule Bedrock.Cluster do
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor do
         config()[:path_to_descriptor] ||
-          Path.join(Application.app_dir(unquote(otp_app), "priv"), @descriptor_file_name)
+          Path.join(
+            Application.app_dir(unquote(otp_app), "priv"),
+            @descriptor_file_name
+          )
       end
 
       @doc """
@@ -105,27 +109,30 @@ defmodule Bedrock.Cluster do
       def otp_name(component) when is_atom(component), do: Cluster.otp_name(@name, component)
 
       @doc """
+      Get the current controller for the cluster. If we can't find one, we
+      return an error.
+      """
+      @spec controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
+      def controller, do: Cluster.get_controller(__MODULE__)
+
+      @doc """
       Get a coordinator for the cluster. If there is an instance running on
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
-      @spec coordinator() :: {:ok, pid()} | {:error, :unavailable}
-      def coordinator do
-        Process.whereis(@coordinator_otp_name)
-        |> case do
-          nil -> Cluster.get_coordinator(@otp_name)
-          pid -> {:ok, pid}
-        end
-      end
+      @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
+      def coordinator, do: Cluster.get_coordinator(__MODULE__)
 
       @doc """
       Get the nodes that are running coordinators for the cluster.
       """
-      def coordinator_nodes, do: Cluster.get_coordinator_nodes(@otp_name)
+      @spec coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+      def coordinator_nodes, do: Cluster.get_coordinator_nodes(__MODULE__)
 
       @doc """
       Get a new instance of the `Bedrock.Client` configured for the cluster.
       """
+      @spec client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
       def client do
         coordinator()
         |> case do
@@ -137,8 +144,51 @@ defmodule Bedrock.Cluster do
       @doc false
       def child_spec(opts), do: Bedrock.Cluster.child_spec([{:cluster, __MODULE__} | opts])
 
+      @spec config() :: Keyword.t()
       def config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
     end
+  end
+
+  @doc """
+  Get a coordinator for the given cluster.
+  """
+  @spec get_coordinator(cluster :: Module.t()) :: {:ok, pid()} | {:error, :unavailable}
+  def get_coordinator(cluster) do
+    Process.whereis(cluster.otp_name(:coordinator))
+    |> case do
+      nil -> GenServer.call(cluster.otp_name(), :get_coordinator)
+      pid -> {:ok, pid}
+    end
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
+  @doc """
+  Get the current controller for the cluster. If we can't find one, we
+  return an error.
+  """
+  @spec get_controller(cluster :: Module.t()) :: {:ok, pid()} | {:error, :unavailable}
+  def get_controller(cluster) do
+    Process.whereis(cluster.otp_name(:controller))
+    |> case do
+      nil ->
+        with {:ok, coordinator} <- cluster.coordinator() do
+          Coordinator.get_controller(coordinator)
+        end
+
+      pid ->
+        {:ok, pid}
+    end
+  end
+
+  @doc """
+  Get the nodes that are running coordinators for the given cluster.
+  """
+  @spec get_coordinator_nodes(cluster :: Module.t()) :: {:ok, [node()]} | {:error, :unavailable}
+  def get_coordinator_nodes(cluster) do
+    GenServer.call(cluster.otp_name(), :get_coordinator_nodes)
+  catch
+    :exit, _ -> {:error, :unavailable}
   end
 
   @doc """
@@ -171,6 +221,7 @@ defmodule Bedrock.Cluster do
   @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
+    logger = Module.concat(cluster, Logger)
 
     cluster_name = cluster.name()
 
@@ -188,7 +239,7 @@ defmodule Bedrock.Cluster do
           descriptor
 
         {:error, _reason} ->
-          Logger.warning("Bedrock: Creating a default single-cluster configuration")
+          logger.warning("Bedrock: Creating a default single-cluster configuration")
 
           Descriptor.new(cluster_name, [Node.self()])
       end
@@ -210,26 +261,6 @@ defmodule Bedrock.Cluster do
       },
       restart: :permanent
     }
-  end
-
-  @doc """
-  Get a coordinator for the given cluster.
-  """
-  @spec get_coordinator(cluster :: atom()) :: {:ok, {atom(), node()}} | {:error, :unavailable}
-  def get_coordinator(cluster) do
-    GenServer.call(cluster, :get_coordinator)
-  catch
-    :exit, _ -> {:error, :unavailable}
-  end
-
-  @doc """
-  Get the nodes that are running coordinators for the given cluster.
-  """
-  @spec get_coordinator_nodes(cluster :: atom()) :: {:ok, [node()]} | {:error, :unavailable}
-  def get_coordinator_nodes(cluster) do
-    GenServer.call(cluster, :get_coordinator_nodes)
-  catch
-    :exit, _ -> {:error, :unavailable}
   end
 
   @impl GenServer

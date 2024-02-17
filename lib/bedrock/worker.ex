@@ -11,6 +11,8 @@ defmodule Bedrock.Worker do
     storage
   ]a
 
+  alias __MODULE__.Manager
+
   def default_services, do: @default_services
 
   use Supervisor
@@ -81,19 +83,26 @@ defmodule Bedrock.Worker do
   end
 
   def init({cluster, services, config}) do
-    Logger.debug(
-      "Worker #{Node.self()} up, offering: #{services |> Enum.map_join(", ", &Atom.to_string/1)}",
-      cluster: cluster
-    )
+    manager_otp_name = cluster.otp_name(:worker_manager)
 
     children =
       [
-        {DynamicSupervisor, name: cluster.otp_name(:sup)}
+        {DynamicSupervisor, name: cluster.otp_name(:sup)},
+        {Manager,
+         [
+           cluster: cluster,
+           services: services,
+           otp_name: manager_otp_name
+         ]}
         | services
           |> Enum.reduce([], fn
             service, acc ->
               [
-                {module_for_service(service), [{:cluster, cluster} | config[service]]}
+                {module_for_service(service),
+                 [
+                   {:cluster, cluster},
+                   {:manager, manager_otp_name} | config[service]
+                 ]}
                 | acc
               ]
           end)
@@ -105,4 +114,75 @@ defmodule Bedrock.Worker do
   defp module_for_service(:coordinator), do: Bedrock.ControlPlane.Coordinator
   defp module_for_service(:storage), do: Bedrock.DataPlane.StorageSystem
   defp module_for_service(:log_system), do: Bedrock.DataPlane.LogSystem
+
+  defmodule Manager do
+    use GenServer
+
+    alias Bedrock.ControlPlane.Coordinator
+
+    defstruct ~w[cluster services coordinator]a
+
+    def child_spec(opts) do
+      cluster = opts[:cluster] || raise "Missing :cluster option"
+      services = opts[:services] || raise "Missing :services option"
+      otp_name = opts[:otp_name] || raise "Missing :otp_name option"
+
+      %{
+        id: __MODULE__,
+        start: {
+          GenServer,
+          :start_link,
+          [
+            __MODULE__,
+            {cluster, services},
+            [name: otp_name]
+          ]
+        },
+        restart: :permanent
+      }
+    end
+
+    @impl GenServer
+    def init({cluster, services}) do
+      t = %__MODULE__{
+        cluster: cluster,
+        services: services
+      }
+
+      {:ok, t, {:continue, :find_a_live_coordinator}}
+    end
+
+    @impl GenServer
+    def handle_continue(:find_a_live_coordinator, t) do
+      t.cluster.coordinator()
+      |> case do
+        {:ok, coordinator} ->
+          {:noreply, %{t | coordinator: coordinator}, {:continue, :attempt_to_join_cluster}}
+
+        {:error, :unavailable} ->
+          Process.send_after(self(), :find_a_live_coordinator, 1_000)
+          {:noreply, t}
+      end
+
+      {:noreply, t}
+    end
+
+    def handle_continue(:attempt_to_join_cluster, t) do
+      t.coordinator
+      |> Coordinator.join_cluster({t.otp_name, Node.self()}, t.services)
+      |> case do
+        :ok ->
+          {:noreply, t}
+
+        {:error, :unavailable} ->
+          {:noreply, %{t | coordinator: nil}, {:continue, :find_a_live_coordinator}}
+      end
+
+      {:noreply, t}
+    end
+
+    @impl GenServer
+    def handle_info(:find_a_live_coordinator, t),
+      do: {:noreply, t, {:continue, :find_a_live_coordinator}}
+  end
 end

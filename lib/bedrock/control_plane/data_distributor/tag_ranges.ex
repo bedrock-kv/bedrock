@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.DataDistributor.TagRanges do
+  use Bedrock, :types
   use Bedrock.Cluster, :types
+
   @type t :: :ets.table()
   @type tag :: term()
   @type key_range :: {lower :: key(), upper :: key()}

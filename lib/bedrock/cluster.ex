@@ -29,8 +29,6 @@ defmodule Bedrock.Cluster do
 
   defmacro __using__(:types) do
     quote do
-      use Bedrock, :types
-
       @type version :: Bedrock.Cluster.version()
       @type transaction :: Bedrock.Cluster.transaction()
       @type storage_engine :: Bedrock.Cluster.storage_engine()
@@ -86,7 +84,8 @@ defmodule Bedrock.Cluster do
       def otp_name, do: @otp_name
 
       @doc """
-      Get the OTP name for a component within the cluster.
+      Get the OTP name for a component within the cluster. These names are
+      limited in scope to the current node.
       """
       @spec otp_name(
               :sup
@@ -268,42 +267,42 @@ defmodule Bedrock.Cluster do
     do: {:ok, %__MODULE__{cluster: cluster, descriptor: descriptor}}
 
   @impl GenServer
-  def handle_call(:get_coordinator, _from, %{coordinator: nil} = state) do
-    find_a_live_coordinator(state)
+  def handle_call(:get_coordinator, _from, %{coordinator: nil} = t) do
+    find_a_live_coordinator(t)
     |> case do
       {:ok, coordinator} ->
         coordinator_ref = Process.monitor(coordinator)
 
         {:reply, {:ok, coordinator},
-         %{state | coordinator: coordinator, coordinator_ref: coordinator_ref}}
+         %{t | coordinator: coordinator, coordinator_ref: coordinator_ref}}
 
       {:error, _reason} ->
-        {:reply, {:error, :unavailable}, state}
+        {:reply, {:error, :unavailable}, t}
     end
   end
 
-  def handle_call(:get_coordinator, _from, state),
-    do: {:reply, {:ok, state.coordinator}, state}
+  def handle_call(:get_coordinator, _from, t),
+    do: {:reply, {:ok, t.coordinator}, t}
 
-  def handle_call(:get_coordinator_nodes, _from, state),
-    do: {:reply, {:ok, state.descriptor.coordinator_nodes}, state}
+  def handle_call(:get_coordinator_nodes, _from, t),
+    do: {:reply, {:ok, t.descriptor.coordinator_nodes}, t}
 
   @impl GenServer
-  def handle_info({:DOWN, ref, :process, _process, _reason}, state)
-      when state.coordinator_ref == ref,
-      do: {:noreply, %{state | coordinator: nil, coordinator_ref: nil}}
+  def handle_info({:DOWN, ref, :process, _process, _reason}, t)
+      when t.coordinator_ref == ref,
+      do: {:noreply, %{t | coordinator: nil, coordinator_ref: nil}}
 
   # Find a live coordinator. We make a ping call to all of the nodes that we
   # know about and return the first one that responds. If none respond, we
   # return an error.
   #
   @doc false
-  @spec find_a_live_coordinator(state :: t()) :: {:ok, {atom(), node()}} | {:error, :unavailable}
-  def find_a_live_coordinator(state) do
-    coordinator_otp_name = state.cluster.otp_name(:coordinator)
+  @spec find_a_live_coordinator(t()) :: {:ok, {atom(), node()}} | {:error, :unavailable}
+  def find_a_live_coordinator(t) do
+    coordinator_otp_name = t.cluster.otp_name(:coordinator)
 
     GenServer.multi_call(
-      state.descriptor.coordinator_nodes,
+      t.descriptor.coordinator_nodes,
       coordinator_otp_name,
       :ping,
       @coordinator_ping_timeout_in_ms

@@ -1,5 +1,6 @@
 defmodule Bedrock.ControlPlane.DataDistributor do
   use GenServer
+  use Bedrock, :types
   use Bedrock.Cluster, :types
 
   alias Bedrock.Cluster

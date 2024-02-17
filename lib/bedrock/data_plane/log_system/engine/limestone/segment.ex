@@ -1,7 +1,9 @@
 defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.Segment do
+  use Bedrock, :types
   use Bedrock.Cluster, :types
-  defstruct [:path, :size]
+
   @type t :: %__MODULE__{}
+  defstruct [:path, :size]
 
   alias Bedrock.DataPlane.Transaction
 

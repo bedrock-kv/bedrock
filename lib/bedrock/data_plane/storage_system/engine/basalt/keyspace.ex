@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.Keyspace do
+  use Bedrock, :types
   use Bedrock.Cluster, :types
+
   alias Bedrock.DataPlane.Transaction
 
   @type t :: :ets.tid()

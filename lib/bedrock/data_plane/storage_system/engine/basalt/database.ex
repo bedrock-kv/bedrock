@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database do
+  use Bedrock, :types
   use Bedrock.Cluster, :types
   use Bedrock.DataPlane.StorageSystem.Engine, :types
 

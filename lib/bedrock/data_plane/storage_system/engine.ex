@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine do
+  use Bedrock, :types
   use Bedrock.Cluster, :types
 
   @type t :: Bedrock.Engine.t()

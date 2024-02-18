@@ -30,7 +30,8 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   def init({cluster, services}) do
     t = %__MODULE__{
       cluster: cluster,
-      services: services
+      services: services,
+      controller: :unavailable
     }
 
     PubSub.subscribe(cluster, :cluster_controller_replaced)

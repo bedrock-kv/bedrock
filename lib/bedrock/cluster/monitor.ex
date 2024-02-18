@@ -6,10 +6,12 @@ defmodule Bedrock.Cluster.Monitor do
 
   require Logger
 
+  @type coordinator :: GenServer.name()
+
   @type t :: %__MODULE__{
           cluster: Module.t(),
           descriptor: Descriptor.t(),
-          coordinator: pid() | nil
+          coordinator: coordinator() | :unavailable
         }
 
   defstruct ~w[
@@ -23,7 +25,7 @@ defmodule Bedrock.Cluster.Monitor do
   to see if we're running an instance locally, if not, we ask the running
   instance of the cluster monitor to find one for us.
   """
-  @spec get_coordinator(cluster :: Module.t()) :: {:ok, pid()} | {:error, :unavailable}
+  @spec get_coordinator(cluster :: Module.t()) :: {:ok, coordinator()} | {:error, :unavailable}
   def get_coordinator(cluster) do
     cluster.otp_name(:coordinator)
     |> Process.whereis()
@@ -38,7 +40,7 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(cluster :: Module.t()) :: {:ok, pid()} | {:error, :unavailable}
+  @spec get_controller(cluster :: Module.t()) :: {:ok, coordinator()} | {:error, :unavailable}
   def get_controller(cluster) do
     cluster
     |> get_coordinator()
@@ -97,11 +99,7 @@ defmodule Bedrock.Cluster.Monitor do
     find_a_live_coordinator(t)
     |> case do
       {:ok, coordinator} ->
-        if coordinator != t.coordinator do
-          PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
-        end
-
-        {:reply, %{t | coordinator: coordinator}}
+        {:reply, t |> change_coordinator(coordinator)}
 
       {:error, :unavailable} ->
         Process.send_after(
@@ -110,7 +108,7 @@ defmodule Bedrock.Cluster.Monitor do
           t.cluster.coordinator_ping_timeout_in_ms()
         )
 
-        {:noreply, %{t | coordinator: :unavailable}}
+        {:noreply, t |> change_coordinator(:unavailable)}
     end
   end
 
@@ -153,5 +151,13 @@ defmodule Bedrock.Cluster.Monitor do
       {[{first_node, :pong} | _other_coordinators], _failures} ->
         {:ok, {coordinator_otp_name, first_node}}
     end
+  end
+
+  @spec change_coordinator(t(), coordinator :: coordinator() | :unavailable) :: t()
+  def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
+
+  def change_coordinator(t, coordinator) do
+    PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
+    %{t | coordinator: coordinator}
   end
 end

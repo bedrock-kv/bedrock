@@ -12,7 +12,6 @@ defmodule Bedrock.ControlPlane.DataDistributor do
 
   defstruct ~w[
     controller
-    storage_controller_otp_name
     state
     tag_ranges
     log_info_table
@@ -45,35 +44,20 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   def start_link(opts) do
     controller = opts[:controller] || raise "Missing :controller option"
 
-    storage_controller_otp_name =
-      opts[:storage_controller_otp_name] || raise "Missing :storage_controller_otp_name option"
-
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-    GenServer.start_link(__MODULE__, {controller, storage_controller_otp_name}, name: otp_name)
+    GenServer.start_link(__MODULE__, {controller}, name: otp_name)
   end
 
   @impl GenServer
-  def init({controller, storage_controller_otp_name}) do
+  def init({controller}) do
     {:ok,
      %__MODULE__{
        controller: controller,
-       storage_controller_otp_name: storage_controller_otp_name,
        state: :starting,
        tag_ranges: TagRanges.new(),
        log_info_table: LogInfoTable.new(),
        storage_teams: %{}
-     }, {:continue, :startup}}
-  end
-
-  @impl GenServer
-  def handle_continue(:startup, state) do
-    GenServer.multi_call(Node.list(), state.storage_controller_otp_name, :ping, 1_000)
-    |> case do
-      {replies, unresponsive} ->
-        {replies, unresponsive}
-    end
-
-    {:noreply, state}
+     }}
   end
 
   @impl GenServer

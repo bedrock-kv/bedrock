@@ -12,6 +12,7 @@ defmodule Bedrock.Cluster do
   @type storage_engine :: GenServer.name()
   @type log_system_engine :: GenServer.name()
 
+  @doc false
   defmacro __using__(:types) do
     quote do
       @type version :: Bedrock.Cluster.version()
@@ -21,6 +22,7 @@ defmodule Bedrock.Cluster do
     end
   end
 
+  @doc false
   defmacro __using__(opts) do
     otp_app = opts[:otp_app] || raise "Missing :otp_app option"
     name = opts[:name] || raise "Missing :name option"
@@ -182,25 +184,11 @@ defmodule Bedrock.Cluster do
   @doc """
   Get the OTP name for a component within the cluster with the given name.
   """
-  @spec otp_name(
-          cluster_name :: binary(),
-          service ::
-            :sup
-            | :controller
-            | :coordinator
-            | :data_distributor
-            | :log_system
-            | :monitor
-            | :sequencer
-            | :service_advertiser
-            | :storage_system
-        ) :: atom()
+  @spec otp_name(cluster_name :: binary(), service :: atom()) :: atom()
   def otp_name(cluster_name, service) when is_binary(cluster_name),
     do: :"#{otp_name(cluster_name)}_#{service}"
 
-  @doc """
-  Return an appropriately configured child specification for a cluster.
-  """
+  @doc false
   @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
@@ -246,6 +234,7 @@ defmodule Bedrock.Cluster do
     }
   end
 
+  @impl Supervisor
   def init({cluster, path_to_descriptor, descriptor}) do
     children =
       [

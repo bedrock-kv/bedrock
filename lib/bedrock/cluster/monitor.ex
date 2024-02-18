@@ -2,19 +2,19 @@ defmodule Bedrock.Cluster.Monitor do
   use GenServer
 
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.Cluster.PubSub
 
   require Logger
 
   @type monitor :: GenServer.name()
-  @type coordinator :: GenServer.name()
   @type controller :: GenServer.name()
 
   @type t :: %__MODULE__{
           cluster: Module.t(),
           descriptor: Descriptor.t(),
-          coordinator: coordinator() | :unavailable,
-          controller: controller() | :unavailable
+          coordinator: Coordinator.name() | :unavailable,
+          controller: ClusterController.name() | :unavailable
         }
 
   defstruct ~w[
@@ -28,7 +28,7 @@ defmodule Bedrock.Cluster.Monitor do
   Get a coordinator for the cluster. We ask the running instance of the cluster
   monitor to find one for us.
   """
-  @spec get_coordinator(monitor()) :: {:ok, coordinator()} | {:error, :unavailable}
+  @spec get_coordinator(monitor()) :: {:ok, Coordinator.name()} | {:error, :unavailable}
   def get_coordinator(monitor) do
     monitor |> GenServer.call(:get_coordinator)
   catch
@@ -38,7 +38,7 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(monitor()) :: {:ok, controller()} | {:error, :unavailable}
+  @spec get_controller(monitor()) :: {:ok, ClusterController.name()} | {:error, :unavailable}
   def get_controller(monitor) do
     monitor |> GenServer.call(:get_controller)
   catch
@@ -82,7 +82,8 @@ defmodule Bedrock.Cluster.Monitor do
     t = %__MODULE__{
       cluster: cluster,
       descriptor: descriptor,
-      coordinator: :unavailable
+      coordinator: :unavailable,
+      controller: :unavailable
     }
 
     {:ok, t, {:continue, :find_a_live_coordinator}}
@@ -202,7 +203,7 @@ defmodule Bedrock.Cluster.Monitor do
   have we do nothing, otherwise we publish a message to a topic to let everyone
   on this node know that the coordinator has changed.
   """
-  @spec change_coordinator(t(), coordinator() | :unavailable) :: t()
+  @spec change_coordinator(t(), Coordinator.name() | :unavailable) :: t()
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
 
   def change_coordinator(t, coordinator) do
@@ -215,7 +216,7 @@ defmodule Bedrock.Cluster.Monitor do
   already have we do nothing, otherwise we publish a message to a topic to let
   everyone on this node know that the controller has changed.
   """
-  @spec change_cluster_controller(t(), controller() | :unavailable) :: t()
+  @spec change_cluster_controller(t(), ClusterController.name() | :unavailable) :: t()
   def change_cluster_controller(t, controller) when t.controller == controller, do: t
 
   def change_cluster_controller(t, controller)

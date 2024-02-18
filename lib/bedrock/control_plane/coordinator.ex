@@ -154,7 +154,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
             )
 
           GenServer.abcast(
-            Node.list(),
+            [t.my_node | Node.list()],
             t.cluster.otp_name(:monitor),
             {:cluster_controller_replaced, {t.controller_otp_name, my_node}}
           )

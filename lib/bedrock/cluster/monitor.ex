@@ -43,14 +43,11 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(cluster :: Module.t()) :: {:ok, coordinator()} | {:error, :unavailable}
+  @spec get_controller(cluster :: Module.t()) :: {:ok, controller()} | {:error, :unavailable}
   def get_controller(cluster) do
-    cluster
-    |> get_coordinator()
-    |> case do
-      {:ok, coordinator} -> Coordinator.get_controller(coordinator)
-      {:error, _reason} = reason -> reason
-    end
+    cluster.otp_name(:monitor) |> GenServer.call(:get_controller)
+  catch
+    :exit, _ -> {:error, :unavailable}
   end
 
   @doc """
@@ -58,8 +55,7 @@ defmodule Bedrock.Cluster.Monitor do
   """
   @spec get_coordinator_nodes(cluster :: Module.t()) :: {:ok, [node()]} | {:error, :unavailable}
   def get_coordinator_nodes(cluster) do
-    cluster.otp_name(:monitor)
-    |> GenServer.call(:get_coordinator_nodes)
+    cluster.otp_name(:monitor) |> GenServer.call(:get_coordinator_nodes)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -141,6 +137,12 @@ defmodule Bedrock.Cluster.Monitor do
   def handle_call(:get_coordinator, _from, t),
     do: {:reply, {:ok, t.coordinator}, t}
 
+  def handle_call(:get_controller, _from, %{controller: :unavailable} = t),
+    do: {:reply, {:error, :unavailable}, t}
+
+  def handle_call(:get_controller, _from, t),
+    do: {:reply, {:ok, t.controller}, t}
+
   def handle_call(:get_coordinator_nodes, _from, t),
     do: {:reply, {:ok, t.descriptor.coordinator_nodes}, t}
 
@@ -157,13 +159,20 @@ defmodule Bedrock.Cluster.Monitor do
   def handle_info(:try_to_find_current_cluster_controller, t),
     do: {:noreply, t}
 
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) when t.controller == pid,
-    do: {:noreply, t |> change_cluster_controller(:unavailable)}
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) when t.controller == pid do
+    {:noreply, t |> change_cluster_controller(:unavailable),
+     {:continue, :find_current_cluster_controller}}
+  end
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, t),
     do: {:noreply, t}
 
   @impl GenServer
+  def handle_cast({:cluster_controller_replaced, :unavailable}, t) do
+    {:noreply, t |> change_cluster_controller(:unavailable),
+     {:continue, :find_current_cluster_controller}}
+  end
+
   def handle_cast({:cluster_controller_replaced, cluster_controller}, t),
     do: {:noreply, t |> change_cluster_controller(cluster_controller)}
 

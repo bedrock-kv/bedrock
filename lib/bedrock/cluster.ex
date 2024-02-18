@@ -231,7 +231,7 @@ defmodule Bedrock.Cluster do
          descriptor: descriptor,
          path_to_descriptor: path_to_descriptor,
          name: cluster.otp_name(:monitor)}
-        | children_for_services(cluster, cluster.config() |> Keyword.get(:services))
+        | children_for_services(cluster, cluster.config() |> Keyword.get(:services, []))
       ]
 
     Supervisor.init(children, strategy: :one_for_one)

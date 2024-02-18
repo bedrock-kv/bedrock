@@ -97,7 +97,7 @@ defmodule Bedrock.Engine.Controller do
         otp_scope,
         otp_name
       }) do
-    state =
+    t =
       %__MODULE__{
         subsystem: subsystem,
         cluster: cluster,
@@ -112,15 +112,15 @@ defmodule Bedrock.Engine.Controller do
         engines: %{}
       }
 
-    {:ok, state, {:continue, :sync_existing}}
+    {:ok, t, {:continue, :sync_existing}}
   end
 
   @impl GenServer
-  def handle_continue(:sync_existing, state) do
+  def handle_continue(:sync_existing, t) do
     Logger.debug("Syncing existing engines")
 
     engines =
-      state.engine_supervisor_otp_name
+      t.engine_supervisor_otp_name
       |> DynamicSupervisor.which_children()
       |> Enum.map(fn
         {_, engine_pid, _, _} when is_pid(engine_pid) ->
@@ -143,50 +143,49 @@ defmodule Bedrock.Engine.Controller do
       |> Enum.reject(&(&1 == :skip))
       |> Map.new()
 
-    {:noreply, %{state | engines: engines} |> recompute_controller_health(),
-     {:continue, :spin_up}}
+    {:noreply, %{t | engines: engines} |> recompute_controller_health(), {:continue, :spin_up}}
   end
 
-  def handle_continue(:spin_up, state) do
+  def handle_continue(:spin_up, t) do
     Logger.debug("Find existing persistent engines")
 
     engine_ids_to_start =
-      state.path
+      t.path
       |> Path.join("*")
       |> Path.wildcard()
       |> Enum.map(&Path.basename/1)
-      |> Enum.reject(&Map.has_key?(state.engines, &1))
+      |> Enum.reject(&Map.has_key?(t.engines, &1))
 
-    if [] == engine_ids_to_start && map_size(state.engines) == 0 do
-      {:noreply, state, {:continue, :setup_first_instance}}
+    if [] == engine_ids_to_start && map_size(t.engines) == 0 do
+      {:noreply, t, {:continue, :setup_first_instance}}
     else
-      {:noreply, state, {:continue, {:start_engines, engine_ids_to_start}}}
+      {:noreply, t, {:continue, {:start_engines, engine_ids_to_start}}}
     end
   end
 
-  def handle_continue(:setup_first_instance, state) do
+  def handle_continue(:setup_first_instance, t) do
     Logger.debug("Configuring first instance of engine")
 
-    new_engine(state)
+    new_engine(t)
     |> case do
-      {:ok, engine_id} -> {:noreply, state, {:continue, {:start_engines, [engine_id]}}}
+      {:ok, engine_id} -> {:noreply, t, {:continue, {:start_engines, [engine_id]}}}
       {:error, reason} -> {:stop, reason}
     end
   end
 
-  def handle_continue({:start_engines, instance_ids}, state) do
+  def handle_continue({:start_engines, instance_ids}, t) do
     Logger.debug("Starting engines: #{inspect(instance_ids)}: #{instance_ids |> Enum.join(", ")}")
 
     engines =
       instance_ids
-      |> Enum.into(state.engines, fn instance_id ->
-        start_engine_if_necessary(state, instance_id)
+      |> Enum.into(t.engines, fn instance_id ->
+        start_engine_if_necessary(t, instance_id)
         |> case do
           {:ok, _pid} ->
             {instance_id,
              %Info{
                health: :ok,
-               otp_name: otp_name_for_engine(state.otp_scope, instance_id)
+               otp_name: otp_name_for_engine(t.otp_scope, instance_id)
              }}
 
           {:error, reason} ->
@@ -194,110 +193,103 @@ defmodule Bedrock.Engine.Controller do
         end
       end)
 
-    {:noreply, %{state | engines: engines} |> recompute_controller_health(),
+    {:noreply, %{t | engines: engines} |> recompute_controller_health(),
      {:continue, :find_cluster_controller}}
   end
 
-  def handle_continue(:find_cluster_controller, state) do
-    Logger.debug("Looking for a cluster controller...")
-
-    state.cluster.controller()
+  def handle_continue(:find_cluster_controller, t) do
+    t.cluster.controller()
     |> case do
       {:ok, cluster_controller} ->
-        Logger.debug("Found cluster controller #{inspect(cluster_controller)}")
-
-        {:noreply, %{state | cluster_controller: cluster_controller},
-         {:continue, :report_for_duty}}
+        {:noreply, %{t | cluster_controller: cluster_controller}, {:continue, :report_for_duty}}
 
       {:error, _} ->
-        Logger.debug("Cluster controller not found, retrying in 1 second")
         Process.send_after(self(), :find_cluster_controller, 1_000)
-        {:noreply, state}
+        {:noreply, t}
     end
   end
 
-  def handle_continue(:report_for_duty, state) do
+  def handle_continue(:report_for_duty, t) do
     Logger.debug("Reporting for duty...")
 
-    report_for_duty(state)
+    report_for_duty(t)
     |> case do
       :ok ->
-        Logger.debug("Engine controller #{state.otp_name} reported for duty")
-        {:noreply, state}
+        {:noreply, t}
 
       {:error, :unavailable} ->
-        Logger.debug("Reporting for duty failed, retrying in 1 second")
         Process.send_after(self(), :report_for_duty, 1_000)
-        {:noreply, state}
+        {:noreply, t}
     end
   end
 
-  def report_for_duty(state) do
-    state.cluster_controller
+  @spec report_for_duty(t()) :: :ok | {:error, :unavailable}
+  def report_for_duty(t) do
+    t.cluster_controller
     |> ClusterController.report_for_duty(
-      state.subsystem,
-      {state.otp_name, Node.self()}
+      t.subsystem,
+      {t.otp_name, Node.self()}
     )
   end
 
   @impl GenServer
-  def handle_call({:cluster_controller_replaced, cluster_controller}, from, state) do
+  def handle_call({:cluster_controller_replaced, cluster_controller}, from, t) do
     IO.inspect({cluster_controller, from})
-    {:reply, :ok, state}
+    {:reply, :ok, t}
   end
 
-  def handle_call(:ping, _from, state),
-    do: {:reply, :pong, state}
+  def handle_call(:ping, _from, t),
+    do: {:reply, :pong, t}
 
-  def handle_call(:engines, _from, state) do
+  def handle_call(:engines, _from, t) do
     engines =
-      state.engines
+      t.engines
       |> Enum.map(fn
         {_id, %{otp_name: otp_name}} -> otp_name
       end)
 
-    {:reply, {:ok, engines}, state}
+    {:reply, {:ok, engines}, t}
   end
 
-  def handle_call(:wait_for_healthy, _from, %{health: :ok} = state),
-    do: {:reply, :ok, state}
+  def handle_call(:wait_for_healthy, _from, %{health: :ok} = t),
+    do: {:reply, :ok, t}
 
-  def handle_call(:wait_for_healthy, from, state),
-    do: {:noreply, %{state | waiting_for_healthy: [from | state.waiting_for_healthy]}}
+  def handle_call(:wait_for_healthy, from, t),
+    do: {:noreply, %{t | waiting_for_healthy: [from | t.waiting_for_healthy]}}
 
   @impl GenServer
-  def handle_cast({:engine_health, engine_id, health}, state) do
+  def handle_cast({:engine_health, engine_id, health}, t) do
     {:noreply,
-     state
+     t
      |> update_engine_health(engine_id, health)}
   end
 
   @impl GenServer
-  def handle_info(:find_cluster_controller, %{cluster_controller: nil} = state),
-    do: {:noreply, state, {:continue, :find_cluster_controller}}
+  def handle_info(:find_cluster_controller, %{cluster_controller: nil} = t),
+    do: {:noreply, t, {:continue, :find_cluster_controller}}
 
-  def handle_info(:find_cluster_controller, state),
-    do: {:noreply, state, {:continue, :find_cluster_controller}}
+  def handle_info(:find_cluster_controller, t),
+    do: {:noreply, t, {:continue, :find_cluster_controller}}
 
-  def handle_info(:report_for_duty, state),
-    do: {:noreply, state, {:continue, :report_for_duty}}
+  def handle_info(:report_for_duty, t),
+    do: {:noreply, t, {:continue, :report_for_duty}}
 
-  def update_engine_health(state, engine_id, health) do
+  def update_engine_health(t, engine_id, health) do
     %{
-      state
+      t
       | engines:
-          Map.update!(state.engines, engine_id, fn info ->
+          Map.update!(t.engines, engine_id, fn info ->
             Map.put(info, :health, health)
           end)
     }
     |> recompute_controller_health()
   end
 
-  def recompute_controller_health(state) do
+  def recompute_controller_health(t) do
     %{
-      state
+      t
       | health:
-          state.engines
+          t.engines
           |> Map.values()
           |> Enum.map(& &1.health)
           |> Enum.reduce(:ok, fn
@@ -310,53 +302,53 @@ defmodule Bedrock.Engine.Controller do
     |> notify_waiting_for_healthy_if_necessary()
   end
 
-  def notify_waiting_for_healthy_if_necessary(%{waiting_for_healthy: []} = state), do: state
+  def notify_waiting_for_healthy_if_necessary(%{waiting_for_healthy: []} = t), do: t
 
-  def notify_waiting_for_healthy_if_necessary(%{health: :ok} = state) do
-    state.waiting_for_healthy
+  def notify_waiting_for_healthy_if_necessary(%{health: :ok} = t) do
+    t.waiting_for_healthy
     |> Enum.each(fn from -> GenServer.reply(from, :ok) end)
 
-    %{state | wait_for_healthy: []}
+    %{t | wait_for_healthy: []}
   end
 
-  @spec new_engine(state :: t()) :: {:ok, engine_id()} | {:error, term()}
-  def new_engine(state) do
+  @spec new_engine(t()) :: {:ok, engine_id()} | {:error, term()}
+  def new_engine(t) do
     with id <- UUID.uuid4(),
-         path <- Path.join(state.path, id),
+         path <- Path.join(t.path, id),
          :ok <- File.mkdir_p(path),
-         manifest <- Manifest.new(state.cluster.name(), id, state.default_engine),
+         manifest <- Manifest.new(t.cluster.name(), id, t.default_engine),
          :ok <- manifest.engine.one_time_initialization(path),
          :ok <- manifest |> Manifest.write_to_file(path |> Path.join("manifest.json")) do
       {:ok, id}
     end
   end
 
-  @spec start_engine_if_necessary(state :: t(), engine_id()) ::
+  @spec start_engine_if_necessary(t(), engine_id()) ::
           {:ok, pid()} | {:error, term()}
-  def start_engine_if_necessary(state, id) do
-    state.otp_name
+  def start_engine_if_necessary(t, id) do
+    t.otp_name
     |> otp_name_for_engine(id)
     |> Process.whereis()
     |> case do
-      nil -> start_engine(state, id)
+      nil -> start_engine(t, id)
       pid -> {:ok, pid}
     end
   end
 
-  @spec start_engine(state :: t(), engine_id()) ::
+  @spec start_engine(t(), engine_id()) ::
           {:ok, pid()} | {:error, term()}
-  def start_engine(state, id) do
-    with path <- Path.join(state.path, id),
+  def start_engine(t, id) do
+    with path <- Path.join(t.path, id),
          {:ok, manifest} <- Manifest.load_from_file(Path.join(path, "manifest.json")),
          :ok <- check_manifest_id(manifest, id),
-         :ok <- check_manifest_cluster_name(manifest, state.cluster.name()) do
-      state.engine_supervisor_otp_name
+         :ok <- check_manifest_cluster_name(manifest, t.cluster.name()) do
+      t.engine_supervisor_otp_name
       |> DynamicSupervisor.start_child(
         manifest.engine.child_spec(
           path: path,
           id: id,
-          controller: state.otp_name,
-          otp_name: otp_name_for_engine(state.otp_scope, id)
+          controller: t.otp_name,
+          otp_name: otp_name_for_engine(t.otp_scope, id)
         )
         |> Map.put(:restart, :transient)
       )

@@ -1,4 +1,11 @@
 defmodule Bedrock.Cluster.ServiceAdvertiser do
+  @moduledoc """
+  Advertises services to the cluster controller. This module is responsible for
+  advertising the services that are available on the local node to the cluster
+  controller. This is done by subscribing to the `:cluster_controller_replaced`
+  topic and then advertising the services to the controller when a new one
+  is started.
+  """
   use GenServer
 
   alias Bedrock.Cluster.PubSub

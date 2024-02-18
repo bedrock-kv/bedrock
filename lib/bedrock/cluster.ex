@@ -41,15 +41,32 @@ defmodule Bedrock.Cluster do
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
       @log_system_otp_name Cluster.otp_name(@name, :log_system)
+      @monitor_otp_name Cluster.otp_name(@name, :monitor)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
+      @service_advertiser_otp_name Cluster.otp_name(@name, :service_advertiser)
       @storage_system_otp_name Cluster.otp_name(@name, :storage_system)
-      @worker_otp_name Cluster.otp_name(@name, :worker)
 
       @doc """
       Get the name of the cluster.
       """
       @spec name() :: String.t()
       def name, do: @name
+
+      ######################################################################
+      # Configuration
+      ######################################################################
+
+      @doc """
+      Get the configuration for this node of the cluster.
+      """
+      @spec config() :: Keyword.t()
+      def config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
+
+      @doc """
+      Get the services advertised to the cluster by this node.
+      """
+      @spec advertised_services() :: [:coordination | :log | :storage]
+      def advertised_services, do: config() |> Keyword.get(:services, [])
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the
@@ -78,6 +95,10 @@ defmodule Bedrock.Cluster do
         |> Keyword.get(:coordinator_ping_timeout_in_ms, @default_coordinator_ping_timeout_in_ms)
       end
 
+      ######################################################################
+      # OTP Names
+      ######################################################################
+
       @doc """
       Get the OTP name for the cluster.
       """
@@ -94,26 +115,32 @@ defmodule Bedrock.Cluster do
               | :coordinator
               | :data_distributor
               | :log_system
+              | :monitor
               | :sequencer
+              | :service_advertiser
               | :storage_system
-              | :worker
             ) :: atom()
       def otp_name(:sup), do: @sup_otp_name
       def otp_name(:controller), do: @controller_otp_name
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:data_distributor), do: @data_distributor_otp_name
       def otp_name(:log_system), do: @log_system_otp_name
+      def otp_name(:monitor), do: @monitor_otp_name
       def otp_name(:sequencer), do: @sequencer_otp_name
+      def otp_name(:service_advertiser), do: @service_advertiser_otp_name
       def otp_name(:storage_system), do: @storage_system_otp_name
-      def otp_name(:worker), do: @worker_otp_name
       def otp_name(component) when is_atom(component), do: Cluster.otp_name(@name, component)
+
+      ######################################################################
+      # Cluster Services
+      ######################################################################
 
       @doc """
       Get the current controller for the cluster. If we can't find one, we
       return an error.
       """
       @spec controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def controller, do: Monitor.get_controller(__MODULE__)
+      def controller, do: otp_name(:monitor) |> Monitor.get_controller()
 
       @doc """
       Get a coordinator for the cluster. If there is an instance running on
@@ -121,13 +148,13 @@ defmodule Bedrock.Cluster do
       on the cluster. If we can't find one, we return an error.
       """
       @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def coordinator, do: Monitor.get_coordinator(__MODULE__)
+      def coordinator, do: otp_name(:monitor) |> Monitor.get_coordinator()
 
       @doc """
       Get the nodes that are running coordinators for the cluster.
       """
       @spec coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def coordinator_nodes, do: Monitor.get_coordinator_nodes(__MODULE__)
+      def coordinator_nodes, do: otp_name(:monitor) |> Monitor.get_coordinator_nodes()
 
       @doc """
       Get a new instance of the `Bedrock.Client` configured for the cluster.
@@ -143,9 +170,6 @@ defmodule Bedrock.Cluster do
 
       @doc false
       def child_spec(opts), do: Bedrock.Cluster.child_spec([{:cluster, __MODULE__} | opts])
-
-      @spec config() :: Keyword.t()
-      def config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
     end
   end
 
@@ -156,7 +180,7 @@ defmodule Bedrock.Cluster do
   def otp_name(cluster_name) when is_binary(cluster_name), do: :"bedrock_#{cluster_name}"
 
   @doc """
-  Get the OTP name for a service within the cluster with the given name.
+  Get the OTP name for a component within the cluster with the given name.
   """
   @spec otp_name(
           cluster_name :: binary(),
@@ -166,9 +190,10 @@ defmodule Bedrock.Cluster do
             | :coordinator
             | :data_distributor
             | :log_system
+            | :monitor
             | :sequencer
+            | :service_advertiser
             | :storage_system
-            | :worker
         ) :: atom()
   def otp_name(cluster_name, service) when is_binary(cluster_name),
     do: :"#{otp_name(cluster_name)}_#{service}"
@@ -231,15 +256,15 @@ defmodule Bedrock.Cluster do
          descriptor: descriptor,
          path_to_descriptor: path_to_descriptor,
          name: cluster.otp_name(:monitor)}
-        | children_for_services(cluster, cluster.config() |> Keyword.get(:services, []))
+        | children_for_services(cluster, cluster.advertised_services())
       ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  def children_for_services(_cluster, []), do: []
+  defp children_for_services(_cluster, []), do: []
 
-  def children_for_services(cluster, services) do
+  defp children_for_services(cluster, services) do
     [
       {Bedrock.Cluster.ServiceAdvertiser,
        [

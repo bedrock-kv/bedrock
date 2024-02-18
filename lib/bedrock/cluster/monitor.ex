@@ -6,6 +6,7 @@ defmodule Bedrock.Cluster.Monitor do
 
   require Logger
 
+  @type monitor :: GenServer.name()
   @type coordinator :: GenServer.name()
   @type controller :: GenServer.name()
 
@@ -24,18 +25,12 @@ defmodule Bedrock.Cluster.Monitor do
   ]a
 
   @doc """
-  Get a coordinator for the given cluster. First, we check the current node
-  to see if we're running an instance locally, if not, we ask the running
-  instance of the cluster monitor to find one for us.
+  Get a coordinator for the cluster. We ask the running instance of the cluster
+  monitor to find one for us.
   """
-  @spec get_coordinator(cluster :: Module.t()) :: {:ok, coordinator()} | {:error, :unavailable}
-  def get_coordinator(cluster) do
-    cluster.otp_name(:coordinator)
-    |> Process.whereis()
-    |> case do
-      nil -> GenServer.call(cluster.otp_name(:monitor), :get_coordinator)
-      pid -> {:ok, pid}
-    end
+  @spec get_coordinator(monitor()) :: {:ok, coordinator()} | {:error, :unavailable}
+  def get_coordinator(monitor) do
+    monitor |> GenServer.call(:get_coordinator)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -43,9 +38,9 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(cluster :: Module.t()) :: {:ok, controller()} | {:error, :unavailable}
-  def get_controller(cluster) do
-    cluster.otp_name(:monitor) |> GenServer.call(:get_controller)
+  @spec get_controller(monitor()) :: {:ok, controller()} | {:error, :unavailable}
+  def get_controller(monitor) do
+    monitor |> GenServer.call(:get_controller)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -53,9 +48,9 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the nodes that are running coordinators for the given cluster.
   """
-  @spec get_coordinator_nodes(cluster :: Module.t()) :: {:ok, [node()]} | {:error, :unavailable}
-  def get_coordinator_nodes(cluster) do
-    cluster.otp_name(:monitor) |> GenServer.call(:get_coordinator_nodes)
+  @spec get_coordinator_nodes(monitor()) :: {:ok, [node()]} | {:error, :unavailable}
+  def get_coordinator_nodes(monitor) do
+    monitor |> GenServer.call(:get_coordinator_nodes)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -176,11 +171,13 @@ defmodule Bedrock.Cluster.Monitor do
   def handle_cast({:cluster_controller_replaced, cluster_controller}, t),
     do: {:noreply, t |> change_cluster_controller(cluster_controller)}
 
-  # Find a live coordinator. We make a ping call to all of the nodes that we
-  # know about and return the first one that responds. If none respond, we
-  # return an error.
-  #
-  @doc false
+  # Internals
+
+  @doc """
+  Find a live coordinator. We make a ping call to all of the nodes that we know
+  about and return the first one that responds. If none respond, we return an
+  error.
+  """
   @spec find_a_live_coordinator(t()) :: {:ok, {atom(), node()}} | {:error, :unavailable}
   def find_a_live_coordinator(t) do
     coordinator_otp_name = t.cluster.otp_name(:coordinator)
@@ -200,6 +197,11 @@ defmodule Bedrock.Cluster.Monitor do
     end
   end
 
+  @doc """
+  Change the coordinator. If the coordinator is the same as the one we already
+  have we do nothing, otherwise we publish a message to a topic to let everyone
+  on this node know that the coordinator has changed.
+  """
   @spec change_coordinator(t(), coordinator() | :unavailable) :: t()
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
 
@@ -208,6 +210,11 @@ defmodule Bedrock.Cluster.Monitor do
     %{t | coordinator: coordinator}
   end
 
+  @doc """
+  Change the cluster controller. If the controller is the same as the one we
+  already have we do nothing, otherwise we publish a message to a topic to let
+  everyone on this node know that the controller has changed.
+  """
   @spec change_cluster_controller(t(), controller() | :unavailable) :: t()
   def change_cluster_controller(t, controller) when t.controller == controller, do: t
 

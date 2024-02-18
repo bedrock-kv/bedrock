@@ -262,6 +262,9 @@ defmodule Bedrock.Raft do
         %{t | mode: follower}
         |> notify_change_in_leadership()
 
+      {:ok, %Leader{} = leader} ->
+        %{t | mode: leader}
+
       {:ok, %Candidate{} = candidate} ->
         %{t | mode: candidate}
     end

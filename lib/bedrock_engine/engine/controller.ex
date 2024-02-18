@@ -3,14 +3,12 @@ defmodule Bedrock.Engine.Controller do
 
   alias Bedrock.Engine
   alias Bedrock.Engine.Manifest
-  alias Bedrock.ControlPlane.ClusterController
 
   require Logger
 
   defstruct ~w[
     cluster
     subsystem
-    cluster_controller
     default_engine
     engine_supervisor_otp_name
     engines
@@ -193,51 +191,10 @@ defmodule Bedrock.Engine.Controller do
         end
       end)
 
-    {:noreply, %{t | engines: engines} |> recompute_controller_health(),
-     {:continue, :find_cluster_controller}}
-  end
-
-  def handle_continue(:find_cluster_controller, t) do
-    t.cluster.controller()
-    |> case do
-      {:ok, cluster_controller} ->
-        {:noreply, %{t | cluster_controller: cluster_controller}, {:continue, :report_for_duty}}
-
-      {:error, _} ->
-        Process.send_after(self(), :find_cluster_controller, 1_000)
-        {:noreply, t}
-    end
-  end
-
-  def handle_continue(:report_for_duty, t) do
-    Logger.debug("Reporting for duty...")
-
-    report_for_duty(t)
-    |> case do
-      :ok ->
-        {:noreply, t}
-
-      {:error, :unavailable} ->
-        Process.send_after(self(), :report_for_duty, 1_000)
-        {:noreply, t}
-    end
-  end
-
-  @spec report_for_duty(t()) :: :ok | {:error, :unavailable}
-  def report_for_duty(t) do
-    t.cluster_controller
-    |> ClusterController.report_for_duty(
-      t.subsystem,
-      {t.otp_name, Node.self()}
-    )
+    {:noreply, %{t | engines: engines} |> recompute_controller_health()}
   end
 
   @impl GenServer
-  def handle_call({:cluster_controller_replaced, cluster_controller}, from, t) do
-    IO.inspect({cluster_controller, from})
-    {:reply, :ok, t}
-  end
-
   def handle_call(:ping, _from, t),
     do: {:reply, :pong, t}
 
@@ -263,16 +220,6 @@ defmodule Bedrock.Engine.Controller do
      t
      |> update_engine_health(engine_id, health)}
   end
-
-  @impl GenServer
-  def handle_info(:find_cluster_controller, %{cluster_controller: nil} = t),
-    do: {:noreply, t, {:continue, :find_cluster_controller}}
-
-  def handle_info(:find_cluster_controller, t),
-    do: {:noreply, t, {:continue, :find_cluster_controller}}
-
-  def handle_info(:report_for_duty, t),
-    do: {:noreply, t, {:continue, :report_for_duty}}
 
   def update_engine_health(t, engine_id, health) do
     %{

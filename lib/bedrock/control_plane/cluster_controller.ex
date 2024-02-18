@@ -46,6 +46,13 @@ defmodule Bedrock.ControlPlane.ClusterController do
     }
   end
 
+  @spec join_cluster(service(), node(), [atom()]) :: :ok | {:error, :unavailable}
+  def join_cluster(controller, node, services) do
+    GenServer.call(controller, {:join_cluster, node, services})
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
   @spec get_sequencer(service()) :: pid() | {:error, :unavailable}
   def get_sequencer(controller) do
     GenServer.call(controller, :get_sequencer)
@@ -61,11 +68,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
     :exit, {:noproc, {GenServer, :cast, _}} ->
       {:error, :unavailable}
   end
-
-  @spec report_for_duty(service(), subsystem :: atom(), subsystem_controller :: GenServer.name()) ::
-          :ok | {:error, :unavailable}
-  def report_for_duty(controller, subsystem, subsystem_controller),
-    do: GenServer.cast(controller, {:report_for_duty, subsystem, subsystem_controller})
 
   @impl GenServer
   def init({cluster, epoch, coordinator, otp_name}) do
@@ -100,15 +102,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @impl GenServer
   def handle_continue(:find_and_stop_existing_logs, state) do
-    {responses, failing_nodes} =
-      GenServer.multi_call(
-        Node.list(),
-        state.log_system_controller_otp_name,
-        {:cluster_controller_replaced, {state.otp_name, Node.self()}}
-      )
-
-    IO.inspect({responses, failing_nodes})
-
     {:noreply, state}
   end
 
@@ -119,14 +112,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def handle_call(:get_data_distributor, _from, state),
     do: {:reply, state.data_distributor, state}
 
-  @impl GenServer
-  def handle_cast({:report_for_duty, subsystem, _subsystem_controller}, state) do
-    case subsystem do
-      :log_system ->
-        {:noreply, state}
-
-      :storage_system ->
-        {:noreply, state}
-    end
+  def handle_call({:join_cluster, node, services}, _from, state) do
+    IO.inspect({:join_cluster, node, services}, label: "join_cluster")
+    {:reply, :ok, state}
   end
 end

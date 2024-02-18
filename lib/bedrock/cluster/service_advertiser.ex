@@ -2,7 +2,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   use GenServer
 
   alias Bedrock.Cluster.PubSub
-  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.ClusterController
 
   defstruct ~w[cluster services controller]a
 
@@ -33,7 +33,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
       services: services
     }
 
-    PubSub.subscribe(cluster, :controller_changed)
+    PubSub.subscribe(cluster, :cluster_controller_replaced)
 
     cluster.controller()
     |> case do
@@ -46,14 +46,29 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   end
 
   @impl GenServer
+  def handle_continue(:advertise_services, %{controller: :unavailable} = t),
+    do: {:noreply, t}
+
   def handle_continue(:advertise_services, t) do
-    Coordinator.join_cluster(t.controller, Node.self(), t.services)
+    t.controller
+    |> ClusterController.join_cluster(Node.self(), t.services)
+    |> case do
+      :ok ->
+        IO.inspect({:advertise_services, t})
+        {:noreply, t}
+
+      {:error, :unavailable} ->
+        {:noreply, %{t | controller: :unavailable}}
+    end
+
     {:noreply, t}
   end
 
   @impl GenServer
-  def handle_info({:controller_changed, new_controller}, t) when t.controller != new_controller,
-    do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_services}}
+  def handle_info({:cluster_controller_replaced, new_controller}, t)
+      when t.controller == new_controller,
+      do: {:noreply, t}
 
-  def handle_info({:controller_changed, _}, t), do: {:noreply, t}
+  def handle_info({:cluster_controller_replaced, new_controller}, t),
+    do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_services}}
 end

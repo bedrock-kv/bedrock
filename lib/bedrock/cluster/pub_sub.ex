@@ -33,7 +33,7 @@ defmodule Bedrock.Cluster.PubSub do
       topic,
       fn handlers ->
         handlers
-        |> Enum.reduce([], fn pid, acc ->
+        |> Enum.reduce([], fn {pid, _}, acc ->
           if Process.alive?(pid) do
             send(pid, message)
             acc

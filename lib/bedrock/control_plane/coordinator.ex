@@ -40,13 +40,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
     :exit, _ -> {:error, :unavailable}
   end
 
-  @spec join_cluster(any(), any(), any()) :: :ok | {:error, :unavailable}
-  def join_cluster(coordinator, worker_otp_name, services) do
-    GenServer.call(coordinator, {:join_cluster, worker_otp_name, services})
-  catch
-    :exit, _ -> {:error, :unavailable}
-  end
-
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     otp_name = cluster.otp_name(:coordinator)
@@ -96,48 +89,50 @@ defmodule Bedrock.ControlPlane.Coordinator do
   end
 
   @impl GenServer
-  def handle_call({:controller_started, {_controller, node} = controller}, _from, state) do
-    Logger.debug("Bedrock [#{state.cluster.name()}]: #{node} is the controller")
-    {:reply, :ok, state |> update_controller(controller)}
+  def handle_call({:controller_started, {_controller, node} = controller}, _from, t) do
+    Logger.debug("Bedrock [#{t.cluster.name()}]: #{node} is the controller")
+    {:reply, :ok, t |> update_controller(controller)}
   end
 
-  def handle_call(:get_configuration, _from, state),
-    do: {:reply, state.configuration, state}
+  def handle_call(:get_configuration, _from, t),
+    do: {:reply, t.configuration, t}
 
-  def handle_call(:ping, _from, state),
-    do: {:reply, :pong, state}
+  def handle_call(:ping, _from, t),
+    do: {:reply, :pong, t}
 
-  def handle_call(:get_controller, _from, state) do
-    state.controller
-    |> case do
-      :unavailable ->
-        {:reply, {:error, :unavailable}, state}
+  def handle_call(:get_controller, _from, t) when t.controller == :unavailable,
+    do: {:reply, {:error, :unavailable}, t}
 
-      controller ->
-        {:reply, {:ok, controller}, state}
-    end
-  end
+  def handle_call(:get_controller, _from, t) when is_pid(t.controller),
+    do: {:reply, {:ok, {t.controller_otp_name, t.my_node}}, t}
 
-  def handle_call(:get_nearest_read_version_proxy, _from, state) do
-    {state, read_version_proxy} = state |> get_or_create_read_version_proxy()
-    {:reply, {:ok, read_version_proxy}, state}
+  def handle_call(:get_controller, _from, t),
+    do: {:reply, {:ok, t.controller}, t}
+
+  def handle_call(:get_nearest_read_version_proxy, _from, t) do
+    {t, read_version_proxy} = t |> get_or_create_read_version_proxy()
+    {:reply, {:ok, read_version_proxy}, t}
   end
 
   @impl GenServer
-  def handle_info({:raft, :leadership_changed, leadership}, state) do
+  def handle_info({:raft, :leadership_changed, leadership}, t) do
     {new_leader, epoch} = leadership
-    cluster_name = state.cluster.name()
-    my_node = state.my_node
+    cluster_name = t.cluster.name()
+    my_node = t.my_node
 
-    if is_pid(state.controller) do
-      Logger.debug("Bedrock [#{cluster_name}]: shutting down our controller")
-      GenServer.stop(state.controller, :shutdown)
+    if is_pid(t.controller) do
+      try do
+        Logger.debug("Bedrock [#{cluster_name}]: shutting down our controller")
+        GenServer.stop(t.controller, :shutdown)
+      rescue
+        _ -> :ok
+      end
     end
 
     controller =
       case new_leader do
         :undecided ->
-          if state.controller != :unavailable do
+          if t.controller != :unavailable do
             Logger.debug("Bedrock [#{cluster_name}]: leadership lost")
           end
 
@@ -148,15 +143,21 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
           {:ok, controller} =
             DynamicSupervisor.start_child(
-              state.supervisor_otp_name,
+              t.supervisor_otp_name,
               {ClusterController,
                [
-                 cluster: state.cluster,
+                 cluster: t.cluster,
                  epoch: epoch,
-                 coordinator: state.otp_name,
-                 otp_name: state.controller_otp_name
+                 coordinator: t.otp_name,
+                 otp_name: t.controller_otp_name
                ]}
             )
+
+          GenServer.abcast(
+            Node.list(),
+            t.cluster.otp_name(:monitor),
+            {:cluster_controller_replaced, {t.controller_otp_name, my_node}}
+          )
 
           controller
 
@@ -165,50 +166,46 @@ defmodule Bedrock.ControlPlane.Coordinator do
             "Bedrock [#{cluster_name}]: leadership changed to #{other_node} for epoch #{epoch}"
           )
 
-          {state.controller_otp_name, other_node}
+          {t.controller_otp_name, other_node}
       end
 
-    {:noreply, state |> update_controller(controller)}
+    {:noreply, t |> update_controller(controller)}
   end
 
-  def handle_info({:raft, :timer, event}, state) do
-    raft = state.raft |> Raft.handle_event(event, :timer)
-    {:noreply, %{state | raft: raft}}
+  def handle_info({:raft, :timer, event}, t) do
+    raft = t.raft |> Raft.handle_event(event, :timer)
+    {:noreply, %{t | raft: raft}}
   end
 
-  def handle_info({:raft, :send_rpc, event, target}, state) do
-    GenServer.cast({state.otp_name, target}, {:raft, :rpc, event, Node.self()})
-    {:noreply, state}
+  def handle_info({:raft, :send_rpc, event, target}, t) do
+    GenServer.cast({t.otp_name, target}, {:raft, :rpc, event, Node.self()})
+    {:noreply, t}
   end
 
   @impl GenServer
-  def handle_cast({:raft, :rpc, event, source}, state) do
-    raft = state.raft |> Raft.handle_event(event, source)
-    {:noreply, %{state | raft: raft}}
+  def handle_cast({:raft, :rpc, event, source}, t) do
+    raft = t.raft |> Raft.handle_event(event, source)
+    {:noreply, %{t | raft: raft}}
   end
 
-  def update_controller(state, :unavailable),
-    do: %{state | controller: :unavailable}
+  def update_controller(t, new_controller), do: %{t | controller: new_controller}
 
-  def update_controller(state, controller),
-    do: %{state | controller: controller}
-
-  def get_or_create_read_version_proxy(%{read_version_proxies: []} = state) do
+  def get_or_create_read_version_proxy(%{read_version_proxies: []} = t) do
     {:ok, read_version_proxy} =
       DynamicSupervisor.start_child(
-        state.supervisor_otp_name,
+        t.supervisor_otp_name,
         {ReadVersionProxy,
          [
            id: :rand.uniform(100_000_000),
-           controller: state.controller
+           controller: t.controller
          ]}
       )
 
-    {%{state | read_version_proxies: [read_version_proxy]}, read_version_proxy}
+    {%{t | read_version_proxies: [read_version_proxy]}, read_version_proxy}
   end
 
-  def get_or_create_read_version_proxy(%{read_version_proxies: proxies} = state) do
-    {state, proxies |> Enum.random()}
+  def get_or_create_read_version_proxy(%{read_version_proxies: proxies} = t) do
+    {t, proxies |> Enum.random()}
   end
 
   defmodule RaftInterface do

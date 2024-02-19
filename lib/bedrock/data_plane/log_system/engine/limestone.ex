@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone do
-  use Bedrock.Engine
+  use Bedrock.Worker
   use Supervisor
 
-  alias Bedrock.Engine.Controller
+  alias Bedrock.Worker
   alias Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentRecycler
   alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Transactions
   alias Bedrock.DataPlane.LogSystem.Engine.Limestone.TransactionReceiver
@@ -55,7 +55,7 @@ defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone do
          ]}
       ]
 
-    Controller.report_engine_health(controller, id, :ok)
+    Worker.Controller.report_engine_health(controller, id, :ok)
 
     Supervisor.init(children, strategy: :one_for_one)
   end

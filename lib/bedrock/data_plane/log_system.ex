@@ -4,6 +4,10 @@ defmodule Bedrock.DataPlane.LogSystem do
 
   @type id :: binary()
 
+  defmodule Config do
+    defstruct [:write_quorum, :replication_factor, :tlogs]
+  end
+
   @doc """
   Starts a supervisor for the log system.
   """
@@ -43,7 +47,7 @@ defmodule Bedrock.DataPlane.LogSystem do
 
     children = [
       {DynamicSupervisor, name: engine_supervisor_otp_name},
-      {Bedrock.Engine.Controller,
+      {Bedrock.Worker.Controller,
        [
          cluster: cluster,
          subsystem: :log_system,
@@ -58,14 +62,14 @@ defmodule Bedrock.DataPlane.LogSystem do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  @spec engines(cluster :: Module.t()) :: {:ok, [Bedrock.Engine.t()]} | {:error, term()}
+  @spec engines(cluster :: Module.t()) :: {:ok, [Bedrock.Worker.t()]} | {:error, term()}
   def engines(t),
-    do: t.otp_name(:log_system_controller) |> Bedrock.Engine.Controller.engines()
+    do: t.otp_name(:log_system_controller) |> Bedrock.Worker.Controller.engines()
 
   @spec wait_for_healthy(cluster :: Module.t(), :infinity | non_neg_integer()) ::
           :ok | {:error, any()}
   def wait_for_healthy(cluster, timeout) do
     cluster.otp_name(:log_system_controller)
-    |> Bedrock.Engine.Controller.wait_for_healthy(timeout)
+    |> Bedrock.Worker.Controller.wait_for_healthy(timeout)
   end
 end

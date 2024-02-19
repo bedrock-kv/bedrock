@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt do
-  use Bedrock.Engine
+  use Bedrock.Worker
   use GenServer
 
-  alias Bedrock.Engine.Controller
+  alias Bedrock.Worker.Controller
   alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database
   alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Writer
 

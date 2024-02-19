@@ -1,10 +1,8 @@
-defmodule Bedrock.Engine.Controller do
+defmodule Bedrock.Worker.Controller do
   use GenServer
 
-  alias Bedrock.Engine
-  alias Bedrock.Engine.Manifest
-
-  require Logger
+  alias Bedrock.Worker
+  alias Bedrock.Worker.Manifest
 
   defstruct ~w[
     cluster
@@ -33,8 +31,7 @@ defmodule Bedrock.Engine.Controller do
   def wait_for_healthy(t, timeout) when is_controller(t) do
     GenServer.call(t, :wait_for_healthy, timeout)
   catch
-    :exit, {:noproc, {GenServer, :call, _}} ->
-      {:error, :engine_controller_does_not_exist}
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
 
   @spec report_engine_health(
@@ -45,12 +42,11 @@ defmodule Bedrock.Engine.Controller do
   def report_engine_health(t, engine_id, health) when is_controller(t),
     do: GenServer.cast(t, {:engine_health, engine_id, health})
 
-  @spec engines(t :: controller_name()) :: {:ok, [Engine.t()]} | {:error, term()}
+  @spec engines(t :: controller_name()) :: {:ok, [Worker.t()]} | {:error, term()}
   def engines(t) when is_controller(t) do
     GenServer.call(t, :engines)
   catch
-    :exit, {:noproc, {GenServer, :call, _}} ->
-      {:error, :engine_does_not_exist}
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
 
   def child_spec(opts) do
@@ -115,14 +111,12 @@ defmodule Bedrock.Engine.Controller do
 
   @impl GenServer
   def handle_continue(:sync_existing, t) do
-    Logger.debug("Syncing existing engines")
-
     engines =
       t.engine_supervisor_otp_name
       |> DynamicSupervisor.which_children()
       |> Enum.map(fn
         {_, engine_pid, _, _} when is_pid(engine_pid) ->
-          Engine.info(engine_pid, [:id, :health, :otp_name])
+          Worker.info(engine_pid, [:id, :health, :otp_name])
           |> case do
             {:ok, info} ->
               {info[:id],
@@ -145,8 +139,6 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue(:spin_up, t) do
-    Logger.debug("Find existing persistent engines")
-
     engine_ids_to_start =
       t.path
       |> Path.join("*")
@@ -162,8 +154,6 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue(:setup_first_instance, t) do
-    Logger.debug("Configuring first instance of engine")
-
     new_engine(t)
     |> case do
       {:ok, engine_id} -> {:noreply, t, {:continue, {:start_engines, [engine_id]}}}
@@ -172,8 +162,6 @@ defmodule Bedrock.Engine.Controller do
   end
 
   def handle_continue({:start_engines, instance_ids}, t) do
-    Logger.debug("Starting engines: #{inspect(instance_ids)}: #{instance_ids |> Enum.join(", ")}")
-
     engines =
       instance_ids
       |> Enum.into(t.engines, fn instance_id ->

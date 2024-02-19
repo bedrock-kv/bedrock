@@ -37,7 +37,7 @@ defmodule Bedrock.DataPlane.StorageSystem do
 
     children = [
       {DynamicSupervisor, name: engine_supervisor_otp_name},
-      {Bedrock.Engine.Controller,
+      {Bedrock.Worker.Controller,
        [
          cluster: cluster,
          subsystem: :storage_system,
@@ -57,5 +57,5 @@ defmodule Bedrock.DataPlane.StorageSystem do
   def engines(t) when is_binary(t),
     do: otp_name(t, :controller) |> engines()
 
-  defdelegate engines(t), to: Bedrock.Engine.Controller
+  defdelegate engines(t), to: Bedrock.Worker.Controller
 end

@@ -11,7 +11,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
 
-  defstruct ~w[cluster services controller]a
+  defstruct [:cluster, :services, :controller, :directory]
 
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
@@ -38,7 +38,8 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     t = %__MODULE__{
       cluster: cluster,
       services: services,
-      controller: :unavailable
+      controller: :unavailable,
+      directory: :ets.new(:service_directory, [])
     }
 
     PubSub.subscribe(cluster, :cluster_controller_replaced)
@@ -59,7 +60,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
 
   def handle_continue(:advertise_services, t) do
     t.controller
-    |> ClusterController.join_cluster(Node.self(), t.services)
+    |> ClusterController.request_to_rejoin(Node.self(), t.services)
     |> case do
       :ok ->
         IO.inspect({:advertise_services, t})

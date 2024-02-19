@@ -50,5 +50,5 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine do
   """
   @spec info(t(), [basic_fact_name()]) :: {:ok, keyword()} | {:error, term()}
   @spec info(t(), [basic_fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, term()}
-  defdelegate info(storage_engine, fact_names, timeout \\ 5_000), to: Bedrock.Engine
+  defdelegate info(storage_engine, fact_names, timeout \\ 5_000), to: Bedrock.Worker
 end

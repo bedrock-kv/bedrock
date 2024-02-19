@@ -1,4 +1,4 @@
-defmodule Bedrock.Engine.Manifest do
+defmodule Bedrock.Worker.Manifest do
   @derive Jason.Encoder
   defstruct ~w[cluster id engine]a
   @type t :: %__MODULE__{}
@@ -92,7 +92,7 @@ defmodule Bedrock.Engine.Manifest do
   defp check_module_is_storage_engine(engine) do
     if :attributes
        |> engine.module_info()
-       |> Enum.member?({:behaviour, [Bedrock.Engine]}) do
+       |> Enum.member?({:behaviour, [Bedrock.Worker]}) do
       :ok
     else
       {:error, :engine_module_does_not_implement_behaviour}

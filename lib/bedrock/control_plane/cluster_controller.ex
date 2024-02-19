@@ -9,7 +9,28 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
 
-  @type name :: GenServer.name()
+  @type service :: GenServer.name()
+
+  @spec request_to_rejoin(service(), node(), [atom()]) :: :ok | {:error, :unavailable}
+  def request_to_rejoin(controller, node, services) do
+    GenServer.call(controller, {:request_to_rejoin, node, services})
+  catch
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+  end
+
+  @spec get_sequencer(service()) :: {:ok, pid()} | {:error, :unavailable}
+  def get_sequencer(controller) do
+    GenServer.call(controller, :get_sequencer)
+  catch
+    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
+  end
+
+  @spec get_data_distributor(service()) :: {:ok, pid()} | {:error, :unavailable}
+  def get_data_distributor(controller) do
+    GenServer.call(controller, :get_data_distributor)
+  catch
+    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
+  end
 
   @type t :: %__MODULE__{}
   defstruct [
@@ -20,11 +41,12 @@ defmodule Bedrock.ControlPlane.ClusterController do
     :coordinator
   ]
 
+  @doc false
   def child_spec(opts) do
-    cluster = Keyword.get(opts, :cluster) || raise "Missing :cluster option"
-    epoch = Keyword.get(opts, :epoch) || raise "Missing :epoch option"
-    coordinator = Keyword.get(opts, :coordinator) || raise "Missing :coordinator option"
-    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
+    cluster = opts[:cluster] || raise "Missing :cluster param"
+    epoch = opts[:epoch] || raise "Missing :epoch param"
+    coordinator = opts[:coordinator] || raise "Missing :coordinator param"
+    otp_name = opts[:otp_name] || raise "Missing :otp_name param"
 
     %{
       id: __MODULE__,
@@ -37,27 +59,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
          ]},
       restart: :temporary
     }
-  end
-
-  @spec join_cluster(name(), node(), [atom()]) :: :ok | {:error, :unavailable}
-  def join_cluster(controller, node, services) do
-    GenServer.call(controller, {:join_cluster, node, services})
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
-
-  @spec get_sequencer(name()) :: {:ok, pid()} | {:error, :unavailable}
-  def get_sequencer(controller) do
-    GenServer.call(controller, :get_sequencer)
-  catch
-    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
-  end
-
-  @spec get_data_distributor(name()) :: {:ok, pid()} | {:error, :unavailable}
-  def get_data_distributor(controller) do
-    GenServer.call(controller, :get_data_distributor)
-  catch
-    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
   end
 
   @doc false
@@ -82,13 +83,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
          sequencer: sequencer,
          data_distributor: data_distributor,
          coordinator: coordinator
-       }, {:continue, :find_and_stop_existing_logs}}
+       }}
     end
-  end
-
-  @impl GenServer
-  def handle_continue(:find_and_stop_existing_logs, state) do
-    {:noreply, state}
   end
 
   @impl GenServer
@@ -98,8 +94,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def handle_call(:get_data_distributor, _from, state),
     do: {:reply, {:ok, state.data_distributor}, state}
 
-  def handle_call({:join_cluster, node, services}, _from, state) do
-    IO.inspect({:join_cluster, node, services}, label: "join_cluster")
+  def handle_call({:request_to_rejoin, node, services}, _from, state) do
+    IO.inspect({:request_to_rejoin, node, services}, label: "request_to_rejoin")
     {:reply, :ok, state}
   end
 end

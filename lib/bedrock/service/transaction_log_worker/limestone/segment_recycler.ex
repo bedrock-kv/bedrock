@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentRecycler do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
   @doc """
   """
   @spec check_out(any(), new_path :: String.t()) :: {:ok, Segment.t()} | {:error, term()}
@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentRecycler do
   defmodule Service do
     use GenServer
 
-    alias Bedrock.DataPlane.LogSystem.Engine.Limestone.UnusedSegments
+    alias Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments
 
     defstruct ~w[path minimum_available unused_segments]a
     @type t :: %__MODULE__{}

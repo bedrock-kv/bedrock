@@ -1,9 +1,9 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.LogReader do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.LogReader do
   use GenStage
   use Bedrock.Cluster, :types
 
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Transactions
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Transactions
 
   defstruct ~w[transactions demand version]a
 

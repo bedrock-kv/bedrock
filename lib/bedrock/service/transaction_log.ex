@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.LogSystem do
+defmodule Bedrock.Service.TransactionLog do
   use Supervisor
   use Bedrock.Cluster, :types
 
@@ -19,9 +19,9 @@ defmodule Bedrock.DataPlane.LogSystem do
       Keyword.get(opts, :path) ||
         raise "Missing :path option; required when :log_system is specified in :services"
 
-    default_engine =
-      Keyword.get(opts, :default_engine) ||
-        Bedrock.DataPlane.LogSystem.Engine.Limestone
+    default_worker =
+      Keyword.get(opts, :default_worker) ||
+        Bedrock.Service.TransactionLogWorker.Limestone
 
     otp_name = cluster.otp_name(:log_system)
 
@@ -32,7 +32,7 @@ defmodule Bedrock.DataPlane.LogSystem do
         :start_link,
         [
           __MODULE__,
-          {cluster, path, default_engine, otp_name},
+          {cluster, path, default_worker, otp_name},
           [name: otp_name]
         ]
       },
@@ -41,18 +41,18 @@ defmodule Bedrock.DataPlane.LogSystem do
   end
 
   @impl Supervisor
-  def init({cluster, path, default_engine, otp_name}) do
-    engine_supervisor_otp_name = cluster.otp_name(:log_system_engine_supervisor)
+  def init({cluster, path, default_worker, otp_name}) do
+    worker_supervisor_otp_name = cluster.otp_name(:log_system_worker_supervisor)
     controller_otp_name = cluster.otp_name(:log_system_controller)
 
     children = [
-      {DynamicSupervisor, name: engine_supervisor_otp_name},
-      {Bedrock.Worker.Controller,
+      {DynamicSupervisor, name: worker_supervisor_otp_name},
+      {Bedrock.Service.Controller,
        [
          cluster: cluster,
          subsystem: :log_system,
-         default_engine: default_engine,
-         engine_supervisor_otp_name: engine_supervisor_otp_name,
+         default_worker: default_worker,
+         worker_supervisor_otp_name: worker_supervisor_otp_name,
          path: path,
          otp_scope: otp_name,
          otp_name: controller_otp_name
@@ -62,14 +62,14 @@ defmodule Bedrock.DataPlane.LogSystem do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  @spec engines(cluster :: Module.t()) :: {:ok, [Bedrock.Worker.t()]} | {:error, term()}
-  def engines(t),
-    do: t.otp_name(:log_system_controller) |> Bedrock.Worker.Controller.engines()
+  @spec workers(cluster :: Module.t()) :: {:ok, [Bedrock.Service.t()]} | {:error, term()}
+  def workers(t),
+    do: t.otp_name(:log_system_controller) |> Bedrock.Service.Controller.workers()
 
   @spec wait_for_healthy(cluster :: Module.t(), :infinity | non_neg_integer()) ::
           :ok | {:error, any()}
   def wait_for_healthy(cluster, timeout) do
     cluster.otp_name(:log_system_controller)
-    |> Bedrock.Worker.Controller.wait_for_healthy(timeout)
+    |> Bedrock.Service.Controller.wait_for_healthy(timeout)
   end
 end

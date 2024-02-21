@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValues do
+defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   use Bedrock, :types
   use Bedrock.Cluster, :types
-  use Bedrock.DataPlane.StorageSystem.Engine, :types
+  use Bedrock.Service.StorageWorker, :types
 
   alias Bedrock.DataPlane.Transaction
 

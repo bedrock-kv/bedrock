@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.MultiversionConcurrencyControl do
+defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

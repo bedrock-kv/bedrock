@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.Keyspace do
+defmodule Bedrock.Service.StorageWorker.Basalt.Keyspace do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

@@ -1,8 +1,8 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.TransactionReceiver do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.TransactionReceiver do
   use GenServer
 
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Transactions
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentRecycler
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Transactions
+  alias Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler
 
   defstruct [:transactions]
   @type t :: %__MODULE__{}

@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.KeyspaceTest do
+defmodule Bedrock.Service.StorageWorker.Basalt.KeyspaceTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Keyspace
+  alias Bedrock.Service.StorageWorker.Basalt.Keyspace
 
   def new_random_keyspace, do: Keyspace.new(:"keyspace_#{Faker.random_between(0, 10_000)}")
 

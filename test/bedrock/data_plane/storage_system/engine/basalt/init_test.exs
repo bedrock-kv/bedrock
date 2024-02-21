@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.InitTest do
+defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt
+  alias Bedrock.Service.StorageWorker.Basalt
 
   def with_id(context) do
     id = Faker.UUID.v4()

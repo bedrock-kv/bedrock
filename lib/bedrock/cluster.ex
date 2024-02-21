@@ -274,7 +274,7 @@ defmodule Bedrock.Cluster do
   end
 
   defp module_for_service(:coordination), do: Bedrock.ControlPlane.Coordinator
-  defp module_for_service(:storage), do: Bedrock.DataPlane.StorageSystem
-  defp module_for_service(:log), do: Bedrock.DataPlane.LogSystem
+  defp module_for_service(:storage), do: Bedrock.Service.Storage
+  defp module_for_service(:log), do: Bedrock.Service.TransactionLog
   defp module_for_service(service), do: raise("Unknown service: #{inspect(service)}")
 end

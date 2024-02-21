@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentTest do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Segment
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Segment
 
   setup context do
     context

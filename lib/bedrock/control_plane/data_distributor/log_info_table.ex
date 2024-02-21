@@ -1,7 +1,6 @@
 defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.ControlPlane.DataDistributor.LogInfo
-  alias Bedrock.DataPlane.LogSystem
 
   @type t :: :ets.table()
   @type tag :: DataDistributor.tag()

@@ -1,11 +1,11 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone do
-  use Bedrock.Worker
+defmodule Bedrock.Service.TransactionLogWorker.Limestone do
+  use Bedrock.Service.WorkerBehaviour
   use Supervisor
 
-  alias Bedrock.Worker
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.SegmentRecycler
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Transactions
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.TransactionReceiver
+  alias Bedrock.Service.Controller
+  alias Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Transactions
+  alias Bedrock.Service.TransactionLogWorker.Limestone.TransactionReceiver
 
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
@@ -55,7 +55,7 @@ defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone do
          ]}
       ]
 
-    Worker.Controller.report_engine_health(controller, id, :ok)
+    Controller.report_worker_health(controller, id, :ok)
 
     Supervisor.init(children, strategy: :one_for_one)
   end

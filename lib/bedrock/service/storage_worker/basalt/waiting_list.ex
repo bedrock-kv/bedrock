@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.WaitingList do
+defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
   use GenServer
 
   defstruct ~w[version waiting]a

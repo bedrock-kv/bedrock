@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.DatabaseTest do
+defmodule Bedrock.Service.StorageWorker.Basalt.DatabaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database
+  alias Bedrock.Service.StorageWorker.Basalt.Database
 
   describe "Basalt.Database.open/2" do
     @tag :tmp_dir

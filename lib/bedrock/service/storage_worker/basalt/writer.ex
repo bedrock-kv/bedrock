@@ -1,8 +1,8 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.Writer do
+defmodule Bedrock.Service.StorageWorker.Basalt.Writer do
   use GenStage
   use Bedrock.Cluster, :types
 
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database
+  alias Bedrock.Service.StorageWorker.Basalt.Database
 
   defstruct ~w[database storage_engine id loader_task]a
   @type t :: %__MODULE__{}

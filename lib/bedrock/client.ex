@@ -2,7 +2,7 @@ defmodule Bedrock.Client do
   alias Bedrock.Client.Transaction
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
-  alias Bedrock.DataPlane.StorageSystem.Engine, as: StorageSystemEngine
+  alias Bedrock.Service.Storage, as: StorageSystemEngine
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
 
   defstruct [

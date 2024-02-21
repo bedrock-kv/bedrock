@@ -1,10 +1,10 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt do
-  use Bedrock.Worker
+defmodule Bedrock.Service.StorageWorker.Basalt do
+  use Bedrock.Service.WorkerBehaviour
   use GenServer
 
-  alias Bedrock.Worker.Controller
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Writer
+  alias Bedrock.Service.Controller
+  alias Bedrock.Service.StorageWorker.Basalt.Database
+  alias Bedrock.Service.StorageWorker.Basalt.Writer
 
   defstruct ~w[otp_name path controller id database writer key_min key_max]a
   @type t :: %__MODULE__{}
@@ -90,7 +90,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt do
 
   @impl GenServer
   def handle_continue(:report_health_to_controller, state) do
-    Controller.report_engine_health(state.controller, state.id, :ok)
+    Controller.report_worker_health(state.controller, state.id, :ok)
     {:noreply, state}
   end
 

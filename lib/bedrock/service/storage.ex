@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.StorageSystem do
+defmodule Bedrock.Service.Storage do
   use Supervisor
   use Bedrock.Cluster, :types
 
@@ -9,9 +9,9 @@ defmodule Bedrock.DataPlane.StorageSystem do
       Keyword.get(opts, :path) ||
         raise "Missing :path option; required when :storage is specified in :services"
 
-    default_engine =
-      Keyword.get(opts, :default_engine) ||
-        Bedrock.DataPlane.StorageSystem.Engine.Basalt
+    default_worker =
+      Keyword.get(opts, :default_worker) ||
+        Bedrock.Service.StorageWorker.Basalt
 
     otp_name = cluster.otp_name(:storage_system)
 
@@ -22,7 +22,7 @@ defmodule Bedrock.DataPlane.StorageSystem do
         :start_link,
         [
           __MODULE__,
-          {cluster, path, default_engine, otp_name},
+          {cluster, path, default_worker, otp_name},
           [name: otp_name]
         ]
       },
@@ -31,18 +31,18 @@ defmodule Bedrock.DataPlane.StorageSystem do
   end
 
   @impl Supervisor
-  def init({cluster, path, default_engine, otp_name}) do
-    engine_supervisor_otp_name = otp_name(otp_name, :engine_supervisor)
+  def init({cluster, path, default_worker, otp_name}) do
+    worker_supervisor_otp_name = otp_name(otp_name, :worker_supervisor)
     controller_otp_name = otp_name(otp_name, :controller)
 
     children = [
-      {DynamicSupervisor, name: engine_supervisor_otp_name},
-      {Bedrock.Worker.Controller,
+      {DynamicSupervisor, name: worker_supervisor_otp_name},
+      {Bedrock.Service.Controller,
        [
          cluster: cluster,
          subsystem: :storage_system,
-         default_engine: default_engine,
-         engine_supervisor_otp_name: engine_supervisor_otp_name,
+         default_worker: default_worker,
+         worker_supervisor_otp_name: worker_supervisor_otp_name,
          path: path,
          otp_scope: otp_name,
          otp_name: controller_otp_name
@@ -54,8 +54,8 @@ defmodule Bedrock.DataPlane.StorageSystem do
 
   defp otp_name(otp_name, service), do: :"#{otp_name}_#{service}"
 
-  def engines(t) when is_binary(t),
-    do: otp_name(t, :controller) |> engines()
+  def workers(t) when is_binary(t),
+    do: otp_name(t, :controller) |> workers()
 
-  defdelegate engines(t), to: Bedrock.Worker.Controller
+  defdelegate workers(t), to: Bedrock.Service.Controller
 end

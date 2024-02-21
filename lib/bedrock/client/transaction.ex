@@ -1,7 +1,7 @@
 defmodule Bedrock.Client.Transaction do
   use GenServer
 
-  alias Bedrock.DataPlane.StorageSystem.Engine, as: StorageSystemEngine
+  alias Bedrock.Service.StorageWorker
   alias Bedrock.Client
 
   defstruct [:client, :read_version, :commit_proxy, :rx, :wx, :started_at]
@@ -80,7 +80,7 @@ defmodule Bedrock.Client.Transaction do
             value =
               state
               |> storage_engine_for_key(key)
-              |> StorageSystemEngine.get(key, state.read_version)
+              |> StorageWorker.get(key, state.read_version)
 
             {state |> Map.update!(:rx, &Map.put(&1, key, value)), value}
         end

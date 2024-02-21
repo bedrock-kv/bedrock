@@ -1,15 +1,15 @@
-defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.Database do
+defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   use Bedrock, :types
   use Bedrock.Cluster, :types
-  use Bedrock.DataPlane.StorageSystem.Engine, :types
+  use Bedrock.Service.StorageWorker, :types
 
   defstruct ~w[mvcc keyspace pkv waiting_list]a
   @type t :: %__MODULE__{}
 
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValues
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.MultiversionConcurrencyControl, as: MVCC
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.Keyspace
-  alias Bedrock.DataPlane.StorageSystem.Engine.Basalt.WaitingList
+  alias Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues
+  alias Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl, as: MVCC
+  alias Bedrock.Service.StorageWorker.Basalt.Keyspace
+  alias Bedrock.Service.StorageWorker.Basalt.WaitingList
 
   @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}
   def open(otp_name, file_path) when is_atom(otp_name) do

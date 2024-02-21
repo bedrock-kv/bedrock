@@ -1,14 +1,14 @@
-defmodule Bedrock.Worker.Manifest do
+defmodule Bedrock.Service.Manifest do
   @derive Jason.Encoder
-  defstruct ~w[cluster id engine]a
+  defstruct ~w[cluster id worker]a
   @type t :: %__MODULE__{}
 
-  @spec new(cluster :: String.t(), id :: String.t(), engine :: module()) :: t()
-  def new(cluster, id, engine) do
+  @spec new(cluster :: String.t(), id :: String.t(), worker :: module()) :: t()
+  def new(cluster, id, worker) do
     %__MODULE__{
       cluster: cluster,
       id: id,
-      engine: engine
+      worker: worker
     }
   end
 
@@ -17,7 +17,7 @@ defmodule Bedrock.Worker.Manifest do
     %{
       cluster: manifest.cluster,
       id: manifest.id,
-      engine: manifest.engine |> Module.split() |> Enum.join(".")
+      worker: manifest.worker |> Module.split() |> Enum.join(".")
     }
     |> Jason.encode()
     |> case do
@@ -36,12 +36,12 @@ defmodule Bedrock.Worker.Manifest do
          true <- is_map(json) || {:error, :manifest_is_not_a_dictionary},
          {:ok, cluster} <- cluster_from_json(json["cluster"]),
          {:ok, id} <- id_from_json(json["id"]),
-         {:ok, engine} <- engine_from_json(json["engine"]) do
+         {:ok, worker} <- worker_from_json(json["worker"]) do
       {:ok,
        %__MODULE__{
          cluster: cluster,
          id: id,
-         engine: engine
+         worker: worker
        }}
     end
   end
@@ -54,48 +54,48 @@ defmodule Bedrock.Worker.Manifest do
     end
   end
 
-  @spec engine_from_json(binary()) ::
+  @spec worker_from_json(binary()) ::
           {:ok, module()}
           | {:error,
-             :engine_module_is_invalid
-             | :engine_module_does_not_exist
-             | :engine_module_failed_to_load
-             | :malformed_engine_name
-             | :invalid_engine_name
-             | :engine_module_does_not_implement_behaviour}
-  defp engine_from_json(engine_name) when is_binary(engine_name) do
-    with {:ok, engine_module} <- parse_engine_name(engine_name),
-         {:module, engine} <- Code.ensure_loaded(engine_module),
-         :ok <- check_module_is_storage_engine(engine) do
-      {:ok, engine}
+             :worker_module_is_invalid
+             | :worker_module_does_not_exist
+             | :worker_module_failed_to_load
+             | :malformed_worker_name
+             | :invalid_worker_name
+             | :worker_module_does_not_implement_behaviour}
+  defp worker_from_json(worker_name) when is_binary(worker_name) do
+    with {:ok, worker_module} <- parse_worker_name(worker_name),
+         {:module, worker} <- Code.ensure_loaded(worker_module),
+         :ok <- check_module_is_storage_worker(worker) do
+      {:ok, worker}
     else
-      {:error, :badfile} -> {:error, :engine_module_is_invalid}
-      {:error, :nofile} -> {:error, :engine_module_does_not_exist}
-      {:error, :on_load_failure} -> {:error, :engine_module_failed_to_load}
+      {:error, :badfile} -> {:error, :worker_module_is_invalid}
+      {:error, :nofile} -> {:error, :worker_module_does_not_exist}
+      {:error, :on_load_failure} -> {:error, :worker_module_failed_to_load}
       {:error, _reason} = error -> error
     end
   end
 
-  defp engine_from_json(_),
-    do: {:error, :invalid_engine_name}
+  defp worker_from_json(_),
+    do: {:error, :invalid_worker_name}
 
-  @spec parse_engine_name(String.t()) :: {:ok, module()} | {:error, :malformed_engine_name}
-  defp parse_engine_name(engine_name) do
-    engine_name
+  @spec parse_worker_name(String.t()) :: {:ok, module()} | {:error, :malformed_worker_name}
+  defp parse_worker_name(worker_name) do
+    worker_name
     |> String.split(".")
     |> case do
-      [] -> {:error, :malformed_engine_name}
+      [] -> {:error, :malformed_worker_name}
       components -> {:ok, Module.concat(components)}
     end
   end
 
-  defp check_module_is_storage_engine(engine) do
+  defp check_module_is_storage_worker(worker) do
     if :attributes
-       |> engine.module_info()
+       |> worker.module_info()
        |> Enum.member?({:behaviour, [Bedrock.Worker]}) do
       :ok
     else
-      {:error, :engine_module_does_not_implement_behaviour}
+      {:error, :worker_module_does_not_implement_behaviour}
     end
   end
 

@@ -1,10 +1,10 @@
-defmodule Bedrock.DataPlane.LogSystem.Engine.Limestone.UnusedSegments do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
   @moduledoc """
   A simple implementation of a segment manager that keeps track of unused
   segments in a directory. This is useful for managing pre-allocated segments
   that can be used to store transaction log entries.
   """
-  alias Bedrock.DataPlane.LogSystem.Engine.Limestone.Segment
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Segment
 
   defstruct [:path, :segments, :size, next_id: 0]
   @type t :: %__MODULE__{}

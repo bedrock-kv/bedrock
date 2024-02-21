@@ -5,12 +5,12 @@ defmodule Bedrock.Service.Worker do
   facts about itself when requested.
   """
 
-  @type name :: pid() | atom() | {atom(), Node.t()}
+  @type t :: pid() | atom() | {atom(), Node.t()}
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name
   @type timeout_in_ms :: :infinity | non_neg_integer()
 
-  @spec info(name(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
-  @spec info(name(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec info(t(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec info(t(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, :unavailable}
   def info(worker, fact_names, timeout \\ 5_000) do
     GenServer.call(worker, {:info, fact_names}, timeout)
   catch

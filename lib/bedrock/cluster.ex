@@ -10,7 +10,7 @@ defmodule Bedrock.Cluster do
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
   @type storage_engine :: GenServer.name()
-  @type log_system_engine :: GenServer.name()
+  @type transaction_log_engine :: GenServer.name()
 
   @doc false
   defmacro __using__(:types) do
@@ -18,7 +18,7 @@ defmodule Bedrock.Cluster do
       @type version :: Bedrock.Cluster.version()
       @type transaction :: Bedrock.Cluster.transaction()
       @type storage_engine :: Bedrock.Cluster.storage_engine()
-      @type log_system_engine :: Bedrock.Cluster.log_system_engine()
+      @type transaction_log_engine :: Bedrock.Cluster.transaction_log_engine()
     end
   end
 
@@ -42,7 +42,7 @@ defmodule Bedrock.Cluster do
       @controller_otp_name Cluster.otp_name(@name, :controller)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
-      @log_system_otp_name Cluster.otp_name(@name, :log_system)
+      @transaction_log_otp_name Cluster.otp_name(@name, :transaction_log)
       @monitor_otp_name Cluster.otp_name(@name, :monitor)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
       @service_advertiser_otp_name Cluster.otp_name(@name, :service_advertiser)
@@ -116,7 +116,7 @@ defmodule Bedrock.Cluster do
               | :controller
               | :coordinator
               | :data_distributor
-              | :log_system
+              | :transaction_log
               | :monitor
               | :sequencer
               | :service_advertiser
@@ -126,7 +126,7 @@ defmodule Bedrock.Cluster do
       def otp_name(:controller), do: @controller_otp_name
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:data_distributor), do: @data_distributor_otp_name
-      def otp_name(:log_system), do: @log_system_otp_name
+      def otp_name(:transaction_log), do: @transaction_log_otp_name
       def otp_name(:monitor), do: @monitor_otp_name
       def otp_name(:sequencer), do: @sequencer_otp_name
       def otp_name(:service_advertiser), do: @service_advertiser_otp_name
@@ -259,7 +259,7 @@ defmodule Bedrock.Cluster do
        [
          cluster: cluster,
          services: services,
-         otp_name: cluster.otp_name(:manager)
+         otp_name: cluster.otp_name(:service_advertiser)
        ]}
       | services
         |> Enum.map(fn service ->

@@ -1,61 +1,11 @@
 defmodule Bedrock.Service.Storage do
-  use Supervisor
   use Bedrock.Cluster, :types
 
-  def child_spec(opts) do
-    cluster = Keyword.get(opts, :cluster) || raise "Missing :cluster option"
+  @type t :: GenServer.name()
 
-    path =
-      Keyword.get(opts, :path) ||
-        raise "Missing :path option; required when :storage is specified in :services"
-
-    default_worker =
-      Keyword.get(opts, :default_worker) ||
-        Bedrock.Service.StorageWorker.Basalt
-
-    otp_name = cluster.otp_name(:storage_system)
-
-    %{
-      id: __MODULE__,
-      start: {
-        Supervisor,
-        :start_link,
-        [
-          __MODULE__,
-          {cluster, path, default_worker, otp_name},
-          [name: otp_name]
-        ]
-      },
-      restart: :permanent
-    }
-  end
-
-  @impl Supervisor
-  def init({cluster, path, default_worker, otp_name}) do
-    worker_supervisor_otp_name = otp_name(otp_name, :worker_supervisor)
-    controller_otp_name = otp_name(otp_name, :controller)
-
-    children = [
-      {DynamicSupervisor, name: worker_supervisor_otp_name},
-      {Bedrock.Service.Controller,
-       [
-         cluster: cluster,
-         subsystem: :storage_system,
-         default_worker: default_worker,
-         worker_supervisor_otp_name: worker_supervisor_otp_name,
-         path: path,
-         otp_scope: otp_name,
-         otp_name: controller_otp_name
-       ]}
-    ]
-
-    Supervisor.init(children, strategy: :one_for_one)
-  end
-
-  defp otp_name(otp_name, service), do: :"#{otp_name}_#{service}"
-
-  def workers(t) when is_binary(t),
-    do: otp_name(t, :controller) |> workers()
-
+  @spec workers(t()) :: {:ok, [Bedrock.Service.Worker.t()]} | {:error, term()}
   defdelegate workers(t), to: Bedrock.Service.Controller
+
+  @doc false
+  defdelegate child_spec(opts), to: __MODULE__.Supervisor
 end

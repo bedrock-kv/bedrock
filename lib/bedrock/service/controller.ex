@@ -12,7 +12,6 @@ defmodule Bedrock.Service.Controller do
     workers
     health
     otp_name
-    otp_scope
     path
     registry
     waiting_for_healthy
@@ -54,7 +53,6 @@ defmodule Bedrock.Service.Controller do
     subsystem = opts[:subsystem] || raise "Missing :subsystem option"
     path = opts[:path] || raise "Missing :path option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-    otp_scope = opts[:otp_scope] || raise "Missing :otp_scope option"
     default_worker = opts[:default_worker] || raise "Missing :default_worker option"
 
     worker_supervisor_otp_name =
@@ -73,7 +71,6 @@ defmodule Bedrock.Service.Controller do
              path,
              default_worker,
              worker_supervisor_otp_name,
-             otp_scope,
              otp_name
            },
            [name: otp_name]
@@ -88,7 +85,6 @@ defmodule Bedrock.Service.Controller do
         path,
         default_worker,
         worker_supervisor_otp_name,
-        otp_scope,
         otp_name
       }) do
     t =
@@ -98,7 +94,6 @@ defmodule Bedrock.Service.Controller do
         path: path,
         default_worker: default_worker,
         worker_supervisor_otp_name: worker_supervisor_otp_name,
-        otp_scope: otp_scope,
         otp_name: otp_name,
         #
         health: :starting,
@@ -171,7 +166,7 @@ defmodule Bedrock.Service.Controller do
             {instance_id,
              %Info{
                health: :ok,
-               otp_name: otp_name_for_worker(t.otp_scope, instance_id)
+               otp_name: otp_name_for_worker(t.otp_name, instance_id)
              }}
 
           {:error, reason} ->
@@ -283,7 +278,7 @@ defmodule Bedrock.Service.Controller do
           path: path,
           id: id,
           controller: t.otp_name,
-          otp_name: otp_name_for_worker(t.otp_scope, id)
+          otp_name: otp_name_for_worker(t.otp_name, id)
         )
         |> Map.put(:restart, :transient)
       )

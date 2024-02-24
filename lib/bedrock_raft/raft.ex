@@ -18,13 +18,14 @@ defmodule Bedrock.Raft do
   @type quorum :: non_neg_integer()
   @type service :: atom() | pid() | {atom(), node()}
   @type leadership :: {leader :: :undecided | service(), election_term()}
-  @type binary_transaction :: binary()
-  @type tuple_transaction :: {term :: election_term(), index :: non_neg_integer()}
-  @type transaction :: binary_transaction() | tuple_transaction()
+  @type binary_transaction_id :: binary()
+  @type tuple_transaction_id :: {term :: election_term(), index :: non_neg_integer()}
+  @type transaction_id :: binary_transaction_id() | tuple_transaction_id()
+  @type transaction :: {transaction_id(), term()}
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
-  alias Bedrock.Raft.Transaction
+  alias Bedrock.Raft.TransactionID
   alias Bedrock.Raft.Mode.Candidate
   alias Bedrock.Raft.Mode.Follower
   alias Bedrock.Raft.Mode.Leader
@@ -58,7 +59,7 @@ defmodule Bedrock.Raft do
     quorum = determine_majority([me | nodes]) - 1
 
     # Start with the newest term in the log.
-    initial_term = Log.newest_safe_transaction(log) |> Transaction.term()
+    initial_term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
 
     # If we're the only node, we can be the leader.
     mode =

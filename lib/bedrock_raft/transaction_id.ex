@@ -1,4 +1,4 @@
-defmodule Bedrock.Raft.Transaction do
+defmodule Bedrock.Raft.TransactionID do
   @moduledoc """
   Transactions are the basic unit of ordering in the Raft log. They are
   represented as a tuple of the election term and the index of the transaction
@@ -8,14 +8,14 @@ defmodule Bedrock.Raft.Transaction do
   """
   alias Bedrock.Raft
 
-  @spec new(Raft.election_term(), Raft.index()) :: Raft.tuple_transaction()
+  @spec new(Raft.election_term(), Raft.index()) :: Raft.tuple_transaction_id()
   def new(term, index), do: {term, index}
 
-  @spec term(Raft.transaction()) :: Raft.election_term()
+  @spec term(Raft.transaction_id()) :: Raft.election_term()
   def term({term, _index}), do: term
   def term(t) when is_binary(t), do: decode(t) |> elem(0)
 
-  @spec index(Raft.transaction()) :: Raft.index()
+  @spec index(Raft.transaction_id()) :: Raft.index()
   def index({_term, index}), do: index
   def index(t) when is_binary(t), do: decode(t) |> elem(1)
 
@@ -26,9 +26,9 @@ defmodule Bedrock.Raft.Transaction do
 
   Binary transactions pass-through unchanged.
   """
-  @spec encode(Raft.transaction()) :: Raft.binary_transaction()
+  @spec encode(Raft.transaction_id()) :: Raft.binary_transaction_id()
   def encode({term, index}), do: pack(term) <> pack(index)
-  def encode(transaction) when is_binary(transaction), do: transaction
+  def encode(transaction_id) when is_binary(transaction_id), do: transaction_id
 
   def pack(v) when v <= 0xFF, do: <<0x15, v::unsigned-big-integer-size(8)>>
   def pack(v) when v <= 0xFFFF, do: <<0x16, v::unsigned-big-integer-size(16)>>
@@ -43,8 +43,8 @@ defmodule Bedrock.Raft.Transaction do
   Decode a binary-encoded transaction into a transaction tuple. Tuple
   transactions pass-through unchanged.
   """
-  @spec decode(Raft.transaction()) :: Raft.tuple_transaction()
-  def decode({_term, _index} = transaction), do: transaction
+  @spec decode(Raft.transaction_id()) :: Raft.tuple_transaction_id()
+  def decode({_term, _index} = transaciton_id), do: transaciton_id
 
   def decode(value) when is_binary(value) do
     {term, encoded_index} = unpack(value)

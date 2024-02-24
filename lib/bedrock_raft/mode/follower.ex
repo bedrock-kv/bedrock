@@ -69,10 +69,10 @@ defmodule Bedrock.Raft.Mode.Follower do
           candidate :: Raft.service(),
           candidate_last_transaction :: Raft.transaction()
         ) :: {:ok, t()}
-  def vote_requested(t, election_term, candidate, candidate_newest_transaction) do
+  def vote_requested(t, election_term, candidate, candidate_newest_transaction_id) do
     if (election_term == t.term and is_nil(t.voted_for)) or
          (election_term > t.term and
-            candidate_newest_transaction >= Log.newest_transaction(t.log)) do
+            candidate_newest_transaction_id >= Log.newest_transaction_id(t.log)) do
       {:ok,
        t
        |> reset_timer()
@@ -149,12 +149,12 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   @spec send_append_entries_reply(t()) :: t()
   defp send_append_entries_reply(t) do
-    newest_transaction = Log.newest_transaction(t.log)
+    newest_transaction_id = Log.newest_transaction_id(t.log)
 
     :ok =
       apply(t.interface, :send_event, [
         t.leader,
-        {:append_entries_ack, t.term, newest_transaction}
+        {:append_entries_ack, t.term, newest_transaction_id}
       ])
 
     t

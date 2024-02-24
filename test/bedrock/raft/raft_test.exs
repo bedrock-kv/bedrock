@@ -562,23 +562,23 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event(:heartbeat, :timer)
 
       assert [t1, t2] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
-      assert t2 == p |> Raft.log() |> Log.newest_transaction()
-      assert t0 == p |> Raft.log() |> Log.newest_safe_transaction()
+      assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
+      assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
 
-      assert t2 == p |> Raft.log() |> Log.newest_transaction()
-      assert t0 == p |> Raft.log() |> Log.newest_safe_transaction()
+      assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
+      assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
       p =
         p
         |> Raft.handle_event({:append_entries_ack, 1, t2}, :c)
         |> Raft.handle_event(:heartbeat, :timer)
 
-      assert t2 == p |> Raft.log() |> Log.newest_transaction()
-      assert t2 == p |> Raft.log() |> Log.newest_safe_transaction()
+      assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
+      assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
     end
 
     test "A three node cluster where we are a follower, where we start off at nothing and need to catch up" do
@@ -612,8 +612,8 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries, 1, t0, [t1, t2], t2}, :c)
 
       assert [t1, t2] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
-      assert t2 == p |> Raft.log() |> Log.newest_transaction()
-      assert t2 == p |> Raft.log() |> Log.newest_safe_transaction()
+      assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
+      assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
     end
   end
 end

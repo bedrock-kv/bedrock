@@ -25,17 +25,18 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
     }
 
   defimpl Bedrock.Raft.Log do
-    alias Bedrock.Raft.Transaction
+    alias Bedrock.Raft.TransactionID
 
-    @initial_transaction Transaction.new(0, 0)
-    @binary_initial_transaction Transaction.encode(@initial_transaction)
+    @initial_transaction_id TransactionID.new(0, 0)
+    @binary_initial_transaction_id TransactionID.encode(@initial_transaction_id)
 
-    def append_transactions(%{format: :tuple} = t, @initial_transaction, transactions) do
+    @impl Bedrock.Raft.Log
+    def append_transactions(%{format: :tuple} = t, @initial_transaction_id, transactions) do
       true = :ets.insert_new(t.transactions, transactions |> Enum.map(&{&1, :undefined}))
       {:ok, t}
     end
 
-    def append_transactions(%{format: :binary} = t, @binary_initial_transaction, transactions) do
+    def append_transactions(%{format: :binary} = t, @binary_initial_transaction_id, transactions) do
       true = :ets.insert_new(t.transactions, transactions |> Enum.map(&{&1, :undefined}))
       {:ok, t}
     end
@@ -54,22 +55,25 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
       end
     end
 
-    def initial_transaction(%{format: :tuple}), do: @initial_transaction
-    def initial_transaction(%{format: :binary}), do: @binary_initial_transaction
+    @impl Bedrock.Raft.Log
+    def initial_transaction_id(%{format: :tuple}), do: @initial_transaction_id
+    def initial_transaction_id(%{format: :binary}), do: @binary_initial_transaction_id
 
+    @impl Bedrock.Raft.Log
     def commit_up_to(t, transaction)
         when (t.format == :tuple and is_tuple(transaction)) or
                (t.format == :binary and is_binary(transaction)) do
       {:ok, %{t | last_commit: transaction}}
     end
 
-    def newest_transaction(t) do
+    @impl Bedrock.Raft.Log
+    def newest_transaction_id(t) do
       :ets.last(t.transactions)
       |> case do
         :"$end_of_table" ->
           case t.format do
-            :binary -> @binary_initial_transaction
-            :tuple -> @initial_transaction
+            :binary -> @binary_initial_transaction_id
+            :tuple -> @initial_transaction_id
           end
 
         transaction ->
@@ -77,23 +81,27 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
       end
     end
 
-    def newest_safe_transaction(t), do: t.last_commit || initial_transaction(t)
+    @impl Bedrock.Raft.Log
+    def newest_safe_transaction_id(t), do: t.last_commit || initial_transaction_id(t)
 
-    def has_transaction?(%{format: :tuple}, @initial_transaction), do: true
-    def has_transaction?(%{format: :binary}, @binary_initial_transaction), do: true
-    def has_transaction?(t, transaction), do: :ets.member(t.transactions, transaction)
+    @impl Bedrock.Raft.Log
+    def has_transaction_id?(%{format: :tuple}, @initial_transaction_id), do: true
+    def has_transaction_id?(%{format: :binary}, @binary_initial_transaction_id), do: true
+    def has_transaction_id?(t, transaction), do: :ets.member(t.transactions, transaction)
 
+    @impl Bedrock.Raft.Log
     def transactions_to(t, :newest),
-      do: transactions_from(t, initial_transaction(t), newest_transaction(t))
+      do: transactions_from(t, initial_transaction_id(t), newest_transaction_id(t))
 
     def transactions_to(t, :newest_safe),
-      do: transactions_from(t, initial_transaction(t), newest_safe_transaction(t))
+      do: transactions_from(t, initial_transaction_id(t), newest_safe_transaction_id(t))
 
+    @impl Bedrock.Raft.Log
     def transactions_from(t, from, :newest),
-      do: transactions_from(t, from, newest_transaction(t))
+      do: transactions_from(t, from, newest_transaction_id(t))
 
     def transactions_from(t, from, :newest_safe),
-      do: transactions_from(t, from, newest_safe_transaction(t))
+      do: transactions_from(t, from, newest_safe_transaction_id(t))
 
     def transactions_from(t, from, to) do
       :ets.select(t.transactions, match_gte_lte(from, to))
@@ -102,8 +110,8 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
           transactions
 
         transactions
-        when (t.format == :tuple and from == @initial_transaction) or
-               (t.format == :binary and from == @binary_initial_transaction) ->
+        when (t.format == :tuple and from == @initial_transaction_id) or
+               (t.format == :binary and from == @binary_initial_transaction_id) ->
           transactions
 
         [] ->

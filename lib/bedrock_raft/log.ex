@@ -23,8 +23,8 @@ defprotocol Bedrock.Raft.Log do
   @doc """
   Get the initial transaction for the log.
   """
-  @spec initial_transaction(t()) :: Raft.transaction()
-  def initial_transaction(t)
+  @spec initial_transaction_id(t()) :: Raft.transaction_id()
+  def initial_transaction_id(t)
 
   @doc """
   Mark all transactions up to and including the given transaction as committed.
@@ -35,26 +35,26 @@ defprotocol Bedrock.Raft.Log do
   @doc """
   Get the newest transaction in the log.
   """
-  @spec newest_transaction(t()) :: Raft.transaction()
-  def newest_transaction(t)
+  @spec newest_transaction_id(t()) :: Raft.transaction_id()
+  def newest_transaction_id(t)
 
   @doc """
   Get the newest transaction in the log that has been safely appended to the
   logs of a quorum of peers in the cluster.
   """
-  @spec newest_safe_transaction(t()) :: Raft.transaction()
-  def newest_safe_transaction(t)
+  @spec newest_safe_transaction_id(t()) :: Raft.transaction_id()
+  def newest_safe_transaction_id(t)
 
   @doc """
   Does the log contain the given transaction?
   """
-  @spec has_transaction?(t(), Raft.transaction()) :: boolean()
-  def has_transaction?(t, transaction)
+  @spec has_transaction_id?(t(), Raft.transaction_id()) :: boolean()
+  def has_transaction_id?(t, transaction_id)
 
   @doc """
   Get a list of transactions that have occurred up to the the given transaction.
   """
-  @spec transactions_to(t(), to :: Raft.transaction() | :newest | :newest_safe) :: [
+  @spec transactions_to(t(), to :: Raft.transaction_id() | :newest | :newest_safe) :: [
           Raft.transaction()
         ]
   def transactions_to(t, to)
@@ -65,8 +65,8 @@ defprotocol Bedrock.Raft.Log do
   """
   @spec transactions_from(
           t(),
-          from :: Raft.transaction(),
-          to :: Raft.tranasaction() | :newest | :newest_safe
-        ) :: [Raft.transaction()]
+          from :: Raft.transaction_id(),
+          to :: Raft.transaction_id() | :newest | :newest_safe
+        ) :: [Raft.transaction_id()]
   def transactions_from(t, from, to)
 end

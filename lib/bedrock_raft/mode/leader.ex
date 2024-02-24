@@ -63,7 +63,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     quorum
     term
     pongs
-    newest_transaction
+    newest_transaction_id
     follower_tracking
     cancel_timer_fn
     log
@@ -72,7 +72,7 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
-  alias Bedrock.Raft.Transaction
+  alias Bedrock.Raft.TransactionID
   alias Bedrock.Raft.Mode.Leader.FollowerTracking
 
   @doc """
@@ -93,7 +93,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       nodes: nodes,
       term: term,
       pongs: [],
-      newest_transaction: Log.newest_transaction(log),
+      newest_transaction_id: Log.newest_transaction_id(log),
       follower_tracking: FollowerTracking.new(nodes),
       log: log,
       interface: interface
@@ -111,17 +111,17 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec add_transaction(t(), Raft.transaction()) ::
           {:ok, t()} | {:error, :out_of_order | :incorrect_term}
 
-  def add_transaction(t, transaction) do
+  def add_transaction(t, transaction_id) do
     cond do
-      transaction < t.newest_transaction ->
+      transaction_id < t.newest_transaction_id ->
         {:error, :out_of_order}
 
-      Transaction.term(transaction) != t.term ->
+      TransactionID.term(transaction_id) != t.term ->
         {:error, :incorrect_term}
 
       true ->
-        Log.append_transactions(t.log, t.newest_transaction, [transaction])
-        {:ok, %{t | newest_transaction: transaction}}
+        Log.append_transactions(t.log, t.newest_transaction_id, [transaction_id])
+        {:ok, %{t | newest_transaction_id: transaction_id}}
     end
   end
 
@@ -136,7 +136,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           follower :: Raft.service()
         ) ::
           {:ok, t()}
-  def append_entries_ack_received(t, term, newest_transaction, _from = follower)
+  def append_entries_ack_received(t, term, newest_transaction_id, _from = follower)
       when term == t.term do
     t =
       if follower in t.pongs do
@@ -145,11 +145,11 @@ defmodule Bedrock.Raft.Mode.Leader do
         %{t | pongs: [follower | t.pongs]}
       end
 
-    if Log.has_transaction?(t.log, newest_transaction) do
-      FollowerTracking.update_newest_transaction(
+    if Log.has_transaction_id?(t.log, newest_transaction_id) do
+      FollowerTracking.update_newest_transaction_id(
         t.follower_tracking,
         follower,
-        newest_transaction
+        newest_transaction_id
       )
     end
 
@@ -164,9 +164,9 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),
-          prev_transaction :: Raft.transaction(),
+          prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
-          commit_transaction :: Raft.transaction(),
+          commit_transaction :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
           :new_leader_elected | {:ok, t()}
@@ -206,26 +206,26 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   @spec send_append_entries_to_followers(t()) :: t()
   def send_append_entries_to_followers(t) do
-    newest_safe_transaction = newest_safe_transaction(t)
+    newest_safe_transaction_id = newest_safe_transaction_id(t)
 
     {:ok, log} =
-      Log.commit_up_to(t.log, newest_safe_transaction)
+      Log.commit_up_to(t.log, newest_safe_transaction_id)
 
     t.nodes
     |> Enum.each(fn follower ->
-      prev_transaction =
-        FollowerTracking.last_sent_transaction(t.follower_tracking, follower)
+      prev_transaction_id =
+        FollowerTracking.last_sent_transaction_id(t.follower_tracking, follower)
         |> case do
-          :unknown -> newest_safe_transaction
-          transaction -> transaction
+          :unknown -> newest_safe_transaction_id
+          transaction_id -> transaction_id
         end
 
       transactions =
-        Log.transactions_from(t.log, prev_transaction, :newest)
+        Log.transactions_from(t.log, prev_transaction_id, :newest)
         |> Enum.take(10)
 
       if transactions != [] do
-        FollowerTracking.update_last_sent_transaction(
+        FollowerTracking.update_last_sent_transaction_id(
           t.follower_tracking,
           follower,
           transactions |> List.last()
@@ -234,19 +234,19 @@ defmodule Bedrock.Raft.Mode.Leader do
 
       apply(t.interface, :send_event, [
         follower,
-        {:append_entries, t.term, prev_transaction, transactions, newest_safe_transaction}
+        {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
       ])
     end)
 
     %{t | log: log}
   end
 
-  defp newest_safe_transaction(t) do
+  defp newest_safe_transaction_id(t) do
     t.follower_tracking
-    |> FollowerTracking.newest_safe_transaction(t.quorum)
+    |> FollowerTracking.newest_safe_transaction_id(t.quorum)
     |> case do
-      :unknown -> t.newest_transaction
-      transaction -> transaction
+      :unknown -> t.newest_transaction_id
+      transaction_id -> transaction_id
     end
   end
 

@@ -149,11 +149,11 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   @spec request_votes_from_all_nodes(t()) :: t()
   defp request_votes_from_all_nodes(t) do
-    newest_transaction = Log.newest_transaction(t.log)
+    newest_transaction_id = Log.newest_transaction_id(t.log)
 
     t.nodes
     |> Enum.each(
-      &apply(t.interface, :send_event, [&1, {:request_vote, t.term, newest_transaction}])
+      &apply(t.interface, :send_event, [&1, {:request_vote, t.term, newest_transaction_id}])
     )
 
     t

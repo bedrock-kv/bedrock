@@ -1,10 +1,10 @@
 defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @moduledoc """
   The FollowerTracking module is responsible for keeping track of the state of
-  followers. This includes the last transaction that was sent to a follower, the
-  newest transaction that the follower has acknowledged, and the newest
-  transaction that a quorum of followers has acknowledged. This information is
-  used to determine the commit index.
+  followers. This includes the last transaction id that was sent to a follower,
+  the newest transaction id that the follower has acknowledged, and the newest
+  transaction id that a quorum of followers has acknowledged. This information
+  is used to determine the commit index.
   """
 
   @type t :: :ets.table()

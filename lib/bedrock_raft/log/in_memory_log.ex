@@ -27,27 +27,38 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
   defimpl Bedrock.Raft.Log do
     alias Bedrock.Raft.TransactionID
 
+    @type t :: Bedrock.Raft.Log.InMemoryLog.t()
+
     @initial_transaction_id TransactionID.new(0, 0)
     @binary_initial_transaction_id TransactionID.encode(@initial_transaction_id)
 
     @impl Bedrock.Raft.Log
     def append_transactions(%{format: :tuple} = t, @initial_transaction_id, transactions) do
-      true = :ets.insert_new(t.transactions, transactions |> Enum.map(&{&1, :undefined}))
+      true =
+        :ets.insert_new(t.transactions, transactions |> Enum.map(&normalize_transaction(t, &1)))
+
       {:ok, t}
     end
 
     def append_transactions(%{format: :binary} = t, @binary_initial_transaction_id, transactions) do
-      true = :ets.insert_new(t.transactions, transactions |> Enum.map(&{&1, :undefined}))
+      true =
+        :ets.insert_new(t.transactions, transactions |> Enum.map(&normalize_transaction(t, &1)))
+
       {:ok, t}
     end
 
-    def append_transactions(t, prev, transactions)
-        when (t.format == :tuple and is_tuple(prev)) or
-               (t.format == :binary and is_binary(prev)) do
-      :ets.lookup(t.transactions, prev)
+    def append_transactions(t, prev_transaction_id, transactions)
+        when (t.format == :tuple and is_tuple(prev_transaction_id)) or
+               (t.format == :binary and is_binary(prev_transaction_id)) do
+      :ets.lookup(t.transactions, prev_transaction_id)
       |> case do
-        [{^prev, _}] ->
-          true = :ets.insert_new(t.transactions, transactions |> Enum.map(&{&1, :undefined}))
+        [{^prev_transaction_id, _}] ->
+          true =
+            :ets.insert_new(
+              t.transactions,
+              transactions |> Enum.map(&normalize_transaction(t, &1))
+            )
+
           {:ok, t}
 
         [] ->
@@ -76,8 +87,8 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
             :tuple -> @initial_transaction_id
           end
 
-        transaction ->
-          transaction
+        transaction_id ->
+          transaction_id
       end
     end
 
@@ -87,7 +98,7 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
     @impl Bedrock.Raft.Log
     def has_transaction_id?(%{format: :tuple}, @initial_transaction_id), do: true
     def has_transaction_id?(%{format: :binary}, @binary_initial_transaction_id), do: true
-    def has_transaction_id?(t, transaction), do: :ets.member(t.transactions, transaction)
+    def has_transaction_id?(t, transaction_id), do: :ets.member(t.transactions, transaction_id)
 
     @impl Bedrock.Raft.Log
     def transactions_to(t, :newest),
@@ -106,7 +117,7 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
     def transactions_from(t, from, to) do
       :ets.select(t.transactions, match_gte_lte(from, to))
       |> case do
-        [^from | transactions] ->
+        [{^from, _data} | transactions] ->
           transactions
 
         transactions
@@ -120,7 +131,31 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
     end
 
     defp match_gte_lte(gte, lte) do
-      [{{:"$1", :_}, [{:>=, :"$1", {:const, gte}}, {:"=<", :"$1", {:const, lte}}], [:"$1"]}]
+      [
+        {{:"$1", :"$2"}, [{:>=, :"$1", {:const, gte}}, {:"=<", :"$1", {:const, lte}}],
+         [{{:"$1", :"$2"}}]}
+      ]
     end
+
+    @doc """
+    Ensure that the given transaction is in the correct format for the log,
+    converting it only if necessary.
+    """
+    @spec normalize_transaction(t(), Raft.transaction()) :: Raft.transaction()
+    def normalize_transaction(%{format: :tuple}, {transaction_id, _data} = transaction)
+        when is_tuple(transaction_id),
+        do: transaction
+
+    def normalize_transaction(%{format: :tuple}, {transaction_id, data})
+        when is_binary(transaction_id),
+        do: {transaction_id |> TransactionID.decode(), data}
+
+    def normalize_transaction(%{format: :binary}, {transaction_id, _data} = transaction)
+        when is_binary(transaction_id),
+        do: transaction
+
+    def normalize_transaction(%{format: :binary}, {transaction_id, data})
+        when is_tuple(transaction_id),
+        do: {transaction_id |> TransactionID.encode(), data}
   end
 end

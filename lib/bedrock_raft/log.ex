@@ -9,16 +9,16 @@ defprotocol Bedrock.Raft.Log do
 
   @doc """
   Append the given block of transactions to the log, starting at the given
-  previous transaction. If we can't find the previous transaction, we return an
-  error.
+  previous transaction's id. If we can't find the previous transaction, we
+  return an error.
   """
   @spec append_transactions(
           t(),
-          prev :: Raft.transaction(),
+          prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()]
         ) ::
           {:ok, t()} | {:error, :prev_transaction_not_found}
-  def append_transactions(t, prev_transaction, transactions)
+  def append_transactions(t, prev_transaction_id, transactions)
 
   @doc """
   Get the initial transaction for the log.
@@ -54,9 +54,8 @@ defprotocol Bedrock.Raft.Log do
   @doc """
   Get a list of transactions that have occurred up to the the given transaction.
   """
-  @spec transactions_to(t(), to :: Raft.transaction_id() | :newest | :newest_safe) :: [
-          Raft.transaction()
-        ]
+  @spec transactions_to(t(), to :: Raft.transaction_id() | :newest | :newest_safe) ::
+          [Raft.transaction()]
   def transactions_to(t, to)
 
   @doc """
@@ -67,6 +66,6 @@ defprotocol Bedrock.Raft.Log do
           t(),
           from :: Raft.transaction_id(),
           to :: Raft.transaction_id() | :newest | :newest_safe
-        ) :: [Raft.transaction_id()]
+        ) :: [Raft.transaction()]
   def transactions_from(t, from, to)
 end

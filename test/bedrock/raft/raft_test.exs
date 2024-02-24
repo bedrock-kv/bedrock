@@ -433,7 +433,7 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t1} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
 
-      p = p |> Raft.handle_event({:append_entries, 2, t0, [t1], t1}, :c)
+      p = p |> Raft.handle_event({:append_entries, 2, t0, [{t1, :data1}], t1}, :c)
 
       assert {:c, 2} = Raft.leadership(p)
     end
@@ -494,7 +494,7 @@ defmodule Bedrock.RaftTest do
 
       assert {:undecided, 2} = Raft.leadership(p)
 
-      assert {:error, :not_leader} = p |> Raft.add_transaction({2, 0})
+      assert {:error, :not_leader} = p |> Raft.add_transaction({{2, 0}, :data2})
 
       assert %Raft{
                me: :a,
@@ -544,16 +544,20 @@ defmodule Bedrock.RaftTest do
 
       assert p |> Raft.am_i_the_leader?()
 
-      assert {:ok, p} = Raft.add_transaction(p, t1)
-      assert {:ok, p} = Raft.add_transaction(p, t2)
+      assert {:ok, p} = Raft.add_transaction(p, {t1, :data1})
+      assert {:ok, p} = Raft.add_transaction(p, {t2, :data2})
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
 
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [^t1, ^t2], ^t0} ->
+      expect(MockInterface, :send_event, fn :b,
+                                            {:append_entries, 1, ^t0,
+                                             [{^t1, :data1}, {^t2, :data2}], ^t0} ->
         :ok
       end)
 
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [^t1, ^t2], ^t0} ->
+      expect(MockInterface, :send_event, fn :c,
+                                            {:append_entries, 1, ^t0,
+                                             [{^t1, :data1}, {^t2, :data2}], ^t0} ->
         :ok
       end)
 
@@ -561,7 +565,7 @@ defmodule Bedrock.RaftTest do
         p
         |> Raft.handle_event(:heartbeat, :timer)
 
-      assert [t1, t2] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
+      assert [{t1, :data1}, {t2, :data2}] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
@@ -609,9 +613,9 @@ defmodule Bedrock.RaftTest do
 
       p =
         p
-        |> Raft.handle_event({:append_entries, 1, t0, [t1, t2], t2}, :c)
+        |> Raft.handle_event({:append_entries, 1, t0, [{t1, :data1}, {t2, :data2}], t2}, :c)
 
-      assert [t1, t2] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
+      assert [{t1, :data1}, {t2, :data2}] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
     end

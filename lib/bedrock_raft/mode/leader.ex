@@ -111,7 +111,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec add_transaction(t(), Raft.transaction()) ::
           {:ok, t()} | {:error, :out_of_order | :incorrect_term}
 
-  def add_transaction(t, transaction_id) do
+  def add_transaction(t, {transaction_id, _data} = transaction) do
     cond do
       transaction_id < t.newest_transaction_id ->
         {:error, :out_of_order}
@@ -120,7 +120,7 @@ defmodule Bedrock.Raft.Mode.Leader do
         {:error, :incorrect_term}
 
       true ->
-        Log.append_transactions(t.log, t.newest_transaction_id, [transaction_id])
+        Log.append_transactions(t.log, t.newest_transaction_id, [transaction])
         {:ok, %{t | newest_transaction_id: transaction_id}}
     end
   end
@@ -228,7 +228,7 @@ defmodule Bedrock.Raft.Mode.Leader do
         FollowerTracking.update_last_sent_transaction_id(
           t.follower_tracking,
           follower,
-          transactions |> List.last()
+          transactions |> List.last() |> elem(0)
         )
       end
 

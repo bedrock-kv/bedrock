@@ -1,5 +1,7 @@
 defmodule Bedrock.Service.TransactionLog do
-  use Bedrock.Cluster, :types
+  @moduledoc """
+
+  """
 
   @type t :: GenServer.name()
   @type id :: binary()

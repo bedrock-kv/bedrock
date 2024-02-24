@@ -9,16 +9,17 @@ defmodule Bedrock.Cluster do
 
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
-  @type storage_engine :: GenServer.name()
-  @type transaction_log_engine :: GenServer.name()
+  @type storage_worker :: GenServer.name()
+  @type transaction_log_worker :: GenServer.name()
+  @type service :: :coordination | :transaction_log | :storage
 
   @doc false
   defmacro __using__(:types) do
     quote do
       @type version :: Bedrock.Cluster.version()
       @type transaction :: Bedrock.Cluster.transaction()
-      @type storage_engine :: Bedrock.Cluster.storage_engine()
-      @type transaction_log_engine :: Bedrock.Cluster.transaction_log_engine()
+      @type storage_worker :: Bedrock.Cluster.storage_worker()
+      @type transaction_log_worker :: Bedrock.Cluster.transaction_log_worker()
     end
   end
 
@@ -67,7 +68,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the services advertised to the cluster by this node.
       """
-      @spec advertised_services() :: [:coordination | :log | :storage]
+      @spec advertised_services() :: [Bedrock.Cluster.service()]
       def advertised_services, do: config() |> Keyword.get(:services, [])
 
       @doc """
@@ -275,6 +276,6 @@ defmodule Bedrock.Cluster do
 
   defp module_for_service(:coordination), do: Bedrock.ControlPlane.Coordinator
   defp module_for_service(:storage), do: Bedrock.Service.Storage
-  defp module_for_service(:log), do: Bedrock.Service.TransactionLog
+  defp module_for_service(:transaction_log), do: Bedrock.Service.TransactionLog
   defp module_for_service(service), do: raise("Unknown service: #{inspect(service)}")
 end

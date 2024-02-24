@@ -64,6 +64,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     term
     pongs
     newest_transaction_id
+    last_consensus_transaction_id
     follower_tracking
     cancel_timer_fn
     log
@@ -94,6 +95,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       term: term,
       pongs: [],
       newest_transaction_id: Log.newest_transaction_id(log),
+      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       follower_tracking: FollowerTracking.new(nodes),
       log: log,
       interface: interface
@@ -239,6 +241,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     end)
 
     %{t | log: log}
+    |> consensus_reached(newest_safe_transaction_id)
   end
 
   defp newest_safe_transaction_id(t) do
@@ -266,4 +269,14 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec reset_pongs(t()) :: t()
   def reset_pongs(t),
     do: %{t | pongs: []}
+
+  defp consensus_reached(t, transaction_id)
+       when t.last_consensus_transaction_id == transaction_id,
+       do: t
+
+  defp consensus_reached(t, transaction_id) do
+    :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+
+    %{t | last_consensus_transaction_id: transaction_id}
+  end
 end

@@ -1,4 +1,6 @@
 defmodule Bedrock.Raft.Interface do
+  alias Bedrock.Raft.Log
+
   @type cancel_timer_fn :: (-> :ok)
 
   @doc """
@@ -26,4 +28,10 @@ defmodule Bedrock.Raft.Interface do
   Send an event to a Raft node.
   """
   @callback send_event(to :: Raft.service(), event :: any()) :: :ok
+
+  @doc """
+  Signal that a consensus has been reached up to the given transaction by the
+  quorum of Raft nodes.
+  """
+  @callback consensus_reached(Log.t(), Raft.transaction_id()) :: :ok
 end

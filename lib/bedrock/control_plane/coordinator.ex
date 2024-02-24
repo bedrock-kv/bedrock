@@ -238,5 +238,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
           fn -> :ok end
       end
     end
+
+    def consensus_reached(_log, _transaction_id) do
+      :ok
+    end
   end
 end

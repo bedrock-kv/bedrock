@@ -35,6 +35,7 @@ defmodule Bedrock.Raft.Mode.Follower do
       term
       leader
       voted_for
+      last_consensus_transaction_id
       cancel_timer_fn
       log
       interface
@@ -48,6 +49,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     %__MODULE__{
       term: term,
       voted_for: nil,
+      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       leader: :undecided,
       log: log,
       interface: interface
@@ -139,11 +141,12 @@ defmodule Bedrock.Raft.Mode.Follower do
     end
   end
 
-  def commit_up_to(t, transaction) do
-    Log.commit_up_to(t.log, transaction)
+  def commit_up_to(t, transaction_id) do
+    Log.commit_up_to(t.log, transaction_id)
     |> case do
       {:ok, log} ->
         %{t | log: log}
+        |> consensus_reached(transaction_id)
     end
   end
 
@@ -187,4 +190,14 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   @spec record_term(t(), Raft.election_term()) :: t()
   defp record_term(t, term), do: %{t | term: term}
+
+  defp consensus_reached(t, transaction_id)
+       when t.last_consensus_transaction_id == transaction_id,
+       do: t
+
+  defp consensus_reached(t, transaction_id) do
+    :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+
+    %{t | last_consensus_transaction_id: transaction_id}
+  end
 end

@@ -39,7 +39,8 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @doc """
   Find the highest commit that a majority of followers have acknowledged. We
   can do this by sorting the list of last_transaction_id_acked and taking the
-  quorum-th-from-last element.
+  quorum-th-from-last element -- every follower above this index has already
+  acknowledged *at-least* up to this transaction.
   """
   @spec newest_safe_transaction_id(t(), quorum :: non_neg_integer()) ::
           Raft.transaction_id() | :unknown

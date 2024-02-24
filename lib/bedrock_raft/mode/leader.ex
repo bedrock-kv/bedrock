@@ -132,7 +132,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec append_entries_ack_received(
           t(),
           Raft.election_term(),
-          newest_transaction :: Raft.transaction(),
+          newest_transaction_id :: Raft.transaction_id(),
           follower :: Raft.service()
         ) ::
           {:ok, t()}

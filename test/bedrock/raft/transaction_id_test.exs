@@ -4,13 +4,13 @@ defmodule Bedrock.Raft.TransactionIDTest do
   alias Bedrock.Raft.TransactionID
 
   describe "Transaction comparisons" do
-    test "tuple transactions order appropriately" do
+    test "tuple transaction ids order appropriately" do
       assert {2, 1} > {2, 0}
       assert {3, 0} > {2, 0}
       assert {3, 0} > {2, 1}
     end
 
-    test "binary transactions order appropriately" do
+    test "binary transaction ids order appropriately" do
       assert TransactionID.encode({2, 1}) > TransactionID.encode({2, 0})
       assert TransactionID.encode({3, 0}) > TransactionID.encode({2, 0})
       assert TransactionID.encode({3, 0}) > TransactionID.encode({2, 1})
@@ -19,12 +19,14 @@ defmodule Bedrock.Raft.TransactionIDTest do
       t2 = TransactionID.encode({127, 2})
       t3 = TransactionID.encode({128, 3})
       t4 = TransactionID.encode({16_383, 4})
-      t5 = TransactionID.encode({16_384, 5})
+      t5 = TransactionID.encode({16_384, 3})
+      t6 = TransactionID.encode({16_384, 5})
 
       assert t2 > t1
       assert t3 > t2
       assert t4 > t3
       assert t5 > t4
+      assert t6 > t5
     end
   end
 

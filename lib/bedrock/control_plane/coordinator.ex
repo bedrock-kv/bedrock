@@ -116,58 +116,31 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   @impl GenServer
   def handle_info({:raft, :leadership_changed, leadership}, t) do
-    {new_leader, epoch} = leadership
-    cluster_name = t.cluster.name()
-    my_node = t.my_node
-
     if is_pid(t.controller) do
       try do
-        Logger.debug("Bedrock [#{cluster_name}]: shutting down our controller")
-        GenServer.stop(t.controller, :shutdown)
+        GenServer.stop(t.controller, :shutdown, 50)
       rescue
         _ -> :ok
       end
     end
 
+    my_node = t.my_node
+    {new_leader, epoch} = leadership
+
     controller =
       case new_leader do
-        :undecided ->
-          if t.controller != :unavailable do
-            Logger.debug("Bedrock [#{cluster_name}]: leadership lost")
-          end
-
-          :unavailable
-
-        ^my_node ->
-          Logger.debug("Bedrock [#{cluster_name}]: starting up our controller for epoch #{epoch}")
-
-          {:ok, controller} =
-            DynamicSupervisor.start_child(
-              t.supervisor_otp_name,
-              {ClusterController,
-               [
-                 cluster: t.cluster,
-                 epoch: epoch,
-                 coordinator: t.otp_name,
-                 otp_name: t.controller_otp_name
-               ]}
-            )
-
-          GenServer.abcast(
-            [t.my_node | Node.list()],
-            t.cluster.otp_name(:monitor),
-            {:cluster_controller_replaced, {t.controller_otp_name, my_node}}
-          )
-
-          controller
-
-        other_node ->
-          Logger.debug(
-            "Bedrock [#{cluster_name}]: leadership changed to #{other_node} for epoch #{epoch}"
-          )
-
-          {t.controller_otp_name, other_node}
+        :undecided -> :unavailable
+        ^my_node -> start_controller_on_this_node(t, epoch)
+        other_node -> {t.controller_otp_name, other_node}
       end
+
+    if is_pid(controller) do
+      GenServer.abcast(
+        [t.my_node | Node.list()],
+        t.cluster.otp_name(:monitor),
+        {:cluster_controller_replaced, {t.controller_otp_name, my_node}}
+      )
+    end
 
     {:noreply, t |> update_controller(controller)}
   end
@@ -186,6 +159,23 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def handle_cast({:raft, :rpc, event, source}, t) do
     raft = t.raft |> Raft.handle_event(event, source)
     {:noreply, %{t | raft: raft}}
+  end
+
+  def start_controller_on_this_node(t, epoch) do
+    DynamicSupervisor.start_child(
+      t.supervisor_otp_name,
+      {ClusterController,
+       [
+         cluster: t.cluster,
+         epoch: epoch,
+         coordinator: t.otp_name,
+         otp_name: t.controller_otp_name
+       ]}
+    )
+    |> case do
+      {:ok, controller} -> controller
+      {:error, reason} -> raise "Bedrock: failed to start controller: #{inspect(reason)}"
+    end
   end
 
   def update_controller(t, new_controller), do: %{t | controller: new_controller}
@@ -239,7 +229,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
       end
     end
 
-    def consensus_reached(_log, _transaction_id) do
+    def consensus_reached(log, transaction_id) do
+      send(self(), {:raft, :consensus_reached, log, transaction_id})
       :ok
     end
   end

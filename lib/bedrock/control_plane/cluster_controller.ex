@@ -15,21 +15,21 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def request_to_rejoin(controller, node, services) do
     GenServer.call(controller, {:request_to_rejoin, node, services})
   catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+    :exit, {:noproc, _} -> {:error, :unavailable}
   end
 
   @spec get_sequencer(service()) :: {:ok, pid()} | {:error, :unavailable}
   def get_sequencer(controller) do
     GenServer.call(controller, :get_sequencer)
   catch
-    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
+    :exit, {:noproc, _} -> {:error, :unavailable}
   end
 
   @spec get_data_distributor(service()) :: {:ok, pid()} | {:error, :unavailable}
   def get_data_distributor(controller) do
     GenServer.call(controller, :get_data_distributor)
   catch
-    :exit, {:noproc, {GenServer, :cast, _}} -> {:error, :unavailable}
+    :exit, {:noproc, _} -> {:error, :unavailable}
   end
 
   @type t :: %__MODULE__{}

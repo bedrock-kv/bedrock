@@ -22,6 +22,7 @@ defmodule Bedrock.Cluster.Monitor do
     descriptor
     coordinator
     controller
+    timer_ref
   ]a
 
   @doc """
@@ -94,17 +95,17 @@ defmodule Bedrock.Cluster.Monitor do
     find_a_live_coordinator(t)
     |> case do
       {:ok, coordinator} ->
-        {:noreply, t |> change_coordinator(coordinator),
-         {:continue, :find_current_cluster_controller}}
+        {:noreply,
+         t
+         |> cancel_timer()
+         |> change_coordinator(coordinator), {:continue, :find_current_cluster_controller}}
 
       {:error, :unavailable} ->
-        Process.send_after(
-          self(),
-          :try_to_find_a_live_coordinator,
-          t.cluster.coordinator_ping_timeout_in_ms()
-        )
-
-        {:noreply, t |> change_coordinator(:unavailable)}
+        {:noreply,
+         t
+         |> cancel_timer()
+         |> change_coordinator(:unavailable)
+         |> set_timer(:try_to_find_a_live_coordinator)}
     end
   end
 
@@ -113,16 +114,17 @@ defmodule Bedrock.Cluster.Monitor do
     |> Coordinator.get_controller(100)
     |> case do
       {:ok, controller} ->
-        {:noreply, t |> change_cluster_controller(controller)}
+        {:noreply,
+         t
+         |> cancel_timer()
+         |> change_cluster_controller(controller)}
 
       {:error, :unavailable} ->
-        Process.send_after(
-          self(),
-          :try_to_find_current_cluster_controller,
-          t.cluster.coordinator_ping_timeout_in_ms()
-        )
-
-        {:noreply, t |> change_cluster_controller(:unavailable)}
+        {:noreply,
+         t
+         |> cancel_timer()
+         |> change_cluster_controller(:unavailable)
+         |> set_timer(:try_to_find_current_cluster_controller)}
     end
   end
 
@@ -155,22 +157,20 @@ defmodule Bedrock.Cluster.Monitor do
   def handle_info(:try_to_find_current_cluster_controller, t),
     do: {:noreply, t}
 
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) when t.controller == pid do
-    {:noreply, t |> change_cluster_controller(:unavailable),
-     {:continue, :find_current_cluster_controller}}
-  end
-
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, t),
-    do: {:noreply, t}
-
   @impl GenServer
   def handle_cast({:cluster_controller_replaced, :unavailable}, t) do
-    {:noreply, t |> change_cluster_controller(:unavailable),
-     {:continue, :find_current_cluster_controller}}
+    {:noreply,
+     t
+     |> cancel_timer()
+     |> change_cluster_controller(:unavailable), {:continue, :find_current_cluster_controller}}
   end
 
-  def handle_cast({:cluster_controller_replaced, cluster_controller}, t),
-    do: {:noreply, t |> change_cluster_controller(cluster_controller)}
+  def handle_cast({:cluster_controller_replaced, cluster_controller}, t) do
+    {:noreply,
+     t
+     |> cancel_timer()
+     |> change_cluster_controller(cluster_controller)}
+  end
 
   # Internals
 
@@ -221,16 +221,35 @@ defmodule Bedrock.Cluster.Monitor do
 
   def change_cluster_controller(t, controller)
       when controller == :unavailable or is_tuple(controller) do
+    Logger.debug("Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(controller)}")
+
     PubSub.publish(
       t.cluster,
       :cluster_controller_replaced,
       {:cluster_controller_replaced, controller}
     )
 
-    if is_tuple(controller) do
-      Process.monitor(controller)
-    end
-
     %{t | controller: controller}
+  end
+
+  @spec cancel_timer(t()) :: t()
+  def cancel_timer(%{timer_ref: nil} = t), do: t
+
+  def cancel_timer(%{timer_ref: timer_ref} = t) do
+    Process.cancel_timer(timer_ref)
+    %{t | timer_ref: nil}
+  end
+
+  @spec set_timer(t(), timer_name :: atom()) :: t()
+  def set_timer(%{timer_ref: nil} = t, timer_name) do
+    %{
+      t
+      | timer_ref:
+          Process.send_after(
+            self(),
+            timer_name,
+            t.cluster.coordinator_ping_timeout_in_ms()
+          )
+    }
   end
 end

@@ -30,6 +30,11 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     }
   end
 
+  def add_node(t, node, last_pong_received_at, services) do
+    :ets.insert(t.table, {node, last_pong_received_at, services})
+    t
+  end
+
   @spec alive?(t(), node(), now :: non_neg_integer()) :: boolean()
   def alive?(t, node, now) do
     :ets.lookup(t.table, node)

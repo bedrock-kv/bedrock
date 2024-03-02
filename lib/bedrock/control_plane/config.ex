@@ -7,6 +7,9 @@ defmodule Bedrock.ControlPlane.Config do
     # The parameters that are used to configure the cluster.
     parameters: nil,
 
+    # The policies that are used to configure the cluster.
+    policies: nil,
+
     # The layout of the transaction system.
     transaction_system_layout: nil
   ]
@@ -48,6 +51,13 @@ defmodule Bedrock.ControlPlane.Config do
       # The number of transaction resolvers that are to be made available as
       # part of the transaction system.
       desired_transaction_resolvers: 1
+    ]
+  end
+
+  defmodule Policies do
+    defstruct [
+      # Should nodes that volunteer to join the cluster be allowed to do so?
+      allow_volunteer_nodes_to_join: true
     ]
   end
 
@@ -131,6 +141,9 @@ defmodule Bedrock.ControlPlane.Config do
       otp_name: nil
     ]
   end
+
+  @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
+  def allow_volunteer_nodes_to_join?(t), do: t.policies.allow_volunteer_nodes_to_join
 
   @spec nodes(t()) :: [node()]
   def nodes(t), do: t.parameters.nodes

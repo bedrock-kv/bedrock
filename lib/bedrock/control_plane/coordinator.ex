@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator do
   use GenServer
 
+  alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.ClusterController
@@ -105,9 +106,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def handle_call(:get_controller, _from, t) when t.controller == :unavailable,
     do: {:reply, {:error, :unavailable}, t}
 
-  def handle_call(:get_controller, _from, t) when is_pid(t.controller),
-    do: {:reply, {:ok, {t.controller_otp_name, t.my_node}}, t}
-
   def handle_call(:get_controller, _from, t),
     do: {:reply, {:ok, t.controller}, t}
 
@@ -117,7 +115,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   end
 
   @impl GenServer
-  def handle_info({:raft, :leadership_changed, leadership}, t) do
+  def handle_info({:raft, :leadership_changed, {new_leader, epoch}}, t) do
     if is_pid(t.controller) and t.my_node == node(t.controller) do
       try do
         GenServer.stop(t.controller, :shutdown, 50)
@@ -127,13 +125,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     my_node = t.my_node
-    {new_leader, epoch} = leadership
 
     controller =
       case new_leader do
         :undecided -> :unavailable
         ^my_node -> start_controller_on_this_node(t, epoch)
-        other_node -> {t.controller_otp_name, other_node}
+        other_node -> :rpc.call(other_node, Process, :whereis, [t.controller_otp_name], 100)
       end
 
     {:noreply, t |> update_controller(controller)}
@@ -195,6 +192,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
              desired_get_read_version_proxies: 1,
              desired_commit_proxies: 1,
              desired_transaction_resolvers: 1
+           },
+           policies: %Policies{
+             allow_volunteer_nodes_to_join: true
            },
            transaction_system_layout: %Config.TransactionSystemLayout{
              storage_teams: [

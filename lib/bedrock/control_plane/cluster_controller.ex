@@ -130,8 +130,31 @@ defmodule Bedrock.ControlPlane.ClusterController do
     do: {:reply, {:ok, t.data_distributor}, t}
 
   def handle_call({:request_to_rejoin, node, services}, _from, t) do
-    IO.inspect({:request_to_rejoin, node, services}, label: "request_to_rejoin")
-    {:reply, :ok, t}
+    now = :erlang.monotonic_time(:millisecond)
+    t.node_tracking |> NodeTracking.update_last_pong_received_at(node, now)
+
+    result =
+      NodeTracking.services(t.node_tracking, node)
+      |> case do
+        :unknown ->
+          if Config.allow_volunteer_nodes_to_join?(t.config) do
+            t.node_tracking |> NodeTracking.add_node(node, now, services)
+            :ok
+          else
+            {:error, :nodes_must_be_added_by_an_administrator}
+          end
+
+        existing_services ->
+          if existing_services != services do
+            t.node_tracking |> NodeTracking.update_services(node, services)
+          end
+
+          :ok
+      end
+
+    IO.inspect(t.node_tracking.table |> :ets.tab2list())
+
+    {:reply, result, t}
   end
 
   @impl GenServer

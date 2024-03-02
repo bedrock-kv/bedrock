@@ -7,7 +7,7 @@ defmodule Bedrock.Service.Worker do
 
   @type t :: pid() | atom() | {atom(), Node.t()}
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name
-  @type timeout_in_ms :: :infinity | non_neg_integer()
+  @type timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec info(t(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
   @spec info(t(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, :unavailable}

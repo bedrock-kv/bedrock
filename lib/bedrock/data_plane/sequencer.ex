@@ -1,7 +1,12 @@
 defmodule Bedrock.DataPlane.Sequencer do
   use GenServer
+  use Bedrock, :types
 
   defstruct [:cluster, :controller, epoch: 0, latest_committed_version: <<>>]
+
+  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), epoch()) :: :ok
+  def invite_to_rejoin(t, controller, epoch),
+    do: GenServer.cast(t, {:invite_to_rejoin, controller, epoch})
 
   def start_link(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
@@ -23,9 +28,17 @@ defmodule Bedrock.DataPlane.Sequencer do
   end
 
   @impl GenServer
-  def handle_call(:next_read_version, _from, state),
-    do: {:reply, {:ok, state.latest_committed_version}, state}
+  def handle_cast({:recruitment_invitation, controller, epoch}, t)
+      when t.epoch >= epoch,
+      do: {:noreply, %{t | controller: controller, epoch: epoch}}
+
+  def handle_cast({:recruitment_invitation, _controller, _epoch}, t),
+    do: {:noreply, t}
 
   @impl GenServer
-  def handle_info(:die, _state), do: raise("die!")
+  def handle_call(:next_read_version, _from, t),
+    do: {:reply, {:ok, t.latest_committed_version}, t}
+
+  @impl GenServer
+  def handle_info(:die, _t), do: raise("die!")
 end

@@ -20,6 +20,10 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   @type t :: %__MODULE__{}
   @type tag :: integer()
 
+  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), epoch()) :: :ok
+  def invite_to_rejoin(t, controller, epoch),
+    do: GenServer.cast(t, {:invite_to_rejoin, controller, epoch})
+
   @spec storage_team_for_key(cluster :: binary(), key()) :: {:ok, Team.t()} | {:error, :not_found}
   def storage_team_for_key(cluster, key) do
     cluster

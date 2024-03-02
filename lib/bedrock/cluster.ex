@@ -34,6 +34,7 @@ defmodule Bedrock.Cluster do
 
       @default_descriptor_file_name "bedrock.cluster"
       @default_coordinator_ping_timeout_in_ms 300
+      @default_monitor_ping_timeout_in_ms 300
 
       @name unquote(name)
       @otp_name Cluster.otp_name(@name)
@@ -90,12 +91,25 @@ defmodule Bedrock.Cluster do
       end
 
       @doc """
-      Get the timeout in milliseconds for pinging the coordinator.
+      Get the timeout (in milliseconds) for pinging the coordinator.
       """
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
         config()
         |> Keyword.get(:coordinator_ping_timeout_in_ms, @default_coordinator_ping_timeout_in_ms)
+      end
+
+      @doc """
+      Get the timeout (in milliseconds) for a monitor process waiting to
+      receivea a ping from the currently active cluster controller. Once a
+      monitor has successfully joined a cluster, it will wait for a ping from
+      the controller. If it does not receive a ping within the timeout, it
+      will attempt to find a new controller.
+      """
+      @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
+      def monitor_ping_timeout_in_ms do
+        config()
+        |> Keyword.get(:monitor_ping_timeout_in_ms, @default_monitor_ping_timeout_in_ms)
       end
 
       ######################################################################
@@ -173,6 +187,10 @@ defmodule Bedrock.Cluster do
 
       @doc false
       def child_spec(opts), do: Bedrock.Cluster.child_spec([{:cluster, __MODULE__} | opts])
+
+      @doc false
+      def ping_nodes(nodes, cluster_controller, epoch),
+        do: otp_name(:monitor) |> Monitor.ping_nodes(nodes, cluster_controller, epoch)
     end
   end
 

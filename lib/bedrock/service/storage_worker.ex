@@ -4,7 +4,6 @@ defmodule Bedrock.Service.StorageWorker do
 
   @type name :: Bedrock.Service.Worker.name()
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
-  @type timeout_in_ms :: :infinity | non_neg_integer()
   @type fact_name ::
           Bedrock.Service.Worker.fact_name()
           | :durable_version
@@ -18,7 +17,6 @@ defmodule Bedrock.Service.StorageWorker do
     quote do
       @type name :: Bedrock.Service.StorageWorker.name()
       @type key_range :: Bedrock.Service.StorageWorker.key_range()
-      @type timeout_in_ms :: Bedrock.Service.StorageWorker.timeout_in_ms()
       @type fact_name :: Bedrock.Service.StorageWorker.fact_name()
     end
   end

@@ -2,8 +2,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
   use GenServer
 
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.Raft
+  alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
 
   require Logger
@@ -116,11 +118,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   @impl GenServer
   def handle_info({:raft, :leadership_changed, leadership}, t) do
-    if is_pid(t.controller) do
+    if is_pid(t.controller) and t.my_node == node(t.controller) do
       try do
         GenServer.stop(t.controller, :shutdown, 50)
-      rescue
-        _ -> :ok
+      catch
+        :exit, {:noproc, _} -> :ok
       end
     end
 
@@ -133,14 +135,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
         ^my_node -> start_controller_on_this_node(t, epoch)
         other_node -> {t.controller_otp_name, other_node}
       end
-
-    if is_pid(controller) do
-      GenServer.abcast(
-        [t.my_node | Node.list()],
-        t.cluster.otp_name(:monitor),
-        {:cluster_controller_replaced, {t.controller_otp_name, my_node}}
-      )
-    end
 
     {:noreply, t |> update_controller(controller)}
   end
@@ -162,19 +156,64 @@ defmodule Bedrock.ControlPlane.Coordinator do
   end
 
   def start_controller_on_this_node(t, epoch) do
-    DynamicSupervisor.start_child(
-      t.supervisor_otp_name,
-      {ClusterController,
-       [
-         cluster: t.cluster,
-         epoch: epoch,
-         coordinator: t.otp_name,
-         otp_name: t.controller_otp_name
-       ]}
-    )
-    |> case do
-      {:ok, controller} -> controller
+    with {:ok, coordinator_nodes} <- t.cluster.coordinator_nodes(),
+         {:ok, config} <- latest_safe_config(t, coordinator_nodes),
+         {:ok, controller} <-
+           DynamicSupervisor.start_child(
+             t.supervisor_otp_name,
+             {ClusterController,
+              [
+                cluster: t.cluster,
+                config: config,
+                epoch: epoch,
+                coordinator: t.otp_name,
+                otp_name: t.controller_otp_name
+              ]}
+           ) do
+      controller
+    else
       {:error, reason} -> raise "Bedrock: failed to start controller: #{inspect(reason)}"
+    end
+  end
+
+  def latest_safe_config(t, coordinator_nodes) do
+    t.raft
+    |> Raft.log()
+    |> Log.transactions_to(:newest_safe)
+    |> List.last()
+    |> case do
+      nil ->
+        {:ok,
+         %Config{
+           state: :initializing,
+           parameters: %Config.Parameters{
+             nodes: coordinator_nodes,
+             retransmission_rate_in_hz: 1000 / t.cluster.coordinator_ping_timeout_in_ms(),
+             replication_factor: 1,
+             desired_coordinators: length(coordinator_nodes),
+             desired_logs: 1,
+             desired_get_read_version_proxies: 1,
+             desired_commit_proxies: 1,
+             desired_transaction_resolvers: 1
+           },
+           transaction_system_layout: %Config.TransactionSystemLayout{
+             storage_teams: [
+               %Config.StorageTeamDescriptor{
+                 tag: 1,
+                 start_key: <<>>,
+                 storage_worker_ids: []
+               },
+               %Config.StorageTeamDescriptor{
+                 tag: 0,
+                 start_key: <<0xFF>>,
+                 storage_worker_ids: []
+               }
+             ]
+           }
+         }}
+
+      {_transaction_id, config} ->
+        {:ok, config}
     end
   end
 

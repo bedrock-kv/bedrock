@@ -116,11 +116,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   @impl GenServer
-  def handle_info({:timeout, :ping_all_nodes}, t) do
-    {:noreply,
-     t
-     |> ping_all_nodes()}
-  end
+  def handle_info({:timeout, :ping_all_nodes}, t),
+    do: {:noreply, t |> ping_all_nodes()}
 
   @impl GenServer
   def handle_call(:get_sequencer, _from, t),

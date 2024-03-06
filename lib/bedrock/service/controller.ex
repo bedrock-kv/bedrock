@@ -148,17 +148,9 @@ defmodule Bedrock.Service.Controller do
       |> Enum.reject(&Map.has_key?(t.workers, &1))
 
     if [] == worker_ids_to_start && map_size(t.workers) == 0 do
-      {:noreply, t, {:continue, :setup_first_instance}}
+      {:noreply, t}
     else
       {:noreply, t, {:continue, {:start_workers, worker_ids_to_start}}}
-    end
-  end
-
-  def handle_continue(:setup_first_instance, t) do
-    new_worker(t)
-    |> case do
-      {:ok, worker_id} -> {:noreply, t, {:continue, {:start_workers, [worker_id]}}}
-      {:error, reason} -> {:stop, reason}
     end
   end
 

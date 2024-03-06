@@ -96,8 +96,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
     }
   end
 
-  @spec init({any(), Bedrock.ControlPlane.Config.t(), any(), any(), any()}) ::
-          {:ok, Bedrock.ControlPlane.ClusterController.t(), {:continue, :recruiting}}
   @doc false
   @impl GenServer
   def init({cluster, config, epoch, coordinator, otp_name}) do
@@ -206,14 +204,13 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def try_to_invite_old_sequencer(t) do
     t.config
     |> Config.sequencer()
-    |> case do
-      nil -> t
-      sequencer -> t |> send_rejoin_invitation_to_sequencer(sequencer)
-    end
+    |> send_rejoin_invitation_to_sequencer(t)
   end
 
-  @spec send_rejoin_invitation_to_sequencer(t(), sequencer :: GenServer.name()) :: t()
-  def send_rejoin_invitation_to_sequencer(t, sequencer) do
+  @spec send_rejoin_invitation_to_sequencer(sequencer :: pid() | nil, t()) :: t()
+  def send_rejoin_invitation_to_sequencer(nil, t), do: t
+
+  def send_rejoin_invitation_to_sequencer(sequencer, t) do
     Sequencer.invite_to_rejoin(sequencer, self(), t.epoch)
     t |> add_expected_service(sequencer, :sequencer)
   end
@@ -224,15 +221,13 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def try_to_invite_old_data_distributor(t) do
     t.config
     |> Config.data_distributor()
-    |> case do
-      nil -> t
-      data_distributor -> t |> send_rejoin_invitation_to_data_distributor(data_distributor)
-    end
+    |> send_rejoin_invitation_to_data_distributor(t)
   end
 
-  @spec send_rejoin_invitation_to_data_distributor(t(), data_distributor :: GenServer.name()) ::
-          t()
-  def send_rejoin_invitation_to_data_distributor(t, data_distributor) do
+  @spec send_rejoin_invitation_to_data_distributor(data_distributor :: pid() | nil, t()) :: t()
+  def send_rejoin_invitation_to_data_distributor(nil, t), do: t
+
+  def send_rejoin_invitation_to_data_distributor(data_distributor, t) do
     DataDistributor.invite_to_rejoin(data_distributor, self(), t.epoch)
     t |> add_expected_service(data_distributor, :data_distributor)
   end

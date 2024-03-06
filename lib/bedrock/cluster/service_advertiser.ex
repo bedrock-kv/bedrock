@@ -5,7 +5,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   This GenServer is responsible for advertising the services that are available
   on the local node to the cluster controller. This is done by subscribing to
   the `:cluster_controller_replaced` topic and then advertising the services to
-  the controller when a new one is started.
+  the controller when the controller is replaced.
   """
   use GenServer
 
@@ -63,12 +63,8 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     t.controller
     |> ClusterController.request_to_rejoin(Node.self(), t.services)
     |> case do
-      :ok ->
-        IO.inspect({:advertise_services, t})
-        {:noreply, t}
-
-      {:error, :unavailable} ->
-        {:noreply, %{t | controller: :unavailable}}
+      :ok -> {:noreply, t}
+      {:error, :unavailable} -> {:noreply, %{t | controller: :unavailable}}
     end
 
     {:noreply, t}

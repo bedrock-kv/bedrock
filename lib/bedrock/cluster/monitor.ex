@@ -14,6 +14,7 @@ defmodule Bedrock.Cluster.Monitor do
   @type t :: %__MODULE__{
           node: node(),
           cluster: Module.t(),
+          path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
           coordinator: Coordinator.name() | :unavailable,
           controller: ClusterController.name() | :unavailable,
@@ -21,6 +22,7 @@ defmodule Bedrock.Cluster.Monitor do
         }
   defstruct node: nil,
             cluster: nil,
+            path_to_descriptor: nil,
             descriptor: nil,
             coordinator: :unavailable,
             controller: :unavailable,
@@ -78,14 +80,15 @@ defmodule Bedrock.Cluster.Monitor do
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     descriptor = opts[:descriptor] || raise "Missing :descriptor option"
-    otp_name = cluster.otp_name(:monitor)
+    path_to_descriptor = opts[:path_to_descriptor] || raise "Missing :path_to_descriptor option"
+    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
     %{
       id: otp_name,
       start: {
         GenServer,
         :start_link,
-        [__MODULE__, {cluster, descriptor}, [name: otp_name]]
+        [__MODULE__, {cluster, path_to_descriptor, descriptor}, [name: otp_name]]
       },
       restart: :permanent
     }
@@ -94,11 +97,12 @@ defmodule Bedrock.Cluster.Monitor do
   # GenServer
 
   @impl GenServer
-  def init({cluster, descriptor}) do
+  def init({cluster, path_to_descriptor, descriptor}) do
     t = %__MODULE__{
       node: Node.self(),
       cluster: cluster,
       descriptor: descriptor,
+      path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
       controller: :unavailable
     }

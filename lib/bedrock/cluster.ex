@@ -263,7 +263,7 @@ defmodule Bedrock.Cluster do
          cluster: cluster,
          descriptor: descriptor,
          path_to_descriptor: path_to_descriptor,
-         name: cluster.otp_name(:monitor)}
+         otp_name: cluster.otp_name(:monitor)}
         | children_for_services(cluster, cluster.advertised_services())
       ]
 

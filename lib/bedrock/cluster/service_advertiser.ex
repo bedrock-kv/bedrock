@@ -8,15 +8,50 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   the controller when the controller is replaced.
   """
   use GenServer
+  require Logger
 
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.Service.Worker
+  alias Bedrock.Service.Controller
 
-  defstruct [:cluster, :services, :controller, :directory]
+  @type t :: %__MODULE__{
+          cluster: Cluster.t(),
+          advertised_services: [atom()],
+          controller: ClusterController.t() | :unavailable
+        }
+  defstruct [:cluster, :advertised_services, :controller]
+
+  defmodule Directory do
+    @type t :: :ets.table()
+    @type id :: String.t()
+    @type class :: :log | :storage
+
+    @spec new() :: t()
+    def new(), do: :ets.new(:service_directory, [:ordered_set])
+
+    @spec insert(t(), id(), class(), pid()) :: :ok
+    def insert(t, id, service, pid) do
+      :ets.insert(t, {id, service, pid})
+      :ok
+    end
+
+    @spec remove(t(), String.t()) :: :ok
+    def remove(t, id) do
+      :ets.delete(t, id)
+      :ok
+    end
+
+    @spec lookup(t(), String.t()) :: any() | nil
+    def lookup(t, id), do: :ets.lookup(t, id) |> List.first()
+
+    @spec export(t()) :: [tuple()]
+    def export(t), do: :ets.tab2list(t)
+  end
 
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
-    services = opts[:services] || raise "Missing :services option"
+    advertised_services = opts[:services] || raise "Missing :services option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
     %{
@@ -26,7 +61,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
         :start_link,
         [
           __MODULE__,
-          {cluster, services},
+          {cluster, advertised_services},
           [name: otp_name]
         ]
       },
@@ -35,12 +70,11 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   end
 
   @impl GenServer
-  def init({cluster, services}) do
+  def init({cluster, advertised_services}) do
     t = %__MODULE__{
       cluster: cluster,
-      services: services,
-      controller: :unavailable,
-      directory: :ets.new(:service_directory, [])
+      advertised_services: advertised_services,
+      controller: :unavailable
     }
 
     PubSub.subscribe(cluster, :cluster_controller_replaced)
@@ -61,7 +95,11 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
 
   def handle_continue(:advertise_services, t) do
     t.controller
-    |> ClusterController.request_to_rejoin(Node.self(), t.services)
+    |> ClusterController.request_to_rejoin(
+      Node.self(),
+      t.advertised_services,
+      running_services(t)
+    )
     |> case do
       :ok -> {:noreply, t}
       {:error, :unavailable} -> {:noreply, %{t | controller: :unavailable}}
@@ -77,4 +115,38 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
 
   def handle_info({:cluster_controller_replaced, new_controller}, t),
     do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_services}}
+
+  @spec running_services(t()) :: [keyword()]
+  def running_services(t) do
+    t.advertised_services
+    |> Enum.flat_map(fn
+      service when service in [:transaction_log, :storage] ->
+        t.cluster.otp_name(service)
+        |> Controller.workers()
+        |> case do
+          {:error, reason} ->
+            Logger.error("Failed to get workers for #{service}: #{inspect(reason)}")
+            []
+
+          {:ok, worker_pids} ->
+            worker_pids |> gather_info_from_workers()
+        end
+
+      :coordination ->
+        []
+    end)
+  end
+
+  @spec gather_info_from_workers([pid()]) :: [keyword()]
+  def gather_info_from_workers(worker_pids) do
+    worker_pids
+    |> Enum.reduce([], fn worker_pid, list ->
+      worker_pid
+      |> Worker.info([:id, :otp_name, :kind, :pid])
+      |> case do
+        {:ok, info} -> [info | list]
+        _ -> list
+      end
+    end)
+  end
 end

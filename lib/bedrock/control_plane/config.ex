@@ -105,11 +105,11 @@ defmodule Bedrock.ControlPlane.Config do
   defmodule StorageTeamDescriptor do
     @type t :: %__MODULE__{}
     defstruct [
-      # The tag that identifies the team.
-      tag: nil,
-
       # The first key in the range of keys that the team is responsible for.
       start_key: nil,
+
+      # The tag that identifies the team.
+      tag: nil,
 
       # The list of storage workers that are responsible for the team.
       storage_worker_ids: []
@@ -122,9 +122,8 @@ defmodule Bedrock.ControlPlane.Config do
       # The set of tags that the log services.
       tags: [],
 
-      # The otp name of the log worker that is responsible for this set of
-      # tags.
-      log_worker: nil
+      # The id of the log worker that is responsible for this set of tags.
+      log_worker_id: nil
     ]
   end
 
@@ -151,13 +150,13 @@ defmodule Bedrock.ControlPlane.Config do
   @spec ping_rate_in_ms(t()) :: non_neg_integer()
   def ping_rate_in_ms(t), do: div(1000, t.parameters.ping_rate_in_hz)
 
-  @spec sequencer(t()) :: GenServer.name() | nil
+  @spec sequencer(t()) :: pid() | nil
   def sequencer(t), do: find_singleton_service(t, :sequencer)
 
-  @spec data_distributor(t()) :: GenServer.name() | nil
+  @spec data_distributor(t()) :: pid() | nil
   def data_distributor(t), do: find_singleton_service(t, :data_distributor)
 
-  @spec log_workers(t()) :: [GenServer.name()]
+  @spec log_workers(t()) :: [pid()]
   def log_workers(t), do: find_multiple_services(t, :log)
 
   def service_directory(%__MODULE__{
@@ -167,10 +166,12 @@ defmodule Bedrock.ControlPlane.Config do
       }),
       do: service_directory
 
+  @spec find_singleton_service(t(), atom()) :: pid() | nil
   defp find_singleton_service(%__MODULE__{} = t, service_type) do
     t |> service_directory() |> Enum.find(nil, &match?(%{type: ^service_type}, &1.otp_name))
   end
 
+  @spec find_multiple_services(t(), atom()) :: [pid()]
   defp find_multiple_services(%__MODULE__{} = t, service_type) do
     t |> service_directory() |> Enum.filter(&match?(%{type: ^service_type}, &1.otp_name))
   end

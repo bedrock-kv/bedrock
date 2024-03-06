@@ -12,6 +12,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   @supported_info ~w[
     durable_version
     id
+    pid
     path
     key_range
     kind
@@ -44,15 +45,15 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   def init({otp_name, controller, id, path}) do
     new_state(otp_name, controller, id, path)
     |> case do
-      {:ok, state} -> {:ok, state, {:continue, :report_health_to_controller}}
+      {:ok, t} -> {:ok, t, {:continue, :report_health_to_controller}}
       {:error, reason} -> {:stop, reason}
     end
   end
 
   @impl GenServer
-  def terminate(:normal, state) do
-    :ok = Writer.stop(state.writer, :normal)
-    :ok = Database.close(state.database)
+  def terminate(:normal, t) do
+    :ok = Writer.stop(t.writer, :normal)
+    :ok = Database.close(t.database)
     :normal
   end
 
@@ -82,40 +83,41 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   end
 
   @impl GenServer
-  def handle_call({:get, key, version, opts}, _from, state),
-    do: {:reply, state |> get(key, version, opts), state}
+  def handle_call({:get, key, version, opts}, _from, t),
+    do: {:reply, t |> get(key, version, opts), t}
 
-  def handle_call({:info, opts}, _from, state),
-    do: {:reply, state |> info(opts), state}
+  def handle_call({:info, opts}, _from, t),
+    do: {:reply, t |> info(opts), t}
 
   @impl GenServer
-  def handle_continue(:report_health_to_controller, state) do
-    Controller.report_worker_health(state.controller, state.id, :ok)
-    {:noreply, state}
+  def handle_continue(:report_health_to_controller, t) do
+    Controller.report_worker_health(t.controller, t.id, :ok)
+    {:noreply, t}
   end
 
   defp ensure_directory_exists(path), do: File.mkdir_p(path)
 
-  defp get(state, key, version, opts),
-    do: Database.lookup(state.database, key, version, opts)
+  defp get(t, key, version, opts),
+    do: Database.lookup(t.database, key, version, opts)
 
-  defp info(state, opts) do
+  defp info(t, opts) do
     {:ok,
      opts
      |> Enum.reject(&(not Enum.member?(@supported_info, &1)))
      |> Enum.reduce([], fn
-       fact_name, acc -> [{fact_name, gather_info(fact_name, state)} | acc]
+       fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
      end)}
   end
 
-  defp gather_info(:durable_version, state), do: Database.last_durable_version(state.database)
-  defp gather_info(:id, state), do: state.id
-  defp gather_info(:key_range, state), do: Database.key_range(state.database)
+  defp gather_info(:durable_version, t), do: Database.last_durable_version(t.database)
+  defp gather_info(:pid, _state), do: self()
+  defp gather_info(:id, t), do: t.id
+  defp gather_info(:key_range, t), do: Database.key_range(t.database)
   defp gather_info(:kind, _state), do: :storage
-  defp gather_info(:n_objects, state), do: Database.info(state.database, :n_objects)
-  defp gather_info(:otp_name, state), do: state.otp_name
-  defp gather_info(:path, state), do: state.path
-  defp gather_info(:size_in_bytes, state), do: Database.info(state.database, :size_in_bytes)
+  defp gather_info(:n_objects, t), do: Database.info(t.database, :n_objects)
+  defp gather_info(:otp_name, t), do: t.otp_name
+  defp gather_info(:path, t), do: t.path
+  defp gather_info(:size_in_bytes, t), do: Database.info(t.database, :size_in_bytes)
   defp gather_info(:supported_info, _state), do: @supported_info
-  defp gather_info(:utilization, state), do: Database.info(state.database, :utilization)
+  defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)
 end

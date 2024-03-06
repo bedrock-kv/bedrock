@@ -22,9 +22,14 @@ defmodule Bedrock.Service.Controller do
 
   defguard is_controller(t) when is_pid(t) or is_atom(t) or is_tuple(t)
 
-  defmodule Info do
-    defstruct ~w[health otp_name]a
+  defmodule WorkerInfo do
     @type t :: %__MODULE__{}
+    defstruct [
+      #
+      :id,
+      :health,
+      :otp_name
+    ]
   end
 
   def wait_for_healthy(t, timeout) when is_controller(t) do
@@ -115,7 +120,8 @@ defmodule Bedrock.Service.Controller do
           |> case do
             {:ok, info} ->
               {info[:id],
-               %Info{
+               %WorkerInfo{
+                 id: info[:id],
                  health: info[:health] || :ok,
                  otp_name: info[:otp_name]
                }}
@@ -160,18 +166,19 @@ defmodule Bedrock.Service.Controller do
     workers =
       instance_ids
       |> Enum.into(t.workers, fn instance_id ->
-        start_worker_if_necessary(t, instance_id)
-        |> case do
-          {:ok, _pid} ->
-            {instance_id,
-             %Info{
-               health: :ok,
-               otp_name: otp_name_for_worker(t.otp_name, instance_id)
-             }}
+        health =
+          start_worker_if_necessary(t, instance_id)
+          |> case do
+            {:ok, _pid} -> :ok
+            {:error, reason} -> {:failed_to_start, reason}
+          end
 
-          {:error, reason} ->
-            {instance_id, %Info{health: {:failed_to_start, reason}}}
-        end
+        {instance_id,
+         %WorkerInfo{
+           id: instance_id,
+           health: health,
+           otp_name: otp_name_for_worker(t.otp_name, instance_id)
+         }}
       end)
 
     {:noreply, %{t | workers: workers} |> recompute_controller_health()}

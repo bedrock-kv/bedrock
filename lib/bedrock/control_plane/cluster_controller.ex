@@ -20,10 +20,20 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def send_pong(controller, from_node),
     do: GenServer.cast(controller, {:pong, from_node})
 
-  @spec request_to_rejoin(service(), node(), [atom()], timeout_in_ms()) ::
+  @spec request_to_rejoin(service(), node(), [atom()], [keyword()], timeout_in_ms()) ::
           :ok | {:error, :unavailable}
-  def request_to_rejoin(controller, node, services, timeout_in_ms \\ 5_000) do
-    GenServer.call(controller, {:request_to_rejoin, node, services}, timeout_in_ms)
+  def request_to_rejoin(
+        controller,
+        node,
+        advertised_services,
+        running_services,
+        timeout_in_ms \\ 5_000
+      ) do
+    GenServer.call(
+      controller,
+      {:request_to_rejoin, node, advertised_services, running_services},
+      timeout_in_ms
+    )
   catch
     :exit, {:noproc, _} -> {:error, :unavailable}
   end
@@ -98,20 +108,22 @@ defmodule Bedrock.ControlPlane.ClusterController do
        config: config,
        otp_name: otp_name,
        coordinator: coordinator,
-       node_tracking: NodeTracking.new(Config.nodes(config), Config.ping_rate_in_ms(config)),
+       node_tracking: NodeTracking.new(Config.nodes(config)),
        service_directory: ServiceDirectory.new()
-     }, {:continue, :recruiting}}
+     }, {:continue, :notify_and_lock}}
   end
 
   @impl GenServer
-  def handle_continue(:recruiting, t) do
-    t =
-      t
-      |> ping_all_nodes()
-      |> try_to_invite_old_sequencer()
-      |> try_to_invite_old_data_distributor()
-      |> try_to_lock_old_logs()
+  def handle_continue(:notify_and_lock, t) do
+    {:noreply,
+     t
+     |> ping_all_nodes()
+     |> try_to_invite_old_sequencer()
+     |> try_to_invite_old_data_distributor()
+     |> try_to_lock_old_logs()}
+  end
 
+  def handle_continue(:track_rejoins, t) do
     {:noreply, t}
   end
 
@@ -126,32 +138,43 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def handle_call(:get_data_distributor, _from, t),
     do: {:reply, {:ok, t.data_distributor}, t}
 
-  def handle_call({:request_to_rejoin, node, services}, _from, t) do
+  def handle_call({:request_to_rejoin, node, advertised_services, running_services}, _from, t) do
+    handle_request_to_rejoin(t, node, advertised_services, running_services)
+    |> case do
+      :ok -> {:reply, :ok, t, {:continue, :track_rejoins}}
+      {:error, _reason} = error -> {:reply, error, t}
+    end
+  end
+
+  @spec handle_request_to_rejoin(t(), node(), [atom()], []) ::
+          :ok | {:error, :nodes_must_be_added_by_an_administrator}
+  def handle_request_to_rejoin(t, node, advertised_services, running_services) do
+    advertised_services = Enum.sort(advertised_services)
     now = :erlang.monotonic_time(:millisecond)
-    t.node_tracking |> NodeTracking.update_last_pong_received_at(node, now)
 
-    result =
-      NodeTracking.services(t.node_tracking, node)
-      |> case do
-        :unknown ->
-          if Config.allow_volunteer_nodes_to_join?(t.config) do
-            t.node_tracking |> NodeTracking.add_node(node, now, services)
-            :ok
-          else
-            {:error, :nodes_must_be_added_by_an_administrator}
-          end
+    IO.inspect(
+      "advertised_services: #{inspect(advertised_services)}, running_services: #{inspect(running_services)}"
+    )
 
-        existing_services ->
-          if existing_services != services do
-            t.node_tracking |> NodeTracking.update_services(node, services)
-          end
-
+    t.node_tracking
+    |> NodeTracking.update_last_pong_received_at(node, now)
+    |> NodeTracking.advertised_services(node)
+    |> case do
+      :unknown ->
+        if Config.allow_volunteer_nodes_to_join?(t.config) do
+          t.node_tracking |> NodeTracking.add_node(node, now, advertised_services)
           :ok
-      end
+        else
+          {:error, :nodes_must_be_added_by_an_administrator}
+        end
 
-    IO.inspect(t.node_tracking.table |> :ets.tab2list())
+      ^advertised_services ->
+        :ok
 
-    {:reply, result, t}
+      _existing_services ->
+        t.node_tracking |> NodeTracking.update_advertised_services(node, advertised_services)
+        :ok
+    end
   end
 
   @impl GenServer

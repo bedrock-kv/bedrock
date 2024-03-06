@@ -12,7 +12,7 @@ defmodule Bedrock.Service.Storage.Supervisor do
       Keyword.get(opts, :default_worker) ||
         Bedrock.Service.StorageWorker.Basalt
 
-    otp_name = cluster.otp_name(:storage_system)
+    otp_name = cluster.otp_name(:storage)
 
     %{
       id: __MODULE__,

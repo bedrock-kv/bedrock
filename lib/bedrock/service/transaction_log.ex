@@ -13,7 +13,7 @@ defmodule Bedrock.Service.TransactionLog do
 
   @spec wait_for_healthy(t(), :infinity | non_neg_integer()) :: :ok | {:error, any()}
   def wait_for_healthy(cluster, timeout) do
-    cluster.otp_name(:transaction_log_controller)
+    cluster.otp_name(:transaction_log)
     |> Bedrock.Service.Controller.wait_for_healthy(timeout)
   end
 

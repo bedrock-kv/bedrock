@@ -92,7 +92,7 @@ defmodule Bedrock.Service.Manifest do
   defp check_module_is_storage_worker(worker) do
     if :attributes
        |> worker.module_info()
-       |> Enum.member?({:behaviour, [Bedrock.Worker]}) do
+       |> Enum.member?({:behaviour, [Bedrock.Service.WorkerBehaviour]}) do
       :ok
     else
       {:error, :worker_module_does_not_implement_behaviour}

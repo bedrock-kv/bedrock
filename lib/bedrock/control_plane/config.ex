@@ -134,10 +134,7 @@ defmodule Bedrock.ControlPlane.Config do
       id: nil,
 
       # The type of the service.
-      type: nil,
-
-      # The otp name of the service.
-      otp_name: nil
+      type: nil
     ]
   end
 

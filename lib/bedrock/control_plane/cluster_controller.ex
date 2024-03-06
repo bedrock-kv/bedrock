@@ -127,7 +127,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @impl GenServer
   def handle_info({:timeout, :ping_all_nodes}, t),
-    do: {:noreply, t |> ping_all_nodes()}
+    do: {:noreply, t |> ping_all_nodes() |> deal_with_dead_nodes()}
 
   @impl GenServer
   def handle_call(:get_sequencer, _from, t),
@@ -147,38 +147,30 @@ defmodule Bedrock.ControlPlane.ClusterController do
   @spec handle_request_to_rejoin(t(), node(), [atom()], []) ::
           :ok | {:error, :nodes_must_be_added_by_an_administrator}
   def handle_request_to_rejoin(t, node, advertised_services, running_services) do
-    advertised_services = Enum.sort(advertised_services)
     now = :erlang.monotonic_time(:millisecond)
-
-    IO.inspect(
-      "advertised_services: #{inspect(advertised_services)}, running_services: #{inspect(running_services)}"
-    )
 
     t.node_tracking
     |> NodeTracking.update_last_pong_received_at(node, now)
-    |> NodeTracking.advertised_services(node)
-    |> case do
-      :unknown ->
-        if Config.allow_volunteer_nodes_to_join?(t.config) do
-          t.node_tracking |> NodeTracking.add_node(node, now, advertised_services)
-          :ok
-        else
-          {:error, :nodes_must_be_added_by_an_administrator}
-        end
+    |> NodeTracking.update_advertised_services(node, advertised_services)
 
-      ^advertised_services ->
-        :ok
-
-      _existing_services ->
-        t.node_tracking |> NodeTracking.update_advertised_services(node, advertised_services)
-        :ok
+    if t.node_tracking |> NodeTracking.authorized?(node) do
+      handle_update_to_running_services(t, node, running_services)
+    else
+      {:error, :nodes_must_be_added_by_an_administrator}
     end
+  end
+
+  @spec handle_update_to_running_services(t(), node(), []) :: :ok
+  def handle_update_to_running_services(_t, _node, _running_services) do
+    :ok
   end
 
   @impl GenServer
   def handle_cast({:pong, node}, t) do
+    now = :erlang.monotonic_time(:millisecond)
+
     t.node_tracking
-    |> NodeTracking.update_last_pong_received_at(node, :erlang.monotonic_time(:millisecond))
+    |> NodeTracking.update_last_pong_received_at(node, now)
 
     {:noreply, t}
   end
@@ -194,7 +186,16 @@ defmodule Bedrock.ControlPlane.ClusterController do
     |> set_timer(:ping_all_nodes, Config.ping_rate_in_ms(t.config))
   end
 
-  def recruit_missing_services(t) do
+  def deal_with_dead_nodes(t) do
+    now = :erlang.monotonic_time(:millisecond)
+
+    t.node_tracking
+    |> NodeTracking.dead_nodes(now, 3 * Config.ping_rate_in_ms(t.config))
+    |> Enum.each(fn dead_node ->
+      IO.inspect(dead_node, label: "Dead node")
+      t.node_tracking |> NodeTracking.down(dead_node)
+    end)
+
     t
   end
 

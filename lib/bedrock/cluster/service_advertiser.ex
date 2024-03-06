@@ -101,8 +101,15 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
       running_services(t)
     )
     |> case do
-      :ok -> {:noreply, t}
-      {:error, :unavailable} -> {:noreply, %{t | controller: :unavailable}}
+      :ok ->
+        {:noreply, t}
+
+      {:error, :unavailable} ->
+        {:noreply, %{t | controller: :unavailable}}
+
+      {:error, :nodes_must_be_added_by_an_administrator} ->
+        Logger.error("This node must be added to the cluster by an administrator")
+        {:noreply, t}
     end
 
     {:noreply, t}
@@ -124,12 +131,15 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
         t.cluster.otp_name(service)
         |> Controller.workers()
         |> case do
+          {:ok, worker_pids} ->
+            worker_pids |> gather_info_from_workers()
+
+          {:error, :unavailable} ->
+            []
+
           {:error, reason} ->
             Logger.error("Failed to get workers for #{service}: #{inspect(reason)}")
             []
-
-          {:ok, worker_pids} ->
-            worker_pids |> gather_info_from_workers()
         end
 
       :coordination ->

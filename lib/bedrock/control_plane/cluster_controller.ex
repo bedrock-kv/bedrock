@@ -26,9 +26,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
     do: GenServer.cast(controller, {:new_worker, node, worker_info})
 
   @spec request_to_rejoin(service(), node(), [atom()], [keyword()]) ::
-          :ok | {:error, :unavailable}
+          :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   @spec request_to_rejoin(service(), node(), [atom()], [keyword()], timeout_in_ms()) ::
-          :ok | {:error, :unavailable}
+          :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   def request_to_rejoin(
         controller,
         node,

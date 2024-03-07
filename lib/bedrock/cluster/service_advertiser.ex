@@ -26,33 +26,6 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   def notify_of_new_worker(service_advertiser, worker),
     do: GenServer.cast(service_advertiser, {:new_worker, worker})
 
-  defmodule Directory do
-    @type t :: :ets.table()
-    @type id :: String.t()
-    @type class :: :log | :storage
-
-    @spec new() :: t()
-    def new(), do: :ets.new(:service_directory, [:ordered_set])
-
-    @spec insert(t(), id(), class(), pid()) :: :ok
-    def insert(t, id, service, pid) do
-      :ets.insert(t, {id, service, pid})
-      :ok
-    end
-
-    @spec remove(t(), String.t()) :: :ok
-    def remove(t, id) do
-      :ets.delete(t, id)
-      :ok
-    end
-
-    @spec lookup(t(), String.t()) :: any() | nil
-    def lookup(t, id), do: :ets.lookup(t, id) |> List.first()
-
-    @spec export(t()) :: [tuple()]
-    def export(t), do: :ets.tab2list(t)
-  end
-
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     advertised_services = opts[:services] || raise "Missing :services option"

@@ -17,9 +17,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     t
   end
 
-  @spec add_node(t(), node(), integer(), services :: [atom()], authorized :: boolean()) :: t()
-  def add_node(t, node, last_pong_received_at, services, authorized) do
-    :ets.insert(t, {node, last_pong_received_at, services, :up, authorized})
+  @spec add_node(t(), node(), authorized :: boolean()) :: t()
+  def add_node(t, node, authorized) do
+    :ets.insert(t, {node, :unknown, :unknown, :up, authorized})
     t
   end
 
@@ -32,6 +32,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     ])
   end
 
+  @spec exists?(t(), node()) :: boolean()
+  def exists?(t, node), do: [] != :ets.lookup(t, node)
+
   @spec alive?(t(), node()) :: boolean()
   def alive?(t, node) do
     :ets.lookup(t, node)
@@ -39,7 +42,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
       [] ->
         false
 
-      [{^node, :unknown, _services, up_down, _authorized}] ->
+      [{^node, _last_seen_at, _services, up_down, _authorized}] ->
         :up == up_down
     end
   end
@@ -49,7 +52,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     :ets.lookup(t, node)
     |> case do
       [] -> false
-      [{^node, _last_pong_received_at, _services, _up_down, authorized}] -> authorized
+      [{^node, _last_seen_at, _services, _up_down, authorized}] -> authorized
     end
   end
 
@@ -60,15 +63,15 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
       [] ->
         :unknown
 
-      [{^node, _last_pong_received_at, advertised_services, _up_down, _authorized}] ->
+      [{^node, _last_seen_at, advertised_services, _up_down, _authorized}] ->
         advertised_services
     end
   end
 
-  @spec update_last_pong_received_at(t(), node(), last_pong_received_at :: integer()) ::
+  @spec update_last_seen_at(t(), node(), last_seen_at :: integer()) ::
           t()
-  def update_last_pong_received_at(t, node, last_pong_received_at) do
-    :ets.update_element(t, node, [{2, last_pong_received_at}, {4, :up}])
+  def update_last_seen_at(t, node, last_seen_at) do
+    :ets.update_element(t, node, [{2, last_seen_at}, {4, :up}])
     t
   end
 

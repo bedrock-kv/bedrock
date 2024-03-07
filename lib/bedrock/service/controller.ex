@@ -3,6 +3,7 @@ defmodule Bedrock.Service.Controller do
 
   alias Bedrock.Service.Worker
   alias Bedrock.Service.Manifest
+  alias Bedrock.Cluster.ServiceAdvertiser
 
   defstruct ~w[
     cluster
@@ -259,8 +260,19 @@ defmodule Bedrock.Service.Controller do
     |> otp_name_for_worker(id)
     |> Process.whereis()
     |> case do
-      nil -> start_worker(t, id)
-      pid -> {:ok, pid}
+      nil ->
+        start_worker(t, id)
+        |> case do
+          {:ok, pid} ->
+            notify_service_advertiser_of_new_worker(t, pid)
+            {:ok, pid}
+
+          error ->
+            error
+        end
+
+      pid ->
+        {:ok, pid}
     end
   end
 
@@ -283,6 +295,9 @@ defmodule Bedrock.Service.Controller do
       )
     end
   end
+
+  def notify_service_advertiser_of_new_worker(t, pid),
+    do: ServiceAdvertiser.notify_of_new_worker(t.cluster.otp_name(:service_advertiser), pid)
 
   @spec check_manifest_id(manifest :: Manifest.t(), id :: worker_id()) ::
           :ok | {:error, :id_in_manifest_does_not_match}

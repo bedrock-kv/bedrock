@@ -22,6 +22,10 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
         }
   defstruct [:cluster, :advertised_services, :controller]
 
+  @spec notify_of_new_worker(service_advertiser :: GenServer.name(), worker :: pid()) :: :ok
+  def notify_of_new_worker(service_advertiser, worker),
+    do: GenServer.cast(service_advertiser, {:new_worker, worker})
+
   defmodule Directory do
     @type t :: :ets.table()
     @type id :: String.t()
@@ -116,6 +120,24 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   end
 
   @impl GenServer
+  def handle_cast({:new_worker, worker_pid}, t) do
+    gather_info_from_worker(worker_pid)
+    |> case do
+      {:ok, info} ->
+        t.controller
+        |> ClusterController.notify_of_new_worker(
+          Node.self(),
+          info
+        )
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, t}
+  end
+
+  @impl GenServer
   def handle_info({:cluster_controller_replaced, new_controller}, t)
       when t.controller == new_controller,
       do: {:noreply, t}
@@ -151,12 +173,14 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   def gather_info_from_workers(worker_pids) do
     worker_pids
     |> Enum.reduce([], fn worker_pid, list ->
-      worker_pid
-      |> Worker.info([:id, :otp_name, :kind, :pid])
+      gather_info_from_worker(worker_pid)
       |> case do
         {:ok, info} -> [info | list]
         _ -> list
       end
     end)
   end
+
+  def gather_info_from_worker(worker_pid),
+    do: Worker.info(worker_pid, [:id, :otp_name, :kind, :pid])
 end

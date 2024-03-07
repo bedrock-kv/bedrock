@@ -18,7 +18,8 @@ defmodule Bedrock.Cluster.Monitor do
           descriptor: Descriptor.t(),
           coordinator: Coordinator.name() | :unavailable,
           controller: ClusterController.name() | :unavailable,
-          timer_ref: reference() | nil
+          timer_ref: reference() | nil,
+          mode: :passive | :active
         }
   defstruct node: nil,
             cluster: nil,
@@ -26,7 +27,8 @@ defmodule Bedrock.Cluster.Monitor do
             descriptor: nil,
             coordinator: :unavailable,
             controller: :unavailable,
-            timer_ref: nil
+            timer_ref: nil,
+            mode: :active
 
   @doc """
   Ping all of the nodes in the given cluster.
@@ -82,13 +84,14 @@ defmodule Bedrock.Cluster.Monitor do
     descriptor = opts[:descriptor] || raise "Missing :descriptor option"
     path_to_descriptor = opts[:path_to_descriptor] || raise "Missing :path_to_descriptor option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
+    mode = opts[:mode] || :active
 
     %{
       id: otp_name,
       start: {
         GenServer,
         :start_link,
-        [__MODULE__, {cluster, path_to_descriptor, descriptor}, [name: otp_name]]
+        [__MODULE__, {cluster, path_to_descriptor, descriptor, mode}, [name: otp_name]]
       },
       restart: :permanent
     }
@@ -97,14 +100,15 @@ defmodule Bedrock.Cluster.Monitor do
   # GenServer
 
   @impl GenServer
-  def init({cluster, path_to_descriptor, descriptor}) do
+  def init({cluster, path_to_descriptor, descriptor, mode}) do
     t = %__MODULE__{
       node: Node.self(),
       cluster: cluster,
       descriptor: descriptor,
       path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
-      controller: :unavailable
+      controller: :unavailable,
+      mode: mode
     }
 
     {:ok, t, {:continue, :find_a_live_coordinator}}
@@ -273,7 +277,9 @@ defmodule Bedrock.Cluster.Monitor do
   end
 
   @spec set_timer(t(), timer_name :: atom(), timeout_in_ms()) :: t()
-  def set_timer(%{timer_ref: nil} = t, name, timeout_in_ms) do
+  def set_timer(%{timer_ref: nil, mode: :active} = t, name, timeout_in_ms) do
     %{t | timer_ref: Process.send_after(self(), {:timeout, name}, timeout_in_ms)}
   end
+
+  def set_timer(t, _name, _timeout_in_ms), do: t
 end

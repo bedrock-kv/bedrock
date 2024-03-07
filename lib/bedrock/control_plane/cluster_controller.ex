@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   use GenServer
 
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
   alias Bedrock.ControlPlane.Config
@@ -20,34 +21,36 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def send_pong(controller, from_node),
     do: GenServer.cast(controller, {:pong, from_node})
 
+  @spec notify_of_new_worker(service(), node(), keyword()) :: :ok
+  def notify_of_new_worker(controller, node, worker_info),
+    do: GenServer.cast(controller, {:new_worker, node, worker_info})
+
+  @spec request_to_rejoin(service(), node(), [atom()], [keyword()]) ::
+          :ok | {:error, :unavailable}
   @spec request_to_rejoin(service(), node(), [atom()], [keyword()], timeout_in_ms()) ::
           :ok | {:error, :unavailable}
   def request_to_rejoin(
         controller,
         node,
         advertised_services,
-        running_services,
+        services,
         timeout_in_ms \\ 5_000
       ) do
     GenServer.call(
       controller,
-      {:request_to_rejoin, node, advertised_services, running_services},
+      {:request_to_rejoin, node, advertised_services, services},
       timeout_in_ms
     )
   catch
     :exit, {:noproc, _} -> {:error, :unavailable}
   end
 
-  @spec get_sequencer(service()) :: {:ok, pid()} | {:error, :unavailable}
-  def get_sequencer(controller) do
-    GenServer.call(controller, :get_sequencer)
-  catch
-    :exit, {:noproc, _} -> {:error, :unavailable}
-  end
-
-  @spec get_data_distributor(service()) :: {:ok, pid()} | {:error, :unavailable}
-  def get_data_distributor(controller) do
-    GenServer.call(controller, :get_data_distributor)
+  @spec get_transaction_system_layout(service()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :initializing | :unavailable}
+  @spec get_transaction_system_layout(service(), timeout_in_ms()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :initializing | :unavailable}
+  def get_transaction_system_layout(controller, timeout_in_ms \\ 5_000) do
+    GenServer.call(controller, :get_transaction_system_layout, timeout_in_ms)
   catch
     :exit, {:noproc, _} -> {:error, :unavailable}
   end
@@ -60,7 +63,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
           sequencer: GenServer.name(),
           data_distributor: GenServer.name(),
           coordinator: pid(),
-          node_tracking: NodeTracking.t()
+          node_tracking: NodeTracking.t(),
+          transaction_system_layout: TransactionSystemLayout.t(),
+          events: [term()]
         }
   defstruct [
     :epoch,
@@ -72,7 +77,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
     :coordinator,
     :node_tracking,
     :service_directory,
-    :timer_ref
+    :timer_ref,
+    :transaction_system_layout,
+    :events
   ]
 
   @doc false
@@ -107,7 +114,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
        otp_name: otp_name,
        coordinator: coordinator,
        node_tracking: NodeTracking.new(Config.nodes(config)),
-       service_directory: ServiceDirectory.new()
+       service_directory: ServiceDirectory.new(),
+       events: []
      }, {:continue, :notify_and_lock}}
   end
 
@@ -121,61 +129,75 @@ defmodule Bedrock.ControlPlane.ClusterController do
      |> try_to_lock_old_logs()}
   end
 
-  def handle_continue(:track_rejoins, t) do
-    {:noreply, t}
+  def handle_continue(:process_events, %{events: []} = t), do: {:noreply, t}
+
+  def handle_continue(:process_events, t) do
+    {:noreply, t.events |> Enum.reduce(%{t | events: []}, &handle_event(&1, &2)),
+     {:continue, :process_events}}
   end
 
   @impl GenServer
   def handle_info({:timeout, :ping_all_nodes}, t),
-    do: {:noreply, t |> ping_all_nodes() |> deal_with_dead_nodes()}
+    do: {:noreply, t |> ping_all_nodes() |> determine_dead_nodes(), {:continue, :process_events}}
 
   @impl GenServer
-  def handle_call(:get_sequencer, _from, t),
-    do: {:reply, {:ok, t.sequencer}, t}
+  def handle_call(:get_transaction_system_layout, _from, t)
+      when is_nil(t.transaction_system_layout),
+      do: {:reply, {:error, :initializing}, t}
 
-  def handle_call(:get_data_distributor, _from, t),
-    do: {:reply, {:ok, t.data_distributor}, t}
+  def handle_call(:get_transaction_system_layout, _from, t),
+    do: {:reply, {:ok, t.transaction_system_layout}, t}
 
-  def handle_call({:request_to_rejoin, node, advertised_services, running_services}, _from, t) do
-    handle_request_to_rejoin(t, node, advertised_services, running_services)
+  def handle_call({:request_to_rejoin, node, advertised_services, services}, _from, t) do
+    handle_request_to_rejoin(t, node, advertised_services, services)
     |> case do
-      :ok -> {:reply, :ok, t, {:continue, :track_rejoins}}
+      {:ok, t} -> {:reply, :ok, t, {:continue, :process_events}}
       {:error, _reason} = error -> {:reply, error, t}
     end
   end
 
+  @impl GenServer
+  def handle_cast({:pong, node}, t),
+    do: {:noreply, t |> update_node_last_seen_at(node), {:continue, :process_events}}
+
+  def handle_cast({:new_worker, node, worker_info}, t) do
+    {:noreply, t |> add_event({:node_added_worker, node, worker_info}),
+     {:continue, :process_events}}
+  end
+
+  #
+
   @spec handle_request_to_rejoin(t(), node(), [atom()], []) ::
-          :ok | {:error, :nodes_must_be_added_by_an_administrator}
-  def handle_request_to_rejoin(t, node, advertised_services, running_services) do
-    now = :erlang.monotonic_time(:millisecond)
+          {:ok, t()} | {:error, :nodes_must_be_added_by_an_administrator}
+  def handle_request_to_rejoin(t, node, advertised_services, services) do
+    t =
+      t
+      |> maybe_add_node(node)
+      |> update_node_last_seen_at(node)
+      |> update_advertised_services(node, advertised_services)
 
-    t.node_tracking
-    |> NodeTracking.update_last_pong_received_at(node, now)
-    |> NodeTracking.update_advertised_services(node, advertised_services)
-
-    if t.node_tracking |> NodeTracking.authorized?(node) do
-      handle_update_to_running_services(t, node, running_services)
+    if NodeTracking.authorized?(t.node_tracking, node) do
+      {:ok, services |> Enum.reduce(t, &add_event(&2, {:node_added_worker, node, &1}))}
     else
       {:error, :nodes_must_be_added_by_an_administrator}
     end
   end
 
-  @spec handle_update_to_running_services(t(), node(), []) :: :ok
-  def handle_update_to_running_services(_t, _node, _running_services) do
-    :ok
+  def handle_event(event, t) do
+    IO.inspect(event, label: "Event")
+    t
   end
 
-  @impl GenServer
-  def handle_cast({:pong, node}, t) do
-    now = :erlang.monotonic_time(:millisecond)
+  @spec maybe_add_event(t(), boolean(), term()) :: t()
+  def maybe_add_event(t, false, _event), do: t
+  def maybe_add_event(t, true, event), do: t |> add_event(event)
 
-    t.node_tracking
-    |> NodeTracking.update_last_pong_received_at(node, now)
+  @spec add_event(t(), term()) :: t()
+  def add_event(t, event),
+    do: %{t | events: [event | t.events]}
 
-    {:noreply, t}
-  end
-
-  #
+  @spec now() :: integer()
+  def now, do: :erlang.monotonic_time(:millisecond)
 
   @spec ping_all_nodes(t()) :: t()
   def ping_all_nodes(t) do
@@ -186,16 +208,39 @@ defmodule Bedrock.ControlPlane.ClusterController do
     |> set_timer(:ping_all_nodes, Config.ping_rate_in_ms(t.config))
   end
 
-  def deal_with_dead_nodes(t) do
-    now = :erlang.monotonic_time(:millisecond)
+  @spec update_node_last_seen_at(t(), node()) :: t()
+  def update_node_last_seen_at(t, node) do
+    node_up = not NodeTracking.alive?(t.node_tracking, node)
+    NodeTracking.update_last_seen_at(t.node_tracking, node, now())
+    t |> maybe_add_event(node_up, {:node_up, node})
+  end
 
+  @spec determine_dead_nodes(t()) :: t()
+  def determine_dead_nodes(t) do
     t.node_tracking
-    |> NodeTracking.dead_nodes(now, 3 * Config.ping_rate_in_ms(t.config))
-    |> Enum.each(fn dead_node ->
-      IO.inspect(dead_node, label: "Dead node")
+    |> NodeTracking.dead_nodes(now(), 3 * Config.ping_rate_in_ms(t.config))
+    |> Enum.reduce(t, fn dead_node, t ->
       t.node_tracking |> NodeTracking.down(dead_node)
+      t |> add_event({:node_down, dead_node})
     end)
+  end
 
+  @spec maybe_add_node(t(), node()) :: t()
+  def maybe_add_node(t, node) do
+    if not NodeTracking.exists?(t.node_tracking, node) do
+      NodeTracking.add_node(
+        t.node_tracking,
+        node,
+        Config.allow_volunteer_nodes_to_join?(t.config)
+      )
+    end
+
+    t
+  end
+
+  @spec update_advertised_services(t(), node(), [atom()]) :: t()
+  def update_advertised_services(t, node, advertised_services) do
+    NodeTracking.update_advertised_services(t.node_tracking, node, advertised_services)
     t
   end
 

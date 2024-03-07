@@ -255,6 +255,8 @@ defmodule Bedrock.Cluster do
 
   @impl Supervisor
   def init({cluster, path_to_descriptor, descriptor}) do
+    advertised_services = cluster.advertised_services()
+
     children =
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
@@ -263,8 +265,13 @@ defmodule Bedrock.Cluster do
          cluster: cluster,
          descriptor: descriptor,
          path_to_descriptor: path_to_descriptor,
-         otp_name: cluster.otp_name(:monitor)}
-        | children_for_services(cluster, cluster.advertised_services())
+         otp_name: cluster.otp_name(:monitor),
+         mode:
+           if(advertised_services == [],
+             do: :passive,
+             else: :active
+           )}
+        | children_for_services(cluster, advertised_services)
       ]
 
     Supervisor.init(children, strategy: :one_for_one)

@@ -181,40 +181,47 @@ defmodule Bedrock.ControlPlane.Coordinator do
     |> case do
       nil ->
         {:ok,
-         %Config{
-           state: :initializing,
-           parameters: %Config.Parameters{
-             nodes: coordinator_nodes,
-             retransmission_rate_in_hz: 1000 / t.cluster.coordinator_ping_timeout_in_ms(),
-             replication_factor: 1,
-             desired_coordinators: length(coordinator_nodes),
-             desired_logs: 1,
-             desired_get_read_version_proxies: 1,
-             desired_commit_proxies: 1,
-             desired_transaction_resolvers: 1
-           },
-           policies: %Policies{
-             allow_volunteer_nodes_to_join: true
-           },
-           transaction_system_layout: %Config.TransactionSystemLayout{
-             storage_teams: [
-               %Config.StorageTeamDescriptor{
-                 tag: 1,
-                 start_key: <<>>,
-                 storage_worker_ids: []
-               },
-               %Config.StorageTeamDescriptor{
-                 tag: 0,
-                 start_key: <<0xFF>>,
-                 storage_worker_ids: []
-               }
-             ]
-           }
-         }}
+         initial_config_for_new_system(
+           coordinator_nodes,
+           1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
+         )}
 
       {_transaction_id, config} ->
         {:ok, config}
     end
+  end
+
+  def initial_config_for_new_system(coordinator_nodes, retransmission_rate_in_hz) do
+    %Config{
+      state: :initializing,
+      parameters: %Config.Parameters{
+        nodes: coordinator_nodes,
+        retransmission_rate_in_hz: retransmission_rate_in_hz,
+        replication_factor: 1,
+        desired_coordinators: length(coordinator_nodes),
+        desired_logs: 1,
+        desired_get_read_version_proxies: 1,
+        desired_commit_proxies: 1,
+        desired_transaction_resolvers: 1
+      },
+      policies: %Policies{
+        allow_volunteer_nodes_to_join: true
+      },
+      transaction_system_layout: %Config.TransactionSystemLayout{
+        storage_teams: [
+          %Config.StorageTeamDescriptor{
+            tag: 1,
+            start_key: <<>>,
+            storage_worker_ids: []
+          },
+          %Config.StorageTeamDescriptor{
+            tag: 0,
+            start_key: <<0xFF>>,
+            storage_worker_ids: []
+          }
+        ]
+      }
+    }
   end
 
   def update_controller(t, new_controller), do: %{t | controller: new_controller}

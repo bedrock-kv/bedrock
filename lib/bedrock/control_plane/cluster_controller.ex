@@ -2,7 +2,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   @moduledoc """
   The controller is a singleton within the cluster. It is created by the winner
   of the coordinator election. It is responsible for bringing up the data plane
-  and putting the cluster into a writable t.
+  and putting the cluster into a writable state.
   """
   use GenServer
 
@@ -60,8 +60,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
           otp_name: atom(),
           cluster: Module.t(),
           config: Config.t(),
-          sequencer: GenServer.name(),
-          data_distributor: GenServer.name(),
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
           transaction_system_layout: TransactionSystemLayout.t(),
@@ -72,8 +70,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
     :otp_name,
     :cluster,
     :config,
-    :sequencer,
-    :data_distributor,
     :coordinator,
     :node_tracking,
     :service_directory,

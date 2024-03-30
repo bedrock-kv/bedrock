@@ -1,10 +1,9 @@
 defmodule Bedrock.ControlPlane.Coordinator do
   use GenServer
 
-  alias Bedrock.ControlPlane.Config.Policies
-  alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
-  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
@@ -204,7 +203,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
         desired_commit_proxies: 1,
         desired_transaction_resolvers: 1
       },
-      policies: %Policies{
+      policies: %Config.Policies{
         allow_volunteer_nodes_to_join: true
       },
       transaction_system_layout: %Config.TransactionSystemLayout{

@@ -92,12 +92,21 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   @doc """
   Interrogate the key-value store for specific metadata. Supported queries are:
 
-  - `:n_objects` - the number of objects in the store
-  - `:size_in_bytes` - the size of the store in bytes
-  - `:utilization` - the utilization of the store (expressed in a range from 0.0 to 1.0)
+  * `:n_keys` - the number of keys in the store
+  * `:size_in_bytes` - the size of the store in bytes
+  * `:utilization` - the utilization of the database (as a percentage, expressed
+    as a float between 0.0 and 1.0)
   """
-  @spec info(pkv :: t(), :n_objects | :size_in_bytes | :utilization) :: any()
-  def info(pkv, :n_objects), do: pkv |> :dets.info(:no_objects)
+  @spec info(pkv :: t(), :n_keys | :size_in_bytes | :utilization) :: any() | :undefined
+  def info(pkv, :n_keys) do
+    # We don't count the :last_version key
+    pkv
+    |> :dets.info(:no_objects)
+    |> case do
+      0 -> 0
+      n_keys -> n_keys - 1
+    end
+  end
 
   def info(pkv, :utilization) do
     pkv
@@ -109,6 +118,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   end
 
   def info(pkv, :size_in_bytes), do: pkv |> :dets.info(:file_size)
+
+  def info(_pkv, _query), do: :undefined
 
   @doc """
   Prune the key-value store of any keys that have a `nil` value.

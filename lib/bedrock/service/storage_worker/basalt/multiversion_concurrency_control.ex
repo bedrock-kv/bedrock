@@ -18,7 +18,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
              read_concurrency: true,
              write_concurrency: true
            ]),
-         true <- :ets.insert(mvcc, [{:last_version, version}]) do
+         true <-
+           :ets.insert(mvcc, [
+             {:newest_version, version},
+             {:oldest_version, version}
+           ]) do
       mvcc
     end
   end
@@ -43,15 +47,15 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
         ) ::
           version()
   def apply_transactions!(mvcc, transactions) do
-    latest_version = mvcc |> last_version()
+    latest_version = mvcc |> newest_version()
 
     transactions
     |> Enum.reduce(latest_version, fn
-      {version, _kv_pairs}, last_version
-      when last_version != :undefined and version <= last_version ->
-        raise "Transactions must be applied in order (new #{version}, old #{last_version})"
+      {version, _kv_pairs}, newest_version
+      when newest_version != :undefined and version <= newest_version ->
+        raise "Transactions must be applied in order (new #{version}, old #{newest_version})"
 
-      {version, _kv_pairs} = transaction, _last_version ->
+      {version, _kv_pairs} = transaction, _newest_version ->
         :ok = apply_one_transaction!(mvcc, transaction)
         version
     end)
@@ -66,7 +70,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
     :ets.insert(
       mvcc,
       [
-        {:last_version, version}
+        {:newest_version, version}
         | kv_pairs
           |> Enum.map(fn
             {key, value} -> {versioned_key(key, version), value}
@@ -102,7 +106,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   in the transaction timeline.
   """
   @spec lookup(mvcc :: t(), key(), version()) ::
-          {:ok, value()} | {:error, :not_found}
+          {:ok, value()} | {:error, :not_found | :transaction_too_old}
   def lookup(mvcc, key, version) do
     mvcc
     |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
@@ -113,7 +117,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
         |> to_lookup_result()
 
       :"$end_of_table" ->
-        {:error, :not_found}
+        cond do
+          version > newest_version(mvcc) -> {:error, :transaction_too_new}
+          version < oldest_version(mvcc) -> {:error, :transaction_too_old}
+          true -> {:error, :not_found}
+        end
     end
   end
 
@@ -130,9 +138,22 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   Get the last transaction version performed on the table. If no transaction
   has been performed then nil is returned.
   """
-  @spec last_version(mvcc :: t()) :: version() | nil
-  def last_version(mvcc) do
-    :ets.lookup(mvcc, :last_version)
+  @spec newest_version(mvcc :: t()) :: version() | nil
+  def newest_version(mvcc) do
+    :ets.lookup(mvcc, :newest_version)
+    |> case do
+      [{_, version}] -> version
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Get the oldest possible transaction that can be read by the system. All
+  transactions prior to this will have been coalesced.
+  """
+  @spec oldest_version(mvcc :: t()) :: version() | nil
+  def oldest_version(mvcc) do
+    :ets.lookup(mvcc, :oldest_version)
     |> case do
       [{_, version}] -> version
       [] -> nil
@@ -151,7 +172,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   """
   @spec transaction_at_version(mvcc :: t(), version :: :latest | version()) :: transaction() | nil
   def transaction_at_version(mvcc, :latest) do
-    last_version(mvcc)
+    newest_version(mvcc)
     |> case do
       nil -> nil
       version -> transaction_at_version(mvcc, version)
@@ -181,6 +202,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   """
   @spec purge_keys_older_than_version(mvcc :: t(), version()) :: {:ok, n_purged :: pos_integer()}
   def purge_keys_older_than_version(mvcc, version) do
+    :ets.insert(mvcc, [{:oldest_version, version}])
     n_purged = :ets.select_delete(mvcc, match_version_lt(version))
     {:ok, n_purged}
   end

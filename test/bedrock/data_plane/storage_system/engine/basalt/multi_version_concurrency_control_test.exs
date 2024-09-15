@@ -30,7 +30,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControlTes
                MVCC.apply_one_transaction!(mvcc, {1, [{"c", "d"}, {"e", nil}, {"a", "b"}]})
 
       assert [
-               {:last_version, 1},
+               {:newest_version, 1},
+               {:oldest_version, 0},
                {{"a", 1}, "b"},
                {{"c", 1}, "d"},
                {{"e", 1}, nil}
@@ -53,7 +54,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControlTes
                )
 
       assert [
-               {:last_version, 2},
+               {:newest_version, 2},
+               {:oldest_version, 0},
                {{"a", 1}, "b"},
                {{"a", 2}, "b2"},
                {{"c", 1}, "d"},

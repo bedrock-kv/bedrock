@@ -58,7 +58,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
         |> Stream.map(fn keys -> :ok = Keyspace.insert_many(keyspace, keys) end)
         |> Stream.run()
 
-        {:ok, %{}}
+        {:ok, %{}, %{}}
       end
     )
   end
@@ -70,39 +70,42 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
     latest_committed_version
   end
 
+  def last_committed_version(database),
+    do: MVCC.newest_version(database.mvcc)
+
   @spec lookup(database :: t(), key(), version()) ::
-          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
+          {:ok, value()}
+          | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
   @spec lookup(database :: t(), key(), version(), opts :: keyword()) ::
-          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
+          {:ok, value()}
+          | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
   def lookup(database, key, version, opts \\ []) do
-    wait_if_necessary(database, version, opts[:timeout])
+    lookup_in_mvcc(database, key, version)
     |> case do
-      :ok -> lookup_in_mvcc(database, key, version)
-      {:error, _reason} = error -> error
+      {:error, :transaction_too_new} ->
+        wait_for_version(database, version, opts[:timeout] || 0)
+        |> case do
+          :ok -> lookup_in_mvcc(database, key, version)
+          {:error, :timeout} -> {:error, :transaction_too_new}
+        end
+
+      other ->
+        other
     end
   end
-
-  defp wait_if_necessary(database, version, timeout) do
-    if version > latest_committed_version(database) do
-      wait_for_version(database, version, timeout)
-    else
-      :ok
-    end
-  end
-
-  defp latest_committed_version(database),
-    do: database.mvcc |> MVCC.last_version()
-
-  defp wait_for_version(_database, _version, nil),
-    do: {:error, :transaction_too_new}
 
   defp wait_for_version(database, version, timeout),
     do: database.waiting_list |> WaitingList.wait_for_version(version, timeout)
 
+  @spec lookup_in_mvcc(database :: t(), key(), version()) ::
+          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
   defp lookup_in_mvcc(database, key, version) do
-    case database.mvcc |> MVCC.lookup(key, version) do
-      {:error, :not_found} -> lookup_in_pkv(database, key, version)
+    MVCC.lookup(database.mvcc, key, version)
+    |> case do
       {:ok, _value} = result -> result
+      {:error, :not_found} -> lookup_in_pkv(database, key, version)
+      {:error, :transaction_too_new} = result -> result
+      {:error, :transaction_too_old} = result -> result
     end
   end
 
@@ -123,16 +126,35 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
     end
   end
 
-  @spec info(database :: t(), :n_objects | :utilization | :size_in_bytes) :: any() | :undefined
+  @doc """
+  Returns information about the database. The following statistics are
+  available:
+
+  * `:n_keys` - the number of keys in the store
+  * `:size_in_bytes` - the size of the database in bytes
+  * `:utilization` - the utilization of the database (as a percentage, expressed
+    as a float between 0.0 and 1.0)
+  """
+  @spec info(database :: t(), :n_keys | :utilization | :size_in_bytes) :: any() | :undefined
   def info(database, stat),
     do: database.pkv |> PersistentKeyValues.info(stat)
 
+  @doc """
+  Ensures that the database is durable up to the given version. This is done by
+  applying all transactions up to the given version to the the underlying
+  persistent key value store. Versions of values older than the given version
+  are pruned from the store.
+  """
   @spec ensure_durability_to_version(database :: t(), :latest | version()) :: :ok
   def ensure_durability_to_version(database, version) do
-    if transaction = database.mvcc |> MVCC.transaction_at_version(version) do
-      database.pkv |> PersistentKeyValues.apply_transaction(transaction)
-      database.keyspace |> Keyspace.apply_transaction(transaction)
+    %{pkv: pkv, mvcc: mvcc, keyspace: keyspace} = database
+
+    if transaction = MVCC.transaction_at_version(mvcc, version) do
+      PersistentKeyValues.apply_transaction(pkv, transaction)
+      Keyspace.apply_transaction(keyspace, transaction)
     end
+
+    {:ok, _n_purged} = MVCC.purge_keys_older_than_version(mvcc, version)
 
     :ok
   end

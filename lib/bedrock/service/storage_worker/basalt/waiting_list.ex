@@ -7,11 +7,15 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
 
   defstruct ~w[version waiting]a
 
+  @type name :: GenServer.name()
+
+  @spec wait_for_version(name(), version :: any(), timeout :: any()) :: :ok | {:error, :timeout}
+  def wait_for_version(_waiting_list, _version, 0), do: {:error, :timeout}
+
   def wait_for_version(waiting_list, version, timeout) do
     GenServer.call(waiting_list, {:wait_for_version, version}, timeout)
   catch
-    :exit, {:timeout, _} ->
-      {:error, :timeout}
+    :exit, {:timeout, _} -> {:error, :timeout}
   end
 
   def notify_version_committed(waiting_list, version),

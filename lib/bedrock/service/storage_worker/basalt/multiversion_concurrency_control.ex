@@ -48,7 +48,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
     transactions
     |> Enum.reduce(latest_version, fn
       {version, _kv_pairs}, last_version
-      when version <= last_version ->
+      when last_version != :undefined and version <= last_version ->
         raise "Transactions must be applied in order (new #{version}, old #{last_version})"
 
       {version, _kv_pairs} = transaction, _last_version ->

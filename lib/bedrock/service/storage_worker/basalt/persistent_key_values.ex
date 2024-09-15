@@ -37,7 +37,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     lookup(pkv, :last_version)
     |> case do
       nil -> :undefined
-      {_, version} -> version
+      version -> version
     end
   end
 
@@ -59,15 +59,16 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   """
   @spec apply_transaction(pkv :: t(), Transaction.t()) :: :ok | {:error, term()}
   def apply_transaction(pkv, transaction) do
-    with true <-
-           is_newer?(Transaction.version(transaction), last_version(pkv)) ||
+    with transaction_version <- Transaction.version(transaction),
+         true <-
+           is_newer?(transaction_version, last_version(pkv)) ||
              {:error, :out_of_order},
          :ok <-
            :dets.insert(pkv, [
-             {:last_version, Transaction.version(transaction)}
+             {:last_version, transaction_version}
              | Transaction.key_values(transaction)
-           ]),
-         :ok <- :dets.sync(pkv) do
+           ]) do
+      :dets.sync(pkv)
     end
   end
 

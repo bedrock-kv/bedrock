@@ -45,7 +45,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   @spec key_range(database :: t()) :: key_range() | :undefined
   def key_range(database), do: database.pkv |> PersistentKeyValues.key_range()
 
-  @spec load_keys(Database.t()) :: :ok
+  @spec load_keys(t()) :: :ok
   def load_keys(database) do
     %{keyspace: keyspace, pkv: pkv} = database
 

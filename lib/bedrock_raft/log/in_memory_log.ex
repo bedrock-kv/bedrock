@@ -5,6 +5,8 @@ defmodule Bedrock.Raft.Log.InMemoryLog do
   testing and development, but should not be used in production.
   """
 
+  alias Bedrock.Raft
+
   defstruct ~w[
     format
     transactions

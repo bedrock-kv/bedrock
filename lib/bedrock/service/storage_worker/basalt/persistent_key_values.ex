@@ -5,7 +5,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
 
   alias Bedrock.DataPlane.Transaction
 
-  @type t :: :dets.tid()
+  @type t :: :dets.tab_name()
 
   @spec open(atom(), String.t()) :: {:ok, t()} | {:error, any()}
   def open(name, file_path) when is_atom(name) do
@@ -30,7 +30,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     end
   end
 
-  @spec key_range(t()) :: StorageSystem.Engine.key_range() | :undefined
+  @spec key_range(t()) :: key_range() | :undefined
   def key_range(pkv) do
     lookup(pkv, :key_range)
     |> case do
@@ -82,7 +82,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     {:ok, n_pruned}
   end
 
-  @spec stream_keys(pkv :: t()) :: Stream.t()
+  @spec stream_keys(pkv :: t()) :: Enumerable.t()
   def stream_keys(pkv) do
     Stream.resource(
       fn -> :dets.first(pkv) end,

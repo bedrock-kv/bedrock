@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
+  alias Bedrock.Service.TransactionLogWorker.Limestone.Segment
+
   @doc """
   """
   @spec check_out(any(), new_path :: String.t()) :: {:ok, Segment.t()} | {:error, term()}

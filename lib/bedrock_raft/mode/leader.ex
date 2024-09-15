@@ -85,7 +85,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           Raft.quorum(),
           [Raft.service()],
           Log.t(),
-          interface :: Module.t()
+          interface :: module()
         ) ::
           t()
   def new(term, quorum, nodes, log, interface) do

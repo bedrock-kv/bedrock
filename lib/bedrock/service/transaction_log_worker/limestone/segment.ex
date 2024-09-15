@@ -69,7 +69,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
   efficiency, we read the entire segment into memory and then stream from
   there, decoding the key/value pairs as they are consumed.
   """
-  @spec stream!(segment :: t()) :: Stream.t()
+  @spec stream!(segment :: t()) :: Enumerable.t()
   def stream!(segment) do
     Stream.resource(
       fn ->

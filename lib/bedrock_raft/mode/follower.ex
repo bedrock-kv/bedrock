@@ -44,7 +44,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
 
-  @spec new(Raft.election_term(), Log.t(), interface :: Module.t()) :: t()
+  @spec new(Raft.election_term(), Log.t(), interface :: module()) :: t()
   def new(term, log, interface) do
     %__MODULE__{
       term: term,

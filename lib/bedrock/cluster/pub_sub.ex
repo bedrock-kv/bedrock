@@ -26,7 +26,7 @@ defmodule Bedrock.Cluster.PubSub do
   Publish a message to a topic. This will send the message to all subscribing
   processes.
   """
-  @spec publish(cluster :: Module.t(), topic :: any(), message :: any()) :: :ok
+  @spec publish(cluster :: module(), topic :: any(), message :: any()) :: :ok
   def publish(cluster, topic, message) do
     cluster.otp_name(:pub_sub)
     |> Registry.dispatch(
@@ -51,7 +51,7 @@ defmodule Bedrock.Cluster.PubSub do
   to the given topic. The current process will receive future messages published
   for the given topic.
   """
-  @spec subscribe(cluster :: Module.t(), topic :: any()) :: :ok
+  @spec subscribe(cluster :: module(), topic :: any()) :: :ok
   def subscribe(cluster, topic) do
     cluster.otp_name(:pub_sub)
     |> Registry.register(topic, self())
@@ -64,7 +64,7 @@ defmodule Bedrock.Cluster.PubSub do
   subscriber to the given topic. The cuurent process will no longer receive
   messages for the given topic.
   """
-  @spec unsubscribe(cluster :: Module.t(), topic :: any()) :: :ok
+  @spec unsubscribe(cluster :: module(), topic :: any()) :: :ok
   def unsubscribe(cluster, topic) do
     cluster.otp_name(:pub_sub)
     |> Registry.unregister_match(topic, self())

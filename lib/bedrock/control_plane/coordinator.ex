@@ -10,8 +10,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   require Logger
 
+  @type service :: GenServer.name()
+
   @type t :: %__MODULE__{
-          cluster: Module.t(),
+          cluster: module(),
           controller: :unavailable | {atom(), atom()} | pid(),
           controller_otp_name: atom(),
           my_node: node(),

@@ -63,7 +63,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           Raft.quorum(),
           [Raft.service()],
           log :: Log.t(),
-          interface :: Module.t()
+          interface :: module()
         ) ::
           t()
   def new(term, quorum, nodes, log, interface) do

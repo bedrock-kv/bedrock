@@ -6,10 +6,10 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   use GenServer
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.Service.TransactionLogWorker
@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   @type t :: %__MODULE__{
           epoch: Bedrock.epoch(),
           otp_name: atom(),
-          cluster: Module.t(),
+          cluster: module(),
           config: Config.t(),
           coordinator: pid(),
           node_tracking: NodeTracking.t(),

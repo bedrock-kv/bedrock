@@ -1,5 +1,5 @@
 defmodule Bedrock.Raft.Interface do
-  alias Bedrock.Raft.Log
+  alias Bedrock.Raft
 
   @type cancel_timer_fn :: (-> :ok)
 
@@ -33,5 +33,5 @@ defmodule Bedrock.Raft.Interface do
   Signal that a consensus has been reached up to the given transaction by the
   quorum of Raft nodes.
   """
-  @callback consensus_reached(Log.t(), Raft.transaction_id()) :: :ok
+  @callback consensus_reached(Raft.Log.t(), Raft.transaction_id()) :: :ok
 end

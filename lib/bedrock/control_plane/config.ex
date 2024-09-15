@@ -1,7 +1,13 @@
 defmodule Bedrock.ControlPlane.Config do
+  alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  @type t :: %__MODULE__{}
+  @type t :: %__MODULE__{
+          state: atom(),
+          parameters: map(),
+          policies: Policies.t(),
+          transaction_system_layout: TransactionSystemLayout.t()
+        }
   defstruct [
     # The current state of the cluster.
     state: :initializing,
@@ -15,6 +21,10 @@ defmodule Bedrock.ControlPlane.Config do
     # The layout of the transaction system.
     transaction_system_layout: nil
   ]
+
+  def valid_states, do: ~w[
+    initializing
+  ]a
 
   @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
   def allow_volunteer_nodes_to_join?(t), do: t.policies.allow_volunteer_nodes_to_join

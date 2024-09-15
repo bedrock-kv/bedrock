@@ -2,6 +2,11 @@ defmodule Bedrock.DataPlane.TransactionSystem.ReadVersionProxy do
   use GenServer
   alias Bedrock.ControlPlane.ClusterController
 
+  @type t :: %__MODULE__{
+          controller: ClusterController.t(),
+          sequencer: GenServer.name()
+        }
+
   defstruct ~w[controller sequencer]a
 
   def next_read_version(proxy), do: GenServer.call(proxy, :get_read_version)

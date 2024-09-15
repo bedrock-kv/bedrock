@@ -15,6 +15,7 @@ defmodule Bedrock.Raft do
   """
 
   @type election_term :: non_neg_integer()
+  @type index :: non_neg_integer()
   @type quorum :: non_neg_integer()
   @type service :: atom() | pid() | {atom(), node()}
   @type leadership :: {leader :: :undecided | service(), election_term()}
@@ -35,7 +36,7 @@ defmodule Bedrock.Raft do
           mode: %Follower{} | %Candidate{} | %Leader{},
           nodes: [service()],
           quorum: non_neg_integer(),
-          interface: Module.t()
+          interface: module()
         }
   defstruct ~w[
       me
@@ -52,7 +53,7 @@ defmodule Bedrock.Raft do
           me :: service(),
           nodes :: [service()],
           log :: Log.t(),
-          interface :: Module.t()
+          interface :: module()
         ) :: t()
   def new(me, nodes, log, interface) do
     # Assume that we'll always vote for ourselves, so majority - 1.

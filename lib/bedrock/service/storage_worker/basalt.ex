@@ -110,13 +110,13 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   end
 
   defp gather_info(:durable_version, t), do: Database.last_durable_version(t.database)
-  defp gather_info(:pid, _state), do: self()
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_range, t), do: Database.key_range(t.database)
   defp gather_info(:kind, _state), do: :storage
-  defp gather_info(:n_objects, t), do: Database.info(t.database, :n_objects)
+  defp gather_info(:n_keys, t), do: Database.info(t.database, :n_keys)
   defp gather_info(:otp_name, t), do: t.otp_name
   defp gather_info(:path, t), do: t.path
+  defp gather_info(:pid, _state), do: self()
   defp gather_info(:size_in_bytes, t), do: Database.info(t.database, :size_in_bytes)
   defp gather_info(:supported_info, _state), do: @supported_info
   defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)

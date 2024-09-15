@@ -100,7 +100,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
     @type t :: %__MODULE__{}
   end
 
-  @spec writer(Segment.t()) :: {:ok, Writer.t()} | {:error, atom()}
+  @spec writer(t()) :: {:ok, Writer.t()} | {:error, atom()}
   def writer(segment) do
     with {:ok, fd} <-
            :file.open(segment.path |> String.to_charlist(), [:write, :read, :raw, :binary]),

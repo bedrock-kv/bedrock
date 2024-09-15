@@ -2,7 +2,7 @@ defmodule Bedrock.Service.TransactionLogWorker do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  @type name :: Bedrock.Service.Worker.name()
+  @type name :: Bedrock.Service.Worker.t()
   @type fact_name :: Bedrock.Service.Worker.fact_name() | :path
 
   defmacro __using__(:types) do

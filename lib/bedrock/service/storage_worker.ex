@@ -2,7 +2,7 @@ defmodule Bedrock.Service.StorageWorker do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  @type name :: Bedrock.Service.Worker.name()
+  @type name :: Bedrock.Service.Worker.t()
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
   @type fact_name ::
           Bedrock.Service.Worker.fact_name()

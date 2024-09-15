@@ -4,6 +4,7 @@ defmodule Bedrock.Service.Controller do
   alias Bedrock.Service.Worker
   alias Bedrock.Service.Manifest
   alias Bedrock.Cluster.ServiceAdvertiser
+  alias Bedrock.Service.StorageWorker
 
   defstruct ~w[
     cluster
@@ -47,7 +48,7 @@ defmodule Bedrock.Service.Controller do
   def report_worker_health(t, worker_id, health) when is_controller(t),
     do: GenServer.cast(t, {:worker_health, worker_id, health})
 
-  @spec workers(t :: controller_name()) :: {:ok, [Engine.t()]} | {:error, term()}
+  @spec workers(t :: controller_name()) :: {:ok, [StorageWorker.name()]} | {:error, term()}
   def workers(t) when is_controller(t) do
     GenServer.call(t, :workers)
   catch

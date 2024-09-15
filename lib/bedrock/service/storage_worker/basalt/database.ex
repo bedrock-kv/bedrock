@@ -66,7 +66,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   @spec apply_transactions(database :: t(), transactions :: [transaction()]) :: version()
   def apply_transactions(database, transactions) do
     latest_committed_version = MVCC.apply_transactions!(database.mvcc, transactions)
-    database.waiting_list |> WaitingList.notify_version_committed(latest_committed_version)
+    WaitingList.notify_version_committed(database.waiting_list, latest_committed_version)
     latest_committed_version
   end
 
@@ -76,14 +76,14 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   @spec lookup(database :: t(), key(), version()) ::
           {:ok, value()}
           | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
-  @spec lookup(database :: t(), key(), version(), opts :: keyword()) ::
+  @spec lookup(database :: t(), key(), version(), timeout_in_ms :: non_neg_integer()) ::
           {:ok, value()}
           | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
-  def lookup(database, key, version, opts \\ []) do
+  def lookup(database, key, version, timeout_in_ms \\ 0) do
     lookup_in_mvcc(database, key, version)
     |> case do
       {:error, :transaction_too_new} ->
-        wait_for_version(database, version, opts[:timeout] || 0)
+        wait_for_version(database, version, timeout_in_ms)
         |> case do
           :ok -> lookup_in_mvcc(database, key, version)
           {:error, :timeout} -> {:error, :transaction_too_new}
@@ -97,15 +97,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   defp wait_for_version(database, version, timeout),
     do: database.waiting_list |> WaitingList.wait_for_version(version, timeout)
 
-  @spec lookup_in_mvcc(database :: t(), key(), version()) ::
-          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
   defp lookup_in_mvcc(database, key, version) do
     MVCC.lookup(database.mvcc, key, version)
     |> case do
-      {:ok, _value} = result -> result
       {:error, :not_found} -> lookup_in_pkv(database, key, version)
-      {:error, :transaction_too_new} = result -> result
-      {:error, :transaction_too_old} = result -> result
+      result -> result
     end
   end
 

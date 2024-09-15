@@ -5,6 +5,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
   """
   use GenServer
 
+  alias Bedrock.DataPlane.Version
+
   defstruct ~w[version waiting]a
 
   @type name :: GenServer.name()
@@ -30,9 +32,12 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
         {:wait_for_version, version},
         from,
         %{version: current_version} = state
-      )
-      when version > current_version do
-    {:noreply, %{state | waiting: [{from, version} | state.waiting]}}
+      ) do
+    if Version.older?(version, current_version) do
+      {:reply, :ok, state}
+    else
+      {:noreply, %{state | waiting: [{version, from} | state.waiting]}}
+    end
   end
 
   def handle_call({:wait_for_version, _version}, _from, state),
@@ -42,8 +47,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
     do: {:noreply, %{state | version: version}}
 
   def handle_cast({:version_committed, committed_version}, state) do
-    new_wait_list =
-      state.wait_list
+    waiting =
+      state.waiting
       |> Enum.reduce([], fn
         {version, _from} = entry, acc when version > committed_version ->
           [entry | acc]
@@ -53,6 +58,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
           acc
       end)
 
-    {:noreply, %{state | wait_list: new_wait_list}}
+    {:noreply, %{state | version: committed_version, waiting: waiting}}
   end
 end

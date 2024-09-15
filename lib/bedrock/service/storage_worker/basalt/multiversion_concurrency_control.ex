@@ -7,6 +7,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
+  alias Bedrock.DataPlane.Version
+
   @type t :: :ets.table()
 
   @spec new(otp_name :: atom(), version()) :: t()
@@ -106,22 +108,26 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   in the transaction timeline.
   """
   @spec lookup(mvcc :: t(), key(), version()) ::
-          {:ok, value()} | {:error, :not_found | :transaction_too_old}
+          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
   def lookup(mvcc, key, version) do
-    mvcc
-    |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
-    |> case do
-      {[match], _continuation} ->
-        match
-        |> value_from_lookup()
-        |> to_lookup_result()
+    if Version.newer?(version, newest_version(mvcc)) do
+      {:error, :transaction_too_new}
+    else
+      mvcc
+      |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
+      |> case do
+        {[match], _continuation} ->
+          match
+          |> value_from_lookup()
+          |> to_lookup_result()
 
-      :"$end_of_table" ->
-        cond do
-          version > newest_version(mvcc) -> {:error, :transaction_too_new}
-          version < oldest_version(mvcc) -> {:error, :transaction_too_old}
-          true -> {:error, :not_found}
-        end
+        :"$end_of_table" ->
+          if Version.older?(version, oldest_version(mvcc)) do
+            {:error, :transaction_too_old}
+          else
+            {:error, :not_found}
+          end
+      end
     end
   end
 

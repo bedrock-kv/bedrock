@@ -6,6 +6,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   use Bedrock.Service.StorageWorker, :types
 
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
 
   @type t :: :dets.tab_name()
 
@@ -61,7 +62,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   def apply_transaction(pkv, transaction) do
     with transaction_version <- Transaction.version(transaction),
          true <-
-           is_newer?(transaction_version, last_version(pkv)) ||
+           Version.newer?(transaction_version, last_version(pkv)) ||
              {:error, :transaction_too_old},
          :ok <-
            :dets.insert(pkv, [
@@ -71,9 +72,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
       :dets.sync(pkv)
     end
   end
-
-  defp is_newer?(_version, :undefined), do: true
-  defp is_newer?(version, last_version), do: version > last_version
 
   @doc """
   Attempt to find the value for the given key in the key-value store. Returns

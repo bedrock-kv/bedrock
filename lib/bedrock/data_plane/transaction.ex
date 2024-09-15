@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Transaction do
-  @type version :: binary()
+  @type version :: binary() | non_neg_integer()
   @type key_value :: Bedrock.key_value()
 
   @type t :: {version(), [key_value()] | binary() | nil}

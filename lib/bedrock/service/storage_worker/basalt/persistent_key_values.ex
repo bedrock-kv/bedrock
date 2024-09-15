@@ -59,7 +59,9 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   """
   @spec apply_transaction(pkv :: t(), Transaction.t()) :: :ok | {:error, term()}
   def apply_transaction(pkv, transaction) do
-    with true <- Transaction.version(transaction) > last_version(pkv) || {:error, :out_of_order},
+    with true <-
+           is_newer?(Transaction.version(transaction), last_version(pkv)) ||
+             {:error, :out_of_order},
          :ok <-
            :dets.insert(pkv, [
              {:last_version, Transaction.version(transaction)}
@@ -68,6 +70,9 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
          :ok <- :dets.sync(pkv) do
     end
   end
+
+  defp is_newer?(_version, :undefined), do: true
+  defp is_newer?(version, last_version), do: version > last_version
 
   @doc """
   Attempt to find the value for the given key in the key-value store. Returns

@@ -1,3 +1,2 @@
-skaffold 2.9.0
-elixir 1.16.1-otp-26
-erlang 26.2.1
+elixir 1.17.2-otp-26
+erlang 26.2.5.2

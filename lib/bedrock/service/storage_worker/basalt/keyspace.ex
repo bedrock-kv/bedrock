@@ -1,7 +1,14 @@
 defmodule Bedrock.Service.StorageWorker.Basalt.Keyspace do
   @moduledoc """
-  A keyspace is a collection of keys and their values. It is used to store
-  the state of a single keyspace in the Basalt storage engine.
+  A keyspace is an ordered set of keys.
+
+  Under the hood, an ordered_set ETS table is used to store the keys. It is
+  intended that the keyspace can be read and written concurrently by multiple
+  processes, so we rely on the fact that ETS insert operations are atomic to
+  ensure that the keyspace is always in a consistent state. As such, each key
+  is stored along with a boolean "presence" value. This allows us to determine
+  whether a key has been deleted or not (while still relying on the atomicity
+  of the insert operation).
   """
 
   use Bedrock, :types
@@ -36,8 +43,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Keyspace do
     end
   end
 
-  @spec load_keys(keyspace :: t(), keys :: [key()]) :: :ok
-  def load_keys(keyspace, keys) do
+  @spec insert_many(keyspace :: t(), keys :: [key()]) :: :ok
+  def insert_many(keyspace, keys) do
     true = :ets.insert_new(keyspace, keys |> Enum.map(fn key -> {key, true} end))
     :ok
   end

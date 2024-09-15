@@ -50,12 +50,12 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
     %{keyspace: keyspace, pkv: pkv} = database
 
     :telemetry.span(
-      [:bedrock, :storage, :alice, :database, :load_keys],
+      [:bedrock, :storage, :basalt, :database, :load_keys],
       %{database: database},
       fn ->
         PersistentKeyValues.stream_keys(pkv)
         |> Stream.chunk_every(500)
-        |> Stream.map(fn keys -> :ok = Keyspace.load_keys(keyspace, keys) end)
+        |> Stream.map(fn keys -> :ok = Keyspace.insert_many(keyspace, keys) end)
         |> Stream.run()
 
         {:ok, %{}}
@@ -107,12 +107,14 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   end
 
   defp lookup_in_pkv(database, key, version) do
+    %{keyspace: keyspace, pkv: pkv, mvcc: mvcc} = database
+
     value =
-      if database.keyspace |> Keyspace.key_exists?(key) do
-        database.pkv |> PersistentKeyValues.lookup(key)
+      if Keyspace.key_exists?(keyspace, key) do
+        PersistentKeyValues.lookup(pkv, key)
       end
 
-    database.mvcc |> MVCC.insert_read(key, version, value)
+    :ok = MVCC.insert_read(mvcc, key, version, value)
 
     if value do
       {:ok, value}

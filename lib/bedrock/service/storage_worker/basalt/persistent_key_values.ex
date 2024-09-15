@@ -62,7 +62,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     with transaction_version <- Transaction.version(transaction),
          true <-
            is_newer?(transaction_version, last_version(pkv)) ||
-             {:error, :out_of_order},
+             {:error, :transaction_too_old},
          :ok <-
            :dets.insert(pkv, [
              {:last_version, transaction_version}

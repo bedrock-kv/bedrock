@@ -1,4 +1,9 @@
 defmodule Bedrock.Service.StorageWorker.Basalt.Keyspace do
+  @moduledoc """
+  A keyspace is a collection of keys and their values. It is used to store
+  the state of a single keyspace in the Basalt storage engine.
+  """
+
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

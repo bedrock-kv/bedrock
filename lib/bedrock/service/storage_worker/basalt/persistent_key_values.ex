@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
+  @moduledoc """
+  """
   use Bedrock, :types
   use Bedrock.Cluster, :types
   use Bedrock.Service.StorageWorker, :types
@@ -7,6 +9,9 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
 
   @type t :: :dets.tab_name()
 
+  @doc """
+  Opens a persistent key-value store.
+  """
   @spec open(atom(), String.t()) :: {:ok, t()} | {:error, any()}
   def open(name, file_path) when is_atom(name) do
     :dets.open_file(name,
@@ -17,10 +22,16 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     )
   end
 
+  @doc """
+  Closes a persistent key-value store.
+  """
   @spec close(t()) :: :ok
   def close(dets),
     do: :dets.close(dets)
 
+  @doc """
+  Returns the last version of the key-value store.
+  """
   @spec last_version(t()) :: version() | :undefined
   def last_version(pkv) do
     lookup(pkv, :last_version)
@@ -30,6 +41,9 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     end
   end
 
+  @doc """
+  Returns the key range of the key-value store.
+  """
   @spec key_range(t()) :: key_range() | :undefined
   def key_range(pkv) do
     lookup(pkv, :key_range)
@@ -39,9 +53,14 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     end
   end
 
-  @spec apply_transaction(pkv :: t(), {version(), [key_value()]}) :: :ok | {:error, term()}
+  @doc """
+  Apply a transaction to the key-value store, atomically. The transaction must
+  be applied in order.
+  """
+  @spec apply_transaction(pkv :: t(), Transaction.t()) :: :ok | {:error, term()}
   def apply_transaction(pkv, transaction) do
-    with :ok <-
+    with true <- Transaction.version(transaction) > last_version(pkv) || {:error, :out_of_order},
+         :ok <-
            :dets.insert(pkv, [
              {:last_version, Transaction.version(transaction)}
              | Transaction.key_values(transaction)
@@ -50,7 +69,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     end
   end
 
-  @spec lookup(pkv :: t(), term()) :: term() | nil
+  @doc """
+  Attempt to find the value for the given key in the key-value store. Returns
+  `nil` if the key is not found.
+  """
+  @spec lookup(pkv :: t(), key :: term()) :: term() | nil
   def lookup(pkv, key) do
     pkv
     |> :dets.lookup(key)
@@ -60,28 +83,40 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     end
   end
 
+  @doc """
+  Interrogate the key-value store for specific metadata. Supported queries are:
+
+  - `:n_objects` - the number of objects in the store
+  - `:size_in_bytes` - the size of the store in bytes
+  - `:utilization` - the utilization of the store (expressed in a range from 0.0 to 1.0)
+  """
+  @spec info(pkv :: t(), :n_objects | :size_in_bytes | :utilization) :: any()
   def info(pkv, :n_objects), do: pkv |> :dets.info(:no_objects)
 
   def info(pkv, :utilization) do
     pkv
     |> :dets.info(:no_slots)
     |> case do
-      {min, used, max} ->
-        Float.ceil((used - min) / max, 1)
-
-      :undefined ->
-        :undefined
+      {min, used, max} -> Float.ceil((used - min) / max, 1)
+      :undefined -> :undefined
     end
   end
 
   def info(pkv, :size_in_bytes), do: pkv |> :dets.info(:file_size)
 
+  @doc """
+  Prune the key-value store of any keys that have a `nil` value.
+  """
   @spec prune(pkv :: t()) :: {:ok, n_pruned :: non_neg_integer()}
   def prune(pkv) do
     n_pruned = :dets.select_delete(pkv, [{{:_, :"$1"}, [{:is_nil}], [true]}])
     {:ok, n_pruned}
   end
 
+  @doc """
+  Return a stream of all keys in the key-value store. The keys are not
+  guaranteed to be in any particular order.
+  """
   @spec stream_keys(pkv :: t()) :: Enumerable.t()
   def stream_keys(pkv) do
     Stream.resource(

@@ -1,4 +1,8 @@
 defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
+  @moduledoc """
+  A waiting list is a list of processes that are waiting for a specific version
+  to be committed. It is used to implement MVCC in the Basalt storage engine.
+  """
   use GenServer
 
   defstruct ~w[version waiting]a

@@ -30,7 +30,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
 
   @spec close(database :: t()) :: :ok
   def close(database) do
-    with :ok <- ensure_durability_to_version(database, :latest),
+    with :ok <- ensure_durability_to_latest_version(database),
          :ok <- PersistentKeyValues.close(database.pkv),
          :ok <- Keyspace.close(database.keyspace),
          :ok <- MVCC.close(database.mvcc) do
@@ -136,21 +136,26 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
     do: database.pkv |> PersistentKeyValues.info(stat)
 
   @doc """
+  Ensures that the database is durable up to the latest version.
+  """
+  @spec ensure_durability_to_latest_version(db :: t()) :: :ok
+  def ensure_durability_to_latest_version(db),
+    do: ensure_durability_to_version(db, MVCC.newest_version(db.mvcc))
+
+  @doc """
   Ensures that the database is durable up to the given version. This is done by
   applying all transactions up to the given version to the the underlying
   persistent key value store. Versions of values older than the given version
   are pruned from the store.
   """
-  @spec ensure_durability_to_version(database :: t(), :latest | version()) :: :ok
-  def ensure_durability_to_version(database, version) do
-    %{pkv: pkv, mvcc: mvcc, keyspace: keyspace} = database
+  @spec ensure_durability_to_version(db :: t(), version()) :: :ok
+  def ensure_durability_to_version(db, version) do
+    if transaction = MVCC.transaction_at_version(db.mvcc, version) do
+      PersistentKeyValues.apply_transaction(db.pkv, transaction)
+      Keyspace.apply_transaction(db.keyspace, transaction)
 
-    if transaction = MVCC.transaction_at_version(mvcc, version) do
-      PersistentKeyValues.apply_transaction(pkv, transaction)
-      Keyspace.apply_transaction(keyspace, transaction)
+      {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
     end
-
-    {:ok, _n_purged} = MVCC.purge_keys_older_than_version(mvcc, version)
 
     :ok
   end

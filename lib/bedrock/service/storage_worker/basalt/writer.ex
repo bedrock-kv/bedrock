@@ -7,7 +7,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Writer do
   defstruct ~w[database storage_engine id loader_task]a
   @type t :: %__MODULE__{}
 
-  @spec stop(writer :: GenStage.server(), reason :: term()) :: :ok
+  @spec stop(writer :: GenStage.stage(), reason :: term()) :: :ok
   def stop(writer, reason),
     do: GenStage.stop(writer, reason)
 

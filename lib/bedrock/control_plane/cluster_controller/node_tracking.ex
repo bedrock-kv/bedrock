@@ -20,6 +20,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   defp row(node, last_seen_at, advertised_services, up_down, authorized),
     do: {node, last_seen_at, advertised_services, up_down, authorized}
 
+  @doc """
+  Create a new node tracking table with the given nodes.
+  """
   @spec new(nodes :: [node()]) :: t()
   def new(nodes) do
     t = :ets.new(:node_tracking, [:ordered_set])
@@ -27,26 +30,41 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     t
   end
 
+  @doc """
+  Add a new node to the node tracking table.
+  """
   @spec add_node(t(), node(), authorized :: boolean()) :: t()
   def add_node(t, node, authorized) do
     :ets.insert(t, row(node, :unknown, :unknown, :up, authorized))
     t
   end
 
+  @doc """
+  Get the list of nodes that are considered to be dead. A node is considered to
+  be dead if it has not responded to a ping in the last `liveness_timeout_in_ms`
+  milliseconds, has never responded to a ping or is explicitly marked as :down.
+  """
   @spec dead_nodes(t(), now :: integer(), liveness_timeout_in_ms :: timeout_in_ms()) ::
           [node()]
   def dead_nodes(t, now, liveness_timeout_in_ms) do
     :ets.select(t, [
-      {{:"$1", :"$2", :_, :down, :_},
+      {{:"$1", :"$2", :_, :"$4", :_},
        [
-         {:orelse, {:==, :"$2", :unknown}, {:<, :"$2", {:const, now - liveness_timeout_in_ms}}}
+         {:orelse, {:==, :"$4", :down},
+          {:orelse, {:==, :"$2", :unknown}, {:<, :"$2", {:const, now - liveness_timeout_in_ms}}}}
        ], [:"$1"]}
     ])
   end
 
+  @doc """
+  Check if a node exists in the node tracking table.
+  """
   @spec exists?(t(), node()) :: boolean()
   def exists?(t, node), do: [] != :ets.lookup(t, node)
 
+  @doc """
+  Check if a node is currently considered to be alive.
+  """
   @spec alive?(t(), node()) :: boolean()
   def alive?(t, node) do
     :ets.lookup(t, node)
@@ -59,6 +77,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     end
   end
 
+  @doc """
+  Check if a node is currently considered to be authorized.
+  """
   @spec authorized?(t(), node()) :: boolean()
   def authorized?(t, node) do
     :ets.lookup(t, node)
@@ -68,6 +89,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     end
   end
 
+  @doc """
+  Get a list of the services that a node is advertising.
+  """
   @spec advertised_services(t(), node()) :: [atom()] | :unknown
   def advertised_services(t, node) do
     :ets.lookup(t, node)
@@ -80,6 +104,9 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     end
   end
 
+  @doc """
+  Get the last time that a node responded to a ping.
+  """
   @spec update_last_seen_at(t(), node(), last_seen_at :: integer()) ::
           t()
   def update_last_seen_at(t, node, last_seen_at) do
@@ -87,12 +114,18 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     t
   end
 
+  @doc """
+  Update the list of services that a node is advertising.
+  """
   @spec update_advertised_services(t(), node(), advertised_services :: [atom()]) :: t()
   def update_advertised_services(t, node, advertised_services) do
     :ets.update_element(t, node, {3, advertised_services})
     t
   end
 
+  @doc """
+  Mark a node as being down.
+  """
   @spec down(t(), node()) :: t()
   def down(t, node) do
     :ets.update_element(t, node, {4, :down})

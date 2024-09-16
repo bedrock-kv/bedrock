@@ -290,7 +290,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @spec add_expected_service(t(), GenServer.name(), atom()) :: t()
   def add_expected_service(t, service, service_type) do
-    t.service_directory |> ServiceDirectory.add_expected_service(service, service_type)
+    t.service_directory |> ServiceDirectory.add_expected_service!(service, service_type)
     t
   end
 

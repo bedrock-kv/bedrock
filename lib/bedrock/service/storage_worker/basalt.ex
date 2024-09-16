@@ -77,7 +77,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
          writer: writer
        }}
     else
-      :error -> {:error, :invalid_args}
       {:error, _reason} = error -> error
     end
   end

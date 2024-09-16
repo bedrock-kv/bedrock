@@ -10,6 +10,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   use GenServer
   require Logger
 
+  alias Bedrock.Cluster
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.Service.Worker

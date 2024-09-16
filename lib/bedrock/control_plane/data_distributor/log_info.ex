@@ -10,6 +10,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfo do
 
   defstruct ~w[id tag endpoint]a
 
+  @spec new(TransactionLog.id(), DataDistributor.tag(), DataDistributor.endpoint()) :: t()
   def new(id, tag, endpoint) do
     %__MODULE__{
       id: id,

@@ -58,7 +58,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
         |> Stream.map(fn keys -> :ok = Keyspace.insert_many(keyspace, keys) end)
         |> Stream.run()
 
-        {:ok, %{}, %{}}
+        {:ok, %{}}
       end
     )
   end

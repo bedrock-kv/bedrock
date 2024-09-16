@@ -7,6 +7,7 @@ defmodule Bedrock.Cluster do
 
   require Logger
 
+  @type t :: module()
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
   @type storage_worker :: GenServer.name()

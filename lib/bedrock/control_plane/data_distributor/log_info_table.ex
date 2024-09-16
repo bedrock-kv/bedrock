@@ -1,9 +1,7 @@
 defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
-  alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.ControlPlane.DataDistributor.LogInfo
 
   @type t :: :ets.table()
-  @type tag :: DataDistributor.tag()
 
   @spec new() :: t()
   def new, do: :ets.new(:log_table, [:protected, :duplicate_bag, read_concurrency: true])
@@ -29,7 +27,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   @doc """
   Find all log_infos for the given tag, or return :not_found.
   """
-  @spec log_infos_for_tag(t(), tag()) :: {:ok, [LogInfo.t()]} | {:error, :not_found}
+  @spec log_infos_for_tag(t(), LogInfo.tag()) :: {:ok, [LogInfo.t()]} | {:error, :not_found}
   def log_infos_for_tag(t, tag) do
     :ets.lookup(t, {:tag, tag})
     |> case do
@@ -41,7 +39,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   @doc """
   Find the log_info for the given id, or return :not_found.
   """
-  @spec log_info_for_id(t(), LogSystem.id()) :: {:ok, LogInfo.t()} | {:error, :not_found}
+  @spec log_info_for_id(t(), id :: LogInfo.id()) :: {:ok, LogInfo.t()} | {:error, :not_found}
   def log_info_for_id(t, id) do
     :ets.lookup(t, {:id, id})
     |> case do

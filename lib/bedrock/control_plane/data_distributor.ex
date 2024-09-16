@@ -18,8 +18,6 @@ defmodule Bedrock.ControlPlane.DataDistributor do
     storage_teams
   ]a
   @type t :: %__MODULE__{}
-  @type tag :: integer()
-  @type endpoint :: pid() | atom()
 
   @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), epoch()) :: :ok
   def invite_to_rejoin(t, controller, epoch),

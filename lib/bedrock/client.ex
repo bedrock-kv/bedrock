@@ -2,8 +2,9 @@ defmodule Bedrock.Client do
   alias Bedrock.Client.Transaction
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
-  alias Bedrock.Service.Storage, as: StorageSystemEngine
+  alias Bedrock.Service.StorageWorker
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
+  alias Bedrock.ControlPlane.DataDistributor.Team
 
   defstruct [
     :coordinator,
@@ -100,13 +101,13 @@ defmodule Bedrock.Client do
   defdelegate commit(txn),
     to: Transaction
 
-  @spec storage_engine_for_key(transaction :: t(), key :: binary()) :: StorageSystemEngine.t()
-  def storage_engine_for_key(client, key) do
+  @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [StorageWorker.name()]
+  def storage_workers_for_key(client, key) do
     client.data_distributor
     |> DataDistributor.storage_team_for_key(key)
     |> case do
       {:ok, storage_team} ->
-        storage_team |> StorageSystemEngine.storage_engines_for_key(key)
+        Team.storage_engines_for_key(storage_team, key)
 
       {:error, :not_found} ->
         raise "No storage team found for key #{inspect(key)}"

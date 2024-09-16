@@ -79,7 +79,8 @@ defmodule Bedrock.Client.Transaction do
           :error ->
             value =
               state
-              |> storage_engine_for_key(key)
+              |> storage_workers_for_key(key)
+              |> Enum.random()
               |> StorageWorker.get(key, state.read_version)
 
             {state |> Map.update!(:rx, &Map.put(&1, key, value)), value}
@@ -106,7 +107,7 @@ defmodule Bedrock.Client.Transaction do
   end
 
   @doc false
-  @spec storage_engine_for_key(transaction :: t(), key :: binary()) :: StorageSystemEngine.t()
-  def storage_engine_for_key(%{client: client}, key),
-    do: client |> Client.storage_engine_for_key(key)
+  @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [StorageWorker.name()]
+  def storage_workers_for_key(%{client: client}, key),
+    do: client |> Client.storage_workers_for_key(key)
 end

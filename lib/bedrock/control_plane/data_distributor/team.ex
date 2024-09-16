@@ -10,4 +10,6 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
       log_storage_pairs: []
     }
   end
+
+  def storage_engines_for_key(_team, _key), do: []
 end

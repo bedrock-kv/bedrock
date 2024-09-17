@@ -244,8 +244,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @spec try_to_invite_old_sequencer(t()) :: t()
   def try_to_invite_old_sequencer(t) do
-    t.config
-    |> Config.sequencer()
+    t.config.transaction_system_layout.sequencer
     |> send_rejoin_invitation_to_sequencer(t)
   end
 
@@ -261,8 +260,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @spec try_to_invite_old_data_distributor(t()) :: t()
   def try_to_invite_old_data_distributor(t) do
-    t.config
-    |> Config.data_distributor()
+    t.config.transaction_system_layout.data_distributor
     |> send_rejoin_invitation_to_data_distributor(t)
   end
 

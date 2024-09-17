@@ -1,36 +1,37 @@
 defmodule Bedrock.ControlPlane.Config do
   @moduledoc """
-  This module defines the configuration structure and functions for the Bedrock
-  Control Plane. It provides functions for accessing and manipulating the
-  configuration parameters, policies and transaction system layout.
+  A `Config` is a data structure that describes the configuration of the
+  control plane. It contains the current state of the cluster, the parameters
+  that are used to configure the cluster, the policies that are used to
+  configure the cluster and the layout of the transaction system.
   """
   alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
+  @typedoc """
+  Struct representing the control plane configuration.
+
+  ## Fields
+    - `state` - The current state of the cluster.
+    - `parameters` - The parameters that are used to configure the cluster.
+    - `policies` - The policies that are used to configure the cluster.
+    - `transaction_system_layout` - The layout of the transaction system.
+  """
   @type t :: %__MODULE__{
           state: state(),
           parameters: map(),
           policies: Policies.t(),
           transaction_system_layout: TransactionSystemLayout.t()
         }
-  defstruct [
-    # The current state of the cluster.
-    state: :initializing,
-
-    # The parameters that are used to configure the cluster.
-    parameters: nil,
-
-    # The policies that are used to configure the cluster.
-    policies: nil,
-
-    # The layout of the transaction system.
-    transaction_system_layout: nil
-  ]
+  defstruct state: :initializing,
+            parameters: nil,
+            policies: nil,
+            transaction_system_layout: nil
 
   @type state :: :initializing | :running | :stopping
 
   @doc """
-  Creates a new configuration struct.
+  Creates a new `Config` struct.
   """
   @spec new(state(), parameters :: map(), Policies.t(), TransactionSystemLayout.t()) :: t()
   def new(state, parameters, policies, transaction_system_layout) do
@@ -61,18 +62,6 @@ defmodule Bedrock.ControlPlane.Config do
   def ping_rate_in_ms(t), do: div(1000, t.parameters.ping_rate_in_hz)
 
   @doc """
-  Returns the pid of the sequencer.
-  """
-  @spec sequencer(t()) :: pid() | nil
-  def sequencer(t), do: find_singleton_service(t, :sequencer)
-
-  @doc """
-  Returns the pid of the data distributor.
-  """
-  @spec data_distributor(t()) :: pid() | nil
-  def data_distributor(t), do: find_singleton_service(t, :data_distributor)
-
-  @doc """
   Returns the otp_names of the log workers.
   """
   @spec log_workers(t()) :: [atom()]
@@ -93,17 +82,6 @@ defmodule Bedrock.ControlPlane.Config do
         }
       }),
       do: service_directory
-
-  @spec find_singleton_service(t(), atom()) :: atom() | nil
-  defp find_singleton_service(%__MODULE__{} = t, service_type) do
-    t
-    |> service_directory()
-    |> Enum.find(nil, &match?(%{type: ^service_type}, &1))
-    |> case do
-      nil -> nil
-      %{otp_name: otp_name} -> otp_name
-    end
-  end
 
   @spec find_multiple_services(t(), atom()) :: [atom()]
   defp find_multiple_services(%__MODULE__{} = t, service_type) do

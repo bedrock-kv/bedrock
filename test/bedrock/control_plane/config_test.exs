@@ -40,48 +40,22 @@ defmodule Bedrock.ControlPlane.ConfigTest do
       config = %Config{
         transaction_system_layout: %TransactionSystemLayout{
           service_directory: [
-            ServiceDescriptor.new(:sequencer, :sequencer),
-            ServiceDescriptor.new(:data_distributor, :data_distributor)
+            ServiceDescriptor.new(:log, :log1),
+            ServiceDescriptor.new(:log, :log2),
+            ServiceDescriptor.new(:storage, :storage1),
+            ServiceDescriptor.new(:storage, :storage2),
+            ServiceDescriptor.new(:storage, :storage3)
           ]
         }
       }
 
       assert [
-               %{type: :sequencer, otp_name: :sequencer},
-               %{type: :data_distributor, otp_name: :data_distributor}
+               %{type: :log, otp_name: :log1},
+               %{type: :log, otp_name: :log2},
+               %{type: :storage, otp_name: :storage1},
+               %{type: :storage, otp_name: :storage2},
+               %{type: :storage, otp_name: :storage3}
              ] = Config.service_directory(config)
-    end
-  end
-
-  describe "sequencer/1" do
-    test "returns the sequencer pid" do
-      sequencer = spawn(fn -> :ok end)
-
-      config = %Config{
-        transaction_system_layout: %TransactionSystemLayout{
-          service_directory: [
-            ServiceDescriptor.new(:sequencer, sequencer)
-          ]
-        }
-      }
-
-      assert Config.sequencer(config) == sequencer
-    end
-  end
-
-  describe "data_distributor/1" do
-    test "returns the data distributor pid" do
-      data_distributor = spawn(fn -> :ok end)
-
-      config = %Config{
-        transaction_system_layout: %TransactionSystemLayout{
-          service_directory: [
-            ServiceDescriptor.new(:data_distributor, data_distributor)
-          ]
-        }
-      }
-
-      assert Config.data_distributor(config) == data_distributor
     end
   end
 

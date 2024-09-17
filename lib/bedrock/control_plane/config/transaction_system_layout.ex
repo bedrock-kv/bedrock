@@ -1,5 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
-  @type t :: %__MODULE__{}
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+
   defstruct [
     # The full otp name of the cluster controller.
     controller: nil,
@@ -37,4 +38,9 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     # the otp names used to communicate with them.
     service_directory: []
   ]
+
+  @type t :: %__MODULE__{
+          controller: pid(),
+          service_directory: [ServiceDescriptor.t()]
+        }
 end

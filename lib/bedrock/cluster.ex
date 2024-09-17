@@ -14,6 +14,19 @@ defmodule Bedrock.Cluster do
   @type transaction_log_worker :: GenServer.name()
   @type service :: :coordination | :transaction_log | :storage
 
+  @callback name() :: String.t()
+  @callback config() :: Keyword.t()
+  @callback advertised_services() :: [Bedrock.Cluster.service()]
+  @callback path_to_descriptor() :: Path.t()
+  @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
+  @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
+  @callback otp_name() :: atom()
+  @callback otp_name(service :: atom()) :: atom()
+  @callback controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
+  @callback coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
+  @callback coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+  @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
+
   @doc false
   defmacro __using__(:types) do
     quote do
@@ -30,6 +43,7 @@ defmodule Bedrock.Cluster do
     name = opts[:name] || raise "Missing :name option"
 
     quote location: :keep do
+      @behaviour Bedrock.Cluster
       alias Bedrock.Cluster
       alias Bedrock.Cluster.Monitor
 

@@ -1,4 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator do
+  @moduledoc """
+  The Coordinator module is responsible for managing the state of the cluster.
+  """
   use GenServer
 
   alias Bedrock.ControlPlane.ClusterController
@@ -181,10 +184,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
     |> List.last()
     |> case do
       nil ->
+        retransmission_rate_in_hz = 1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
+
         {:ok,
          initial_config_for_new_system(
            coordinator_nodes,
-           1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
+           retransmission_rate_in_hz
          )}
 
       {_transaction_id, config} ->

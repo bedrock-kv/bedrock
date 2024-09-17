@@ -1,4 +1,6 @@
 defmodule Bedrock.Client.Transaction do
+  @type t :: pid()
+
   @spec commit(txn :: pid()) :: :ok | {:error, :transaction_expired}
   def commit(txn),
     do: GenServer.call(txn, :commit)

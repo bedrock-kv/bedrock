@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Config.Policies do
   @moduledoc """
   A `Policies` is a data structure that describes the policies that are used
+  to configure the cluster.
   """
 
   @typedoc """

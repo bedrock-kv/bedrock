@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.Config do
   configure the cluster and the layout of the transaction system.
   """
   alias Bedrock.ControlPlane.Config.Policies
+  alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @typedoc """
@@ -19,7 +20,7 @@ defmodule Bedrock.ControlPlane.Config do
   """
   @type t :: %__MODULE__{
           state: state(),
-          parameters: map(),
+          parameters: Parameters.t(),
           policies: Policies.t(),
           transaction_system_layout: TransactionSystemLayout.t()
         }
@@ -33,7 +34,7 @@ defmodule Bedrock.ControlPlane.Config do
   @doc """
   Creates a new `Config` struct.
   """
-  @spec new(state(), parameters :: map(), Policies.t(), TransactionSystemLayout.t()) :: t()
+  @spec new(state(), Parameters.t(), Policies.t(), TransactionSystemLayout.t()) :: t()
   def new(state, parameters, policies, transaction_system_layout) do
     %__MODULE__{
       state: state,
@@ -53,7 +54,7 @@ defmodule Bedrock.ControlPlane.Config do
   Returns the nodes that are part of the cluster.
   """
   @spec nodes(t()) :: [node()]
-  def nodes(t), do: t.parameters[:nodes] || []
+  def nodes(t), do: t.parameters.nodes || []
 
   @doc """
   Returns the ping rate in milliseconds.

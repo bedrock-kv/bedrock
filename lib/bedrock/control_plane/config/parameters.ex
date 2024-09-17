@@ -1,39 +1,49 @@
 defmodule Bedrock.ControlPlane.Config.Parameters do
-  @type t :: %__MODULE__{}
-  defstruct [
-    # A list of nodes that are participating in the cluster.
-    nodes: [],
+  @moduledoc """
+  A `Parameters` is a data structure that describes the parameters that are used
+  to configure the cluster.
+  """
 
-    # The rate at which the controller is to ping the nodes, expressed in
-    # Hertz
-    ping_rate_in_hz: 10,
+  @typedoc """
+  Struct representing the parameters that are used to configure the cluster.
 
-    # The rate at which the system is to retransmit messages, expressed in
-    # Hertz.
-    retransmission_rate_in_hz: 20,
-
-    # The (minimum) number of nodes that must acknowledge a write before it is
-    # considered successful.
-    replication_factor: 1,
-
-    # The number of coordinators that are to be made available within the
-    # system.
-    desired_coordinators: 1,
-
-    # The number of transaction logs that are to be made available within the
-    # system. Must be equal to or greater than the replication factor.
-    desired_logs: 1,
-
-    # The number of get read version proxies that are to be made available as
-    # part of the transaction system.
-    desired_get_read_version_proxies: 1,
-
-    # The number of commit proxies that are to be made available as part of
-    # the transaction system.
-    desired_commit_proxies: 1,
-
-    # The number of transaction resolvers that are to be made available as
-    # part of the transaction system.
-    desired_transaction_resolvers: 1
-  ]
+  ## Fields:
+  - `nodes` - A list of nodes that are participating in the cluster.
+  - `ping_rate_in_hz` - The rate at which the controller is to ping the nodes,
+    expressed in Hertz.
+  - `retransmission_rate_in_hz` - The rate at which the system is to retransmit
+    messages, expressed in Hertz.
+  - `replication_factor` - The (minimum) number of nodes that must acknowledge a
+    write before it is considered successful.
+  - `desired_coordinators` - The number of coordinators that are to be made
+    available within the system.
+  - `desired_logs` - The number of transaction logs that are to be made
+    available
+  - `desired_get_read_version_proxies` - The number of get read version proxies
+    that are to be made available as part of the transaction system.
+  - `desired_commit_proxies` - The number of commit proxies that are to be made
+    available as part of the transaction system.
+  - `desired_transaction_resolvers` - The number of transaction resolvers that
+    are to be made available as part of the transaction system.
+  """
+  @type t :: %__MODULE__{
+          nodes: [node()],
+          ping_rate_in_hz: non_neg_integer(),
+          retransmission_rate_in_hz: non_neg_integer(),
+          replication_factor: non_neg_integer(),
+          desired_coordinators: non_neg_integer(),
+          desired_logs: non_neg_integer(),
+          desired_get_read_version_proxies: non_neg_integer(),
+          desired_commit_proxies: non_neg_integer(),
+          desired_transaction_resolvers: non_neg_integer()
+        }
+  defstruct nodes: [],
+            ping_rate_in_hz: 10,
+            retransmission_rate_in_hz: 20,
+            replication_factor: 1,
+            desired_coordinators: 1,
+            desired_logs: 1,
+            desired_get_read_version_proxies: 1,
+            desired_commit_proxies: 1,
+            desired_transaction_resolvers: 1
 end

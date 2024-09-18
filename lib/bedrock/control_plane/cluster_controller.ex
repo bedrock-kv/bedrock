@@ -214,10 +214,10 @@ defmodule Bedrock.ControlPlane.ClusterController do
   @spec determine_dead_nodes(t()) :: t()
   def determine_dead_nodes(t) do
     t.node_tracking
-    |> NodeTracking.dead_nodes(now(), 3 * Config.ping_rate_in_ms(t.config))
-    |> Enum.reduce(t, fn dead_node, t ->
-      t.node_tracking |> NodeTracking.down(dead_node)
-      t |> add_event({:node_down, dead_node})
+    |> NodeTracking.dying_nodes(now(), 3 * Config.ping_rate_in_ms(t.config))
+    |> Enum.reduce(t, fn dying_node, t ->
+      t.node_tracking |> NodeTracking.down(dying_node)
+      t |> add_event({:node_down, dying_node})
     end)
   end
 

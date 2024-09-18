@@ -40,9 +40,24 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   end
 
   @doc """
-  Get the list of nodes that are considered to be dead. A node is considered to
-  be dead if it has not responded to a ping in the last `liveness_timeout_in_ms`
-  milliseconds, has never responded to a ping or is explicitly marked as :down.
+  Get the list of nodes that have not responded to a ping in the last
+  `liveness_timeout_in_ms` milliseconds or have never responded to a ping.
+  """
+  @spec dying_nodes(t(), now :: integer(), liveness_timeout_in_ms :: timeout_in_ms()) ::
+          [node()]
+  def dying_nodes(t, now, liveness_timeout_in_ms) do
+    :ets.select(t, [
+      {{:"$1", :"$2", :_, :up, :_},
+       [
+         {:orelse, {:==, :"$2", :unknown}, {:<, :"$2", {:const, now - liveness_timeout_in_ms}}}
+       ], [:"$1"]}
+    ])
+  end
+
+  @doc """
+  Get the list of nodes that have not responded to a ping in the last
+  `liveness_timeout_in_ms` milliseconds, have never responded to a ping or are
+  explicitly marked as :down.
   """
   @spec dead_nodes(t(), now :: integer(), liveness_timeout_in_ms :: timeout_in_ms()) ::
           [node()]

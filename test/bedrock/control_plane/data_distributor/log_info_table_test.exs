@@ -60,14 +60,14 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTableTest do
     end
   end
 
-  describe "DataDistributor.LogInfoTable.log_infos_for_tag/2" do
+  describe "DataDistributor.LogInfoTable.all_log_info_for_tag/2" do
     test "returns the correct log_infos when given a tag that exists" do
       t = LogInfoTable.new()
       log_info1 = LogInfo.new("id1", 1, "endpoint1")
       log_info2 = LogInfo.new("id2", 1, "endpoint2")
       assert :ok = LogInfoTable.add_log_info(t, log_info1)
       assert :ok = LogInfoTable.add_log_info(t, log_info2)
-      assert {:ok, [^log_info1, ^log_info2]} = LogInfoTable.log_infos_for_tag(t, 1)
+      assert {:ok, [^log_info1, ^log_info2]} = LogInfoTable.all_log_info_for_tag(t, 1)
     end
   end
 end

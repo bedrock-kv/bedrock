@@ -13,10 +13,10 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   """
   @spec add_log_info(t(), LogInfo.t()) :: :ok | {:error, :already_exists}
   def add_log_info(t, log_info) do
-    :ets.insert_new(t, log_info |> to_record(:id))
+    :ets.insert_new(t, log_info |> to_row(:id))
     |> case do
       true ->
-        true = :ets.insert(t, log_info |> to_record(:tag))
+        true = :ets.insert(t, log_info |> to_row(:tag))
         :ok
 
       false ->
@@ -27,8 +27,8 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   @doc """
   Find all log_infos for the given tag, or return :not_found.
   """
-  @spec log_infos_for_tag(t(), LogInfo.tag()) :: {:ok, [LogInfo.t()]} | {:error, :not_found}
-  def log_infos_for_tag(t, tag) do
+  @spec all_log_info_for_tag(t(), LogInfo.tag()) :: {:ok, [LogInfo.t()]} | {:error, :not_found}
+  def all_log_info_for_tag(t, tag) do
     :ets.lookup(t, {:tag, tag})
     |> case do
       [] -> {:error, :not_found}
@@ -51,9 +51,9 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfoTable do
   defp to_log_info({_key, id, tag, endpoint} = _record),
     do: LogInfo.new(id, tag, endpoint)
 
-  defp to_record(log_info, :tag),
+  defp to_row(log_info, :tag),
     do: {{:tag, log_info.tag}, log_info.id, log_info.tag, log_info.endpoint}
 
-  defp to_record(log_info, :id),
+  defp to_row(log_info, :id),
     do: {{:id, log_info.id}, log_info.id, log_info.tag, log_info.endpoint}
 end

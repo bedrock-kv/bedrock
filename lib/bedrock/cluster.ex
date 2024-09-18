@@ -4,14 +4,16 @@ defmodule Bedrock.Cluster do
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Service.StorageWorker
+  alias Bedrock.Service.TransactionLogWorker
 
   require Logger
 
   @type t :: module()
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
-  @type storage_worker :: GenServer.name()
-  @type transaction_log_worker :: GenServer.name()
+  @type storage_worker :: StorageWorker.name()
+  @type transaction_log_worker :: TransactionLogWorker.name()
   @type service :: :coordination | :transaction_log | :storage
 
   @callback name() :: String.t()
@@ -32,8 +34,6 @@ defmodule Bedrock.Cluster do
     quote do
       @type version :: Bedrock.Cluster.version()
       @type transaction :: Bedrock.Cluster.transaction()
-      @type storage_worker :: Bedrock.Cluster.storage_worker()
-      @type transaction_log_worker :: Bedrock.Cluster.transaction_log_worker()
     end
   end
 
@@ -45,6 +45,7 @@ defmodule Bedrock.Cluster do
     quote location: :keep do
       @behaviour Bedrock.Cluster
       alias Bedrock.Cluster
+      alias Bedrock.Client
       alias Bedrock.Cluster.Monitor
 
       @default_descriptor_file_name "bedrock.cluster"
@@ -146,11 +147,11 @@ defmodule Bedrock.Cluster do
               | :controller
               | :coordinator
               | :data_distributor
-              | :transaction_log
               | :monitor
               | :sequencer
               | :service_advertiser
               | :storage_system
+              | :transaction_log
             ) :: atom()
       def otp_name(:sup), do: @sup_otp_name
       def otp_name(:controller), do: @controller_otp_name
@@ -189,19 +190,19 @@ defmodule Bedrock.Cluster do
       def coordinator_nodes, do: otp_name(:monitor) |> Monitor.get_coordinator_nodes()
 
       @doc """
-      Get a new instance of the `Bedrock.Client` configured for the cluster.
+      Get a new instance of the `Client` configured for the cluster.
       """
-      @spec client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
+      @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
       def client do
         coordinator()
         |> case do
-          {:ok, coordinator} -> Bedrock.Client.new(coordinator)
+          {:ok, coordinator} -> Client.new(coordinator)
           {:error, _} = error -> error
         end
       end
 
       @doc false
-      def child_spec(opts), do: Bedrock.Cluster.child_spec([{:cluster, __MODULE__} | opts])
+      def child_spec(opts), do: Cluster.child_spec([{:cluster, __MODULE__} | opts])
 
       @doc false
       def ping_nodes(nodes, cluster_controller, epoch),
@@ -277,20 +278,21 @@ defmodule Bedrock.Cluster do
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
         {Bedrock.Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
         {Bedrock.Cluster.Monitor,
-         cluster: cluster,
-         descriptor: descriptor,
-         path_to_descriptor: path_to_descriptor,
-         otp_name: cluster.otp_name(:monitor),
-         mode:
-           if(advertised_services == [],
-             do: :passive,
-             else: :active
-           )}
+         [
+           cluster: cluster,
+           descriptor: descriptor,
+           path_to_descriptor: path_to_descriptor,
+           otp_name: cluster.otp_name(:monitor),
+           mode: mode_for_services(advertised_services)
+         ]}
         | children_for_services(cluster, advertised_services)
       ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
+
+  defp mode_for_services([]), do: :passive
+  defp mode_for_services(_), do: :active
 
   defp children_for_services(_cluster, []), do: []
 

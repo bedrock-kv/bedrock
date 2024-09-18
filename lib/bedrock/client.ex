@@ -1,4 +1,10 @@
 defmodule Bedrock.Client do
+  @moduledoc """
+  The client module provides a simple interface for interacting with the
+  Bedrock system. It provides a simple API for starting transactions, reading
+  and writing values, and committing transactions.
+  """
+
   alias Bedrock.Client.Transaction
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
@@ -6,17 +12,21 @@ defmodule Bedrock.Client do
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
   alias Bedrock.ControlPlane.DataDistributor.Team
 
-  defstruct [
-    :coordinator,
-    :read_version_proxy,
-    :data_distributor,
-    :transaction_window_in_ms
-  ]
+  @type t :: %__MODULE__{
+          coordinator: coordinator(),
+          read_version_proxy: pid(),
+          data_distributor: pid(),
+          transaction_window_in_ms: non_neg_integer()
+        }
+  defstruct coordinator: nil,
+            read_version_proxy: nil,
+            data_distributor: nil,
+            transaction_window_in_ms: 0
 
-  @type t :: %__MODULE__{}
+  @typep coordinator :: pid() | {atom(), node()}
   @type transaction_fn :: (Transaction.t() -> any())
 
-  @spec new(coordinator :: pid() | {atom(), node()}) :: {:ok, t()} | {:error, :not_found}
+  @spec new(coordinator()) :: {:ok, t()} | {:error, :no_coordinators}
   def new(coordinator) do
     coordinator
     |> Coordinator.get_nearest_read_version_proxy()
@@ -39,7 +49,6 @@ defmodule Bedrock.Client do
   committed as soon as possible
   """
   @spec transaction(client :: t()) :: {:ok, Transaction.t()}
-  @spec transaction(client :: t(), transaction_fn()) :: any()
   def transaction(%__MODULE__{} = client) do
     with {:ok, read_version} <- client.read_version_proxy |> ReadVersionProxy.next_read_version() do
       Transaction.start_link(client, read_version)
@@ -57,7 +66,8 @@ defmodule Bedrock.Client do
    `{:cancel, reason}` if the transaction is to be discarded and the reason
    returned.
   """
-  def transaction(client, transaction_fn) do
+  @spec transaction(client :: t(), transaction_fn()) :: any()
+  def transaction(%__MODULE__{} = client, transaction_fn) do
     with {:ok, txn} <- transaction(client) do
       txn
       |> transaction_fn.()
@@ -75,7 +85,7 @@ defmodule Bedrock.Client do
   @doc """
   Read a value for the given key. If no value has been set, then return nil.
   """
-  @spec get(txn :: pid(), key :: binary()) :: nil | binary()
+  @spec get(txn :: Transaction.t(), key :: binary()) :: nil | binary()
   defdelegate get(txn, key),
     to: Transaction
 
@@ -83,31 +93,31 @@ defmodule Bedrock.Client do
   Read a value for the given key. If no value has been set, return the given
   default value.
   """
-  @spec get(txn :: pid(), key :: binary(), default_value :: binary()) :: binary()
+  @spec get(txn :: Transaction.t(), key :: binary(), default_value :: binary()) :: binary()
   def get(txn, key, default_value),
     do: Transaction.get(txn, key) || default_value
 
   @doc """
   Put a key/value pair into a transaction.
   """
-  @spec put(txn :: pid(), key :: binary(), value :: binary()) :: :ok
+  @spec put(txn :: Transaction.t(), key :: binary(), value :: binary()) :: :ok
   defdelegate put(txn, key, value),
     to: Transaction
 
   @doc """
   Commits a transaction.
   """
-  @spec commit(txn :: pid()) :: :ok | {:error, :transaction_expired}
+  @spec commit(txn :: Transaction.t()) :: :ok | {:error, :transaction_expired}
   defdelegate commit(txn),
     to: Transaction
 
-  @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [StorageWorker.name()]
+  @spec storage_workers_for_key(client :: t(), key :: binary()) :: [StorageWorker.name()]
   def storage_workers_for_key(client, key) do
     client.data_distributor
     |> DataDistributor.storage_team_for_key(key)
     |> case do
       {:ok, storage_team} ->
-        Team.storage_engines_for_key(storage_team, key)
+        Team.storage_workers(storage_team)
 
       {:error, :not_found} ->
         raise "No storage team found for key #{inspect(key)}"

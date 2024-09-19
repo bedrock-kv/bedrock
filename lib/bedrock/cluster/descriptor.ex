@@ -84,9 +84,6 @@ defmodule Bedrock.Cluster.Descriptor do
   defp parse_cluster_name_and_rest(_),
     do: {:error, :invalid_cluster_descriptor}
 
-  defp parse_joined_cluster_nodes(_cluster_name, []),
-    do: {:error, :invalid_cluster_descriptor}
-
   defp parse_joined_cluster_nodes(cluster_name, joined_coordinator_nodes),
     do: {:ok, new(cluster_name, joined_coordinator_nodes |> Enum.map(&String.to_atom/1))}
 end

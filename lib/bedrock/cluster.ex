@@ -48,7 +48,6 @@ defmodule Bedrock.Cluster do
       alias Bedrock.Client
       alias Bedrock.Cluster.Monitor
 
-      @default_descriptor_file_name "bedrock.cluster"
       @default_coordinator_ping_timeout_in_ms 300
       @default_monitor_ping_timeout_in_ms 300
 
@@ -91,7 +90,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the path to the descriptor file. If the path is not set in the
       configuration, we default to a file named
-      "#{@default_descriptor_file_name}" in the `priv` directory for the
+      "#{Cluster.default_descriptor_file_name()}" in the `priv` directory for the
       application.
       """
       @spec path_to_descriptor() :: Path.t()
@@ -101,7 +100,7 @@ defmodule Bedrock.Cluster do
           :path_to_descriptor,
           Path.join(
             Application.app_dir(unquote(otp_app), "priv"),
-            @default_descriptor_file_name
+            Cluster.default_descriptor_file_name()
           )
         )
       end
@@ -209,6 +208,9 @@ defmodule Bedrock.Cluster do
         do: otp_name(:monitor) |> Monitor.ping_nodes(nodes, cluster_controller, epoch)
     end
   end
+
+  @doc false
+  def default_descriptor_file_name, do: "bedrock.cluster"
 
   @doc """
   Get the OTP name for the cluster with the given name.

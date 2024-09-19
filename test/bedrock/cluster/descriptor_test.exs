@@ -67,5 +67,15 @@ defmodule Bedrock.Cluster.DescriptorTest do
       assert {:error, :invalid_cluster_descriptor} ==
                Descriptor.parse_cluster_file_contents("invalid_descriptor")
     end
+
+    test "parse_cluster_name_and_rest/1 returns an error tuple if the descriptor is missing nodes" do
+      assert {:error, :invalid_cluster_descriptor} ==
+               Descriptor.parse_cluster_file_contents("missing_nodes:")
+    end
+
+    test "parse_cluster_name_and_rest/1 returns an error tuple if the descriptor is missing names" do
+      assert {:error, :invalid_cluster_descriptor} ==
+               Descriptor.parse_cluster_file_contents(":missing_name")
+    end
   end
 end

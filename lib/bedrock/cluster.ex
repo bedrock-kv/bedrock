@@ -42,6 +42,7 @@ defmodule Bedrock.Cluster do
     otp_app = opts[:otp_app] || raise "Missing :otp_app option"
     name = opts[:name] || raise "Missing :name option"
 
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote location: :keep do
       @behaviour Bedrock.Cluster
       alias Bedrock.Cluster

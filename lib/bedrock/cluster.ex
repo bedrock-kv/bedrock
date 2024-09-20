@@ -240,9 +240,7 @@ defmodule Bedrock.Cluster do
       |> case do
         {:ok, descriptor} ->
           if cluster_name != descriptor.cluster_name do
-            raise """
-            The cluster name in the descriptor file (#{descriptor.cluster_name}) does not match the cluster name (#{cluster_name}) in the configuration.
-            """
+            raise "The cluster name in the descriptor file (#{descriptor.cluster_name}) does not match the cluster name (#{cluster_name}) in the configuration."
           end
 
           if Node.self() == :nonode@nohost do
@@ -252,7 +250,7 @@ defmodule Bedrock.Cluster do
           descriptor
 
         {:error, _reason} ->
-          Logger.warning("Bedrock: Creating a default single-cluster configuration")
+          Logger.warning("Bedrock: Creating a default single-node configuration")
 
           Descriptor.new(cluster_name, [Node.self()])
       end

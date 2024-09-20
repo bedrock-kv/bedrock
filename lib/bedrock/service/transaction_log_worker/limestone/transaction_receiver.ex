@@ -31,7 +31,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.TransactionReceiver do
   end
 
   def init({transactions, recycler, _controller}) do
-    {:ok, _segment} = SegmentRecycler.check_out(recycler, "/tmp/test")
+    #    {:ok, _segment} = SegmentRecycler.check_out(recycler, "/tmp/test")
 
     {:ok, %__MODULE__{transactions: transactions}}
   end

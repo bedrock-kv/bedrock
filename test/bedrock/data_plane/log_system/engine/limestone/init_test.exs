@@ -1,31 +1,30 @@
-defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
+defmodule Bedrock.Service.TransactionLogWorker.Limestone.InitTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Service.StorageWorker.Basalt
+  alias Bedrock.Service.TransactionLogWorker.Limestone
 
   def with_id(context) do
     id = Faker.UUID.v4()
     {:ok, context |> Map.put(:id, id)}
   end
 
-  describe "Basalt.child_spec/1" do
+  describe "Limestone.child_spec/1" do
     setup :with_id
 
     @tag :tmp_dir
     test "starts properly", %{id: id, tmp_dir: tmp_dir} do
       child_spec =
-        Basalt.child_spec(
+        Limestone.child_spec(
           cluster: "test",
           path: tmp_dir,
           id: id,
-          otp_name: :test_storage_engine,
+          otp_name: :test_transaction_log_engine,
           controller: self()
         )
 
       pid = start_supervised!(child_spec)
 
       assert Process.alive?(pid)
-      assert File.exists?(Path.join(tmp_dir, "dets"))
     end
   end
 end

@@ -90,6 +90,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
     end
   end
 
+  defp find_highest_id([]), do: 0
+
   defp find_highest_id(segments) do
     segments
     |> Enum.map(&(&1.path |> Path.basename() |> String.split(".")))

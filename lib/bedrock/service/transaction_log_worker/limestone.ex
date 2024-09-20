@@ -37,6 +37,9 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
   def init({otp_name, id, path, minimum_available, segment_size, controller}) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
+    recycler_name = :"#{otp_name}_recycler"
+    transaction_receiver_name = :"#{otp_name}_receiver"
+
     children =
       [
         {SegmentRecycler,
@@ -44,14 +47,14 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
            minimum_available: minimum_available,
            segment_size: segment_size,
            path: path,
-           otp_name: :"#{otp_name}_recycler"
+           otp_name: recycler_name
          ]},
         {TransactionReceiver,
          [
            transactions: transactions,
-           recycler: :recycler,
+           recycler: recycler_name,
            controller: controller,
-           otp_name: :"#{otp_name}_receiver"
+           otp_name: transaction_receiver_name
          ]}
       ]
 

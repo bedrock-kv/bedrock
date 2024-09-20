@@ -25,28 +25,18 @@ defmodule Bedrock.Cluster.PubSub do
   @doc """
   Publish a message to a topic. This will send the message to all subscribing
   processes.
-
-  _NOTE:_ If a previously subscribed process is no longer alive, it will be
-  unregistered from the topic.
   """
   @spec publish(cluster :: module(), topic :: any(), message :: any()) :: :ok
   def publish(cluster, topic, message) do
     cluster.otp_name(:pub_sub)
-    |> Registry.dispatch(
-      topic,
-      fn handlers ->
+    |> Registry.dispatch(topic, fn
+      handlers ->
         handlers
-        |> Enum.reduce([], fn {pid, _}, acc ->
-          if Process.alive?(pid) do
+        |> Enum.each(fn
+          {pid, _} ->
             send(pid, message)
-            acc
-          else
-            [pid | acc]
-          end
         end)
-        |> Enum.each(&Registry.unregister_match(cluster.otp_name(:pub_sub), topic, &1))
-      end
-    )
+    end)
   end
 
   @doc """

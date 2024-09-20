@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   and putting the cluster into a writable state.
   """
   use GenServer
+  require Logger
 
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
@@ -180,7 +181,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   def handle_event(event, t) do
-    IO.inspect(event, label: "Event")
+    Logger.info(inspect(event))
     t
   end
 

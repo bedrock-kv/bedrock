@@ -5,7 +5,8 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   This GenServer is responsible for advertising the services that are available
   on the local node to the cluster controller. This is done by subscribing to
   the `:cluster_controller_replaced` topic and then advertising the services to
-  the controller when the controller is replaced.
+  the controller when the controller is replaced, or when new workers are
+  started on the node.
   """
   use GenServer
   require Logger
@@ -122,9 +123,11 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   @spec running_services(t()) :: [keyword()]
   def running_services(t) do
     t.advertised_services
+    |> Enum.filter(&(&1 in [:transaction_log, :storage]))
     |> Enum.flat_map(fn
-      service when service in [:transaction_log, :storage] ->
-        t.cluster.otp_name(service)
+      service ->
+        service
+        |> t.cluster.otp_name()
         |> Controller.workers()
         |> case do
           {:ok, worker_pids} ->
@@ -137,9 +140,6 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
             Logger.error("Failed to get workers for #{service}: #{inspect(reason)}")
             []
         end
-
-      :coordination ->
-        []
     end)
   end
 

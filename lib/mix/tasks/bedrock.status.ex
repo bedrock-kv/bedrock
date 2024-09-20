@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Bedrock.Status do
     |> Keyword.get_values(:cluster)
     |> parse_clusters()
     |> Enum.each(fn cluster ->
-      IO.inspect(cluster.config())
+      IO.puts(inspect(cluster.config()))
     end)
   end
 end

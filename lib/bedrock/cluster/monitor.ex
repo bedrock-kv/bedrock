@@ -76,9 +76,7 @@ defmodule Bedrock.Cluster.Monitor do
     :exit, _ -> {:error, :unavailable}
   end
 
-  @doc """
-  Return an appropriately configured child specification for a cluster.
-  """
+  @doc false
   @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
@@ -100,6 +98,7 @@ defmodule Bedrock.Cluster.Monitor do
 
   # GenServer
 
+  @doc false
   @impl GenServer
   def init({cluster, path_to_descriptor, descriptor, mode}) do
     t = %__MODULE__{
@@ -115,6 +114,7 @@ defmodule Bedrock.Cluster.Monitor do
     {:ok, t, {:continue, :find_a_live_coordinator}}
   end
 
+  @doc false
   @impl GenServer
   def handle_continue(:find_a_live_coordinator, t) do
     find_a_live_coordinator(t)
@@ -165,6 +165,7 @@ defmodule Bedrock.Cluster.Monitor do
     {:noreply, t |> maybe_set_ping_timer()}
   end
 
+  @doc false
   @impl GenServer
   def handle_call(:get_coordinator, _from, %{coordinator: :unavailable} = t),
     do: {:reply, {:error, :unavailable}, t}
@@ -199,6 +200,7 @@ defmodule Bedrock.Cluster.Monitor do
      {:continue, :find_current_cluster_controller}}
   end
 
+  @doc false
   @impl GenServer
   def handle_cast({:ping, cluster_controller, _epoch}, t) do
     {:noreply, t |> change_cluster_controller(cluster_controller),

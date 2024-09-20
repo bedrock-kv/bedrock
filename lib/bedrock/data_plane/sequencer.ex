@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Sequencer do
   def start_link(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     controller = opts[:controller] || raise "Missing :controller option"
-    epoch = Keyword.get(opts, :epoch, 0)
+    epoch = opts[:epoch] || raise "Missing :epoch option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
     GenServer.start_link(__MODULE__, {cluster, controller, epoch}, name: otp_name)

@@ -17,12 +17,15 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   alias Bedrock.Service.Worker
   alias Bedrock.Service.Controller
 
-  @type t :: %__MODULE__{
-          cluster: Cluster.t(),
-          advertised_services: [atom()],
-          controller: ClusterController.t() | :unavailable
-        }
-  defstruct [:cluster, :advertised_services, :controller]
+  defmodule State do
+    @moduledoc false
+    @type t :: %__MODULE__{
+            cluster: Cluster.t(),
+            advertised_services: [atom()],
+            controller: ClusterController.t() | :unavailable
+          }
+    defstruct [:cluster, :advertised_services, :controller]
+  end
 
   @spec notify_of_new_worker(service_advertiser :: GenServer.name(), worker :: pid()) :: :ok
   def notify_of_new_worker(service_advertiser, worker),
@@ -49,8 +52,10 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   end
 
   @impl GenServer
+  @spec init({module(), [atom()]}) ::
+          {:ok, State.t()} | {:ok, State.t(), {:continue, :advertise_services}}
   def init({cluster, advertised_services}) do
-    t = %__MODULE__{
+    t = %State{
       cluster: cluster,
       advertised_services: advertised_services,
       controller: :unavailable
@@ -120,7 +125,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   def handle_info({:cluster_controller_replaced, new_controller}, t),
     do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_services}}
 
-  @spec running_services(t()) :: [keyword()]
+  @spec running_services(State.t()) :: [keyword()]
   def running_services(t) do
     t.advertised_services
     |> Enum.filter(&(&1 in [:transaction_log, :storage]))
@@ -155,6 +160,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     end)
   end
 
+  @spec gather_info_from_worker(pid()) :: {:ok, keyword()} | {:error, :unavailable}
   def gather_info_from_worker(worker_pid),
     do: Worker.info(worker_pid, [:id, :otp_name, :kind, :pid])
 end

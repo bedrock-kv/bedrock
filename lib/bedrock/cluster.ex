@@ -269,6 +269,7 @@ defmodule Bedrock.Cluster do
     }
   end
 
+  @doc false
   @impl Supervisor
   def init({cluster, path_to_descriptor, descriptor}) do
     advertised_services = cluster.advertised_services()

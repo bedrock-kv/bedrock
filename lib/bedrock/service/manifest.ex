@@ -14,16 +14,15 @@ defmodule Bedrock.Service.Manifest do
 
   @spec write_to_file(manifest :: t(), path_to_manifest :: String.t()) :: :ok | {:error, term()}
   def write_to_file(manifest, path_to_manifest) do
-    %{
-      cluster: manifest.cluster,
-      id: manifest.id,
-      worker: manifest.worker |> Module.split() |> Enum.join(".")
-    }
-    |> Jason.encode()
-    |> case do
-      {:ok, json} -> path_to_manifest |> write_file_contents(json)
-      {:error, _reason} = error -> error
-    end
+    {:ok, json} =
+      %{
+        cluster: manifest.cluster,
+        id: manifest.id,
+        worker: manifest.worker |> Module.split() |> Enum.join(".")
+      }
+      |> Jason.encode()
+
+    path_to_manifest |> write_file_contents(json)
   end
 
   defp write_file_contents(path_to_manifest, json),
@@ -43,6 +42,12 @@ defmodule Bedrock.Service.Manifest do
          id: id,
          worker: worker
        }}
+    else
+      {:error, %Jason.DecodeError{}} ->
+        {:error, :manifest_is_invalid}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -60,7 +65,8 @@ defmodule Bedrock.Service.Manifest do
              :worker_module_is_invalid
              | :worker_module_does_not_exist
              | :worker_module_failed_to_load
-             | :malformed_worker_name
+             | :invalid_cluster_id
+             | :invalid_cluster_name
              | :invalid_worker_name
              | :worker_module_does_not_implement_behaviour}
   defp worker_from_json(worker_name) when is_binary(worker_name) do
@@ -79,15 +85,9 @@ defmodule Bedrock.Service.Manifest do
   defp worker_from_json(_),
     do: {:error, :invalid_worker_name}
 
-  @spec parse_worker_name(String.t()) :: {:ok, module()} | {:error, :malformed_worker_name}
-  defp parse_worker_name(worker_name) do
-    worker_name
-    |> String.split(".")
-    |> case do
-      [] -> {:error, :malformed_worker_name}
-      components -> {:ok, Module.concat(components)}
-    end
-  end
+  @spec parse_worker_name(String.t()) :: {:ok, module()} | {:error, :invalid_worker_name}
+  defp parse_worker_name(worker_name),
+    do: {:ok, worker_name |> String.split(".") |> Module.concat()}
 
   defp check_module_is_storage_worker(worker) do
     if :attributes
@@ -100,12 +100,12 @@ defmodule Bedrock.Service.Manifest do
   end
 
   @spec id_from_json(value :: binary()) ::
-          {:ok, id :: String.t()} | {:error, :malformed_cluster_id}
+          {:ok, id :: String.t()} | {:error, :invalid_cluster_id}
   defp id_from_json(id) when is_binary(id), do: {:ok, id}
-  defp id_from_json(_), do: {:error, :malformed_cluster_id}
+  defp id_from_json(_), do: {:error, :invalid_cluster_id}
 
   @spec cluster_from_json(value :: binary()) ::
-          {:ok, cluster_name :: String.t()} | {:error, :malformed_cluster_name}
+          {:ok, cluster_name :: String.t()} | {:error, :invalid_cluster_name}
   defp cluster_from_json(cluster) when is_binary(cluster), do: {:ok, cluster}
-  defp cluster_from_json(_), do: {:error, :malformed_cluster_name}
+  defp cluster_from_json(_), do: {:error, :invalid_cluster_name}
 end

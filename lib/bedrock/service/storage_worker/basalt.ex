@@ -9,7 +9,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   defstruct ~w[otp_name path controller id database writer key_min key_max]a
   @type t :: %__MODULE__{}
 
-  @supported_info ~w[
+  defp supported_info, do: ~w[
     durable_version
     id
     pid
@@ -101,7 +101,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   defp info(t, opts) do
     {:ok,
      opts
-     |> Enum.reject(&(not Enum.member?(@supported_info, &1)))
+     |> Enum.reject(&(not Enum.member?(supported_info(), &1)))
      |> Enum.reduce([], fn
        fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
      end)}
@@ -116,6 +116,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   defp gather_info(:path, t), do: t.path
   defp gather_info(:pid, _state), do: self()
   defp gather_info(:size_in_bytes, t), do: Database.info(t.database, :size_in_bytes)
-  defp gather_info(:supported_info, _state), do: @supported_info
+  defp gather_info(:supported_info, _state), do: supported_info()
   defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)
 end

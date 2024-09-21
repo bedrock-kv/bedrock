@@ -89,7 +89,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControlTes
       mvcc: mvcc
     } do
       assert :ok = mvcc |> MVCC.insert_read("x", 1, "x")
-      assert {:ok, "x"} = MVCC.lookup(mvcc, "x", 1)
+      assert {:ok, "x"} = MVCC.fetch(mvcc, "x", 1)
     end
 
     test "it will do nothing when asked to set a new value for an existing key/version", %{
@@ -97,37 +97,37 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControlTes
     } do
       assert :ok = mvcc |> MVCC.insert_read("x", 1, "x")
       assert :ok = mvcc |> MVCC.insert_read("x", 1, "y")
-      assert {:ok, "x"} = MVCC.lookup(mvcc, "x", 1)
+      assert {:ok, "x"} = MVCC.fetch(mvcc, "x", 1)
     end
   end
 
-  describe "MultiversionConcurrencyControl.lookup/3" do
+  describe "MultiversionConcurrencyControl.fetch/3" do
     setup [:with_mvcc, :with_transactions_applied]
 
     test "it will return the correct value, if given a key that was set at the exact version", %{
       mvcc: mvcc
     } do
-      assert {:ok, "d"} = MVCC.lookup(mvcc, "j", 1)
+      assert {:ok, "d"} = MVCC.fetch(mvcc, "j", 1)
     end
 
     test "it will return the correct value, if given a key that was set at a lower version", %{
       mvcc: mvcc
     } do
-      assert {:ok, "d"} = MVCC.lookup(mvcc, "j", 2)
+      assert {:ok, "d"} = MVCC.fetch(mvcc, "j", 2)
     end
 
     test "it will return an error for cleared keys, if given a key that has been cleared at the exact version",
          %{
            mvcc: mvcc
          } do
-      assert {:error, :not_found} = MVCC.lookup(mvcc, "a", 1)
+      assert {:error, :not_found} = MVCC.fetch(mvcc, "a", 1)
     end
 
     test "it will return the correct value for keys cleared at a lower version",
          %{
            mvcc: mvcc
          } do
-      assert {:error, :not_found} = MVCC.lookup(mvcc, "n", 3)
+      assert {:error, :not_found} = MVCC.fetch(mvcc, "n", 3)
     end
   end
 

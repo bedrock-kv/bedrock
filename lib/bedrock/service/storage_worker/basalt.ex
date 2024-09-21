@@ -4,7 +4,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   alias Agent.Server
   alias Bedrock.Service.Controller
   alias Bedrock.Service.StorageWorker.Basalt.Database
-  alias Bedrock.Service.StorageWorker.Basalt.Writer
 
   @doc false
   @spec child_spec(opts :: keyword()) :: map()
@@ -27,51 +26,50 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   end
 
   defmodule State do
-    @type t :: %__MODULE__{}
-    defstruct ~w[otp_name path controller id database writer key_min key_max]a
-
-    def new(path, otp_name, id, controller, database, writer) do
-      %State{
-        path: path,
-        otp_name: otp_name,
-        id: id,
-        controller: controller,
-        database: database,
-        writer: writer
-      }
-    end
+    @type t :: %__MODULE__{
+            otp_name: atom(),
+            path: Path.t(),
+            controller: pid(),
+            id: Controller.worker_id(),
+            database: Database.t()
+          }
+    defstruct otp_name: nil,
+              path: nil,
+              controller: nil,
+              id: nil,
+              database: nil
   end
 
   defmodule Logic do
     def startup(otp_name, controller, id, path) do
       with :ok <- ensure_directory_exists(path),
-           {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")),
-           {:ok, writer} <-
-             Writer.start_link(
-               storage_engine: self(),
-               database: database,
-               id: id,
-               otp_name: :"#{otp_name}_writer"
-             ) do
-        {:ok, State.new(path, otp_name, id, controller, database, writer)}
+           {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
+        {:ok,
+         %State{
+           path: path,
+           otp_name: otp_name,
+           id: id,
+           controller: controller,
+           database: database
+         }}
       end
     end
 
     @spec ensure_directory_exists(Path.t()) :: :ok | {:error, File.posix()}
-    defp ensure_directory_exists(path), do: File.mkdir_p(path)
+    defp ensure_directory_exists(path),
+      do: File.mkdir_p(path)
 
-    def shutdown(%State{} = t) do
-      :ok = Writer.stop(t.writer, :normal)
-      :ok = Database.close(t.database)
-    end
+    def shutdown(%State{} = t),
+      do: :ok = Database.close(t.database)
 
-    def fetch(%State{} = t, key, version, timeout),
-      do: Database.lookup(t.database, key, version, timeout)
+    def fetch(%State{} = t, key, version),
+      do: Database.fetch(t.database, key, version)
 
-    def info(t, opts) do
+    def info(%State{} = t, opt) when is_atom(opt), do: {:ok, gather_info(opt, t)}
+
+    def info(%State{} = t, opts) when is_list(opts) do
       {:ok,
        opts
-       |> Enum.reject(&(not Enum.member?(supported_info(), &1)))
        |> Enum.reduce([], fn
          fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
        end)}
@@ -84,7 +82,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
       path
       key_range
       kind
-      n_objects
+      n_keys
       otp_name
       size_in_bytes
       supported_info
@@ -94,14 +92,15 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     defp gather_info(:durable_version, t), do: Database.last_durable_version(t.database)
     defp gather_info(:id, t), do: t.id
     defp gather_info(:key_range, t), do: Database.key_range(t.database)
-    defp gather_info(:kind, _state), do: :storage
+    defp gather_info(:kind, _t), do: :storage
     defp gather_info(:n_keys, t), do: Database.info(t.database, :n_keys)
     defp gather_info(:otp_name, t), do: t.otp_name
     defp gather_info(:path, t), do: t.path
-    defp gather_info(:pid, _state), do: self()
+    defp gather_info(:pid, _t), do: self()
     defp gather_info(:size_in_bytes, t), do: Database.info(t.database, :size_in_bytes)
-    defp gather_info(:supported_info, _state), do: supported_info()
+    defp gather_info(:supported_info, _t), do: supported_info()
     defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)
+    defp gather_info(_unsupported, _t), do: {:error, :unsupported_info}
   end
 
   defmodule Server do
@@ -122,8 +121,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     end
 
     @impl GenServer
-    def handle_call({:fetch, key, version, timeout}, _from, %State{} = t),
-      do: {:reply, t |> Logic.fetch(key, version, timeout), t}
+    def handle_call({:fetch, key, version, 0}, _from, %State{} = t),
+      do: {:reply, t |> Logic.fetch(key, version), t}
 
     def handle_call({:info, opts}, _from, %State{} = t),
       do: {:reply, t |> Logic.info(opts), t}

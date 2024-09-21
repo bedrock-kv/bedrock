@@ -64,14 +64,14 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
     test "stores the given key-values correctly", %{pkv: pkv} do
       PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar))
 
-      assert :bar == PersistentKeyValues.lookup(pkv, :foo)
+      assert {:ok, :bar} == PersistentKeyValues.fetch(pkv, :foo)
     end
 
     test "correctly overwrites a previous value for a key", %{pkv: pkv} do
       PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar))
       PersistentKeyValues.apply_transaction(pkv, Transaction.new(2, foo: :baz))
 
-      assert :baz == PersistentKeyValues.lookup(pkv, :foo)
+      assert {:ok, :baz} == PersistentKeyValues.fetch(pkv, :foo)
     end
 
     test "does not allow older transactions to be written after newer ones", %{pkv: pkv} do
@@ -80,25 +80,45 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert {:error, :transaction_too_old} ==
                PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar))
 
-      assert :baz == PersistentKeyValues.lookup(pkv, :foo)
+      assert {:ok, :baz} == PersistentKeyValues.fetch(pkv, :foo)
     end
   end
 
   describe "Basalt.PersistentKeyValues.stream_keys/1" do
     setup :with_empty_pkv
 
-    test "returns the correct set of keys, and excludes system keys", %{pkv: pkv} do
-      PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar, a: 1))
-      PersistentKeyValues.apply_transaction(pkv, Transaction.new(2, foo: :baz, l: 3))
-      PersistentKeyValues.apply_transaction(pkv, Transaction.new(3, foo: :biz, j: 2))
-      PersistentKeyValues.apply_transaction(pkv, Transaction.new(4, foo: :buz))
+    test "returns the correct set of keys", %{pkv: pkv} do
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(1, [{"foo", :bar}, {"a", 1}])
+        )
 
-      PersistentKeyValues.apply_transaction(
-        pkv,
-        Transaction.new(4, [{<<0xFF, 0xFF>>, :system_key}])
-      )
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(2, [{"foo", :baz}, {"l", 3}])
+        )
 
-      assert [:a, :foo, :j, :l, :last_version] ==
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(3, [{"foo", :biz}, {"j", 2}])
+        )
+
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(4, [{"foo", :buz}])
+        )
+
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(5, [{<<0xFF, 0xFF>>, :system_key}])
+        )
+
+      assert ["a", "foo", "j", "l", <<0xFF, 0xFF>>] ==
                PersistentKeyValues.stream_keys(pkv)
                |> Enum.to_list()
                |> Enum.sort()

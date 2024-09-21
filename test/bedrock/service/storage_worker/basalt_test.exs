@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
+defmodule Bedrock.Service.StorageWorker.BasaltTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Service.StorageWorker.Basalt
@@ -60,6 +60,27 @@ defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
 
       # At this point, a physical database should have been created on disk.
       assert File.exists?(Path.join(tmp_dir, "dets"))
+    end
+  end
+
+  describe "Basalt.Logic" do
+    @tag :tmp_dir
+    test "info/2 will return data for all topics it advertises as supported", %{tmp_dir: tmp_dir} do
+      {:ok, state} =
+        Basalt.Logic.startup(
+          :test_storage_engine,
+          self(),
+          id(),
+          tmp_dir
+        )
+
+      {:ok, supported_info} = Basalt.Logic.info(state, :supported_info)
+
+      assert {:ok, all_supported_info} = Basalt.Logic.info(state, supported_info)
+
+      assert all_supported_info
+             |> Keyword.keys()
+             |> Enum.sort() == supported_info |> Enum.sort()
     end
   end
 end

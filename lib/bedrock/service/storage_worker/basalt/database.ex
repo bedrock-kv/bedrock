@@ -3,13 +3,13 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   use Bedrock.Cluster, :types
   use Bedrock.Service.StorageWorker, :types
 
-  defstruct ~w[mvcc keyspace pkv waiting_list]a
+  defstruct ~w[mvcc keyspace pkv key_range]a
   @type t :: %__MODULE__{}
 
   alias Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues
   alias Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl, as: MVCC
   alias Bedrock.Service.StorageWorker.Basalt.Keyspace
-  alias Bedrock.Service.StorageWorker.Basalt.WaitingList
+  alias Bedrock.DataPlane.Version
 
   @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}
   def open(otp_name, file_path) when is_atom(otp_name) do
@@ -17,13 +17,14 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
          last_durable_version <- PersistentKeyValues.last_version(pkv),
          mvcc <- MVCC.new(:"#{otp_name}_mvcc", last_durable_version),
          keyspace <- Keyspace.new(:"#{otp_name}_keyspace"),
-         {:ok, waiting_list} <- WaitingList.start_link(last_durable_version) do
+         key_range <- PersistentKeyValues.key_range(pkv),
+         :ok <- load_keys_into_keyspace(pkv, keyspace) do
       {:ok,
        %__MODULE__{
          mvcc: mvcc,
          keyspace: keyspace,
          pkv: pkv,
-         waiting_list: waiting_list
+         key_range: key_range
        }}
     end
   end
@@ -43,82 +44,53 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
 
   @spec key_range(database :: t()) :: key_range() | :undefined
-  def key_range(database), do: database.pkv |> PersistentKeyValues.key_range()
+  def key_range(database), do: database.key_range
 
-  @spec load_keys(t()) :: :ok
-  def load_keys(database) do
-    %{keyspace: keyspace, pkv: pkv} = database
-
-    :telemetry.span(
-      [:bedrock, :storage, :basalt, :database, :load_keys],
-      %{database: database},
-      fn ->
-        PersistentKeyValues.stream_keys(pkv)
-        |> Stream.chunk_every(500)
-        |> Stream.map(fn keys -> :ok = Keyspace.insert_many(keyspace, keys) end)
-        |> Stream.run()
-
-        {:ok, %{}}
-      end
-    )
+  @spec load_keys_into_keyspace(PersistentKeyValues.t(), Keyspace.t()) :: :ok
+  def load_keys_into_keyspace(pkv, keyspace) do
+    PersistentKeyValues.stream_keys(pkv)
+    |> Stream.chunk_every(1_000)
+    |> Stream.map(fn keys -> :ok = Keyspace.insert_many(keyspace, keys) end)
+    |> Stream.run()
   end
 
   @spec apply_transactions(database :: t(), transactions :: [transaction()]) :: version()
-  def apply_transactions(database, transactions) do
-    latest_committed_version = MVCC.apply_transactions!(database.mvcc, transactions)
-    WaitingList.notify_version_applied(database.waiting_list, latest_committed_version)
-    latest_committed_version
-  end
+  def apply_transactions(database, transactions),
+    do: MVCC.apply_transactions!(database.mvcc, transactions)
 
   def last_committed_version(database),
     do: MVCC.newest_version(database.mvcc)
 
-  @spec lookup(database :: t(), key(), version()) ::
+  @spec fetch(database :: t(), key(), version()) ::
           {:ok, value()}
-          | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
-  @spec lookup(database :: t(), key(), version(), timeout_in_ms :: non_neg_integer()) ::
-          {:ok, value()}
-          | {:error, :not_found | :transaction_too_old | :transaction_too_new | :timeout}
-  def lookup(database, key, version, timeout_in_ms \\ 0) do
-    lookup_in_mvcc(database, key, version)
+          | {:error,
+             :not_found
+             | :key_out_of_range}
+  def fetch(%{key_range: {min_key, max_key}}, key, _version)
+      when key < min_key or key >= max_key,
+      do: {:error, :key_out_of_range}
+
+  def fetch(database, key, version) do
+    MVCC.fetch(database.mvcc, key, version)
     |> case do
-      {:error, :transaction_too_new} ->
-        wait_for_version(database, version, timeout_in_ms)
-        |> case do
-          :ok -> lookup_in_mvcc(database, key, version)
-          {:error, :timeout} -> {:error, :transaction_too_new}
+      {:error, :not_found} ->
+        if Keyspace.key_exists?(database.keyspace, key) and
+             not Version.older?(version, MVCC.oldest_version(database.mvcc)) do
+          PersistentKeyValues.fetch(database.pkv, key)
+          |> case do
+            {:ok, value} = result ->
+              :ok = MVCC.insert_read(database.mvcc, key, version, value)
+              result
+
+            {:error, :not_found} = result ->
+              result
+          end
+        else
+          {:error, :transaction_too_old}
         end
 
-      other ->
-        other
-    end
-  end
-
-  defp wait_for_version(database, version, timeout),
-    do: database.waiting_list |> WaitingList.wait_for_version(version, timeout)
-
-  defp lookup_in_mvcc(database, key, version) do
-    MVCC.lookup(database.mvcc, key, version)
-    |> case do
-      {:error, :not_found} -> lookup_in_pkv(database, key, version)
-      result -> result
-    end
-  end
-
-  defp lookup_in_pkv(database, key, version) do
-    %{keyspace: keyspace, pkv: pkv, mvcc: mvcc} = database
-
-    value =
-      if Keyspace.key_exists?(keyspace, key) do
-        PersistentKeyValues.lookup(pkv, key)
-      end
-
-    :ok = MVCC.insert_read(mvcc, key, version, value)
-
-    if value do
-      {:ok, value}
-    else
-      {:error, :not_found}
+      result ->
+        result
     end
   end
 

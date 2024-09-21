@@ -7,8 +7,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  alias Bedrock.DataPlane.Version
-
   @type t :: :ets.table()
 
   @spec new(otp_name :: atom(), version()) :: t()
@@ -107,39 +105,29 @@ defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
   This is useful for providing a consistent view of the data at a given point
   in the transaction timeline.
   """
-  @spec lookup(mvcc :: t(), key(), version()) ::
-          {:ok, value()} | {:error, :not_found | :transaction_too_old | :transaction_too_new}
-  def lookup(mvcc, key, version) do
-    cond do
-      Version.newer?(version, newest_version(mvcc)) ->
-        {:error, :transaction_too_new}
+  @spec fetch(mvcc :: t(), key(), version()) :: {:ok, value()} | {:error, :not_found}
+  def fetch(mvcc, key, version) do
+    mvcc
+    |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
+    |> case do
+      {[match], _continuation} ->
+        match
+        |> value_from_ets_row()
+        |> to_fetch_result()
 
-      Version.older?(version, oldest_version(mvcc)) ->
-        {:error, :transaction_too_old}
-
-      true ->
-        mvcc
-        |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
-        |> case do
-          {[match], _continuation} ->
-            match
-            |> value_from_lookup()
-            |> to_lookup_result()
-
-          :"$end_of_table" ->
-            {:error, :not_found}
-        end
+      :"$end_of_table" ->
+        {:error, :not_found}
     end
   end
 
   defp match_value_for_key_with_version_lte(key, version),
     do: [{{{:"$1", :"$2"}, :"$3"}, [{:"=:=", key, :"$1"}, {:"=<", :"$2", version}], [:"$3"]}]
 
-  defp value_from_lookup({value}), do: value
-  defp value_from_lookup(value), do: value
+  defp value_from_ets_row({value}), do: value
+  defp value_from_ets_row(value), do: value
 
-  defp to_lookup_result(nil), do: {:error, :not_found}
-  defp to_lookup_result(value), do: {:ok, value}
+  defp to_fetch_result(nil), do: {:error, :not_found}
+  defp to_fetch_result(value), do: {:ok, value}
 
   @doc """
   Get the last transaction version performed on the table. If no transaction

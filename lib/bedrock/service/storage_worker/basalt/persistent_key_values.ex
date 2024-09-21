@@ -35,10 +35,10 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   """
   @spec last_version(t()) :: version() | :undefined
   def last_version(pkv) do
-    lookup(pkv, :last_version)
+    fetch(pkv, :last_version)
     |> case do
-      nil -> :undefined
-      version -> version
+      {:error, :not_found} -> :undefined
+      {:ok, version} -> version
     end
   end
 
@@ -47,10 +47,10 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   """
   @spec key_range(t()) :: key_range() | :undefined
   def key_range(pkv) do
-    lookup(pkv, :key_range)
+    fetch(pkv, :key_range)
     |> case do
-      nil -> :undefined
-      {_min, _max} = key_range -> key_range
+      {:error, :not_found} -> :undefined
+      {:ok, {_min, _max}} = key_range -> key_range
     end
   end
 
@@ -77,13 +77,13 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   Attempt to find the value for the given key in the key-value store. Returns
   `nil` if the key is not found.
   """
-  @spec lookup(pkv :: t(), key :: term()) :: term() | nil
-  def lookup(pkv, key) do
+  @spec fetch(pkv :: t(), key :: term()) :: {:ok, term()} | {:error, :not_found}
+  def fetch(pkv, key) do
     pkv
     |> :dets.lookup(key)
     |> case do
-      [] -> nil
-      [{_, value}] -> value
+      [] -> {:error, :not_found}
+      [{_, value}] -> {:ok, value}
     end
   end
 
@@ -137,11 +137,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
     Stream.resource(
       fn -> :dets.first(pkv) end,
       fn
-        <<0xFF>> <> _ -> {:halt, :ok}
         :"$end_of_table" -> {:halt, :ok}
         key -> {[key], :dets.next(pkv, key)}
       end,
       fn _ -> :ok end
     )
+    |> Stream.filter(&is_binary/1)
   end
 end

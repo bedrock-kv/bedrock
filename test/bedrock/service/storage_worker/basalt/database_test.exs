@@ -61,11 +61,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.DatabaseTest do
       assert :ok == Database.ensure_durability_to_version(db, 1)
       assert 1 == Database.last_durable_version(db)
       assert 1 == Database.info(db, :n_keys)
-      assert {:ok, "bar"} == Database.lookup(db, "foo", 1)
-      assert {:ok, "baz"} == Database.lookup(db, "foo", 2)
-      assert {:ok, "biz"} == Database.lookup(db, "foo", 3)
-      assert {:ok, "bif"} == Database.lookup(db, "boo", 2)
-      assert {:ok, "bom"} == Database.lookup(db, "bam", 3)
+      assert {:ok, "bar"} == Database.fetch(db, "foo", 1)
+      assert {:ok, "baz"} == Database.fetch(db, "foo", 2)
+      assert {:ok, "biz"} == Database.fetch(db, "foo", 3)
+      assert {:ok, "bif"} == Database.fetch(db, "boo", 2)
+      assert {:ok, "bom"} == Database.fetch(db, "bam", 3)
 
       # Ensure durability of the second transaction and check that the last
       # durable version and value is correct and that versions older than
@@ -73,11 +73,11 @@ defmodule Bedrock.Service.StorageWorker.Basalt.DatabaseTest do
       assert :ok == Database.ensure_durability_to_version(db, 2)
       assert 2 == Database.last_durable_version(db)
       assert 2 == Database.info(db, :n_keys)
-      assert {:error, :transaction_too_old} == Database.lookup(db, "foo", 1)
-      assert {:ok, "baz"} == Database.lookup(db, "foo", 2)
-      assert {:ok, "biz"} == Database.lookup(db, "foo", 3)
-      assert {:ok, "bif"} == Database.lookup(db, "boo", 2)
-      assert {:ok, "bom"} == Database.lookup(db, "bam", 3)
+      assert {:error, :transaction_too_old} == Database.fetch(db, "foo", 1)
+      assert {:ok, "baz"} == Database.fetch(db, "foo", 2)
+      assert {:ok, "biz"} == Database.fetch(db, "foo", 3)
+      assert {:ok, "bif"} == Database.fetch(db, "boo", 2)
+      assert {:ok, "bom"} == Database.fetch(db, "bam", 3)
 
       # Ensure durability of the third transaction and check that the last
       # durable version and value is correct and that versions older than
@@ -85,61 +85,12 @@ defmodule Bedrock.Service.StorageWorker.Basalt.DatabaseTest do
       assert :ok == Database.ensure_durability_to_version(db, 3)
       assert 3 == Database.last_durable_version(db)
       assert 3 == Database.info(db, :n_keys)
-      assert {:error, :transaction_too_old} == Database.lookup(db, "foo", 1)
-      assert {:error, :transaction_too_old} == Database.lookup(db, "foo", 2)
-      assert {:ok, "biz"} == Database.lookup(db, "foo", 3)
-      assert {:error, :transaction_too_old} == Database.lookup(db, "boo", 2)
-      assert {:ok, "bif"} == Database.lookup(db, "boo", 3)
-      assert {:ok, "bom"} == Database.lookup(db, "bam", 3)
-    end
-
-    @tag :tmp_dir
-    test "the waiting mechanism works properly", %{tmp_dir: tmp_dir} do
-      {:ok, db} = Database.open(random_name(), Path.join(tmp_dir, "e"))
-
-      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 1)
-      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 2)
-      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3)
-
-      waiter = self()
-
-      # After 50ms, apply the transaction that the test is waiting for. Then
-      # signal that the transaction has been applied.
-      Task.async(fn ->
-        Process.sleep(50)
-        assert 1 == Database.apply_transactions(db, [Transaction.new(1, [{"foo", "bar"}])])
-        send(waiter, :done_1)
-      end)
-
-      # Wait for the transaction to be applied.
-      assert {:ok, "bar"} == Database.lookup(db, "foo", 1, 1_000)
-
-      # Check that the async task has completed.
-      assert_receive :done_1
-
-      # Check that the second value is not yet available.
-      assert {:error, :transaction_too_new} == Database.lookup(db, "foo", 2)
-
-      # After 50ms, apply the transaction that the test is waiting for. Then
-      # signal that the transaction has been applied.
-      Task.async(fn ->
-        Process.sleep(50)
-        assert 2 == Database.apply_transactions(db, [Transaction.new(2, [{"foo", "baz"}])])
-        send(waiter, :done_2)
-      end)
-
-      # Wait for the transaction to be applied.
-      assert {:ok, "baz"} == Database.lookup(db, "foo", 2, 1_000)
-
-      # Check that the first value is still available.
-      assert {:ok, "bar"} == Database.lookup(db, "foo", 1)
-
-      # Check that the async task has completed.
-      assert_receive :done_2
-
-      # Finally, check that the third value is not yet available by allowing it
-      # to timeout after 20ms.
-      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3, 20)
+      assert {:error, :transaction_too_old} == Database.fetch(db, "foo", 1)
+      assert {:error, :transaction_too_old} == Database.fetch(db, "foo", 2)
+      assert {:ok, "biz"} == Database.fetch(db, "foo", 3)
+      assert {:error, :transaction_too_old} == Database.fetch(db, "boo", 2)
+      assert {:ok, "bif"} == Database.fetch(db, "boo", 3)
+      assert {:ok, "bom"} == Database.fetch(db, "bam", 3)
     end
   end
 end

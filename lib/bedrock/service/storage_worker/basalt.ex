@@ -30,7 +30,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     path = opts[:path] || raise "Missing :path option"
 
     %{
-      id: __MODULE__,
+      id: {__MODULE__, id},
       start:
         {GenServer, :start_link,
          [
@@ -43,7 +43,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
 
   @impl GenServer
   def init({otp_name, controller, id, path}) do
-    new_state(otp_name, controller, id, path)
+    start(otp_name, controller, id, path)
     |> case do
       {:ok, t} -> {:ok, t, {:continue, :report_health_to_controller}}
       {:error, reason} -> {:stop, reason}
@@ -57,7 +57,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     :normal
   end
 
-  defp new_state(otp_name, controller, id, path) do
+  defp start(otp_name, controller, id, path) do
     with :ok <- ensure_directory_exists(path),
          {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")),
          {:ok, writer} <-
@@ -76,8 +76,6 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
          database: database,
          writer: writer
        }}
-    else
-      {:error, _reason} = error -> error
     end
   end
 
@@ -94,6 +92,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     {:noreply, t}
   end
 
+  @spec ensure_directory_exists(Path.t()) :: :ok | {:error, File.posix()}
   defp ensure_directory_exists(path), do: File.mkdir_p(path)
 
   defp get(t, key, version, opts),

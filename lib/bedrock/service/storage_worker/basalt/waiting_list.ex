@@ -20,7 +20,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.WaitingList do
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  def notify_version_committed(waiting_list, version),
+  def notify_version_applied(waiting_list, version),
     do: GenServer.cast(waiting_list, {:version_committed, version})
 
   def start_link(version),

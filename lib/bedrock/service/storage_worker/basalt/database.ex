@@ -66,7 +66,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   @spec apply_transactions(database :: t(), transactions :: [transaction()]) :: version()
   def apply_transactions(database, transactions) do
     latest_committed_version = MVCC.apply_transactions!(database.mvcc, transactions)
-    WaitingList.notify_version_committed(database.waiting_list, latest_committed_version)
+    WaitingList.notify_version_applied(database.waiting_list, latest_committed_version)
     latest_committed_version
   end
 

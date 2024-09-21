@@ -92,54 +92,54 @@ defmodule Bedrock.Service.StorageWorker.Basalt.DatabaseTest do
       assert {:ok, "bif"} == Database.lookup(db, "boo", 3)
       assert {:ok, "bom"} == Database.lookup(db, "bam", 3)
     end
-  end
 
-  @tag :tmp_dir
-  test "the waiting mechanism works properly", %{tmp_dir: tmp_dir} do
-    {:ok, db} = Database.open(random_name(), Path.join(tmp_dir, "e"))
+    @tag :tmp_dir
+    test "the waiting mechanism works properly", %{tmp_dir: tmp_dir} do
+      {:ok, db} = Database.open(random_name(), Path.join(tmp_dir, "e"))
 
-    assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 1)
-    assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 2)
-    assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3)
+      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 1)
+      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 2)
+      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3)
 
-    waiter = self()
+      waiter = self()
 
-    # After 50ms, apply the transaction that the test is waiting for. Then
-    # signal that the transaction has been applied.
-    Task.async(fn ->
-      Process.sleep(50)
-      assert 1 == Database.apply_transactions(db, [Transaction.new(1, [{"foo", "bar"}])])
-      send(waiter, :done_1)
-    end)
+      # After 50ms, apply the transaction that the test is waiting for. Then
+      # signal that the transaction has been applied.
+      Task.async(fn ->
+        Process.sleep(50)
+        assert 1 == Database.apply_transactions(db, [Transaction.new(1, [{"foo", "bar"}])])
+        send(waiter, :done_1)
+      end)
 
-    # Wait for the transaction to be applied.
-    assert {:ok, "bar"} == Database.lookup(db, "foo", 1, 1_000)
+      # Wait for the transaction to be applied.
+      assert {:ok, "bar"} == Database.lookup(db, "foo", 1, 1_000)
 
-    # Check that the async task has completed.
-    assert_receive :done_1
+      # Check that the async task has completed.
+      assert_receive :done_1
 
-    # Check that the second value is not yet available.
-    assert {:error, :transaction_too_new} == Database.lookup(db, "foo", 2)
+      # Check that the second value is not yet available.
+      assert {:error, :transaction_too_new} == Database.lookup(db, "foo", 2)
 
-    # After 50ms, apply the transaction that the test is waiting for. Then
-    # signal that the transaction has been applied.
-    Task.async(fn ->
-      Process.sleep(50)
-      assert 2 == Database.apply_transactions(db, [Transaction.new(2, [{"foo", "baz"}])])
-      send(waiter, :done_2)
-    end)
+      # After 50ms, apply the transaction that the test is waiting for. Then
+      # signal that the transaction has been applied.
+      Task.async(fn ->
+        Process.sleep(50)
+        assert 2 == Database.apply_transactions(db, [Transaction.new(2, [{"foo", "baz"}])])
+        send(waiter, :done_2)
+      end)
 
-    # Wait for the transaction to be applied.
-    assert {:ok, "baz"} == Database.lookup(db, "foo", 2, 1_000)
+      # Wait for the transaction to be applied.
+      assert {:ok, "baz"} == Database.lookup(db, "foo", 2, 1_000)
 
-    # Check that the first value is still available.
-    assert {:ok, "bar"} == Database.lookup(db, "foo", 1)
+      # Check that the first value is still available.
+      assert {:ok, "bar"} == Database.lookup(db, "foo", 1)
 
-    # Check that the async task has completed.
-    assert_receive :done_2
+      # Check that the async task has completed.
+      assert_receive :done_2
 
-    # Finally, check that the third value is not yet available by allowing it
-    # to timeout after 20ms.
-    assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3, 20)
+      # Finally, check that the third value is not yet available by allowing it
+      # to timeout after 20ms.
+      assert {:error, :transaction_too_new} = Database.lookup(db, "foo", 3, 20)
+    end
   end
 end

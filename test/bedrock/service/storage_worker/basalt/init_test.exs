@@ -3,21 +3,49 @@ defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
 
   alias Bedrock.Service.StorageWorker.Basalt
 
-  def with_id(context) do
-    id = Faker.UUID.v4()
-    {:ok, context |> Map.put(:id, id)}
-  end
+  def id, do: Faker.UUID.v4()
 
   describe "Basalt.child_spec/1" do
-    setup :with_id
-
     @tag :tmp_dir
-    test "starts properly", %{id: id, tmp_dir: tmp_dir} do
+    test "properly constructs a child spec", %{tmp_dir: tmp_dir} do
+      expected_id = id()
+
       child_spec =
         Basalt.child_spec(
           cluster: "test",
           path: tmp_dir,
-          id: id,
+          id: expected_id,
+          otp_name: :test_storage_engine,
+          controller: self()
+        )
+
+      assert %{
+               id: {Bedrock.Service.StorageWorker.Basalt, ^expected_id},
+               start: {
+                 GenServer,
+                 :start_link,
+                 [
+                   Bedrock.Service.StorageWorker.Basalt,
+                   {:test_storage_engine, pid, ^expected_id, ^tmp_dir},
+                   [name: :test_storage_engine]
+                 ]
+               }
+             } = child_spec
+
+      assert(is_pid(pid))
+    end
+  end
+
+  describe "Basalt" do
+    @tag :tmp_dir
+    test "lifecycle functions properly", %{tmp_dir: tmp_dir} do
+      expected_id = id()
+
+      child_spec =
+        Basalt.child_spec(
+          cluster: "test",
+          path: tmp_dir,
+          id: expected_id,
           otp_name: :test_storage_engine,
           controller: self()
         )

@@ -41,6 +41,14 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
   end
 
   defmodule Logic do
+    alias Bedrock.DataPlane.Version
+
+    @spec startup(
+            otp_name :: atom(),
+            controller :: pid(),
+            id :: Controller.worker_id(),
+            Path.t()
+          ) :: {:ok, State.t()} | {:error, term()}
     def startup(otp_name, controller, id, path) do
       with :ok <- ensure_directory_exists(path),
            {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
@@ -59,12 +67,16 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     defp ensure_directory_exists(path),
       do: File.mkdir_p(path)
 
+    @spec shutdown(State.t()) :: :ok
     def shutdown(%State{} = t),
       do: :ok = Database.close(t.database)
 
+    @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
+            {:error, :key_out_of_range | :not_found} | {:ok, binary()}
     def fetch(%State{} = t, key, version),
       do: Database.fetch(t.database, key, version)
 
+    @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
     def info(%State{} = t, opt) when is_atom(opt), do: {:ok, gather_info(opt, t)}
 
     def info(%State{} = t, opts) when is_list(opts) do

@@ -72,16 +72,16 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
       do: :ok = Database.close(t.database)
 
     @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
-            {:error, :key_out_of_range | :not_found} | {:ok, binary()}
+            {:error, :key_out_of_range | :not_found | :transaction_too_old} | {:ok, binary()}
     def fetch(%State{} = t, key, version),
       do: Database.fetch(t.database, key, version)
 
     @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
-    def info(%State{} = t, opt) when is_atom(opt), do: {:ok, gather_info(opt, t)}
+    def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
 
-    def info(%State{} = t, opts) when is_list(opts) do
+    def info(%State{} = t, facts) when is_list(facts) do
       {:ok,
-       opts
+       facts
        |> Enum.reduce([], fn
          fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
        end)}

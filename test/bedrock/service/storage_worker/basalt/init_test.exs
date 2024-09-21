@@ -25,7 +25,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
                  GenServer,
                  :start_link,
                  [
-                   Bedrock.Service.StorageWorker.Basalt,
+                   Bedrock.Service.StorageWorker.Basalt.Server,
                    {:test_storage_engine, pid, ^expected_id, ^tmp_dir},
                    [name: :test_storage_engine]
                  ]
@@ -53,6 +53,12 @@ defmodule Bedrock.Service.StorageWorker.Basalt.InitTest do
       pid = start_supervised!(child_spec)
 
       assert Process.alive?(pid)
+
+      # We expect the worker to eventually send a message to the controller
+      # when it's ready to accept requests.
+      assert_receive {:"$gen_cast", {:worker_health, ^expected_id, :ok}}, 5_000
+
+      # At this point, a physical database should have been created on disk.
       assert File.exists?(Path.join(tmp_dir, "dets"))
     end
   end

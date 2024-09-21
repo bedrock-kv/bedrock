@@ -85,7 +85,7 @@ defmodule Bedrock.Client.Transaction do
                 state
                 |> storage_workers_for_key(key)
                 |> Enum.random()
-                |> StorageWorker.get(key, state.read_version)
+                |> StorageWorker.fetch(key, state.read_version)
 
               {state |> Map.update!(:rx, &Map.put(&1, key, value)), value}
           end

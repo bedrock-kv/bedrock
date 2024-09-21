@@ -24,19 +24,19 @@ defmodule Bedrock.Service.StorageWorker do
   @doc """
   Returns the value for the given key/version.
   """
-  @spec get(name(), key(), version(), timeout_in_ms()) ::
+  @spec fetch(name(), key(), version(), timeout_in_ms()) ::
           {:ok, value()}
           | {:error,
              :timeout
              | :not_found
              | :transaction_too_old
              | :transaction_too_new
-             | :engine_does_not_exist}
-  def get(worker, key, version, timeout \\ 5_000) when is_binary(key) do
-    GenServer.call(worker, {:get, key, version, [timeout: timeout]})
+             | :unavailable}
+  def fetch(worker, key, version, timeout \\ 5_000) when is_binary(key) do
+    GenServer.call(worker, {:fetch, key, version, [timeout: timeout]})
   catch
     :exit, {:noproc, {GenServer, :call, _}} ->
-      {:error, :engine_does_not_exist}
+      {:error, :unavailable}
   end
 
   @doc """

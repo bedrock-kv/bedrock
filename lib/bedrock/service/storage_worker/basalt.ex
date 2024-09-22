@@ -121,8 +121,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     @impl GenServer
     def init(args),
       # We use a continuation here to ensure that the controller isn't blocked
-      # waiting for the worker to finish it's startup sequence which could take
-      # a few seconds or longer if the database is large. The controller will
+      # waiting for the worker to finish it's startup sequence (which could take
+      # a few seconds or longer if the database is large.) The controller will
       # be notified when the worker is ready to accept requests.
       do: {:ok, args, {:continue, :finish_startup}}
 

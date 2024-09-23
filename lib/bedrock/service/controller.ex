@@ -1,7 +1,6 @@
 defmodule Bedrock.Service.Controller do
   use GenServer
 
-  alias Bedrock.Service.Worker
   alias Bedrock.Service.Manifest
   alias Bedrock.Cluster.ServiceAdvertiser
   alias Bedrock.Service.StorageWorker
@@ -108,53 +107,21 @@ defmodule Bedrock.Service.Controller do
         workers: %{}
       }
 
-    {:ok, t, {:continue, :sync_existing}}
+    {:ok, t, {:continue, :spin_up}}
   end
 
   @impl GenServer
-  def handle_continue(:sync_existing, t) do
-    workers =
-      t.worker_supervisor_otp_name
-      |> DynamicSupervisor.which_children()
-      |> Enum.map(fn
-        {_, worker_pid, _, _} when is_pid(worker_pid) ->
-          Worker.info(worker_pid, [:id, :health, :otp_name])
-          |> case do
-            {:ok, info} ->
-              {info[:id],
-               %WorkerInfo{
-                 id: info[:id],
-                 health: info[:health] || :ok,
-                 otp_name: info[:otp_name]
-               }}
-
-            _ ->
-              :skip
-          end
-
-        _ ->
-          :skip
-      end)
-      |> Enum.reject(&(&1 == :skip))
-      |> Map.new()
-
-    {:noreply, %{t | workers: workers} |> recompute_controller_health(), {:continue, :spin_up}}
-  end
-
   def handle_continue(:spin_up, t) do
     worker_ids_to_start =
       t.path
       |> Path.join("*")
       |> Path.wildcard()
       |> Enum.map(&Path.basename/1)
-      |> Enum.reject(&Map.has_key?(t.workers, &1))
 
-    if [] == worker_ids_to_start && map_size(t.workers) == 0 do
-      {:noreply, t}
-    else
-      {:noreply, t, {:continue, {:start_workers, worker_ids_to_start}}}
-    end
+    {:noreply, t, {:continue, {:start_workers, worker_ids_to_start}}}
   end
+
+  def handle_continue({:start_workers, []}, t), do: {:noreply, t}
 
   def handle_continue({:start_workers, instance_ids}, t) do
     workers =
@@ -257,43 +224,39 @@ defmodule Bedrock.Service.Controller do
   @spec start_worker_if_necessary(t(), worker_id()) ::
           {:ok, pid()} | {:error, term()}
   def start_worker_if_necessary(t, id) do
-    t.otp_name
-    |> otp_name_for_worker(id)
+    worker_otp_name = otp_name_for_worker(t.otp_name, id)
+
+    worker_otp_name
     |> Process.whereis()
     |> case do
-      nil ->
-        start_worker(t, id)
-        |> case do
-          {:ok, pid} ->
-            notify_service_advertiser_of_new_worker(t, pid)
-            {:ok, pid}
-
-          error ->
-            error
-        end
-
-      pid ->
-        {:ok, pid}
+      nil -> start_worker(t, id, worker_otp_name)
+      pid -> {:ok, pid}
     end
   end
 
-  @spec start_worker(t(), worker_id()) ::
+  @spec start_worker(t(), worker_id(), worker_otp_name :: atom()) ::
           {:ok, pid()} | {:error, term()}
-  def start_worker(t, id) do
+  def start_worker(t, id, otp_name) do
     with path <- Path.join(t.path, id),
          {:ok, manifest} <- Manifest.load_from_file(Path.join(path, "manifest.json")),
          :ok <- check_manifest_id(manifest, id),
-         :ok <- check_manifest_cluster_name(manifest, t.cluster.name()) do
-      t.worker_supervisor_otp_name
-      |> DynamicSupervisor.start_child(
-        manifest.worker.child_spec(
-          path: path,
-          id: id,
-          controller: t.otp_name,
-          otp_name: otp_name_for_worker(t.otp_name, id)
-        )
-        |> Map.put(:restart, :transient)
-      )
+         :ok <- check_manifest_cluster_name(manifest, t.cluster.name()),
+         {:ok, _top_level_pid} <-
+           DynamicSupervisor.start_child(
+             t.worker_supervisor_otp_name,
+             manifest.worker.child_spec(
+               path: path,
+               id: id,
+               controller: t.otp_name,
+               otp_name: otp_name
+             )
+             |> Map.put(:restart, :transient)
+           ) do
+      Process.whereis(otp_name)
+      |> case do
+        nil -> {:error, :unable_to_locate_server}
+        server_pid -> {:ok, server_pid}
+      end
     end
   end
 

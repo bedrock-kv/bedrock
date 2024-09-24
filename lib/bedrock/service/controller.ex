@@ -2,8 +2,7 @@ defmodule Bedrock.Service.Controller do
   use GenServer
 
   alias Bedrock.Service.Manifest
-  alias Bedrock.Cluster.ServiceAdvertiser
-  alias Bedrock.Service.StorageWorker
+  alias Bedrock.Service.Worker
 
   defstruct ~w[
     cluster
@@ -26,7 +25,6 @@ defmodule Bedrock.Service.Controller do
   defmodule WorkerInfo do
     @type t :: %__MODULE__{}
     defstruct [
-      #
       :id,
       :health,
       :otp_name
@@ -47,7 +45,7 @@ defmodule Bedrock.Service.Controller do
   def report_worker_health(t, worker_id, health) when is_controller(t),
     do: GenServer.cast(t, {:worker_health, worker_id, health})
 
-  @spec workers(t :: controller_name()) :: {:ok, [StorageWorker.name()]} | {:error, term()}
+  @spec workers(t :: controller_name()) :: {:ok, [Worker.t()]} | {:error, term()}
   def workers(t) when is_controller(t) do
     GenServer.call(t, :workers)
   catch
@@ -62,8 +60,7 @@ defmodule Bedrock.Service.Controller do
     default_worker = opts[:default_worker] || raise "Missing :default_worker option"
 
     worker_supervisor_otp_name =
-      Keyword.get(opts, :worker_supervisor_otp_name) ||
-        raise "Missing :worker_supervisor_otp_name option"
+      opts[:worker_supervisor_otp_name] || raise "Missing :worker_supervisor_otp_name option"
 
     %{
       id: __MODULE__,
@@ -236,32 +233,29 @@ defmodule Bedrock.Service.Controller do
 
   @spec start_worker(t(), worker_id(), worker_otp_name :: atom()) ::
           {:ok, pid()} | {:error, term()}
-  def start_worker(t, id, otp_name) do
-    with path <- Path.join(t.path, id),
+  def start_worker(t, worker_id, worker_otp_name) do
+    with path <- Path.join(t.path, worker_id),
          {:ok, manifest} <- Manifest.load_from_file(Path.join(path, "manifest.json")),
-         :ok <- check_manifest_id(manifest, id),
+         :ok <- check_manifest_id(manifest, worker_id),
          :ok <- check_manifest_cluster_name(manifest, t.cluster.name()),
          {:ok, _top_level_pid} <-
            DynamicSupervisor.start_child(
              t.worker_supervisor_otp_name,
              manifest.worker.child_spec(
                path: path,
-               id: id,
+               id: worker_id,
                controller: t.otp_name,
-               otp_name: otp_name
+               otp_name: worker_otp_name
              )
              |> Map.put(:restart, :transient)
            ) do
-      Process.whereis(otp_name)
+      Process.whereis(worker_otp_name)
       |> case do
         nil -> {:error, :unable_to_locate_server}
-        server_pid -> {:ok, server_pid}
+        worker_pid -> {:ok, worker_pid}
       end
     end
   end
-
-  def notify_service_advertiser_of_new_worker(t, pid),
-    do: ServiceAdvertiser.notify_of_new_worker(t.cluster.otp_name(:service_advertiser), pid)
 
   @spec check_manifest_id(manifest :: Manifest.t(), id :: worker_id()) ::
           :ok | {:error, :id_in_manifest_does_not_match}

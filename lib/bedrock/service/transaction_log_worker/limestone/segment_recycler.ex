@@ -20,14 +20,11 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
 
     alias Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments
 
-    defstruct ~w[path minimum_available unused_segments]a
-    @type t :: %__MODULE__{}
-
     def child_spec(args) do
-      path = args[:path] || raise "Missing :path option"
-      minimum_available = args[:minimum_available] || raise "Missing :minimum_available option"
-      segment_size = args[:segment_size] || raise "Missing :segment_size option"
-      otp_name = args[:otp_name] || raise "Missing :otp_name option"
+      path = Keyword.fetch!(args, :path)
+      minimum_available = Keyword.fetch!(args, :minimum_available)
+      segment_size = Keyword.fetch!(args, :segment_size)
+      otp_name = Keyword.fetch!(args, :otp_name)
 
       %{
         id: __MODULE__,
@@ -45,10 +42,15 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
       }
     end
 
+    defmodule State do
+      defstruct ~w[path minimum_available unused_segments]a
+      @type t :: %__MODULE__{}
+    end
+
     @impl GenServer
     def init({path, minimum_available, segment_size}) do
       {:ok,
-       %__MODULE__{
+       %State{
          path: path,
          minimum_available: minimum_available,
          unused_segments: UnusedSegments.new!(path, segment_size)
@@ -61,7 +63,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
       |> UnusedSegments.ensure_minimum_available(state.minimum_available)
       |> case do
         {:ok, unused_segments} ->
-          {:noreply, %{state | unused_segments: unused_segments}}
+          {:noreply, state |> with_updated_unused_segments(unused_segments)}
 
         {:error, reason} ->
           {:stop, :shutdown, reason}

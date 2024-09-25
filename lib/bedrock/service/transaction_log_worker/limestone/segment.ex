@@ -28,6 +28,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
          :ok <- :file.close(fd) do
       :ok
     else
+      {:error, :eisdir} -> raise "not implemented"
       {:error, :enoent} -> {:error, :path_does_not_exist}
     end
   end
@@ -96,8 +97,21 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
   end
 
   defmodule Writer do
+    @moduledoc """
+    A struct that represents a writer for a segment.
+    """
     defstruct [:fd, :write_offset, :bytes_remaining]
-    @type t :: %__MODULE__{}
+
+    @typedoc """
+    A `Writer` is a handle to a segment that can be used to write transcations
+    to the segment. It is a stateful object that keeps track of the current
+    write offset and the number of bytes remaining in the segment.
+    """
+    @type t :: %__MODULE__{
+            fd: pos_integer(),
+            write_offset: pos_integer(),
+            bytes_remaining: pos_integer()
+          }
   end
 
   @spec writer(t()) :: {:ok, Writer.t()} | {:error, atom()}

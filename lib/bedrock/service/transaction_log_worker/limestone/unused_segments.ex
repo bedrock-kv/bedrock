@@ -6,12 +6,21 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
   """
   alias Bedrock.Service.TransactionLogWorker.Limestone.Segment
 
-  defstruct [:path, :segments, :size, next_id: 0]
+  defstruct path: nil,
+            segments: [],
+            size: 0,
+            next_id: 0,
+            mininum_available: 0
+
   @type t :: %__MODULE__{}
 
-  @unused_file_prefix "preallocated"
+  def unused_file_prefix, do: "preallocated"
+  def generate_unused_file_name(id), do: "#{unused_file_prefix()}.#{id}"
 
-  @spec new(path_to_dir :: binary(), size :: non_neg_integer()) :: {:ok, t()} | {:error, atom()}
+  @spec new(
+          path_to_dir :: binary(),
+          size :: non_neg_integer()
+        ) :: {:ok, t()} | {:error, atom()}
   def new(path_to_dir, size) do
     with true <- File.dir?(path_to_dir) || {:error, :path_is_not_a_directory},
          segments <- load_from_path(path_to_dir),
@@ -30,14 +39,14 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
   def new!(path_to_dir, size) do
     new(path_to_dir, size)
     |> case do
-      {:ok, usf} -> usf
+      {:ok, t} -> t
       {:error, reason} -> raise reason
     end
   end
 
   @spec load_from_path(dir_path :: binary()) :: [Segment.t()]
   defp load_from_path(path) do
-    Path.wildcard(Path.join(path, "#{@unused_file_prefix}.*"))
+    Path.wildcard(Path.join(path, "#{unused_file_prefix()}.*"))
     |> Enum.reduce([], fn
       _, {:error, _} = error ->
         error
@@ -54,39 +63,41 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
   @spec check_out(t(), new_name :: String.t()) :: {:ok, Segment.t(), t()} | {:error, atom()}
   def check_out(%{segments: []}, _new_name), do: {:error, :unavailable}
 
-  def check_out(usf, new_name) do
-    [first_segment | remaining_segments] = usf.segments
+  def check_out(t, new_name) do
+    [first_segment | remaining_segments] = t.segments
 
     first_segment
     |> Segment.rename(new_name)
     |> case do
-      {:ok, renamed} -> {:ok, renamed, %{usf | segments: remaining_segments}}
+      {:ok, renamed} -> {:ok, renamed, %{t | segments: remaining_segments}}
       {:error, _reason} = error -> error
     end
   end
 
   @spec check_in(t(), Segment.t()) :: {:ok, t()} | {:error, atom()}
-  def check_in(usf, file) do
-    with new_name <- Path.join(usf.path, "#{@unused_file_prefix}.#{usf.next_id}"),
+  def check_in(t, file) do
+    with new_name <- Path.join(t.path, generate_unused_file_name(t.next_id)),
          {:ok, renamed} <- Segment.rename(file, new_name),
          :ok <- Segment.clear(renamed) do
-      {:ok, %{usf | segments: [renamed | usf.segments], next_id: usf.next_id + 1}}
+      {:ok, %{t | segments: [renamed | t.segments], next_id: t.next_id + 1}}
     end
   end
 
   @spec ensure_minimum_available(t(), non_neg_integer()) :: {:ok, t()} | {:error, atom()}
-  def ensure_minimum_available(_usf, n) when n < 0, do: raise("n must be >= 0")
+  def ensure_minimum_available(_t, n) when n < 0, do: raise("n must be >= 0")
 
-  def ensure_minimum_available(%{segments: segments} = usf, n) when n >= length(segments),
-    do: {:ok, usf}
+  def ensure_minimum_available(t, n), do: create_new_segments(t, max(0, n - length(t.segments)))
 
-  def ensure_minimum_available(usf, 0),
-    do: {:ok, usf}
+  defp create_new_segments(t, 0), do: {:ok, t}
 
-  def ensure_minimum_available(usf, n) do
-    with {:ok, segment} <- Segment.allocate(usf.path, usf.size) do
-      %{usf | segments: [segment | usf.segments]}
-      |> ensure_minimum_available(n - 1)
+  defp create_new_segments(t, n) do
+    with {:ok, segment} <-
+           Segment.allocate(
+             Path.join(t.path, generate_unused_file_name(t.next_id)),
+             t.size
+           ) do
+      %{t | segments: [segment | t.segments], next_id: t.next_id + 1}
+      |> create_new_segments(n - 1)
     end
   end
 
@@ -95,7 +106,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.UnusedSegments do
   defp find_highest_id(segments) do
     segments
     |> Enum.map(&(&1.path |> Path.basename() |> String.split(".")))
-    |> Enum.map(fn [@unused_file_prefix, id] -> String.to_integer(id) end)
+    |> Enum.reject(fn [prefix, _] -> prefix != unused_file_prefix() end)
+    |> Enum.map(fn [_prefix, id] -> String.to_integer(id) end)
     |> Enum.max()
   end
 end

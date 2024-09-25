@@ -108,7 +108,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
     write offset and the number of bytes remaining in the segment.
     """
     @type t :: %__MODULE__{
-            fd: pos_integer(),
+            fd: File.file_descriptor(),
             write_offset: pos_integer(),
             bytes_remaining: pos_integer()
           }

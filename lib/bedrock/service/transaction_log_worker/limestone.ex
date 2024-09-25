@@ -24,7 +24,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
              otp_name,
              id,
              path,
-             opts[:minimum_available] || 3,
+             opts[:min_available] || 3,
+             opts[:max_available] || 5,
              opts[:segment_size] || 64 * 1024 * 1024,
              controller
            }
@@ -34,7 +35,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
   end
 
   @impl Supervisor
-  def init({otp_name, id, path, minimum_available, segment_size, controller}) do
+  def init({otp_name, id, path, min_available, max_available, segment_size, controller}) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
     recycler_name = :"#{otp_name}_recycler"
@@ -43,7 +44,9 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
       [
         {SegmentRecycler,
          [
-           minimum_available: minimum_available,
+           id: id,
+           min_available: min_available,
+           max_available: max_available,
            segment_size: segment_size,
            path: path,
            otp_name: recycler_name

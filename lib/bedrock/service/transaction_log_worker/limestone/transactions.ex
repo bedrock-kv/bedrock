@@ -27,7 +27,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Transactions do
     :ok
   end
 
-  @spec get(t(), version(), pos_integer()) :: [transaction()]
+  @spec get(t(), version(), count :: pos_integer()) :: [transaction()]
   def get(t, version, count) do
     :ets.select(t.ets, match_value_for_key_with_version_gt(version), count)
     |> case do

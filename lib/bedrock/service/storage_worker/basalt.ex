@@ -77,11 +77,12 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
       do: Database.fetch(t.database, key, version)
 
     @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
-    def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
+    def info(%State{} = t, fact_name) when is_atom(fact_name),
+      do: {:ok, gather_info(fact_name, t)}
 
-    def info(%State{} = t, facts) when is_list(facts) do
+    def info(%State{} = t, fact_names) when is_list(fact_names) do
       {:ok,
-       facts
+       fact_names
        |> Enum.reduce([], fn
          fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
        end)}
@@ -136,8 +137,8 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
     def handle_call({:fetch, key, version, 0}, _from, %State{} = t),
       do: {:reply, t |> Logic.fetch(key, version), t}
 
-    def handle_call({:info, opts}, _from, %State{} = t),
-      do: {:reply, t |> Logic.info(opts), t}
+    def handle_call({:info, fact_names}, _from, %State{} = t),
+      do: {:reply, t |> Logic.info(fact_names), t}
 
     def handle_call(_, _from, t),
       do: {:reply, {:error, :not_ready}, t}
@@ -147,7 +148,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt do
       Logic.startup(otp_name, controller, id, path)
       |> case do
         {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
-        {:error, reason} -> {:stop, :nostate, reason}
+        {:error, reason} -> {:stop, reason, :nostate}
       end
     end
 

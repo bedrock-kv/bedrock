@@ -5,7 +5,7 @@ defmodule Bedrock.Service.Worker do
   facts about itself when requested.
   """
 
-  @type t :: pid() | atom() | {atom(), Node.t()}
+  @type t :: GenServer.server()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
 

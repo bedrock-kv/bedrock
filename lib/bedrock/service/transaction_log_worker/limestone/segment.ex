@@ -7,6 +7,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
 
   alias Bedrock.DataPlane.Transaction
 
+  @version_bits 6
+  @kv_bits 32 - @version_bits
   @empty_segment_header <<"SGMT", 8::big-integer-size(32)>>
 
   @doc """
@@ -80,8 +82,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
         bytes
       end,
       fn
-        <<crc32::big-integer-size(32), version_size::big-integer-size(8),
-          key_values_size::big-integer-size(24), version::binary-size(version_size),
+        <<crc32::big-integer-size(32), version_size::big-integer-size(@version_bits),
+          key_values_size::big-integer-size(@kv_bits), version::binary-size(version_size),
           key_values::binary-size(key_values_size), remaining_bytes::binary>> ->
           calc_crc32 = :erlang.crc32(version) |> :erlang.crc32(key_values)
 
@@ -181,8 +183,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Segment do
 
     if total_size <= bytes_remaining do
       header = <<
-        version_size::big-unsigned-integer-size(8),
-        key_values_size::big-unsigned-integer-size(24)
+        version_size::big-unsigned-integer-size(@version_bits),
+        key_values_size::big-unsigned-integer-size(@kv_bits)
       >>
 
       crc32 =

@@ -37,16 +37,15 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
   def init({otp_name, id, controller, _path, _min_available, _max_available, _segment_size}) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
-    recycler_name = :"#{otp_name}_recycler"
-
     children =
       [
         {Server,
-         id: id,
-         otp_name: otp_name,
-         controller: controller,
-         transactions: transactions,
-         recycler: recycler_name}
+         [
+           id: id,
+           otp_name: otp_name,
+           controller: controller,
+           transactions: transactions
+         ]}
       ]
 
     Supervisor.init(children, strategy: :rest_for_one)

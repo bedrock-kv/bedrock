@@ -58,4 +58,32 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.TransactionsTest do
              ] == t.ets |> :ets.tab2list()
     end
   end
+
+  describe "Limestone.Transactions.get/3" do
+    @tag :with_empty
+    test "it will return transactions correctly", %{transactions: t} do
+      t1 = Transaction.new(<<1>>, [{"test", "me"}])
+      t2 = Transaction.new(<<2>>, [{"test", "you"}])
+      t3 = Transaction.new(<<3>>, [{"test", "boo"}])
+      t4 = Transaction.new(<<4>>, [{"test", "baz"}])
+
+      assert :ok = t |> Transactions.append!([t1, t2, t3, t4])
+
+      assert [
+               {<<2>>, [{"test", "you"}]},
+               {<<3>>, [{"test", "boo"}]},
+               {<<4>>, [{"test", "baz"}]}
+             ] ==
+               Transactions.get(t, <<1>>, 5)
+
+      assert [
+               {<<3>>, [{"test", "boo"}]},
+               {<<4>>, [{"test", "baz"}]}
+             ] ==
+               Transactions.get(t, <<2>>, 2)
+
+      assert [] ==
+               Transactions.get(t, <<4>>, 2)
+    end
+  end
 end

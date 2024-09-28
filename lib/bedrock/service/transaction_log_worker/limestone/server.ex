@@ -11,6 +11,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     controller = Keyword.fetch!(opts, :controller)
     transactions = Keyword.fetch!(opts, :transactions)
     recycler = Keyword.fetch!(opts, :recycler)
+    sup = Keyword.fetch(opts, :sup)
 
     %{
       id: __MODULE__,
@@ -18,7 +19,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
         {GenServer, :start_link,
          [
            __MODULE__.Server,
-           {id, otp_name, controller, transactions, recycler},
+           {id, otp_name, controller, transactions, recycler, sup},
            [name: otp_name]
          ]}
     }
@@ -27,11 +28,12 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
   defmodule State do
     @type t :: %__MODULE__{
             mode: :waiting | :locked | :running,
-            id: integer(),
+            id: String.t(),
             otp_name: atom(),
             transactions: Transactions.t(),
             controller: Controller.t(),
             recycler: SegmentRecycler.server(),
+            sup: atom(),
             last_tx_id: Transaction.version() | :undefined,
             cluster_controller: ClusterController.t() | nil
           }
@@ -41,13 +43,44 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
               transactions: nil,
               controller: nil,
               recycler: nil,
+              sup: nil,
               last_tx_id: nil,
               cluster_controller: nil
   end
 
+  defmodule Subscriptions do
+    @type t :: :ets.table()
+    @type subscription :: {
+            id :: String.t(),
+            last_tx_id :: Transaction.version(),
+            last_durable_tx_id :: Transaction.version(),
+            last_seen :: DateTime.t()
+          }
+
+    def new, do: :ets.new(:subscribers, [:ordered_set])
+
+    @spec all(t()) :: {:ok, [subscription()]}
+    def all(t), do: {:ok, :ets.tab2list(t)}
+
+    @spec lookup(t(), String.t()) :: {:ok, subscription()} | {:error, :not_found}
+    def lookup(t, id) do
+      :ets.lookup(t, id)
+      |> case do
+        [] -> {:error, :not_found}
+        [sub] -> {:ok, sub}
+      end
+    end
+
+    @spec update(t(), String.t(), Transaction.version(), Transaction.version()) :: :ok
+    def update(t, id, last_tx_id, last_durable_tx_id) do
+      :ets.insert(t, {id, last_tx_id, last_durable_tx_id, DateTime.utc_now()})
+      :ok
+    end
+  end
+
   defmodule Logic do
-    @spec startup(any(), any(), any(), any(), any()) :: {:ok, State.t()} | {:error, term()}
-    def startup(id, otp_name, controller, transactions, recycler) do
+    @spec startup(any(), any(), any(), any(), any(), any()) :: {:ok, State.t()} | {:error, term()}
+    def startup(id, otp_name, controller, transactions, recycler, sup) do
       {:ok,
        %State{
          mode: :waiting,
@@ -56,14 +89,15 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
          controller: controller,
          transactions: transactions,
          recycler: recycler,
+         sup: sup,
          last_tx_id: :undefined
        }}
     end
 
     @spec apply_transaction(State.t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
-            {:ok, State.t()} | {:error, :transaction_id_mismatch | :not_running}
+            {:ok, State.t()} | {:error, :out_of_order | :not_running}
     def apply_transaction(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
-      do: {:error, :transaction_id_mismatch}
+      do: {:error, :out_of_order}
 
     def apply_transaction(t, _transaction, _prev_tx_id) when t.mode != :running,
       do: {:error, :not_running}
@@ -77,6 +111,33 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
 
     def request_lock(t, cluster_controller, epoch),
       do: {:ok, %{t | epoch: epoch, cluster_controller: cluster_controller, state: :locked}}
+
+    @spec pull_transactions(
+            t :: State.t(),
+            id :: String.t(),
+            last_tx_id :: Transaction.version(),
+            count :: pos_integer(),
+            last_durable_tx_id :: Transaction.version()
+          ) ::
+            {:ok, [] | [Transaction.t()]} | {:error, :transaction_too_new}
+    def pull_transactions(t, _id, last_tx_id, _count, _last_durable_tx_id)
+        when last_tx_id > t.last_tx_id,
+        do: {:error, :transaction_too_new}
+
+    def pull_transactions(t, id, last_tx_id, count, last_durable_tx_id) do
+      t.transactions
+      |> Transactions.get(last_tx_id, count)
+      |> case do
+        [] ->
+          t.subscriptions |> Subscriptions.update(id, last_tx_id, last_durable_tx_id)
+          {:ok, []}
+
+        transactions ->
+          last_tx_id = transactions |> List.last() |> Transaction.version()
+          t.subscriptions |> Subscriptions.update(id, last_tx_id, last_durable_tx_id)
+          {:ok, transactions}
+      end
+    end
 
     @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
     def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
@@ -124,8 +185,20 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     def handle_call({:apply_transaction, transaction, prev_tx_id}, _from, %State{} = t) do
       Logic.apply_transaction(t, transaction, prev_tx_id)
       |> case do
-        {:ok, t} -> {:reply, :ok, t, {:continue, :notify_producers}}
+        {:ok, t} -> {:reply, :ok, t}
         {:error, _reason} = error -> {:reply, error, t}
+      end
+    end
+
+    def handle_call(
+          {:pull_transactions, id, last_tx_id, count, last_durable_tx_id},
+          _from,
+          %State{} = t
+        ) do
+      Logic.pull_transactions(t, id, last_tx_id, count, last_durable_tx_id)
+      |> case do
+        {:ok, []} -> {:reply, {:ok, []}, t}
+        {:ok, transactions} -> {:reply, {:ok, transactions}, t}
       end
     end
 
@@ -139,20 +212,17 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     end
 
     @impl GenServer
-    def handle_continue(:finish_startup, {id, otp_name, controller, transactions, recycler}) do
-      Logic.startup(id, otp_name, controller, transactions, recycler)
+    def handle_continue(:finish_startup, {id, otp_name, controller, transactions, recycler, sup}) do
+      Logic.startup(id, otp_name, controller, transactions, recycler, sup)
       |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
-        {:error, reason} -> {:stop, reason, :nostate}
+        {:ok, t} ->
+          {:noreply, t, {:continue, :report_health_to_controller}}
+          # {:error, reason} -> {:stop, reason, :nostate}
       end
     end
 
     def handle_continue(:report_health_to_controller, %State{} = t) do
       :ok = Controller.report_worker_health(t.controller, t.id, :ok)
-      {:noreply, t}
-    end
-
-    def handle_continue(:notify_producers, t) do
       {:noreply, t}
     end
 

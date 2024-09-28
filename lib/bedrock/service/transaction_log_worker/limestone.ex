@@ -37,7 +37,6 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
   def init({otp_name, id, controller, _path, _min_available, _max_available, _segment_size}) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
-    sup_name = :"#{otp_name}_sup"
     recycler_name = :"#{otp_name}_recycler"
 
     children =
@@ -47,8 +46,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
          otp_name: otp_name,
          controller: controller,
          transactions: transactions,
-         recycler: recycler_name},
-        {DynamicSupervisor, name: sup_name}
+         recycler: recycler_name}
       ]
 
     Supervisor.init(children, strategy: :rest_for_one)

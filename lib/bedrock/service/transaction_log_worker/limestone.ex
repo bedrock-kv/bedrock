@@ -47,8 +47,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
          otp_name: otp_name,
          controller: controller,
          transactions: transactions,
-         recycler: recycler_name,
-         sup: sup_name},
+         recycler: recycler_name},
         {DynamicSupervisor, name: sup_name}
       ]
 

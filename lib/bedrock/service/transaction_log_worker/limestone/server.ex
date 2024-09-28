@@ -11,7 +11,6 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     controller = Keyword.fetch!(opts, :controller)
     transactions = Keyword.fetch!(opts, :transactions)
     recycler = Keyword.fetch!(opts, :recycler)
-    sup = Keyword.fetch(opts, :sup)
 
     %{
       id: __MODULE__,
@@ -19,7 +18,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
         {GenServer, :start_link,
          [
            __MODULE__.Server,
-           {id, otp_name, controller, transactions, recycler, sup},
+           {id, otp_name, controller, transactions, recycler},
            [name: otp_name]
          ]}
     }
@@ -27,13 +26,12 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
 
   defmodule State do
     @type t :: %__MODULE__{
-            mode: :waiting | :locked | :running,
+            mode: :waiting | :locked | :ready,
             id: String.t(),
             otp_name: atom(),
             transactions: Transactions.t(),
             controller: Controller.t(),
             recycler: SegmentRecycler.server(),
-            sup: atom(),
             last_tx_id: Transaction.version() | :undefined,
             cluster_controller: ClusterController.t() | nil
           }
@@ -43,7 +41,6 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
               transactions: nil,
               controller: nil,
               recycler: nil,
-              sup: nil,
               last_tx_id: nil,
               cluster_controller: nil
   end
@@ -79,8 +76,14 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
   end
 
   defmodule Logic do
-    @spec startup(any(), any(), any(), any(), any(), any()) :: {:ok, State.t()} | {:error, term()}
-    def startup(id, otp_name, controller, transactions, recycler, sup) do
+    @spec startup(
+            id :: String.t(),
+            otp_name :: atom(),
+            controller :: pid(),
+            Transactions.t(),
+            SegmentRecycler.server()
+          ) :: {:ok, State.t()} | {:error, term()}
+    def startup(id, otp_name, controller, transactions, recycler) do
       {:ok,
        %State{
          mode: :waiting,
@@ -89,18 +92,17 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
          controller: controller,
          transactions: transactions,
          recycler: recycler,
-         sup: sup,
          last_tx_id: :undefined
        }}
     end
 
     @spec apply_transaction(State.t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
-            {:ok, State.t()} | {:error, :out_of_order | :not_running}
+            {:ok, State.t()} | {:error, :out_of_order | :not_ready}
     def apply_transaction(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
       do: {:error, :out_of_order}
 
-    def apply_transaction(t, _transaction, _prev_tx_id) when t.mode != :running,
-      do: {:error, :not_running}
+    def apply_transaction(t, _transaction, _prev_tx_id) when t.mode != :ready,
+      do: {:error, :not_ready}
 
     def apply_transaction(t, transaction, _prev_tx_id) do
       Transactions.append!(t.transactions, transaction)
@@ -212,8 +214,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     end
 
     @impl GenServer
-    def handle_continue(:finish_startup, {id, otp_name, controller, transactions, recycler, sup}) do
-      Logic.startup(id, otp_name, controller, transactions, recycler, sup)
+    def handle_continue(:finish_startup, {id, otp_name, controller, transactions, recycler}) do
+      Logic.startup(id, otp_name, controller, transactions, recycler)
       |> case do
         {:ok, t} ->
           {:noreply, t, {:continue, :report_health_to_controller}}

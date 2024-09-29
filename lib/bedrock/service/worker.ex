@@ -6,12 +6,12 @@ defmodule Bedrock.Service.Worker do
   the type of worker.)
   """
 
-  @type worker :: GenServer.server()
+  @type t :: GenServer.server()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
 
-  @spec info(worker(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
-  @spec info(worker(), [fact_name()], timeout_in_ms()) ::
+  @spec info(worker :: t(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec info(worker :: t(), [fact_name()], timeout_in_ms()) ::
           {:ok, keyword()} | {:error, :unavailable}
   def info(worker, fact_names, timeout \\ 5_000) do
     GenServer.call(worker, {:info, fact_names}, timeout)

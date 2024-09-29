@@ -186,12 +186,12 @@ defmodule Bedrock.Service.TransactionLog.Limestone do
       do: :ok = Controller.report_worker_health(t.controller, t.id, health)
 
     @spec push(t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
-            {:ok, t()} | {:error, :out_of_order | :not_ready}
+            {:ok, t()} | {:error, :tx_out_of_order | :not_ready}
     def push(t, _transaction, _prev_tx_id) when t.state not in [:ready, :locked],
       do: {:error, :not_ready}
 
     def push(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
-      do: {:error, :out_of_order}
+      do: {:error, :tx_out_of_order}
 
     def push(t, transaction, _prev_tx_id) do
       Transactions.append!(t.transactions, transaction)

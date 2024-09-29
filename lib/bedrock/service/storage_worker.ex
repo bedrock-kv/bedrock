@@ -2,10 +2,12 @@ defmodule Bedrock.Service.StorageWorker do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  @type name :: Bedrock.Service.Worker.worker()
+  alias Bedrock.Service.Worker
+
+  @type name :: Worker.t()
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
   @type fact_name ::
-          Bedrock.Service.Worker.fact_name()
+          Worker.fact_name()
           | :durable_version
           | :key_range
           | :n_objects
@@ -37,5 +39,5 @@ defmodule Bedrock.Service.StorageWorker do
   @spec info(name(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
   @spec info(name(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, term()}
   defdelegate info(worker, fact_names, timeout \\ 5_000),
-    to: Bedrock.Service.Worker
+    to: Worker
 end

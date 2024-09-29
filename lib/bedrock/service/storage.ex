@@ -2,11 +2,12 @@ defmodule Bedrock.Service.Storage do
   use Bedrock.Cluster, :types
 
   alias Bedrock.Service.Worker
+  alias Bedrock.Service.Controller
 
-  @type t :: GenServer.server()
+  @type t :: Worker.t()
 
-  @spec workers(t()) :: {:ok, [Worker.worker()]} | {:error, term()}
-  defdelegate workers(t), to: Bedrock.Service.Controller
+  @spec storage(storage_controller :: t()) :: {:ok, [Worker.t()]} | {:error, term()}
+  defdelegate storage(storage_controller), to: Controller, as: :workers
 
   @doc false
   defdelegate child_spec(opts), to: __MODULE__.Supervisor

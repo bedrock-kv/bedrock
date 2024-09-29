@@ -27,8 +27,8 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     defstruct [:cluster, :advertised_services, :controller]
   end
 
-  @spec notify_of_new_worker(service_advertiser :: GenServer.name(), worker :: pid()) :: :ok
-  def notify_of_new_worker(service_advertiser, worker),
+  @spec report_new_worker(service_advertiser :: GenServer.name(), worker :: pid()) :: :ok
+  def report_new_worker(service_advertiser, worker),
     do: GenServer.cast(service_advertiser, {:new_worker, worker})
 
   def child_spec(opts) do
@@ -105,7 +105,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     |> case do
       {:ok, info} ->
         t.controller
-        |> ClusterController.notify_of_new_worker(
+        |> ClusterController.report_new_worker(
           Node.self(),
           info
         )

@@ -2,7 +2,7 @@ defmodule Bedrock.Service.StorageWorker do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  @type name :: Bedrock.Service.Worker.t()
+  @type name :: Bedrock.Service.Worker.worker()
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
   @type fact_name ::
           Bedrock.Service.Worker.fact_name()
@@ -12,14 +12,6 @@ defmodule Bedrock.Service.StorageWorker do
           | :path
           | :size_in_bytes
           | :utilization
-
-  defmacro __using__(:types) do
-    quote do
-      @type name :: Bedrock.Service.StorageWorker.name()
-      @type key_range :: Bedrock.Service.StorageWorker.key_range()
-      @type fact_name :: Bedrock.Service.StorageWorker.fact_name()
-    end
-  end
 
   @doc """
   Returns the value for the given key/version.
@@ -40,7 +32,7 @@ defmodule Bedrock.Service.StorageWorker do
   end
 
   @doc """
-  Ask the storage engine for various facts about itself.
+  Ask the storage worker for various facts about itself.
   """
   @spec info(name(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
   @spec info(name(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, term()}

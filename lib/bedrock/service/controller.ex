@@ -18,7 +18,7 @@ defmodule Bedrock.Service.Controller do
   ]a
   @type t :: %__MODULE__{}
   @type worker_id :: String.t()
-  @type controller_name :: GenServer.name()
+  @type server :: GenServer.server()
 
   defguard is_controller(t) when is_pid(t) or is_atom(t) or is_tuple(t)
 
@@ -38,14 +38,14 @@ defmodule Bedrock.Service.Controller do
   end
 
   @spec report_worker_health(
-          controller_name(),
+          server(),
           worker_id(),
           any()
         ) :: :ok
   def report_worker_health(t, worker_id, health) when is_controller(t),
     do: GenServer.cast(t, {:worker_health, worker_id, health})
 
-  @spec workers(t :: controller_name()) :: {:ok, [Worker.t()]} | {:error, term()}
+  @spec workers(t :: server()) :: {:ok, [Worker.t()]} | {:error, term()}
   def workers(t) when is_controller(t) do
     GenServer.call(t, :workers)
   catch

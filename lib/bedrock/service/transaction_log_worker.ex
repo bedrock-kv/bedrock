@@ -3,42 +3,71 @@ defmodule Bedrock.Service.TransactionLogWorker do
   use Bedrock.Cluster, :types
 
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Service.Worker
 
-  @type name :: Bedrock.Service.Worker.t()
-  @type fact_name :: Bedrock.Service.Worker.fact_name() | :path
-
-  defmacro __using__(:types) do
-    quote do
-      @type name :: Bedrock.Service.TransactionLogWorker.name()
-      @type fact_name :: Bedrock.Service.TransactionLogWorker.fact_name()
-      @type timeout_in_ms :: Bedrock.Service.TransactionLogWorker.timeout_in_ms()
-    end
-  end
+  @type worker :: Worker.worker()
+  @type id :: String.t()
+  @type fact_name :: Worker.fact_name()
 
   @doc """
+  Apply a new mutation to the log. The previous transaction id is given as a
+  check to ensure strict ordering. If the previous transaction id is not the
+  latest transaction, the mutation will be rejected.
   """
-  @spec apply_transaction(name(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
+  @spec push(worker(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
           :ok
-          | {:error,
-             :tx_too_old
-             | :locked}
-  def apply_transaction(worker, transaction, prev_tx_id),
-    do: GenServer.call(worker, {:apply_transaction, transaction, prev_tx_id})
+          | {:error, :out_of_order | :locked}
+  def push(worker, transaction, prev_tx_id),
+    do: GenServer.call(worker, {:push, transaction, prev_tx_id})
 
   @doc """
-  Request that the transaction log worker lock itself. After receiving this
-  message, the worker will cease to accept new transactions. The calling process
-  is passed to the log worker.
+  Retrieve up to `count` transactions, starting immediately after the given
+  `last_tx_id`.
+
+  If the `subscriber_id` option is present, we'll make a note of the
+  `last_tx_id` (and `lase_durable_tx_id` if present) for that subscriber along
+  with a timestamp of the pull.
+
+  (It is expected that storage workers will supply their id as the
+  `subscriber_id` and report their `last_durable_tx_id` when they pull. Other
+  clients of the log may not.)
+
+  ## Errors:
+  -- `:not_ready`: The worker is not ready to serve transactions.
+  -- `:tx_too_new`: The `last_tx_id` is newer than the latest
+     transaction.
   """
-  @spec request_lock(name(), controller :: pid(), epoch()) :: :ok
-  def request_lock(worker, controller, epoch),
-    do: GenServer.cast(worker, {:request_lock, controller, epoch})
+  @spec pull(
+          worker :: worker(),
+          last_tx_id :: Transaction.version(),
+          count :: pos_integer(),
+          opts :: [
+            subscriber_id: String.t(),
+            last_durable_tx_id: Transaction.version()
+          ]
+        ) ::
+          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}
+  def pull(worker, last_tx_id, count, opts),
+    do: GenServer.call(worker, {:pull, last_tx_id, count, opts})
 
   @doc """
-  Ask the transaction log engine for various facts about itself.
+  Request that the transaction log worker lock itself and stop accepting new
+  transactions. This mechanism is used by a newly elected cluster controller
+  to prevent new transactions from being accepted while it is establishing
+  its authority.
+
+  In order for the lock to succeed, the given epoch needs to be greater than
+  the current epoch.
   """
-  @spec info(name(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(name(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, term()}
+  @spec lock(worker(), cluster_controller :: pid(), epoch()) :: :ok
+  def lock(worker, cluster_controller, epoch),
+    do: GenServer.cast(worker, {:lock, cluster_controller, epoch})
+
+  @doc """
+  Ask the transaction log worker for various facts about itself.
+  """
+  @spec info(worker(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
+  @spec info(worker(), [fact_name()], timeout_in_ms()) :: {:ok, keyword()} | {:error, term()}
   defdelegate info(worker, fact_names, timeout \\ 5_000),
     to: Bedrock.Service.Worker
 end

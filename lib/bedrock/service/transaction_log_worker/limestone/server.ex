@@ -2,7 +2,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Controller
-  alias Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler
+  alias Bedrock.Service.TransactionLogWorker
   alias Bedrock.Service.TransactionLogWorker.Limestone.Transactions
 
   def child_spec(opts) do
@@ -23,23 +23,57 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     }
   end
 
+  defmodule StateMachine do
+    use Gearbox,
+      states: ~w(starting waiting locked ready)a,
+      initial: :starting,
+      transitions: %{
+        starting: :waiting,
+        waiting: :locked,
+        locked: [:locked, :ready]
+      }
+  end
+
   defmodule State do
+    @type state :: :starting | :waiting | :locked | :ready
     @type t :: %__MODULE__{
-            mode: :waiting | :locked | :ready,
+            state: state(),
+            subscriber_liveness_timeout_in_s: integer(),
             id: String.t(),
             otp_name: atom(),
             transactions: Transactions.t(),
-            controller: Controller.t(),
+            controller: Controller.server() | nil,
+            epoch: Bedrock.epoch() | nil,
             last_tx_id: Transaction.version() | :undefined,
             cluster_controller: ClusterController.t() | nil
           }
-    defstruct mode: nil,
+    defstruct state: nil,
+              subscriber_liveness_timeout_in_s: 60,
               id: nil,
               otp_name: nil,
               transactions: nil,
               controller: nil,
+              epoch: nil,
               last_tx_id: nil,
               cluster_controller: nil
+
+    @type transition_fn :: (t() -> t())
+
+    @spec transition_to(t(), state(), transition_fn()) :: {:ok, t()} | {:error, any()}
+    def transition_to(t, new_state, transition_fn) do
+      Gearbox.transition(t, StateMachine, new_state)
+      |> case do
+        {:ok, new_t} ->
+          transition_fn.(new_t)
+          |> case do
+            {:halt, reason} -> {:error, reason}
+            new_t -> {:ok, new_t}
+          end
+
+        error ->
+          error
+      end
+    end
   end
 
   defmodule Subscriptions do
@@ -48,7 +82,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
             id :: String.t(),
             last_tx_id :: Transaction.version(),
             last_durable_tx_id :: Transaction.version(),
-            last_seen :: DateTime.t()
+            last_seen_at :: integer()
           }
 
     def new, do: :ets.new(:subscribers, [:ordered_set])
@@ -67,22 +101,46 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
 
     @spec update(t(), String.t(), Transaction.version(), Transaction.version()) :: :ok
     def update(t, id, last_tx_id, last_durable_tx_id) do
-      :ets.insert(t, {id, last_tx_id, last_durable_tx_id, DateTime.utc_now()})
+      :ets.insert(
+        t,
+        {id, last_tx_id, last_durable_tx_id, DateTime.utc_now() |> DateTime.to_unix()}
+      )
+
       :ok
     end
+
+    def minimum_durable_tx_id(t, max_age_in_s) do
+      :ets.select(t, match_last_seen_for_live_subscribers(max_age_in_s))
+      |> case do
+        [] -> :unknown
+        last_durable_tx_ids -> last_durable_tx_ids |> Enum.min()
+      end
+    end
+
+    defp match_last_seen_for_live_subscribers(max_age_in_s),
+      do: [
+        {{:_, :_, :"$3", :"$4"},
+         [
+           {:>=, :"$4",
+            {:constant, DateTime.utc_now() |> DateTime.to_unix() |> Kernel.-(max_age_in_s)}}
+         ], [:"$3"]}
+      ]
   end
 
   defmodule Logic do
+    @type t :: State.t()
+    @type fact_name :: TransactionLogWorker.fact_name()
+
     @spec startup(
             id :: String.t(),
             otp_name :: atom(),
             controller :: pid(),
             Transactions.t()
-          ) :: {:ok, State.t()} | {:error, term()}
+          ) :: {:ok, t()} | {:error, term()}
     def startup(id, otp_name, controller, transactions) do
       {:ok,
        %State{
-         mode: :waiting,
+         state: :starting,
          id: id,
          otp_name: otp_name,
          controller: controller,
@@ -91,37 +149,52 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
        }}
     end
 
-    @spec apply_transaction(State.t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
-            {:ok, State.t()} | {:error, :out_of_order | :not_ready}
-    def apply_transaction(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
-      do: {:error, :out_of_order}
-
-    def apply_transaction(t, _transaction, _prev_tx_id) when t.mode != :ready,
+    @spec push(t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
+            {:ok, t()} | {:error, :out_of_order | :not_ready}
+    def push(t, _transaction, _prev_tx_id) when t.state not in [:ready, :locked],
       do: {:error, :not_ready}
 
-    def apply_transaction(t, transaction, _prev_tx_id) do
+    def push(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
+      do: {:error, :out_of_order}
+
+    def push(t, transaction, _prev_tx_id) do
       Transactions.append!(t.transactions, transaction)
       {:ok, %{t | last_tx_id: Transaction.version(transaction)}}
     end
 
-    def request_lock(t, _controller, epoch) when t.epoch >= epoch, do: {:error, :epoch_too_old}
+    @spec lock(t(), ClusterController.service(), Bedrock.epoch()) ::
+            {:ok, t()} | {:error, :epoch_too_old | String.t()}
+    def lock(t, cluster_controller, epoch) do
+      State.transition_to(t, :locked, fn
+        t when t.epoch >= epoch ->
+          {:halt, :epoch_too_old}
 
-    def request_lock(t, cluster_controller, epoch),
-      do: {:ok, %{t | epoch: epoch, cluster_controller: cluster_controller, state: :locked}}
+        t ->
+          %{t | epoch: epoch, cluster_controller: cluster_controller}
+      end)
+    end
 
-    @spec pull_transactions(
-            t :: State.t(),
-            id :: String.t(),
+    @spec pull(
+            t :: t(),
             last_tx_id :: Transaction.version(),
             count :: pos_integer(),
-            last_durable_tx_id :: Transaction.version()
+            opts :: [
+              subscriber_id: String.t(),
+              last_durable_tx_id: Transaction.version()
+            ]
           ) ::
-            {:ok, [] | [Transaction.t()]} | {:error, :transaction_too_new}
-    def pull_transactions(t, _id, last_tx_id, _count, _last_durable_tx_id)
-        when last_tx_id > t.last_tx_id,
-        do: {:error, :transaction_too_new}
+            {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}
+    def pull(t, _last_tx_id, _count, _opts)
+        when t.state != :ready,
+        do: {:error, :not_ready}
 
-    def pull_transactions(t, id, last_tx_id, count, last_durable_tx_id) do
+    def pull(t, last_tx_id, _count, _opts)
+        when last_tx_id > t.last_tx_id,
+        do: {:error, :tx_too_new}
+
+    def pull(t, last_tx_id, count, subscriber_id: id = opts) do
+      last_durable_tx_id = opts[:last_durable_tx_id] || :undefined
+
       t.transactions
       |> Transactions.get(last_tx_id, count)
       |> case do
@@ -136,7 +209,13 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
       end
     end
 
-    @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
+    def pull(t, last_tx_id, count, _opts) do
+      {:ok,
+       t.transactions
+       |> Transactions.get(last_tx_id, count)}
+    end
+
+    @spec info(t(), fact_name() | [fact_name()]) :: {:ok, any()} | {:error, :unsupported_info}
     def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
 
     def info(%State{} = t, facts) when is_list(facts) do
@@ -150,17 +229,27 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     defp supported_info, do: ~w[
       id
       kind
-      pid
+      minimum_durable_tx_id
       otp_name
+      pid
+      state
       supported_info
     ]a
 
-    @spec gather_info(fact_name :: atom(), any()) :: term() | {:error, :unsupported}
+    @spec gather_info(fact_name(), any()) :: term() | {:error, :unsupported}
+    # Worker facts
     defp gather_info(:id, %{id: id}), do: id
+    defp gather_info(:state, %{state: state}), do: state
     defp gather_info(:kind, _t), do: :transaction_log
     defp gather_info(:otp_name, %State{otp_name: otp_name}), do: otp_name
     defp gather_info(:pid, _), do: self()
     defp gather_info(:supported_info, _), do: supported_info()
+
+    # Transaction Log facts
+    defp gather_info(:minimum_durable_tx_id, t),
+      do: Subscriptions.minimum_durable_tx_id(t.subscriptions, t.subscriber_liveness_timeout_in_s)
+
+    # Everything else...
     defp gather_info(_, _), do: {:error, :unsupported}
   end
 
@@ -179,20 +268,16 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     def handle_call({:info, fact_names}, _from, %State{} = t),
       do: {:reply, Logic.info(t, fact_names), t}
 
-    def handle_call({:apply_transaction, transaction, prev_tx_id}, _from, %State{} = t) do
-      Logic.apply_transaction(t, transaction, prev_tx_id)
+    def handle_call({:push, transaction, prev_tx_id}, _from, %State{} = t) do
+      Logic.push(t, transaction, prev_tx_id)
       |> case do
         {:ok, t} -> {:reply, :ok, t}
         {:error, _reason} = error -> {:reply, error, t}
       end
     end
 
-    def handle_call(
-          {:pull_transactions, id, last_tx_id, count, last_durable_tx_id},
-          _from,
-          %State{} = t
-        ) do
-      Logic.pull_transactions(t, id, last_tx_id, count, last_durable_tx_id)
+    def handle_call({:pull, last_tx_id, count, opts}, _from, %State{} = t) do
+      Logic.pull(t, last_tx_id, count, opts)
       |> case do
         {:ok, []} -> {:reply, {:ok, []}, t}
         {:ok, transactions} -> {:reply, {:ok, transactions}, t}
@@ -200,10 +285,10 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     end
 
     @impl GenServer
-    def handle_info({:request_lock, controller, epoch}, %State{} = t) do
-      Logic.request_lock(t, controller, epoch)
+    def handle_cast({:lock, controller, epoch}, %State{} = t) do
+      Logic.lock(t, controller, epoch)
       |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :finish_lock_request}}
+        {:ok, t} -> {:noreply, t, {:continue, :finish_lock}}
         _error -> {:noreply, t}
       end
     end
@@ -212,9 +297,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
     def handle_continue(:finish_startup, {id, otp_name, controller, transactions}) do
       Logic.startup(id, otp_name, controller, transactions)
       |> case do
-        {:ok, t} ->
-          {:noreply, t, {:continue, :report_health_to_controller}}
-          # {:error, reason} -> {:stop, reason, :nostate}
+        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
       end
     end
 
@@ -223,8 +306,18 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone.Server do
       {:noreply, t}
     end
 
-    def handle_continue(:finish_lock_request, t) do
-      #      ClusterController.notify_lock_request_complete(t.cluster_controller, t.id)
+    def handle_continue(:finish_lock, t) do
+      t
+      |> Logic.info([:last_tx_id, :minimum_durable_tx_id])
+      |> case do
+        {:ok, info} ->
+          ClusterController.report_transaction_log_lock_complete(
+            t.cluster_controller,
+            t.id,
+            info
+          )
+      end
+
       {:noreply, t}
     end
   end

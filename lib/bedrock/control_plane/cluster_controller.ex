@@ -13,6 +13,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.TransactionLogWorker
 
   @type service :: GenServer.name()
@@ -22,9 +23,24 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def send_pong(controller, from_node),
     do: GenServer.cast(controller, {:pong, from_node})
 
-  @spec notify_of_new_worker(service(), node(), keyword()) :: :ok
-  def notify_of_new_worker(controller, node, worker_info),
+  @spec report_new_worker(service(), node(), keyword()) :: :ok
+  def report_new_worker(controller, node, worker_info),
     do: GenServer.cast(controller, {:new_worker, node, worker_info})
+
+  @spec report_transaction_log_lock_complete(
+          service(),
+          TransactionLogWorker.id(),
+          info :: [
+            last_tx_id: Transaction.version(),
+            minimum_durable_tx_id: Transaction.version()
+          ]
+        ) :: :ok
+  def report_transaction_log_lock_complete(controller, id, info),
+    do:
+      GenServer.cast(
+        controller,
+        {:transaction_log_lock_complete, id, info}
+      )
 
   @spec request_to_rejoin(service(), node(), [atom()], [keyword()]) ::
           :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
@@ -162,6 +178,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
      {:continue, :process_events}}
   end
 
+  def handle_cast({:transaction_log_lock_complete, _id, _info}, t) do
+    # TODO
+    {:noreply, t}
+  end
+
   #
 
   @spec handle_request_to_rejoin(t(), node(), [atom()], []) ::
@@ -280,7 +301,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
     t.config
     |> Config.log_workers()
     |> Enum.reduce(t, fn log_worker, t ->
-      :ok = TransactionLogWorker.request_lock(log_worker, self(), t.epoch)
+      :ok = TransactionLogWorker.lock(log_worker, self(), t.epoch)
       t |> add_expected_service(log_worker, :log_worker)
     end)
   end

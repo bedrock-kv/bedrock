@@ -1,11 +1,11 @@
 defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   use Bedrock, :types
   use Bedrock.Cluster, :types
-  use Bedrock.Service.StorageWorker, :types
 
   defstruct ~w[mvcc keyspace pkv key_range]a
   @type t :: %__MODULE__{}
 
+  alias Bedrock.Service.StorageWorker
   alias Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues
   alias Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl, as: MVCC
   alias Bedrock.Service.StorageWorker.Basalt.Keyspace
@@ -43,7 +43,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.Database do
   @spec last_durable_version(database :: t()) :: version() | :undefined
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
 
-  @spec key_range(database :: t()) :: key_range() | :undefined
+  @spec key_range(database :: t()) :: StorageWorker.key_range() | :undefined
   def key_range(database), do: database.key_range
 
   @spec load_keys_into_keyspace(PersistentKeyValues.t(), Keyspace.t()) :: :ok

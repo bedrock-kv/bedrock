@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.StorageController do
+defmodule Bedrock.Service.StorageController do
   @moduledoc """
   Responsible for managing the lifecycle of the Storage services on this node,
   for a given cluster.

@@ -21,7 +21,7 @@ defmodule Bedrock.Client.Transaction do
   defmodule Impl do
     use GenServer
 
-    alias Bedrock.Service.Storage
+    alias Bedrock.DataPlane.Storage
     alias Bedrock.Client
 
     defstruct [:client, :read_version, :commit_proxy, :rx, :wx, :started_at]

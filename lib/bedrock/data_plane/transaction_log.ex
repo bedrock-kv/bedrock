@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.TransactionLog do
+defmodule Bedrock.DataPlane.TransactionLog do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

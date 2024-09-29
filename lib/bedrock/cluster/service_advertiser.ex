@@ -133,7 +133,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
       service ->
         service
         |> t.cluster.otp_name()
-        |> Controller.workers()
+        |> Controller.all()
         |> case do
           {:ok, worker_pids} ->
             worker_pids |> gather_info_from_workers()

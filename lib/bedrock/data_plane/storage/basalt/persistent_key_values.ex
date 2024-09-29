@@ -1,10 +1,10 @@
-defmodule Bedrock.Service.Storage.Basalt.PersistentKeyValues do
+defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc """
   """
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  alias Bedrock.Service.Storage
+  alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 

@@ -8,8 +8,8 @@ defmodule Bedrock.Client do
   alias Bedrock.Client.Transaction
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
-  alias Bedrock.Service.Storage
-  alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
+  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.ReadVersionProxy
   alias Bedrock.ControlPlane.DataDistributor.Team
 
   @type t :: %__MODULE__{

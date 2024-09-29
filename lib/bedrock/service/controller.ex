@@ -1,12 +1,19 @@
 defmodule Bedrock.Service.Controller do
   @moduledoc """
   """
-
   alias Bedrock.Service.Worker
 
   @type t :: GenServer.server()
-  @type epoch :: pos_integer()
-  @type server :: GenServer.server()
+
+  @doc """
+  Return a list of running workers.
+  """
+  @spec all(controller :: t()) :: {:ok, [Worker.t()]} | {:error, term()}
+  def all(controller) do
+    GenServer.call(controller, :workers)
+  catch
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+  end
 
   @doc """
   Wait until the controller signals that it (and all of it's workers) are
@@ -27,19 +34,60 @@ defmodule Bedrock.Service.Controller do
   def report_worker_health(controller, worker_id, health),
     do: GenServer.cast(controller, {:worker_health, worker_id, health})
 
-  @doc """
-  Return a list of running workers.
-  """
-  @spec workers(controller :: t()) :: {:ok, [Worker.t()]} | {:error, term()}
-  def workers(controller) do
-    GenServer.call(controller, :workers)
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
-
   @doc false
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
   defdelegate child_spec(opts), to: __MODULE__.Server
+
+  defmacro __using__(opts) do
+    kind = opts[:kind] || raise "Missing :kind option."
+    default_worker = opts[:default_worker] || raise "Missing :default_worker option."
+
+    quote do
+      @doc false
+      @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
+      def child_spec(opts) do
+        cluster = Keyword.get(opts, :cluster) || raise "Missing :cluster option"
+
+        path =
+          Keyword.get(opts, :path) ||
+            raise "Missing :path option; required when :transaction_log is specified in :services"
+
+        default_worker =
+          Keyword.get(opts, :default_worker) ||
+            Bedrock.DataPlane.TransactionLog.Limestone
+
+        otp_name = cluster.otp_name(unquote(kind))
+
+        worker_supervisor_otp_name = cluster.otp_name(:"#{otp_name}_worker_supervisor")
+
+        children = [
+          {DynamicSupervisor, name: worker_supervisor_otp_name},
+          {Bedrock.Service.Controller,
+           [
+             cluster: cluster,
+             subsystem: :transaction_log,
+             default_worker: unquote(default_worker),
+             worker_supervisor_otp_name: worker_supervisor_otp_name,
+             path: path,
+             otp_name: otp_name
+           ]}
+        ]
+
+        %{
+          id: __MODULE__,
+          start: {
+            Supervisor,
+            :start_link,
+            [
+              children,
+              [strategy: :one_for_one]
+            ]
+          },
+          restart: :permanent
+        }
+      end
+    end
+  end
 
   defmodule Data do
     @type t :: %__MODULE__{}
@@ -253,7 +301,7 @@ defmodule Bedrock.Service.Controller do
         start:
           {GenServer, :start_link,
            [
-             __MODULE__.Server,
+             __MODULE__,
              {
                subsystem,
                cluster,

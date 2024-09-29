@@ -1,12 +1,12 @@
-defmodule Bedrock.Service.TransactionLog.Limestone do
+defmodule Bedrock.DataPlane.TransactionLog.Limestone do
   use Supervisor
   use Bedrock.Service.WorkerBehaviour
 
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Controller
-  alias Bedrock.Service.TransactionLog
-  alias Bedrock.Service.TransactionLog.Limestone.Transactions
+  alias Bedrock.DataPlane.TransactionLog
+  alias Bedrock.DataPlane.TransactionLog.Limestone.Transactions
 
   @doc false
   @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()

@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfo do
             tag: nil,
             endpoint: nil
 
-  alias Bedrock.Service.TransactionLog
+  alias Bedrock.DataPlane.TransactionLog
 
   @type id :: TransactionLog.id()
   @type tag :: integer()

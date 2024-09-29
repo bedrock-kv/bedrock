@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.TransactionSystem.ReadVersionProxy do
+defmodule Bedrock.DataPlane.ReadVersionProxy do
   use GenServer
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.ClusterController

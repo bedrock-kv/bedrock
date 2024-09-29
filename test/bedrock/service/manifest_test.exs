@@ -2,8 +2,8 @@ defmodule Bedrock.Service.ManifestTest do
   use ExUnit.Case, async: true
   alias Bedrock.Service.Manifest
 
-  defp storage_worker, do: Bedrock.Service.Storage.Basalt
-  defp transaction_log_worker, do: Bedrock.Service.TransactionLog.Limestone
+  defp storage_worker, do: Bedrock.DataPlane.Storage.Basalt
+  defp transaction_log_worker, do: Bedrock.DataPlane.TransactionLog.Limestone
 
   describe "Manifest reading and writing" do
     @tag :tmp_dir

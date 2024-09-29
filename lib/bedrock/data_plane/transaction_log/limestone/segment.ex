@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.TransactionLog.Limestone.Segment do
+defmodule Bedrock.DataPlane.TransactionLog.Limestone.Segment do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

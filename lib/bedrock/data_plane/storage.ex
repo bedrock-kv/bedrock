@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.Storage do
+defmodule Bedrock.DataPlane.Storage do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 

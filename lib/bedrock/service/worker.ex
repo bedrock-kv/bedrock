@@ -1,9 +1,8 @@
 defmodule Bedrock.Service.Worker do
   @moduledoc """
-  A worker is a process that is managed by a controller. It is a GenServer that
-  is started and stopped by a service controller. It is expected to provide a
-  set of facts about itself when requested along with other services (as befits
-  the type of worker.)
+  A worker is a GenServer that is started and stopped by a service controller.
+  It is expected to provide a set of facts about itself when requested along
+  with other services (as befits the type of worker.)
   """
 
   @type t :: GenServer.server()

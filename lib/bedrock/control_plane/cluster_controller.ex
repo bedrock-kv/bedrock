@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Service.TransactionLog
+  alias Bedrock.DataPlane.TransactionLog
 
   @type service :: GenServer.name()
   @type timeout_in_ms :: Bedrock.timeout_in_ms()

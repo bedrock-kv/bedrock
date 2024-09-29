@@ -24,8 +24,8 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
         }
   defstruct tag: nil, key_range: nil, replication_factor: nil, log_storage_pairs: []
 
-  alias Bedrock.Service.Storage
-  alias Bedrock.Service.TransactionLog
+  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.TransactionLog
 
   @type tag :: String.t()
   @type key_range :: Range.t()

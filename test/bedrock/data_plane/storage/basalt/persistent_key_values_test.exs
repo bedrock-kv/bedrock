@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Service.Storage.Basalt.PersistentKeyValues
+  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
   alias Bedrock.DataPlane.Transaction
 
   defp random_file_name() do

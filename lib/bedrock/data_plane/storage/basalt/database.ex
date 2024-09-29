@@ -1,14 +1,14 @@
-defmodule Bedrock.Service.Storage.Basalt.Database do
+defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
   defstruct ~w[mvcc keyspace pkv key_range]a
   @type t :: %__MODULE__{}
 
-  alias Bedrock.Service.Storage
-  alias Bedrock.Service.Storage.Basalt.PersistentKeyValues
-  alias Bedrock.Service.Storage.Basalt.MultiversionConcurrencyControl, as: MVCC
-  alias Bedrock.Service.Storage.Basalt.Keyspace
+  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
+  alias Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl, as: MVCC
+  alias Bedrock.DataPlane.Storage.Basalt.Keyspace
   alias Bedrock.DataPlane.Version
 
   @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}

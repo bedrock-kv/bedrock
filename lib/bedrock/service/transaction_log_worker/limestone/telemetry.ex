@@ -1,2 +1,2 @@
-defmodule Bedrock.Service.TransactionLogWorker.Limestone.Telemetry do
+defmodule Bedrock.Service.TransactionLog.Limestone.Telemetry do
 end

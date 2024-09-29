@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Service.TransactionLogWorker
+  alias Bedrock.Service.TransactionLog
 
   @type service :: GenServer.name()
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @spec report_transaction_log_lock_complete(
           service(),
-          TransactionLogWorker.id(),
+          TransactionLog.id(),
           info :: [
             last_tx_id: Transaction.version(),
             minimum_durable_tx_id: Transaction.version()
@@ -301,7 +301,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
     t.config
     |> Config.log_workers()
     |> Enum.reduce(t, fn log_worker, t ->
-      :ok = TransactionLogWorker.lock(log_worker, self(), t.epoch)
+      :ok = TransactionLog.lock(log_worker, self(), t.epoch)
       t |> add_expected_service(log_worker, :log_worker)
     end)
   end

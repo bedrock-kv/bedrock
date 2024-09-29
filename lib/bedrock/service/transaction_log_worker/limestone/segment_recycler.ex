@@ -1,6 +1,6 @@
-defmodule Bedrock.Service.TransactionLogWorker.Limestone.SegmentRecycler do
+defmodule Bedrock.Service.TransactionLog.Limestone.SegmentRecycler do
   alias Bedrock.Service.StorageWorker.Basalt.Logic
-  alias Bedrock.Service.TransactionLogWorker.Limestone.Segment
+  alias Bedrock.Service.TransactionLog.Limestone.Segment
 
   @type server :: GenServer.server()
 

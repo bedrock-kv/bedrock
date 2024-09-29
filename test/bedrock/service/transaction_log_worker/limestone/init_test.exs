@@ -1,7 +1,7 @@
-defmodule Bedrock.Service.TransactionLogWorker.Limestone.InitTest do
+defmodule Bedrock.Service.TransactionLog.Limestone.InitTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Service.TransactionLogWorker.Limestone
+  alias Bedrock.Service.TransactionLog.Limestone
 
   def with_id(context) do
     id = Faker.UUID.v4()

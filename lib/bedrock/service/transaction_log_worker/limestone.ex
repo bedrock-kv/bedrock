@@ -1,12 +1,12 @@
-defmodule Bedrock.Service.TransactionLogWorker.Limestone do
+defmodule Bedrock.Service.TransactionLog.Limestone do
   use Supervisor
   use Bedrock.Service.WorkerBehaviour
 
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Controller
-  alias Bedrock.Service.TransactionLogWorker
-  alias Bedrock.Service.TransactionLogWorker.Limestone.Transactions
+  alias Bedrock.Service.TransactionLog
+  alias Bedrock.Service.TransactionLog.Limestone.Transactions
 
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
@@ -160,7 +160,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
 
   defmodule Logic do
     @type t :: State.t()
-    @type fact_name :: TransactionLogWorker.fact_name()
+    @type fact_name :: TransactionLog.fact_name()
+    @type health :: TransactionLog.health()
 
     @spec startup(
             id :: String.t(),
@@ -179,6 +180,10 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
          last_tx_id: :undefined
        }}
     end
+
+    @spec report_health_to_transaction_log_controller(t(), health()) :: :ok
+    def report_health_to_transaction_log_controller(t, health),
+      do: :ok = Controller.report_worker_health(t.controller, t.id, health)
 
     @spec push(t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
             {:ok, t()} | {:error, :out_of_order | :not_ready}
@@ -207,17 +212,14 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
 
     @spec report_lock_complete_to_cluster_controller(t()) :: :ok
     def report_lock_complete_to_cluster_controller(t) do
-      info(t, [:last_tx_id, :minimum_durable_tx_id])
-      |> case do
-        {:ok, info} ->
-          ClusterController.report_transaction_log_lock_complete(
-            t.cluster_controller,
-            t.id,
-            info
-          )
+      {:ok, info} = Logic.info(t, [:last_tx_id, :minimum_durable_tx_id])
 
-          :ok
-      end
+      :ok =
+        ClusterController.report_transaction_log_lock_complete(
+          t.cluster_controller,
+          t.id,
+          info
+        )
     end
 
     @spec pull(
@@ -366,7 +368,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
     end
 
     def handle_continue(:report_health_to_controller, %State{} = t) do
-      :ok = Controller.report_worker_health(t.controller, t.id, :ok)
+      :ok = Logic.report_health_to_transaction_log_controller(t, :ok)
       {:noreply, t}
     end
 

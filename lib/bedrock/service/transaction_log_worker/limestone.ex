@@ -24,8 +24,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
              id,
              controller,
              path,
-             opts[:min_available] || 3,
-             opts[:max_available] || 5,
+             opts[:min_spare_segments] || 3,
+             opts[:max_spare_segments] || 5,
              opts[:segment_size] || 64 * 1024 * 1024
            }
          ]},
@@ -34,7 +34,9 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
   end
 
   @impl Supervisor
-  def init({otp_name, id, controller, _path, _min_available, _max_available, _segment_size}) do
+  def init(
+        {otp_name, id, controller, _path, _min_spare_segments, _max_spare_segments, _segment_size}
+      ) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
     children =

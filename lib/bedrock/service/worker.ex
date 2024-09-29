@@ -10,6 +10,8 @@ defmodule Bedrock.Service.Worker do
   @type id :: String.t()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
+  @type health :: :ok | :starting | {:error, term()}
+  @type otp_name :: atom()
 
   @spec info(worker :: t(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
   @spec info(worker :: t(), [fact_name()], timeout_in_ms()) ::

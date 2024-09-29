@@ -53,7 +53,7 @@ defmodule Bedrock.Service.Storage.Basalt do
       do: :ok = Database.close(t.database)
 
     @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
-            {:error, :key_out_of_range | :not_found | :transaction_too_old} | {:ok, binary()}
+            {:error, :key_out_of_range | :not_found | :tx_too_old} | {:ok, binary()}
     def fetch(%State{} = t, key, version),
       do: Database.fetch(t.database, key, version)
 

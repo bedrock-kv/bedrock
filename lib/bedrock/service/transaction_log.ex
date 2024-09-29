@@ -78,6 +78,5 @@ defmodule Bedrock.Service.TransactionLog do
   @spec info(transaction_log :: t(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
   @spec info(transaction_log :: t(), [fact_name()], timeout_in_ms()) ::
           {:ok, keyword()} | {:error, term()}
-  defdelegate info(transaction_log, fact_names, timeout \\ 5_000),
-    to: Worker
+  defdelegate info(transaction_log, fact_names, timeout \\ 5_000), to: Worker
 end

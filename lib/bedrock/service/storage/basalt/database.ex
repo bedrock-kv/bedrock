@@ -86,7 +86,7 @@ defmodule Bedrock.Service.Storage.Basalt.Database do
               result
           end
         else
-          {:error, :transaction_too_old}
+          {:error, :tx_too_old}
         end
 
       result ->

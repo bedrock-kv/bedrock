@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
   use Bedrock.Service.WorkerBehaviour
 
   alias Agent.Server
-  alias Bedrock.Service.Controller
+  alias Bedrock.Service.StorageController
   alias Bedrock.Service.Worker
   alias Bedrock.DataPlane.Storage.Basalt.Database
 
@@ -153,7 +153,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     end
 
     def handle_continue(:report_health_to_controller, %State{} = t) do
-      :ok = Controller.report_worker_health(t.controller, t.id, :ok)
+      :ok = StorageController.report_health(t.controller, t.id, :ok)
       {:noreply, t}
     end
   end

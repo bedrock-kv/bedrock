@@ -5,5 +5,6 @@ defmodule Bedrock.Service.TransactionLogController do
   """
   use Bedrock.Service.Controller,
     kind: :transaction_log,
+    worker: Bedrock.DataPlane.TransactionLog,
     default_worker: Bedrock.DataPlane.TransactionLog.Limestone
 end

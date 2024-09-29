@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   """
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
+  alias Bedrock.DataPlane.ReadVersionProxy
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
@@ -26,6 +26,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
     :exit, _ -> {:error, :unavailable}
   end
 
+  @doc false
+  @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     otp_name = cluster.otp_name(:coordinator)

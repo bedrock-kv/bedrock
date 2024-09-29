@@ -30,8 +30,8 @@ defmodule Bedrock.Service.Controller do
   @doc """
   Called by a worker to report it's health to the controller.
   """
-  @spec report_worker_health(controller :: t(), Worker.id(), any()) :: :ok
-  def report_worker_health(controller, worker_id, health),
+  @spec report_health(controller :: t(), Worker.id(), any()) :: :ok
+  def report_health(controller, worker_id, health),
     do: GenServer.cast(controller, {:worker_health, worker_id, health})
 
   @doc false
@@ -40,9 +40,23 @@ defmodule Bedrock.Service.Controller do
 
   defmacro __using__(opts) do
     kind = opts[:kind] || raise "Missing :kind option."
+    worker = opts[:worker] || raise "Missing :worker option."
     default_worker = opts[:default_worker] || raise "Missing :default_worker option."
 
     quote do
+      alias Bedrock.Service.Controller
+
+      @type t :: Controller.t()
+
+      @spec all(controller :: t()) :: {:ok, [unquote(worker).t()]} | {:error, term()}
+      defdelegate all(controller), to: Controller
+
+      @spec wait_for_healthy(controller :: t(), timeout()) :: :ok | {:error, :unavailable}
+      defdelegate wait_for_healthy(controller, timeout), to: Controller
+
+      @spec report_health(controller :: t(), unquote(worker).id(), any()) :: :ok
+      defdelegate report_health(controller, worker_id, health), to: Controller
+
       @doc false
       @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
       def child_spec(opts) do
@@ -53,8 +67,7 @@ defmodule Bedrock.Service.Controller do
             raise "Missing :path option; required when :transaction_log is specified in :services"
 
         default_worker =
-          Keyword.get(opts, :default_worker) ||
-            Bedrock.DataPlane.TransactionLog.Limestone
+          Keyword.get(opts, :default_worker) || unquote(default_worker)
 
         otp_name = cluster.otp_name(unquote(kind))
 
@@ -62,11 +75,11 @@ defmodule Bedrock.Service.Controller do
 
         children = [
           {DynamicSupervisor, name: worker_supervisor_otp_name},
-          {Bedrock.Service.Controller,
+          {Controller,
            [
              cluster: cluster,
              subsystem: :transaction_log,
-             default_worker: unquote(default_worker),
+             default_worker: default_worker,
              worker_supervisor_otp_name: worker_supervisor_otp_name,
              path: path,
              otp_name: otp_name

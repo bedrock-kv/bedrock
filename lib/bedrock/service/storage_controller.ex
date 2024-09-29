@@ -5,5 +5,6 @@ defmodule Bedrock.Service.StorageController do
   """
   use Bedrock.Service.Controller,
     kind: :storage,
+    worker: Bedrock.DataPlane.Storage,
     default_worker: Bedrock.DataPlane.Storage.Basalt
 end

@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.TransactionLog do
 
   @type t :: Worker.t()
   @type id :: Worker.id()
-  @type health :: :ok | {:error, term()}
+  @type health :: Worker.health()
   @type fact_name ::
           Worker.fact_name()
           | :last_tx_id

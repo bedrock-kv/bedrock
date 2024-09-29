@@ -2,6 +2,8 @@ defmodule Bedrock.Service.Controller do
   @moduledoc """
   """
 
+  alias Bedrock.Service.Worker
+
   @type t :: GenServer.server()
   @type epoch :: pos_integer()
   @type server :: GenServer.server()
@@ -66,7 +68,6 @@ defmodule Bedrock.Service.Controller do
 
   defmodule Logic do
     alias Bedrock.Service.Manifest
-    alias Bedrock.Service.Worker
 
     @type t :: Data.t()
 

@@ -3,34 +3,19 @@ defmodule Bedrock.Service.Storage.Basalt do
 
   alias Agent.Server
   alias Bedrock.Service.Controller
+  alias Bedrock.Service.Worker
   alias Bedrock.Service.Storage.Basalt.Database
 
   @doc false
   @spec child_spec(opts :: keyword()) :: map()
-  def child_spec(opts) do
-    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-    controller = opts[:controller] || raise "Missing :controller option"
-    id = opts[:id] || raise "Missing :id option"
-    path = opts[:path] || raise "Missing :path option"
-
-    %{
-      id: {__MODULE__, id},
-      start:
-        {GenServer, :start_link,
-         [
-           __MODULE__.Server,
-           {otp_name, controller, id, path},
-           [name: otp_name]
-         ]}
-    }
-  end
+  defdelegate child_spec(opts), to: __MODULE__.Server
 
   defmodule State do
     @type t :: %__MODULE__{
             otp_name: atom(),
             path: Path.t(),
             controller: pid(),
-            id: Controller.worker_id(),
+            id: Worker.id(),
             database: Database.t()
           }
     defstruct otp_name: nil,
@@ -43,12 +28,8 @@ defmodule Bedrock.Service.Storage.Basalt do
   defmodule Logic do
     alias Bedrock.DataPlane.Version
 
-    @spec startup(
-            otp_name :: atom(),
-            controller :: pid(),
-            id :: Controller.worker_id(),
-            Path.t()
-          ) :: {:ok, State.t()} | {:error, term()}
+    @spec startup(otp_name :: atom(), controller :: pid(), id :: Worker.id(), Path.t()) ::
+            {:ok, State.t()} | {:error, term()}
     def startup(otp_name, controller, id, path) do
       with :ok <- ensure_directory_exists(path),
            {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
@@ -118,6 +99,25 @@ defmodule Bedrock.Service.Storage.Basalt do
 
   defmodule Server do
     use GenServer
+
+    @spec child_spec(opts :: keyword()) :: map()
+    def child_spec(opts) do
+      otp_name = opts[:otp_name] || raise "Missing :otp_name option"
+      controller = opts[:controller] || raise "Missing :controller option"
+      id = opts[:id] || raise "Missing :id option"
+      path = opts[:path] || raise "Missing :path option"
+
+      %{
+        id: {__MODULE__, id},
+        start:
+          {GenServer, :start_link,
+           [
+             __MODULE__,
+             {otp_name, controller, id, path},
+             [name: otp_name]
+           ]}
+      }
+    end
 
     @impl GenServer
     def init(args),

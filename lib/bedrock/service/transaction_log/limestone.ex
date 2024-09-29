@@ -8,6 +8,8 @@ defmodule Bedrock.Service.TransactionLog.Limestone do
   alias Bedrock.Service.TransactionLog
   alias Bedrock.Service.TransactionLog.Limestone.Transactions
 
+  @doc false
+  @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
     id = Keyword.fetch!(opts, :id)

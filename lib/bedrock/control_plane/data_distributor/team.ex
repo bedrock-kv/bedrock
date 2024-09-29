@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
   @type key_range :: Range.t()
   @type replication_factor :: non_neg_integer()
   @type log_storage_pair :: {log_worker_ref(), StorageWorker.name()}
-  @type log_worker_ref :: TransactionLogWorker.name()
+  @type log_worker_ref :: TransactionLogWorker.worker()
 
   @spec new(tag(), key_range()) :: t()
   @spec new(tag(), key_range(), replication_factor()) :: t()

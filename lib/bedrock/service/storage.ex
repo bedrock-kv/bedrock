@@ -1,9 +1,11 @@
 defmodule Bedrock.Service.Storage do
   use Bedrock.Cluster, :types
 
-  @type t :: GenServer.name()
+  alias Bedrock.Service.Worker
 
-  @spec workers(t()) :: {:ok, [Bedrock.Service.Worker.t()]} | {:error, term()}
+  @type t :: GenServer.server()
+
+  @spec workers(t()) :: {:ok, [Worker.worker()]} | {:error, term()}
   defdelegate workers(t), to: Bedrock.Service.Controller
 
   @doc false

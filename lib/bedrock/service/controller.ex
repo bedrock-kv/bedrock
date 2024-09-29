@@ -45,7 +45,7 @@ defmodule Bedrock.Service.Controller do
   def report_worker_health(t, worker_id, health) when is_controller(t),
     do: GenServer.cast(t, {:worker_health, worker_id, health})
 
-  @spec workers(t :: server()) :: {:ok, [Worker.t()]} | {:error, term()}
+  @spec workers(t :: server()) :: {:ok, [Worker.worker()]} | {:error, term()}
   def workers(t) when is_controller(t) do
     GenServer.call(t, :workers)
   catch

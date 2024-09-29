@@ -7,7 +7,10 @@ defmodule Bedrock.Service.TransactionLogWorker do
 
   @type worker :: Worker.worker()
   @type id :: String.t()
-  @type fact_name :: Worker.fact_name()
+  @type fact_name ::
+          Worker.fact_name()
+          | :last_tx_id
+          | :minimum_durable_tx_id
 
   @doc """
   Apply a new mutation to the log. The previous transaction id is given as a

@@ -13,7 +13,7 @@ defmodule Bedrock.Cluster do
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
   @type storage_worker :: StorageWorker.name()
-  @type transaction_log_worker :: TransactionLogWorker.name()
+  @type transaction_log_worker :: TransactionLogWorker.worker()
   @type service :: :coordination | :transaction_log | :storage
 
   @callback name() :: String.t()

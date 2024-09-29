@@ -205,6 +205,21 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
       end)
     end
 
+    @spec report_lock_complete_to_cluster_controller(t()) :: :ok
+    def report_lock_complete_to_cluster_controller(t) do
+      info(t, [:last_tx_id, :minimum_durable_tx_id])
+      |> case do
+        {:ok, info} ->
+          ClusterController.report_transaction_log_lock_complete(
+            t.cluster_controller,
+            t.id,
+            info
+          )
+
+          :ok
+      end
+    end
+
     @spec pull(
             t :: t(),
             last_tx_id :: Transaction.version(),
@@ -337,7 +352,7 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
     def handle_cast({:lock, controller, epoch}, %State{} = t) do
       Logic.lock(t, controller, epoch)
       |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :finish_lock}}
+        {:ok, t} -> {:noreply, t, {:continue, :report_lock_complete_to_cluster_controller}}
         _error -> {:noreply, t}
       end
     end
@@ -355,18 +370,8 @@ defmodule Bedrock.Service.TransactionLogWorker.Limestone do
       {:noreply, t}
     end
 
-    def handle_continue(:finish_lock, t) do
-      t
-      |> Logic.info([:last_tx_id, :minimum_durable_tx_id])
-      |> case do
-        {:ok, info} ->
-          ClusterController.report_transaction_log_lock_complete(
-            t.cluster_controller,
-            t.id,
-            info
-          )
-      end
-
+    def handle_continue(:report_lock_complete_to_cluster_controller, t) do
+      :ok = Logic.report_lock_complete_to_cluster_controller(t)
       {:noreply, t}
     end
   end

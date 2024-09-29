@@ -6,7 +6,7 @@ defmodule Bedrock.Service.TransactionLog do
   alias Bedrock.Service.Worker
 
   @type t :: Worker.t()
-  @type id :: String.t()
+  @type id :: Worker.id()
   @type health :: :ok | {:error, term()}
   @type fact_name ::
           Worker.fact_name()
@@ -19,9 +19,12 @@ defmodule Bedrock.Service.TransactionLog do
   latest transaction, the mutation will be rejected.
   """
   @spec push(transaction_log :: t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
-          :ok | {:error, :tx_out_of_order | :locked}
-  def push(transaction_log, transaction, prev_tx_id),
-    do: GenServer.call(transaction_log, {:push, transaction, prev_tx_id})
+          :ok | {:error, :tx_out_of_order | :locked | :unavailable}
+  def push(transaction_log, transaction, prev_tx_id) do
+    GenServer.call(transaction_log, {:push, transaction, prev_tx_id})
+  catch
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+  end
 
   @doc """
   Retrieve up to `count` transactions, starting immediately after the given
@@ -49,9 +52,12 @@ defmodule Bedrock.Service.TransactionLog do
             last_durable_tx_id: Transaction.version()
           ]
         ) ::
-          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}
-  def pull(transaction_log, last_tx_id, count, opts),
-    do: GenServer.call(transaction_log, {:pull, last_tx_id, count, opts})
+          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
+  def pull(transaction_log, last_tx_id, count, opts) do
+    GenServer.call(transaction_log, {:pull, last_tx_id, count, opts})
+  catch
+    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+  end
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new

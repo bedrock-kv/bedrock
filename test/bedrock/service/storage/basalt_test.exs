@@ -1,7 +1,7 @@
-defmodule Bedrock.Service.StorageWorker.BasaltTest do
+defmodule Bedrock.Service.Storage.BasaltTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Service.StorageWorker.Basalt
+  alias Bedrock.Service.Storage.Basalt
 
   def id, do: Faker.UUID.v4()
 
@@ -20,12 +20,12 @@ defmodule Bedrock.Service.StorageWorker.BasaltTest do
         )
 
       assert %{
-               id: {Bedrock.Service.StorageWorker.Basalt, ^expected_id},
+               id: {Bedrock.Service.Storage.Basalt, ^expected_id},
                start: {
                  GenServer,
                  :start_link,
                  [
-                   Bedrock.Service.StorageWorker.Basalt.Server,
+                   Bedrock.Service.Storage.Basalt.Server,
                    {:test_storage_engine, pid, ^expected_id, ^tmp_dir},
                    [name: :test_storage_engine]
                  ]

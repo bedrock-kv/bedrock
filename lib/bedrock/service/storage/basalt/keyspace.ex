@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.StorageWorker.Basalt.Keyspace do
+defmodule Bedrock.Service.Storage.Basalt.Keyspace do
   @moduledoc """
   A keyspace is an ordered set of keys.
 

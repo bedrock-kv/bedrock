@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.StorageWorker.Basalt.MultiversionConcurrencyControl do
+defmodule Bedrock.Service.Storage.Basalt.MultiversionConcurrencyControl do
   @moduledoc """
   Multiversion Concurrency Control (MVCC) is a concurrency control method that
   allows for multiple versions of a key to exist in the same table. This module

@@ -8,7 +8,7 @@ defmodule Bedrock.Client do
   alias Bedrock.Client.Transaction
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
-  alias Bedrock.Service.StorageWorker
+  alias Bedrock.Service.Storage
   alias Bedrock.DataPlane.TransactionSystem.ReadVersionProxy
   alias Bedrock.ControlPlane.DataDistributor.Team
 
@@ -111,7 +111,7 @@ defmodule Bedrock.Client do
   defdelegate commit(txn),
     to: Transaction
 
-  @spec storage_workers_for_key(client :: t(), key :: binary()) :: [StorageWorker.name()]
+  @spec storage_workers_for_key(client :: t(), key :: binary()) :: [Storage.t()]
   def storage_workers_for_key(client, key) do
     client.data_distributor
     |> DataDistributor.storage_team_for_key(key)

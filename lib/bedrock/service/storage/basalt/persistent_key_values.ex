@@ -1,10 +1,10 @@
-defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
+defmodule Bedrock.Service.Storage.Basalt.PersistentKeyValues do
   @moduledoc """
   """
   use Bedrock, :types
   use Bedrock.Cluster, :types
 
-  alias Bedrock.Service.StorageWorker
+  alias Bedrock.Service.Storage
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -45,7 +45,7 @@ defmodule Bedrock.Service.StorageWorker.Basalt.PersistentKeyValues do
   @doc """
   Returns the key range of the key-value store.
   """
-  @spec key_range(t()) :: StorageWorker.key_range() | :undefined
+  @spec key_range(t()) :: Storage.key_range() | :undefined
   def key_range(pkv) do
     fetch(pkv, :key_range)
     |> case do

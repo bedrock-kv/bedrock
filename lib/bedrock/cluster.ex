@@ -4,7 +4,7 @@ defmodule Bedrock.Cluster do
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.Service.StorageWorker
+  alias Bedrock.Service.Storage
   alias Bedrock.Service.TransactionLog
 
   require Logger
@@ -12,7 +12,7 @@ defmodule Bedrock.Cluster do
   @type t :: module()
   @type version :: Bedrock.DataPlane.Transaction.version()
   @type transaction :: Bedrock.DataPlane.Transaction.t()
-  @type storage_worker :: StorageWorker.name()
+  @type storage_worker :: Storage.t()
   @type transaction_log_worker :: TransactionLog.t()
   @type service :: :coordination | :transaction_log | :storage
 
@@ -319,7 +319,7 @@ defmodule Bedrock.Cluster do
   end
 
   defp module_for_service(:coordination), do: Bedrock.ControlPlane.Coordinator
-  defp module_for_service(:storage), do: Bedrock.Service.Storage
+  defp module_for_service(:storage), do: Bedrock.Service.StorageController
   defp module_for_service(:transaction_log), do: Bedrock.Service.TransactionLogController
   defp module_for_service(service), do: raise("Unknown service: #{inspect(service)}")
 end

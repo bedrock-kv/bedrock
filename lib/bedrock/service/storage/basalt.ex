@@ -1,9 +1,9 @@
-defmodule Bedrock.Service.StorageWorker.Basalt do
+defmodule Bedrock.Service.Storage.Basalt do
   use Bedrock.Service.WorkerBehaviour
 
   alias Agent.Server
   alias Bedrock.Service.Controller
-  alias Bedrock.Service.StorageWorker.Basalt.Database
+  alias Bedrock.Service.Storage.Basalt.Database
 
   @doc false
   @spec child_spec(opts :: keyword()) :: map()

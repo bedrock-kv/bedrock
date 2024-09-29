@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.Storage.Supervisor do
+defmodule Bedrock.Service.StorageController.Supervisor do
   use Supervisor
 
   def child_spec(opts) do
@@ -10,7 +10,7 @@ defmodule Bedrock.Service.Storage.Supervisor do
 
     default_worker =
       Keyword.get(opts, :default_worker) ||
-        Bedrock.Service.StorageWorker.Basalt
+        Bedrock.Service.Storage.Basalt
 
     otp_name = cluster.otp_name(:storage)
 

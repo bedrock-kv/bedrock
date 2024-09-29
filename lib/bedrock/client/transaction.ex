@@ -21,7 +21,7 @@ defmodule Bedrock.Client.Transaction do
   defmodule Impl do
     use GenServer
 
-    alias Bedrock.Service.StorageWorker
+    alias Bedrock.Service.Storage
     alias Bedrock.Client
 
     defstruct [:client, :read_version, :commit_proxy, :rx, :wx, :started_at]
@@ -85,7 +85,7 @@ defmodule Bedrock.Client.Transaction do
                 state
                 |> storage_workers_for_key(key)
                 |> Enum.random()
-                |> StorageWorker.fetch(key, state.read_version)
+                |> Storage.fetch(key, state.read_version)
 
               {state |> Map.update!(:rx, &Map.put(&1, key, value)), value}
           end
@@ -115,7 +115,7 @@ defmodule Bedrock.Client.Transaction do
     end
 
     @doc false
-    @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [StorageWorker.name()]
+    @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [Storage.t()]
     def storage_workers_for_key(%{client: client}, key),
       do: client |> Client.storage_workers_for_key(key)
   end

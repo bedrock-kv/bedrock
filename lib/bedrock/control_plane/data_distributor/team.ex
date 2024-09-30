@@ -25,13 +25,13 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
   defstruct tag: nil, key_range: nil, replication_factor: nil, log_storage_pairs: []
 
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.TransactionLog
+  alias Bedrock.DataPlane.Log
 
   @type tag :: String.t()
   @type key_range :: Range.t()
   @type replication_factor :: non_neg_integer()
   @type log_storage_pair :: {log_worker_ref(), Storage.t()}
-  @type log_worker_ref :: TransactionLog.t()
+  @type log_worker_ref :: Log.t()
 
   @spec new(tag(), key_range()) :: t()
   @spec new(tag(), key_range(), replication_factor()) :: t()

@@ -1,12 +1,12 @@
-defmodule Bedrock.DataPlane.TransactionLog.Limestone do
+defmodule Bedrock.DataPlane.Log.Limestone do
   use Supervisor
   use Bedrock.Service.WorkerBehaviour
 
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Service.TransactionLogController
-  alias Bedrock.DataPlane.TransactionLog
-  alias Bedrock.DataPlane.TransactionLog.Limestone.Transactions
+  alias Bedrock.Service.LogController
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Limestone.Transactions
 
   @doc false
   @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
@@ -75,7 +75,7 @@ defmodule Bedrock.DataPlane.TransactionLog.Limestone do
             id: String.t(),
             otp_name: atom(),
             transactions: Transactions.t(),
-            controller: TransactionLogController.t() | nil,
+            controller: LogController.t() | nil,
             epoch: Bedrock.epoch() | nil,
             last_tx_id: Transaction.version() | :undefined,
             cluster_controller: ClusterController.t() | nil
@@ -162,8 +162,8 @@ defmodule Bedrock.DataPlane.TransactionLog.Limestone do
 
   defmodule Logic do
     @type t :: State.t()
-    @type fact_name :: TransactionLog.fact_name()
-    @type health :: TransactionLog.health()
+    @type fact_name :: Log.fact_name()
+    @type health :: Log.health()
 
     @spec startup(
             id :: String.t(),
@@ -185,7 +185,7 @@ defmodule Bedrock.DataPlane.TransactionLog.Limestone do
 
     @spec report_health_to_transaction_log_controller(t(), health()) :: :ok
     def report_health_to_transaction_log_controller(t, health),
-      do: :ok = TransactionLogController.report_health(t.controller, t.id, health)
+      do: :ok = LogController.report_health(t.controller, t.id, health)
 
     @spec push(t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
             {:ok, t()} | {:error, :tx_out_of_order | :not_ready}

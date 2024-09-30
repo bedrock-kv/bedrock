@@ -3,7 +3,7 @@ defmodule Bedrock.Service.ManifestTest do
   alias Bedrock.Service.Manifest
 
   defp storage_worker, do: Bedrock.DataPlane.Storage.Basalt
-  defp transaction_log_worker, do: Bedrock.DataPlane.TransactionLog.Limestone
+  defp transaction_log_worker, do: Bedrock.DataPlane.Log.Limestone
 
   describe "Manifest reading and writing" do
     @tag :tmp_dir

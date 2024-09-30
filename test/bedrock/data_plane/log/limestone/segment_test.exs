@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.TransactionLog.Limestone.SegmentTest do
+defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.TransactionLog.Limestone.Segment
+  alias Bedrock.DataPlane.Log.Limestone.Segment
 
   setup context do
     context

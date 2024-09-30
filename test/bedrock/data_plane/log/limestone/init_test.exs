@@ -1,7 +1,7 @@
-defmodule Bedrock.DataPlane.TransactionLog.Limestone.InitTest do
+defmodule Bedrock.DataPlane.Log.Limestone.InitTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.TransactionLog.Limestone
+  alias Bedrock.DataPlane.Log.Limestone
 
   def with_id(context) do
     id = Faker.UUID.v4()

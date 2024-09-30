@@ -1,11 +1,11 @@
-defmodule Bedrock.DataPlane.TransactionLog.Limestone.Transactions do
+defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
   use Bedrock.Cluster, :types
 
   defstruct ~w[ets]a
   @type t :: %__MODULE__{}
 
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.TransactionLog.Limestone.Segment
+  alias Bedrock.DataPlane.Log.Limestone.Segment
 
   @spec new(atom()) :: t()
   def new(name) do

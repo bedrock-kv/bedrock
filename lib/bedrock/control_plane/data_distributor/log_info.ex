@@ -3,7 +3,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfo do
   """
 
   @typedoc """
-  A `LogInfo` struct is used to store basic information about a `TransactionLog`.
+  A `LogInfo` struct is used to store basic information about a `Log`.
   """
   @type t :: %__MODULE__{
           id: id(),
@@ -14,9 +14,9 @@ defmodule Bedrock.ControlPlane.DataDistributor.LogInfo do
             tag: nil,
             endpoint: nil
 
-  alias Bedrock.DataPlane.TransactionLog
+  alias Bedrock.DataPlane.Log
 
-  @type id :: TransactionLog.id()
+  @type id :: Log.id()
   @type tag :: integer()
   @type endpoint :: pid() | atom()
 

@@ -218,17 +218,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
           allow_volunteer_nodes_to_join: true
         },
         transaction_system_layout: %Config.TransactionSystemLayout{
+          transaction_resolvers: [
+            Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
+          ],
           storage_teams: [
-            %Config.StorageTeamDescriptor{
-              tag: 1,
-              start_key: <<>>,
-              storage_worker_ids: []
-            },
-            %Config.StorageTeamDescriptor{
-              tag: 0,
-              start_key: <<0xFF>>,
-              storage_worker_ids: []
-            }
+            Config.StorageTeamDescriptor.new({<<>>, <<0xFF>>}, 1, []),
+            Config.StorageTeamDescriptor.new({<<0xFF>>, nil}, 0, [])
           ]
         }
       }

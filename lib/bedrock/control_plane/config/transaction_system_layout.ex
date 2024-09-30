@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   the transaction system within the cluster.
   """
 
+  alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
   @typedoc """
@@ -29,6 +30,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   """
   @type t :: %__MODULE__{
           controller: pid(),
+          transaction_resolvers: [TransactionResolverDescriptor.t()],
           service_directory: [ServiceDescriptor.t()]
         }
 

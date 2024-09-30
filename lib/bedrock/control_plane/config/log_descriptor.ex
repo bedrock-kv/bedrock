@@ -4,6 +4,11 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   system.
   """
 
+  alias Bedrock.DataPlane.Log
+
+  @type tag :: integer()
+  @type log_worker_id :: Log.id()
+
   @typedoc """
   Struct representing a log descriptor.
 
@@ -14,11 +19,8 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   """
   @type t :: %__MODULE__{
           tags: [tag()],
-          log_worker_id: any()
+          log_worker_id: log_worker_id()
         }
-
-  @type tag :: integer()
-  @type log_worker_id :: any()
 
   defstruct tags: [],
             log_worker_id: nil

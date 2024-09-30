@@ -2,7 +2,7 @@ defmodule Bedrock do
   @type key :: binary()
   @type value :: binary()
   @type key_value :: {key(), value()}
-  @type key_range :: {first_key :: key(), last_key :: key()}
+  @type key_range :: {first_key :: key(), last_key :: key() | nil}
   @type epoch :: non_neg_integer()
   @type timeout_in_ms :: :infinity | non_neg_integer()
 

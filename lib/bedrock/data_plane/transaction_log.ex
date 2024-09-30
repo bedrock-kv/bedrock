@@ -27,7 +27,7 @@ defmodule Bedrock.DataPlane.TransactionLog do
   end
 
   @doc """
-  Retrieve up to `count` transactions, starting immediately after the given
+  Retrieve up to `demand` transactions, starting immediately after the given
   `last_tx_id`.
 
   If the `subscriber_id` option is present, we'll make a note of the
@@ -46,15 +46,15 @@ defmodule Bedrock.DataPlane.TransactionLog do
   @spec pull(
           transaction_log :: t(),
           last_tx_id :: Transaction.version(),
-          count :: pos_integer(),
+          demand :: pos_integer(),
           opts :: [
             subscriber_id: String.t(),
             last_durable_tx_id: Transaction.version()
           ]
         ) ::
           {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
-  def pull(transaction_log, last_tx_id, count, opts) do
-    GenServer.call(transaction_log, {:pull, last_tx_id, count, opts})
+  def pull(transaction_log, last_tx_id, demand, opts) do
+    GenServer.call(transaction_log, {:pull, last_tx_id, demand, opts})
   catch
     :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end

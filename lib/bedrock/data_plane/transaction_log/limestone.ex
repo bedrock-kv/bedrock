@@ -200,7 +200,7 @@ defmodule Bedrock.DataPlane.TransactionLog.Limestone do
       {:ok, %{t | last_tx_id: Transaction.version(transaction)}}
     end
 
-    @spec lock(t(), ClusterController.service(), Bedrock.epoch()) ::
+    @spec lock(t(), ClusterController.t(), Bedrock.epoch()) ::
             {:ok, t()} | {:error, :epoch_too_old | String.t()}
     def lock(t, cluster_controller, epoch) do
       State.transition_to(t, :locked, fn

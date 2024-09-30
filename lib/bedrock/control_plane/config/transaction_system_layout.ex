@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `sequencer` - The full otp name of the cluster sequencer.
     - `rate_keeper` - The full otp name of the system rate-keeper.
     - `data_distributor` - The full otp name of the cluster data distributor.
-    - `get_read_version_proxies` - The full otp names of the get-read-version proxies.
+    - `read_version_proxies` - The full otp names of the read-version proxies.
     - `commit_proxies` - The full otp names of the commit proxies.
     - `transaction_resolvers` - The full otp names of the transaction resolvers.
     - `logs` - A list of logs that are responsible for storing the transactions on
@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
             sequencer: nil,
             rate_keeper: nil,
             data_distributor: nil,
-            get_read_version_proxies: [],
+            read_version_proxies: [],
             commit_proxies: [],
             transaction_resolvers: [],
             logs: [],

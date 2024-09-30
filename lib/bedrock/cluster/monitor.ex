@@ -18,7 +18,7 @@ defmodule Bedrock.Cluster.Monitor do
           path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
           coordinator: Coordinator.service() | :unavailable,
-          controller: ClusterController.service() | :unavailable,
+          controller: ClusterController.t() | :unavailable,
           timer_ref: reference() | nil,
           mode: :passive | :active
         }
@@ -59,7 +59,7 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(monitor()) :: {:ok, ClusterController.service()} | {:error, :unavailable}
+  @spec get_controller(monitor()) :: {:ok, ClusterController.t()} | {:error, :unavailable}
   def get_controller(monitor) do
     monitor |> GenServer.call(:get_controller)
   catch
@@ -251,7 +251,7 @@ defmodule Bedrock.Cluster.Monitor do
   already have we do nothing, otherwise we publish a message to a topic to let
   everyone on this node know that the controller has changed.
   """
-  @spec change_cluster_controller(t(), ClusterController.service() | :unavailable) :: t()
+  @spec change_cluster_controller(t(), ClusterController.t() | :unavailable) :: t()
   def change_cluster_controller(t, controller) when t.controller == controller, do: t
 
   def change_cluster_controller(t, controller) do

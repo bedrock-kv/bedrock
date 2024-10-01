@@ -173,7 +173,7 @@ defmodule Bedrock.Cluster do
       return an error.
       """
       @spec controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def controller, do: otp_name(:monitor) |> Monitor.get_controller()
+      def controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
       @doc """
       Get a coordinator for the cluster. If there is an instance running on
@@ -181,13 +181,13 @@ defmodule Bedrock.Cluster do
       on the cluster. If we can't find one, we return an error.
       """
       @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def coordinator, do: otp_name(:monitor) |> Monitor.get_coordinator()
+      def coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
 
       @doc """
       Get the nodes that are running coordinators for the cluster.
       """
       @spec coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def coordinator_nodes, do: otp_name(:monitor) |> Monitor.get_coordinator_nodes()
+      def coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
 
       @doc """
       Get a new instance of the `Client` configured for the cluster.

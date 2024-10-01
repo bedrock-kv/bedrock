@@ -13,9 +13,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   @type service :: GenServer.name()
 
-  @spec get_controller(coordinator :: atom()) :: {:ok, atom()} | {:error, :unavailable}
-  def get_controller(coordinator, timeout \\ 5_000) do
-    GenServer.call(coordinator, :get_controller, timeout)
+  @spec fetch_controller(coordinator :: atom()) :: {:ok, atom()} | {:error, :unavailable}
+  def fetch_controller(coordinator, timeout \\ 5_000) do
+    GenServer.call(coordinator, :fetch_controller, timeout)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -111,10 +111,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
     def handle_call(:ping, _from, t),
       do: {:reply, :pong, t}
 
-    def handle_call(:get_controller, _from, t) when t.controller == :unavailable,
+    def handle_call(:fetch_controller, _from, t) when t.controller == :unavailable,
       do: {:reply, {:error, :unavailable}, t}
 
-    def handle_call(:get_controller, _from, t),
+    def handle_call(:fetch_controller, _from, t),
       do: {:reply, {:ok, t.controller}, t}
 
     def handle_call(:get_nearest_read_version_proxy, _from, t) do

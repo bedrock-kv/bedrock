@@ -1,10 +1,15 @@
 defmodule Bedrock.ControlPlane.DataDistributor.TagRanges do
-  use Bedrock, :types
-  use Bedrock.Cluster, :types
+  @moduledoc """
+  `TagRanges` maps non-overlapping key ranges to integer tags and provides
+  fast way to lookup the tag that owns a given key. The key ranges are
+  represented by an ETS table that contains tuples of the form
+  `{lower_bound, upper_bound, tag}`.
+  """
 
   @type t :: :ets.table()
-  @type tag :: term()
-  @type key_range :: {lower :: key(), upper :: key()}
+  @type tag :: non_neg_integer()
+  @type key :: Bedrock.key()
+  @type key_range :: Bedrock.key_range()
 
   @spec new() :: t()
   def new, do: :ets.new(:tag_list, [:ordered_set, read_concurrency: true])

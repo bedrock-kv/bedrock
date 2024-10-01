@@ -147,12 +147,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     def handle_continue(:finish_startup, {otp_name, controller, id, path}) do
       Logic.startup(otp_name, controller, id, path)
       |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
+        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_storage_controller}}
         {:error, reason} -> {:stop, reason, :nostate}
       end
     end
 
-    def handle_continue(:report_health_to_controller, %State{} = t) do
+    def handle_continue(:report_health_to_storage_controller, %State{} = t) do
       :ok = StorageController.report_health(t.controller, t.id, :ok)
       {:noreply, t}
     end

@@ -49,9 +49,9 @@ defmodule Bedrock.Cluster.Monitor do
   Get a coordinator for the cluster. We ask the running instance of the cluster
   monitor to find one for us.
   """
-  @spec get_coordinator(monitor()) :: {:ok, Coordinator.service()} | {:error, :unavailable}
-  def get_coordinator(monitor) do
-    monitor |> GenServer.call(:get_coordinator)
+  @spec fetch_coordinator(monitor()) :: {:ok, Coordinator.service()} | {:error, :unavailable}
+  def fetch_coordinator(monitor) do
+    monitor |> GenServer.call(:fetch_coordinator)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -59,9 +59,9 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec get_controller(monitor()) :: {:ok, ClusterController.t()} | {:error, :unavailable}
-  def get_controller(monitor) do
-    monitor |> GenServer.call(:get_controller)
+  @spec fetch_controller(monitor()) :: {:ok, ClusterController.t()} | {:error, :unavailable}
+  def fetch_controller(monitor) do
+    monitor |> GenServer.call(:fetch_controller)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -69,9 +69,9 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the nodes that are running coordinators for the given cluster.
   """
-  @spec get_coordinator_nodes(monitor()) :: {:ok, [node()]} | {:error, :unavailable}
-  def get_coordinator_nodes(monitor) do
-    monitor |> GenServer.call(:get_coordinator_nodes)
+  @spec fetch_coordinator_nodes(monitor()) :: {:ok, [node()]} | {:error, :unavailable}
+  def fetch_coordinator_nodes(monitor) do
+    monitor |> GenServer.call(:fetch_coordinator_nodes)
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -139,7 +139,7 @@ defmodule Bedrock.Cluster.Monitor do
 
   def handle_continue(:find_current_cluster_controller, t) do
     t.coordinator
-    |> Coordinator.get_controller(100)
+    |> Coordinator.fetch_controller(100)
     |> case do
       {:ok, controller} ->
         {:noreply,
@@ -167,19 +167,19 @@ defmodule Bedrock.Cluster.Monitor do
 
   @doc false
   @impl GenServer
-  def handle_call(:get_coordinator, _from, %{coordinator: :unavailable} = t),
+  def handle_call(:fetch_coordinator, _from, %{coordinator: :unavailable} = t),
     do: {:reply, {:error, :unavailable}, t}
 
-  def handle_call(:get_coordinator, _from, t),
+  def handle_call(:fetch_coordinator, _from, t),
     do: {:reply, {:ok, t.coordinator}, t}
 
-  def handle_call(:get_controller, _from, %{controller: :unavailable} = t),
+  def handle_call(:fetch_controller, _from, %{controller: :unavailable} = t),
     do: {:reply, {:error, :unavailable}, t}
 
-  def handle_call(:get_controller, _from, t),
+  def handle_call(:fetch_controller, _from, t),
     do: {:reply, {:ok, t.controller}, t}
 
-  def handle_call(:get_coordinator_nodes, _from, t),
+  def handle_call(:fetch_coordinator_nodes, _from, t),
     do: {:reply, {:ok, t.descriptor.coordinator_nodes}, t}
 
   @impl GenServer

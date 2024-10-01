@@ -37,23 +37,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   end
 
   @doc false
-  @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
-  def child_spec(opts) do
-    cluster = opts[:cluster] || raise "Missing :cluster option"
-    otp_name = cluster.otp_name(:coordinator)
-
-    %{
-      id: __MODULE__,
-      start:
-        {GenServer, :start_link,
-         [
-           __MODULE__.Impl,
-           {cluster, otp_name},
-           [name: otp_name]
-         ]},
-      restart: :permanent
-    }
-  end
+  defdelegate child_spec(opts), to: __MODULE__.Impl
 
   defmodule Impl do
     @moduledoc false
@@ -77,6 +61,24 @@ defmodule Bedrock.ControlPlane.Coordinator do
               raft: nil,
               proxies: [],
               supervisor_otp_name: nil
+
+    @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
+    def child_spec(opts) do
+      cluster = opts[:cluster] || raise "Missing :cluster option"
+      otp_name = cluster.otp_name(:coordinator)
+
+      %{
+        id: __MODULE__,
+        start:
+          {GenServer, :start_link,
+           [
+             __MODULE__.Impl,
+             {cluster, otp_name},
+             [name: otp_name]
+           ]},
+        restart: :permanent
+      }
+    end
 
     @impl GenServer
     def init({cluster, otp_name}) do

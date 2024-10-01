@@ -39,7 +39,7 @@ defmodule Bedrock.Client do
            transaction_window_in_ms: 5_000
          }}
 
-      {:error, :not_found} ->
+      {:error, :unavailable} ->
         {:error, :no_coordinators}
     end
   end

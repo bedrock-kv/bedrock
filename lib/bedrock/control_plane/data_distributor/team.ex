@@ -28,8 +28,8 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
   alias Bedrock.DataPlane.Log
 
   @type tag :: String.t()
-  @type key_range :: Range.t()
-  @type replication_factor :: non_neg_integer()
+  @type key_range :: Bedrock.key_range()
+  @type replication_factor :: pos_integer()
   @type log_storage_pair :: {log_worker_ref(), Storage.t()}
   @type log_worker_ref :: Log.t()
 

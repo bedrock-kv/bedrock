@@ -4,8 +4,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   the transaction system within the cluster.
   """
 
-  alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
+  alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
 
   @typedoc """
   Struct representing the layout of the transaction system within the cluster.
@@ -30,7 +32,13 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   """
   @type t :: %__MODULE__{
           controller: pid(),
+          sequencer: pid(),
+          rate_keeper: pid(),
+          data_distributor: pid(),
+          proxies: [pid()],
           transaction_resolvers: [TransactionResolverDescriptor.t()],
+          logs: [LogDescriptor.t()],
+          storage_teams: [StorageTeamDescriptor.t()],
           service_directory: [ServiceDescriptor.t()]
         }
 
@@ -38,8 +46,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
             sequencer: nil,
             rate_keeper: nil,
             data_distributor: nil,
-            read_version_proxies: [],
-            commit_proxies: [],
+            proxies: [],
             transaction_resolvers: [],
             logs: [],
             storage_teams: [],

@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   """
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.DataPlane.ReadVersionProxy
+  alias Bedrock.DataPlane.Proxy
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
@@ -56,7 +56,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
             my_node: node(),
             otp_name: atom(),
             raft: Raft.t(),
-            read_version_proxies: [ReadVersionProxy.t()],
+            proxies: [Proxy.t()],
             supervisor_otp_name: atom()
           }
     defstruct cluster: nil,
@@ -65,7 +65,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
               my_node: nil,
               otp_name: nil,
               raft: nil,
-              read_version_proxies: [],
+              proxies: [],
               supervisor_otp_name: nil
 
     @impl GenServer

@@ -9,7 +9,7 @@ defmodule Bedrock.Client do
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.ReadVersionProxy
+  alias Bedrock.DataPlane.Proxy
   alias Bedrock.ControlPlane.DataDistributor.Team
 
   @type t :: %__MODULE__{
@@ -50,7 +50,7 @@ defmodule Bedrock.Client do
   """
   @spec transaction(client :: t()) :: {:ok, Transaction.t()}
   def transaction(%__MODULE__{} = client) do
-    with {:ok, read_version} <- client.read_version_proxy |> ReadVersionProxy.next_read_version() do
+    with {:ok, read_version} <- client.read_version_proxy |> Proxy.next_read_version() do
       Transaction.start_link(client, read_version)
     end
   end

@@ -72,7 +72,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
         start:
           {GenServer, :start_link,
            [
-             __MODULE__.Impl,
+             __MODULE__,
              {cluster, otp_name},
              [name: otp_name]
            ]},

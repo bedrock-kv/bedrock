@@ -68,14 +68,14 @@ defmodule Bedrock.ControlPlane.ClusterController do
         {:transaction_log_lock_complete, id, info}
       )
 
-  @spec get_transaction_system_layout(cluster_controller :: t()) ::
-          {:ok, TransactionSystemLayout.t()} | {:error, :initializing | :unavailable}
-  @spec get_transaction_system_layout(cluster_controller :: t(), timeout_in_ms()) ::
-          {:ok, TransactionSystemLayout.t()} | {:error, :initializing | :unavailable}
-  def get_transaction_system_layout(cluster_controller, timeout_in_ms \\ 5_000) do
+  @spec fetch_transaction_system_layout(cluster_controller :: t()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
+  @spec fetch_transaction_system_layout(cluster_controller :: t(), timeout_in_ms()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
+  def fetch_transaction_system_layout(cluster_controller, timeout_in_ms \\ 5_000) do
     GenServer.call(cluster_controller, :get_transaction_system_layout, timeout_in_ms)
     |> case do
-      nil -> {:error, :initializing}
+      nil -> {:error, :uninitialized}
       layout -> {:ok, layout}
     end
   catch

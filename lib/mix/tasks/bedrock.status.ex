@@ -39,11 +39,24 @@ defmodule Mix.Tasks.Bedrock.Status do
   def run(argv) do
     {opts, _args} = OptionParser.parse!(argv, switches: switches(), aliases: aliases())
 
-    opts
-    |> Keyword.get_values(:cluster)
-    |> parse_clusters()
-    |> Enum.each(fn cluster ->
-      IO.puts(inspect(cluster.config()))
-    end)
+    Application.ensure_all_started(:bedrock)
+
+    clusters =
+      opts
+      |> Keyword.get_values(:cluster)
+      |> parse_clusters()
+
+    Supervisor.start_link(clusters, name: Bedrock.Supervisor, strategy: :one_for_one)
+
+    cluster =
+      clusters
+      |> List.first()
+
+    cluster.controller()
+    |> case do
+      {:ok, cluster_controller} ->
+        Bedrock.ControlPlane.ClusterController.fetch_transaction_system_layout(cluster_controller)
+        |> IO.inspect()
+    end
   end
 end

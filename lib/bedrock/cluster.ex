@@ -24,8 +24,9 @@ defmodule Bedrock.Cluster do
   @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
-  @callback controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
-  @callback coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
+  @callback controller() ::
+              {:ok, Bedrock.ControlPlane.ClusterController.t()} | {:error, :unavailable}
+  @callback coordinator() :: {:ok, Bedrock.ControlPlane.Coordinator.t()} | {:error, :unavailable}
   @callback coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
 

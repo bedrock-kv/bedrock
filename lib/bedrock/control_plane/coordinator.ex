@@ -11,17 +11,27 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   require Logger
 
-  @type service :: GenServer.name()
+  @type t :: GenServer.name()
 
-  @spec fetch_controller(coordinator :: atom()) :: {:ok, atom()} | {:error, :unavailable}
+  @spec fetch_controller(coordinator :: t()) ::
+          {:ok, ClusterController.t()} | {:error, :unavailable}
   def fetch_controller(coordinator, timeout \\ 5_000) do
-    GenServer.call(coordinator, :fetch_controller, timeout)
+    GenServer.call(coordinator, :get_controller, timeout)
+    |> case do
+      :unavailable -> {:error, :unavailable}
+      controller -> {:ok, controller}
+    end
   catch
     :exit, _ -> {:error, :unavailable}
   end
 
-  def get_nearest_read_version_proxy(coordinator) do
-    GenServer.call(coordinator, :get_nearest_read_version_proxy)
+  @spec fetch_proxy(coordinator :: t()) :: {:ok, Proxy.t()} | {:error, :unavailable}
+  def fetch_proxy(coordinator) do
+    GenServer.call(coordinator, :get_proxy)
+    |> case do
+      :unavailable -> {:error, :unavailable}
+      proxy -> {:ok, proxy}
+    end
   catch
     :exit, _ -> {:error, :unavailable}
   end
@@ -51,7 +61,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
     @type t :: %__MODULE__{
             cluster: module(),
-            controller: :unavailable | {atom(), atom()} | pid(),
+            controller: :unavailable | ClusterController.t(),
             controller_otp_name: atom(),
             my_node: node(),
             otp_name: atom(),
@@ -111,15 +121,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
     def handle_call(:ping, _from, t),
       do: {:reply, :pong, t}
 
-    def handle_call(:fetch_controller, _from, t) when t.controller == :unavailable,
-      do: {:reply, {:error, :unavailable}, t}
+    def handle_call(:get_controller, _from, t),
+      do: {:reply, t.controller, t}
 
-    def handle_call(:fetch_controller, _from, t),
-      do: {:reply, {:ok, t.controller}, t}
-
-    def handle_call(:get_nearest_read_version_proxy, _from, t) do
+    def handle_call(:get_proxy, _from, t) do
       {t, read_version_proxy} = t |> get_or_create_read_version_proxy()
-      {:reply, {:ok, read_version_proxy}, t}
+      {:reply, read_version_proxy, t}
     end
 
     @impl GenServer

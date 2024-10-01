@@ -29,7 +29,7 @@ defmodule Bedrock.Client do
   @spec new(coordinator()) :: {:ok, t()} | {:error, :no_coordinators}
   def new(coordinator) do
     coordinator
-    |> Coordinator.get_nearest_read_version_proxy()
+    |> Coordinator.fetch_proxy()
     |> case do
       {:ok, read_version_proxy} ->
         {:ok,

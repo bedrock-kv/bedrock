@@ -68,8 +68,8 @@ defmodule Bedrock.DataPlane.Log do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) :: :ok
-  def lock(log, cluster_controller, epoch),
+  @spec request_lock(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) :: :ok
+  def request_lock(log, cluster_controller, epoch),
     do: GenServer.cast(log, {:lock, cluster_controller, epoch})
 
   @doc """

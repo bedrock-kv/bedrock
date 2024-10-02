@@ -31,27 +31,25 @@ defmodule Bedrock.ControlPlane.ClusterController do
           cluster_controller :: ref(),
           node(),
           capabilities :: [atom()],
-          services :: [keyword()]
-        ) ::
-          :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
+          running_services :: [keyword()]
+        ) :: :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   @spec request_to_rejoin(
           cluster_controller :: ref(),
           node(),
-          [atom()],
-          [keyword()],
+          capabilities :: [atom()],
+          running_services :: [keyword()],
           timeout_in_ms()
-        ) ::
-          :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
+        ) :: :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   def request_to_rejoin(
         cluster_controller,
         node,
         capabilities,
-        services,
+        running_services,
         timeout_in_ms \\ 5_000
       ) do
     GenServer.call(
       cluster_controller,
-      {:request_to_rejoin, node, capabilities, services},
+      {:request_to_rejoin, node, capabilities, running_services},
       timeout_in_ms
     )
   catch
@@ -110,6 +108,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   defmodule Data do
+    @moduledoc false
+
     @type t :: %__MODULE__{
             epoch: Bedrock.epoch(),
             otp_name: atom(),
@@ -148,12 +148,21 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   defmodule Logic do
+    @moduledoc false
+
     @type service :: GenServer.name()
+    @type service_type :: atom()
+    @type capability :: Bedrock.Cluster.capability()
     @type timeout_in_ms :: Bedrock.timeout_in_ms()
 
-    @spec handle_request_to_rejoin(Data.t(), node(), [atom()], []) ::
+    @spec handle_request_to_rejoin(
+            Data.t(),
+            node(),
+            capabilities :: [atom()],
+            running_services :: []
+          ) ::
             {:ok, Data.t()} | {:error, :nodes_must_be_added_by_an_administrator}
-    def handle_request_to_rejoin(t, node, capabilities, services) do
+    def handle_request_to_rejoin(t, node, capabilities, running_services) do
       t =
         t
         |> maybe_add_node(node)
@@ -161,7 +170,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
         |> update_capabilities(node, capabilities)
 
       if NodeTracking.authorized?(t.node_tracking, node) do
-        {:ok, services |> Enum.reduce(t, &add_event(&2, {:node_added_worker, node, &1}))}
+        {:ok, running_services |> Enum.reduce(t, &add_event(&2, {:node_added_worker, node, &1}))}
       else
         {:error, :nodes_must_be_added_by_an_administrator}
       end
@@ -215,13 +224,13 @@ defmodule Bedrock.ControlPlane.ClusterController do
       t
     end
 
-    @spec update_capabilities(Data.t(), node(), [atom()]) :: Data.t()
+    @spec update_capabilities(Data.t(), node(), [capability()]) :: Data.t()
     def update_capabilities(t, node, capabilities) do
       NodeTracking.update_capabilities(t.node_tracking, node, capabilities)
       t
     end
 
-    @spec add_expected_service(Data.t(), GenServer.name(), atom()) :: Data.t()
+    @spec add_expected_service(Data.t(), service(), service_type()) :: Data.t()
     def add_expected_service(t, service, service_type) do
       t.service_directory |> ServiceDirectory.add_expected_service!(service, service_type)
       t
@@ -278,8 +287,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
       t.config
       |> Config.log_workers()
       |> Enum.reduce(t, fn log_worker, t ->
-        :ok = Log.lock(log_worker, self(), t.epoch)
-        t |> add_expected_service(log_worker, :log_worker)
+        :ok = Log.request_lock(log_worker, self(), t.epoch)
+        t |> add_expected_service(log_worker, :log)
       end)
     end
 
@@ -312,8 +321,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def handle_call(:get_transaction_system_layout, _from, t),
     do: {:reply, t.transaction_system_layout, t}
 
-  def handle_call({:request_to_rejoin, node, capabilities, services}, _from, t) do
-    Logic.handle_request_to_rejoin(t, node, capabilities, services)
+  def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
+    Logic.handle_request_to_rejoin(t, node, capabilities, running_services)
     |> case do
       {:ok, t} -> {:reply, :ok, t, {:continue, :process_events}}
       {:error, _reason} = error -> {:reply, error, t}

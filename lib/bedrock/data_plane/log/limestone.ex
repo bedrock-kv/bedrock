@@ -217,7 +217,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
       {:ok, info} = Logic.info(t, [:last_tx_id, :minimum_durable_tx_id])
 
       :ok =
-        ClusterController.report_transaction_log_lock_complete(
+        ClusterController.report_log_lock_complete(
           t.cluster_controller,
           t.id,
           info

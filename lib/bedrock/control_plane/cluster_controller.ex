@@ -53,7 +53,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
     :exit, {:noproc, _} -> {:error, :unavailable}
   end
 
-  @spec report_transaction_log_lock_complete(
+  @spec report_log_lock_complete(
           cluster_controller :: t(),
           Log.id(),
           info :: [
@@ -61,11 +61,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
             minimum_durable_tx_id: Transaction.version()
           ]
         ) :: :ok
-  def report_transaction_log_lock_complete(controller, id, info),
+  def report_log_lock_complete(controller, id, info),
     do:
       GenServer.cast(
         controller,
-        {:transaction_log_lock_complete, id, info}
+        {:log_lock_complete, id, info}
       )
 
   @spec fetch_transaction_system_layout(cluster_controller :: t()) ::
@@ -324,7 +324,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
      {:continue, :process_events}}
   end
 
-  def handle_cast({:transaction_log_lock_complete, _id, _info}, t) do
+  def handle_cast({:log_lock_complete, _id, _info}, t) do
     # TODO
     {:noreply, t}
   end

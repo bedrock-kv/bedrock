@@ -78,20 +78,26 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
       {:error, :not_found} ->
         if Keyspace.key_exists?(database.keyspace, key) and
              not Version.older?(version, MVCC.oldest_version(database.mvcc)) do
-          PersistentKeyValues.fetch(database.pkv, key)
-          |> case do
-            {:ok, value} = result ->
-              :ok = MVCC.insert_read(database.mvcc, key, version, value)
-              result
-
-            {:error, :not_found} = result ->
-              result
-          end
+          fetch_from_persistence_and_write_back_to_mvcc(database, key, version)
         else
           {:error, :tx_too_old}
         end
 
       result ->
+        result
+    end
+  end
+
+  @spec fetch_from_persistence_and_write_back_to_mvcc(t(), Bedrock.key(), Transaction.version()) ::
+          {:ok, Bedrock.value()} | {:error, :not_found}
+  defp fetch_from_persistence_and_write_back_to_mvcc(database, key, version) do
+    PersistentKeyValues.fetch(database.pkv, key)
+    |> case do
+      {:ok, value} = result ->
+        :ok = MVCC.insert_read(database.mvcc, key, version, value)
+        result
+
+      {:error, :not_found} = result ->
         result
     end
   end

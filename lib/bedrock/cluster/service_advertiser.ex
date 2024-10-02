@@ -128,7 +128,6 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   @spec running_services(State.t()) :: [keyword()]
   def running_services(t) do
     t.capabilities
-    |> Enum.filter(&(&1 in [:transaction_log, :storage]))
     |> Enum.flat_map(fn
       service ->
         service

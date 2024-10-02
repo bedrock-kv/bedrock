@@ -290,7 +290,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     # Worker facts
     defp gather_info(:id, %{id: id}), do: id
     defp gather_info(:state, %{state: state}), do: state
-    defp gather_info(:kind, _t), do: :transaction_log
+    defp gather_info(:kind, _t), do: :log
     defp gather_info(:otp_name, %State{otp_name: otp_name}), do: otp_name
     defp gather_info(:pid, _), do: self()
     defp gather_info(:supported_info, _), do: supported_info()

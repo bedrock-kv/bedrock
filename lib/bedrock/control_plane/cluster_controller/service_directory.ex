@@ -7,27 +7,52 @@ defmodule Bedrock.ControlPlane.ClusterController.ServiceDirectory do
 
   @type t :: :ets.table()
 
-  @typep service :: GenServer.name()
-  @typep service_type :: atom()
-  @typep status :: atom()
+  alias Bedrock.ControlPlane.ClusterController.ServiceInfo
 
-  @spec row(service(), service_type(), status()) :: {service(), service_type(), status()}
-  defp row(otp_name, service_type, status), do: {otp_name, service_type, status}
+  @typep id :: ServiceInfo.id()
+  @typep kind :: ServiceInfo.kind()
+  @typep expected :: boolean()
+  @typep status :: ServiceInfo.status()
+  @typep table_row :: {id(), kind(), status(), expected()}
+
+  @spec table_row(ServiceInfo.t(), expected()) :: table_row()
+  defp table_row(%{id: id, kind: kind, status: status}, expected),
+    do: {id, kind, status, expected}
 
   @spec new() :: t()
   def new, do: :ets.new(:service_directory, [:set])
 
-  @spec add_expected_service!(t(), GenServer.name(), atom()) :: :ok
-  def add_expected_service!(t, service_type, otp_name) do
-    if :ets.insert_new(t, row(otp_name, service_type, :expected)) do
-      :ok
-    else
-      raise "Service already exists"
+  @spec update_service_info(t(), ServiceInfo.t()) :: :changed | :unchanged
+  def update_service_info(t, service_info) do
+    status = service_info.status
+
+    :ets.lookup(t, service_info.id)
+    |> case do
+      [{_id, _kind, ^status, _expected}] ->
+        :unchanged
+
+      _ ->
+        :ets.insert(t, table_row(service_info, false))
+        :changed
     end
   end
 
-  @spec any_expected_services?(t()) :: boolean()
-  def any_expected_services?(t) do
-    :ets.select(t, [{{:_, :_, :expected}, [], [true]}]) != []
+  @spec node_down(t(), node()) :: [ServiceInfo.t()]
+  def node_down(t, node) do
+    :ets.select(t, match_id_and_kind_for_running_services_on_node(node))
+    |> case do
+      [] ->
+        []
+
+      affected_rows ->
+        affected_rows
+        |> Enum.map(fn {id, kind} ->
+          :ets.update_element(t, id, {3, :down})
+          ServiceInfo.new(id, kind, :down)
+        end)
+    end
   end
+
+  defp match_id_and_kind_for_running_services_on_node(node),
+    do: [{{:"$1", :"$2", {:up, :_, :_, node}, :_}, [], [{{:"$1", :"$2"}}]}]
 end

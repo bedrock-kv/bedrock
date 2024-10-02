@@ -9,10 +9,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
+  alias Bedrock.ControlPlane.ClusterController.ServiceInfo
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.DataDistributor
-  alias Bedrock.DataPlane.Sequencer
+  # alias Bedrock.ControlPlane.DataDistributor
+  # alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Log
 
@@ -230,9 +231,22 @@ defmodule Bedrock.ControlPlane.ClusterController do
       t
     end
 
-    @spec add_expected_service(Data.t(), service(), service_type()) :: Data.t()
-    def add_expected_service(t, service, service_type) do
-      t.service_directory |> ServiceDirectory.add_expected_service!(service, service_type)
+    def add_running_service(t, node, info) do
+      service_info =
+        ServiceInfo.new(info[:id], info[:kind])
+        |> ServiceInfo.up(info[:pid], info[:otp_name], node)
+
+      status = ServiceDirectory.update_service_info(t.service_directory, service_info)
+
+      IO.inspect({service_info, status})
+
+      t
+    end
+
+    def node_down(t, node) do
+      affected_service_info = ServiceDirectory.node_down(t.service_directory, node)
+
+      IO.inspect(affected_service_info)
       t
     end
 
@@ -258,9 +272,10 @@ defmodule Bedrock.ControlPlane.ClusterController do
     @spec send_rejoin_invitation_to_sequencer(sequencer :: pid() | nil, Data.t()) :: Data.t()
     def send_rejoin_invitation_to_sequencer(nil, t), do: t
 
-    def send_rejoin_invitation_to_sequencer(sequencer, t) do
-      Sequencer.invite_to_rejoin(sequencer, self(), t.epoch)
-      t |> add_expected_service(sequencer, :sequencer)
+    def send_rejoin_invitation_to_sequencer(_sequencer, t) do
+      # Sequencer.invite_to_rejoin(sequencer, self(), t.epoch)
+      # t |> add_expected_service(sequencer, :sequencer)
+      t
     end
 
     # Data Distributor
@@ -275,9 +290,10 @@ defmodule Bedrock.ControlPlane.ClusterController do
             Data.t()
     def send_rejoin_invitation_to_data_distributor(nil, t), do: t
 
-    def send_rejoin_invitation_to_data_distributor(data_distributor, t) do
-      DataDistributor.invite_to_rejoin(data_distributor, self(), t.epoch)
-      t |> add_expected_service(data_distributor, :data_distributor)
+    def send_rejoin_invitation_to_data_distributor(_data_distributor, t) do
+      # DataDistributor.invite_to_rejoin(data_distributor, self(), t.epoch)
+      # t |> add_expected_service(data_distributor, :data_distributor)
+      t
     end
 
     # Transaction Logs
@@ -288,7 +304,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
       |> Config.log_workers()
       |> Enum.reduce(t, fn log_worker, t ->
         :ok = Log.request_lock(log_worker, self(), t.epoch)
-        t |> add_expected_service(log_worker, :log)
+        # t |> add_expected_service(log_worker, :log)
+        t
       end)
     end
 
@@ -354,6 +371,12 @@ defmodule Bedrock.ControlPlane.ClusterController do
        {:continue, :process_events}}
 
   #
+
+  def handle_event({:node_added_worker, node, info}, t),
+    do: t |> Logic.add_running_service(node, info)
+
+  def handle_event({:node_down, node}, t),
+    do: t |> Logic.node_down(node)
 
   def handle_event(event, t) do
     Logger.info(inspect(event))

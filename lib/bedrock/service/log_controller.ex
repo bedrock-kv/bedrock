@@ -4,7 +4,7 @@ defmodule Bedrock.Service.LogController do
   node, for a given cluster.
   """
   use Bedrock.Service.Controller,
-    kind: :transaction_log,
+    kind: :log,
     worker: Bedrock.DataPlane.Log,
     default_worker: Bedrock.DataPlane.Log.Limestone
 end

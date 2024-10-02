@@ -256,7 +256,9 @@ defmodule Bedrock.Cluster.Monitor do
   def change_cluster_controller(t, controller) when t.controller == controller, do: t
 
   def change_cluster_controller(t, controller) do
-    Logger.debug("Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(controller)}")
+    Logger.debug(
+      "Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(if is_pid(controller), do: node(controller), else: controller)}"
+    )
 
     PubSub.publish(
       t.cluster,

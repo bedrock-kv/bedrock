@@ -1,6 +1,4 @@
 defmodule Bedrock.Service.Controller do
-  @moduledoc """
-  """
   alias Bedrock.Service.Worker
 
   @type ref :: GenServer.server()
@@ -64,7 +62,7 @@ defmodule Bedrock.Service.Controller do
 
         path =
           Keyword.get(opts, :path) ||
-            raise "Missing :path option; required when :transaction_log is specified in :services"
+            raise "Missing :path option; required when :log is specified in :services"
 
         default_worker =
           Keyword.get(opts, :default_worker) || unquote(default_worker)
@@ -78,7 +76,7 @@ defmodule Bedrock.Service.Controller do
           {Controller,
            [
              cluster: cluster,
-             subsystem: :transaction_log,
+             subsystem: :log,
              default_worker: default_worker,
              worker_supervisor_otp_name: worker_supervisor_otp_name,
              path: path,
@@ -128,6 +126,7 @@ defmodule Bedrock.Service.Controller do
   end
 
   defmodule Logic do
+    alias Bedrock.Cluster.ServiceAdvertiser
     alias Bedrock.Service.Manifest
 
     def startup(subsystem, cluster, path, default_worker, worker_supervisor_otp_name, otp_name) do
@@ -209,10 +208,22 @@ defmodule Bedrock.Service.Controller do
              ) do
         Process.whereis(worker_otp_name)
         |> case do
-          nil -> raise "Unable to locate server #{worker_otp_name}"
-          worker_pid -> {:ok, worker_pid}
+          nil ->
+            raise "Unable to locate server #{worker_otp_name}"
+
+          worker_pid ->
+            :ok = advertise_new_worker(t, worker_pid)
+            {:ok, worker_pid}
         end
       end
+    end
+
+    @spec advertise_new_worker(Data.t(), worker_pid :: pid()) :: :ok
+    def advertise_new_worker(t, worker_pid) do
+      ServiceAdvertiser.report_new_worker(
+        t.cluster.otp_name(:service_advertiser),
+        worker_pid
+      )
     end
 
     @spec check_manifest_id(manifest :: Manifest.t(), id :: Worker.id()) ::

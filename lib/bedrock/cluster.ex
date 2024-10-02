@@ -17,7 +17,7 @@ defmodule Bedrock.Cluster do
   @type transaction :: Transaction.t()
   @type storage :: Storage.ref()
   @type log :: Log.ref()
-  @type capability :: :coordination | :transaction_log | :storage
+  @type capability :: :coordination | :log | :storage
 
   @callback name() :: String.t()
   @callback config() :: Keyword.t()
@@ -55,11 +55,11 @@ defmodule Bedrock.Cluster do
       @controller_otp_name Cluster.otp_name(@name, :controller)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
-      @transaction_log_otp_name Cluster.otp_name(@name, :transaction_log)
+      @log_otp_name Cluster.otp_name(@name, :log)
       @monitor_otp_name Cluster.otp_name(@name, :monitor)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
       @service_advertiser_otp_name Cluster.otp_name(@name, :service_advertiser)
-      @storage_system_otp_name Cluster.otp_name(@name, :storage_system)
+      @storage_otp_name Cluster.otp_name(@name, :storage)
 
       @doc """
       Get the name of the cluster.
@@ -145,18 +145,18 @@ defmodule Bedrock.Cluster do
               | :monitor
               | :sequencer
               | :service_advertiser
-              | :storage_system
-              | :transaction_log
+              | :storage
+              | :log
             ) :: atom()
       def otp_name(:sup), do: @sup_otp_name
       def otp_name(:controller), do: @controller_otp_name
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:data_distributor), do: @data_distributor_otp_name
-      def otp_name(:transaction_log), do: @transaction_log_otp_name
+      def otp_name(:log), do: @log_otp_name
       def otp_name(:monitor), do: @monitor_otp_name
       def otp_name(:sequencer), do: @sequencer_otp_name
       def otp_name(:service_advertiser), do: @service_advertiser_otp_name
-      def otp_name(:storage_system), do: @storage_system_otp_name
+      def otp_name(:storage), do: @storage_otp_name
       def otp_name(component) when is_atom(component), do: Cluster.otp_name(@name, component)
 
       ######################################################################
@@ -315,6 +315,6 @@ defmodule Bedrock.Cluster do
 
   defp module_for_capability(:coordination), do: Bedrock.ControlPlane.Coordinator
   defp module_for_capability(:storage), do: Bedrock.Service.StorageController
-  defp module_for_capability(:transaction_log), do: Bedrock.Service.LogController
+  defp module_for_capability(:log), do: Bedrock.Service.LogController
   defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")
 end

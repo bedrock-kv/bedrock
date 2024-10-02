@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
   alias Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl, as: MVCC
   alias Bedrock.DataPlane.Storage.Basalt.Keyspace
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}

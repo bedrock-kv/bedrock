@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Storage do
   use Bedrock, :types
 
   alias Bedrock.Service.Worker
+  alias Bedrock.DataPlane.Transaction
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()

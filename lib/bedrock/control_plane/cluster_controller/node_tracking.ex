@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   @moduledoc """
   The NodeTracking module is responsible for keeping track of the state of the
-  nodes in the cluster. This includes the list of services that the node is
+  nodes in the cluster. This includes the list of capabilities that the node is
   advertising, the last time it responded to a ping and whether or not it is
   considered to be alive.
   """
@@ -11,14 +11,14 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   @type t :: :ets.table()
 
   @typep last_seen_at :: integer() | :unknown
-  @typep advertised_services :: [atom()] | :unknown
+  @typep capabilities :: [atom()] | :unknown
   @typep up_down :: :up | :down
   @typep authorized :: boolean()
 
-  @spec row(node(), last_seen_at(), advertised_services(), up_down(), authorized()) ::
-          {node(), last_seen_at(), advertised_services(), up_down(), authorized()}
-  defp row(node, last_seen_at, advertised_services, up_down, authorized),
-    do: {node, last_seen_at, advertised_services, up_down, authorized}
+  @spec row(node(), last_seen_at(), capabilities(), up_down(), authorized()) ::
+          {node(), last_seen_at(), capabilities(), up_down(), authorized()}
+  defp row(node, last_seen_at, capabilities, up_down, authorized),
+    do: {node, last_seen_at, capabilities, up_down, authorized}
 
   @doc """
   Create a new node tracking table with the given nodes.
@@ -87,7 +87,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
       [] ->
         false
 
-      [_row = {^node, _last_seen_at, _services, up_down, _authorized}] ->
+      [_row = {^node, _last_seen_at, _capabilties, up_down, _authorized}] ->
         :up == up_down
     end
   end
@@ -100,22 +100,22 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     :ets.lookup(t, node)
     |> case do
       [] -> false
-      [_row = {^node, _last_seen_at, _services, _up_down, authorized}] -> authorized
+      [_row = {^node, _last_seen_at, _capabilties, _up_down, authorized}] -> authorized
     end
   end
 
   @doc """
-  Get a list of the services that a node is advertising.
+  Get a list of the capabilties that a node is advertising.
   """
-  @spec advertised_services(t(), node()) :: [atom()] | :unknown
-  def advertised_services(t, node) do
+  @spec capabilities(t(), node()) :: [atom()] | :unknown
+  def capabilities(t, node) do
     :ets.lookup(t, node)
     |> case do
       [] ->
         :unknown
 
-      [_row = {^node, _last_seen_at, advertised_services, _up_down, _authorized}] ->
-        advertised_services
+      [_row = {^node, _last_seen_at, capabilities, _up_down, _authorized}] ->
+        capabilities
     end
   end
 
@@ -130,11 +130,11 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   end
 
   @doc """
-  Update the list of services that a node is advertising.
+  Update the list of capabilities that a node is advertising.
   """
-  @spec update_advertised_services(t(), node(), advertised_services :: [atom()]) :: t()
-  def update_advertised_services(t, node, advertised_services) do
-    :ets.update_element(t, node, {3, advertised_services})
+  @spec update_capabilities(t(), node(), capabilities :: [atom()]) :: t()
+  def update_capabilities(t, node, capabilities) do
+    :ets.update_element(t, node, {3, capabilities})
     t
   end
 

@@ -14,11 +14,11 @@ defmodule Bedrock.Cluster do
   @type transaction :: Bedrock.DataPlane.Transaction.t()
   @type storage_worker :: Storage.t()
   @type transaction_log_worker :: Log.t()
-  @type service :: :coordination | :transaction_log | :storage
+  @type capability :: :coordination | :transaction_log | :storage
 
   @callback name() :: String.t()
   @callback config() :: Keyword.t()
-  @callback advertised_services() :: [Bedrock.Cluster.service()]
+  @callback capabilities() :: [capability()]
   @callback path_to_descriptor() :: Path.t()
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
   @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
@@ -84,10 +84,10 @@ defmodule Bedrock.Cluster do
       def config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
-      Get the services advertised to the cluster by this node.
+      Get the capability advertised to the cluster by this node.
       """
-      @spec advertised_services() :: [Bedrock.Cluster.service()]
-      def advertised_services, do: config() |> Keyword.get(:services, [])
+      @spec capabilities() :: [Cluster.capability()]
+      def capabilities, do: config() |> Keyword.get(:capabilities, [])
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the
@@ -274,7 +274,7 @@ defmodule Bedrock.Cluster do
   @doc false
   @impl Supervisor
   def init({cluster, path_to_descriptor, descriptor}) do
-    advertised_services = cluster.advertised_services()
+    capabilities = cluster.capabilities()
 
     children =
       [
@@ -286,41 +286,41 @@ defmodule Bedrock.Cluster do
            descriptor: descriptor,
            path_to_descriptor: path_to_descriptor,
            otp_name: cluster.otp_name(:monitor),
-           mode: mode_for_services(advertised_services)
+           mode: mode_for_capabilities(capabilities)
          ]}
-        | children_for_services(cluster, advertised_services)
+        | children_for_capabilities(cluster, capabilities)
       ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defp mode_for_services([]), do: :passive
-  defp mode_for_services(_), do: :active
+  defp mode_for_capabilities([]), do: :passive
+  defp mode_for_capabilities(_), do: :active
 
-  defp children_for_services(_cluster, []), do: []
+  defp children_for_capabilities(_cluster, []), do: []
 
-  defp children_for_services(cluster, services) do
+  defp children_for_capabilities(cluster, capabilities) do
     [
       {Bedrock.Cluster.ServiceAdvertiser,
        [
          cluster: cluster,
-         services: services,
+         capabilities: capabilities,
          otp_name: cluster.otp_name(:service_advertiser)
        ]}
-      | services
-        |> Enum.map(fn service ->
-          {module_for_service(service),
+      | capabilities
+        |> Enum.map(fn capability ->
+          {module_for_capability(capability),
            [
              {:cluster, cluster}
              | cluster.config()
-               |> Keyword.get(service, [])
+               |> Keyword.get(capability, [])
            ]}
         end)
     ]
   end
 
-  defp module_for_service(:coordination), do: Bedrock.ControlPlane.Coordinator
-  defp module_for_service(:storage), do: Bedrock.Service.StorageController
-  defp module_for_service(:transaction_log), do: Bedrock.Service.LogController
-  defp module_for_service(service), do: raise("Unknown service: #{inspect(service)}")
+  defp module_for_capability(:coordination), do: Bedrock.ControlPlane.Coordinator
+  defp module_for_capability(:storage), do: Bedrock.Service.StorageController
+  defp module_for_capability(:transaction_log), do: Bedrock.Service.LogController
+  defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")
 end

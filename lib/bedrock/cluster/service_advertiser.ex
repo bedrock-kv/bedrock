@@ -1,10 +1,10 @@
 defmodule Bedrock.Cluster.ServiceAdvertiser do
   @moduledoc """
-  Advertises services to the cluster controller.
+  Advertises capabilities to the cluster controller.
 
-  This GenServer is responsible for advertising the services that are available
+  This GenServer is responsible for advertising the capabilities that are available
   on the local node to the cluster controller. This is done by subscribing to
-  the `:cluster_controller_replaced` topic and then advertising the services to
+  the `:cluster_controller_replaced` topic and then advertising the capabilities to
   the controller when the controller is replaced, or when new workers are
   started on the node.
   """
@@ -21,10 +21,10 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     @moduledoc false
     @type t :: %__MODULE__{
             cluster: Cluster.t(),
-            advertised_services: [atom()],
+            capabilities: [atom()],
             controller: ClusterController.t() | :unavailable
           }
-    defstruct [:cluster, :advertised_services, :controller]
+    defstruct [:cluster, :capabilities, :controller]
   end
 
   @spec report_new_worker(service_advertiser :: GenServer.name(), worker :: pid()) :: :ok
@@ -33,7 +33,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
 
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
-    advertised_services = opts[:services] || raise "Missing :services option"
+    capabilities = opts[:capabilities] || raise "Missing :capabilities option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
     %{
@@ -43,7 +43,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
         :start_link,
         [
           __MODULE__,
-          {cluster, advertised_services},
+          {cluster, capabilities},
           [name: otp_name]
         ]
       },
@@ -53,11 +53,11 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
 
   @impl GenServer
   @spec init({module(), [atom()]}) ::
-          {:ok, State.t()} | {:ok, State.t(), {:continue, :advertise_services}}
-  def init({cluster, advertised_services}) do
+          {:ok, State.t()} | {:ok, State.t(), {:continue, :advertise_capabilities}}
+  def init({cluster, capabilities}) do
     t = %State{
       cluster: cluster,
-      advertised_services: advertised_services,
+      capabilities: capabilities,
       controller: :unavailable
     }
 
@@ -66,7 +66,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     cluster.controller()
     |> case do
       {:ok, controller} ->
-        {:ok, %{t | controller: controller}, {:continue, :advertise_services}}
+        {:ok, %{t | controller: controller}, {:continue, :advertise_capabilities}}
 
       {:error, :unavailable} ->
         {:ok, t}
@@ -74,14 +74,14 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
   end
 
   @impl GenServer
-  def handle_continue(:advertise_services, %{controller: :unavailable} = t),
+  def handle_continue(:advertise_capabilities, %{controller: :unavailable} = t),
     do: {:noreply, t}
 
-  def handle_continue(:advertise_services, t) do
+  def handle_continue(:advertise_capabilities, t) do
     t.controller
     |> ClusterController.request_to_rejoin(
       Node.self(),
-      t.advertised_services,
+      t.capabilities,
       running_services(t)
     )
     |> case do
@@ -123,11 +123,11 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
       do: {:noreply, t}
 
   def handle_info({:cluster_controller_replaced, new_controller}, t),
-    do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_services}}
+    do: {:noreply, %{t | controller: new_controller}, {:continue, :advertise_capabilities}}
 
   @spec running_services(State.t()) :: [keyword()]
   def running_services(t) do
-    t.advertised_services
+    t.capabilities
     |> Enum.filter(&(&1 in [:transaction_log, :storage]))
     |> Enum.flat_map(fn
       service ->

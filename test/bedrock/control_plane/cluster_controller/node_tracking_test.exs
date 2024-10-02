@@ -42,10 +42,10 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTrackingTest do
     refute NodeTracking.authorized?(table, :node4)
   end
 
-  test "advertised_services/2 returns the advertised services of a node", %{table: table} do
-    assert NodeTracking.advertised_services(table, :node1) == :unknown
-    NodeTracking.update_advertised_services(table, :node1, [:service1, :service2])
-    assert NodeTracking.advertised_services(table, :node1) == [:service1, :service2]
+  test "capabilities/2 returns the advertised services of a node", %{table: table} do
+    assert NodeTracking.capabilities(table, :node1) == :unknown
+    NodeTracking.update_capabilities(table, :node1, [:service1, :service2])
+    assert NodeTracking.capabilities(table, :node1) == [:service1, :service2]
   end
 
   test "update_last_seen_at/3 updates the last seen time of a node", %{table: table} do
@@ -55,8 +55,8 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTrackingTest do
     assert updated_last_seen_at == last_seen_at
   end
 
-  test "update_advertised_services/3 updates the advertised services of a node", %{table: table} do
-    NodeTracking.update_advertised_services(table, :node1, [:service1, :service2])
+  test "update_capabilities/3 updates the advertised services of a node", %{table: table} do
+    NodeTracking.update_capabilities(table, :node1, [:service1, :service2])
     [{_, _, updated_services, _, _}] = :ets.lookup(table, :node1)
     assert updated_services == [:service1, :service2]
   end

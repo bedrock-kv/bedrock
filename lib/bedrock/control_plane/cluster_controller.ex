@@ -27,7 +27,12 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def report_new_worker(cluster_controller, node, worker_info),
     do: GenServer.cast(cluster_controller, {:new_worker, node, worker_info})
 
-  @spec request_to_rejoin(cluster_controller :: t(), node(), [atom()], [keyword()]) ::
+  @spec request_to_rejoin(
+          cluster_controller :: t(),
+          node(),
+          capabilities :: [atom()],
+          services :: [keyword()]
+        ) ::
           :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   @spec request_to_rejoin(
           cluster_controller :: t(),
@@ -40,13 +45,13 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def request_to_rejoin(
         cluster_controller,
         node,
-        advertised_services,
+        capabilities,
         services,
         timeout_in_ms \\ 5_000
       ) do
     GenServer.call(
       cluster_controller,
-      {:request_to_rejoin, node, advertised_services, services},
+      {:request_to_rejoin, node, capabilities, services},
       timeout_in_ms
     )
   catch
@@ -148,12 +153,12 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec handle_request_to_rejoin(Data.t(), node(), [atom()], []) ::
             {:ok, Data.t()} | {:error, :nodes_must_be_added_by_an_administrator}
-    def handle_request_to_rejoin(t, node, advertised_services, services) do
+    def handle_request_to_rejoin(t, node, capabilities, services) do
       t =
         t
         |> maybe_add_node(node)
         |> update_node_last_seen_at(node)
-        |> update_advertised_services(node, advertised_services)
+        |> update_capabilities(node, capabilities)
 
       if NodeTracking.authorized?(t.node_tracking, node) do
         {:ok, services |> Enum.reduce(t, &add_event(&2, {:node_added_worker, node, &1}))}
@@ -210,9 +215,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
       t
     end
 
-    @spec update_advertised_services(Data.t(), node(), [atom()]) :: Data.t()
-    def update_advertised_services(t, node, advertised_services) do
-      NodeTracking.update_advertised_services(t.node_tracking, node, advertised_services)
+    @spec update_capabilities(Data.t(), node(), [atom()]) :: Data.t()
+    def update_capabilities(t, node, capabilities) do
+      NodeTracking.update_capabilities(t.node_tracking, node, capabilities)
       t
     end
 
@@ -307,8 +312,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def handle_call(:get_transaction_system_layout, _from, t),
     do: {:reply, t.transaction_system_layout, t}
 
-  def handle_call({:request_to_rejoin, node, advertised_services, services}, _from, t) do
-    Logic.handle_request_to_rejoin(t, node, advertised_services, services)
+  def handle_call({:request_to_rejoin, node, capabilities, services}, _from, t) do
+    Logic.handle_request_to_rejoin(t, node, capabilities, services)
     |> case do
       {:ok, t} -> {:reply, :ok, t, {:continue, :process_events}}
       {:error, _reason} = error -> {:reply, error, t}

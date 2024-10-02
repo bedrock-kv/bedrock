@@ -16,26 +16,26 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Log
 
-  @type t :: GenServer.server()
+  @type ref :: GenServer.server()
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
 
-  @spec send_pong(cluster_controller :: t(), from_node :: node()) :: :ok
+  @spec send_pong(cluster_controller :: ref(), from_node :: node()) :: :ok
   def send_pong(cluster_controller, from_node),
     do: GenServer.cast(cluster_controller, {:pong, from_node})
 
-  @spec report_new_worker(cluster_controller :: t(), node(), keyword()) :: :ok
+  @spec report_new_worker(cluster_controller :: ref(), node(), keyword()) :: :ok
   def report_new_worker(cluster_controller, node, worker_info),
     do: GenServer.cast(cluster_controller, {:new_worker, node, worker_info})
 
   @spec request_to_rejoin(
-          cluster_controller :: t(),
+          cluster_controller :: ref(),
           node(),
           capabilities :: [atom()],
           services :: [keyword()]
         ) ::
           :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   @spec request_to_rejoin(
-          cluster_controller :: t(),
+          cluster_controller :: ref(),
           node(),
           [atom()],
           [keyword()],
@@ -59,7 +59,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   @spec report_log_lock_complete(
-          cluster_controller :: t(),
+          cluster_controller :: ref(),
           Log.id(),
           info :: [
             last_tx_id: Transaction.version(),
@@ -73,9 +73,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
         {:log_lock_complete, id, info}
       )
 
-  @spec fetch_transaction_system_layout(cluster_controller :: t()) ::
+  @spec fetch_transaction_system_layout(cluster_controller :: ref()) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
-  @spec fetch_transaction_system_layout(cluster_controller :: t(), timeout_in_ms()) ::
+  @spec fetch_transaction_system_layout(cluster_controller :: ref(), timeout_in_ms()) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
   def fetch_transaction_system_layout(cluster_controller, timeout_in_ms \\ 5_000) do
     GenServer.call(cluster_controller, :get_transaction_system_layout, timeout_in_ms)

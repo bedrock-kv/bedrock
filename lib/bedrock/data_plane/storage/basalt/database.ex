@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   use Bedrock, :types
-  use Bedrock.Cluster, :types
 
   defstruct ~w[mvcc keyspace pkv key_range]a
   @type t :: %__MODULE__{}
@@ -40,7 +39,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     :ok
   end
 
-  @spec last_durable_version(database :: t()) :: version() | :undefined
+  @spec last_durable_version(database :: t()) :: Transaction.version() | :undefined
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
 
   @spec key_range(database :: t()) :: Storage.key_range() | :undefined
@@ -54,14 +53,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     |> Stream.run()
   end
 
-  @spec apply_transactions(database :: t(), transactions :: [transaction()]) :: version()
+  @spec apply_transactions(database :: t(), transactions :: [Transaction.t()]) ::
+          Transaction.version()
   def apply_transactions(database, transactions),
     do: MVCC.apply_transactions!(database.mvcc, transactions)
 
   def last_committed_version(database),
     do: MVCC.newest_version(database.mvcc)
 
-  @spec fetch(database :: t(), key(), version()) ::
+  @spec fetch(database :: t(), key(), Transaction.version()) ::
           {:ok, value()}
           | {:error,
              :not_found
@@ -120,7 +120,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   persistent key value store. Versions of values older than the given version
   are pruned from the store.
   """
-  @spec ensure_durability_to_version(db :: t(), version()) :: :ok
+  @spec ensure_durability_to_version(db :: t(), Transaction.version()) :: :ok
   def ensure_durability_to_version(db, version) do
     if transaction = MVCC.transaction_at_version(db.mvcc, version) do
       PersistentKeyValues.apply_transaction(db.pkv, transaction)

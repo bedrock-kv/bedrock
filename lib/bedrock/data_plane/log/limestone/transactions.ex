@@ -1,6 +1,4 @@
 defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
-  use Bedrock.Cluster, :types
-
   defstruct ~w[ets]a
   @type t :: %__MODULE__{}
 
@@ -27,7 +25,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
     :ok
   end
 
-  @spec get(t(), version(), count :: pos_integer()) :: [transaction()]
+  @spec get(t(), Transaction.version(), count :: pos_integer()) :: [Transaction.t()]
   def get(t, version, count) do
     :ets.select(t.ets, match_value_for_key_with_version_gt(version), count)
     |> case do
@@ -56,7 +54,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
   Load all transactions from the given segment into the transaction log starting
   at the given version, exclusive.
   """
-  @spec from_segment(t(), Segment.t(), at_version :: version()) :: :ok
+  @spec from_segment(t(), Segment.t(), at_version :: Transaction.version()) :: :ok
   def from_segment(t, segment, at_version) do
     segment
     |> Segment.stream!()
@@ -74,7 +72,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
   Append one or more transactions to the transaction log. It will raise if any
   of the given transactions are already in the log.
   """
-  @spec append!(t(), transaction() | [transaction()]) :: :ok
+  @spec append!(t(), Transaction.t() | [Transaction.t()]) :: :ok
   def append!(t, transaction) when is_tuple(transaction) or is_list(transaction) do
     :ets.insert_new(t.ets, transaction) || raise "duplicate transaction"
     :ok

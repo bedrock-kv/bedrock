@@ -75,10 +75,10 @@ defmodule Bedrock.DataPlane.Log.Limestone do
             id: String.t(),
             otp_name: atom(),
             transactions: Transactions.t(),
-            controller: LogController.t() | nil,
+            controller: LogController.ref() | nil,
             epoch: Bedrock.epoch() | nil,
             last_tx_id: Transaction.version() | :undefined,
-            cluster_controller: ClusterController.t() | nil
+            cluster_controller: ClusterController.ref() | nil
           }
     defstruct state: nil,
               subscriber_liveness_timeout_in_s: 60,
@@ -200,7 +200,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
       {:ok, %{t | last_tx_id: Transaction.version(transaction)}}
     end
 
-    @spec lock(t(), ClusterController.t(), Bedrock.epoch()) ::
+    @spec lock(t(), ClusterController.ref(), Bedrock.epoch()) ::
             {:ok, t()} | {:error, :epoch_too_old | String.t()}
     def lock(t, cluster_controller, epoch) do
       State.transition_to(t, :locked, fn

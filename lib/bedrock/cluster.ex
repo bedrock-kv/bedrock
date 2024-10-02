@@ -4,16 +4,20 @@ defmodule Bedrock.Cluster do
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Transaction
 
   require Logger
 
   @type t :: module()
-  @type version :: Bedrock.DataPlane.Transaction.version()
-  @type transaction :: Bedrock.DataPlane.Transaction.t()
-  @type storage_worker :: Storage.t()
-  @type transaction_log_worker :: Log.t()
+  @type name :: String.t()
+  @type version :: Transaction.version()
+  @type transaction :: Transaction.t()
+  @type storage :: Storage.ref()
+  @type log :: Log.ref()
   @type capability :: :coordination | :transaction_log | :storage
 
   @callback name() :: String.t()
@@ -24,19 +28,10 @@ defmodule Bedrock.Cluster do
   @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
-  @callback controller() ::
-              {:ok, Bedrock.ControlPlane.ClusterController.t()} | {:error, :unavailable}
-  @callback coordinator() :: {:ok, Bedrock.ControlPlane.Coordinator.t()} | {:error, :unavailable}
+  @callback controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
+  @callback coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
-
-  @doc false
-  defmacro __using__(:types) do
-    quote do
-      @type version :: Bedrock.Cluster.version()
-      @type transaction :: Bedrock.Cluster.transaction()
-    end
-  end
 
   @doc false
   defmacro __using__(opts) do
@@ -70,7 +65,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the name of the cluster.
       """
-      @spec name() :: String.t()
+      @spec name() :: Cluster.name()
       def name, do: @name
 
       ######################################################################
@@ -217,13 +212,13 @@ defmodule Bedrock.Cluster do
   @doc """
   Get the OTP name for the cluster with the given name.
   """
-  @spec otp_name(cluster_name :: binary()) :: atom()
+  @spec otp_name(name()) :: atom()
   def otp_name(cluster_name) when is_binary(cluster_name), do: :"bedrock_#{cluster_name}"
 
   @doc """
   Get the OTP name for a component within the cluster with the given name.
   """
-  @spec otp_name(cluster_name :: binary(), service :: atom()) :: atom()
+  @spec otp_name(name(), service :: atom()) :: atom()
   def otp_name(cluster_name, service) when is_binary(cluster_name),
     do: :"#{otp_name(cluster_name)}_#{service}"
 

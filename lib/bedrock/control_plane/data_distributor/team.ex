@@ -30,8 +30,8 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
   @type tag :: String.t()
   @type key_range :: Bedrock.key_range()
   @type replication_factor :: pos_integer()
-  @type log_storage_pair :: {log_worker_ref(), Storage.t()}
-  @type log_worker_ref :: Log.t()
+  @type log_storage_pair :: {log_worker_ref(), Storage.ref()}
+  @type log_worker_ref :: Log.ref()
 
   @spec new(tag(), key_range()) :: t()
   @spec new(tag(), key_range(), replication_factor()) :: t()
@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.DataDistributor.Team do
     }
   end
 
-  @spec storage_workers(t()) :: [Storage.t()]
+  @spec storage_workers(t()) :: [Storage.ref()]
   def storage_workers(team) do
     team.log_storage_pairs
     |> Enum.map(&elem(&1, 1))

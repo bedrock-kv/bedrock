@@ -10,9 +10,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
   whether a key has been deleted or not (while still relying on the atomicity
   of the insert operation).
   """
-
   use Bedrock, :types
-  use Bedrock.Cluster, :types
 
   alias Bedrock.DataPlane.Transaction
 
@@ -28,7 +26,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
     :ok
   end
 
-  @spec apply_transaction(keyspace :: t(), transaction()) :: :ok
+  @spec apply_transaction(keyspace :: t(), Transaction.t()) :: :ok
   def apply_transaction(keyspace, transaction) do
     with true <-
            :ets.insert(keyspace, [

@@ -2,13 +2,13 @@ defmodule Bedrock.Service.ManifestTest do
   use ExUnit.Case, async: true
   alias Bedrock.Service.Manifest
 
-  defp storage_worker, do: Bedrock.DataPlane.Storage.Basalt
-  defp transaction_log_worker, do: Bedrock.DataPlane.Log.Limestone
+  defp storage, do: Bedrock.DataPlane.Storage.Basalt
+  defp log, do: Bedrock.DataPlane.Log.Limestone
 
   describe "Manifest reading and writing" do
     @tag :tmp_dir
     test "succeeds for a storage worker", %{tmp_dir: tmp_dir} do
-      manifest = Manifest.new("test_cluster", "test_id", storage_worker())
+      manifest = Manifest.new("test_cluster", "test_id", storage())
       path = Path.join(tmp_dir, "manifest.json")
       :ok = Manifest.write_to_file(manifest, path)
 
@@ -17,7 +17,7 @@ defmodule Bedrock.Service.ManifestTest do
 
     @tag :tmp_dir
     test "succeeds for a transaction log worker", %{tmp_dir: tmp_dir} do
-      manifest = Manifest.new("test_cluster", "test_id", transaction_log_worker())
+      manifest = Manifest.new("test_cluster", "test_id", log())
       path = Path.join(tmp_dir, "manifest.json")
       :ok = Manifest.write_to_file(manifest, path)
 

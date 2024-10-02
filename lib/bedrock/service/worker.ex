@@ -5,15 +5,15 @@ defmodule Bedrock.Service.Worker do
   with other services (as befits the type of worker.)
   """
 
-  @type t :: GenServer.server()
+  @type ref :: GenServer.server()
   @type id :: String.t()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
   @type health :: :ok | :starting | {:error, term()}
   @type otp_name :: atom()
 
-  @spec info(worker :: t(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
-  @spec info(worker :: t(), [fact_name()], timeout_in_ms()) ::
+  @spec info(worker :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec info(worker :: ref(), [fact_name()], timeout_in_ms()) ::
           {:ok, keyword()} | {:error, :unavailable}
   def info(worker, fact_names, timeout \\ 5_000) do
     GenServer.call(worker, {:info, fact_names}, timeout)

@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Proxy do
   alias Bedrock.ControlPlane.ClusterController
 
   @type t :: %__MODULE__{
-          controller: ClusterController.t(),
+          controller: ClusterController.ref(),
           layout: TransactionSystemLayout.t()
         }
 

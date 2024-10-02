@@ -22,7 +22,7 @@ defmodule Bedrock.Cluster.ServiceAdvertiser do
     @type t :: %__MODULE__{
             cluster: Cluster.t(),
             capabilities: [atom()],
-            controller: ClusterController.t() | :unavailable
+            controller: ClusterController.ref() | :unavailable
           }
     defstruct [:cluster, :capabilities, :controller]
   end

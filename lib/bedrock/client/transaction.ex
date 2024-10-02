@@ -115,7 +115,7 @@ defmodule Bedrock.Client.Transaction do
     end
 
     @doc false
-    @spec storage_workers_for_key(transaction :: t(), key :: binary()) :: [Storage.t()]
+    @spec storage_workers_for_key(transaction :: t(), Bedrock.key()) :: [Storage.ref()]
     def storage_workers_for_key(%{client: client}, key),
       do: client |> Client.storage_workers_for_key(key)
   end

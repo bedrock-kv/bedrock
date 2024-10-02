@@ -1,11 +1,10 @@
 defmodule Bedrock.DataPlane.Log do
   use Bedrock, :types
-  use Bedrock.Cluster, :types
 
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
 
-  @type t :: Worker.t()
+  @type ref :: Worker.ref()
   @type id :: Worker.id()
   @type health :: Worker.health()
   @type fact_name ::
@@ -18,10 +17,10 @@ defmodule Bedrock.DataPlane.Log do
   check to ensure strict ordering. If the previous transaction id is not the
   latest transaction, the mutation will be rejected.
   """
-  @spec push(transaction_log :: t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
+  @spec push(log :: ref(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable}
-  def push(transaction_log, transaction, prev_tx_id) do
-    GenServer.call(transaction_log, {:push, transaction, prev_tx_id})
+  def push(log, transaction, prev_tx_id) do
+    GenServer.call(log, {:push, transaction, prev_tx_id})
   catch
     :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
@@ -44,7 +43,7 @@ defmodule Bedrock.DataPlane.Log do
      transaction.
   """
   @spec pull(
-          transaction_log :: t(),
+          log :: ref(),
           last_tx_id :: Transaction.version(),
           demand :: pos_integer(),
           opts :: [
@@ -53,8 +52,8 @@ defmodule Bedrock.DataPlane.Log do
           ]
         ) ::
           {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
-  def pull(transaction_log, last_tx_id, demand, opts) do
-    GenServer.call(transaction_log, {:pull, last_tx_id, demand, opts})
+  def pull(log, last_tx_id, demand, opts) do
+    GenServer.call(log, {:pull, last_tx_id, demand, opts})
   catch
     :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
@@ -68,15 +67,15 @@ defmodule Bedrock.DataPlane.Log do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock(transaction_log :: t(), cluster_controller :: pid(), epoch()) :: :ok
-  def lock(transaction_log, cluster_controller, epoch),
-    do: GenServer.cast(transaction_log, {:lock, cluster_controller, epoch})
+  @spec lock(log :: ref(), cluster_controller :: pid(), epoch()) :: :ok
+  def lock(log, cluster_controller, epoch),
+    do: GenServer.cast(log, {:lock, cluster_controller, epoch})
 
   @doc """
   Ask the transaction log worker for various facts about itself.
   """
-  @spec info(transaction_log :: t(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(transaction_log :: t(), [fact_name()], timeout_in_ms()) ::
+  @spec info(log :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
+  @spec info(log :: ref(), [fact_name()], timeout_in_ms()) ::
           {:ok, keyword()} | {:error, term()}
-  defdelegate info(transaction_log, fact_names, timeout \\ 5_000), to: Worker
+  defdelegate info(log, fact_names, timeout \\ 5_000), to: Worker
 end

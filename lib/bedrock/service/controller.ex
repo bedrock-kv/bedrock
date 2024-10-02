@@ -3,12 +3,12 @@ defmodule Bedrock.Service.Controller do
   """
   alias Bedrock.Service.Worker
 
-  @type t :: GenServer.server()
+  @type ref :: GenServer.server()
 
   @doc """
   Return a list of running workers.
   """
-  @spec all(controller :: t()) :: {:ok, [Worker.t()]} | {:error, term()}
+  @spec all(controller :: ref()) :: {:ok, [Worker.ref()]} | {:error, term()}
   def all(controller) do
     GenServer.call(controller, :workers)
   catch
@@ -20,7 +20,7 @@ defmodule Bedrock.Service.Controller do
   reporting that they are healthy, or the timeout happens... whichever comes
   first.
   """
-  @spec wait_for_healthy(controller :: t(), timeout()) :: :ok | {:error, :unavailable}
+  @spec wait_for_healthy(controller :: ref(), timeout()) :: :ok | {:error, :unavailable}
   def wait_for_healthy(controller, timeout) do
     GenServer.call(controller, :wait_for_healthy, timeout)
   catch
@@ -30,7 +30,7 @@ defmodule Bedrock.Service.Controller do
   @doc """
   Called by a worker to report it's health to the controller.
   """
-  @spec report_health(controller :: t(), Worker.id(), any()) :: :ok
+  @spec report_health(controller :: ref(), Worker.id(), any()) :: :ok
   def report_health(controller, worker_id, health),
     do: GenServer.cast(controller, {:worker_health, worker_id, health})
 
@@ -46,15 +46,15 @@ defmodule Bedrock.Service.Controller do
     quote do
       alias Bedrock.Service.Controller
 
-      @type t :: Controller.t()
+      @type ref :: Controller.ref()
 
-      @spec all(controller :: t()) :: {:ok, [unquote(worker).t()]} | {:error, term()}
+      @spec all(controller :: ref()) :: {:ok, [unquote(worker).ref()]} | {:error, term()}
       defdelegate all(controller), to: Controller
 
-      @spec wait_for_healthy(controller :: t(), timeout()) :: :ok | {:error, :unavailable}
+      @spec wait_for_healthy(controller :: ref(), timeout()) :: :ok | {:error, :unavailable}
       defdelegate wait_for_healthy(controller, timeout), to: Controller
 
-      @spec report_health(controller :: t(), unquote(worker).id(), any()) :: :ok
+      @spec report_health(controller :: ref(), unquote(worker).id(), any()) :: :ok
       defdelegate report_health(controller, worker_id, health), to: Controller
 
       @doc false
@@ -130,8 +130,6 @@ defmodule Bedrock.Service.Controller do
   defmodule Logic do
     alias Bedrock.Service.Manifest
 
-    @type t :: Data.t()
-
     def startup(subsystem, cluster, path, default_worker, worker_supervisor_otp_name, otp_name) do
       {:ok,
        %Data{
@@ -148,7 +146,7 @@ defmodule Bedrock.Service.Controller do
        }}
     end
 
-    @spec worker_ids_from_disk(t()) :: [Worker.id()]
+    @spec worker_ids_from_disk(Data.t()) :: [Worker.id()]
     def worker_ids_from_disk(t) do
       t.path
       |> Path.join("*")
@@ -156,7 +154,7 @@ defmodule Bedrock.Service.Controller do
       |> Enum.map(&Path.basename/1)
     end
 
-    @spec start_workers(t(), [Worker.id()]) :: t()
+    @spec start_workers(Data.t(), [Worker.id()]) :: Data.t()
     def start_workers(t, worker_ids) do
       workers =
         worker_ids
@@ -179,7 +177,7 @@ defmodule Bedrock.Service.Controller do
       %{t | workers: workers}
     end
 
-    @spec start_worker_if_necessary(t(), Worker.id()) :: {:ok, pid()} | {:error, term()}
+    @spec start_worker_if_necessary(Data.t(), Worker.id()) :: {:ok, pid()} | {:error, term()}
     def start_worker_if_necessary(t, id) do
       worker_otp_name = otp_name_for_worker(t.otp_name, id)
 
@@ -191,7 +189,8 @@ defmodule Bedrock.Service.Controller do
       end
     end
 
-    @spec start_worker(t(), Worker.id(), Worker.otp_name()) :: {:ok, pid()} | {:error, term()}
+    @spec start_worker(Data.t(), Worker.id(), Worker.otp_name()) ::
+            {:ok, pid()} | {:error, term()}
     def start_worker(t, worker_id, worker_otp_name) do
       with path <- Path.join(t.path, worker_id),
            {:ok, manifest} <- Manifest.load_from_file(Path.join(path, "manifest.json")),
@@ -229,7 +228,7 @@ defmodule Bedrock.Service.Controller do
 
     defp check_manifest_cluster_name(_, _), do: {:error, :cluster_name_in_manifest_does_not_match}
 
-    @spec new_worker(t()) :: {:ok, Worker.id()} | {:error, term()}
+    @spec new_worker(Data.t()) :: {:ok, Worker.id()} | {:error, term()}
     def new_worker(t) do
       with id <- UUID.uuid4(),
            path <- Path.join(t.path, id),
@@ -245,7 +244,7 @@ defmodule Bedrock.Service.Controller do
     defp otp_name_for_worker(otp_name, id),
       do: :"#{otp_name}_#{id |> String.replace("-", "_")}"
 
-    @spec otp_names_for_running_workers(t) :: [atom()]
+    @spec otp_names_for_running_workers(Data.t()) :: [atom()]
     def otp_names_for_running_workers(t) do
       t.workers
       |> Enum.map(fn
@@ -253,7 +252,7 @@ defmodule Bedrock.Service.Controller do
       end)
     end
 
-    @spec update_health_for_worker(t(), Worker.id(), Worker.health()) :: t()
+    @spec update_health_for_worker(Data.t(), Worker.id(), Worker.health()) :: Data.t()
     def update_health_for_worker(t, worker_id, health) do
       %{
         t
@@ -264,10 +263,10 @@ defmodule Bedrock.Service.Controller do
       }
     end
 
-    @spec recompute_controller_health(t()) :: t()
+    @spec recompute_controller_health(Data.t()) :: Data.t()
     def recompute_controller_health(t), do: %{t | health: compute_health(t)}
 
-    @spec compute_health(t()) :: Worker.health()
+    @spec compute_health(Data.t()) :: Worker.health()
     defp compute_health(t) do
       t.workers
       |> Map.values()
@@ -280,11 +279,11 @@ defmodule Bedrock.Service.Controller do
       end)
     end
 
-    @spec add_pid_to_waiting_for_healthy(t(), pid()) :: t()
+    @spec add_pid_to_waiting_for_healthy(Data.t(), pid()) :: Data.t()
     def add_pid_to_waiting_for_healthy(t, pid),
       do: %{t | waiting_for_healthy: [pid | t.waiting_for_healthy]}
 
-    @spec notify_waiting_for_healthy(t()) :: t()
+    @spec notify_waiting_for_healthy(Data.t()) :: Data.t()
     def notify_waiting_for_healthy(%{health: :ok, waiting_for_healthy: waiting_for_healthy} = t)
         when waiting_for_healthy != [] do
       Enum.each(t.waiting_for_healthy, fn from -> GenServer.reply(from, :ok) end)

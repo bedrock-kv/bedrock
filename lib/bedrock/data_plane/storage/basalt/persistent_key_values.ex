@@ -2,7 +2,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc """
   """
   use Bedrock, :types
-  use Bedrock.Cluster, :types
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Transaction
@@ -33,7 +32,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec last_version(t()) :: version() | :undefined
+  @spec last_version(t()) :: Transaction.version() | :undefined
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do

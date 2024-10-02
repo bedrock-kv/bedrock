@@ -9,16 +9,16 @@ defmodule Bedrock.Cluster.Monitor do
 
   require Logger
 
-  @type monitor :: GenServer.name()
-  @type controller :: ClusterController.t()
+  @type ref :: GenServer.name()
+  @type controller :: ClusterController.ref()
 
   @type t :: %__MODULE__{
           node: node(),
           cluster: module(),
           path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
-          coordinator: Coordinator.t() | :unavailable,
-          controller: ClusterController.t() | :unavailable,
+          coordinator: Coordinator.ref() | :unavailable,
+          controller: ClusterController.ref() | :unavailable,
           timer_ref: reference() | nil,
           mode: :passive | :active
         }
@@ -34,7 +34,8 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Ping all of the nodes in the given cluster.
   """
-  @spec ping_nodes(monitor(), nodes :: [node()], ClusterController.t(), Bedrock.epoch()) :: :ok
+  @spec ping_nodes(monitor :: ref(), nodes :: [node()], ClusterController.ref(), Bedrock.epoch()) ::
+          :ok
   def ping_nodes(monitor, nodes, cluster_controller, epoch) do
     GenServer.abcast(
       nodes,
@@ -49,7 +50,7 @@ defmodule Bedrock.Cluster.Monitor do
   Get a coordinator for the cluster. We ask the running instance of the cluster
   monitor to find one for us.
   """
-  @spec fetch_coordinator(monitor()) :: {:ok, Coordinator.t()} | {:error, :unavailable}
+  @spec fetch_coordinator(monitor :: ref()) :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   def fetch_coordinator(monitor) do
     monitor |> GenServer.call(:fetch_coordinator)
   catch
@@ -59,7 +60,8 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the current controller for the cluster.
   """
-  @spec fetch_controller(monitor()) :: {:ok, ClusterController.t()} | {:error, :unavailable}
+  @spec fetch_controller(monitor :: ref()) ::
+          {:ok, ClusterController.ref()} | {:error, :unavailable}
   def fetch_controller(monitor) do
     monitor |> GenServer.call(:fetch_controller)
   catch
@@ -69,7 +71,7 @@ defmodule Bedrock.Cluster.Monitor do
   @doc """
   Get the nodes that are running coordinators for the given cluster.
   """
-  @spec fetch_coordinator_nodes(monitor()) :: {:ok, [node()]} | {:error, :unavailable}
+  @spec fetch_coordinator_nodes(monitor :: ref()) :: {:ok, [node()]} | {:error, :unavailable}
   def fetch_coordinator_nodes(monitor) do
     monitor |> GenServer.call(:fetch_coordinator_nodes)
   catch
@@ -238,7 +240,7 @@ defmodule Bedrock.Cluster.Monitor do
   have we do nothing, otherwise we publish a message to a topic to let everyone
   on this node know that the coordinator has changed.
   """
-  @spec change_coordinator(t(), Coordinator.t() | :unavailable) :: t()
+  @spec change_coordinator(t(), Coordinator.ref() | :unavailable) :: t()
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
 
   def change_coordinator(t, coordinator) do
@@ -251,7 +253,7 @@ defmodule Bedrock.Cluster.Monitor do
   already have we do nothing, otherwise we publish a message to a topic to let
   everyone on this node know that the controller has changed.
   """
-  @spec change_cluster_controller(t(), ClusterController.t() | :unavailable) :: t()
+  @spec change_cluster_controller(t(), ClusterController.ref() | :unavailable) :: t()
   def change_cluster_controller(t, controller) when t.controller == controller, do: t
 
   def change_cluster_controller(t, controller) do

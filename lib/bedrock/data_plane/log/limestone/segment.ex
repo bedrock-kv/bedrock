@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Limestone.Segment do
   use Bedrock, :types
-  use Bedrock.Cluster, :types
 
   @type t :: %__MODULE__{}
   defstruct [:path, :size]
@@ -163,7 +162,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Segment do
   end
 
   @spec encode_transactions(
-          [transaction()],
+          [Transaction.t()],
           (bytes_available :: non_neg_integer())
           | {encoded :: iolist(), bytes_remaining :: non_neg_integer()}
         ) ::

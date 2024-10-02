@@ -11,10 +11,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   require Logger
 
-  @type t :: GenServer.name()
+  @type ref :: GenServer.name()
 
-  @spec fetch_controller(coordinator :: t()) ::
-          {:ok, ClusterController.t()} | {:error, :unavailable}
+  @spec fetch_controller(coordinator :: ref()) ::
+          {:ok, ClusterController.ref()} | {:error, :unavailable}
   def fetch_controller(coordinator, timeout \\ 5_000) do
     GenServer.call(coordinator, :get_controller, timeout)
     |> case do
@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
     :exit, _ -> {:error, :unavailable}
   end
 
-  @spec fetch_proxy(coordinator :: t()) :: {:ok, Proxy.t()} | {:error, :unavailable}
+  @spec fetch_proxy(coordinator :: ref()) :: {:ok, Proxy.t()} | {:error, :unavailable}
   def fetch_proxy(coordinator) do
     GenServer.call(coordinator, :get_proxy)
     |> case do
@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
     @type t :: %__MODULE__{
             cluster: module(),
-            controller: :unavailable | ClusterController.t(),
+            controller: :unavailable | ClusterController.ref(),
             controller_otp_name: atom(),
             my_node: node(),
             otp_name: atom(),

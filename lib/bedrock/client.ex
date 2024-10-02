@@ -85,7 +85,7 @@ defmodule Bedrock.Client do
   @doc """
   Read a value for the given key. If no value has been set, then return nil.
   """
-  @spec get(txn :: Transaction.t(), key :: binary()) :: nil | binary()
+  @spec get(txn :: Transaction.t(), Bedrock.key()) :: nil | Bedrock.value()
   defdelegate get(txn, key),
     to: Transaction
 
@@ -93,14 +93,14 @@ defmodule Bedrock.Client do
   Read a value for the given key. If no value has been set, return the given
   default value.
   """
-  @spec get(txn :: Transaction.t(), key :: binary(), default_value :: binary()) :: binary()
+  @spec get(txn :: Transaction.t(), Bedrock.key(), default :: Bedrock.value()) :: Bedrock.value()
   def get(txn, key, default_value),
     do: Transaction.get(txn, key) || default_value
 
   @doc """
   Put a key/value pair into a transaction.
   """
-  @spec put(txn :: Transaction.t(), key :: binary(), value :: binary()) :: :ok
+  @spec put(txn :: Transaction.t(), Bedrock.key(), Bedrock.value()) :: :ok
   defdelegate put(txn, key, value),
     to: Transaction
 
@@ -111,7 +111,7 @@ defmodule Bedrock.Client do
   defdelegate commit(txn),
     to: Transaction
 
-  @spec storage_workers_for_key(client :: t(), key :: binary()) :: [Storage.t()]
+  @spec storage_workers_for_key(client :: t(), Bedrock.key()) :: [Storage.ref()]
   def storage_workers_for_key(client, key) do
     client.data_distributor
     |> DataDistributor.storage_team_for_key(key)

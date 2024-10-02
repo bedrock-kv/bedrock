@@ -1,6 +1,5 @@
 defmodule Bedrock.Cluster.Monitor do
   use GenServer
-  use Bedrock, :types
 
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.PubSub
@@ -281,7 +280,7 @@ defmodule Bedrock.Cluster.Monitor do
     %{t | timer_ref: nil}
   end
 
-  @spec set_timer(t(), timer_name :: atom(), timeout_in_ms()) :: t()
+  @spec set_timer(t(), timer_name :: atom(), Bedrock.timeout_in_ms()) :: t()
   def set_timer(%{timer_ref: nil, mode: :active} = t, name, timeout_in_ms) do
     %{t | timer_ref: Process.send_after(self(), {:timeout, name}, timeout_in_ms)}
   end

@@ -1,6 +1,5 @@
 defmodule Bedrock.ControlPlane.DataDistributor do
   use GenServer
-  use Bedrock, :types
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.DataDistributor.LogInfoTable
@@ -18,13 +17,14 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   ]a
   @type t :: %__MODULE__{}
 
-  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), epoch()) :: :ok
+  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), Bedrock.epoch()) :: :ok
   def invite_to_rejoin(t, controller, epoch),
     do: GenServer.cast(t, {:invite_to_rejoin, controller, epoch})
 
-  @spec storage_team_for_key(cluster :: binary(), key()) :: {:ok, Team.t()} | {:error, :not_found}
-  def storage_team_for_key(cluster, key) do
-    cluster
+  @spec storage_team_for_key(cluster_name :: Cluster.name(), Bedrock.key()) ::
+          {:ok, Team.t()} | {:error, :not_found}
+  def storage_team_for_key(cluster_name, key) do
+    cluster_name
     |> otp_name()
     |> GenServer.call({:storage_team_for_key, key})
   end

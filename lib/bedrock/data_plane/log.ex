@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log do
-  use Bedrock, :types
+  @moduledoc """
+  """
 
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
@@ -67,7 +68,7 @@ defmodule Bedrock.DataPlane.Log do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock(log :: ref(), cluster_controller :: pid(), epoch()) :: :ok
+  @spec lock(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) :: :ok
   def lock(log, cluster_controller, epoch),
     do: GenServer.cast(log, {:lock, cluster_controller, epoch})
 
@@ -75,7 +76,7 @@ defmodule Bedrock.DataPlane.Log do
   Ask the transaction log worker for various facts about itself.
   """
   @spec info(log :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(log :: ref(), [fact_name()], timeout_in_ms()) ::
+  @spec info(log :: ref(), [fact_name()], Bedrock.timeout_in_ms()) ::
           {:ok, keyword()} | {:error, term()}
   defdelegate info(log, fact_names, timeout \\ 5_000), to: Worker
 end

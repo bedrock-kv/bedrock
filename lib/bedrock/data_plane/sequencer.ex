@@ -1,10 +1,9 @@
 defmodule Bedrock.DataPlane.Sequencer do
   use GenServer
-  use Bedrock, :types
 
   defstruct [:cluster, :controller, epoch: 0, latest_committed_version: <<>>]
 
-  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), epoch()) :: :ok
+  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), Bedrock.epoch()) :: :ok
   def invite_to_rejoin(t, controller, epoch),
     do: GenServer.cast(t, {:invite_to_rejoin, controller, epoch})
 

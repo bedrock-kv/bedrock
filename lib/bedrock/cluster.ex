@@ -1,6 +1,5 @@
 defmodule Bedrock.Cluster do
   use Supervisor
-  use Bedrock, :types
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor

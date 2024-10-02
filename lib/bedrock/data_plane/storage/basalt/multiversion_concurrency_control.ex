@@ -4,7 +4,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   allows for multiple versions of a key to exist in the same table. This module
   provides an implementation of MVCC for Basalt.
   """
-  use Bedrock, :types
 
   alias Bedrock.DataPlane.Transaction
 
@@ -91,7 +90,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
 
   No error checking is performed on the version.
   """
-  @spec insert_read(mvcc :: t(), key(), Transaction.version(), value() | nil) :: :ok
+  @spec insert_read(mvcc :: t(), Bedrock.key(), Transaction.version(), Bedrock.value() | nil) ::
+          :ok
   def insert_read(mvcc, key, version, value) when is_binary(value) or is_nil(value) do
     :ets.insert_new(mvcc, {versioned_key(key, version), {value}})
     :ok
@@ -106,7 +106,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   This is useful for providing a consistent view of the data at a given point
   in the transaction timeline.
   """
-  @spec fetch(mvcc :: t(), key(), Transaction.version()) :: {:ok, value()} | {:error, :not_found}
+  @spec fetch(mvcc :: t(), Bedrock.key(), Transaction.version()) ::
+          {:ok, Bedrock.value()} | {:error, :not_found}
   def fetch(mvcc, key, version) do
     mvcc
     |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)

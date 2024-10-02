@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Limestone.Segment do
-  use Bedrock, :types
+  @moduledoc """
+  """
 
   @type t :: %__MODULE__{}
   defstruct [:path, :size]
@@ -166,7 +167,8 @@ defmodule Bedrock.DataPlane.Log.Limestone.Segment do
           (bytes_available :: non_neg_integer())
           | {encoded :: iolist(), bytes_remaining :: non_neg_integer()}
         ) ::
-          {encoded :: iodata(), remainder :: [key_value()], bytes_remaining :: non_neg_integer()}
+          {encoded :: iodata(), remainder :: [Bedrock.key_value()],
+           bytes_remaining :: non_neg_integer()}
   defp encode_transactions([], {encoded, bytes_remaining}),
     do: {encoded |> Enum.reverse(), [], bytes_remaining}
 

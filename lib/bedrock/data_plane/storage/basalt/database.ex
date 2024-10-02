@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Database do
-  use Bedrock, :types
+  @moduledoc """
+  """
 
   defstruct ~w[mvcc keyspace pkv key_range]a
   @type t :: %__MODULE__{}
@@ -62,8 +63,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   def last_committed_version(database),
     do: MVCC.newest_version(database.mvcc)
 
-  @spec fetch(database :: t(), key(), Transaction.version()) ::
-          {:ok, value()}
+  @spec fetch(database :: t(), Bedrock.key(), Transaction.version()) ::
+          {:ok, Bedrock.value()}
           | {:error,
              :not_found
              | :key_out_of_range}

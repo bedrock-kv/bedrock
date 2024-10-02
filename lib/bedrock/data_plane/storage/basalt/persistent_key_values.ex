@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc """
   """
-  use Bedrock, :types
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Transaction

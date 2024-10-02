@@ -1,12 +1,10 @@
 defmodule Bedrock.DataPlane.Storage do
-  use Bedrock, :types
-
   alias Bedrock.Service.Worker
   alias Bedrock.DataPlane.Transaction
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
-  @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
+  @type key_range :: Bedrock.key_range()
   @type fact_name ::
           Worker.fact_name()
           | :durable_version
@@ -19,8 +17,8 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Returns the value for the given key/version.
   """
-  @spec fetch(storage :: ref(), key(), Transaction.version(), timeout_in_ms()) ::
-          {:ok, value()}
+  @spec fetch(storage :: ref(), Bedrock.key(), Transaction.version(), Bedrock.timeout_in_ms()) ::
+          {:ok, Bedrock.value()}
           | {:error,
              :timeout
              | :not_found
@@ -37,7 +35,7 @@ defmodule Bedrock.DataPlane.Storage do
   Ask the storage storage for various facts about itself.
   """
   @spec info(storage :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(storage :: ref(), [fact_name()], timeout_in_ms()) ::
+  @spec info(storage :: ref(), [fact_name()], Bedrock.timeout_in_ms()) ::
           {:ok, keyword()} | {:error, term()}
   defdelegate info(storage, fact_names, timeout \\ 5_000), to: Worker
 end

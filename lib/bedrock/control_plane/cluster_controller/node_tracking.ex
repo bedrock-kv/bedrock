@@ -6,8 +6,6 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   considered to be alive.
   """
 
-  use Bedrock, :types
-
   @type t :: :ets.table()
 
   @typep last_seen_at :: integer() | :unknown
@@ -43,7 +41,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   Get the list of nodes that have not responded to a ping in the last
   `liveness_timeout_in_ms` milliseconds or have never responded to a ping.
   """
-  @spec dying_nodes(t(), now :: integer(), liveness_timeout_in_ms :: timeout_in_ms()) ::
+  @spec dying_nodes(t(), now :: integer(), liveness_timeout_in_ms :: Bedrock.timeout_in_ms()) ::
           [node()]
   def dying_nodes(t, now, liveness_timeout_in_ms) do
     :ets.select(t, [
@@ -59,7 +57,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   `liveness_timeout_in_ms` milliseconds, have never responded to a ping or are
   explicitly marked as :down.
   """
-  @spec dead_nodes(t(), now :: integer(), liveness_timeout_in_ms :: timeout_in_ms()) ::
+  @spec dead_nodes(t(), now :: integer(), liveness_timeout_in_ms :: Bedrock.timeout_in_ms()) ::
           [node()]
   def dead_nodes(t, now, liveness_timeout_in_ms) do
     :ets.select(t, [

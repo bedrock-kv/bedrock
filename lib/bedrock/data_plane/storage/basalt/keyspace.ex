@@ -10,7 +10,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
   whether a key has been deleted or not (while still relying on the atomicity
   of the insert operation).
   """
-  use Bedrock, :types
 
   alias Bedrock.DataPlane.Transaction
 
@@ -41,7 +40,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
     end
   end
 
-  @spec insert_many(keyspace :: t(), keys :: [key()]) :: :ok
+  @spec insert_many(keyspace :: t(), keys :: [Bedrock.key()]) :: :ok
   def insert_many(keyspace, keys) do
     true = :ets.insert_new(keyspace, keys |> Enum.map(fn key -> {key, true} end))
     :ok
@@ -53,7 +52,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
     {:ok, n_pruned}
   end
 
-  @spec key_exists?(keyspace :: t(), key()) :: boolean()
+  @spec key_exists?(keyspace :: t(), Bedrock.key()) :: boolean()
   def key_exists?(keyspace, key) when is_binary(key) do
     :ets.lookup(keyspace, key)
     |> case do

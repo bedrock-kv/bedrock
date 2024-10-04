@@ -3,29 +3,47 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
 
   @type key_range :: Bedrock.key_range()
   @type tag :: integer()
-  @type storage_worker_id :: Storage.id()
+  @type storage_id :: Storage.id()
 
   @typedoc """
   ## Fields:
-  - `start_key`: The first key in the range of keys that the team is responsible for.
   - `tag`: The tag that identifies the team.
-  - `storage_worker_ids`: The list of storage workers that are responsible for the team.
+  - `key_range`: The range of keys that the team is responsible for.
+  - `ids`: The list of storage workers that are responsible for the team.
   """
   @type t :: %__MODULE__{
-          key_range: key_range(),
           tag: tag(),
-          storage_worker_ids: [storage_worker_id()]
+          key_range: key_range(),
+          storage_ids: [storage_id()]
         }
-  defstruct key_range: nil,
-            tag: nil,
-            storage_worker_ids: []
+  defstruct tag: nil,
+            key_range: nil,
+            storage_ids: []
 
-  @spec new(key_range(), tag(), [storage_worker_id()]) :: t()
-  def new(key_range, tag, storage_worker_ids) do
+  @doc """
+  Create a new storage team descriptor.
+  """
+  @spec new(tag(), key_range(), [storage_id()]) :: t()
+  def new(tag, key_range, storage_ids) do
     %__MODULE__{
-      key_range: key_range,
       tag: tag,
-      storage_worker_ids: storage_worker_ids
+      key_range: key_range,
+      storage_ids: storage_ids
     }
   end
+
+  @doc """
+  Inserts a storage team descriptor into a list of storage team descriptors,
+  replacing any existing storage team descriptor with the same tag.
+  """
+  @spec upsert([t()], t()) :: [t()]
+  def upsert([], n), do: [n]
+  def upsert([%{tag: tag} | t], n = %{tag: tag}), do: [n | t]
+  def upsert([h | t], n), do: [h | upsert(t, n)]
+
+  @spec find_by_tag([t()], tag()) :: t() | nil
+  def find_by_tag(l, tag), do: l |> Enum.find(&(&1.tag == tag))
+
+  @spec remove_by_tag([t()], tag()) :: [t()]
+  def remove_by_tag(l, tag), do: l |> Enum.reject(&(&1.tag == tag))
 end

@@ -1,16 +1,22 @@
 defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
-  @type t :: %__MODULE__{
-          type: atom(),
-          otp_name: atom()
-        }
-  defstruct type: nil,
-            otp_name: nil
+  @type id :: String.t()
+  @type type :: Bedrock.service()
 
-  @spec new(atom(), atom()) :: t()
-  def new(type, otp_name) do
+  @type t :: %__MODULE__{
+          id: id(),
+          type: type(),
+          pid: pid()
+        }
+  defstruct id: nil,
+            type: nil,
+            pid: nil
+
+  @spec new(id(), type(), pid()) :: t()
+  def new(id, type, pid) do
     %__MODULE__{
+      id: id,
       type: type,
-      otp_name: otp_name
+      pid: pid
     }
   end
 end

@@ -57,7 +57,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
             otp_name: atom(),
             raft: Raft.t(),
             proxies: [Proxy.t()],
-            supervisor_otp_name: atom()
+            supervisor_otp_name: atom(),
+            configuration: Config.t() | nil
           }
     defstruct cluster: nil,
               am_i_the_leader: false,
@@ -67,7 +68,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
               otp_name: nil,
               raft: nil,
               proxies: [],
-              supervisor_otp_name: nil
+              supervisor_otp_name: nil,
+              configuration: nil
 
     @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
     def child_spec(opts) do
@@ -155,8 +157,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
             {false, :unavailable}
 
           other_node ->
-            IO.inspect(t.controller_otp_name)
-
             {false,
              :rpc.call(other_node, Process, :whereis, [t.controller_otp_name], 100) ||
                :unavailable}
@@ -182,10 +182,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def handle_cast({:raft, :consensus_reached, _log, _transaction_id}, t) do
-      if t.i_am_the_leader do
-        IO.inspect("i am the leader")
-      end
-
       {:noreply, t}
     end
 
@@ -209,7 +205,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
       end
     end
 
-    def stop_controller_on_this_node!(t, timeout_in_ms \\ 250) do
+    def stop_controller_on_this_node!(t, timeout_in_ms \\ 100) do
       ref = Process.monitor(t.controller)
 
       :ok = GenServer.stop(t.controller, :shutdown, timeout_in_ms)

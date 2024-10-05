@@ -26,6 +26,8 @@ defmodule Mix.Tasks.Bedrock.Status do
 
   """
 
+  alias Bedrock.ControlPlane.Coordinator
+
   defp switches,
     do: [
       cluster: [:string, :keep]
@@ -46,17 +48,21 @@ defmodule Mix.Tasks.Bedrock.Status do
       |> Keyword.get_values(:cluster)
       |> parse_clusters()
 
-    Supervisor.start_link(clusters, name: Bedrock.Supervisor, strategy: :one_for_one)
+    {:ok, _pid} =
+      Supervisor.start_link(clusters, strategy: :one_for_one)
+      |> case do
+        {:ok, pid} -> {:ok, pid}
+        {:error, {:already_started, pid}} -> {:ok, pid}
+      end
 
-    cluster =
-      clusters
-      |> List.first()
-
-    cluster.controller()
-    |> case do
-      {:ok, cluster_controller} ->
-        Bedrock.ControlPlane.ClusterController.fetch_transaction_system_layout(cluster_controller)
-        |> IO.inspect()
+    for cluster <- clusters do
+      cluster.coordinator()
+      |> IO.inspect()
+      |> case do
+        {:ok, coordinator} ->
+          Coordinator.fetch_config(coordinator)
+          |> IO.inspect()
+      end
     end
   end
 end

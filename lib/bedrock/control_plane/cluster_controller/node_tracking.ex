@@ -23,7 +23,6 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
   """
   @spec new(nodes :: [node()]) :: t()
   def new(nodes) do
-    IO.inspect(nodes)
     t = :ets.new(:node_tracking, [:ordered_set])
     :ets.insert(t, nodes |> Enum.map(&row(&1, :unknown, :unknown, :down, true)))
     t

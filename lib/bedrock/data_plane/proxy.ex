@@ -15,7 +15,7 @@ defmodule Bedrock.DataPlane.Proxy do
   def child_spec(opts) do
     id = Keyword.get(opts, :id) || raise "Missing :id option"
     controller = Keyword.get(opts, :controller) || raise "Missing :controller option"
-    {:ok, layout} = ClusterController.fetch_transaction_system_layout(controller)
+    layout = Keyword.get(opts, :layout) || raise "Missing :layout option"
 
     %{
       id: id,

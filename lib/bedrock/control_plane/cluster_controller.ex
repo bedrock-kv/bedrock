@@ -66,20 +66,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
         {:log_lock_complete, id, info}
       )
 
-  @spec fetch_transaction_system_layout(cluster_controller :: ref()) ::
-          {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
-  @spec fetch_transaction_system_layout(cluster_controller :: ref(), timeout_in_ms()) ::
-          {:ok, TransactionSystemLayout.t()} | {:error, :uninitialized | :unavailable}
-  def fetch_transaction_system_layout(cluster_controller, timeout_in_ms \\ 5_000) do
-    GenServer.call(cluster_controller, :get_transaction_system_layout, timeout_in_ms)
-    |> case do
-      nil -> {:error, :uninitialized}
-      layout -> {:ok, layout}
-    end
-  catch
-    :exit, {:noproc, _} -> {:error, :unavailable}
-  end
-
   @doc false
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
   defdelegate child_spec(opts), to: __MODULE__.Service
@@ -126,6 +112,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   defmodule Logic do
     @moduledoc false
+    use Bedrock.Internal.TimerManagement, type: Data.t()
 
     @type service :: GenServer.name()
     @type service_type :: atom()
@@ -288,17 +275,18 @@ defmodule Bedrock.ControlPlane.ClusterController do
       t
     end
 
-    @spec cancel_timer(Data.t()) :: Data.t()
-    def cancel_timer(%{timer_ref: nil} = t), do: t
+    # Event Handling
 
-    def cancel_timer(%{timer_ref: timer_ref} = t) do
-      Process.cancel_timer(timer_ref)
-      %{t | timer_ref: nil}
+    def handle_event({:node_added_worker, node, info}, t),
+      do: t |> Logic.add_running_service(node, info)
+
+    def handle_event({:node_down, node}, t),
+      do: t |> Logic.node_down(node)
+
+    def handle_event(event, t) do
+      Logger.info(inspect(event))
+      t
     end
-
-    @spec set_timer(Data.t(), name :: atom(), timeout_in_ms()) :: Data.t()
-    def set_timer(%{timer_ref: nil} = t, name, timeout_in_ms),
-      do: %{t | timer_ref: Process.send_after(self(), {:timeout, name}, timeout_in_ms)}
   end
 
   defmodule Service do
@@ -339,9 +327,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
          {:continue, :process_events}}
 
     @impl GenServer
-    def handle_call(:get_transaction_system_layout, _from, t),
-      do: {:reply, t.transaction_system_layout, t}
-
     def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
       Logic.handle_request_to_rejoin(t, node, capabilities, running_services)
       |> case do
@@ -371,20 +356,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     def handle_continue(:process_events, t),
       do:
-        {:noreply, t.events |> Enum.reduce(%{t | events: []}, &handle_event(&1, &2)),
+        {:noreply, t.events |> Enum.reduce(%{t | events: []}, &Logic.handle_event(&1, &2)),
          {:continue, :process_events}}
-
-    #
-
-    def handle_event({:node_added_worker, node, info}, t),
-      do: t |> Logic.add_running_service(node, info)
-
-    def handle_event({:node_down, node}, t),
-      do: t |> Logic.node_down(node)
-
-    def handle_event(event, t) do
-      Logger.info(inspect(event))
-      t
-    end
   end
 end

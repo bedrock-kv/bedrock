@@ -1,5 +1,6 @@
 defmodule Bedrock.Cluster.Monitor do
   use GenServer
+  use Bedrock.Internal.TimerManagement, type: t()
 
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.PubSub
@@ -273,19 +274,4 @@ defmodule Bedrock.Cluster.Monitor do
 
   def maybe_set_ping_timer(t),
     do: t |> cancel_timer() |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
-
-  @spec cancel_timer(t()) :: t()
-  def cancel_timer(%{timer_ref: nil} = t), do: t
-
-  def cancel_timer(%{timer_ref: timer_ref} = t) do
-    Process.cancel_timer(timer_ref)
-    %{t | timer_ref: nil}
-  end
-
-  @spec set_timer(t(), timer_name :: atom(), Bedrock.timeout_in_ms()) :: t()
-  def set_timer(%{timer_ref: nil, mode: :active} = t, name, timeout_in_ms) do
-    %{t | timer_ref: Process.send_after(self(), {:timeout, name}, timeout_in_ms)}
-  end
-
-  def set_timer(t, _name, _timeout_in_ms), do: t
 end

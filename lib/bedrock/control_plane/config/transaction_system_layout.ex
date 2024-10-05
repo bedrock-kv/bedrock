@@ -35,10 +35,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
        the otp names used to communicate with them.
   """
   @type t :: %__MODULE__{
-          controller: pid(),
-          sequencer: pid(),
-          rate_keeper: pid(),
-          data_distributor: pid(),
+          controller: pid() | nil,
+          sequencer: pid() | nil,
+          rate_keeper: pid() | nil,
+          data_distributor: pid() | nil,
           proxies: [pid()],
           transaction_resolvers: [TransactionResolverDescriptor.t()],
           logs: [LogDescriptor.t()],

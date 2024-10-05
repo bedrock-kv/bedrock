@@ -12,39 +12,45 @@ defmodule Bedrock.ControlPlane.Coordinator do
   require Logger
 
   @type ref :: GenServer.name()
+  @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
-  @spec fetch_controller(coordinator :: ref()) ::
+  @spec fetch_controller(coordinator :: ref(), timeout_in_ms()) ::
           {:ok, ClusterController.ref()} | {:error, :unavailable}
-  def fetch_controller(coordinator, timeout \\ 5_000) do
-    GenServer.call(coordinator, :get_controller, timeout)
-    |> case do
-      :unavailable -> {:error, :unavailable}
-      controller -> {:ok, controller}
-    end
-  catch
-    :exit, _ -> {:error, :unavailable}
-  end
+  def fetch_controller(coordinator, timeout \\ 5_000),
+    do: call_service(coordinator, :get_controller, timeout)
 
-  @spec fetch_proxy(coordinator :: ref()) :: {:ok, Proxy.t()} | {:error, :unavailable}
-  def fetch_proxy(coordinator) do
-    GenServer.call(coordinator, :get_proxy)
+  @spec fetch_proxy(coordinator :: ref(), timeout_in_ms()) ::
+          {:ok, Proxy.t()} | {:error, :unavailable}
+  def fetch_proxy(coordinator, timeout \\ 5_000),
+    do: call_service(coordinator, :get_proxy, timeout)
+
+  @spec fetch_config(coordinator :: ref(), timeout_in_ms()) ::
+          {:ok, Config.t()} | {:error, :unavailable}
+  def fetch_config(coordinator, timeout \\ 5_000),
+    do: call_service(coordinator, :get_configuration, timeout)
+
+  @spec call_service(coordinator :: ref(), message :: any(), timeout_in_ms()) ::
+          {:ok, any()} | {:error, :unavailable}
+  defp call_service(coordinator, message, timeout) do
+    GenServer.call(coordinator, message, timeout)
     |> case do
       :unavailable -> {:error, :unavailable}
-      proxy -> {:ok, proxy}
+      config -> {:ok, config}
     end
   catch
     :exit, _ -> {:error, :unavailable}
   end
 
   @doc false
-  defdelegate child_spec(opts), to: __MODULE__.Impl
+  defdelegate child_spec(opts), to: __MODULE__.Service
 
-  defmodule Impl do
+  defmodule Service do
     @moduledoc false
     use GenServer
 
     @type t :: %__MODULE__{
             cluster: module(),
+            am_i_the_leader: boolean(),
             controller: :unavailable | ClusterController.ref(),
             controller_otp_name: atom(),
             my_node: node(),
@@ -54,6 +60,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
             supervisor_otp_name: atom()
           }
     defstruct cluster: nil,
+              am_i_the_leader: false,
               controller: :unavailable,
               controller_otp_name: nil,
               my_node: nil,
@@ -134,23 +141,28 @@ defmodule Bedrock.ControlPlane.Coordinator do
     @impl GenServer
     def handle_info({:raft, :leadership_changed, {new_leader, epoch}}, t) do
       if is_pid(t.controller) and t.my_node == node(t.controller) do
-        try do
-          GenServer.stop(t.controller, :shutdown, 50)
-        catch
-          :exit, {:noproc, _} -> :ok
-        end
+        :ok = stop_controller_on_this_node!(t)
       end
 
       my_node = t.my_node
 
-      controller =
+      {am_i_the_leader, controller} =
         case new_leader do
-          :undecided -> :unavailable
-          ^my_node -> start_controller_on_this_node(t, epoch)
-          other_node -> :rpc.call(other_node, Process, :whereis, [t.controller_otp_name], 100)
+          ^my_node ->
+            {true, start_controller_on_this_node!(t, epoch)}
+
+          :undecided ->
+            {false, :unavailable}
+
+          other_node ->
+            IO.inspect(t.controller_otp_name)
+
+            {false,
+             :rpc.call(other_node, Process, :whereis, [t.controller_otp_name], 100) ||
+               :unavailable}
         end
 
-      {:noreply, t |> update_controller(controller)}
+      {:noreply, t |> update_controller(controller) |> update_am_i_the_leader(am_i_the_leader)}
     end
 
     def handle_info({:raft, :timer, event}, t) do
@@ -169,9 +181,16 @@ defmodule Bedrock.ControlPlane.Coordinator do
       {:noreply, %{t | raft: raft}}
     end
 
-    def start_controller_on_this_node(t, epoch) do
-      with {:ok, coordinator_nodes} <- t.cluster.coordinator_nodes(),
-           {:ok, config} <- latest_safe_config(t, coordinator_nodes),
+    def handle_cast({:raft, :consensus_reached, _log, _transaction_id}, t) do
+      if t.i_am_the_leader do
+        IO.inspect("i am the leader")
+      end
+
+      {:noreply, t}
+    end
+
+    def start_controller_on_this_node!(t, epoch) do
+      with {:ok, config} <- latest_safe_config(t),
            {:ok, controller} <-
              DynamicSupervisor.start_child(
                t.supervisor_otp_name,
@@ -180,7 +199,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
                   cluster: t.cluster,
                   config: config,
                   epoch: epoch,
-                  coordinator: t.otp_name,
+                  coordinator: self(),
                   otp_name: t.controller_otp_name
                 ]}
              ) do
@@ -190,20 +209,38 @@ defmodule Bedrock.ControlPlane.Coordinator do
       end
     end
 
-    def latest_safe_config(t, coordinator_nodes) do
+    def stop_controller_on_this_node!(t, timeout_in_ms \\ 250) do
+      ref = Process.monitor(t.controller)
+
+      :ok = GenServer.stop(t.controller, :shutdown, timeout_in_ms)
+
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        timeout_in_ms ->
+          raise Logger.error("Bedrock: failed to stop controller (#{inspect(t.controller)})")
+      end
+    catch
+      :exit, {:noproc, _} -> :ok
+    end
+
+    def latest_safe_config(t) do
       t.raft
       |> Raft.log()
       |> Log.transactions_to(:newest_safe)
       |> List.last()
       |> case do
         nil ->
-          retransmission_rate_in_hz = 1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
+          {:ok, nodes} = t.cluster.coordinator_nodes()
+          {:ok, Config.new(nodes)}
 
-          {:ok,
-           initial_config_for_new_system(
-             coordinator_nodes,
-             retransmission_rate_in_hz
-           )}
+        # retransmission_rate_in_hz = 1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
+
+        # {:ok,
+        #  initial_config_for_new_system(
+        #    coordinator_nodes,
+        #    retransmission_rate_in_hz
+        #  )}
 
         {_transaction_id, config} ->
           {:ok, config}
@@ -211,6 +248,21 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def initial_config_for_new_system(coordinator_nodes, retransmission_rate_in_hz) do
+      alias Config.StorageTeamDescriptor
+      alias Config.TransactionSystemLayout
+
+      team_1 = StorageTeamDescriptor.new(1, {<<>>, <<0xFF>>}, ["storage_id_1"])
+      team_0 = StorageTeamDescriptor.new(0, {<<0xFF>>, nil}, ["storage_id_2"])
+
+      tsl =
+        %TransactionSystemLayout{
+          transaction_resolvers: [
+            Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
+          ]
+        }
+        |> TransactionSystemLayout.insert_storage_team(team_1)
+        |> TransactionSystemLayout.insert_storage_team(team_0)
+
       %Config{
         state: :initializing,
         parameters: %Config.Parameters{
@@ -226,19 +278,15 @@ defmodule Bedrock.ControlPlane.Coordinator do
         policies: %Config.Policies{
           allow_volunteer_nodes_to_join: true
         },
-        transaction_system_layout: %Config.TransactionSystemLayout{
-          transaction_resolvers: [
-            Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
-          ],
-          storage_teams: [
-            Config.StorageTeamDescriptor.new({<<>>, <<0xFF>>}, 1, []),
-            Config.StorageTeamDescriptor.new({<<0xFF>>, nil}, 0, [])
-          ]
-        }
+        transaction_system_layout: tsl
       }
     end
 
+    @spec update_controller(t :: t(), new_controller :: ClusterController.ref()) :: t()
     def update_controller(t, new_controller), do: %{t | controller: new_controller}
+
+    @spec update_am_i_the_leader(t :: t(), am_i_the_leader :: boolean()) :: t()
+    def update_am_i_the_leader(t, am_i_the_leader), do: %{t | am_i_the_leader: am_i_the_leader}
 
     def get_or_create_read_version_proxy(%{read_version_proxies: []} = t) do
       {:ok, read_version_proxy} =
@@ -294,6 +342,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
         send(self(), {:raft, :consensus_reached, log, transaction_id})
         :ok
       end
+    end
+
+    defmodule Logic do
     end
   end
 end

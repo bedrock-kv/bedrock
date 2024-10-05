@@ -4,9 +4,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
   of the coordinator election. It is responsible for bringing up the data plane
   and putting the cluster into a writable state.
   """
-  use GenServer
   require Logger
 
+  alias Bedrock.ControlPlane.Coordinator.Service
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
   alias Bedrock.ControlPlane.ClusterController.ServiceInfo
@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.DataPlane.Log
 
   @type ref :: GenServer.server()
-  @type timeout_in_ms :: Bedrock.timeout_in_ms()
+  @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec send_pong(cluster_controller :: ref(), from_node :: node()) :: :ok
   def send_pong(cluster_controller, from_node),
@@ -28,12 +28,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
   def report_new_worker(cluster_controller, node, worker_info),
     do: GenServer.cast(cluster_controller, {:new_worker, node, worker_info})
 
-  @spec request_to_rejoin(
-          cluster_controller :: ref(),
-          node(),
-          capabilities :: [atom()],
-          running_services :: [keyword()]
-        ) :: :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
   @spec request_to_rejoin(
           cluster_controller :: ref(),
           node(),
@@ -88,25 +82,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @doc false
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
-  def child_spec(opts) do
-    cluster = opts[:cluster] || raise "Missing :cluster param"
-    config = opts[:config] || raise "Missing :config param"
-    epoch = opts[:epoch] || raise "Missing :epoch param"
-    coordinator = opts[:coordinator] || raise "Missing :coordinator param"
-    otp_name = opts[:otp_name] || raise "Missing :otp_name param"
-
-    %{
-      id: __MODULE__,
-      start:
-        {GenServer, :start_link,
-         [
-           __MODULE__,
-           {cluster, config, epoch, coordinator, otp_name},
-           [name: otp_name]
-         ]},
-      restart: :temporary
-    }
-  end
+  defdelegate child_spec(opts), to: __MODULE__.Service
 
   defmodule Data do
     @moduledoc false
@@ -141,7 +117,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
         config: config,
         otp_name: otp_name,
         coordinator: coordinator,
-        node_tracking: NodeTracking.new(Config.nodes(config)),
+        node_tracking: config |> Config.nodes() |> NodeTracking.new(),
         service_directory: ServiceDirectory.new(),
         events: []
       }
@@ -265,7 +241,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec try_to_invite_old_sequencer(Data.t()) :: Data.t()
     def try_to_invite_old_sequencer(t) do
-      t.config.transaction_system_layout.sequencer
+      t.config
+      |> Config.sequencer()
       |> send_rejoin_invitation_to_sequencer(t)
     end
 
@@ -282,7 +259,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec try_to_invite_old_data_distributor(Data.t()) :: Data.t()
     def try_to_invite_old_data_distributor(t) do
-      t.config.transaction_system_layout.data_distributor
+      t.config
+      |> Config.data_distributor()
       |> send_rejoin_invitation_to_data_distributor(t)
     end
 
@@ -300,13 +278,14 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec try_to_lock_old_logs(Data.t()) :: Data.t()
     def try_to_lock_old_logs(t) do
-      t.config
-      |> Config.log_workers()
-      |> Enum.reduce(t, fn log_worker, t ->
-        :ok = Log.request_lock(log_worker, self(), t.epoch)
-        # t |> add_expected_service(log_worker, :log)
-        t
-      end)
+      # t.config
+      # |> Config.logs()
+      # |> Enum.reduce(t, fn log_worker, t ->
+      #   :ok = Log.request_lock(log_worker, self(), t.epoch)
+      #   # t |> add_expected_service(log_worker, :log)
+      #   t
+      # end)
+      t
     end
 
     @spec cancel_timer(Data.t()) :: Data.t()
@@ -322,64 +301,90 @@ defmodule Bedrock.ControlPlane.ClusterController do
       do: %{t | timer_ref: Process.send_after(self(), {:timeout, name}, timeout_in_ms)}
   end
 
-  @impl GenServer
-  def init({cluster, config, epoch, coordinator, otp_name}),
-    do:
-      {:ok, Data.new(cluster, config, epoch, coordinator, otp_name),
-       {:continue, :notify_and_lock}}
+  defmodule Service do
+    use GenServer
 
-  @impl GenServer
-  def handle_info({:timeout, :ping_all_nodes}, t),
-    do:
-      {:noreply, t |> Logic.ping_all_nodes() |> Logic.determine_dead_nodes(),
-       {:continue, :process_events}}
+    @doc false
+    @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
+    def child_spec(opts) do
+      cluster = opts[:cluster] || raise "Missing :cluster param"
+      config = opts[:config] || raise "Missing :config param"
+      epoch = opts[:epoch] || raise "Missing :epoch param"
+      coordinator = opts[:coordinator] || raise "Missing :coordinator param"
+      otp_name = opts[:otp_name] || raise "Missing :otp_name param"
 
-  @impl GenServer
-  def handle_call(:get_transaction_system_layout, _from, t),
-    do: {:reply, t.transaction_system_layout, t}
-
-  def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
-    Logic.handle_request_to_rejoin(t, node, capabilities, running_services)
-    |> case do
-      {:ok, t} -> {:reply, :ok, t, {:continue, :process_events}}
-      {:error, _reason} = error -> {:reply, error, t}
+      %{
+        id: __MODULE__,
+        start:
+          {GenServer, :start_link,
+           [
+             __MODULE__,
+             {cluster, config, epoch, coordinator, otp_name},
+             [name: otp_name]
+           ]},
+        restart: :temporary
+      }
     end
-  end
 
-  @impl GenServer
-  def handle_cast({:pong, node}, t),
-    do: {:noreply, t |> Logic.update_node_last_seen_at(node), {:continue, :process_events}}
+    @impl GenServer
+    def init({cluster, config, epoch, coordinator, otp_name}),
+      do:
+        {:ok, Data.new(cluster, config, epoch, coordinator, otp_name),
+         {:continue, :notify_and_lock}}
 
-  def handle_cast({:new_worker, node, worker_info}, t) do
-    {:noreply, t |> Logic.add_event({:node_added_worker, node, worker_info}),
-     {:continue, :process_events}}
-  end
+    @impl GenServer
+    def handle_info({:timeout, :ping_all_nodes}, t),
+      do:
+        {:noreply, t |> Logic.ping_all_nodes() |> Logic.determine_dead_nodes(),
+         {:continue, :process_events}}
 
-  def handle_cast({:log_lock_complete, _id, _info}, t) do
-    # TODO
-    {:noreply, t}
-  end
+    @impl GenServer
+    def handle_call(:get_transaction_system_layout, _from, t),
+      do: {:reply, t.transaction_system_layout, t}
 
-  @impl GenServer
-  def handle_continue(:notify_and_lock, t), do: {:noreply, t |> Logic.notify_and_lock()}
+    def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
+      Logic.handle_request_to_rejoin(t, node, capabilities, running_services)
+      |> case do
+        {:ok, t} -> {:reply, :ok, t, {:continue, :process_events}}
+        {:error, _reason} = error -> {:reply, error, t}
+      end
+    end
 
-  def handle_continue(:process_events, %{events: []} = t), do: {:noreply, t}
+    @impl GenServer
+    def handle_cast({:pong, node}, t),
+      do: {:noreply, t |> Logic.update_node_last_seen_at(node), {:continue, :process_events}}
 
-  def handle_continue(:process_events, t),
-    do:
-      {:noreply, t.events |> Enum.reduce(%{t | events: []}, &handle_event(&1, &2)),
+    def handle_cast({:new_worker, node, worker_info}, t) do
+      {:noreply, t |> Logic.add_event({:node_added_worker, node, worker_info}),
        {:continue, :process_events}}
+    end
 
-  #
+    def handle_cast({:log_lock_complete, _id, _info}, t) do
+      # TODO
+      {:noreply, t}
+    end
 
-  def handle_event({:node_added_worker, node, info}, t),
-    do: t |> Logic.add_running_service(node, info)
+    @impl GenServer
+    def handle_continue(:notify_and_lock, t), do: {:noreply, t |> Logic.notify_and_lock()}
 
-  def handle_event({:node_down, node}, t),
-    do: t |> Logic.node_down(node)
+    def handle_continue(:process_events, %{events: []} = t), do: {:noreply, t}
 
-  def handle_event(event, t) do
-    Logger.info(inspect(event))
-    t
+    def handle_continue(:process_events, t),
+      do:
+        {:noreply, t.events |> Enum.reduce(%{t | events: []}, &handle_event(&1, &2)),
+         {:continue, :process_events}}
+
+    #
+
+    def handle_event({:node_added_worker, node, info}, t),
+      do: t |> Logic.add_running_service(node, info)
+
+    def handle_event({:node_down, node}, t),
+      do: t |> Logic.node_down(node)
+
+    def handle_event(event, t) do
+      Logger.info(inspect(event))
+      t
+    end
   end
 end

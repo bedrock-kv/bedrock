@@ -2,7 +2,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   alias Bedrock.DataPlane.Storage
 
   @type key_range :: Bedrock.key_range()
-  @type tag :: integer()
+  @type tag :: Bedrock.tag()
   @type storage_id :: Storage.id()
 
   @typedoc """

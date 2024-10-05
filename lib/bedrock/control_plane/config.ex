@@ -9,86 +9,85 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
+  def default_ping_rate_in_hz, do: 5
+
   @typedoc """
   Struct representing the control plane configuration.
 
   ## Fields
     - `state` - The current state of the cluster.
+    - `nodes` - The nodes that are part of the cluster.
     - `parameters` - The parameters that are used to configure the cluster.
     - `policies` - The policies that are used to configure the cluster.
     - `transaction_system_layout` - The layout of the transaction system.
   """
   @type t :: %__MODULE__{
           state: state(),
-          parameters: Parameters.t(),
-          policies: Policies.t(),
-          transaction_system_layout: TransactionSystemLayout.t()
+          nodes: [node()],
+          parameters: Parameters.t() | nil,
+          policies: Policies.t() | nil,
+          transaction_system_layout: TransactionSystemLayout.t() | nil
         }
-  defstruct state: :initializing,
+  defstruct state: :uninitialized,
+            nodes: [],
             parameters: nil,
             policies: nil,
             transaction_system_layout: nil
 
-  @type state :: :initializing | :running | :stopping
+  @type state :: :uninitialized | :recovery | :running | :stopping
 
   @doc """
   Creates a new `Config` struct.
   """
-  @spec new(state(), Parameters.t(), Policies.t(), TransactionSystemLayout.t()) :: t()
-  def new(state, parameters, policies, transaction_system_layout) do
+  @spec new(nodes :: [node()]) :: t()
+  def new(nodes) do
+    %__MODULE__{
+      state: :uninitialized,
+      nodes: nodes
+    }
+  end
+
+  @doc """
+  Creates a new `Config` struct.
+  """
+  @spec new(
+          state(),
+          nodes :: [node()],
+          Parameters.t(),
+          Policies.t(),
+          TransactionSystemLayout.t()
+        ) :: t()
+  def new(state, nodes, parameters, policies, transaction_system_layout) do
     %__MODULE__{
       state: state,
+      nodes: nodes,
       parameters: parameters,
       policies: policies,
       transaction_system_layout: transaction_system_layout
     }
   end
 
-  @doc """
-  Returns true if the cluster will allow volunteer nodes to join.
-  """
+  @spec nodes(t()) :: [node()]
+  def nodes(t), do: t.nodes
+
+  @doc "Returns true if the cluster will allow volunteer nodes to join."
   @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
   def allow_volunteer_nodes_to_join?(t), do: t.policies.allow_volunteer_nodes_to_join
 
-  @doc """
-  Returns the nodes that are part of the cluster.
-  """
-  @spec nodes(t()) :: [node()]
-  def nodes(t), do: t.parameters.nodes || []
+  @doc "Returns the nodes that are part of the cluster."
+  @spec coordinators(t()) :: [node()]
+  def coordinators(t), do: t.coordinators || []
 
-  @doc """
-  Returns the ping rate in milliseconds.
-  """
+  @doc "Returns the pid of the current `Sequencer`."
+  @spec sequencer(t()) :: pid() | nil
+  def sequencer(t), do: get_in(t.transaction_system_layout.sequencer)
+
+  @doc "Returns the pid of the current `DataDistributor`."
+  @spec data_distributor(t()) :: pid() | nil
+  def data_distributor(t), do: get_in(t.transaction_system_layout.data_distributor)
+
+  @doc "Returns the ping rate in milliseconds."
   @spec ping_rate_in_ms(t()) :: non_neg_integer()
-  def ping_rate_in_ms(t), do: div(1000, t.parameters.ping_rate_in_hz)
-
-  @doc """
-  Returns the otp_names of the log workers.
-  """
-  @spec log_workers(t()) :: [atom()]
-  def log_workers(t), do: find_multiple_services(t, :log)
-
-  @doc """
-  Returns the otp_names of the storage workers.
-  """
-  @spec storage_workers(t()) :: [atom()]
-  def storage_workers(t), do: find_multiple_services(t, :storage)
-
-  @doc """
-  Returns the entire service directory.
-  """
-  def service_directory(%__MODULE__{
-        transaction_system_layout: %TransactionSystemLayout{
-          service_directory: service_directory
-        }
-      }),
-      do: service_directory
-
-  @spec find_multiple_services(t(), atom()) :: [atom()]
-  defp find_multiple_services(%__MODULE__{} = t, service_type) do
-    t
-    |> service_directory()
-    |> Enum.filter(&match?(%{type: ^service_type}, &1))
-    |> Enum.map(& &1.otp_name)
-  end
+  def ping_rate_in_ms(t),
+    do: div(1000, get_in(t.parameters.ping_rate_in_hz) || default_ping_rate_in_hz())
 end

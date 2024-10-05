@@ -6,7 +6,7 @@ defmodule Bedrock.Service.Worker do
   """
 
   @type ref :: GenServer.server()
-  @type id :: String.t()
+  @type id :: Bedrock.service_id()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
   @type health :: :ok | :starting | {:error, term()}

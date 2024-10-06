@@ -112,10 +112,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
          }}
       else
         {:error, :not_a_coordinator} ->
-          Logger.warning(
-            "Bedrock [#{cluster.name()}]: #{my_node} is not a coordinator; shutting down."
-          )
-
           :ignore
       end
     end

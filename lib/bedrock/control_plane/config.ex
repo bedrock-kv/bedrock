@@ -73,7 +73,7 @@ defmodule Bedrock.ControlPlane.Config do
   @doc "Returns true if the cluster will allow volunteer nodes to join."
   @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
   def allow_volunteer_nodes_to_join?(t),
-    do: get_in(t.policies.allow_volunteer_nodes_to_join) || true
+    do: get_in(t.policies.allow_volunteer_nodes_to_join) || false
 
   @doc "Returns the nodes that are part of the cluster."
   @spec coordinators(t()) :: [node()]

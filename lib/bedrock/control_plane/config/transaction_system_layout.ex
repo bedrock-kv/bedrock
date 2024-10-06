@@ -14,7 +14,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   ## Fields
     - `id` - The unique identifier of the layout.
-    - `nodes` - A list of the nodes that are part of the cluster.
     - `controller` - The full otp name of the cluster controller.
     - `sequencer` - The full otp name of the cluster sequencer.
     - `rate_keeper` - The full otp name of the system rate-keeper.
@@ -29,12 +28,11 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `storage_teams` - A list of storage teams that are responsible for storing the data within
        the system. Each team represents a shard of the key space, and contains
        a list of the storage worker ids that are responsible for the shard.
-    - `service_directory` - A list of all of the workers within the system, their types, ids and
+    - `services` - A list of all of the workers within the system, their types, ids and
        the otp names used to communicate with them.
   """
   @type t :: %__MODULE__{
           id: integer(),
-          nodes: [node()],
           controller: pid() | nil,
           sequencer: pid() | nil,
           rate_keeper: pid() | nil,
@@ -43,11 +41,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           transaction_resolvers: [TransactionResolverDescriptor.t()],
           logs: [LogDescriptor.t()],
           storage_teams: [StorageTeamDescriptor.t()],
-          service_directory: [ServiceDescriptor.t()]
+          services: [ServiceDescriptor.t()]
         }
 
   defstruct id: 0,
-            nodes: [],
             controller: nil,
             sequencer: nil,
             rate_keeper: nil,
@@ -56,5 +53,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
             transaction_resolvers: [],
             logs: [],
             storage_teams: [],
-            service_directory: []
+            services: []
+
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
 end

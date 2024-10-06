@@ -223,16 +223,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
       |> List.last()
       |> case do
         nil ->
-          {:ok, nodes} = t.cluster.coordinator_nodes()
-          {:ok, Config.new(nodes)}
-
-        # retransmission_rate_in_hz = 1000.0 / t.cluster.coordinator_ping_timeout_in_ms()
-
-        # {:ok,
-        #  initial_config_for_new_system(
-        #    coordinator_nodes,
-        #    retransmission_rate_in_hz
-        #  )}
+          {:ok, t.raft |> Raft.known_nodes() |> Config.new()}
 
         {_transaction_id, config} ->
           {:ok, config}
@@ -253,8 +244,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
             Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
           ]
         }
-        |> insert_storage_team(team_1)
-        |> insert_storage_team(team_0)
+        |> upsert_storage_team_descriptor(team_1)
+        |> upsert_storage_team_descriptor(team_0)
 
       %Config{
         state: :initializing,

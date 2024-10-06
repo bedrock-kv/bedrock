@@ -8,9 +8,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   alias Bedrock.ControlPlane.Coordinator.Service
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
-  alias Bedrock.ControlPlane.ClusterController.ServiceDirectory
-  alias Bedrock.ControlPlane.ClusterController.ServiceInfo
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   # alias Bedrock.ControlPlane.DataDistributor
   # alias Bedrock.DataPlane.Sequencer
@@ -80,7 +79,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
             config: Config.t() | nil,
             coordinator: pid(),
             node_tracking: NodeTracking.t(),
-            service_directory: ServiceDirectory.t(),
             timer_ref: reference() | nil,
             transaction_system_layout: TransactionSystemLayout.t() | nil,
             events: [term()]
@@ -104,7 +102,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
         otp_name: otp_name,
         coordinator: coordinator,
         node_tracking: config |> Config.nodes() |> NodeTracking.new(),
-        service_directory: ServiceDirectory.new(),
         events: []
       }
     end
@@ -195,21 +192,29 @@ defmodule Bedrock.ControlPlane.ClusterController do
     end
 
     def add_running_service(t, node, info) do
-      service_info =
-        ServiceInfo.new(info[:id], info[:kind])
-        |> ServiceInfo.up(info[:pid], info[:otp_name], node)
+      descriptor =
+        ServiceDescriptor.new(info[:id], info[:kind])
+        |> ServiceDescriptor.up(info[:pid], info[:otp_name], node)
 
-      status = ServiceDirectory.update_service_info(t.service_directory, service_info)
+      t =
+        update_in(
+          t.config.transaction_system_layout,
+          &TransactionSystemLayout.Tools.upsert_service_descriptor(&1, descriptor)
+        )
 
-      IO.inspect({service_info, status})
+      IO.inspect(t.config.transaction_system_layout)
 
       t
     end
 
     def node_down(t, node) do
-      affected_service_info = ServiceDirectory.node_down(t.service_directory, node)
+      t =
+        update_in(
+          t.config.transaction_system_layout,
+          &TransactionSystemLayout.Tools.node_down(&1, node)
+        )
 
-      IO.inspect(affected_service_info)
+      IO.inspect(t.config.transaction_system_layout)
       t
     end
 

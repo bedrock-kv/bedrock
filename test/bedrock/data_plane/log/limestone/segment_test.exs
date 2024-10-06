@@ -3,11 +3,13 @@ defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
 
   alias Bedrock.DataPlane.Log.Limestone.Segment
 
+  defdelegate random_worker_id, to: Bedrock.Service.Controller.Logic
+
   setup context do
     context
     |> Enum.reduce(context, fn
       {:with_10kib_segment, true}, context ->
-        file_name = Path.join(context[:tmp_dir], UUID.uuid4())
+        file_name = Path.join(context[:tmp_dir], random_worker_id())
         {:ok, segment} = Segment.allocate(file_name, 10_000)
         context |> Map.put(:segment, segment)
 
@@ -19,7 +21,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
   describe "Limestone.Segment" do
     @tag :tmp_dir
     test "allocate/2 successfully creates a segment file of the correct size", %{tmp_dir: tmp_dir} do
-      file_name = Path.join(tmp_dir, UUID.uuid4())
+      file_name = Path.join(tmp_dir, random_worker_id())
       expected_size = 1024
 
       # Make sure the file doesn't exist before we start.

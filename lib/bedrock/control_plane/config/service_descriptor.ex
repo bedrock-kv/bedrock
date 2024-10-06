@@ -1,43 +1,45 @@
 defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
-  @moduledoc """
-  A module representing a service descriptor within the Bedrock control plane configuration.
-
-  This module provides a structure for defining a service descriptor, which includes an `id`,
-  `type`, and `pid`. It is used to describe and instantiate service components within the
-  Bedrock system.
-
-  ## Types
-
-    * `id` - Represents the unique identifier of the service, corresponding to a `String.t()`.
-    * `type` - Represents the type of the service, corresponding to a `Bedrock.service()`.
-    * `t` - A struct of the service descriptor containing `id`, `type`, and `pid`.
-
-  ## Functions
-
-    * `new/3` - Creates a new service descriptor with given `id`, `type`, and `pid`.
-  """
-
-  @type id :: Bedrock.service_id()
-  @type type :: Bedrock.service()
+  @type id :: String.t()
+  @type kind :: :log | :storage
+  @type otp_name :: atom()
+  @type status :: :unknown | :down | {:up, pid(), otp_name(), node()}
 
   @type t :: %__MODULE__{
           id: id(),
-          type: type(),
-          pid: pid()
+          kind: kind(),
+          status: status()
         }
-  defstruct id: nil,
-            type: nil,
-            pid: nil
+  defstruct [:id, :kind, :status]
+
+  @spec new(id(), kind(), status()) :: t()
+  def new(id, kind, status \\ :unknown), do: %__MODULE__{id: id, kind: kind, status: status}
+
+  @spec up(t(), pid(), otp_name(), node()) :: t()
+  def up(t, pid, otp_name, node), do: put_in(t.status, {:up, pid, otp_name, node})
+
+  @spec down(t()) :: t()
+  def down(t), do: put_in(t.status, :down)
 
   @doc """
-  Creates a new service descriptor.
+  Inserts a service descriptor into a list of service descriptors, replacing
+  any existing service descriptor with the same id.
   """
-  @spec new(id(), type(), pid()) :: t()
-  def new(id, type, pid) do
-    %__MODULE__{
-      id: id,
-      type: type,
-      pid: pid
-    }
-  end
+  @spec upsert([t()], t()) :: [t()]
+  def upsert([], n), do: [n]
+  def upsert([%{id: id} | t], %{id: id} = n), do: [n | t]
+  def upsert([h | t], n), do: [h | upsert(t, n)]
+
+  @spec find_by_id([t()], id()) :: t() | nil
+  def find_by_id(l, id), do: l |> Enum.find(&(&1.id == id))
+
+  @spec remove_by_id([t()], id()) :: [t()]
+  def remove_by_id(l, id), do: l |> Enum.reject(&(&1.id == id))
+
+  @doc """
+  Changes the status of a service descriptor to `:down` if it is currently `:up`
+  and running on the given node.
+  """
+  @spec node_down(t(), node()) :: t()
+  def node_down(%{status: {:up, _pid, _otp_name, node}} = t, node), do: put_in(t.status, :down)
+  def node_down(t, _node), do: t
 end

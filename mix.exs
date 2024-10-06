@@ -19,7 +19,7 @@ defmodule Bedrock.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :crypto]
     ]
   end
 
@@ -27,11 +27,8 @@ defmodule Bedrock.MixProject do
   defp deps do
     [
       {:gearbox, "~> 0.3"},
-      {:gen_stage, "~> 1.2"},
-      {:gen_state_machine, "~> 3.0"},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.2"},
-      {:uuid, "~> 1.1"}
+      {:telemetry, "~> 1.2"}
     ]
     |> add_deps_for_dev_and_test()
   end

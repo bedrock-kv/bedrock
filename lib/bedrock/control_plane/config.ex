@@ -9,8 +9,6 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  def default_ping_rate_in_hz, do: 5
-
   @typedoc """
   Struct representing the control plane configuration.
 
@@ -43,27 +41,10 @@ defmodule Bedrock.ControlPlane.Config do
   def new(nodes) do
     %__MODULE__{
       state: :uninitialized,
-      nodes: nodes
-    }
-  end
-
-  @doc """
-  Creates a new `Config` struct.
-  """
-  @spec new(
-          state(),
-          nodes :: [node()],
-          Parameters.t(),
-          Policies.t(),
-          TransactionSystemLayout.t()
-        ) :: t()
-  def new(state, nodes, parameters, policies, transaction_system_layout) do
-    %__MODULE__{
-      state: state,
       nodes: nodes,
-      parameters: parameters,
-      policies: policies,
-      transaction_system_layout: transaction_system_layout
+      parameters: Parameters.new(),
+      policies: Policies.new(),
+      transaction_system_layout: TransactionSystemLayout.new()
     }
   end
 
@@ -73,7 +54,7 @@ defmodule Bedrock.ControlPlane.Config do
   @doc "Returns true if the cluster will allow volunteer nodes to join."
   @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
   def allow_volunteer_nodes_to_join?(t),
-    do: get_in(t.policies.allow_volunteer_nodes_to_join) || false
+    do: get_in(t.policies.allow_volunteer_nodes_to_join) || true
 
   @doc "Returns the nodes that are part of the cluster."
   @spec coordinators(t()) :: [node()]
@@ -88,7 +69,7 @@ defmodule Bedrock.ControlPlane.Config do
   def data_distributor(t), do: get_in(t.transaction_system_layout.data_distributor)
 
   @doc "Returns the ping rate in milliseconds."
-  @spec ping_rate_in_ms(t()) :: non_neg_integer()
+  @spec ping_rate_in_ms(t()) :: pos_integer()
   def ping_rate_in_ms(t),
-    do: div(1000, get_in(t.parameters.ping_rate_in_hz) || default_ping_rate_in_hz())
+    do: div(1000, get_in(t.parameters.ping_rate_in_hz))
 end

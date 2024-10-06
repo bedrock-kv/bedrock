@@ -241,7 +241,7 @@ defmodule Bedrock.Service.Controller do
 
     @spec new_worker(Data.t()) :: {:ok, Worker.id()} | {:error, term()}
     def new_worker(t) do
-      with id <- UUID.uuid4(),
+      with id <- random_worker_id(),
            path <- Path.join(t.path, id),
            :ok <- File.mkdir_p(path),
            manifest <- Manifest.new(t.cluster.name(), id, t.default_worker),
@@ -250,6 +250,8 @@ defmodule Bedrock.Service.Controller do
         {:ok, id}
       end
     end
+
+    def random_worker_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
 
     @spec otp_name_for_worker(otp_name :: atom(), Worker.id()) :: atom()
     defp otp_name_for_worker(otp_name, id),

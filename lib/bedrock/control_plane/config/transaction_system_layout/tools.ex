@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
   @type t :: TransactionSystemLayout.t()
   @type log_id :: Bedrock.service_id()
@@ -20,6 +21,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @spec set_rate_keeper(t(), pid()) :: t()
   def set_rate_keeper(t, rate_keeper), do: put_in(t.rate_keeper, rate_keeper) |> update_id()
 
+  # Logs
+
   @doc """
   Get a log descriptor by its id or nil if not found.
   """
@@ -31,8 +34,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   Inserts a log descriptor into the transaction system layout, replacing any
   existing log descriptor with the same id.
   """
-  @spec insert_log(t(), LogDescriptor.t()) :: t()
-  def insert_log(t, %LogDescriptor{} = descriptor),
+  @spec upsert_log_descriptor(t(), LogDescriptor.t()) :: t()
+  def upsert_log_descriptor(t, %LogDescriptor{} = descriptor),
     do: update_in(t.logs, &LogDescriptor.upsert(&1, descriptor)) |> update_id()
 
   @doc """
@@ -41,6 +44,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @spec remove_log_with_id(t(), log_id()) :: t()
   def remove_log_with_id(t, id),
     do: update_in(t.logs, &LogDescriptor.remove_by_id(&1, id)) |> update_id()
+
+  # Storage
 
   @doc """
   Get a storage team descriptor by its tag or nil if not found.
@@ -53,8 +58,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   Inserts a storage team descriptor into the transaction system layout,
   replacing any existing storage team descriptor with the same tag.
   """
-  @spec insert_storage_team(t(), StorageTeamDescriptor.t()) :: t()
-  def insert_storage_team(t, %StorageTeamDescriptor{} = descriptor),
+  @spec upsert_storage_team_descriptor(t(), StorageTeamDescriptor.t()) :: t()
+  def upsert_storage_team_descriptor(t, %StorageTeamDescriptor{} = descriptor),
     do: update_in(t.storage_teams, &StorageTeamDescriptor.upsert(&1, descriptor)) |> update_id()
 
   @doc """
@@ -63,6 +68,34 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @spec remove_storage_team_with_tag(t(), tag()) :: t()
   def remove_storage_team_with_tag(t, tag),
     do: update_in(t.storage_teams, &StorageTeamDescriptor.remove_by_tag(&1, tag)) |> update_id()
+
+  # Services
+
+  @doc """
+  Inserts a service descriptor into the transaction system layout, replacing any
+  existing service descriptor with the same id.
+  """
+  @spec upsert_service_descriptor(t(), ServiceDescriptor.t()) :: t()
+  def upsert_service_descriptor(t, service_descriptor) do
+    update_in(t.services, &ServiceDescriptor.upsert(&1, service_descriptor))
+    |> update_id()
+  end
+
+  @doc """
+  Traverses the list of service descriptors and changes the status of any
+  service descriptor that is currently `:up` and running on the given node to
+  `:down`.
+  """
+  @spec node_down(t(), node()) :: t()
+  def node_down(t, node) do
+    updated_services = Enum.map(t.services, &ServiceDescriptor.node_down(&1, node))
+
+    if updated_services == t.services do
+      t
+    else
+      put_in(t.services, updated_services) |> update_id()
+    end
+  end
 
   defp update_id(t), do: put_in(t.id, random_id())
 

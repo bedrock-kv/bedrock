@@ -15,4 +15,7 @@ defmodule Bedrock.ControlPlane.Config.Policies do
         }
 
   defstruct allow_volunteer_nodes_to_join: true
+
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
 end

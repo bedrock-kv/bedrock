@@ -18,12 +18,12 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ToolsTest do
     end
   end
 
-  describe "insert_log/2" do
+  describe "upsert_log_descriptor/2" do
     test "inserts a log descriptor" do
       expected_id = "log1"
       layout = %TransactionSystemLayout{}
       log_descriptor = LogDescriptor.new(expected_id, [1, 2, 3])
-      updated_layout = insert_log(layout, log_descriptor)
+      updated_layout = upsert_log_descriptor(layout, log_descriptor)
 
       refute updated_layout.id == layout.id
       assert Enum.any?(updated_layout.logs, fn log -> log.log_id == expected_id end)
@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ToolsTest do
     end
   end
 
-  describe "insert_storage_team/2" do
+  describe "upsert_storage_team_descriptor/2" do
     test "inserts a storage team descriptor" do
       layout = %TransactionSystemLayout{}
 
@@ -66,7 +66,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ToolsTest do
         StorageTeamDescriptor.new(:team1, {<<0x00>>, <<0xFF>>}, ["storage1", "storage2"])
 
       updated_layout =
-        insert_storage_team(layout, storage_team_descriptor)
+        upsert_storage_team_descriptor(layout, storage_team_descriptor)
 
       refute updated_layout.id == layout.id
       assert Enum.any?(updated_layout.storage_teams, fn team -> team.tag == :team1 end)

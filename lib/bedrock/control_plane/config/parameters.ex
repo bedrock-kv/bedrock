@@ -46,4 +46,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
             desired_get_read_version_proxies: 1,
             desired_commit_proxies: 1,
             desired_transaction_resolvers: 1
+
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
 end

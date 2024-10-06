@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   """
   @spec upsert([t()], t()) :: [t()]
   def upsert([], n), do: [n]
-  def upsert([%{log_id: id} | t], n = %{log_id: id}), do: [n | t]
+  def upsert([%{log_id: id} | t], %{log_id: id} = n), do: [n | t]
   def upsert([h | t], n), do: [h | upsert(t, n)]
 
   @spec find_by_id([t()], log_id()) :: t() | nil

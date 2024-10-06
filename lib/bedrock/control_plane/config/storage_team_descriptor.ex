@@ -38,7 +38,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   """
   @spec upsert([t()], t()) :: [t()]
   def upsert([], n), do: [n]
-  def upsert([%{tag: tag} | t], n = %{tag: tag}), do: [n | t]
+  def upsert([%{tag: tag} | t], %{tag: tag} = n), do: [n | t]
   def upsert([h | t], n), do: [h | upsert(t, n)]
 
   @spec find_by_tag([t()], tag()) :: t() | nil

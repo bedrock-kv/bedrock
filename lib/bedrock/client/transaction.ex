@@ -5,6 +5,10 @@ defmodule Bedrock.Client.Transaction do
   def commit(txn),
     do: GenServer.call(txn, :commit)
 
+  @spec cancel(txn :: pid()) :: :ok
+  def cancel(txn),
+    do: :ok = GenServer.stop(txn, :normal)
+
   @spec get(txn :: pid(), key :: binary()) :: nil | binary()
   def get(txn, key) when is_pid(txn),
     do: GenServer.call(txn, {:get, key})
@@ -109,6 +113,7 @@ defmodule Bedrock.Client.Transaction do
       if elapsed_in_ms > state.client.transaction_window_in_ms do
         {:error, :transaction_expired}
       else
+        :ok = GenServer.stop(self(), :normal)
         raise "Not implemented"
         :ok
       end

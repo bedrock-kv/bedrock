@@ -28,17 +28,14 @@ defmodule Bedrock.Client do
 
   @spec new(coordinator()) :: {:ok, t()} | {:error, :no_coordinators}
   def new(coordinator) do
-    coordinator
-    |> Coordinator.fetch_proxy()
-    |> case do
-      {:ok, read_version_proxy} ->
-        {:ok,
-         %__MODULE__{
-           coordinator: coordinator,
-           read_version_proxy: read_version_proxy,
-           transaction_window_in_ms: 5_000
-         }}
-
+    with {:ok, proxy} <- Coordinator.fetch_proxy(coordinator) do
+      {:ok,
+       %__MODULE__{
+         coordinator: coordinator,
+         read_version_proxy: proxy,
+         transaction_window_in_ms: 5_000
+       }}
+    else
       {:error, :unavailable} ->
         {:error, :no_coordinators}
     end
@@ -77,6 +74,7 @@ defmodule Bedrock.Client do
           result
 
         {:cancel, reason} ->
+          :ok = cancel(txn)
           reason
       end
     end
@@ -109,6 +107,13 @@ defmodule Bedrock.Client do
   """
   @spec commit(txn :: Transaction.t()) :: :ok | {:error, :transaction_expired}
   defdelegate commit(txn),
+    to: Transaction
+
+  @doc """
+  Commits a transaction.
+  """
+  @spec cancel(txn :: Transaction.t()) :: :ok | {:error, :transaction_expired}
+  defdelegate cancel(txn),
     to: Transaction
 
   @spec storage_workers_for_key(client :: t(), Bedrock.key()) :: [Storage.ref()]

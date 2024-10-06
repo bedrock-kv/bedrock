@@ -324,19 +324,15 @@ defmodule Bedrock.Cluster do
 
   @spec config(module()) :: {:ok, Config.t()} | {:error, :unavailable}
   def config(module) do
-    module.coordinator()
-    |> case do
-      {:ok, coordinator} -> Coordinator.fetch_config(coordinator)
-      {:error, _} = error -> error
+    with {:ok, coordinator} <- module.coordinator() do
+      Coordinator.fetch_config(coordinator)
     end
   end
 
   @spec client(module()) :: {:ok, Client.t()} | {:error, :unavailable}
   def client(module) do
-    module.coordinator()
-    |> case do
-      {:ok, coordinator} -> Client.new(coordinator)
-      {:error, _} = error -> error
+    with {:ok, coordinator} <- module.coordinator() do
+      Client.new(coordinator)
     end
   end
 end

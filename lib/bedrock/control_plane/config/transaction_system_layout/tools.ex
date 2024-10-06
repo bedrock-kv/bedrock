@@ -8,10 +8,17 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @type tag :: Bedrock.tag()
 
   @spec set_controller(t(), pid()) :: t()
-  def set_controller(t, controller) do
-    t = put_in(t.id, random_id())
-    _t = put_in(t.controller, controller)
-  end
+  def set_controller(t, controller), do: put_in(t.controller, controller) |> update_id()
+
+  @spec set_sequencer(t(), pid()) :: t()
+  def set_sequencer(t, sequencer), do: put_in(t.sequencer, sequencer) |> update_id()
+
+  @spec set_data_distributor(t(), pid()) :: t()
+  def set_data_distributor(t, data_distributor),
+    do: put_in(t.data_distributor, data_distributor) |> update_id()
+
+  @spec set_rate_keeper(t(), pid()) :: t()
+  def set_rate_keeper(t, rate_keeper), do: put_in(t.rate_keeper, rate_keeper) |> update_id()
 
   @doc """
   Get a log descriptor by its id or nil if not found.
@@ -25,24 +32,20 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   existing log descriptor with the same id.
   """
   @spec insert_log(t(), LogDescriptor.t()) :: t()
-  def insert_log(t, %LogDescriptor{} = descriptor) do
-    t = put_in(t.id, random_id())
-    _t = update_in(t.logs, &LogDescriptor.upsert(&1, descriptor))
-  end
+  def insert_log(t, %LogDescriptor{} = descriptor),
+    do: update_in(t.logs, &LogDescriptor.upsert(&1, descriptor)) |> update_id()
 
   @doc """
   Removes a log descriptor by its id.
   """
   @spec remove_log_with_id(t(), log_id()) :: t()
-  def remove_log_with_id(t, id) do
-    t = put_in(t.id, random_id())
-    _t = update_in(t.logs, &LogDescriptor.remove_by_id(&1, id))
-  end
+  def remove_log_with_id(t, id),
+    do: update_in(t.logs, &LogDescriptor.remove_by_id(&1, id)) |> update_id()
 
   @doc """
   Get a storage team descriptor by its tag or nil if not found.
   """
-  @spec find_storage_team_by_tag(t(), tag()) :: LogDescriptor.t() | nil
+  @spec find_storage_team_by_tag(t(), tag()) :: StorageTeamDescriptor.t() | nil
   def find_storage_team_by_tag(t, tag),
     do: get_in(t.storage_teams) |> StorageTeamDescriptor.find_by_tag(tag)
 
@@ -51,19 +54,17 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   replacing any existing storage team descriptor with the same tag.
   """
   @spec insert_storage_team(t(), StorageTeamDescriptor.t()) :: t()
-  def insert_storage_team(t, %StorageTeamDescriptor{} = descriptor) do
-    t = put_in(t.id, random_id())
-    _t = update_in(t.storage_teams, &StorageTeamDescriptor.upsert(&1, descriptor))
-  end
+  def insert_storage_team(t, %StorageTeamDescriptor{} = descriptor),
+    do: update_in(t.storage_teams, &StorageTeamDescriptor.upsert(&1, descriptor)) |> update_id()
 
   @doc """
   Removes a log descriptor by its id.
   """
   @spec remove_storage_team_with_tag(t(), tag()) :: t()
-  def remove_storage_team_with_tag(t, tag) do
-    t = put_in(t.id, random_id())
-    _t = update_in(t.storage_teams, &StorageTeamDescriptor.remove_by_tag(&1, tag))
-  end
+  def remove_storage_team_with_tag(t, tag),
+    do: update_in(t.storage_teams, &StorageTeamDescriptor.remove_by_tag(&1, tag)) |> update_id()
+
+  defp update_id(t), do: put_in(t.id, random_id())
 
   defp random_id, do: Enum.random(1..1_000_000)
 end

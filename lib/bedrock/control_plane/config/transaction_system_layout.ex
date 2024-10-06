@@ -13,6 +13,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   Struct representing the layout of the transaction system within the cluster.
 
   ## Fields
+    - `id` - The unique identifier of the layout.
+    - `nodes` - A list of the nodes that are part of the cluster.
     - `controller` - The full otp name of the cluster controller.
     - `sequencer` - The full otp name of the cluster sequencer.
     - `rate_keeper` - The full otp name of the system rate-keeper.
@@ -32,6 +34,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   """
   @type t :: %__MODULE__{
           id: integer(),
+          nodes: [node()],
           controller: pid() | nil,
           sequencer: pid() | nil,
           rate_keeper: pid() | nil,
@@ -44,6 +47,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
         }
 
   defstruct id: 0,
+            nodes: [],
             controller: nil,
             sequencer: nil,
             rate_keeper: nil,

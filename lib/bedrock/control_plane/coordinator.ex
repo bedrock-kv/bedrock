@@ -240,8 +240,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def initial_config_for_new_system(coordinator_nodes, retransmission_rate_in_hz) do
-      alias Config.StorageTeamDescriptor
       alias Config.TransactionSystemLayout
+      alias Config.StorageTeamDescriptor
+      import Config.TransactionSystemLayout.Tools
 
       team_1 = StorageTeamDescriptor.new(1, {<<>>, <<0xFF>>}, ["storage_id_1"])
       team_0 = StorageTeamDescriptor.new(0, {<<0xFF>>, nil}, ["storage_id_2"])
@@ -252,8 +253,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
             Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
           ]
         }
-        |> TransactionSystemLayout.insert_storage_team(team_1)
-        |> TransactionSystemLayout.insert_storage_team(team_0)
+        |> insert_storage_team(team_1)
+        |> insert_storage_team(team_0)
 
       %Config{
         state: :initializing,

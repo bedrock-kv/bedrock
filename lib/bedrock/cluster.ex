@@ -22,7 +22,7 @@ defmodule Bedrock.Cluster do
   @type capability :: :coordination | :log | :storage
 
   @callback name() :: String.t()
-  @callback config() :: Config.t()
+  @callback config() :: {:ok, Config.t()} | {:error, :unavailable}
   @callback node_config() :: Keyword.t()
   @callback capabilities() :: [capability()]
   @callback path_to_descriptor() :: Path.t()
@@ -68,6 +68,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the name of the cluster.
       """
+      @impl Bedrock.Cluster
       @spec name() :: Cluster.name()
       def name, do: @name
 
@@ -78,18 +79,21 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the configuration for the cluster.
       """
-      @spec config() :: Config.t()
+      @impl Bedrock.Cluster
+      @spec config() :: {:ok, Config.t()} | {:error, :unavailable}
       def config, do: Cluster.config(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
       """
+      @impl Bedrock.Cluster
       @spec node_config() :: Keyword.t()
       def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
+      @impl Bedrock.Cluster
       @spec capabilities() :: [Cluster.capability()]
       def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
 
@@ -99,6 +103,7 @@ defmodule Bedrock.Cluster do
       "#{Cluster.default_descriptor_file_name()}" in the `priv` directory for the
       application.
       """
+      @impl Bedrock.Cluster
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor do
         node_config()
@@ -114,6 +119,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
       """
+      @impl Bedrock.Cluster
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
         node_config()
@@ -127,6 +133,7 @@ defmodule Bedrock.Cluster do
       the controller. If it does not receive a ping within the timeout, it
       will attempt to find a new controller.
       """
+      @impl Bedrock.Cluster
       @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
       def monitor_ping_timeout_in_ms do
         node_config()
@@ -140,6 +147,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the OTP name for the cluster.
       """
+      @impl Bedrock.Cluster
       @spec otp_name() :: atom()
       def otp_name, do: @otp_name
 
@@ -147,6 +155,7 @@ defmodule Bedrock.Cluster do
       Get the OTP name for a component within the cluster. These names are
       limited in scope to the current node.
       """
+      @impl Bedrock.Cluster
       @spec otp_name(
               :sup
               | :controller
@@ -177,6 +186,7 @@ defmodule Bedrock.Cluster do
       Get the current controller for the cluster. If we can't find one, we
       return an error.
       """
+      @impl Bedrock.Cluster
       @spec controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
       def controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
@@ -185,18 +195,21 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
+      @impl Bedrock.Cluster
       @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
       def coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
 
       @doc """
       Get the nodes that are running coordinators for the cluster.
       """
+      @impl Bedrock.Cluster
       @spec coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
       def coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
 
       @doc """
       Get a new instance of the `Client` configured for the cluster.
       """
+      @impl Bedrock.Cluster
       @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
       def client, do: Cluster.client(__MODULE__)
 

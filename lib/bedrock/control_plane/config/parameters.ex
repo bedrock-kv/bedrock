@@ -28,14 +28,14 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
   """
   @type t :: %__MODULE__{
           nodes: [node()],
-          ping_rate_in_hz: non_neg_integer(),
-          retransmission_rate_in_hz: non_neg_integer(),
-          replication_factor: non_neg_integer(),
-          desired_coordinators: non_neg_integer(),
-          desired_logs: non_neg_integer(),
-          desired_get_read_version_proxies: non_neg_integer(),
-          desired_commit_proxies: non_neg_integer(),
-          desired_transaction_resolvers: non_neg_integer()
+          ping_rate_in_hz: pos_integer(),
+          retransmission_rate_in_hz: pos_integer(),
+          replication_factor: pos_integer(),
+          desired_coordinators: pos_integer(),
+          desired_logs: pos_integer(),
+          desired_get_read_version_proxies: pos_integer(),
+          desired_commit_proxies: pos_integer(),
+          desired_transaction_resolvers: pos_integer()
         }
   defstruct nodes: [],
             ping_rate_in_hz: 10,

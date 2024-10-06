@@ -26,8 +26,6 @@ defmodule Mix.Tasks.Bedrock.Status do
 
   """
 
-  alias Bedrock.ControlPlane.Coordinator
-
   defp switches,
     do: [
       cluster: [:string, :keep]
@@ -56,12 +54,10 @@ defmodule Mix.Tasks.Bedrock.Status do
       end
 
     for cluster <- clusters do
-      cluster.coordinator()
-      |> IO.inspect()
+      cluster.config()
       |> case do
-        {:ok, coordinator} ->
-          Coordinator.fetch_config(coordinator)
-          |> IO.inspect()
+        {:ok, config} -> config |> IO.inspect()
+        {:error, reason} -> IO.puts("Error: #{reason}")
       end
     end
   end

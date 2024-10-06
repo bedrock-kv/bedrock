@@ -2,7 +2,9 @@ defmodule Bedrock.Cluster do
   use Supervisor
 
   alias Bedrock.Cluster
+  alias Bedrock.Client
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
@@ -20,6 +22,7 @@ defmodule Bedrock.Cluster do
   @type capability :: :coordination | :log | :storage
 
   @callback name() :: String.t()
+  @callback config() :: Config.t()
   @callback node_config() :: Keyword.t()
   @callback capabilities() :: [capability()]
   @callback path_to_descriptor() :: Path.t()
@@ -43,6 +46,7 @@ defmodule Bedrock.Cluster do
       alias Bedrock.Cluster
       alias Bedrock.Client
       alias Bedrock.Cluster.Monitor
+      alias Bedrock.ControlPlane.Config
 
       @default_coordinator_ping_timeout_in_ms 300
       @default_monitor_ping_timeout_in_ms 300
@@ -70,6 +74,12 @@ defmodule Bedrock.Cluster do
       ######################################################################
       # Configuration
       ######################################################################
+
+      @doc """
+      Get the configuration for the cluster.
+      """
+      @spec config() :: Config.t()
+      def config, do: Cluster.config(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
@@ -188,13 +198,7 @@ defmodule Bedrock.Cluster do
       Get a new instance of the `Client` configured for the cluster.
       """
       @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
-      def client do
-        coordinator()
-        |> case do
-          {:ok, coordinator} -> Client.new(coordinator)
-          {:error, _} = error -> error
-        end
-      end
+      def client, do: Cluster.client(__MODULE__)
 
       @doc false
       def child_spec(opts), do: Cluster.child_spec([{:cluster, __MODULE__} | opts])
@@ -317,4 +321,22 @@ defmodule Bedrock.Cluster do
   defp module_for_capability(:storage), do: Bedrock.Service.StorageController
   defp module_for_capability(:log), do: Bedrock.Service.LogController
   defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")
+
+  @spec config(module()) :: {:ok, Config.t()} | {:error, :unavailable}
+  def config(module) do
+    module.coordinator()
+    |> case do
+      {:ok, coordinator} -> Coordinator.fetch_config(coordinator)
+      {:error, _} = error -> error
+    end
+  end
+
+  @spec client(module()) :: {:ok, Client.t()} | {:error, :unavailable}
+  def client(module) do
+    module.coordinator()
+    |> case do
+      {:ok, coordinator} -> Client.new(coordinator)
+      {:error, _} = error -> error
+    end
+  end
 end

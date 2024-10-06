@@ -20,7 +20,7 @@ defmodule Bedrock.Cluster do
   @type capability :: :coordination | :log | :storage
 
   @callback name() :: String.t()
-  @callback config() :: Keyword.t()
+  @callback node_config() :: Keyword.t()
   @callback capabilities() :: [capability()]
   @callback path_to_descriptor() :: Path.t()
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
@@ -74,14 +74,14 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the configuration for this node of the cluster.
       """
-      @spec config() :: Keyword.t()
-      def config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
+      @spec node_config() :: Keyword.t()
+      def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
       @spec capabilities() :: [Cluster.capability()]
-      def capabilities, do: config() |> Keyword.get(:capabilities, [])
+      def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the
@@ -91,7 +91,7 @@ defmodule Bedrock.Cluster do
       """
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor do
-        config()
+        node_config()
         |> Keyword.get(
           :path_to_descriptor,
           Path.join(
@@ -106,7 +106,7 @@ defmodule Bedrock.Cluster do
       """
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
-        config()
+        node_config()
         |> Keyword.get(:coordinator_ping_timeout_in_ms, @default_coordinator_ping_timeout_in_ms)
       end
 
@@ -119,7 +119,7 @@ defmodule Bedrock.Cluster do
       """
       @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
       def monitor_ping_timeout_in_ms do
-        config()
+        node_config()
         |> Keyword.get(:monitor_ping_timeout_in_ms, @default_monitor_ping_timeout_in_ms)
       end
 
@@ -306,7 +306,7 @@ defmodule Bedrock.Cluster do
           {module_for_capability(capability),
            [
              {:cluster, cluster}
-             | cluster.config()
+             | cluster.node_config()
                |> Keyword.get(capability, [])
            ]}
         end)

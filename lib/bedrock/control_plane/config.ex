@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.Config do
       state: :uninitialized,
       coordinators: coordinators,
       epoch: 0,
-      parameters: Parameters.new(),
+      parameters: Parameters.new(coordinators),
       policies: Policies.new(),
       transaction_system_layout: TransactionSystemLayout.new()
     }

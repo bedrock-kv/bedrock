@@ -187,11 +187,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def handle_info({:raft, :consensus_reached, log, _transaction_id}, t) do
-      Log.transactions_to(log, :newest_safe)
-      |> List.last()
-      |> IO.inspect()
+      {_txn_id, config} =
+        Log.transactions_to(log, :newest_safe)
+        |> List.last()
+        |> IO.inspect()
 
-      {:noreply, t}
+      {:noreply, %{t | configuration: config}}
     end
 
     @impl GenServer

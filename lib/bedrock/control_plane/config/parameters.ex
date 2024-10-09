@@ -47,6 +47,10 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
             desired_commit_proxies: 1,
             desired_transaction_resolvers: 1
 
-  @spec new() :: t()
-  def new, do: %__MODULE__{}
+  @spec new(coordinators :: [node()]) :: t()
+  def new(coordinators),
+    do: %__MODULE__{
+      nodes: coordinators,
+      desired_coordinators: length(coordinators)
+    }
 end

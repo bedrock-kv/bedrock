@@ -1,0 +1,9 @@
+{
+	"files.exclude": {
+		".vscode": true,
+		"_build": true,
+		".elixir_ls": true,
+		".data": true,
+		"deps": true
+	},
+}

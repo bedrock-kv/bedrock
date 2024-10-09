@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   require Logger
 
-  alias Bedrock.ControlPlane.Coordinator.Service
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
@@ -101,7 +101,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
         config: config,
         otp_name: otp_name,
         coordinator: coordinator,
-        node_tracking: config |> Config.nodes() |> NodeTracking.new(),
+        node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
         events: []
       }
     end
@@ -139,6 +139,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec notify_and_lock(Data.t()) :: Data.t()
     def notify_and_lock(t) do
+      :ok = Coordinator.write_config(t.coordinator, t.config)
+
       t
       |> ping_all_nodes()
       |> try_to_invite_old_sequencer()
@@ -148,7 +150,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
     @spec ping_all_nodes(Data.t()) :: Data.t()
     def ping_all_nodes(t) do
-      t.cluster.ping_nodes(Config.nodes(t.config), self(), t.epoch)
+      t.cluster.ping_nodes(Config.coordinators(t.config), self(), t.epoch)
 
       t
       |> cancel_timer()
@@ -320,10 +322,18 @@ defmodule Bedrock.ControlPlane.ClusterController do
     end
 
     @impl GenServer
-    def init({cluster, config, epoch, coordinator, otp_name}),
-      do:
-        {:ok, Data.new(cluster, config, epoch, coordinator, otp_name),
-         {:continue, :notify_and_lock}}
+    def init({cluster, config, epoch, coordinator, otp_name}) do
+      {:ok,
+       Data.new(
+         cluster,
+         config
+         |> Config.Mutations.with_new_epoch(epoch)
+         |> Config.Mutations.with_new_controller(self()),
+         epoch,
+         coordinator,
+         otp_name
+       ), {:continue, :notify_and_lock}}
+    end
 
     @impl GenServer
     def handle_info({:timeout, :ping_all_nodes}, t),

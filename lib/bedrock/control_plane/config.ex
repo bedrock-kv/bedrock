@@ -14,20 +14,22 @@ defmodule Bedrock.ControlPlane.Config do
 
   ## Fields
     - `state` - The current state of the cluster.
-    - `nodes` - The nodes that are part of the cluster.
+    - `coordinators` - The coordinators of the cluster.
     - `parameters` - The parameters that are used to configure the cluster.
     - `policies` - The policies that are used to configure the cluster.
     - `transaction_system_layout` - The layout of the transaction system.
   """
   @type t :: %__MODULE__{
           state: state(),
-          nodes: [node()],
+          coordinators: [node()],
+          epoch: non_neg_integer(),
           parameters: Parameters.t() | nil,
           policies: Policies.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil
         }
   defstruct state: :uninitialized,
-            nodes: [],
+            coordinators: [],
+            epoch: 0,
             parameters: nil,
             policies: nil,
             transaction_system_layout: nil
@@ -37,19 +39,17 @@ defmodule Bedrock.ControlPlane.Config do
   @doc """
   Creates a new `Config` struct.
   """
-  @spec new(nodes :: [node()]) :: t()
-  def new(nodes) do
+  @spec new(coordinators :: [node()]) :: t()
+  def new(coordinators) do
     %__MODULE__{
       state: :uninitialized,
-      nodes: nodes,
+      coordinators: coordinators,
+      epoch: 0,
       parameters: Parameters.new(),
       policies: Policies.new(),
       transaction_system_layout: TransactionSystemLayout.new()
     }
   end
-
-  @spec nodes(t()) :: [node()]
-  def nodes(t), do: t.nodes
 
   @doc "Returns true if the cluster will allow volunteer nodes to join."
   @spec allow_volunteer_nodes_to_join?(t()) :: boolean()
@@ -72,4 +72,19 @@ defmodule Bedrock.ControlPlane.Config do
   @spec ping_rate_in_ms(t()) :: pos_integer()
   def ping_rate_in_ms(t),
     do: div(1000, get_in(t.parameters.ping_rate_in_hz))
+
+  defmodule Mutations do
+    @type t :: Bedrock.ControlPlane.Config.t()
+
+    @spec with_new_epoch(t(), pos_integer()) :: t()
+    def with_new_epoch(config, epoch), do: put_in(config.epoch, epoch)
+
+    @spec with_new_controller(t(), pid()) :: t()
+    def with_new_controller(config, controller),
+      do:
+        update_in(
+          config.transaction_system_layout,
+          &TransactionSystemLayout.Tools.set_controller(&1, controller)
+        )
+  end
 end

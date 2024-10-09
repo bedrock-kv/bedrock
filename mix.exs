@@ -26,6 +26,7 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:bedrock_raft, path: "../bedrock_raft"},
       {:gearbox, "~> 0.3"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"}

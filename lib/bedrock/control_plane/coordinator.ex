@@ -29,13 +29,19 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def fetch_config(coordinator, timeout \\ 5_000),
     do: call_service(coordinator, :get_configuration, timeout)
 
+  @spec write_config(coordinator :: ref(), config :: Config.t(), timeout()) ::
+          :ok | {:error, :unavailable}
+  def write_config(coordinator, config, timeout \\ 5_000),
+    do: call_service(coordinator, {:write_configuration, config}, timeout)
+
   @spec call_service(coordinator :: ref(), message :: any(), timeout_in_ms()) ::
-          {:ok, any()} | {:error, :unavailable}
+          :ok | {:ok, any()} | {:error, :unavailable}
   defp call_service(coordinator, message, timeout) do
     GenServer.call(coordinator, message, timeout)
     |> case do
       :unavailable -> {:error, :unavailable}
-      config -> {:ok, config}
+      :ok -> :ok
+      result -> {:ok, result}
     end
   catch
     :exit, _ -> {:error, :unavailable}
@@ -125,6 +131,15 @@ defmodule Bedrock.ControlPlane.Coordinator do
     def handle_call(:get_configuration, _from, t),
       do: {:reply, t.configuration, t}
 
+    def handle_call({:write_configuration, config}, _from, t) do
+      with {:ok, raft, next_id} <- Raft.next_transaction_id(t.raft),
+           {:ok, raft} <- raft |> Raft.add_transaction({next_id, config}) do
+        {:reply, :ok, %{t | raft: raft}}
+      else
+        {:error, _} -> {:reply, {:error, :failed}, t}
+      end
+    end
+
     def handle_call(:ping, _from, t),
       do: {:reply, :pong, t}
 
@@ -171,14 +186,18 @@ defmodule Bedrock.ControlPlane.Coordinator do
       {:noreply, t}
     end
 
+    def handle_info({:raft, :consensus_reached, log, _transaction_id}, t) do
+      Log.transactions_to(log, :newest_safe)
+      |> List.last()
+      |> IO.inspect()
+
+      {:noreply, t}
+    end
+
     @impl GenServer
     def handle_cast({:raft, :rpc, event, source}, t) do
       raft = t.raft |> Raft.handle_event(event, source)
       {:noreply, %{t | raft: raft}}
-    end
-
-    def handle_cast({:raft, :consensus_reached, _log, _transaction_id}, t) do
-      {:noreply, t}
     end
 
     def start_controller_on_this_node!(t, epoch) do
@@ -298,16 +317,20 @@ defmodule Bedrock.ControlPlane.Coordinator do
       defp determine_timeout(min_ms, max_ms) when min_ms > max_ms, do: raise("invalid_timeout")
       defp determine_timeout(min_ms, max_ms), do: min_ms + :rand.uniform(max_ms - min_ms)
 
+      @impl true
       def ignored_event(_event, _from), do: :ok
 
+      @impl true
       def leadership_changed(leadership),
         do: send(self(), {:raft, :leadership_changed, leadership})
 
+      @impl true
       def send_event(to, event) do
         send(self(), {:raft, :send_rpc, event, to})
         :ok
       end
 
+      @impl true
       def timer(name, min_ms, max_ms) do
         determine_timeout(min_ms, max_ms)
         |> :timer.send_after({:raft, :timer, name})
@@ -322,13 +345,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
         end
       end
 
+      @impl true
       def consensus_reached(log, transaction_id) do
         send(self(), {:raft, :consensus_reached, log, transaction_id})
         :ok
       end
-    end
-
-    defmodule Logic do
     end
   end
 end

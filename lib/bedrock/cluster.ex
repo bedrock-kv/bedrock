@@ -191,6 +191,19 @@ defmodule Bedrock.Cluster do
       def controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
       @doc """
+      Get the current controller for the cluster. If we can't find one, we
+      raise an error.
+      """
+      @spec controller!() :: GenServer.name()
+      def controller! do
+        controller()
+        |> case do
+          {:ok, controller} -> controller
+          {:error, _} -> raise "No controller available"
+        end
+      end
+
+      @doc """
       Get a coordinator for the cluster. If there is an instance running on
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
@@ -198,6 +211,20 @@ defmodule Bedrock.Cluster do
       @impl Bedrock.Cluster
       @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
       def coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
+
+      @doc """
+      Get a coordinator for the cluster. If there is an instance running on
+      the local node, we return it. Otherwise, we look for a live coordinator
+      on the cluster. If we can't find one, we raise an error.
+      """
+      @spec coordinator!() :: GenServer.name()
+      def coordinator! do
+        coordinator()
+        |> case do
+          {:ok, coordinator} -> coordinator
+          {:error, _} -> raise "No coordinator available"
+        end
+      end
 
       @doc """
       Get the nodes that are running coordinators for the cluster.

@@ -50,10 +50,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @doc false
   defdelegate child_spec(opts), to: __MODULE__.Service
 
-  defmodule Service do
-    @moduledoc false
-    use GenServer
-
+  defmodule Data do
     @type t :: %__MODULE__{
             cluster: module(),
             am_i_the_leader: boolean(),
@@ -64,7 +61,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
             raft: Raft.t(),
             proxies: [Proxy.t()],
             supervisor_otp_name: atom(),
-            configuration: Config.t() | nil
+            last_durable_txn_id: Raft.transaction_id(),
+            configuration: Config.t(),
+            waiting_list: %{Raft.transaction_id() => pid()}
           }
     defstruct cluster: nil,
               am_i_the_leader: false,
@@ -75,7 +74,40 @@ defmodule Bedrock.ControlPlane.Coordinator do
               raft: nil,
               proxies: [],
               supervisor_otp_name: nil,
-              configuration: nil
+              last_durable_txn_id: nil,
+              configuration: nil,
+              waiting_list: %{}
+  end
+
+  defmodule Logic do
+    alias Bedrock.Raft
+
+    @type t :: Data.t()
+
+    @spec durably_write_config(t(), Config.t(), GenServer.from()) ::
+            {:ok, t()} | {:error, :not_leader}
+    def durably_write_config(t, config, from) do
+      with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(config) do
+        {:ok,
+         t
+         |> update_raft(raft)
+         |> add_to_waiting_list_for_txn_id(from, txn_id)}
+      end
+    end
+
+    @spec update_raft(t(), Raft.t()) :: t()
+    def update_raft(t, raft), do: put_in(t.raft, raft)
+
+    @spec add_to_waiting_list_for_txn_id(t(), GenServer.from(), Raft.transaction_id()) :: t()
+    def add_to_waiting_list_for_txn_id(t, from, txn_id),
+      do: update_in(t.waiting_list, &Map.put(&1, txn_id, from))
+  end
+
+  defmodule Service do
+    @moduledoc false
+    use GenServer
+
+    @type t :: Data.t()
 
     @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
     def child_spec(opts) do
@@ -100,9 +132,19 @@ defmodule Bedrock.ControlPlane.Coordinator do
       my_node = Node.self()
 
       with {:ok, coordinator_nodes} <- cluster.coordinator_nodes(),
-           true <- my_node in coordinator_nodes || {:error, :not_a_coordinator} do
+           true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
+           raft_log <- InMemoryLog.new() do
+        {last_durable_txn_id, config} =
+          raft_log
+          |> Log.transactions_to(:newest_safe)
+          |> List.last()
+          |> case do
+            nil -> {Log.initial_transaction_id(raft_log), Config.new(coordinator_nodes)}
+            txn -> txn
+          end
+
         {:ok,
-         %__MODULE__{
+         %Data{
            cluster: cluster,
            my_node: my_node,
            otp_name: otp_name,
@@ -112,9 +154,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
              Raft.new(
                my_node,
                coordinator_nodes |> Enum.reject(&(&1 == my_node)),
-               InMemoryLog.new(),
+               raft_log,
                __MODULE__.RaftInterface
-             )
+             ),
+           configuration: config,
+           last_durable_txn_id: last_durable_txn_id
          }}
       else
         {:error, :not_a_coordinator} ->
@@ -131,12 +175,14 @@ defmodule Bedrock.ControlPlane.Coordinator do
     def handle_call(:get_configuration, _from, t),
       do: {:reply, t.configuration, t}
 
-    def handle_call({:write_configuration, config}, _from, t) do
-      with {:ok, raft, next_id} <- Raft.next_transaction_id(t.raft),
-           {:ok, raft} <- raft |> Raft.add_transaction({next_id, config}) do
-        {:reply, :ok, %{t | raft: raft}}
-      else
-        {:error, _} -> {:reply, {:error, :failed}, t}
+    @spec handle_call({:write_configuration, Config.t()}, GenServer.from(), t()) ::
+            {:noreply, t()} | {:reply, {:error, :failed}, t()}
+    def handle_call({:write_configuration, config}, from, t) do
+      t
+      |> Logic.durably_write_config(config, from)
+      |> case do
+        {:ok, t} -> {:noreply, t}
+        {:error, _reason} -> {:reply, {:error, :failed}, t}
       end
     end
 
@@ -186,13 +232,27 @@ defmodule Bedrock.ControlPlane.Coordinator do
       {:noreply, t}
     end
 
-    def handle_info({:raft, :consensus_reached, log, _transaction_id}, t) do
-      {_txn_id, config} =
-        Log.transactions_to(log, :newest_safe)
-        |> List.last()
-        |> IO.inspect()
+    def handle_info({:raft, :consensus_reached, log, durable_txn_id}, t) do
+      t =
+        Log.transactions_from(log, t.last_durable_txn_id, durable_txn_id)
+        |> Enum.reduce(t, fn {txn_id, newest_durable_config}, t ->
+          t =
+            update_in(t.waiting_list, fn waiting_list ->
+              Map.get(waiting_list, txn_id)
+              |> case do
+                nil ->
+                  waiting_list
 
-      {:noreply, %{t | configuration: config}}
+                reply_to ->
+                  GenServer.reply(reply_to, :ok)
+                  Map.delete(waiting_list, txn_id)
+              end
+            end)
+
+          %{t | configuration: newest_durable_config, last_durable_txn_id: txn_id}
+        end)
+
+      {:noreply, t}
     end
 
     @impl GenServer

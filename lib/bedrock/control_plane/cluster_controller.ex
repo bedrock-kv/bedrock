@@ -204,7 +204,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
           &TransactionSystemLayout.Tools.upsert_service_descriptor(&1, descriptor)
         )
 
-      IO.inspect(t.config.transaction_system_layout)
+      :ok = Coordinator.write_config(t.coordinator, t.config)
 
       t
     end
@@ -216,7 +216,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
           &TransactionSystemLayout.Tools.node_down(&1, node)
         )
 
-      IO.inspect(t.config.transaction_system_layout)
+      :ok = Coordinator.write_config(t.coordinator, t.config)
+
       t
     end
 

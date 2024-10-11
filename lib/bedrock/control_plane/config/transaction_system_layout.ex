@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
        the otp names used to communicate with them.
   """
   @type t :: %__MODULE__{
-          id: integer(),
+          id: id(),
           controller: pid() | nil,
           sequencer: pid() | nil,
           rate_keeper: pid() | nil,
@@ -43,6 +43,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           storage_teams: [StorageTeamDescriptor.t()],
           services: [ServiceDescriptor.t()]
         }
+
+  @type id :: non_neg_integer()
 
   defstruct id: 0,
             controller: nil,

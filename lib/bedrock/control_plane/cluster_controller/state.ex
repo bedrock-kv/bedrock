@@ -13,7 +13,8 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
           timer_ref: reference() | nil,
-          transaction_system_layout: TransactionSystemLayout.t() | nil
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
+          last_transaction_layout_id: TransactionSystemLayout.id()
         }
   defstruct epoch: nil,
             otp_name: nil,

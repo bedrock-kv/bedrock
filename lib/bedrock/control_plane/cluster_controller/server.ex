@@ -63,7 +63,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     |> lock_config()
     |> ping_all_nodes()
     |> recover()
-    |> durably_store_config()
+    |> store_changes_to_config()
     |> noreply()
   end
 
@@ -72,7 +72,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     t
     |> ping_all_nodes()
     |> determine_dead_nodes(now())
-    |> durably_store_config()
+    |> store_changes_to_config()
+    |> noreply()
+  end
+
+  def handle_info({:ping, from}, t) do
+    send(from, {:pong, self()})
+
+    t
+    |> node_last_seen_at(node(from), now())
+    |> store_changes_to_config()
     |> noreply()
   end
 
@@ -81,7 +90,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     t
     |> request_to_rejoin(node, capabilities, running_services, now())
     |> then(fn
-      {:ok, t} -> t |> durably_store_config() |> reply(:ok)
+      {:ok, t} -> t |> store_changes_to_config() |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)
     end)
   end
@@ -90,14 +99,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_cast({:pong, node}, t) do
     t
     |> node_last_seen_at(node, now())
-    |> durably_store_config()
+    |> store_changes_to_config()
     |> noreply()
   end
 
   def handle_cast({:node_added_worker, node, worker_info}, t) do
     t
     |> node_added_worker(node, worker_info, now())
-    |> durably_store_config()
+    |> store_changes_to_config()
     |> noreply()
   end
 
@@ -109,11 +118,11 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   defp noreply(t), do: {:noreply, t}
   defp reply(t, result), do: {:reply, result, t}
 
-  defp durably_store_config(t)
+  defp store_changes_to_config(t)
        when t.config.transaction_system_layout.id != t.last_transaction_layout_id do
     :ok = Coordinator.write_config(t.coordinator, t.config)
     %{t | last_transaction_layout_id: t.config.transaction_system_layout.id}
   end
 
-  defp durably_store_config(t), do: t
+  defp store_changes_to_config(t), do: t
 end

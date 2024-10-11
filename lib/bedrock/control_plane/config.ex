@@ -76,11 +76,11 @@ defmodule Bedrock.ControlPlane.Config do
   defmodule Mutations do
     @type t :: Bedrock.ControlPlane.Config.t()
 
-    @spec with_new_epoch(t(), pos_integer()) :: t()
-    def with_new_epoch(config, epoch), do: put_in(config.epoch, epoch)
+    @spec update_epoch(t(), pos_integer()) :: t()
+    def update_epoch(config, epoch), do: put_in(config.epoch, epoch)
 
-    @spec with_new_controller(t(), pid()) :: t()
-    def with_new_controller(config, controller),
+    @spec update_controller(t(), pid()) :: t()
+    def update_controller(config, controller),
       do:
         update_in(
           config.transaction_system_layout,

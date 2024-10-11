@@ -131,11 +131,11 @@ defmodule Bedrock.Cluster.Monitor do
         {:noreply,
          t
          |> cancel_timer()
-         |> change_coordinator(:unavailable)
          |> set_timer(
            :find_a_live_coordinator,
            t.cluster.monitor_ping_timeout_in_ms()
-         )}
+         )
+         |> change_coordinator(:unavailable)}
     end
   end
 
@@ -164,7 +164,7 @@ defmodule Bedrock.Cluster.Monitor do
   def handle_continue(:send_pong_to_controller, t) do
     :ok = ClusterController.send_pong(t.controller, t.node)
 
-    {:noreply, t |> maybe_set_ping_timer()}
+    {:noreply, t |> cancel_timer() |> maybe_set_ping_timer()}
   end
 
   @doc false
@@ -185,29 +185,23 @@ defmodule Bedrock.Cluster.Monitor do
     do: {:reply, {:ok, t.descriptor.coordinator_nodes}, t}
 
   @impl GenServer
-  def handle_info({:timeout, :find_a_live_coordinator}, %{coordinator: :unavailable} = t),
+  def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: {:noreply, t, {:continue, :find_a_live_coordinator}}
 
-  def handle_info({:timeout, :find_a_live_coordinator}, t),
-    do: {:noreply, t}
-
-  def handle_info({:timeout, :find_current_cluster_controller}, %{controller: :unavailable} = t),
+  def handle_info({:timeout, :find_current_cluster_controller}, t),
     do: {:noreply, t, {:continue, :find_current_cluster_controller}}
 
-  def handle_info({:timeout, :find_current_cluster_controller}, t),
-    do: {:noreply, t}
-
-  def handle_info({:timeout, :ping}, t) do
-    {:noreply, t |> change_cluster_controller(:unavailable),
-     {:continue, :find_current_cluster_controller}}
-  end
+  def handle_info({:timeout, :ping}, t),
+    do:
+      {:noreply, t |> change_cluster_controller(:unavailable),
+       {:continue, :find_current_cluster_controller}}
 
   @doc false
   @impl GenServer
-  def handle_cast({:ping, cluster_controller, _epoch}, t) do
-    {:noreply, t |> change_cluster_controller(cluster_controller),
-     {:continue, :send_pong_to_controller}}
-  end
+  def handle_cast({:ping, cluster_controller, _epoch}, t),
+    do:
+      {:noreply, t |> change_cluster_controller(cluster_controller),
+       {:continue, :send_pong_to_controller}}
 
   # Internals
 
@@ -220,18 +214,22 @@ defmodule Bedrock.Cluster.Monitor do
   def find_a_live_coordinator(t) do
     coordinator_otp_name = t.cluster.otp_name(:coordinator)
 
-    GenServer.multi_call(
-      t.descriptor.coordinator_nodes,
-      coordinator_otp_name,
-      :ping,
-      t.cluster.coordinator_ping_timeout_in_ms()
-    )
-    |> case do
-      {[], _failures} ->
-        {:error, :unavailable}
+    if t.node in t.descriptor.coordinator_nodes do
+      {:ok, coordinator_otp_name}
+    else
+      GenServer.multi_call(
+        t.descriptor.coordinator_nodes,
+        coordinator_otp_name,
+        :ping,
+        t.cluster.coordinator_ping_timeout_in_ms()
+      )
+      |> case do
+        {[], _failures} ->
+          {:error, :unavailable}
 
-      {[{first_node, :pong} | _other_coordinators], _failures} ->
-        {:ok, {coordinator_otp_name, first_node}}
+        {[{first_node, {:pong, _coordinator_pid}} | _other_coordinators], _failures} ->
+          {:ok, {coordinator_otp_name, first_node}}
+      end
     end
   end
 
@@ -254,7 +252,8 @@ defmodule Bedrock.Cluster.Monitor do
   everyone on this node know that the controller has changed.
   """
   @spec change_cluster_controller(t(), ClusterController.ref() | :unavailable) :: t()
-  def change_cluster_controller(t, controller) when t.controller == controller, do: t
+  def change_cluster_controller(t, controller) when t.controller == controller,
+    do: t |> cancel_timer()
 
   def change_cluster_controller(t, controller) do
     Logger.debug(
@@ -267,11 +266,11 @@ defmodule Bedrock.Cluster.Monitor do
       {:cluster_controller_replaced, controller}
     )
 
-    %{t | controller: controller} |> maybe_set_ping_timer()
+    %{t | controller: controller} |> cancel_timer() |> maybe_set_ping_timer()
   end
 
-  def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t |> cancel_timer()
+  def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),
-    do: t |> cancel_timer() |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
+    do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
 end

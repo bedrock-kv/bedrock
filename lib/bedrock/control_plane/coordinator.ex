@@ -27,12 +27,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @spec fetch_config(coordinator :: ref(), timeout_in_ms()) ::
           {:ok, Config.t()} | {:error, :unavailable}
   def fetch_config(coordinator, timeout \\ 5_000),
-    do: call_service(coordinator, :get_configuration, timeout)
+    do: call_service(coordinator, :get_config, timeout)
 
   @spec write_config(coordinator :: ref(), config :: Config.t(), timeout()) ::
           :ok | {:error, :unavailable}
   def write_config(coordinator, config, timeout \\ 5_000),
-    do: call_service(coordinator, {:write_configuration, config}, timeout)
+    do: call_service(coordinator, {:write_config, config}, timeout)
 
   @spec call_service(coordinator :: ref(), message :: any(), timeout_in_ms()) ::
           :ok | {:ok, any()} | {:error, :unavailable}
@@ -62,7 +62,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
             proxies: [Proxy.t()],
             supervisor_otp_name: atom(),
             last_durable_txn_id: Raft.transaction_id(),
-            configuration: Config.t(),
+            config: Config.t(),
             waiting_list: %{Raft.transaction_id() => pid()}
           }
     defstruct cluster: nil,
@@ -75,7 +75,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
               proxies: [],
               supervisor_otp_name: nil,
               last_durable_txn_id: nil,
-              configuration: nil,
+              config: nil,
               waiting_list: %{}
   end
 
@@ -157,7 +157,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
                raft_log,
                __MODULE__.RaftInterface
              ),
-           configuration: config,
+           config: config,
            last_durable_txn_id: last_durable_txn_id
          }}
       else
@@ -172,12 +172,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
       {:reply, :ok, t |> update_controller(controller)}
     end
 
-    def handle_call(:get_configuration, _from, t),
-      do: {:reply, t.configuration, t}
+    def handle_call(:get_config, _from, t),
+      do: {:reply, t.config, t}
 
-    @spec handle_call({:write_configuration, Config.t()}, GenServer.from(), t()) ::
+    @spec handle_call({:write_config, Config.t()}, GenServer.from(), t()) ::
             {:noreply, t()} | {:reply, {:error, :failed}, t()}
-    def handle_call({:write_configuration, config}, from, t) do
+    def handle_call({:write_config, config}, from, t) do
       t
       |> Logic.durably_write_config(config, from)
       |> case do
@@ -187,7 +187,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def handle_call(:ping, _from, t),
-      do: {:reply, :pong, t}
+      do: {:reply, {:pong, self()}, t}
 
     def handle_call(:get_controller, _from, t),
       do: {:reply, t.controller, t}
@@ -249,7 +249,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
               end
             end)
 
-          %{t | configuration: newest_durable_config, last_durable_txn_id: txn_id}
+          %{t | config: newest_durable_config, last_durable_txn_id: txn_id}
         end)
 
       {:noreply, t}
@@ -262,14 +262,13 @@ defmodule Bedrock.ControlPlane.Coordinator do
     end
 
     def start_controller_on_this_node!(t, epoch) do
-      with {:ok, config} <- latest_safe_config(t),
-           {:ok, controller} <-
+      with {:ok, controller} <-
              DynamicSupervisor.start_child(
                t.supervisor_otp_name,
                {ClusterController,
                 [
                   cluster: t.cluster,
-                  config: config,
+                  config: t.config,
                   epoch: epoch,
                   coordinator: self(),
                   otp_name: t.controller_otp_name
@@ -294,56 +293,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
       end
     catch
       :exit, {:noproc, _} -> :ok
-    end
-
-    def latest_safe_config(t) do
-      t.raft
-      |> Raft.log()
-      |> Log.transactions_to(:newest_safe)
-      |> List.last()
-      |> case do
-        nil ->
-          {:ok, t.raft |> Raft.known_nodes() |> Config.new()}
-
-        {_transaction_id, config} ->
-          {:ok, config}
-      end
-    end
-
-    def initial_config_for_new_system(coordinator_nodes, retransmission_rate_in_hz) do
-      alias Config.TransactionSystemLayout
-      alias Config.StorageTeamDescriptor
-      import Config.TransactionSystemLayout.Tools
-
-      team_1 = StorageTeamDescriptor.new(1, {<<>>, <<0xFF>>}, ["storage_id_1"])
-      team_0 = StorageTeamDescriptor.new(0, {<<0xFF>>, nil}, ["storage_id_2"])
-
-      tsl =
-        %TransactionSystemLayout{
-          transaction_resolvers: [
-            Config.TransactionResolverDescriptor.new({<<>>, <<0xFF>>}, nil)
-          ]
-        }
-        |> upsert_storage_team_descriptor(team_1)
-        |> upsert_storage_team_descriptor(team_0)
-
-      %Config{
-        state: :initializing,
-        parameters: %Config.Parameters{
-          nodes: coordinator_nodes,
-          retransmission_rate_in_hz: retransmission_rate_in_hz,
-          replication_factor: 1,
-          desired_coordinators: length(coordinator_nodes),
-          desired_logs: 1,
-          desired_get_read_version_proxies: 1,
-          desired_commit_proxies: 1,
-          desired_transaction_resolvers: 1
-        },
-        policies: %Config.Policies{
-          allow_volunteer_nodes_to_join: true
-        },
-        transaction_system_layout: tsl
-      }
     end
 
     @spec update_controller(t :: t(), new_controller :: ClusterController.ref()) :: t()

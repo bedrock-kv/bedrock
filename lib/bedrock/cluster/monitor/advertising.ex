@@ -27,7 +27,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     )
     |> case do
       :ok -> {:ok, t}
-      {:error, reason} -> {:error, reason}
+      {:error, _reason} = error -> error
     end
   end
 

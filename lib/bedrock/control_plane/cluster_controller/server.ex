@@ -17,8 +17,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Recovery,
     only: [
-      begin_recovery: 1,
-      recover: 1
+      claim_config: 1,
+      recover: 1,
+      start_new_recovery_attempt: 1
     ]
 
   @doc false
@@ -60,7 +61,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   @impl true
   def handle_continue(:finish_init, t) do
     t
-    |> begin_recovery()
+    |> claim_config()
+    |> then(fn
+      %{config: %{state: :uninitialized}} = t -> t |> noreply()
+      t -> t |> noreply(:start_recovery)
+    end)
+  end
+
+  def handle_continue(:start_recovery, t) do
+    t
+    |> start_new_recovery_attempt()
     |> ping_all_nodes()
     |> recover()
     |> store_changes_to_config()
@@ -115,14 +125,18 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   defp now, do: DateTime.utc_now()
 
-  defp noreply(t), do: {:noreply, t}
-  defp reply(t, result), do: {:reply, result, t}
-
   defp store_changes_to_config(t)
        when t.config.transaction_system_layout.id != t.last_transaction_layout_id do
-    :ok = Coordinator.write_config(t.coordinator, t.config)
-    put_in(t.last_transaction_layout_id, t.config.transaction_system_layout.id)
+    with :ok <- Coordinator.write_config(t.coordinator, t.config) do
+      put_in(t.last_transaction_layout_id, t.config.transaction_system_layout.id)
+    else
+      {:error, _reason} -> t
+    end
   end
 
   defp store_changes_to_config(t), do: t
+
+  defp noreply(t), do: {:noreply, t}
+  defp noreply(t, continue), do: {:noreply, t, {:continue, continue}}
+  defp reply(t, result), do: {:reply, result, t}
 end

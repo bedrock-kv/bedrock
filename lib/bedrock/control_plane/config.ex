@@ -25,7 +25,6 @@ defmodule Bedrock.ControlPlane.Config do
           recovery_attempt: RecoveryAttempt.t() | nil,
           coordinators: [node()],
           epoch: non_neg_integer(),
-          epoch_started_at: DateTime.t() | nil,
           parameters: Parameters.t() | nil,
           policies: Policies.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil
@@ -34,7 +33,6 @@ defmodule Bedrock.ControlPlane.Config do
             recovery_attempt: nil,
             coordinators: [],
             epoch: 0,
-            epoch_started_at: nil,
             parameters: nil,
             policies: nil,
             transaction_system_layout: nil
@@ -50,7 +48,6 @@ defmodule Bedrock.ControlPlane.Config do
       state: :uninitialized,
       coordinators: coordinators,
       epoch: 0,
-      epoch_started_at: nil,
       parameters: Parameters.new(coordinators),
       policies: Policies.new(),
       transaction_system_layout: TransactionSystemLayout.new()
@@ -80,16 +77,12 @@ defmodule Bedrock.ControlPlane.Config do
     do: div(1000, get_in(t.parameters.ping_rate_in_hz))
 
   defmodule Mutations do
-    @type t :: Bedrock.ControlPlane.Config.t()
+    alias Bedrock.ControlPlane.Config
 
-    @spec update_started_at(t(), DateTime.t()) :: t()
-    def update_started_at(config, epoch_started_at),
-      do: put_in(config.epoch_started_at, epoch_started_at)
-
-    @spec update_epoch(t(), pos_integer()) :: t()
+    @spec update_epoch(Config.t(), pos_integer()) :: Config.t()
     def update_epoch(config, epoch), do: put_in(config.epoch, epoch)
 
-    @spec update_controller(t(), pid()) :: t()
+    @spec update_controller(Config.t(), pid()) :: Config.t()
     def update_controller(config, controller),
       do:
         update_in(

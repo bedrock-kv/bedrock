@@ -313,6 +313,8 @@ defmodule Bedrock.Cluster do
   def init({cluster, path_to_descriptor, descriptor}) do
     capabilities = cluster.capabilities()
 
+    :ok = Bedrock.Internal.Logging.start()
+
     children =
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
@@ -356,7 +358,7 @@ defmodule Bedrock.Cluster do
 
   @spec fetch_config(module()) :: {:ok, Config.t()} | {:error, :unavailable}
   def fetch_config(module) do
-    with {:ok, coordinator} <- module.coordinator() do
+    with {:ok, coordinator} <- module.fetch_coordinator() do
       Coordinator.fetch_config(coordinator)
     end
   end

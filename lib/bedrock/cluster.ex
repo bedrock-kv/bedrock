@@ -30,9 +30,12 @@ defmodule Bedrock.Cluster do
   @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
-  @callback controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
-  @callback coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-  @callback coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+  @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
+  @callback controller!() :: ClusterController.ref()
+  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+  @callback coordinator!() :: Coordinator.ref()
+  @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+  @callback coordinator_nodes!() :: [node()]
   @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
 
   @doc false
@@ -180,18 +183,18 @@ defmodule Bedrock.Cluster do
       ######################################################################
 
       @doc """
-      Get the current controller for the cluster. If we can't find one, we
+      Fetch the current controller for the cluster. If we can't find one, we
       return an error.
       """
       @impl Bedrock.Cluster
-      @spec controller() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
+      @spec fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
+      def fetch_controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
       @doc """
       Get the current controller for the cluster. If we can't find one, we
       raise an error.
       """
-      @spec controller!() :: GenServer.name()
+      @spec controller!() :: ClusterController.ref()
       def controller! do
         controller()
         |> case do
@@ -201,22 +204,23 @@ defmodule Bedrock.Cluster do
       end
 
       @doc """
-      Get a coordinator for the cluster. If there is an instance running on
+      Fetch a coordinator for the cluster. If there is an instance running on
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
       @impl Bedrock.Cluster
-      @spec coordinator() :: {:ok, GenServer.name()} | {:error, :unavailable}
-      def coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
+      @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+      def fetch_coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
 
       @doc """
       Get a coordinator for the cluster. If there is an instance running on
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we raise an error.
       """
-      @spec coordinator!() :: GenServer.name()
+      @impl Bedrock.Cluster
+      @spec coordinator!() :: Coordinator.ref()
       def coordinator! do
-        coordinator()
+        fetch_coordinator()
         |> case do
           {:ok, coordinator} -> coordinator
           {:error, _} -> raise "No coordinator available"
@@ -224,11 +228,25 @@ defmodule Bedrock.Cluster do
       end
 
       @doc """
-      Get the nodes that are running coordinators for the cluster.
+      Fetch the nodes that are running coordinators for the cluster.
       """
       @impl Bedrock.Cluster
-      @spec coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
+      @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+      def fetch_coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
+
+      @doc """
+      Get the nodes that are running coordinators for the cluster. If we can't
+      find any, we raise an error.
+      """
+      @impl Bedrock.Cluster
+      @spec coordinator_nodes!() :: {:ok, [node()]} | {:error, :unavailable}
+      def coordinator_nodes! do
+        fetch_coordinator_nodes()
+        |> case do
+          {:ok, coordinator_nodes} -> coordinator_nodes
+          {:error, _} -> raise "No coordinator nodes available"
+        end
+      end
 
       @doc """
       Get a new instance of the `Client` configured for the cluster.

@@ -8,7 +8,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Transaction
 
-  use Bedrock.Internal.ChildSpec
+  use Bedrock.Internal.GenServerApi
 
   @type ref :: GenServer.server()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   @spec send_pong(cluster_controller :: ref(), from_node :: node()) :: :ok
   def send_pong(cluster_controller, from_node),
-    do: GenServer.cast(cluster_controller, {:pong, from_node})
+    do: cluster_controller |> cast({:pong, from_node})
 
   @doc """
   Reports a new worker to the cluster controller.
@@ -40,7 +40,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
   @spec advertise_worker(cluster_controller :: ref(), node(), keyword()) :: :ok
   def advertise_worker(cluster_controller, node, worker_info),
-    do: GenServer.cast(cluster_controller, {:node_added_worker, node, worker_info})
+    do: cluster_controller |> cast({:node_added_worker, node, worker_info})
 
   @doc """
   Requests a node to rejoin the cluster with the given capabilities and running services.
@@ -71,13 +71,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
         running_services,
         timeout_in_ms \\ 5_000
       ) do
-    GenServer.call(
-      cluster_controller,
+    cluster_controller
+    |> call(
       {:request_to_rejoin, node, capabilities, running_services},
       timeout_in_ms
     )
-  catch
-    :exit, _ -> {:error, :unavailable}
   end
 
   @doc """
@@ -102,9 +100,5 @@ defmodule Bedrock.ControlPlane.ClusterController do
           ]
         ) :: :ok
   def report_log_lock_complete(controller, id, info),
-    do:
-      GenServer.cast(
-        controller,
-        {:log_lock_complete, id, info}
-      )
+    do: controller |> cast({:log_lock_complete, id, info})
 end

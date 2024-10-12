@@ -6,7 +6,6 @@ defmodule Bedrock.Client do
   """
 
   alias Bedrock.Client.Transaction
-  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Proxy
@@ -26,19 +25,9 @@ defmodule Bedrock.Client do
   @typep coordinator :: pid() | {atom(), node()}
   @type transaction_fn :: (Transaction.t() -> any())
 
-  @spec new(coordinator()) :: {:ok, t()} | {:error, :no_coordinators}
+  @spec new(coordinator()) :: {:ok, t()}
   def new(coordinator) do
-    with {:ok, proxy} <- Coordinator.fetch_proxy(coordinator) do
-      {:ok,
-       %__MODULE__{
-         coordinator: coordinator,
-         read_version_proxy: proxy,
-         transaction_window_in_ms: 5_000
-       }}
-    else
-      {:error, :unavailable} ->
-        {:error, :no_coordinators}
-    end
+    {:ok, %__MODULE__{coordinator: coordinator}}
   end
 
   @doc """

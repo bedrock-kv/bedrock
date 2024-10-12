@@ -21,25 +21,23 @@ defmodule Bedrock.Cluster do
   @type log :: Log.ref()
   @type capability :: :coordination | :log | :storage
 
-  defmodule Interface do
-    @callback name() :: String.t()
-    @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
-    @callback config!() :: Config.t()
-    @callback node_config() :: Keyword.t()
-    @callback capabilities() :: [Bedrock.Cluster.capability()]
-    @callback path_to_descriptor() :: Path.t()
-    @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
-    @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
-    @callback otp_name() :: atom()
-    @callback otp_name(service :: atom()) :: atom()
-    @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
-    @callback controller!() :: ClusterController.ref()
-    @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-    @callback coordinator!() :: Coordinator.ref()
-    @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-    @callback coordinator_nodes!() :: [node()]
-    @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
-  end
+  @callback name() :: String.t()
+  @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
+  @callback config!() :: Config.t()
+  @callback node_config() :: Keyword.t()
+  @callback capabilities() :: [Bedrock.Cluster.capability()]
+  @callback path_to_descriptor() :: Path.t()
+  @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
+  @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
+  @callback otp_name() :: atom()
+  @callback otp_name(service :: atom()) :: atom()
+  @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
+  @callback controller!() :: ClusterController.ref()
+  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+  @callback coordinator!() :: Coordinator.ref()
+  @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+  @callback coordinator_nodes!() :: [node()]
+  @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
 
   @doc false
   defmacro __using__(opts) do
@@ -48,7 +46,7 @@ defmodule Bedrock.Cluster do
 
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote location: :keep do
-      @behaviour Bedrock.Cluster.Interface
+      @behaviour Bedrock.Cluster
       alias Bedrock.Cluster
       alias Bedrock.Client
       alias Bedrock.Cluster.Monitor
@@ -73,7 +71,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the name of the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec name() :: Cluster.name()
       def name, do: @name
 
@@ -84,28 +82,28 @@ defmodule Bedrock.Cluster do
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
       def fetch_config, do: Cluster.fetch_config(__MODULE__)
 
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec config!() :: Config.t()
       def config!, do: Cluster.config!(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec node_config() :: Keyword.t()
       def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec capabilities() :: [Cluster.capability()]
       def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
 
@@ -115,14 +113,14 @@ defmodule Bedrock.Cluster do
       "#{Cluster.default_descriptor_file_name()}" in the `priv` directory for the
       application.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor, do: Cluster.path_to_descriptor(__MODULE__, unquote(otp_app))
 
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
         node_config()
@@ -136,7 +134,7 @@ defmodule Bedrock.Cluster do
       the controller. If it does not receive a ping within the timeout, it
       will attempt to find a new controller.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
       def monitor_ping_timeout_in_ms do
         node_config()
@@ -150,7 +148,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the OTP name for the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec otp_name() :: atom()
       def otp_name, do: @otp_name
 
@@ -158,7 +156,7 @@ defmodule Bedrock.Cluster do
       Get the OTP name for a component within the cluster. These names are
       limited in scope to the current node.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec otp_name(
               :sup
               | :controller
@@ -187,7 +185,7 @@ defmodule Bedrock.Cluster do
       Fetch the current controller for the cluster. If we can't find one, we
       return an error.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
       def fetch_controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
@@ -195,7 +193,7 @@ defmodule Bedrock.Cluster do
       Get the current controller for the cluster. If we can't find one, we
       raise an error.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec controller!() :: ClusterController.ref()
       def controller!, do: Cluster.controller!(__MODULE__)
 
@@ -204,7 +202,7 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
       def fetch_coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
 
@@ -213,14 +211,14 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we raise an error.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec coordinator!() :: Coordinator.ref()
       def coordinator!, do: Cluster.coordinator!(__MODULE__)
 
       @doc """
       Fetch the nodes that are running coordinators for the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
       def fetch_coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
 
@@ -228,14 +226,14 @@ defmodule Bedrock.Cluster do
       Get the nodes that are running coordinators for the cluster. If we can't
       find any, we raise an error.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec coordinator_nodes!() :: [node()]
       def coordinator_nodes!, do: Cluster.coordinator_nodes!(__MODULE__)
 
       @doc """
       Get a new instance of the `Client` configured for the cluster.
       """
-      @impl Bedrock.Cluster.Interface
+      @impl Bedrock.Cluster
       @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
       def client, do: Cluster.client(__MODULE__)
 
@@ -269,29 +267,36 @@ defmodule Bedrock.Cluster do
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
 
-    cluster_name = cluster.name()
-
     path_to_descriptor = opts[:path_to_descriptor] || cluster.path_to_descriptor()
 
     descriptor =
-      path_to_descriptor
-      |> Descriptor.read_from_file()
-      |> case do
-        {:ok, descriptor} ->
-          if cluster_name != descriptor.cluster_name do
-            raise "The cluster name in the descriptor file (#{descriptor.cluster_name}) does not match the cluster name (#{cluster_name}) in the configuration."
-          end
+      with :ok <- check_node_is_in_a_cluster(),
+           {:ok, descriptor} <- path_to_descriptor |> Descriptor.read_from_file(),
+           :ok <- check_descriptor_is_for_cluster(descriptor, cluster) do
+        descriptor
+      else
+        {:error, :descriptor_not_for_this_cluster} ->
+          Logger.warning(
+            "Bedrock: The cluster name in the descriptor file does not match the cluster name (#{cluster.name()}) in the configuration."
+          )
 
-          if Node.self() == :nonode@nohost do
-            raise "Bedrock: this node is not part of a cluster (use the \"--name\" or \"--sname\" option when starting the Erlang VM)"
-          end
+          nil
 
-          descriptor
+        {:error, :not_in_a_cluster} ->
+          Logger.warning(
+            "Bedrock: This node is not part of a cluster (use the \"--name\" or \"--sname\" option when starting the Erlang VM)"
+          )
 
         {:error, _reason} ->
+          nil
+      end
+      |> case do
+        nil ->
           Logger.warning("Bedrock: Creating a default single-node configuration")
+          Descriptor.new(cluster.name(), [Node.self()])
 
-          Descriptor.new(cluster_name, [Node.self()])
+        descriptor ->
+          descriptor
       end
 
     %{
@@ -307,6 +312,19 @@ defmodule Bedrock.Cluster do
       type: :supervisor
     }
   end
+
+  @spec check_node_is_in_a_cluster() :: :ok | {:error, :not_in_a_cluster}
+  defp check_node_is_in_a_cluster,
+    do: if(Node.self() != :nonode@nohost, do: :ok, else: {:error, :not_in_a_cluster})
+
+  @spec check_descriptor_is_for_cluster(Descriptor.t(), module()) ::
+          :ok | {:error, :descriptor_not_for_this_cluster}
+  defp check_descriptor_is_for_cluster(descriptor, cluster),
+    do:
+      if(descriptor.cluster_name == cluster.name(),
+        do: :ok,
+        else: {:error, :descriptor_not_for_this_cluster}
+      )
 
   @doc false
   @impl Supervisor

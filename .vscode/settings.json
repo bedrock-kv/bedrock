@@ -6,4 +6,13 @@
 		".data": true,
 		"deps": true
 	},
+	"cSpell.words": [
+		"abcast",
+		"dets",
+		"noproc",
+		"noreply",
+		"pids",
+		"sname",
+		"whereis"
+	],
 }

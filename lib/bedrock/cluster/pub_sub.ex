@@ -1,6 +1,6 @@
 defmodule Bedrock.Cluster.PubSub do
   @moduledoc """
-  A simple pub/sub implementation using the `Registry` module for dispatcing
+  A simple pub/sub implementation using the `Registry` module for dispatching
   messages within a single cluster node.
   """
 
@@ -54,7 +54,7 @@ defmodule Bedrock.Cluster.PubSub do
 
   @doc """
   Unsubscribe from a topic. This will unregister the current process as a
-  subscriber to the given topic. The cuurent process will no longer receive
+  subscriber to the given topic. The current process will no longer receive
   messages for the given topic.
   """
   @spec unsubscribe(cluster :: module(), topic :: any()) :: :ok

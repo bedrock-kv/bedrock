@@ -127,7 +127,7 @@ defmodule Bedrock.Cluster do
 
       @doc """
       Get the timeout (in milliseconds) for a monitor process waiting to
-      receivea a ping from the currently active cluster controller. Once a
+      receives a ping from the currently active cluster controller. Once a
       monitor has successfully joined a cluster, it will wait for a ping from
       the controller. If it does not receive a ping within the timeout, it
       will attempt to find a new controller.

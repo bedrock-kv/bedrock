@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.Monitor.Logic do
+defmodule Bedrock.Cluster.Monitor.Discovery do
   alias Bedrock.Cluster.Monitor.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
@@ -46,7 +46,7 @@ defmodule Bedrock.Cluster.Monitor.Logic do
 
   def change_coordinator(t, coordinator) do
     PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
-    %{t | coordinator: coordinator}
+    put_in(t.coordinator, coordinator)
   end
 
   @doc """
@@ -59,17 +59,15 @@ defmodule Bedrock.Cluster.Monitor.Logic do
     do: t |> cancel_timer()
 
   def change_cluster_controller(t, controller) do
-    Logger.debug(
-      "Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(if is_pid(controller), do: node(controller), else: controller)}"
-    )
+    put_in(t.controller, controller)
+    |> cancel_timer()
+    |> maybe_set_ping_timer()
+    |> notify_cluster_controller_changed()
+  end
 
-    PubSub.publish(
-      t.cluster,
-      :cluster_controller_replaced,
-      {:cluster_controller_replaced, controller}
-    )
-
-    %{t | controller: controller} |> cancel_timer() |> maybe_set_ping_timer()
+  def notify_cluster_controller_changed(t) do
+    send(self(), :cluster_controller_replaced)
+    t
   end
 
   def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t

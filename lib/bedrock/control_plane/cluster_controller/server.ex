@@ -121,7 +121,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   defp store_changes_to_config(t)
        when t.config.transaction_system_layout.id != t.last_transaction_layout_id do
     :ok = Coordinator.write_config(t.coordinator, t.config)
-    %{t | last_transaction_layout_id: t.config.transaction_system_layout.id}
+    put_in(t.last_transaction_layout_id, t.config.transaction_system_layout.id)
   end
 
   defp store_changes_to_config(t), do: t

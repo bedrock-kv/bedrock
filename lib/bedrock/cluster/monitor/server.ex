@@ -6,7 +6,14 @@ defmodule Bedrock.Cluster.Monitor.Server do
   use GenServer
   use Bedrock.Internal.TimerManagement, type: State.t()
 
-  import Bedrock.Cluster.Monitor.Logic,
+  import Bedrock.Cluster.Monitor.Advertising,
+    only: [
+      advertise_capabilities: 1,
+      advertise_worker_to_cluster_controller: 2,
+      publish_cluster_controller_replaced_to_pubsub: 1
+    ]
+
+  import Bedrock.Cluster.Monitor.Discovery,
     only: [
       change_coordinator: 2,
       change_cluster_controller: 2,
@@ -14,11 +21,19 @@ defmodule Bedrock.Cluster.Monitor.Server do
       maybe_set_ping_timer: 1
     ]
 
+  import Bedrock.Cluster.Monitor.Telemetry,
+    only: [
+      emit_cluster_controller_replaced: 1
+    ]
+
+  require Logger
+
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     descriptor = opts[:descriptor] || raise "Missing :descriptor option"
     path_to_descriptor = opts[:path_to_descriptor] || raise "Missing :path_to_descriptor option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
+    capabilities = opts[:capabilities] || raise "Missing :capabilities option"
     mode = opts[:mode] || :active
 
     %{
@@ -26,7 +41,11 @@ defmodule Bedrock.Cluster.Monitor.Server do
       start: {
         GenServer,
         :start_link,
-        [__MODULE__, {cluster, path_to_descriptor, descriptor, mode}, [name: otp_name]]
+        [
+          __MODULE__,
+          {cluster, path_to_descriptor, descriptor, mode, capabilities},
+          [name: otp_name]
+        ]
       },
       restart: :permanent
     }
@@ -34,7 +53,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   @doc false
   @impl GenServer
-  def init({cluster, path_to_descriptor, descriptor, mode}) do
+  def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
     %State{
       node: Node.self(),
       cluster: cluster,
@@ -42,7 +61,8 @@ defmodule Bedrock.Cluster.Monitor.Server do
       path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
       controller: :unavailable,
-      mode: mode
+      mode: mode,
+      capabilities: capabilities
     }
     |> then(&{:ok, &1, {:continue, :find_a_live_coordinator}})
   end
@@ -131,12 +151,41 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> noreply(:find_current_cluster_controller)
   end
 
+  def handle_info(:cluster_controller_replaced, t) do
+    t
+    |> emit_cluster_controller_replaced()
+    |> publish_cluster_controller_replaced_to_pubsub()
+    |> advertise_capabilities()
+    |> case do
+      {:ok, t} ->
+        t |> noreply()
+
+      {:error, :unavailable} ->
+        put_in(t.controller, :unavailable)
+        |> noreply(:find_current_cluster_controller)
+
+      {:error, :nodes_must_be_added_by_an_administrator} ->
+        # Logger.error("This node must be added to the cluster by an administrator")
+        t |> noreply()
+    end
+
+    # Logger.debug(
+    #   "Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(if is_pid(t.controller), do: node(t.controller), else: t.controller)}"
+    # )
+  end
+
   @doc false
   @impl GenServer
   def handle_cast({:ping, cluster_controller, _epoch}, t) do
     t
     |> change_cluster_controller(cluster_controller)
     |> noreply(:send_pong_to_controller)
+  end
+
+  def handle_cast({:advertise_worker, worker_pid}, t) do
+    t
+    |> advertise_worker_to_cluster_controller(worker_pid)
+    |> noreply()
   end
 
   defp noreply(t), do: {:noreply, t}

@@ -126,8 +126,8 @@ defmodule Bedrock.Service.Controller do
   end
 
   defmodule Logic do
-    alias Bedrock.Cluster.ServiceAdvertiser
     alias Bedrock.Service.Manifest
+    alias Bedrock.Cluster.Monitor
 
     def startup(subsystem, cluster, path, default_worker, worker_supervisor_otp_name, otp_name) do
       {:ok,
@@ -220,8 +220,8 @@ defmodule Bedrock.Service.Controller do
 
     @spec advertise_new_worker(Data.t(), worker_pid :: pid()) :: :ok
     def advertise_new_worker(t, worker_pid) do
-      ServiceAdvertiser.report_new_worker(
-        t.cluster.otp_name(:service_advertiser),
+      Monitor.advertise_worker(
+        t.cluster.otp_name(:monitor),
         worker_pid
       )
     end

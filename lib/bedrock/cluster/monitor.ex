@@ -57,30 +57,17 @@ defmodule Bedrock.Cluster.Monitor do
   end
 
   @doc """
-  Retrieve the list of nodes currently running the coordinator processes for the specified cluster.
-
-  The function communicates with the running instance of the cluster monitor to fetch
-  the nodes responsible for coordination within the cluster. If successful, it returns
-  a tuple with `:ok` and the list of nodes; otherwise, it returns `{:error, :unavailable}`
-  if unable to retrieve the information.
-
-  The purpose of this function is to help identify and interact with the nodes
-  managing coordination tasks, which is crucial for maintaining the health and
-  operation of the cluster.
+  Retrieve the list of nodes currently running the coordinator process for the
+  cluster. If successful, it returns a tuple with `:ok` and the list of nodes;
+  otherwise, it returns `{:error, :unavailable}` if unable to retrieve the
+  information.
 
   ## Parameters
-    - monitor: The reference to the GenServer instance of the cluster monitor.
+    - `monitor`: The reference to the GenServer instance of the cluster monitor.
 
   ## Returns
     - `{:ok, [node()]}`: A tuple containing `:ok` and a list of nodes running the coordinators.
     - `{:error, :unavailable}`: An error tuple indicating the information is not accessible at the moment.
-
-  ## Examples
-      iex> Bedrock.Cluster.Monitor.fetch_coordinator_nodes(monitor_ref)
-      {:ok, [:"node1@127.0.0.1", :"node2@127.0.0.1"]}
-
-      iex> Bedrock.Cluster.Monitor.fetch_coordinator_nodes(monitor_ref)
-      {:error, :unavailable}
   """
   @spec fetch_coordinator_nodes(monitor :: ref()) :: {:ok, [node()]} | {:error, :unavailable}
   def fetch_coordinator_nodes(monitor) do
@@ -88,4 +75,23 @@ defmodule Bedrock.Cluster.Monitor do
   catch
     :exit, _ -> {:error, :unavailable}
   end
+
+  @doc """
+  Report the addition of a new worker to the cluster controller. It does so by
+  sending an asynchronous message to the specified monitor process. The monitor
+  process will then gather some information from the worker and pass it to the
+  cluster controller.
+
+  ## Parameters
+    - `monitor`: The GenServer name or PID of the monitor that will handle the
+      new worker information.
+    - `worker`: The PID of the new worker process that has been added. It will
+      be interrogated for details before passing it to the cluster controller.
+
+  ## Returns
+    - `:ok`: Always returns `:ok` as the message is sent asynchronously.
+  """
+  @spec advertise_worker(monitor :: ref(), worker :: pid()) :: :ok
+  def advertise_worker(monitor, worker),
+    do: GenServer.cast(monitor, {:advertise_worker, worker})
 end

@@ -62,7 +62,6 @@ defmodule Bedrock.Cluster do
       @log_otp_name Cluster.otp_name(@name, :log)
       @monitor_otp_name Cluster.otp_name(@name, :monitor)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
-      @service_advertiser_otp_name Cluster.otp_name(@name, :service_advertiser)
       @storage_otp_name Cluster.otp_name(@name, :storage)
 
       @doc """
@@ -163,7 +162,6 @@ defmodule Bedrock.Cluster do
               | :data_distributor
               | :monitor
               | :sequencer
-              | :service_advertiser
               | :storage
               | :log
             ) :: atom()
@@ -174,7 +172,6 @@ defmodule Bedrock.Cluster do
       def otp_name(:log), do: @log_otp_name
       def otp_name(:monitor), do: @monitor_otp_name
       def otp_name(:sequencer), do: @sequencer_otp_name
-      def otp_name(:service_advertiser), do: @service_advertiser_otp_name
       def otp_name(:storage), do: @storage_otp_name
       def otp_name(component) when is_atom(component), do: Cluster.otp_name(@name, component)
 
@@ -324,6 +321,7 @@ defmodule Bedrock.Cluster do
            descriptor: descriptor,
            path_to_descriptor: path_to_descriptor,
            otp_name: cluster.otp_name(:monitor),
+           capabilities: capabilities,
            mode: mode_for_capabilities(capabilities)
          ]}
         | children_for_capabilities(cluster, capabilities)
@@ -338,23 +336,15 @@ defmodule Bedrock.Cluster do
   defp children_for_capabilities(_cluster, []), do: []
 
   defp children_for_capabilities(cluster, capabilities) do
-    [
-      {Bedrock.Cluster.ServiceAdvertiser,
+    capabilities
+    |> Enum.map(fn capability ->
+      {module_for_capability(capability),
        [
-         cluster: cluster,
-         capabilities: capabilities,
-         otp_name: cluster.otp_name(:service_advertiser)
+         {:cluster, cluster}
+         | cluster.node_config()
+           |> Keyword.get(capability, [])
        ]}
-      | capabilities
-        |> Enum.map(fn capability ->
-          {module_for_capability(capability),
-           [
-             {:cluster, cluster}
-             | cluster.node_config()
-               |> Keyword.get(capability, [])
-           ]}
-        end)
-    ]
+    end)
   end
 
   defp module_for_capability(:coordination), do: Bedrock.ControlPlane.Coordinator

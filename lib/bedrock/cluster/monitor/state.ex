@@ -11,7 +11,8 @@ defmodule Bedrock.Cluster.Monitor.State do
           coordinator: Coordinator.ref() | :unavailable,
           controller: ClusterController.ref() | :unavailable,
           timer_ref: reference() | nil,
-          mode: :passive | :active
+          mode: :passive | :active,
+          capabilities: [Bedrock.Cluster.capability()]
         }
   defstruct node: nil,
             cluster: nil,
@@ -20,5 +21,6 @@ defmodule Bedrock.Cluster.Monitor.State do
             coordinator: :unavailable,
             controller: :unavailable,
             timer_ref: nil,
-            mode: :active
+            mode: :active,
+            capabilities: []
 end

@@ -21,23 +21,25 @@ defmodule Bedrock.Cluster do
   @type log :: Log.ref()
   @type capability :: :coordination | :log | :storage
 
-  @callback name() :: String.t()
-  @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
-  @callback config!() :: Config.t()
-  @callback node_config() :: Keyword.t()
-  @callback capabilities() :: [capability()]
-  @callback path_to_descriptor() :: Path.t()
-  @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
-  @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
-  @callback otp_name() :: atom()
-  @callback otp_name(service :: atom()) :: atom()
-  @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
-  @callback controller!() :: ClusterController.ref()
-  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-  @callback coordinator!() :: Coordinator.ref()
-  @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-  @callback coordinator_nodes!() :: [node()]
-  @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
+  defmodule Interface do
+    @callback name() :: String.t()
+    @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
+    @callback config!() :: Config.t()
+    @callback node_config() :: Keyword.t()
+    @callback capabilities() :: [Bedrock.Cluster.capability()]
+    @callback path_to_descriptor() :: Path.t()
+    @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
+    @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
+    @callback otp_name() :: atom()
+    @callback otp_name(service :: atom()) :: atom()
+    @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
+    @callback controller!() :: ClusterController.ref()
+    @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+    @callback coordinator!() :: Coordinator.ref()
+    @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+    @callback coordinator_nodes!() :: [node()]
+    @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
+  end
 
   @doc false
   defmacro __using__(opts) do
@@ -46,7 +48,7 @@ defmodule Bedrock.Cluster do
 
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote location: :keep do
-      @behaviour Bedrock.Cluster
+      @behaviour Bedrock.Cluster.Interface
       alias Bedrock.Cluster
       alias Bedrock.Client
       alias Bedrock.Cluster.Monitor
@@ -71,7 +73,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the name of the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec name() :: Cluster.name()
       def name, do: @name
 
@@ -82,28 +84,28 @@ defmodule Bedrock.Cluster do
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
       def fetch_config, do: Cluster.fetch_config(__MODULE__)
 
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec config!() :: Config.t()
       def config!, do: Cluster.config!(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec node_config() :: Keyword.t()
       def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec capabilities() :: [Cluster.capability()]
       def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
 
@@ -113,14 +115,14 @@ defmodule Bedrock.Cluster do
       "#{Cluster.default_descriptor_file_name()}" in the `priv` directory for the
       application.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor, do: Cluster.path_to_descriptor(__MODULE__, unquote(otp_app))
 
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
         node_config()
@@ -134,7 +136,7 @@ defmodule Bedrock.Cluster do
       the controller. If it does not receive a ping within the timeout, it
       will attempt to find a new controller.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
       def monitor_ping_timeout_in_ms do
         node_config()
@@ -148,7 +150,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the OTP name for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec otp_name() :: atom()
       def otp_name, do: @otp_name
 
@@ -156,7 +158,7 @@ defmodule Bedrock.Cluster do
       Get the OTP name for a component within the cluster. These names are
       limited in scope to the current node.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec otp_name(
               :sup
               | :controller
@@ -185,7 +187,7 @@ defmodule Bedrock.Cluster do
       Fetch the current controller for the cluster. If we can't find one, we
       return an error.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
       def fetch_controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
 
@@ -193,7 +195,7 @@ defmodule Bedrock.Cluster do
       Get the current controller for the cluster. If we can't find one, we
       raise an error.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec controller!() :: ClusterController.ref()
       def controller!, do: Cluster.controller!(__MODULE__)
 
@@ -202,7 +204,7 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
       def fetch_coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
 
@@ -211,14 +213,14 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we raise an error.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec coordinator!() :: Coordinator.ref()
       def coordinator!, do: Cluster.coordinator!(__MODULE__)
 
       @doc """
       Fetch the nodes that are running coordinators for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
       def fetch_coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
 
@@ -226,14 +228,14 @@ defmodule Bedrock.Cluster do
       Get the nodes that are running coordinators for the cluster. If we can't
       find any, we raise an error.
       """
-      @impl Bedrock.Cluster
-      @spec coordinator_nodes!() :: {:ok, [node()]} | {:error, :unavailable}
+      @impl Bedrock.Cluster.Interface
+      @spec coordinator_nodes!() :: [node()]
       def coordinator_nodes!, do: Cluster.coordinator_nodes!(__MODULE__)
 
       @doc """
       Get a new instance of the `Client` configured for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl Bedrock.Cluster.Interface
       @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
       def client, do: Cluster.client(__MODULE__)
 

@@ -1,45 +1,32 @@
 defmodule Bedrock.Cluster.Monitor do
-  use GenServer
-  use Bedrock.Internal.TimerManagement, type: t()
+  @moduledoc """
+  The `Bedrock.Cluster.Monitor` is the interface to a GenServer that is
+  responsible for finding and holding the current coordinator and controller for
+  a cluster.
+  """
 
-  alias Bedrock.Cluster.Descriptor
-  alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
 
-  require Logger
+  use Bedrock.Internal.ChildSpec
 
   @type ref :: GenServer.name()
   @type controller :: ClusterController.ref()
 
-  @type t :: %__MODULE__{
-          node: node(),
-          cluster: module(),
-          path_to_descriptor: Path.t(),
-          descriptor: Descriptor.t(),
-          coordinator: Coordinator.ref() | :unavailable,
-          controller: ClusterController.ref() | :unavailable,
-          timer_ref: reference() | nil,
-          mode: :passive | :active
-        }
-  defstruct node: nil,
-            cluster: nil,
-            path_to_descriptor: nil,
-            descriptor: nil,
-            coordinator: :unavailable,
-            controller: :unavailable,
-            timer_ref: nil,
-            mode: :active
-
   @doc """
-  Ping all of the nodes in the given cluster.
+  Ping all of the nodes in the cluster.
   """
-  @spec ping_nodes(monitor :: ref(), nodes :: [node()], ClusterController.ref(), Bedrock.epoch()) ::
+  @spec ping_nodes(
+          monitor_otp_name :: atom(),
+          nodes :: [node()],
+          ClusterController.ref(),
+          Bedrock.epoch()
+        ) ::
           :ok
-  def ping_nodes(monitor, nodes, cluster_controller, epoch) do
+  def ping_nodes(monitor_otp_name, nodes, cluster_controller, epoch) do
     GenServer.abcast(
       nodes,
-      monitor,
+      monitor_otp_name,
       {:ping, cluster_controller, epoch}
     )
 
@@ -50,7 +37,8 @@ defmodule Bedrock.Cluster.Monitor do
   Get a coordinator for the cluster. We ask the running instance of the cluster
   monitor to find one for us.
   """
-  @spec fetch_coordinator(monitor :: ref()) :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+  @spec fetch_coordinator(monitor :: ref()) ::
+          {:ok, Coordinator.ref()} | {:error, :unavailable}
   def fetch_coordinator(monitor) do
     monitor |> GenServer.call(:fetch_coordinator)
   catch
@@ -69,7 +57,30 @@ defmodule Bedrock.Cluster.Monitor do
   end
 
   @doc """
-  Get the nodes that are running coordinators for the given cluster.
+  Retrieve the list of nodes currently running the coordinator processes for the specified cluster.
+
+  The function communicates with the running instance of the cluster monitor to fetch
+  the nodes responsible for coordination within the cluster. If successful, it returns
+  a tuple with `:ok` and the list of nodes; otherwise, it returns `{:error, :unavailable}`
+  if unable to retrieve the information.
+
+  The purpose of this function is to help identify and interact with the nodes
+  managing coordination tasks, which is crucial for maintaining the health and
+  operation of the cluster.
+
+  ## Parameters
+    - monitor: The reference to the GenServer instance of the cluster monitor.
+
+  ## Returns
+    - `{:ok, [node()]}`: A tuple containing `:ok` and a list of nodes running the coordinators.
+    - `{:error, :unavailable}`: An error tuple indicating the information is not accessible at the moment.
+
+  ## Examples
+      iex> Bedrock.Cluster.Monitor.fetch_coordinator_nodes(monitor_ref)
+      {:ok, [:"node1@127.0.0.1", :"node2@127.0.0.1"]}
+
+      iex> Bedrock.Cluster.Monitor.fetch_coordinator_nodes(monitor_ref)
+      {:error, :unavailable}
   """
   @spec fetch_coordinator_nodes(monitor :: ref()) :: {:ok, [node()]} | {:error, :unavailable}
   def fetch_coordinator_nodes(monitor) do
@@ -77,200 +88,4 @@ defmodule Bedrock.Cluster.Monitor do
   catch
     :exit, _ -> {:error, :unavailable}
   end
-
-  @doc false
-  @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
-  def child_spec(opts) do
-    cluster = opts[:cluster] || raise "Missing :cluster option"
-    descriptor = opts[:descriptor] || raise "Missing :descriptor option"
-    path_to_descriptor = opts[:path_to_descriptor] || raise "Missing :path_to_descriptor option"
-    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-    mode = opts[:mode] || :active
-
-    %{
-      id: otp_name,
-      start: {
-        GenServer,
-        :start_link,
-        [__MODULE__, {cluster, path_to_descriptor, descriptor, mode}, [name: otp_name]]
-      },
-      restart: :permanent
-    }
-  end
-
-  # GenServer
-
-  @doc false
-  @impl GenServer
-  def init({cluster, path_to_descriptor, descriptor, mode}) do
-    t = %__MODULE__{
-      node: Node.self(),
-      cluster: cluster,
-      descriptor: descriptor,
-      path_to_descriptor: path_to_descriptor,
-      coordinator: :unavailable,
-      controller: :unavailable,
-      mode: mode
-    }
-
-    {:ok, t, {:continue, :find_a_live_coordinator}}
-  end
-
-  @doc false
-  @impl GenServer
-  def handle_continue(:find_a_live_coordinator, t) do
-    find_a_live_coordinator(t)
-    |> case do
-      {:ok, coordinator} ->
-        {:noreply,
-         t
-         |> cancel_timer()
-         |> change_coordinator(coordinator), {:continue, :find_current_cluster_controller}}
-
-      {:error, :unavailable} ->
-        {:noreply,
-         t
-         |> cancel_timer()
-         |> set_timer(
-           :find_a_live_coordinator,
-           t.cluster.monitor_ping_timeout_in_ms()
-         )
-         |> change_coordinator(:unavailable)}
-    end
-  end
-
-  def handle_continue(:find_current_cluster_controller, t) do
-    t.coordinator
-    |> Coordinator.fetch_controller(100)
-    |> case do
-      {:ok, controller} ->
-        {:noreply,
-         t
-         |> cancel_timer()
-         |> change_cluster_controller(controller)}
-
-      {:error, :unavailable} ->
-        {:noreply,
-         t
-         |> cancel_timer()
-         |> change_cluster_controller(:unavailable)
-         |> set_timer(
-           :find_current_cluster_controller,
-           t.cluster.monitor_ping_timeout_in_ms()
-         )}
-    end
-  end
-
-  def handle_continue(:send_pong_to_controller, t) do
-    :ok = ClusterController.send_pong(t.controller, t.node)
-
-    {:noreply, t |> cancel_timer() |> maybe_set_ping_timer()}
-  end
-
-  @doc false
-  @impl GenServer
-  def handle_call(:fetch_coordinator, _from, %{coordinator: :unavailable} = t),
-    do: {:reply, {:error, :unavailable}, t}
-
-  def handle_call(:fetch_coordinator, _from, t),
-    do: {:reply, {:ok, t.coordinator}, t}
-
-  def handle_call(:fetch_controller, _from, %{controller: :unavailable} = t),
-    do: {:reply, {:error, :unavailable}, t}
-
-  def handle_call(:fetch_controller, _from, t),
-    do: {:reply, {:ok, t.controller}, t}
-
-  def handle_call(:fetch_coordinator_nodes, _from, t),
-    do: {:reply, {:ok, t.descriptor.coordinator_nodes}, t}
-
-  @impl GenServer
-  def handle_info({:timeout, :find_a_live_coordinator}, t),
-    do: {:noreply, t, {:continue, :find_a_live_coordinator}}
-
-  def handle_info({:timeout, :find_current_cluster_controller}, t),
-    do: {:noreply, t, {:continue, :find_current_cluster_controller}}
-
-  def handle_info({:timeout, :ping}, t),
-    do:
-      {:noreply, t |> change_cluster_controller(:unavailable),
-       {:continue, :find_current_cluster_controller}}
-
-  @doc false
-  @impl GenServer
-  def handle_cast({:ping, cluster_controller, _epoch}, t),
-    do:
-      {:noreply, t |> change_cluster_controller(cluster_controller),
-       {:continue, :send_pong_to_controller}}
-
-  # Internals
-
-  @doc """
-  Find a live coordinator. We make a ping call to all of the nodes that we know
-  about and return the first one that responds. If none respond, we return an
-  error.
-  """
-  @spec find_a_live_coordinator(t()) :: {:ok, {atom(), node()}} | {:error, :unavailable}
-  def find_a_live_coordinator(t) do
-    coordinator_otp_name = t.cluster.otp_name(:coordinator)
-
-    if t.node in t.descriptor.coordinator_nodes do
-      {:ok, coordinator_otp_name}
-    else
-      GenServer.multi_call(
-        t.descriptor.coordinator_nodes,
-        coordinator_otp_name,
-        :ping,
-        t.cluster.coordinator_ping_timeout_in_ms()
-      )
-      |> case do
-        {[], _failures} ->
-          {:error, :unavailable}
-
-        {[{first_node, {:pong, _coordinator_pid}} | _other_coordinators], _failures} ->
-          {:ok, {coordinator_otp_name, first_node}}
-      end
-    end
-  end
-
-  @doc """
-  Change the coordinator. If the coordinator is the same as the one we already
-  have we do nothing, otherwise we publish a message to a topic to let everyone
-  on this node know that the coordinator has changed.
-  """
-  @spec change_coordinator(t(), Coordinator.ref() | :unavailable) :: t()
-  def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
-
-  def change_coordinator(t, coordinator) do
-    PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
-    %{t | coordinator: coordinator}
-  end
-
-  @doc """
-  Change the cluster controller. If the controller is the same as the one we
-  already have we do nothing, otherwise we publish a message to a topic to let
-  everyone on this node know that the controller has changed.
-  """
-  @spec change_cluster_controller(t(), ClusterController.ref() | :unavailable) :: t()
-  def change_cluster_controller(t, controller) when t.controller == controller,
-    do: t |> cancel_timer()
-
-  def change_cluster_controller(t, controller) do
-    Logger.debug(
-      "Bedrock [#{t.cluster.name()}]: Controller changed to #{inspect(if is_pid(controller), do: node(controller), else: controller)}"
-    )
-
-    PubSub.publish(
-      t.cluster,
-      :cluster_controller_replaced,
-      {:cluster_controller_replaced, controller}
-    )
-
-    %{t | controller: controller} |> cancel_timer() |> maybe_set_ping_timer()
-  end
-
-  def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t
-
-  def maybe_set_ping_timer(t),
-    do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
 end

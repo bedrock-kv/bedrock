@@ -8,6 +8,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Transaction
 
+  use Bedrock.Internal.ChildSpec
+
   @type ref :: GenServer.server()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
@@ -105,7 +107,4 @@ defmodule Bedrock.ControlPlane.ClusterController do
         controller,
         {:log_lock_complete, id, info}
       )
-
-  @doc false
-  defdelegate child_spec(opts), to: __MODULE__.Server
 end

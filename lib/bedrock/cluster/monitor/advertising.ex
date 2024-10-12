@@ -1,13 +1,4 @@
 defmodule Bedrock.Cluster.Monitor.Advertising do
-  @moduledoc """
-  Advertises capabilities to the cluster controller.
-
-  This GenServer is responsible for advertising the capabilities that are available
-  on the local node to the cluster controller. This is done by subscribing to
-  the `:cluster_controller_replaced` topic and then advertising the capabilities to
-  the controller when the controller is replaced, or when new workers are
-  started on the node.
-  """
   alias Bedrock.Cluster.Monitor.State
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.Service.Controller

@@ -13,14 +13,12 @@ defmodule Bedrock.Client do
 
   @type t :: %__MODULE__{
           coordinator: coordinator(),
-          read_version_proxy: pid(),
-          data_distributor: pid(),
-          transaction_window_in_ms: non_neg_integer()
+          read_version_proxy: pid() | nil,
+          data_distributor: pid() | nil
         }
   defstruct coordinator: nil,
             read_version_proxy: nil,
-            data_distributor: nil,
-            transaction_window_in_ms: 0
+            data_distributor: nil
 
   @typep coordinator :: pid() | {atom(), node()}
   @type transaction_fn :: (Transaction.t() -> any())

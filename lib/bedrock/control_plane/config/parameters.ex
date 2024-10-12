@@ -35,7 +35,8 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
           desired_logs: pos_integer(),
           desired_get_read_version_proxies: pos_integer(),
           desired_commit_proxies: pos_integer(),
-          desired_transaction_resolvers: pos_integer()
+          desired_transaction_resolvers: pos_integer(),
+          transaction_window_in_ms: pos_integer()
         }
   defstruct nodes: [],
             ping_rate_in_hz: 10,
@@ -45,7 +46,8 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
             desired_logs: 1,
             desired_get_read_version_proxies: 1,
             desired_commit_proxies: 1,
-            desired_transaction_resolvers: 1
+            desired_transaction_resolvers: 1,
+            transaction_window_in_ms: 5_000
 
   @spec new(coordinators :: [node()]) :: t()
   def new(coordinators),

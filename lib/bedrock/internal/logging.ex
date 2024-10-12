@@ -20,10 +20,13 @@ defmodule Bedrock.Internal.Logging do
         _config
       ) do
     if leader == :undecided do
-      Logger.info("Bedrock [#{cluster.name()}]: A quorum has not been reached to elect a leader")
+      Logger.info("Bedrock [#{cluster.name()}]: A quorum has not been reached to elect a leader",
+        ansi_color: :red
+      )
     else
       Logger.info(
-        "Bedrock [#{cluster.name()}]: #{inspect(leader)} was elected as the cluster leader"
+        "Bedrock [#{cluster.name()}]: #{inspect(leader)} was elected as the cluster leader",
+        ansi_color: :green
       )
     end
   end
@@ -35,9 +38,11 @@ defmodule Bedrock.Internal.Logging do
         _config
       ) do
     if controller == :unavailable do
-      Logger.info("Bedrock [#{cluster.name()}]: Controller is unavailable")
+      Logger.info("Bedrock [#{cluster.name()}]: Controller is unavailable", ansi_color: :red)
     else
-      Logger.info("Bedrock [#{cluster.name()}]: Controller changed to #{inspect(controller)}")
+      Logger.info("Bedrock [#{cluster.name()}]: Controller changed to #{inspect(controller)}",
+        ansi_color: :green
+      )
     end
   end
 end

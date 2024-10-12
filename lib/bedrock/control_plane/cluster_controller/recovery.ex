@@ -3,15 +3,43 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
-  @spec lock_config(State.t()) :: State.t()
-  def lock_config(t) do
+  import Bedrock.Internal.Time, only: [now: 0]
+
+  import Bedrock.ControlPlane.Config.Mutations,
+    only: [
+      update_controller: 2,
+      update_epoch: 2,
+      update_started_at: 2
+    ]
+
+  @spec begin_recovery(State.t()) :: State.t()
+  def begin_recovery(t) do
+    started_at = now()
+
     update_in(
       t.config,
       &(&1
-        |> Config.Mutations.update_epoch(t.epoch)
-        |> Config.Mutations.update_controller(self()))
+        |> update_started_at(started_at)
+        |> update_epoch(t.epoch)
+        |> update_controller(self()))
     )
+    |> start_new_recovery_attempt()
+  end
+
+  @spec start_new_recovery_attempt(State.t()) :: State.t()
+  def start_new_recovery_attempt(t) do
+    update_in(t.config.recovery_attempt, fn
+      nil ->
+        RecoveryAttempt.new(t.config.transaction_system_layout)
+
+      previous_recovery_attempt ->
+        RecoveryAttempt.new_from_previous(
+          previous_recovery_attempt,
+          t.config.transaction_system_layout
+        )
+    end)
   end
 
   @spec recover(State.t()) :: State.t()

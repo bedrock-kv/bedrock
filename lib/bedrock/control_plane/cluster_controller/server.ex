@@ -17,7 +17,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Recovery,
     only: [
-      lock_config: 1,
+      begin_recovery: 1,
       recover: 1
     ]
 
@@ -60,7 +60,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   @impl true
   def handle_continue(:finish_init, t) do
     t
-    |> lock_config()
+    |> begin_recovery()
     |> ping_all_nodes()
     |> recover()
     |> store_changes_to_config()

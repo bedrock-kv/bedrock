@@ -5,8 +5,9 @@ defmodule Bedrock.ControlPlane.Config do
   that are used to configure the cluster, the policies that are used to
   configure the cluster and the layout of the transaction system.
   """
-  alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.ControlPlane.Config.Parameters
+  alias Bedrock.ControlPlane.Config.Policies
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @typedoc """
@@ -21,15 +22,19 @@ defmodule Bedrock.ControlPlane.Config do
   """
   @type t :: %__MODULE__{
           state: state(),
+          recovery_attempt: RecoveryAttempt.t() | nil,
           coordinators: [node()],
           epoch: non_neg_integer(),
+          epoch_started_at: DateTime.t() | nil,
           parameters: Parameters.t() | nil,
           policies: Policies.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil
         }
   defstruct state: :uninitialized,
+            recovery_attempt: nil,
             coordinators: [],
             epoch: 0,
+            epoch_started_at: nil,
             parameters: nil,
             policies: nil,
             transaction_system_layout: nil
@@ -45,6 +50,7 @@ defmodule Bedrock.ControlPlane.Config do
       state: :uninitialized,
       coordinators: coordinators,
       epoch: 0,
+      epoch_started_at: nil,
       parameters: Parameters.new(coordinators),
       policies: Policies.new(),
       transaction_system_layout: TransactionSystemLayout.new()
@@ -75,6 +81,10 @@ defmodule Bedrock.ControlPlane.Config do
 
   defmodule Mutations do
     @type t :: Bedrock.ControlPlane.Config.t()
+
+    @spec update_started_at(t(), DateTime.t()) :: t()
+    def update_started_at(config, epoch_started_at),
+      do: put_in(config.epoch_started_at, epoch_started_at)
 
     @spec update_epoch(t(), pos_integer()) :: t()
     def update_epoch(config, epoch), do: put_in(config.epoch, epoch)

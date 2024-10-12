@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def init({cluster, otp_name}) do
     with my_node <- Node.self(),
-         {:ok, coordinator_nodes} <- cluster.coordinator_nodes(),
+         {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          raft_log <- InMemoryLog.new() do
       {last_durable_txn_id, config} =
@@ -80,8 +80,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          last_durable_txn_id: last_durable_txn_id
        }}
     else
-      {:error, :not_a_coordinator} ->
-        :ignore
+      {:error, :unavailable} -> :ignore
+      {:error, :not_a_coordinator} -> :ignore
     end
   end
 

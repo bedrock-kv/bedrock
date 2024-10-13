@@ -62,6 +62,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_continue(:finish_init, t) do
     t
     |> claim_config()
+    |> store_changes_to_config()
+    |> ping_all_nodes()
     |> then(fn
       %{config: %{state: :uninitialized}} = t -> t |> noreply()
       t -> t |> noreply(:start_recovery)
@@ -71,7 +73,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_continue(:start_recovery, t) do
     t
     |> start_new_recovery_attempt()
-    |> ping_all_nodes()
     |> recover()
     |> store_changes_to_config()
     |> noreply()
@@ -109,6 +110,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_cast({:pong, node}, t) do
     t
     |> node_last_seen_at(node, now())
+    |> store_changes_to_config()
+    |> noreply()
+  end
+
+  def handle_cast({:ping, pid}, t) do
+    GenServer.cast(pid, {:pong, self()})
+
+    t
+    |> node_last_seen_at(node(pid), now())
     |> store_changes_to_config()
     |> noreply()
   end

@@ -28,6 +28,19 @@ defmodule Bedrock.ControlPlane.ClusterController do
     do: cluster_controller |> cast({:pong, from_node})
 
   @doc """
+  Sends a 'ping' message to the specified cluster controller from the given node.
+
+  ## Parameters
+  - `cluster_controller`: The reference to the cluster controller (a GenServer).
+
+  ## Returns
+  - `:ok`: Indicates the message was successfully sent.
+  """
+  @spec send_ping(cluster_controller :: ref()) :: :ok
+  def send_ping(cluster_controller),
+    do: cluster_controller |> cast({:ping, self()})
+
+  @doc """
   Reports a new worker to the cluster controller.
 
   ## Parameters

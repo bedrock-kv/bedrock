@@ -7,8 +7,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           cluster: module(),
           leader_node: node() | :undecided,
           my_node: node(),
-          am_i_the_leader: boolean(),
-          controller: :unavailable | ClusterController.ref(),
+          controller: ClusterController.ref() | :unavailable,
           controller_otp_name: atom(),
           otp_name: atom(),
           raft: Raft.t(),
@@ -20,7 +19,6 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   defstruct cluster: nil,
             leader_node: :undecided,
             my_node: nil,
-            am_i_the_leader: false,
             controller: :unavailable,
             controller_otp_name: nil,
             otp_name: nil,
@@ -31,16 +29,14 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             waiting_list: %{}
 
   @spec update_controller(t :: t(), new_controller :: ClusterController.ref()) :: t()
-  def update_controller(t, new_controller), do: put_in(t.controller, new_controller)
+  def update_controller(t, new_controller),
+    do: put_in(t.controller, new_controller)
+
+  def update_controller_in_config(t, new_controller),
+    do: update_in(t.config, &Config.Mutations.update_controller(&1, new_controller))
 
   @spec update_leader_node(t :: t(), leader_node :: node()) :: t()
-  def update_leader_node(t, leader_node) do
-    put_in(t.leader_node, leader_node)
-    |> update_am_i_the_leader(leader_node == t.my_node)
-  end
-
-  @spec update_am_i_the_leader(t :: t(), am_i_the_leader :: boolean()) :: t()
-  def update_am_i_the_leader(t, am_i_the_leader), do: put_in(t.am_i_the_leader, am_i_the_leader)
+  def update_leader_node(t, leader_node), do: put_in(t.leader_node, leader_node)
 
   @spec update_raft(t(), Raft.t()) :: t()
   def update_raft(t, raft), do: put_in(t.raft, raft)

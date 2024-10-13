@@ -56,7 +56,7 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   """
   @spec change_cluster_controller(State.t(), ClusterController.ref() | :unavailable) :: State.t()
   def change_cluster_controller(t, controller) when t.controller == controller,
-    do: t |> cancel_timer()
+    do: t |> cancel_timer() |> maybe_set_ping_timer()
 
   def change_cluster_controller(t, controller) do
     put_in(t.controller, controller)

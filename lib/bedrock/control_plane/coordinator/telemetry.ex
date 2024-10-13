@@ -15,11 +15,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
 
   @doc """
   """
-  @spec emit_cluster_controller_changed(State.t()) :: State.t()
-  def emit_cluster_controller_changed(t) do
+  @spec emit_cluster_controller_changed(State.t(), controller :: pid()) :: State.t()
+  def emit_cluster_controller_changed(t, controller) do
     :telemetry.execute([:bedrock, :cluster, :controller, :changed], %{}, %{
       cluster: t.cluster,
-      controller: t.controller
+      controller: controller
     })
 
     t

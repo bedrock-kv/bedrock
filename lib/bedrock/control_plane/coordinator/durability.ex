@@ -4,10 +4,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Config
 
+  import Bedrock.ControlPlane.Coordinator.Telemetry,
+    only: [
+      emit_cluster_controller_changed: 2
+    ]
+
   import Bedrock.ControlPlane.Coordinator.State,
     only: [
       update_raft: 2,
       update_config: 2,
+      update_controller: 2,
       update_last_durable_txn_id: 2
     ]
 
@@ -36,7 +42,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       |> update_config(newest_durable_config)
       |> update_last_durable_txn_id(txn_id)
     end)
+    |> maybe_update_controller_from_config()
   end
+
+  def maybe_update_controller_from_config(t)
+      when t.controller != t.config.transaction_system_layout.controller do
+    new_controller = t.config.transaction_system_layout.controller
+
+    t
+    |> update_controller(new_controller)
+    |> emit_cluster_controller_changed(new_controller)
+  end
+
+  def maybe_update_controller_from_config(t), do: t
 
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list

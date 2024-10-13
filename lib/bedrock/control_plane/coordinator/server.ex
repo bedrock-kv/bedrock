@@ -16,13 +16,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.ControlPlane.Coordinator.ControllerManagement,
     only: [
-      start_or_find_a_new_controller!: 3,
-      stop_any_running_controller_on_this_node!: 1
+      start_cluster_controller_if_necessary: 1,
+      stop_any_cluster_controller_on_this_node!: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State,
     only: [
+      update_leader_node: 2,
       update_raft: 2
+    ]
+
+  import Bedrock.ControlPlane.Coordinator.Telemetry,
+    only: [
+      emit_cluster_leadership_changed: 1
     ]
 
   require Logger
@@ -89,8 +95,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_call(:fetch_config, _from, t),
     do: t |> reply({:ok, t.config})
 
-  def handle_call(:fetch_controller, _from, t),
-    do: t |> reply({:ok, t.controller})
+  def handle_call(:fetch_controller, _from, t) do
+    if t.controller == :unavailable do
+      case get_in(t.config.transaction_system_layout.controller) do
+        nil -> t |> reply({:error, :unavailable})
+        controller -> t |> reply({:ok, controller})
+      end
+    else
+      t |> reply({:ok, t.controller})
+    end
+  end
 
   def handle_call({:write_config, config}, from, t) do
     t
@@ -105,10 +119,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     do: t |> reply({:pong, self()})
 
   @impl true
-  def handle_info({:raft, :leadership_changed, {new_leader, epoch}}, t) do
+  def handle_info({:raft, :leadership_changed, {:undecided, _epoch}}, t)
+      when :undecided == t.leader_node,
+      do: t |> noreply()
+
+  def handle_info({:raft, :leadership_changed, {new_leader, _epoch}}, t) do
     t
-    |> stop_any_running_controller_on_this_node!()
-    |> start_or_find_a_new_controller!(new_leader, epoch)
+    |> update_leader_node(new_leader)
+    |> emit_cluster_leadership_changed()
+    |> stop_any_cluster_controller_on_this_node!()
+    |> start_cluster_controller_if_necessary()
     |> noreply()
   end
 

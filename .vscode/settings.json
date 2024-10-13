@@ -12,8 +12,10 @@
 		"dets",
 		"noproc",
 		"noreply",
+		"orelse",
 		"pids",
 		"sname",
+		"upsert",
 		"whereis"
 	],
 }

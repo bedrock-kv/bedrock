@@ -85,7 +85,7 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
       [] ->
         false
 
-      [_row = {^node, _last_seen_at, _capabilties, up_down, _authorized}] ->
+      [_row = {^node, _last_seen_at, _capabilities, up_down, _authorized}] ->
         :up == up_down
     end
   end
@@ -98,12 +98,12 @@ defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
     :ets.lookup(t, node)
     |> case do
       [] -> false
-      [_row = {^node, _last_seen_at, _capabilties, _up_down, authorized}] -> authorized
+      [_row = {^node, _last_seen_at, _capabilities, _up_down, authorized}] -> authorized
     end
   end
 
   @doc """
-  Get a list of the capabilties that a node is advertising.
+  Get a list of the capabilities that a node is advertising.
   """
   @spec capabilities(t(), node()) :: [atom()] | :unknown
   def capabilities(t, node) do

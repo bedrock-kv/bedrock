@@ -182,6 +182,12 @@ defmodule Bedrock.Cluster.Monitor.Server do
     end
   end
 
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) when t.coordinator == pid do
+    t
+    |> change_coordinator(:unavailable)
+    |> noreply(:find_a_live_coordinator)
+  end
+
   @doc false
   @impl GenServer
   def handle_cast({:ping, cluster_controller, _epoch}, t),

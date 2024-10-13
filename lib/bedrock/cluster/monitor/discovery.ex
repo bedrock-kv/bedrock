@@ -6,6 +6,11 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
 
   use Bedrock.Internal.TimerManagement, type: State.t()
 
+  import Bedrock.Cluster.Monitor.State,
+    only: [
+      set_coordinator: 2
+    ]
+
   require Logger
 
   @doc """
@@ -26,12 +31,13 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
         :ping,
         t.cluster.coordinator_ping_timeout_in_ms()
       )
+      |> IO.inspect()
       |> case do
         {[], _failures} ->
           {:error, :unavailable}
 
-        {[{first_node, {:pong, _coordinator_pid}} | _other_coordinators], _failures} ->
-          {:ok, {coordinator_otp_name, first_node}}
+        {[{_first_node, {:pong, coordinator_pid}} | _other_coordinators], _failures} ->
+          {:ok, coordinator_pid}
       end
     end
   end
@@ -41,12 +47,23 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   have we do nothing, otherwise we publish a message to a topic to let everyone
   on this node know that the coordinator has changed.
   """
+
   @spec change_coordinator(State.t(), Coordinator.ref() | :unavailable) :: State.t()
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
 
+  def change_coordinator(t, :unavailable), do: t |> set_coordinator(:unavailable)
+
   def change_coordinator(t, coordinator) do
     PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
-    put_in(t.coordinator, coordinator)
+
+    t
+    |> set_coordinator(coordinator)
+    |> start_monitoring_coordinator()
+  end
+
+  def start_monitoring_coordinator(t) do
+    Process.monitor(t.coordinator)
+    t
   end
 
   @doc """

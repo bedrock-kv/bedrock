@@ -31,7 +31,6 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
         :ping,
         t.cluster.coordinator_ping_timeout_in_ms()
       )
-      |> IO.inspect()
       |> case do
         {[], _failures} ->
           {:error, :unavailable}

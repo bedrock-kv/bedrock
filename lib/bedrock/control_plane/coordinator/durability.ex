@@ -17,6 +17,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       update_last_durable_txn_id: 2
     ]
 
+  require Logger
+
   @spec durably_write_config(State.t(), Config.t(), GenServer.from()) ::
           {:ok, State.t()} | {:error, :not_leader}
   def durably_write_config(t, config, from) do
@@ -35,6 +37,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   @spec durable_write_to_config_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
   def durable_write_to_config_completed(t, log, durable_txn_id) do
+    Logger.debug("durable_write_to_config_completed: #{inspect(durable_txn_id)}")
+
     log
     |> Log.transactions_from(t.last_durable_txn_id, durable_txn_id)
     |> Enum.reduce(t, fn {txn_id, newest_durable_config}, t ->

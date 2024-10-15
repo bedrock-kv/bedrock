@@ -18,8 +18,8 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
   @spec start_cluster_controller_if_necessary(State.t()) :: State.t()
   def start_cluster_controller_if_necessary(t)
       when t.leader_node == t.my_node do
-    DynamicSupervisor.start_child(
-      t.supervisor_otp_name,
+    t.supervisor_otp_name
+    |> DynamicSupervisor.start_child(
       {ClusterController,
        [
          cluster: t.cluster,
@@ -46,28 +46,20 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
   @spec stop_any_cluster_controller_on_this_node!(State.t()) :: State.t()
   def stop_any_cluster_controller_on_this_node!(t) do
     Process.whereis(t.controller_otp_name)
-    |> stop_process_with_pid(timeout_in_ms(:old_controller_stop))
     |> case do
-      :ok -> t |> update_controller(:unavailable)
-      :timeout -> raise "Bedrock: failed to stop controller (#{inspect(t.controller)})"
-    end
-  end
+      nil ->
+        t
 
-  @spec stop_process_with_pid(pid() | nil, timeout()) :: :ok | :timeout
-  def stop_process_with_pid(nil, _timeout_in_ms), do: :ok
+      controller_pid ->
+        t.supervisor_otp_name
+        |> DynamicSupervisor.terminate_child(controller_pid)
+        |> case do
+          :ok ->
+            t |> update_controller(:unavailable)
 
-  def stop_process_with_pid(pid, timeout_in_ms) do
-    try do
-      ref = Process.monitor(pid)
-      :ok = GenServer.stop(pid, :shutdown, timeout_in_ms)
-
-      receive do
-        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-      after
-        timeout_in_ms -> :timeout
-      end
-    catch
-      :exit, {:noproc, _} -> :ok
+          {:error, :not_found} ->
+            t |> update_controller(:unavailable)
+        end
     end
   end
 end

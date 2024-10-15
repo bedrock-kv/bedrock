@@ -182,10 +182,14 @@ defmodule Bedrock.Cluster.Monitor.Server do
     end
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) when t.coordinator == pid do
-    t
-    |> change_coordinator(:unavailable)
-    |> noreply(:find_a_live_coordinator)
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) do
+    if pid == t.coordinator || pid == {t.cluster.otp_name(:coordinator), t.node} do
+      t
+      |> change_coordinator(:unavailable)
+      |> noreply(:find_a_live_coordinator)
+    else
+      t |> noreply()
+    end
   end
 
   @doc false

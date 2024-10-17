@@ -1,9 +1,11 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.Client
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Internal.Logging.ControlPlaneTelemetry
+  alias Bedrock.Internal.Logging.RaftTelemetry
 
   require Logger
 
@@ -78,7 +80,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   def init({cluster, path_to_descriptor, descriptor}) do
     capabilities = cluster.capabilities()
 
-    :ok = Bedrock.Internal.Logging.start()
+    cluster.node_config()
+    |> Keyword.get(:trace, [])
+    |> Enum.each(fn
+      :control_plane -> :ok = ControlPlaneTelemetry.start()
+      :raft -> :ok = RaftTelemetry.start()
+    end)
 
     children =
       [

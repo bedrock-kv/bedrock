@@ -1,26 +1,30 @@
-defmodule Bedrock.Internal.Logging do
+defmodule Bedrock.Internal.Logging.ControlPlaneTelemetry do
   require Logger
+
+  defp handler_id, do: "bedrock_logging_controlplane_telemetry"
 
   def start do
     :telemetry.attach_many(
-      "bedrock_logging",
+      handler_id(),
       [
         [:bedrock, :cluster, :controller, :changed],
         [:bedrock, :cluster, :leadership, :changed]
       ],
-      &__MODULE__.handle_cluster_controller_replaced/4,
+      &__MODULE__.log_event/4,
       nil
     )
   end
 
-  def handle_cluster_controller_replaced(
+  def stop, do: :telemetry.detach(handler_id())
+
+  def log_event(
         [:bedrock, :cluster, :leadership, :changed],
         _measurements,
         %{cluster: cluster, new_leader: leader} = _metadata,
         _config
       ) do
     if leader == :undecided do
-      Logger.info("Bedrock [#{cluster.name()}]: A quorum cannot be reached to elect a leader",
+      Logger.info("Bedrock [#{cluster.name()}]: There is no leader",
         ansi_color: :red
       )
     else
@@ -31,7 +35,7 @@ defmodule Bedrock.Internal.Logging do
     end
   end
 
-  def handle_cluster_controller_replaced(
+  def log_event(
         [:bedrock, :cluster, :controller, :changed],
         _measurements,
         %{cluster: cluster, controller: controller} = _metadata,

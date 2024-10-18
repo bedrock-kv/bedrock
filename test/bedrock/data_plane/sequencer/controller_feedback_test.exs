@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.Sequencer.ControllerFeedbackTest do
   alias Bedrock.DataPlane.Sequencer.ControllerFeedback
   alias Bedrock.DataPlane.Sequencer.State
 
-  import ControllerFeedback, only: [accept_invitation: 1, decline_invitation: 1]
+  import ControllerFeedback, only: [accept_invitation: 1, decline_invitation: 2]
   import Bedrock.DataPlane.Sequencer.Versions, only: [encode: 3]
 
   setup do
@@ -17,13 +17,15 @@ defmodule Bedrock.DataPlane.Sequencer.ControllerFeedbackTest do
     expected_controller = self()
     expected_version = encode(state.epoch, 0, 0)
 
-    assert_received {:"$gen_cast", {:recruitment_invitation_accepted, ^expected_controller, ^expected_version}}
+    assert_received {:"$gen_cast",
+                     {:recruitment_invitation_accepted, ^expected_controller, ^expected_version}}
   end
 
   test "decline_invitation/1 sends recruitment_invitation_declined message", %{state: state} do
-    decline_invitation(state)
-
     expected_controller = self()
+
+    decline_invitation(state, expected_controller)
+
     assert_received {:"$gen_cast", {:recruitment_invitation_declined, ^expected_controller}}
   end
 end

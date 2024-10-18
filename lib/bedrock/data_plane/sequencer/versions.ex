@@ -1,8 +1,6 @@
 defmodule Bedrock.DataPlane.Sequencer.Versions do
   alias Bedrock.DataPlane.Sequencer.State
 
-  import Bedrock.DataPlane.Sequencer.Telemetry, only: [track_versions: 4]
-
   @spec next_version(State.t()) :: {Bedrock.version(), State.t()}
   def next_version(t) do
     %{last_timestamp_at: last_timestamp_at} = t
@@ -15,7 +13,6 @@ defmodule Bedrock.DataPlane.Sequencer.Versions do
           if sequence < t.max_transactions_per_ms do
             {last_timestamp_at, sequence}
           else
-            track_versions(t.epoch, last_timestamp_at, sequence, t.last_committed_version)
             {spin_until_next_ms(last_timestamp_at), 0}
           end
 

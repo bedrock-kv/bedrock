@@ -16,10 +16,10 @@ defmodule Bedrock.DataPlane.Sequencer.ControllerFeedback do
     t
   end
 
-  @spec decline_invitation(State.t()) :: State.t()
-  def decline_invitation(t) do
+  @spec decline_invitation(State.t(), controller :: pid()) :: State.t()
+  def decline_invitation(t, controller) do
     GenServer.cast(
-      t.controller,
+      controller,
       {:recruitment_invitation_declined, self()}
     )
 

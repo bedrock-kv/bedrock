@@ -15,7 +15,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   import Bedrock.DataPlane.Sequencer.ControllerFeedback,
     only: [
       accept_invitation: 1,
-      decline_invitation: 1
+      decline_invitation: 2
     ]
 
   use GenServer
@@ -27,13 +27,16 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     started_at = opts[:started_at] || raise "Missing :started_at option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
+    last_committed_version =
+      opts[:last_committed_version] || raise "Missing :last_committed_version option"
+
     %{
       id: __MODULE__,
       start:
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, controller, epoch, started_at},
+           {cluster, controller, epoch, started_at, last_committed_version},
            [name: otp_name]
          ]},
       restart: :temporary
@@ -66,34 +69,34 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
 
   @impl true
   def handle_cast(
-        {:recruitment_invitation, controller, epoch, system_time_started_at_in_ms,
+        {:recruitment_invitation, controller, new_epoch, system_time_started_at_in_ms,
          last_committed_version},
         t
       )
-      when t.epoch > epoch do
+      when new_epoch > t.epoch do
     %State{
       cluster: t.cluster,
       controller: controller,
-      epoch: epoch,
+      epoch: new_epoch,
       last_committed_version: last_committed_version
     }
     |> accept_invitation()
     |> noreply({:start_clock, system_time_started_at_in_ms})
   end
 
-  def handle_cast({:recruitment_invitation, _controller, _epoch}, t),
-    do: t |> decline_invitation() |> noreply()
+  def handle_cast({:recruitment_invitation, controller, _, _, _}, t),
+    do: t |> decline_invitation(controller) |> noreply()
 
   @impl GenServer
   def handle_call(:next_read_version, _from, t),
-    do: t |> reply({:ok, t.latest_committed_version})
+    do: t |> reply({:ok, t.last_committed_version})
 
   def handle_call(:next_commit_version, _from, t) do
     {next_version, t} = next_version(t)
 
     t
     |> update_last_committed_version(next_version)
-    |> reply({:ok, {t.latest_committed_version, next_version}})
+    |> reply({:ok, {t.last_committed_version, next_version}})
   end
 
   @impl GenServer

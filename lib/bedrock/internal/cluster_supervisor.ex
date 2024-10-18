@@ -15,18 +15,19 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
-
+    node = opts[:node] || Node.self()
+    cluster_name = cluster.name()
     path_to_descriptor = opts[:path_to_descriptor] || cluster.path_to_descriptor()
 
     descriptor =
-      with :ok <- check_node_is_in_a_cluster(),
+      with :ok <- check_node_is_in_a_cluster(node),
            {:ok, descriptor} <- path_to_descriptor |> Descriptor.read_from_file(),
-           :ok <- check_descriptor_is_for_cluster(descriptor, cluster) do
+           :ok <- check_descriptor_is_for_cluster(descriptor, cluster_name) do
         descriptor
       else
         {:error, :descriptor_not_for_this_cluster} ->
           Logger.warning(
-            "Bedrock: The cluster name in the descriptor file does not match the cluster name (#{cluster.name()}) in the configuration."
+            "Bedrock: The cluster name in the descriptor file does not match the cluster name (#{cluster_name}) in the configuration."
           )
 
           nil
@@ -42,7 +43,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       |> case do
         nil ->
           Logger.warning("Bedrock: Creating a default single-node configuration")
-          Descriptor.new(cluster.name(), [Node.self()])
+          Descriptor.new(cluster_name, [node])
 
         descriptor ->
           descriptor
@@ -54,7 +55,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
         {Supervisor, :start_link,
          [
            __MODULE__,
-           {cluster, path_to_descriptor, descriptor},
+           {node, cluster, path_to_descriptor, descriptor},
            []
          ]},
       restart: :permanent,
@@ -62,22 +63,22 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     }
   end
 
-  @spec check_node_is_in_a_cluster() :: :ok | {:error, :not_in_a_cluster}
-  defp check_node_is_in_a_cluster,
-    do: if(Node.self() != :nonode@nohost, do: :ok, else: {:error, :not_in_a_cluster})
+  @spec check_node_is_in_a_cluster(node()) :: :ok | {:error, :not_in_a_cluster}
+  defp check_node_is_in_a_cluster(:nonode@nohost), do: {:error, :not_in_a_cluster}
+  defp check_node_is_in_a_cluster(_), do: :ok
 
-  @spec check_descriptor_is_for_cluster(Descriptor.t(), module()) ::
+  @spec check_descriptor_is_for_cluster(Descriptor.t(), cluster_name :: String.t()) ::
           :ok | {:error, :descriptor_not_for_this_cluster}
-  defp check_descriptor_is_for_cluster(descriptor, cluster),
+  defp check_descriptor_is_for_cluster(descriptor, cluster_name),
     do:
-      if(descriptor.cluster_name == cluster.name(),
+      if(descriptor.cluster_name == cluster_name,
         do: :ok,
         else: {:error, :descriptor_not_for_this_cluster}
       )
 
   @doc false
   @impl Supervisor
-  def init({cluster, path_to_descriptor, descriptor}) do
+  def init({_node, cluster, path_to_descriptor, descriptor}) do
     capabilities = cluster.capabilities()
 
     cluster.node_config()

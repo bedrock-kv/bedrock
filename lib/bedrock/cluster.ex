@@ -237,7 +237,8 @@ defmodule Bedrock.Cluster do
       def client, do: ClusterSupervisor.client(__MODULE__)
 
       @doc false
-      def child_spec(opts), do: ClusterSupervisor.child_spec([{:cluster, __MODULE__} | opts])
+      def child_spec(opts),
+        do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
 
       @doc false
       def ping_nodes(nodes, cluster_controller, epoch),

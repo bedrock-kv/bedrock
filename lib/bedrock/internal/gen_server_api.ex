@@ -26,10 +26,11 @@ defmodule Bedrock.Internal.GenServerApi do
   def cast(server, message), do: GenServer.cast(server, message)
 
   @spec call(GenServer.name(), message :: any(), timeout()) ::
-          :ok | {:ok, any()} | {:error, :unavailable | term()}
+          any() | {:error, :unavailable | :timeout | term()}
   def call(server, message, timeout) do
     GenServer.call(server, message, timeout)
   catch
-    :exit, _ -> {:error, :unavailable}
+    :exit, :noproc -> {:error, :unavailable}
+    :exit, :timeout -> {:error, :timeout}
   end
 end

@@ -5,6 +5,9 @@ defmodule Bedrock do
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key() | nil}
   @type epoch :: non_neg_integer()
   @type timeout_in_ms :: :infinity | non_neg_integer()
+  @type timestamp_in_ms :: non_neg_integer()
+
+  @type version :: binary()
 
   @type tag :: non_neg_integer()
 

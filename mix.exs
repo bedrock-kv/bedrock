@@ -37,6 +37,7 @@ defmodule Bedrock.MixProject do
   def add_deps_for_dev_and_test(deps) do
     deps ++
       [
+        {:stream_data, "~> 1.1", only: :test},
         {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},

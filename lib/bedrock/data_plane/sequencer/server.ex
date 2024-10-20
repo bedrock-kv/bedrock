@@ -1,17 +1,6 @@
 defmodule Bedrock.DataPlane.Sequencer.Server do
   alias Bedrock.DataPlane.Sequencer.State
 
-  import Bedrock.DataPlane.Sequencer.State,
-    only: [
-      update_last_committed_version: 2
-    ]
-
-  import Bedrock.DataPlane.Sequencer.Versions,
-    only: [
-      next_version: 1,
-      monotonic_time_in_ms: 0
-    ]
-
   import Bedrock.DataPlane.Sequencer.ControllerFeedback,
     only: [
       accept_invitation: 1,
@@ -44,44 +33,27 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
-  def init({cluster, controller, epoch, system_time_started_at_in_ms, last_committed_version}) do
+  def init({cluster, controller, epoch, last_committed_version}) do
     %State{
       cluster: cluster,
       controller: controller,
       epoch: epoch,
       last_committed_version: last_committed_version
     }
-    |> then(&{:ok, &1, {:continue, {:start_clock, system_time_started_at_in_ms}}})
+    |> then(&{:ok, &1})
   end
 
   @impl true
-  def handle_continue({:start_clock, system_time_started_at_in_ms}, t) do
-    now = monotonic_time_in_ms()
-
+  def handle_cast({:recruitment_invitation, controller, new_epoch, last_committed_version}, t)
+      when new_epoch > t.epoch do
     %{
       t
-      | started_at: now - (:os.system_time(:millisecond) - system_time_started_at_in_ms),
-        last_timestamp_at: now,
-        sequence: 0
-    }
-    |> noreply()
-  end
-
-  @impl true
-  def handle_cast(
-        {:recruitment_invitation, controller, new_epoch, system_time_started_at_in_ms,
-         last_committed_version},
-        t
-      )
-      when new_epoch > t.epoch do
-    %State{
-      cluster: t.cluster,
-      controller: controller,
-      epoch: new_epoch,
-      last_committed_version: last_committed_version
+      | controller: controller,
+        epoch: new_epoch,
+        last_committed_version: last_committed_version
     }
     |> accept_invitation()
-    |> noreply({:start_clock, system_time_started_at_in_ms})
+    |> noreply()
   end
 
   def handle_cast({:recruitment_invitation, controller, _, _, _}, t),
@@ -92,17 +64,15 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     do: t |> reply({:ok, t.last_committed_version})
 
   def handle_call(:next_commit_version, _from, t) do
-    {next_version, t} = next_version(t)
+    next_version = 1 + t.last_committed_version
 
-    t
-    |> update_last_committed_version(next_version)
-    |> reply({:ok, {t.last_committed_version, next_version}})
+    %{t | last_committed_version: next_version}
+    |> reply({:ok, t.last_committed_version, next_version})
   end
 
   @impl GenServer
   def handle_info(:die, _t), do: raise("die!")
 
   defp noreply(t), do: {:noreply, t}
-  defp noreply(t, continue), do: {:noreply, t, {:continue, continue}}
   defp reply(t, result), do: {:reply, result, t}
 end

@@ -7,7 +7,7 @@ defmodule Bedrock do
   @type timeout_in_ms :: :infinity | non_neg_integer()
   @type timestamp_in_ms :: non_neg_integer()
 
-  @type version :: binary()
+  @type version :: non_neg_integer()
 
   @type tag :: non_neg_integer()
 

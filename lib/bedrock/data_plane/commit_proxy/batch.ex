@@ -29,10 +29,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
     }
   end
 
+  @spec transactions_in_order(t()) :: [{GenServer.from(), Bedrock.transaction()}]
+  def transactions_in_order(t),
+    do: t.buffer |> Enum.reverse()
+
   @spec add_transaction(t(), Bedrock.transaction(), from :: GenServer.from()) :: t()
   def add_transaction(t, transaction, from),
     do: %{t | buffer: [{from, transaction} | t.buffer], n_transactions: t.n_transactions + 1}
 
+  @spec set_finalized_at(t(), Bedrock.timestamp_in_ms()) :: t()
   def set_finalized_at(t, finalized_at),
     do: %{t | finalized_at: finalized_at}
 end

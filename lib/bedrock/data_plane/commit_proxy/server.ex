@@ -1,14 +1,14 @@
 defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
 
-  import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 4]
-
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
       start_batch_if_needed: 1,
       add_transaction_to_batch: 3,
       apply_finalization_policy: 1
     ]
+
+  import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
   use GenServer
 
@@ -69,72 +69,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: t |> noreply(continue: {:finalize, t.batch})
 
   def handle_continue({:finalize, batch}, t) do
-    transactions_in_order = batch.buffer |> Enum.reverse()
-
-    commit_version = batch.commit_version
-
-    {:ok, aborted} =
-      resolve_transactions(
-        t.transaction_system_layout.resolver,
-        batch.last_commit_version,
-        commit_version,
-        transactions_in_order |> Enum.map(&prepare_transaction_for_resolution/1)
-      )
-
-    {oks, aborts, writes} = prepare_transactions_for_log(transactions_in_order, aborted)
-
-    :ok = reply_to_all_clients_with_aborted_transactions(aborts)
-
-    combined_transaction = {{batch.last_commit_version, commit_version}, writes}
-
-    :ok = write_transaction_to_logs(t, combined_transaction)
-    :ok = reply_to_all_clients_with_successful_transactions(oks, commit_version)
-
+    :ok = finalize_batch(batch, t.transaction_system_layout)
     t |> noreply()
   end
-
-  def write_transaction_to_logs(_t, _transaction) do
-    :ok
-  end
-
-  @spec reply_to_all_clients_with_aborted_transactions([GenServer.from()]) :: :ok
-  def reply_to_all_clients_with_aborted_transactions(aborts),
-    do: Enum.each(aborts, &GenServer.reply(&1, {:error, :aborted}))
-
-  @spec reply_to_all_clients_with_successful_transactions([GenServer.from()], Bedrock.version()) ::
-          :ok
-  def reply_to_all_clients_with_successful_transactions(oks, commit_version),
-    do: Enum.each(oks, &GenServer.reply(&1, {:ok, commit_version}))
-
-  @spec prepare_transactions_for_log(
-          transactions :: [Bedrock.transaction()],
-          aborts :: [integer()]
-        ) :: {oks :: [pid()], aborts :: [pid()], writes :: %{Bedrock.key() => Bedrock.value()}}
-  def prepare_transactions_for_log(transactions, []) do
-    transactions
-    |> Enum.reduce({[], %{}}, fn {from, _, _, writes}, {pids, writes} ->
-      {[from | pids], Map.merge(writes, writes)}
-    end)
-    |> then(fn {pids, writes} -> {pids, [], writes} end)
-  end
-
-  def prepare_transactions_for_log(transactions, aborts) do
-    aborted_set = MapSet.new(aborts)
-
-    transactions
-    |> Enum.with_index()
-    |> Enum.reduce({[], [], %{}}, fn
-      {{from, _, _, writes}, idx}, {oks, aborts, all_writes} ->
-        if MapSet.member?(aborted_set, idx) do
-          {oks, [from | aborts], writes}
-        else
-          {[from | oks], aborts, Map.merge(all_writes, writes)}
-        end
-    end)
-  end
-
-  def prepare_transaction_for_resolution({_from, read_version, reads, writes}),
-    do: {read_version, reads, writes |> Map.keys()}
 
   defp noreply(t, opts \\ [])
   defp noreply(t, continue: continue, timeout: ms), do: {:noreply, t, ms, {:continue, continue}}

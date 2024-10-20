@@ -5,8 +5,8 @@ defmodule Bedrock.DataPlane.Resolver do
 
   @type transaction :: {
           read_version :: Bedrock.version(),
-          reads :: [Bedrock.key() | Bedrock.key_range()],
-          writes :: [Bedrock.key() | Bedrock.key_range()]
+          read_keys :: [Bedrock.key() | Bedrock.key_range()],
+          write_keys :: [Bedrock.key() | Bedrock.key_range()]
         }
 
   @spec resolve_transactions(

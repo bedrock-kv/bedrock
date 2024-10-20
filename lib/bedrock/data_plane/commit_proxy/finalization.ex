@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Transaction
@@ -13,7 +12,31 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
 
-  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) :: State.t()
+  @doc """
+  Finalizes a batch of transactions by resolving conflicts, separating
+  successful transactions from aborts, and pushing them to the log servers.
+
+  This function processes a batch of transactions, first ensuring that any
+  conflicts are resolved. After conflict resolution, it organizes the
+  transactions into those that will be committed and those that will be aborted.
+
+  Clients with aborted transactions are notified of the abort immediately.
+  Successful transactions are pushed to the system's logs, and clients that
+  submitted the transactions are notified when a majority of the log servers
+  have acknowledged.
+
+  ## Parameters
+
+    - `batch`: A `Batch.t()` struct that contains the transactions to be finalized,
+      along with the commit version details.
+    - `transaction_system_layout`: Provides configuration and systemic details,
+      including the available resolver and log servers.
+
+  ## Returns
+    - `:ok` when the batch has been processed, and all clients have been
+      notified about the status of their transactions.
+  """
+  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) :: :ok
   def finalize_batch(batch, transaction_system_layout) do
     transactions_in_order = transactions_in_order(batch)
 
@@ -199,6 +222,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end)
   end
 
+  @doc """
+  Transforms the list of transactions for resolution.
+
+  Converts the transaction data to the format expected by the conflict
+  resolution logic. For each transaction, it extracts the read version,
+  the reads, and the keys of the writes, discarding the values of the writes
+  as they are not needed for resolution.
+
+  ## Parameters
+
+    - `transactions`: A list of transactions where each transaction is
+      represented as a tuple containing the process `from` identifier,
+      read version, read data, and write data.
+
+  ## Returns
+    - A list of transformed transactions as tuples, each containing:
+      - The read version
+      - The read data
+      - The keys of the write data
+  """
   @spec transform_transactions_for_resolution([Bedrock.transaction()]) :: [Resolver.transaction()]
   def transform_transactions_for_resolution(transactions) do
     transactions

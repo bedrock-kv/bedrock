@@ -6,7 +6,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
   """
 
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Transaction
 
   use Bedrock.Internal.GenServerApi
 

@@ -108,8 +108,8 @@ defmodule Bedrock.ControlPlane.ClusterController do
           cluster_controller :: ref(),
           Log.id(),
           info :: [
-            last_tx_id: Transaction.version(),
-            minimum_durable_tx_id: Transaction.version()
+            last_tx_id: Bedrock.version(),
+            minimum_durable_tx_id: Bedrock.version()
           ]
         ) :: :ok
   def report_log_lock_complete(controller, id, info),

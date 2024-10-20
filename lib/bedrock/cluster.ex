@@ -12,7 +12,7 @@ defmodule Bedrock.Cluster do
 
   @type t :: module()
   @type name :: String.t()
-  @type version :: Transaction.version()
+  @type version :: Bedrock.version()
   @type transaction :: Transaction.t()
   @type storage :: Storage.ref()
   @type log :: Log.ref()

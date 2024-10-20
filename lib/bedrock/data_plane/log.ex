@@ -18,10 +18,10 @@ defmodule Bedrock.DataPlane.Log do
   check to ensure strict ordering. If the previous transaction id is not the
   latest transaction, the mutation will be rejected.
   """
-  @spec push(log :: ref(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
+  @spec push(log :: ref(), Transaction.t(), last_commit_version :: Bedrock.version()) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable}
-  def push(log, transaction, prev_tx_id) do
-    GenServer.call(log, {:push, transaction, prev_tx_id})
+  def push(log, transaction, last_commit_version) do
+    GenServer.call(log, {:push, transaction, last_commit_version})
   catch
     :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
@@ -45,14 +45,14 @@ defmodule Bedrock.DataPlane.Log do
   """
   @spec pull(
           log :: ref(),
-          last_tx_id :: Transaction.version(),
+          last_tx_id :: Bedrock.version(),
           demand :: pos_integer(),
           opts :: [
             subscriber_id: String.t(),
-            last_durable_tx_id: Transaction.version()
+            last_durable_tx_id: Bedrock.version()
           ]
         ) ::
-          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
+          {:ok, [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
   def pull(log, last_tx_id, demand, opts) do
     GenServer.call(log, {:pull, last_tx_id, demand, opts})
   catch

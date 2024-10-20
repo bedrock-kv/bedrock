@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Storage do
   alias Bedrock.Service.Worker
-  alias Bedrock.DataPlane.Transaction
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
@@ -17,7 +16,7 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Returns the value for the given key/version.
   """
-  @spec fetch(storage :: ref(), Bedrock.key(), Transaction.version(), Bedrock.timeout_in_ms()) ::
+  @spec fetch(storage :: ref(), Bedrock.key(), Bedrock.version(), Bedrock.timeout_in_ms()) ::
           {:ok, Bedrock.value()}
           | {:error,
              :timeout

@@ -1,0 +1,38 @@
+defmodule Bedrock.DataPlane.CommitProxy.Batch do
+  @type t :: %__MODULE__{
+          started_at: Bedrock.timestamp_in_ms(),
+          finalized_at: Bedrock.timestamp_in_ms() | nil,
+          last_commit_version: Bedrock.version(),
+          commit_version: Bedrock.version(),
+          n_transactions: non_neg_integer(),
+          buffer: [{GenServer.from(), Bedrock.transaction()}]
+        }
+  defstruct started_at: nil,
+            finalized_at: nil,
+            last_commit_version: nil,
+            commit_version: nil,
+            n_transactions: 0,
+            buffer: []
+
+  @spec new_builder(
+          Bedrock.timestamp_in_ms(),
+          last_commit_version :: Bedrock.version(),
+          commit_version :: Bedrock.version()
+        ) :: t()
+  def new_builder(started_at, last_commit_version, commit_version) do
+    %__MODULE__{
+      started_at: started_at,
+      last_commit_version: last_commit_version,
+      commit_version: commit_version,
+      n_transactions: 0,
+      buffer: []
+    }
+  end
+
+  @spec add_transaction(t(), Bedrock.transaction(), from :: GenServer.from()) :: t()
+  def add_transaction(t, transaction, from),
+    do: %{t | buffer: [{from, transaction} | t.buffer], n_transactions: t.n_transactions + 1}
+
+  def set_finalized_at(t, finalized_at),
+    do: %{t | finalized_at: finalized_at}
+end

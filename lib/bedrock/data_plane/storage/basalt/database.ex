@@ -41,7 +41,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     :ok
   end
 
-  @spec last_durable_version(database :: t()) :: Transaction.version() | :undefined
+  @spec last_durable_version(database :: t()) :: Bedrock.version() | :undefined
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
 
   @spec key_range(database :: t()) :: Storage.key_range() | :undefined
@@ -56,14 +56,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   end
 
   @spec apply_transactions(database :: t(), transactions :: [Transaction.t()]) ::
-          Transaction.version()
+          Bedrock.version()
   def apply_transactions(database, transactions),
     do: MVCC.apply_transactions!(database.mvcc, transactions)
 
   def last_committed_version(database),
     do: MVCC.newest_version(database.mvcc)
 
-  @spec fetch(database :: t(), Bedrock.key(), Transaction.version()) ::
+  @spec fetch(database :: t(), Bedrock.key(), Bedrock.version()) ::
           {:ok, Bedrock.value()}
           | {:error,
              :not_found
@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     end
   end
 
-  @spec fetch_from_persistence_and_write_back_to_mvcc(t(), Bedrock.key(), Transaction.version()) ::
+  @spec fetch_from_persistence_and_write_back_to_mvcc(t(), Bedrock.key(), Bedrock.version()) ::
           {:ok, Bedrock.value()} | {:error, :not_found}
   defp fetch_from_persistence_and_write_back_to_mvcc(database, key, version) do
     PersistentKeyValues.fetch(database.pkv, key)
@@ -128,7 +128,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   persistent key value store. Versions of values older than the given version
   are pruned from the store.
   """
-  @spec ensure_durability_to_version(db :: t(), Transaction.version()) :: :ok
+  @spec ensure_durability_to_version(db :: t(), Bedrock.version()) :: :ok
   def ensure_durability_to_version(db, version) do
     if transaction = MVCC.transaction_at_version(db.mvcc, version) do
       PersistentKeyValues.apply_transaction(db.pkv, transaction)

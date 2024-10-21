@@ -77,7 +77,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
             transactions: Transactions.t(),
             controller: LogController.ref() | nil,
             epoch: Bedrock.epoch() | nil,
-            last_tx_id: Transaction.version() | :undefined,
+            last_tx_id: Bedrock.version() | :undefined,
             cluster_controller: ClusterController.ref() | nil
           }
     defstruct state: nil,
@@ -113,8 +113,8 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     @type t :: :ets.table()
     @type subscription :: {
             id :: String.t(),
-            last_tx_id :: Transaction.version(),
-            last_durable_tx_id :: Transaction.version(),
+            last_tx_id :: Bedrock.version(),
+            last_durable_tx_id :: Bedrock.version(),
             last_seen_at :: integer()
           }
 
@@ -132,7 +132,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
       end
     end
 
-    @spec update(t(), String.t(), Transaction.version(), Transaction.version()) :: :ok
+    @spec update(t(), String.t(), Bedrock.version(), Bedrock.version()) :: :ok
     def update(t, id, last_tx_id, last_durable_tx_id) do
       :ets.insert(
         t,
@@ -187,7 +187,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     def report_health_to_transaction_log_controller(t, health),
       do: :ok = LogController.report_health(t.controller, t.id, health)
 
-    @spec push(t(), Transaction.t(), prev_tx_id :: Transaction.version()) ::
+    @spec push(t(), Transaction.t(), prev_tx_id :: Bedrock.version()) ::
             {:ok, t()} | {:error, :tx_out_of_order | :not_ready}
     def push(t, _transaction, _prev_tx_id) when t.state not in [:ready, :locked],
       do: {:error, :not_ready}
@@ -226,11 +226,11 @@ defmodule Bedrock.DataPlane.Log.Limestone do
 
     @spec pull(
             t :: t(),
-            last_tx_id :: Transaction.version(),
+            last_tx_id :: Bedrock.version(),
             count :: pos_integer(),
             opts :: [
               subscriber_id: String.t(),
-              last_durable_tx_id: Transaction.version()
+              last_durable_tx_id: Bedrock.version()
             ]
           ) ::
             {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}

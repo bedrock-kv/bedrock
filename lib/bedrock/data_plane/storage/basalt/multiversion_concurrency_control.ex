@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
 
   @type t :: :ets.table()
 
-  @spec new(otp_name :: atom(), Transaction.version()) :: t()
+  @spec new(otp_name :: atom(), Bedrock.version()) :: t()
   def new(otp_name, version) when is_atom(otp_name) do
     with mvcc <-
            :ets.new(otp_name, [
@@ -45,7 +45,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
           mvcc :: t(),
           transactions :: [Transaction.t()]
         ) ::
-          Transaction.version()
+          Bedrock.version()
   def apply_transactions!(mvcc, transactions) do
     latest_version = mvcc |> newest_version()
 
@@ -90,7 +90,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
 
   No error checking is performed on the version.
   """
-  @spec insert_read(mvcc :: t(), Bedrock.key(), Transaction.version(), Bedrock.value() | nil) ::
+  @spec insert_read(mvcc :: t(), Bedrock.key(), Bedrock.version(), Bedrock.value() | nil) ::
           :ok
   def insert_read(mvcc, key, version, value) when is_binary(value) or is_nil(value) do
     :ets.insert_new(mvcc, {versioned_key(key, version), {value}})
@@ -106,7 +106,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   This is useful for providing a consistent view of the data at a given point
   in the transaction timeline.
   """
-  @spec fetch(mvcc :: t(), Bedrock.key(), Transaction.version()) ::
+  @spec fetch(mvcc :: t(), Bedrock.key(), Bedrock.version()) ::
           {:ok, Bedrock.value()} | {:error, :not_found}
   def fetch(mvcc, key, version) do
     mvcc
@@ -135,7 +135,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   Get the last transaction version performed on the table. If no transaction
   has been performed then nil is returned.
   """
-  @spec newest_version(mvcc :: t()) :: Transaction.version() | nil
+  @spec newest_version(mvcc :: t()) :: Bedrock.version() | nil
   def newest_version(mvcc) do
     :ets.lookup(mvcc, :newest_version)
     |> case do
@@ -148,7 +148,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   Get the oldest possible transaction that can be read by the system. All
   transactions prior to this will have been coalesced.
   """
-  @spec oldest_version(mvcc :: t()) :: Transaction.version() | nil
+  @spec oldest_version(mvcc :: t()) :: Bedrock.version() | nil
   def oldest_version(mvcc) do
     :ets.lookup(mvcc, :oldest_version)
     |> case do
@@ -171,7 +171,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
           mvcc :: t(),
           version ::
             :latest
-            | Transaction.version()
+            | Bedrock.version()
         ) :: Transaction.t() | nil
   def transaction_at_version(mvcc, :latest) do
     newest_version(mvcc)
@@ -202,7 +202,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   @doc """
   Purge all keys/versions (and values) that are older than the given version.
   """
-  @spec purge_keys_older_than_version(mvcc :: t(), Transaction.version()) ::
+  @spec purge_keys_older_than_version(mvcc :: t(), Bedrock.version()) ::
           {:ok, n_purged :: pos_integer()}
   def purge_keys_older_than_version(mvcc, version) do
     :ets.insert(mvcc, [{:oldest_version, version}])

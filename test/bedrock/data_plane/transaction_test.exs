@@ -9,16 +9,16 @@ defmodule Bedrock.DataPlane.TransactionTest do
     end
   end
 
-  describe "DataPlane.Transaction.version/1" do
+  describe "DataPlane.Bedrock.version/1" do
     test "returns the version of the transaction" do
       tx = Transaction.new(<<0>>, key: "value")
-      assert <<0>> == Transaction.version(tx)
+      assert <<0>> == Bedrock.version(tx)
     end
 
     test "returns the version of an encoded transaction" do
       tx = Transaction.new(<<0>>, key: "value")
       encoded_tx = Transaction.encode(tx)
-      assert <<0>> == Transaction.version(encoded_tx)
+      assert <<0>> == Bedrock.version(encoded_tx)
     end
   end
 

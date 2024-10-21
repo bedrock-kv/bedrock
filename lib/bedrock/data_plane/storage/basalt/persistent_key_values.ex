@@ -31,7 +31,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec last_version(t()) :: Transaction.version() | :undefined
+  @spec last_version(t()) :: Bedrock.version() | :undefined
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do
@@ -65,7 +65,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
          :ok <-
            :dets.insert(pkv, [
              {:last_version, transaction_version}
-             | Transaction.key_values(transaction)
+             | Transaction.key_values(transaction) |> Enum.to_list()
            ]) do
       :dets.sync(pkv)
     end

@@ -11,12 +11,12 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec fetch_controller(coordinator :: ref(), timeout_in_ms()) ::
-          {:ok, ClusterController.ref()} | {:error, :unavailable}
+          {:ok, ClusterController.ref()} | {:error, :unavailable | :timeout}
   def fetch_controller(coordinator, timeout \\ 5_000),
     do: coordinator |> call(:fetch_controller, timeout)
 
   @spec fetch_config(coordinator :: ref(), timeout_in_ms()) ::
-          {:ok, Config.t()} | {:error, :unavailable}
+          {:ok, Config.t()} | {:error, :unavailable | :timeout}
   def fetch_config(coordinator, timeout \\ 5_000),
     do: coordinator |> call(:fetch_config, timeout)
 

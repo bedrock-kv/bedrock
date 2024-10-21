@@ -106,7 +106,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
         |> change_cluster_controller(controller)
         |> noreply(:send_ping_to_controller)
 
-      {:error, :unavailable} ->
+      {:error, reason} when reason in [:timeout, :unavailable] ->
         t
         |> cancel_timer()
         |> change_cluster_controller(:unavailable)

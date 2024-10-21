@@ -129,18 +129,16 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   are pruned from the store.
   """
   @spec ensure_durability_to_version(db :: t(), Bedrock.version()) :: :ok
+  def ensure_durability_to_version(_, :undefined), do: :ok
+
   def ensure_durability_to_version(db, version) do
     MVCC.transaction_at_version(db.mvcc, version)
-    |> case do
-      {:undefined, _} ->
-        :ok
+    |> then(fn transaction ->
+      PersistentKeyValues.apply_transaction(db.pkv, transaction)
+      Keyspace.apply_transaction(db.keyspace, transaction)
 
-      transaction ->
-        PersistentKeyValues.apply_transaction(db.pkv, transaction)
-        Keyspace.apply_transaction(db.keyspace, transaction)
-
-        {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
-    end
+      {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
+    end)
 
     :ok
   end

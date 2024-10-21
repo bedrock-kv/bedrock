@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
-  alias Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl, as: MVCC
+  alias Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl, as: MVCC
   alias Bedrock.DataPlane.Storage.Basalt.Keyspace
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -130,11 +130,16 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   """
   @spec ensure_durability_to_version(db :: t(), Bedrock.version()) :: :ok
   def ensure_durability_to_version(db, version) do
-    if transaction = MVCC.transaction_at_version(db.mvcc, version) do
-      PersistentKeyValues.apply_transaction(db.pkv, transaction)
-      Keyspace.apply_transaction(db.keyspace, transaction)
+    MVCC.transaction_at_version(db.mvcc, version)
+    |> case do
+      {:undefined, _} ->
+        :ok
 
-      {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
+      transaction ->
+        PersistentKeyValues.apply_transaction(db.pkv, transaction)
+        Keyspace.apply_transaction(db.keyspace, transaction)
+
+        {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
     end
 
     :ok

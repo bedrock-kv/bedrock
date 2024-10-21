@@ -7,8 +7,9 @@ defmodule Bedrock.DataPlane.Transaction do
   Create a new transaction.
   """
   @spec new(Bedrock.version() | binary(), map() | binary()) :: t()
-  def new(version, key_values),
-    do: {version, key_values}
+  def new(version, [{_key, _value} | _] = key_values), do: {version, Map.new(key_values)}
+  def new(version, []), do: {version, %{}}
+  def new(version, key_values), do: {version, key_values}
 
   @doc """
   Get the version from the transaction.

@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Limestone.Segment
+  alias Bedrock.DataPlane.Transaction
 
   defdelegate random_worker_id, to: Bedrock.Service.Controller.Logic
 
@@ -70,17 +71,28 @@ defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
     } do
       assert {:ok, writer} = Segment.writer(segment)
 
-      assert {:ok, {1, 0}, writer} = Segment.append(writer, [{"foo", "bar"}])
-      assert {:ok, {1, 0}, writer} = Segment.append(writer, [{"baz", "biz"}])
-      assert {:ok, {2, 0}, writer} = Segment.append(writer, [{"abc", "def"}, {"ghi", "jkl"}])
+      assert {:ok, {1, 0}, writer} =
+               Segment.append(writer, [Transaction.new(0, %{"foo" => "bar"})])
+
+      assert {:ok, {1, 0}, writer} =
+               Segment.append(writer, [Transaction.new(1, %{"baz" => "biz"})])
+
+      assert {:ok, {2, 0}, writer} =
+               Segment.append(writer, [
+                 Transaction.new(2, %{"abc" => "def"}),
+                 Transaction.new(3, %{"foo" => "bla"})
+               ])
+
       writer |> Segment.close()
 
-      assert [
-               {"foo", "bar"},
-               {"baz", "biz"},
-               {"abc", "def"},
-               {"ghi", "jkl"}
-             ] == Segment.stream!(segment) |> Enum.to_list()
+      assert %{
+               "foo" => "bla",
+               "baz" => "biz",
+               "abc" => "def"
+             } ==
+               Segment.stream!(segment)
+               |> Enum.map(&Transaction.key_values/1)
+               |> Enum.reduce(%{}, &Map.merge(&2, &1))
     end
   end
 end

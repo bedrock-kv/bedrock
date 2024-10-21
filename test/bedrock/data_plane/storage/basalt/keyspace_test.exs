@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+                 {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
                )
 
       assert [
@@ -36,13 +36,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+                 {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
                )
 
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {1, [{"f", "f"}, {"g", "g"}, {"h", "h"}, {"i", "i"}]}
+                 {1, %{"f" => "f", "g" => "g", "h" => "h", "i" => "i"}}
                )
 
       assert [
@@ -64,10 +64,10 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
         )
 
-      assert :ok = Keyspace.apply_transaction(keyspace, {1, [{"c", nil}, {"d", nil}]})
+      assert :ok = Keyspace.apply_transaction(keyspace, {1, %{"c" => nil, "d" => nil}})
 
       assert [
                {:last_version, 1},
@@ -86,7 +86,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
         )
 
       assert {:ok, 0} = Keyspace.prune(keyspace)
@@ -100,19 +100,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it suceeds and removes the kets when there are keys to prune" do
+    test "it succeeds and removes the keys when there are keys to prune" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
         )
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {1, [{"a", nil}, {"d", nil}]}
+          {1, %{"a" => nil, "d" => nil}}
         )
 
       assert {:ok, 2} = Keyspace.prune(keyspace)
@@ -132,7 +132,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
         )
 
       assert true = Keyspace.key_exists?(keyspace, "a")
@@ -144,7 +144,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, [{"a", "a"}, {"c", "c"}, {"d", "d"}, {"e", "e"}]}
+          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
         )
 
       refute false = Keyspace.key_exists?(keyspace, "q")

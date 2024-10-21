@@ -40,16 +40,16 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
 
       # Write a series of transactions to the DB, each overwriting the previous
       # transaction.
-      assert 1 == Database.apply_transactions(db, [Transaction.new(1, [{"foo", "bar"}])])
+      assert 1 == Database.apply_transactions(db, [Transaction.new(1, %{"foo" => "bar"})])
 
       assert 2 ==
                Database.apply_transactions(db, [
-                 Transaction.new(2, [{"foo", "baz"}, {"boo", "bif"}])
+                 Transaction.new(2, %{"foo" => "baz", "boo" => "bif"})
                ])
 
       assert 3 ==
                Database.apply_transactions(db, [
-                 Transaction.new(3, [{"foo", "biz"}, {"bam", "bom"}])
+                 Transaction.new(3, %{"foo" => "biz", "bam" => "bom"})
                ])
 
       assert :undefined == Database.last_durable_version(db)

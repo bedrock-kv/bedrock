@@ -1,6 +1,6 @@
-defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
+defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   @moduledoc """
-  Multiversion Concurrency Control (MVCC) is a concurrency control method that
+  Multi-Version Concurrency Control (MVCC) is a concurrency control method that
   allows for multiple versions of a key to exist in the same table. This module
   provides an implementation of MVCC for Basalt.
   """
@@ -158,13 +158,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
   end
 
   @doc """
-  Build a new transaction that encompases only the latest writes for each key in
+  Build a new transaction that encompasses only the latest writes for each key in
   the table, using the latest version as the cutoff. Since the latest
   transaction version is updated atomically alongside the transaction values,
   it's guaranteed that the generated transaction will include all writes that
   have been applied up until that point, and none that have been applied after.
 
-  Returns a transaction tuple. If no transacions have been performed then nil
+  Returns a transaction tuple. If no transactions have been performed then nil
   is returned.
   """
   @spec transaction_at_version(
@@ -185,14 +185,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiversionConcurrencyControl do
     {_, snapshot} =
       :ets.foldr(
         fn
-          {{key, key_version}, value}, {last_key, list}
+          {{key, key_version}, value}, {last_key, kv}
           when not is_tuple(value) and key_version <= version and key != last_key ->
-            {key, [{key, value} | list]}
+            {key, Map.put(kv, key, value)}
 
           _, acc ->
             acc
         end,
-        {nil, []},
+        {nil, %{}},
         mvcc
       )
 

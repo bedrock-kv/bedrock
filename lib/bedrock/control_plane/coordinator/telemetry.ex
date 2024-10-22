@@ -15,7 +15,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
 
   @doc """
   """
-  @spec emit_cluster_controller_changed(State.t(), controller :: pid()) :: State.t()
+  @spec emit_cluster_controller_changed(State.t(), controller :: pid() | :unavailable) ::
+          State.t()
   def emit_cluster_controller_changed(t, controller) do
     :telemetry.execute([:bedrock, :cluster, :controller, :changed], %{}, %{
       cluster: t.cluster,

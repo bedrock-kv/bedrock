@@ -26,4 +26,11 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
             timer_ref: nil,
             transaction_system_layout: nil,
             last_transaction_layout_id: 0
+
+  defmodule Changes do
+    alias Bedrock.ControlPlane.ClusterController.State
+
+    @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
+    def update_config(t, updater), do: update_in(t.config, updater)
+  end
 end

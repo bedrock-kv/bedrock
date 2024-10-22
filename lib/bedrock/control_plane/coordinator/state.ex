@@ -28,22 +28,30 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             config: nil,
             waiting_list: %{}
 
-  @spec update_controller(t :: t(), new_controller :: ClusterController.ref()) :: t()
-  def update_controller(t, new_controller),
-    do: put_in(t.controller, new_controller)
+  defmodule Changes do
+    alias Bedrock.ControlPlane.Coordinator.State
 
-  def update_controller_in_config(t, new_controller),
-    do: update_in(t.config, &Config.Mutations.update_controller(&1, new_controller))
+    @spec set_controller(t :: State.t(), new_controller :: ClusterController.ref() | :unavailable) ::
+            State.t()
+    def set_controller(t, new_controller),
+      do: put_in(t.controller, new_controller)
 
-  @spec update_leader_node(t :: t(), leader_node :: node()) :: t()
-  def update_leader_node(t, leader_node), do: put_in(t.leader_node, leader_node)
+    @spec set_leader_node(t :: State.t(), leader_node :: node()) :: State.t()
+    def set_leader_node(t, leader_node), do: put_in(t.leader_node, leader_node)
 
-  @spec update_raft(t(), Raft.t()) :: t()
-  def update_raft(t, raft), do: put_in(t.raft, raft)
+    @spec set_raft(t :: State.t(), Raft.t()) :: State.t()
+    def set_raft(t, raft), do: put_in(t.raft, raft)
 
-  @spec update_config(t(), Config.t()) :: t()
-  def update_config(t, config), do: put_in(t.config, config)
+    @spec update_raft(t :: State.t(), updater :: (Raft.t() -> Raft.t())) :: State.t()
+    def update_raft(t, updater), do: update_in(t.raft, updater)
 
-  @spec update_last_durable_txn_id(t(), Raft.transaction_id()) :: t()
-  def update_last_durable_txn_id(t, txn_id), do: put_in(t.last_durable_txn_id, txn_id)
+    @spec set_config(t :: State.t(), Config.t()) :: State.t()
+    def set_config(t, config), do: put_in(t.config, config)
+
+    @spec update_config(t :: State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
+    def update_config(t, updater), do: update_in(t.config, updater)
+
+    @spec set_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
+    def set_last_durable_txn_id(t, txn_id), do: put_in(t.last_durable_txn_id, txn_id)
+  end
 end

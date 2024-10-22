@@ -10,6 +10,9 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   def heartbeat_ms, do: 50
 
   @impl true
+  def timestamp_in_ms, do: :erlang.monotonic_time(:millisecond)
+
+  @impl true
   def ignored_event(_event, _from), do: :ok
 
   @impl true

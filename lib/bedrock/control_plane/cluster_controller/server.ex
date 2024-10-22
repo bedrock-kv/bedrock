@@ -65,7 +65,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     |> store_changes_to_config()
     |> ping_all_nodes()
     |> then(fn
-      %{config: %{state: :uninitialized}} = t -> t |> noreply()
+      # %{config: %{state: :uninitialized}} = t -> t |> noreply()
       t -> t |> noreply(:start_recovery)
     end)
   end

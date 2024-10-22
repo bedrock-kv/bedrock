@@ -2,10 +2,9 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator.State
 
-  import Bedrock.ControlPlane.Coordinator.State,
+  import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
-      update_controller: 2,
-      update_controller_in_config: 2
+      set_controller: 2
     ]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
@@ -32,8 +31,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
     |> case do
       {:ok, new_controller} ->
         t
-        |> update_controller(new_controller)
-        |> update_controller_in_config(new_controller)
+        |> set_controller(new_controller)
         |> emit_cluster_controller_changed(new_controller)
 
       {:error, reason} ->
@@ -51,15 +49,11 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
         t
 
       controller_pid ->
-        t.supervisor_otp_name
-        |> DynamicSupervisor.terminate_child(controller_pid)
-        |> case do
-          :ok ->
-            t |> update_controller(:unavailable)
+        DynamicSupervisor.terminate_child(t.supervisor_otp_name, controller_pid)
 
-          {:error, :not_found} ->
-            t |> update_controller(:unavailable)
-        end
+        t
+        |> set_controller(:unavailable)
+        |> emit_cluster_controller_changed(:unavailable)
     end
   end
 end

@@ -20,9 +20,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       stop_any_cluster_controller_on_this_node!: 1
     ]
 
-  import Bedrock.ControlPlane.Coordinator.State,
+  import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
-      update_leader_node: 2,
+      set_leader_node: 2,
       update_raft: 2
     ]
 
@@ -120,12 +120,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @impl true
   def handle_info({:raft, :leadership_changed, {:undecided, _epoch}}, t)
-      when :undecided == t.leader_node,
-      do: t |> noreply()
+      when :undecided == t.leader_node do
+    t |> noreply()
+  end
 
   def handle_info({:raft, :leadership_changed, {new_leader, _epoch}}, t) do
     t
-    |> update_leader_node(new_leader)
+    |> set_leader_node(new_leader)
     |> emit_cluster_leadership_changed()
     |> stop_any_cluster_controller_on_this_node!()
     |> start_cluster_controller_if_necessary()
@@ -134,7 +135,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_info({:raft, :timer, event}, t) do
     t
-    |> update_raft(t.raft |> Raft.handle_event(event, :timer))
+    |> update_raft(&Raft.handle_event(&1, event, :timer))
     |> noreply()
   end
 
@@ -152,7 +153,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_cast({:raft, :rpc, event, source}, t) do
     t
-    |> update_raft(t.raft |> Raft.handle_event(event, source))
+    |> update_raft(&Raft.handle_event(&1, event, source))
     |> noreply()
   end
 

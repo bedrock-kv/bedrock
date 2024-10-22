@@ -173,7 +173,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       {:ok, t} ->
         t |> noreply()
 
-      {:error, :unavailable} ->
+      {:error, reason} when reason in [:unavailable, :timeout] ->
         put_in(t.controller, :unavailable)
         |> noreply(:find_current_cluster_controller)
 

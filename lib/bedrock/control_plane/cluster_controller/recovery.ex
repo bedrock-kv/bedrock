@@ -4,43 +4,54 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   import Bedrock.Internal.Time, only: [now: 0]
 
-  import Bedrock.ControlPlane.Config.Mutations,
+  import Bedrock.ControlPlane.Config.Changes,
     only: [
-      update_controller: 2,
-      update_epoch: 2
+      set_epoch: 2,
+      update_recovery_attempt: 2,
+      set_transaction_system_layout: 2
     ]
 
-  import Bedrock.ControlPlane.ClusterController.Telemetry,
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools,
     only: [
-      emit_recovery_started: 1
+      set_controller: 2
+    ]
+
+  import Bedrock.ControlPlane.ClusterController.State.Changes,
+    only: [
+      update_config: 2
     ]
 
   @spec claim_config(State.t()) :: State.t()
   def claim_config(t) do
     update_in(
       t.config,
-      &(&1
-        |> update_epoch(t.epoch)
-        |> update_controller(self()))
+      &set_epoch(&1, t.epoch)
     )
   end
 
   @spec start_new_recovery_attempt(State.t()) :: State.t()
   def start_new_recovery_attempt(t) do
-    update_in(
-      t.config.recovery_attempt,
-      &RecoveryAttempt.new(
-        &1,
-        t.epoch,
-        now(),
-        :recruiting,
-        t.config.transaction_system_layout
+    t
+    |> update_config(fn config ->
+      config
+      |> update_recovery_attempt(
+        &RecoveryAttempt.new(
+          &1,
+          t.epoch,
+          now(),
+          :recruiting,
+          config.transaction_system_layout
+        )
       )
-    )
-    |> emit_recovery_started()
+      |> set_transaction_system_layout(
+        TransactionSystemLayout.new()
+        |> set_controller(self())
+      )
+    end)
   end
 
   @spec recover(State.t()) :: State.t()

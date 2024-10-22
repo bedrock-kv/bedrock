@@ -76,18 +76,22 @@ defmodule Bedrock.ControlPlane.Config do
   def ping_rate_in_ms(t),
     do: div(1000, get_in(t.parameters.ping_rate_in_hz))
 
-  defmodule Mutations do
+  defmodule Changes do
     alias Bedrock.ControlPlane.Config
 
-    @spec update_epoch(Config.t(), pos_integer()) :: Config.t()
-    def update_epoch(config, epoch), do: put_in(config.epoch, epoch)
+    @spec set_epoch(Config.t(), pos_integer()) :: Config.t()
+    def set_epoch(config, epoch), do: put_in(config.epoch, epoch)
 
-    @spec update_controller(Config.t(), pid()) :: Config.t()
-    def update_controller(config, controller),
-      do:
-        update_in(
-          config.transaction_system_layout,
-          &TransactionSystemLayout.Tools.set_controller(&1, controller)
-        )
+    @spec set_recovery_attempt(Config.t(), RecoveryAttempt.t()) :: Config.t()
+    def set_recovery_attempt(config, recovery_attempt),
+      do: put_in(config.recovery_attempt, recovery_attempt)
+
+    @spec update_recovery_attempt(Config.t(), (RecoveryAttempt.t() -> RecoveryAttempt.t())) ::
+            Config.t()
+    def update_recovery_attempt(config, updater),
+      do: update_in(config.recovery_attempt, updater)
+
+    def set_transaction_system_layout(config, layout),
+      do: put_in(config.transaction_system_layout, layout)
   end
 end

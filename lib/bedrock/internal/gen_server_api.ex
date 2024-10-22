@@ -30,6 +30,7 @@ defmodule Bedrock.Internal.GenServerApi do
     GenServer.call(server, message, timeout)
   catch
     :exit, {:noproc, _} -> {:error, :unavailable}
+    :exit, {{:nodedown, _}, _} -> {:error, :unavailable}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 end

@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :defining_proxies_and_resolvers
           | :final_checks
           | :completed
+          | :stalled
 
   @type t :: %__MODULE__{
           attempt: pos_integer(),

@@ -57,7 +57,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     }
     |> then(fn
       %{config: %{state: :uninitialized}} = t ->
-        {:ok, t, {:continue, :initialization}}
+        {:ok, t, {:continue, :start_recovery}}
+
+      #        {:ok, t, {:continue, :initialization}}
 
       t ->
         {:ok, t, {:continue, :start_recovery}}

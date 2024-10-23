@@ -6,6 +6,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Internal.Logging.ControlPlaneTelemetry
   alias Bedrock.Internal.Logging.RaftTelemetry
+  alias Bedrock.Internal.Logging.RecoveryTelemetry
 
   require Logger
 
@@ -86,6 +87,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Enum.each(fn
       :control_plane -> :ok = ControlPlaneTelemetry.start()
       :raft -> :ok = RaftTelemetry.start()
+      :recovery -> :ok = RecoveryTelemetry.start()
     end)
 
     children =

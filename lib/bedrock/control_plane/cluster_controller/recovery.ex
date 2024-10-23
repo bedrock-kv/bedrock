@@ -1,12 +1,14 @@
 defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   @moduledoc false
 
+  alias Bedrock.ControlPlane.ClusterController.State
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.ClusterController.State
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -26,6 +28,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import Bedrock.ControlPlane.ClusterController.State.Changes,
     only: [
       update_config: 2
+    ]
+
+  import Bedrock.ControlPlane.ClusterController.Telemetry,
+    only: [
+      trace_recovery_attempt_started: 1,
+      trace_recovery_services_locked: 3,
+      trace_recovery_durable_version_chosen: 3,
+      trace_recovery_suitable_logs_chosen: 3
     ]
 
   @spec claim_config(State.t()) :: State.t()
@@ -52,42 +62,65 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         |> set_controller(self())
       )
     end)
+    |> then(fn t ->
+      :ok = trace_recovery_attempt_started(t)
+      t
+    end)
   end
 
   @spec recover(State.t()) :: State.t()
   def recover(t) do
+    old_transaction_system_layout =
+      get_in(t.config.recovery_attempt.last_transaction_system_layout)
+
     with {:ok, services, info_by_id} <-
-           try_to_lock_services_for_recovery(t.config.services, t.epoch, 5_000),
+           try_to_lock_services_for_recovery(
+             old_transaction_system_layout.services,
+             t.epoch,
+             200
+           ),
+         :ok <-
+           trace_recovery_services_locked(t, length(services), map_size(info_by_id)),
          {:ok, log_info, storage_info} <- organize_available_service_info(info_by_id),
          {:ok, replication_factor} <- fetch_replication_factor(t.config),
-         {:ok, newest_durable_version} <-
-           determine_newest_durable_version(
+         {:ok, durable_version, degraded_teams} <-
+           determine_durable_version(
+             old_transaction_system_layout.storage_teams,
              storage_info,
              replication_factor |> determine_quorum()
            ),
+         :ok <- trace_recovery_durable_version_chosen(t, durable_version, degraded_teams),
          {:ok, desired_logs} <- fetch_desired_logs(t.config),
-         {:ok, suitable_logs, version_vector} <-
+         {:ok, suitable_logs,
+          {oldest_version_in_logs, last_version_of_epoch} = log_version_vector} <-
            log_info
            |> extract_version_vectors_by_id()
-           |> determine_suitable_logs_for_recovery(desired_logs |> determine_quorum()) do
+           |> determine_suitable_logs_for_recovery(desired_logs |> determine_quorum()),
+         :ok <- trace_recovery_suitable_logs_chosen(t, suitable_logs, log_version_vector) do
+      IO.inspect({max(durable_version, oldest_version_in_logs), last_version_of_epoch})
+
       t
       |> update_config(fn config ->
         config
-        |> update_transaction_system_layout(
-          &TransactionSystemLayout.Tools.set_services(&1, services)
-        )
-        |> update_recovery_attempt(&RecoveryAttempt.Mutations.update_state(&1, :locked))
+        |> update_transaction_system_layout(fn tsl ->
+          tsl
+          |> TransactionSystemLayout.Tools.set_services(services)
+        end)
+        |> update_recovery_attempt(&RecoveryAttempt.Mutations.update_state(&1, :recruiting))
       end)
     else
-      {:error, :newer_epoch_exists} ->
+      {:error, _reason} ->
         t
         |> update_config(fn config ->
           config
-          |> update_recovery_attempt(&RecoveryAttempt.Mutations.update_state(&1, :failed))
+          |> update_recovery_attempt(&RecoveryAttempt.Mutations.update_state(&1, :stalled))
         end)
     end
   end
 
+  @spec organize_available_service_info(%{Bedrock.service_id() => map()}) ::
+          {:ok, %{Log.id() => map()}, %{Storage.id() => map()}}
+          | {:error, :no_log_info | :no_storage_info | :uninitialized}
   defp organize_available_service_info(info_by_id) do
     info_by_id
     |> Enum.group_by(&elem(&1, 1)[:kind])
@@ -100,6 +133,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
       %{storage: _} ->
         {:error, :no_log_info}
+
+      %{} ->
+        {:error, :uninitialized}
     end
   end
 
@@ -109,33 +145,156 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     log_info |> Enum.map(fn {id, info} -> {id, {info[:oldest_tx_id], info[:last_tx_id]}} end)
   end
 
+  @spec fetch_replication_factor(Config.t()) ::
+          {:ok, non_neg_integer()} | {:error, :unable_to_determine_replication_factor}
   defp fetch_replication_factor(config) do
     get_in(config.parameters.replication_factor)
     |> case do
-      nil -> {:error, :unable_to_determine_replication_factor}
-      factor -> {:ok, factor}
+      value when is_integer(value) -> {:ok, value}
+      _ -> {:error, :unable_to_determine_replication_factor}
     end
   end
 
+  @spec fetch_desired_logs(Config.t()) ::
+          {:ok, non_neg_integer()} | {:error, :unable_to_determine_desired_logs}
   defp fetch_desired_logs(config) do
     get_in(config.parameters.desired_logs)
     |> case do
+      value when is_integer(value) -> {:ok, value}
       nil -> {:error, :unable_to_determine_desired_logs}
-      factor -> {:ok, factor}
     end
   end
 
-  def determine_newest_durable_version(storage_info_by_id, quorum) do
-    storage_info_by_id
-    |> Enum.map(fn {_, info} -> info[:durable_version] end)
-    |> Enum.reject(&is_nil/1)
+  @doc """
+  Determines the latest durable version for a given set of storage teams.
+
+  For each storage team, the function checks if a quorum of storage nodes
+  agree on a version that should be considered the latest durable version.
+  If any storage team does not have enough supporting nodes to reach a
+  quorum, it is classified as failed.
+
+  ## Parameters
+
+    - `teams`: A list of `StorageTeamDescriptor` structs, each representing a
+      storage team whose durable version needs to be determined.
+
+    - `info_by_id`: A map where each storage identifier is mapped to its
+      `durable_version` and `oldest_version` information.
+
+    - `quorum`: The minimum number of nodes that must agree on a durable
+      version for consensus.
+
+  ## Returns
+
+    - `{:ok, durable_version, degraded_teams}`: On successful determination of
+      the durable version, where `durable_version` is the latest version
+      agreed upon, and `degraded_teams` lists teams not reaching the full
+      healthy quorum.
+
+    - `{:error, {:insufficient_storage, failed_tags}}`: If any storage team
+      lacks sufficient storage servers to meet the quorum requirements. We
+      return the full set of failed tags in this case.
+  """
+  @spec determine_durable_version(
+          teams :: [StorageTeamDescriptor.t()],
+          info_by_id :: %{
+            Storage.id() => %{
+              durable_version: Bedrock.version() | nil,
+              oldest_version: Bedrock.version() | nil
+            }
+          },
+          quorum :: non_neg_integer()
+        ) ::
+          {:ok, Bedrock.version(), degraded_teams :: [Bedrock.range_tag()]}
+          | {:error, {:insufficient_storage, failed_tags :: [Bedrock.range_tag()]}}
+  def determine_durable_version(teams, info_by_id, quorum) do
+    Enum.zip(
+      teams |> Enum.map(& &1.tag),
+      teams
+      |> Enum.map(&determine_durable_version_and_status_for_storage_team(&1, info_by_id, quorum))
+    )
+    |> Enum.reduce({nil, [], []}, fn
+      {_tag, {:ok, version, :healthy}}, {min_version, degraded, failed} ->
+        {min(version, min_version), degraded, failed}
+
+      {tag, {:ok, version, :degraded}}, {min_version, degraded, failed} ->
+        {min(version, min_version), [tag | degraded], failed}
+
+      {tag, {:error, :insufficient_storage}}, {min_version, degraded, failed} ->
+        {min_version, degraded, [tag | failed]}
+    end)
+    |> case do
+      {_, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_storage, failed}}
+      {min_version, degraded, []} -> {:ok, min_version, degraded}
+    end
+  end
+
+  @doc """
+  Determine the most recent durable version available among a list of storage
+  servers, based on the provided quorum. It's also important that we discard
+  any storage servers from consideration that do not have a full-copy (back to
+  transaction 0) of the data. We also use the quorum to determine whether or
+  not the team is healthy or degraded.
+
+  ## Parameters
+
+    - `team`: A `StorageTeamDescriptor` struct representing a storage
+      teams involved in the operation.
+
+    - `info_by_id`: A map where each key is a storage identifier and each value
+      is a map (hopefully) containing the `:durable_version` and
+      `:oldest_version`.
+
+    - `quorum`: The minimum number of storage servers that must agree on the
+      version to form a consensus.
+
+  ## Returns
+
+    - `{:ok, durable_version, status}`: The most recent durable version of the
+      storage where consensus was reached and an indicator of the team's status,
+      both based on the `quorum`.
+
+    - `{:error, :insufficient_storage}`: Indicates that there aren't enough
+      storage servers available to meet the quorum requirements for a consensus
+      on the durable version.
+  """
+  @spec determine_durable_version_and_status_for_storage_team(
+          StorageTeamDescriptor.t(),
+          %{
+            Storage.id() => %{
+              durable_version: Bedrock.version() | nil,
+              oldest_version: Bedrock.version() | nil
+            }
+          },
+          quorum :: non_neg_integer()
+        ) ::
+          {:ok, Bedrock.version(), status :: :healthy | :degraded}
+          | {:error, :insufficient_storage}
+  def determine_durable_version_and_status_for_storage_team(team, info_by_id, quorum) do
+    durable_versions =
+      team.storage_ids
+      |> Enum.map(&Map.get(info_by_id, &1))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == 0))
+      |> Enum.map(&Map.get(&1, :durable_version))
+
+    durable_versions
     |> Enum.sort()
     |> Enum.at(-quorum)
     |> case do
-      nil -> {:error, :insufficient_storage}
-      version -> {:ok, version}
+      nil ->
+        {:error, :insufficient_storage}
+
+      version ->
+        {:ok, version, durability_status_for_storage_team(length(durable_versions), quorum)}
     end
   end
+
+  defp durability_status_for_storage_team(durable_versions, quorum)
+       when durable_versions == quorum,
+       do: :healthy
+
+  defp durability_status_for_storage_team(_, _), do: :degraded
 
   @doc """
   Attempts to lock services for recovery. It then sends an invitation to each
@@ -168,8 +327,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           Bedrock.epoch(),
           Bedrock.timeout_in_ms()
         ) ::
-          {:ok, [ServiceDescriptor.t()], recovery_info_by_pid :: keyword()}
-          | {:error, :newer_epoch_exists}
+          {:error, :newer_epoch_exists}
+          | {:ok, [ServiceDescriptor.t()],
+             recovery_info_by_pid :: %{Bedrock.service_id() => map()}}
   def try_to_lock_services_for_recovery(services, epoch, timeout_in_ms) do
     services
     |> Task.async_stream(
@@ -182,24 +342,28 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       ordered: false,
       zip_input_on_exit: true
     )
-    |> Enum.reduce_while({:ok, [], %{}}, fn
-      {_, {:error_newer_epoch_exists} = error}, _ ->
+    |> Enum.reduce_while({[], %{}}, fn
+      {_, {:error, :newer_epoch_exists} = error}, _ ->
         {:halt, error}
 
-      {%{id: id} = service, {:ok, pid, info}}, {:ok, services, info_by_id} ->
+      {%{id: id} = service, {:ok, pid, info}}, {services, info_by_id} ->
         {:cont,
-         {:ok, [service |> ServiceDescriptor.up(pid) | services], Map.put(info_by_id, id, info)}}
+         {[service |> ServiceDescriptor.up(pid) | services], Map.put(info_by_id, id, info)}}
 
-      {service, {:error, _}}, {:ok, services, info_by_id} ->
-        {:cont, {:ok, [service |> ServiceDescriptor.down() | services], info_by_id}}
+      {service, {:error, _}}, {services, info_by_id} ->
+        {:cont, {[service |> ServiceDescriptor.down() | services], info_by_id}}
 
-      {:exit, {service, _}}, {:ok, services, info_by_id} ->
-        {:cont, {:ok, [service |> ServiceDescriptor.down() | services], info_by_id}}
+      {:exit, {service, _}}, {services, info_by_id} ->
+        {:cont, {[service |> ServiceDescriptor.down() | services], info_by_id}}
     end)
+    |> case do
+      {:error, _reason} = error -> error
+      {services, info_by_id} -> {:ok, services, info_by_id}
+    end
   end
 
   @spec try_to_lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch()) ::
-          {:ok, pid(), Bedrock.version_vector()} | {:error, :unavailable}
+          {:ok, pid(), recovery_info :: map()} | {:error, :unavailable}
   def try_to_lock_service_for_recovery(%{kind: :log, last_seen: name}, epoch),
     do: Log.lock_for_recovery(name, self(), epoch)
 

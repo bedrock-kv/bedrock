@@ -104,10 +104,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
     t
     |> request_to_rejoin(node, capabilities, running_services, now())
-    |> then(fn
+    |> case do
       {:ok, t} -> t |> store_changes_to_config() |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)
-    end)
+    end
   end
 
   @impl true

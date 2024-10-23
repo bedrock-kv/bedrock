@@ -58,17 +58,18 @@ defmodule Bedrock.DataPlane.Log.Limestone do
 
   defmodule StateMachine do
     use Gearbox,
-      states: ~w(starting waiting locked ready)a,
+      states: ~w(starting locked ready)a,
       initial: :starting,
       transitions: %{
-        starting: :waiting,
-        waiting: :locked,
-        locked: [:locked, :ready]
+        starting: :locked,
+        locked: [:locked, :ready],
+        ready: :locked
       }
   end
 
   defmodule State do
-    @type state :: :starting | :waiting | :locked | :ready
+    alias Bedrock.DataPlane.Log.Limestone.Subscriptions
+    @type state :: :starting | :locked | :ready
     @type t :: %__MODULE__{
             state: state(),
             subscriber_liveness_timeout_in_s: integer(),
@@ -76,8 +77,10 @@ defmodule Bedrock.DataPlane.Log.Limestone do
             otp_name: atom(),
             transactions: Transactions.t(),
             controller: LogController.ref() | nil,
-            epoch: Bedrock.epoch() | nil,
-            last_tx_id: Bedrock.version() | :undefined,
+            epoch: Bedrock.epoch(),
+            subscriptions: Subscriptions.t(),
+            oldest_version: Bedrock.version() | nil,
+            last_version: Bedrock.version() | nil,
             cluster_controller: ClusterController.ref() | nil
           }
     defstruct state: nil,
@@ -87,7 +90,9 @@ defmodule Bedrock.DataPlane.Log.Limestone do
               transactions: nil,
               controller: nil,
               epoch: nil,
-              last_tx_id: nil,
+              subscriptions: nil,
+              oldest_version: nil,
+              last_version: nil,
               cluster_controller: nil
 
     @type transition_fn :: (t() -> t())
@@ -113,8 +118,8 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     @type t :: :ets.table()
     @type subscription :: {
             id :: String.t(),
-            last_tx_id :: Bedrock.version(),
-            last_durable_tx_id :: Bedrock.version(),
+            last_version :: Bedrock.version(),
+            last_durable_version :: Bedrock.version(),
             last_seen_at :: integer()
           }
 
@@ -133,36 +138,32 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     end
 
     @spec update(t(), String.t(), Bedrock.version(), Bedrock.version()) :: :ok
-    def update(t, id, last_tx_id, last_durable_tx_id) do
+    def update(t, id, last_version, last_durable_version) do
       :ets.insert(
         t,
-        {id, last_tx_id, last_durable_tx_id, DateTime.utc_now() |> DateTime.to_unix()}
+        {id, last_version, last_durable_version, DateTime.utc_now() |> DateTime.to_unix()}
       )
 
       :ok
     end
 
-    def minimum_durable_tx_id(t, max_age_in_s) do
+    def minimum_durable_version(t, max_age_in_s) do
       :ets.select(t, match_last_seen_for_live_subscribers(max_age_in_s))
       |> case do
-        [] -> :unknown
-        last_durable_tx_ids -> last_durable_tx_ids |> Enum.min()
+        [] -> nil
+        last_durable_versions -> last_durable_versions |> Enum.min()
       end
     end
 
-    defp match_last_seen_for_live_subscribers(max_age_in_s),
-      do: [
-        {{:_, :_, :"$3", :"$4"},
-         [
-           {:>=, :"$4",
-            {:constant, DateTime.utc_now() |> DateTime.to_unix() |> Kernel.-(max_age_in_s)}}
-         ], [:"$3"]}
-      ]
+    defp match_last_seen_for_live_subscribers(max_age_in_s) do
+      threshold_time = DateTime.utc_now() |> DateTime.to_unix() |> Kernel.-(max_age_in_s)
+
+      [{{:_, :_, :"$3", :"$4"}, [{:>=, :"$4", threshold_time}], [:"$3"]}]
+    end
   end
 
   defmodule Logic do
     @type t :: State.t()
-    @type fact_name :: Log.fact_name()
     @type health :: Log.health()
 
     @spec startup(
@@ -178,8 +179,9 @@ defmodule Bedrock.DataPlane.Log.Limestone do
          id: id,
          otp_name: otp_name,
          controller: controller,
+         subscriptions: Subscriptions.new(),
          transactions: transactions,
-         last_tx_id: :undefined
+         last_version: nil
        }}
     end
 
@@ -187,85 +189,74 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     def report_health_to_transaction_log_controller(t, health),
       do: :ok = LogController.report_health(t.controller, t.id, health)
 
-    @spec push(t(), Transaction.t(), prev_tx_id :: Bedrock.version()) ::
+    @spec push(t(), Transaction.t(), prev_version :: Bedrock.version()) ::
             {:ok, t()} | {:error, :tx_out_of_order | :not_ready}
-    def push(t, _transaction, _prev_tx_id) when t.state not in [:ready, :locked],
+    def push(t, _transaction, _prev_version) when t.state not in [:ready, :locked],
       do: {:error, :not_ready}
 
-    def push(t, _transaction, prev_tx_id) when t.last_tx_id != prev_tx_id,
+    def push(t, _transaction, prev_version) when t.last_version != prev_version,
       do: {:error, :tx_out_of_order}
 
-    def push(t, transaction, _prev_tx_id) do
+    def push(t, transaction, _prev_version) do
       Transactions.append!(t.transactions, transaction)
-      {:ok, %{t | last_tx_id: Transaction.version(transaction)}}
+      {:ok, %{t | last_version: Transaction.version(transaction)}}
     end
 
-    @spec lock(t(), ClusterController.ref(), Bedrock.epoch()) ::
-            {:ok, t()} | {:error, :epoch_too_old | String.t()}
-    def lock(t, cluster_controller, epoch) do
+    @spec lock_for_recovery(t(), ClusterController.ref(), Bedrock.epoch()) ::
+            {:ok, t()} | {:error, :newer_epoch_exists | String.t()}
+    def lock_for_recovery(t, cluster_controller, epoch) do
       State.transition_to(t, :locked, fn
-        t when t.epoch >= epoch ->
-          {:halt, :epoch_too_old}
+        t when not is_nil(t.epoch) and t.epoch >= epoch ->
+          {:halt, :newer_epoch_exists}
 
         t ->
           %{t | epoch: epoch, cluster_controller: cluster_controller}
       end)
     end
 
-    @spec report_lock_complete_to_cluster_controller(t()) :: :ok
-    def report_lock_complete_to_cluster_controller(t) do
-      {:ok, info} = Logic.info(t, [:last_tx_id, :minimum_durable_tx_id])
-
-      :ok =
-        ClusterController.report_log_lock_complete(
-          t.cluster_controller,
-          t.id,
-          info
-        )
-    end
-
     @spec pull(
             t :: t(),
-            last_tx_id :: Bedrock.version(),
+            last_version :: Bedrock.version(),
             count :: pos_integer(),
             opts :: [
               subscriber_id: String.t(),
-              last_durable_tx_id: Bedrock.version()
+              last_durable_version: Bedrock.version()
             ]
           ) ::
             {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}
-    def pull(t, _last_tx_id, _count, _opts)
+    def pull(t, _last_version, _count, _opts)
         when t.state != :ready,
         do: {:error, :not_ready}
 
-    def pull(t, last_tx_id, _count, _opts)
-        when last_tx_id > t.last_tx_id,
+    def pull(t, last_version, _count, _opts)
+        when last_version > t.last_version,
         do: {:error, :tx_too_new}
 
-    def pull(t, last_tx_id, count, subscriber_id: id = opts) do
-      last_durable_tx_id = opts[:last_durable_tx_id] || :undefined
+    def pull(t, last_version, count, subscriber_id: id = opts) do
+      last_durable_version = opts[:last_durable_version] || :undefined
 
       t.transactions
-      |> Transactions.get(last_tx_id, count)
+      |> Transactions.get(last_version, count)
       |> case do
         [] ->
-          t.subscriptions |> Subscriptions.update(id, last_tx_id, last_durable_tx_id)
+          t.subscriptions |> Subscriptions.update(id, last_version, last_durable_version)
           {:ok, []}
 
         transactions ->
-          last_tx_id = transactions |> List.last() |> Transaction.version()
-          t.subscriptions |> Subscriptions.update(id, last_tx_id, last_durable_tx_id)
+          last_version = transactions |> List.last() |> Transaction.version()
+          t.subscriptions |> Subscriptions.update(id, last_version, last_durable_version)
           {:ok, transactions}
       end
     end
 
-    def pull(t, last_tx_id, count, _opts) do
+    def pull(t, last_version, count, _opts) do
       {:ok,
        t.transactions
-       |> Transactions.get(last_tx_id, count)}
+       |> Transactions.get(last_version, count)}
     end
 
-    @spec info(t(), fact_name() | [fact_name()]) :: {:ok, any()} | {:error, :unsupported_info}
+    @spec info(State.t(), Log.fact_name() | [Log.fact_name()]) ::
+            {:ok, term() | %{Log.fact_name() => term()}} | {:error, :unsupported_info}
     def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
 
     def info(%State{} = t, facts) when is_list(facts) do
@@ -273,20 +264,23 @@ defmodule Bedrock.DataPlane.Log.Limestone do
        facts
        |> Enum.reduce([], fn
          fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
-       end)}
+       end)
+       |> Map.new()}
     end
 
     defp supported_info, do: ~w[
       id
       kind
-      minimum_durable_tx_id
+      minimum_durable_version
+      oldest_version
+      last_version
       otp_name
       pid
       state
       supported_info
     ]a
 
-    @spec gather_info(fact_name(), any()) :: term() | {:error, :unsupported}
+    @spec gather_info(Log.fact_name(), any()) :: term() | {:error, :unsupported}
     # Worker facts
     defp gather_info(:id, %{id: id}), do: id
     defp gather_info(:state, %{state: state}), do: state
@@ -296,8 +290,12 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     defp gather_info(:supported_info, _), do: supported_info()
 
     # Transaction Log facts
-    defp gather_info(:minimum_durable_tx_id, t),
-      do: Subscriptions.minimum_durable_tx_id(t.subscriptions, t.subscriber_liveness_timeout_in_s)
+    defp gather_info(:minimum_durable_version, t) do
+      Subscriptions.minimum_durable_version(t.subscriptions, t.subscriber_liveness_timeout_in_s)
+    end
+
+    defp gather_info(:oldest_version, t), do: t.oldest_version
+    defp gather_info(:last_version, t), do: t.last_version
 
     # Everything else...
     defp gather_info(_, _), do: {:error, :unsupported}
@@ -336,28 +334,33 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     def handle_call({:info, fact_names}, _from, %State{} = t),
       do: {:reply, Logic.info(t, fact_names), t}
 
-    def handle_call({:push, transaction, prev_tx_id}, _from, %State{} = t) do
-      Logic.push(t, transaction, prev_tx_id)
+    def handle_call({:push, transaction, prev_version}, _from, %State{} = t) do
+      Logic.push(t, transaction, prev_version)
       |> case do
         {:ok, t} -> {:reply, :ok, t}
         {:error, _reason} = error -> {:reply, error, t}
       end
     end
 
-    def handle_call({:pull, last_tx_id, count, opts}, _from, %State{} = t) do
-      Logic.pull(t, last_tx_id, count, opts)
+    def handle_call({:pull, last_version, count, opts}, _from, %State{} = t) do
+      Logic.pull(t, last_version, count, opts)
       |> case do
         {:ok, []} -> {:reply, {:ok, []}, t}
         {:ok, transactions} -> {:reply, {:ok, transactions}, t}
       end
     end
 
-    @impl GenServer
-    def handle_cast({:lock, controller, epoch}, %State{} = t) do
-      Logic.lock(t, controller, epoch)
-      |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :report_lock_complete_to_cluster_controller}}
-        _error -> {:noreply, t}
+    def handle_call({:lock_for_recovery, epoch}, controller, %State{} = t) do
+      with {:ok, t} <- Logic.lock_for_recovery(t, controller, epoch),
+           {:ok, info} <-
+             Logic.info(t, [
+               :last_version,
+               :oldest_version,
+               :minimum_durable_version
+             ]) do
+        {:reply, {:ok, self(), info}, t}
+      else
+        error -> {:reply, error, t}
       end
     end
 
@@ -371,11 +374,6 @@ defmodule Bedrock.DataPlane.Log.Limestone do
 
     def handle_continue(:report_health_to_controller, %State{} = t) do
       :ok = Logic.report_health_to_transaction_log_controller(t, :ok)
-      {:noreply, t}
-    end
-
-    def handle_continue(:report_lock_complete_to_cluster_controller, t) do
-      :ok = Logic.report_lock_complete_to_cluster_controller(t)
       {:noreply, t}
     end
   end

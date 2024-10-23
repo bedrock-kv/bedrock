@@ -4,6 +4,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
   alias Agent.Server
   alias Bedrock.Service.StorageController
   alias Bedrock.Service.Worker
+  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Database
 
   @doc false
@@ -14,12 +16,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     @type t :: %__MODULE__{
             otp_name: atom(),
             path: Path.t(),
-            controller: pid(),
+            epoch: Bedrock.epoch() | nil,
+            controller: pid() | nil,
             id: Worker.id(),
             database: Database.t()
           }
     defstruct otp_name: nil,
               path: nil,
+              epoch: nil,
               controller: nil,
               id: nil,
               database: nil
@@ -52,12 +56,21 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     def shutdown(%State{} = t),
       do: :ok = Database.close(t.database)
 
+    @spec lock_for_recovery(State.t(), ClusterController.ref(), Bedrock.epoch()) ::
+            {:ok, State.t()} | {:error, :newer_epoch_exists | String.t()}
+    def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch,
+      do: {:error, :newer_epoch_exists}
+
+    def lock_for_recovery(t, controller, epoch),
+      do: {:ok, %{t | epoch: epoch, controller: controller}}
+
     @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
             {:error, :key_out_of_range | :not_found | :tx_too_old} | {:ok, binary()}
     def fetch(%State{} = t, key, version),
       do: Database.fetch(t.database, key, version)
 
-    @spec info(State.t(), atom() | [atom()]) :: {:ok, any()} | {:error, :unsupported_info}
+    @spec info(State.t(), Storage.fact_name() | [Storage.fact_name()]) ::
+            {:ok, term() | %{Storage.fact_name() => term()}} | {:error, :unsupported_info}
     def info(%State{} = t, fact_name) when is_atom(fact_name),
       do: {:ok, gather_info(fact_name, t)}
 
@@ -66,7 +79,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
        fact_names
        |> Enum.reduce([], fn
          fact_name, acc -> [{fact_name, gather_info(fact_name, t)} | acc]
-       end)}
+       end)
+       |> Map.new()}
     end
 
     defp supported_info, do: ~w[
@@ -128,7 +142,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
       do: {:ok, args, {:continue, :finish_startup}}
 
     @impl GenServer
-    def terminate(:normal, %State{} = t) do
+    def terminate(_, %State{} = t) do
       Logic.shutdown(t)
       :normal
     end
@@ -139,6 +153,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
 
     def handle_call({:info, fact_names}, _from, %State{} = t),
       do: {:reply, t |> Logic.info(fact_names), t}
+
+    def handle_call({:lock_for_recovery, epoch}, controller, t) do
+      with {:ok, t} <- t |> Logic.lock_for_recovery(controller, epoch),
+           {:ok, info} <- t |> Logic.info([]) do
+        {:reply, {:ok, self(), info}, t}
+      else
+        error -> {:reply, error, t}
+      end
+    end
 
     def handle_call(_, _from, t),
       do: {:reply, {:error, :not_ready}, t}

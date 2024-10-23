@@ -69,10 +69,9 @@ defmodule Bedrock.DataPlane.Log do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock_for_recovery(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) ::
+  @spec lock_for_recovery(log :: ref(), Bedrock.epoch()) ::
           {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
-  def lock_for_recovery(log, cluster_controller, epoch),
-    do: GenServer.call(log, {:lock_for_recovery, cluster_controller, epoch})
+  defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
   Ask the transaction log worker for various facts about itself.

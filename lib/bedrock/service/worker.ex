@@ -21,14 +21,9 @@ defmodule Bedrock.Service.Worker do
     call(worker, {:info, fact_names}, opts[:timeout] || :infinity)
   end
 
-  @spec lock_for_recovery(
-          worker :: ref(),
-          controller :: ref(),
-          epoch :: Bedrock.epoch(),
-          opts :: keyword()
-        ) ::
+  @spec lock_for_recovery(worker :: ref(), epoch :: Bedrock.epoch(), opts :: keyword()) ::
           {:ok, recovery_info :: keyword()} | {:error, :newer_epoch_exists}
-  def lock_for_recovery(worker, controller, epoch, opts \\ []) do
-    call(worker, {:lock_for_recovery, controller, epoch}, opts[:timeout] || :infinity)
+  def lock_for_recovery(worker, epoch, opts \\ []) do
+    call(worker, {:lock_for_recovery, epoch}, opts[:timeout] || :infinity)
   end
 end

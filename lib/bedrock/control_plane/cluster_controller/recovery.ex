@@ -342,15 +342,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       ordered: false,
       zip_input_on_exit: true
     )
+    |> Enum.to_list()
+    |> IO.inspect()
     |> Enum.reduce_while({[], %{}}, fn
-      {_, {:error, :newer_epoch_exists} = error}, _ ->
+      {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}
 
-      {%{id: id} = service, {:ok, pid, info}}, {services, info_by_id} ->
+      {:ok, {%{id: id} = service, {:ok, pid, info}}}, {services, info_by_id} ->
         {:cont,
          {[service |> ServiceDescriptor.up(pid) | services], Map.put(info_by_id, id, info)}}
 
-      {service, {:error, _}}, {services, info_by_id} ->
+      {:ok, {service, {:error, _}}}, {services, info_by_id} ->
         {:cont, {[service |> ServiceDescriptor.down() | services], info_by_id}}
 
       {:exit, {service, _}}, {services, info_by_id} ->
@@ -365,10 +367,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   @spec try_to_lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch()) ::
           {:ok, pid(), recovery_info :: map()} | {:error, :unavailable}
   def try_to_lock_service_for_recovery(%{kind: :log, last_seen: name}, epoch),
-    do: Log.lock_for_recovery(name, self(), epoch)
+    do: Log.lock_for_recovery(name, epoch)
 
   def try_to_lock_service_for_recovery(%{kind: :storage, last_seen: name}, epoch),
-    do: Storage.lock_for_recovery(name, self(), epoch)
+    do: Storage.lock_for_recovery(name, epoch)
 
   def try_to_lock_service_for_recovery(_, _), do: {:error, :unavailable}
 

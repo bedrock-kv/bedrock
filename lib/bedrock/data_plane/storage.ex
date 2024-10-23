@@ -39,10 +39,9 @@ defmodule Bedrock.DataPlane.Storage do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock_for_recovery(storage :: ref(), cluster_controller :: pid(), Bedrock.epoch()) ::
+  @spec lock_for_recovery(storage :: ref(), Bedrock.epoch()) ::
           {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
-  def lock_for_recovery(storage, cluster_controller, epoch),
-    do: GenServer.call(storage, {:lock_for_recovery, cluster_controller, epoch})
+  defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
   Ask the storage storage for various facts about itself.

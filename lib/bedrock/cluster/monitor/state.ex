@@ -10,7 +10,7 @@ defmodule Bedrock.Cluster.Monitor.State do
           descriptor: Descriptor.t(),
           coordinator: Coordinator.ref() | :unavailable,
           controller: ClusterController.ref() | :unavailable,
-          timer_ref: reference() | nil,
+          timers: map() | nil,
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()]
@@ -21,7 +21,7 @@ defmodule Bedrock.Cluster.Monitor.State do
             descriptor: nil,
             coordinator: :unavailable,
             controller: :unavailable,
-            timer_ref: nil,
+            timers: nil,
             missed_pongs: 0,
             mode: :active,
             capabilities: []

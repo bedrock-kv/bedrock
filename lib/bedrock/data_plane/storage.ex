@@ -31,10 +31,23 @@ defmodule Bedrock.DataPlane.Storage do
   end
 
   @doc """
+  Request that the storage service lock itself and stop pulling new transactions
+  from the logs. This mechanism is used by a newly elected cluster controller
+  to prevent new transactions from being accepted while it is establishing
+  its authority.
+
+  In order for the lock to succeed, the given epoch needs to be greater than
+  the current epoch.
+  """
+  @spec lock_for_recovery(storage :: ref(), cluster_controller :: pid(), Bedrock.epoch()) ::
+          {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+  def lock_for_recovery(storage, cluster_controller, epoch),
+    do: GenServer.call(storage, {:lock_for_recovery, cluster_controller, epoch})
+
+  @doc """
   Ask the storage storage for various facts about itself.
   """
-  @spec info(storage :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(storage :: ref(), [fact_name()], Bedrock.timeout_in_ms()) ::
+  @spec info(storage :: ref(), [fact_name()], opts :: keyword()) ::
           {:ok, keyword()} | {:error, term()}
-  defdelegate info(storage, fact_names, timeout \\ 5_000), to: Worker
+  defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

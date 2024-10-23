@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.ClusterController.ConfigChanges do
       :replication_factor,
       :desired_coordinators,
       :desired_logs,
-      :desired_get_read_version_proxies,
+      :desired_read_version_proxies,
       :desired_commit_proxies,
       :desired_transaction_resolvers,
       :transaction_window_in_ms

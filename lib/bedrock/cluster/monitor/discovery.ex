@@ -4,7 +4,7 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
 
-  use Bedrock.Internal.TimerManagement, type: State.t()
+  use Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Monitor.State,
     only: [
@@ -72,11 +72,11 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   """
   @spec change_cluster_controller(State.t(), ClusterController.ref() | :unavailable) :: State.t()
   def change_cluster_controller(t, controller) when t.controller == controller,
-    do: t |> cancel_timer() |> maybe_set_ping_timer()
+    do: t |> cancel_timer(:ping) |> maybe_set_ping_timer()
 
   def change_cluster_controller(t, controller) do
     put_in(t.controller, controller)
-    |> cancel_timer()
+    |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
     |> notify_cluster_controller_changed()
   end

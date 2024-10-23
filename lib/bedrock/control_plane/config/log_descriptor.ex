@@ -6,9 +6,6 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
 
   alias Bedrock.DataPlane.Log
 
-  @type tag :: integer()
-  @type log_id :: Log.id()
-
   @typedoc """
   Struct representing a log descriptor.
 
@@ -18,8 +15,8 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
       tags.
   """
   @type t :: %__MODULE__{
-          log_id: log_id(),
-          tags: [tag()]
+          log_id: Log.id(),
+          tags: [Bedrock.range_tag()]
         }
 
   defstruct log_id: nil,
@@ -28,7 +25,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   @doc """
   Creates a new `LogDescriptor` struct.
   """
-  @spec new(log_id(), tags :: [tag()]) :: t()
+  @spec new(Log.id(), tags :: [Bedrock.range_tag()]) :: t()
   def new(log_id, tags),
     do: %__MODULE__{
       log_id: log_id,
@@ -44,9 +41,9 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   def upsert([%{log_id: id} | t], %{log_id: id} = n), do: [n | t]
   def upsert([h | t], n), do: [h | upsert(t, n)]
 
-  @spec find_by_id([t()], log_id()) :: t() | nil
+  @spec find_by_id([t()], Log.id()) :: t() | nil
   def find_by_id(l, log_id), do: l |> Enum.find(&(&1.log_id == log_id))
 
-  @spec remove_by_id([t()], log_id()) :: [t()]
+  @spec remove_by_id([t()], Log.id()) :: [t()]
   def remove_by_id(l, log_id), do: l |> Enum.reject(&(&1.log_id == log_id))
 end

@@ -93,5 +93,8 @@ defmodule Bedrock.ControlPlane.Config do
 
     def set_transaction_system_layout(config, layout),
       do: put_in(config.transaction_system_layout, layout)
+
+    def update_transaction_system_layout(config, updater),
+      do: update_in(config.transaction_system_layout, updater)
   end
 end

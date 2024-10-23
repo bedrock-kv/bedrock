@@ -3,10 +3,9 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.DataPlane.Log
 
   @type t :: TransactionSystemLayout.t()
-  @type log_id :: Bedrock.service_id()
-  @type tag :: Bedrock.tag()
 
   @spec set_controller(t(), pid()) :: t()
   def set_controller(t, controller), do: put_in(t.controller, controller) |> update_id()
@@ -26,7 +25,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @doc """
   Get a log descriptor by its id or nil if not found.
   """
-  @spec find_log_by_id(t(), log_id()) :: LogDescriptor.t() | nil
+  @spec find_log_by_id(t(), Log.id()) :: LogDescriptor.t() | nil
   def find_log_by_id(t, id),
     do: get_in(t.logs) |> LogDescriptor.find_by_id(id)
 
@@ -41,7 +40,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @doc """
   Removes a log descriptor by its id.
   """
-  @spec remove_log_with_id(t(), log_id()) :: t()
+  @spec remove_log_with_id(t(), Log.id()) :: t()
   def remove_log_with_id(t, id),
     do: update_in(t.logs, &LogDescriptor.remove_by_id(&1, id)) |> update_id()
 
@@ -50,7 +49,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @doc """
   Get a storage team descriptor by its tag or nil if not found.
   """
-  @spec find_storage_team_by_tag(t(), tag()) :: StorageTeamDescriptor.t() | nil
+  @spec find_storage_team_by_tag(t(), Bedrock.range_tag()) :: StorageTeamDescriptor.t() | nil
   def find_storage_team_by_tag(t, tag),
     do: get_in(t.storage_teams) |> StorageTeamDescriptor.find_by_tag(tag)
 
@@ -65,11 +64,17 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @doc """
   Removes a log descriptor by its id.
   """
-  @spec remove_storage_team_with_tag(t(), tag()) :: t()
+  @spec remove_storage_team_with_tag(t(), Bedrock.range_tag()) :: t()
   def remove_storage_team_with_tag(t, tag),
     do: update_in(t.storage_teams, &StorageTeamDescriptor.remove_by_tag(&1, tag)) |> update_id()
 
   # Services
+
+  @spec set_services(t(), [ServiceDescriptor.t()]) :: t()
+  def set_services(t, services) do
+    put_in(t.services, services)
+    |> update_id()
+  end
 
   @doc """
   Inserts a service descriptor into the transaction system layout, replacing any

@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Log do
   @type fact_name ::
           Worker.fact_name()
           | :last_tx_id
+          | :oldest_tx_id
           | :minimum_durable_tx_id
 
   @doc """
@@ -68,15 +69,15 @@ defmodule Bedrock.DataPlane.Log do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec request_lock(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) :: :ok
-  def request_lock(log, cluster_controller, epoch),
-    do: GenServer.cast(log, {:lock, cluster_controller, epoch})
+  @spec lock_for_recovery(log :: ref(), cluster_controller :: pid(), Bedrock.epoch()) ::
+          {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+  def lock_for_recovery(log, cluster_controller, epoch),
+    do: GenServer.call(log, {:lock_for_recovery, cluster_controller, epoch})
 
   @doc """
   Ask the transaction log worker for various facts about itself.
   """
-  @spec info(log :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, term()}
-  @spec info(log :: ref(), [fact_name()], Bedrock.timeout_in_ms()) ::
+  @spec info(storage :: ref(), [fact_name()], opts :: keyword()) ::
           {:ok, keyword()} | {:error, term()}
-  defdelegate info(log, fact_names, timeout \\ 5_000), to: Worker
+  defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

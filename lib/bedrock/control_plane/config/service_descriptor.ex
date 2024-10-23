@@ -2,20 +2,24 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   @type id :: String.t()
   @type kind :: :log | :storage
   @type otp_name :: atom()
-  @type status :: :unknown | :down | {:up, pid(), otp_name(), node()}
+  @type status :: {:up, pid()} | :unknown | :down
 
   @type t :: %__MODULE__{
           id: id(),
           kind: kind(),
+          last_seen: {otp_name(), node()},
           status: status()
         }
-  defstruct [:id, :kind, :status]
+  defstruct [:id, :kind, :last_seen, :status]
 
   @spec new(id(), kind(), status()) :: t()
   def new(id, kind, status \\ :unknown), do: %__MODULE__{id: id, kind: kind, status: status}
 
+  @spec up(t(), pid()) :: t()
+  def up(t, pid), do: %{t | status: {:up, pid}}
+
   @spec up(t(), pid(), otp_name(), node()) :: t()
-  def up(t, pid, otp_name, node), do: put_in(t.status, {:up, pid, otp_name, node})
+  def up(t, pid, otp_name, node), do: %{t | status: {:up, pid}, last_seen: {otp_name, node}}
 
   @spec down(t()) :: t()
   def down(t), do: put_in(t.status, :down)
@@ -40,6 +44,8 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   and running on the given node.
   """
   @spec node_down(t(), node()) :: t()
-  def node_down(%{status: {:up, _pid, _otp_name, node}} = t, node), do: put_in(t.status, :down)
+  def node_down(%{last_seen: {_otp_name, node}, status: {:up, _pid}} = t, node),
+    do: put_in(t.status, :down)
+
   def node_down(t, _node), do: t
 end

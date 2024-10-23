@@ -1,8 +1,7 @@
 defmodule Bedrock.Cluster.Monitor.PingPong do
-  alias Bedrock.Cluster.Monitor.State
   alias Bedrock.ControlPlane.ClusterController
 
-  use Bedrock.Internal.TimerManagement, type: State.t()
+  use Bedrock.Internal.TimerManagement
 
   def ping_cluster_controller_if_available(t) when t.controller != :unavailable do
     :ok = ClusterController.send_ping(t.controller)
@@ -14,7 +13,7 @@ defmodule Bedrock.Cluster.Monitor.PingPong do
   def pong_received(t) do
     t
     |> reset_missed_pongs()
-    |> cancel_timer()
+    |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
   end
 

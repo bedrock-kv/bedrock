@@ -3,7 +3,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
   alias Bedrock.ControlPlane.Coordinator
 
   use GenServer
-  use Bedrock.Internal.TimerManagement, type: State.t()
+  use Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Monitor.Advertising,
     only: [
@@ -76,17 +76,18 @@ defmodule Bedrock.Cluster.Monitor.Server do
   @doc false
   @impl GenServer
   def handle_continue(:find_a_live_coordinator, t) do
-    find_a_live_coordinator(t)
+    t
+    |> find_a_live_coordinator()
     |> case do
       {:ok, coordinator} ->
         t
-        |> cancel_timer()
+        |> cancel_timer(:find_a_live_coordinator)
         |> change_coordinator(coordinator)
         |> noreply(:find_current_cluster_controller)
 
       {:error, :unavailable} ->
         t
-        |> cancel_timer()
+        |> cancel_timer(:find_a_live_coordinator)
         |> set_timer(
           :find_a_live_coordinator,
           t.cluster.monitor_ping_timeout_in_ms()
@@ -102,13 +103,13 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> case do
       {:ok, controller} ->
         t
-        |> cancel_timer()
+        |> cancel_timer(:find_current_cluster_controller)
         |> change_cluster_controller(controller)
         |> noreply(:send_ping_to_controller)
 
       {:error, reason} when reason in [:timeout, :unavailable] ->
         t
-        |> cancel_timer()
+        |> cancel_timer(:find_current_cluster_controller)
         |> change_cluster_controller(:unavailable)
         |> set_timer(
           :find_current_cluster_controller,
@@ -159,7 +160,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
     t
     |> pong_missed()
     |> ping_cluster_controller_if_available()
-    |> cancel_timer()
+    |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
     |> noreply()
   end

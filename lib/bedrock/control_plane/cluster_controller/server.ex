@@ -55,37 +55,39 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
       node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
       last_transaction_layout_id: config.transaction_system_layout.id
     }
-    |> then(&{:ok, &1, {:continue, :finish_init}})
-  end
-
-  @impl true
-  def handle_continue(:finish_init, t) do
-    t
-    |> claim_config()
-    |> store_changes_to_config()
-    |> ping_all_nodes()
     |> then(fn
-      # %{config: %{state: :uninitialized}} = t -> t |> noreply()
-      t -> t |> noreply(:start_recovery)
+      %{config: %{state: :uninitialized}} = t ->
+        {:ok, t, {:continue, :initialization}}
+
+      t ->
+        {:ok, t, {:continue, :start_recovery}}
     end)
   end
 
+  @impl true
   def handle_continue(:start_recovery, t) do
     t
+    |> claim_config()
     |> start_new_recovery_attempt()
     |> recover()
     |> store_changes_to_config()
     |> noreply()
   end
 
-  @impl true
-  def handle_info({:timeout, :ping_all_nodes}, t) do
+  def handle_continue(:initialization, t) do
     t
-    |> ping_all_nodes()
-    |> determine_dead_nodes(now())
-    |> store_changes_to_config()
+    |> claim_config()
     |> noreply()
   end
+
+  @impl true
+  # def handle_info({:timeout, :ping_all_nodes}, t) do
+  #   t
+  #   |> ping_all_nodes()
+  #   |> determine_dead_nodes(now())
+  #   |> store_changes_to_config()
+  #   |> noreply()
+  # end
 
   def handle_info({:ping, from}, t) do
     send(from, {:pong, self()})
@@ -146,7 +148,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   defp store_changes_to_config(t), do: t
 
-  defp noreply(t), do: {:noreply, t}
-  defp noreply(t, continue), do: {:noreply, t, {:continue, continue}}
+  defp noreply(t, opts \\ [])
+  #  defp noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
+  defp noreply(t, _opts), do: {:noreply, t}
+
   defp reply(t, result), do: {:reply, result, t}
 end

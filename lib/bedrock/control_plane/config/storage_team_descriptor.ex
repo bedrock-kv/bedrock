@@ -1,10 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   alias Bedrock.DataPlane.Storage
 
-  @type key_range :: Bedrock.key_range()
-  @type tag :: Bedrock.tag()
-  @type storage_id :: Storage.id()
-
   @typedoc """
   ## Fields:
   - `tag`: The tag that identifies the team.
@@ -12,9 +8,9 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   - `ids`: The list of storage workers that are responsible for the team.
   """
   @type t :: %__MODULE__{
-          tag: tag(),
-          key_range: key_range(),
-          storage_ids: [storage_id()]
+          tag: Bedrock.range_tag(),
+          key_range: Bedrock.key_range(),
+          storage_ids: [Storage.id()]
         }
   defstruct tag: nil,
             key_range: nil,
@@ -23,7 +19,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @doc """
   Create a new storage team descriptor.
   """
-  @spec new(tag(), key_range(), [storage_id()]) :: t()
+  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id()]) :: t()
   def new(tag, key_range, storage_ids) do
     %__MODULE__{
       tag: tag,
@@ -41,9 +37,9 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   def upsert([%{tag: tag} | t], %{tag: tag} = n), do: [n | t]
   def upsert([h | t], n), do: [h | upsert(t, n)]
 
-  @spec find_by_tag([t()], tag()) :: t() | nil
+  @spec find_by_tag([t()], Bedrock.range_tag()) :: t() | nil
   def find_by_tag(l, tag), do: l |> Enum.find(&(&1.tag == tag))
 
-  @spec remove_by_tag([t()], tag()) :: [t()]
+  @spec remove_by_tag([t()], Bedrock.range_tag()) :: [t()]
   def remove_by_tag(l, tag), do: l |> Enum.reject(&(&1.tag == tag))
 end

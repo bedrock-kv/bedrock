@@ -12,7 +12,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
           config: Config.t() | nil,
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
-          timer_ref: reference() | nil,
+          timers: map() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           last_transaction_layout_id: TransactionSystemLayout.id()
         }
@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
             coordinator: nil,
             node_tracking: nil,
             service_directory: nil,
-            timer_ref: nil,
+            timers: nil,
             transaction_system_layout: nil,
             last_transaction_layout_id: 0
 

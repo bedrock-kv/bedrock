@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
     available within the system.
   - `desired_logs` - The number of transaction logs that are to be made
     available
-  - `desired_get_read_version_proxies` - The number of get read version proxies
+  - `desired_read_version_proxies` - The number of get read version proxies
     that are to be made available as part of the transaction system.
   - `desired_commit_proxies` - The number of commit proxies that are to be made
     available as part of the transaction system.
@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
           replication_factor: pos_integer(),
           desired_coordinators: pos_integer(),
           desired_logs: pos_integer(),
-          desired_get_read_version_proxies: pos_integer(),
+          desired_read_version_proxies: pos_integer(),
           desired_commit_proxies: pos_integer(),
           desired_transaction_resolvers: pos_integer(),
           transaction_window_in_ms: pos_integer()
@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
             replication_factor: 1,
             desired_coordinators: 1,
             desired_logs: 1,
-            desired_get_read_version_proxies: 1,
+            desired_read_version_proxies: 1,
             desired_commit_proxies: 1,
             desired_transaction_resolvers: 1,
             transaction_window_in_ms: 5_000

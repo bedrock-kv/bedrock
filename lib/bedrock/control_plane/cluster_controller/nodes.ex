@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  use Bedrock.Internal.TimerManagement, type: State.t()
+  use Bedrock.Internal.TimerManagement
 
   @spec request_to_rejoin(
           State.t(),
@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
     t.cluster.ping_nodes(Config.coordinators(t.config), self(), t.epoch)
 
     t
-    |> cancel_timer()
+    |> cancel_timer(:ping_all_nodes)
     |> set_timer(:ping_all_nodes, Config.ping_rate_in_ms(t.config))
   end
 

@@ -5,6 +5,8 @@ defmodule Bedrock.Service.Worker do
   with other services (as befits the type of worker.)
   """
 
+  use Bedrock.Internal.GenServerApi
+
   @type ref :: GenServer.server()
   @type id :: Bedrock.service_id()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
@@ -13,11 +15,20 @@ defmodule Bedrock.Service.Worker do
   @type otp_name :: atom()
 
   @spec info(worker :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
-  @spec info(worker :: ref(), [fact_name()], timeout_in_ms()) ::
+  @spec info(worker :: ref(), [fact_name()], opts :: keyword()) ::
           {:ok, keyword()} | {:error, :unavailable}
-  def info(worker, fact_names, timeout \\ 5_000) do
-    GenServer.call(worker, {:info, fact_names}, timeout)
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
+  def info(worker, fact_names, opts \\ []) do
+    call(worker, {:info, fact_names}, opts[:timeout] || :infinity)
+  end
+
+  @spec lock_for_recovery(
+          worker :: ref(),
+          controller :: ref(),
+          epoch :: Bedrock.epoch(),
+          opts :: keyword()
+        ) ::
+          {:ok, recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+  def lock_for_recovery(worker, controller, epoch, opts \\ []) do
+    call(worker, {:lock_for_recovery, controller, epoch}, opts[:timeout] || :infinity)
   end
 end

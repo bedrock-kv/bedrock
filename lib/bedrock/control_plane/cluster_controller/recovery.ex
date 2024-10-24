@@ -199,8 +199,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           teams :: [StorageTeamDescriptor.t()],
           info_by_id :: %{
             Storage.id() => %{
-              durable_version: Bedrock.version() | nil,
-              oldest_version: Bedrock.version() | nil
+              durable_version: Bedrock.version(),
+              oldest_version: Bedrock.version()
             }
           },
           quorum :: non_neg_integer()
@@ -259,11 +259,11 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       on the durable version.
   """
   @spec determine_durable_version_and_status_for_storage_team(
-          StorageTeamDescriptor.t(),
-          %{
+          team :: StorageTeamDescriptor.t(),
+          info_by_id :: %{
             Storage.id() => %{
-              durable_version: Bedrock.version() | nil,
-              oldest_version: Bedrock.version() | nil
+              durable_version: Bedrock.version(),
+              oldest_durable_version: Bedrock.version()
             }
           },
           quorum :: non_neg_integer()
@@ -342,8 +342,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       ordered: false,
       zip_input_on_exit: true
     )
-    |> Enum.to_list()
-    |> IO.inspect()
     |> Enum.reduce_while({[], %{}}, fn
       {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}

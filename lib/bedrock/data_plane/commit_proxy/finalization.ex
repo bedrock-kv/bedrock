@@ -118,24 +118,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       fn %LogDescriptor{log_id: log_id} ->
         transaction_system_layout.services
         |> ServiceDescriptor.find_by_id(log_id)
-        |> case do
-          %{kind: :log, status: {:up, log_server}} ->
-            Log.push(log_server, encoded_transaction, last_commit_version)
-            |> case do
-              :ok -> :ok
-              error -> {:error, error, log_id}
-            end
-
-          _ ->
-            {:error, :unavailable, log_id}
-        end
+        |> try_to_push_transaction_to_log(encoded_transaction, last_commit_version)
+        |> then(&{log_id, &1})
       end,
       timeout: 5_000
     )
     |> Enum.reduce_while(0, fn
-      {:error, _reason}, count -> {:cont, count}
-      :ok, count when count < m -> {:cont, count + 1}
-      :ok, count -> {:halt, count}
+      {_log_id, {:error, _reason}}, count -> {:cont, count}
+      {_log_id, :ok}, count when count < m -> {:cont, count + 1}
+      {_log_id, :ok}, count -> {:halt, count}
     end)
     |> case do
       count when count >= m ->
@@ -146,6 +137,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         :error
     end
   end
+
+  def try_to_push_transaction_to_log(
+        %{kind: :log, status: {:up, log_server}},
+        encoded_transaction,
+        last_commit_version
+      ),
+      do: Log.push(log_server, encoded_transaction, last_commit_version)
+
+  def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
 
   @spec reply_to_all_clients_with_aborted_transactions([GenServer.from()]) :: :ok
   def reply_to_all_clients_with_aborted_transactions(aborts),

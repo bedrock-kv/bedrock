@@ -41,10 +41,10 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     :ok
   end
 
-  @spec oldest_durable_version(database :: t()) :: Bedrock.version() | :initial
+  @spec oldest_durable_version(database :: t()) :: Bedrock.version()
   def oldest_durable_version(database), do: database.pkv |> PersistentKeyValues.oldest_version()
 
-  @spec last_durable_version(database :: t()) :: Bedrock.version() | :initial
+  @spec last_durable_version(database :: t()) :: Bedrock.version()
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
 
   @spec key_range(database :: t()) :: Storage.key_range() | :undefined

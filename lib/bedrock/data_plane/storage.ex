@@ -13,6 +13,9 @@ defmodule Bedrock.DataPlane.Storage do
           | :size_in_bytes
           | :utilization
 
+  @spec recovery_info :: [fact_name()]
+  def recovery_info, do: [:durable_version, :oldest_durable_version]
+
   @doc """
   Returns the value for the given key/version.
   """

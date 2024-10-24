@@ -85,6 +85,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
 
     defp supported_info, do: ~w[
       durable_version
+      oldest_durable_version
       id
       pid
       path
@@ -97,6 +98,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
       utilization
     ]a
 
+    defp gather_info(:oldest_durable_version, t), do: Database.oldest_durable_version(t.database)
     defp gather_info(:durable_version, t), do: Database.last_durable_version(t.database)
     defp gather_info(:id, t), do: t.id
     defp gather_info(:key_range, t), do: Database.key_range(t.database)
@@ -156,7 +158,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
 
     def handle_call({:lock_for_recovery, epoch}, controller, t) do
       with {:ok, t} <- t |> Logic.lock_for_recovery(controller, epoch),
-           {:ok, info} <- t |> Logic.info([]) do
+           {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
         {:reply, {:ok, self(), info}, t}
       else
         error -> {:reply, error, t}

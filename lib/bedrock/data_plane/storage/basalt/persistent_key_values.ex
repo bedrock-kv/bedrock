@@ -31,11 +31,23 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec last_version(t()) :: Bedrock.version() | :undefined
+  @spec oldest_version(t()) :: Bedrock.version() | :initial
+  def oldest_version(pkv) do
+    fetch(pkv, :oldest_version)
+    |> case do
+      {:error, :not_found} -> :initial
+      {:ok, version} -> version
+    end
+  end
+
+  @doc """
+  Returns the last version of the key-value store.
+  """
+  @spec last_version(t()) :: Bedrock.version() | :initial
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do
-      {:error, :not_found} -> :undefined
+      {:error, :not_found} -> :initial
       {:ok, version} -> version
     end
   end

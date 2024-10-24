@@ -233,8 +233,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   Determine the most recent durable version available among a list of storage
   servers, based on the provided quorum. It's also important that we discard
   any storage servers from consideration that do not have a full-copy (back to
-  transaction 0) of the data. We also use the quorum to determine whether or
-  not the team is healthy or degraded.
+  the initial transaction) of the data. We also use the quorum to determine
+  whether or not the team is healthy or degraded.
 
   ## Parameters
 
@@ -275,7 +275,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       team.storage_ids
       |> Enum.map(&Map.get(info_by_id, &1))
       |> Enum.reject(&is_nil/1)
-      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == 0))
+      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == :initial))
       |> Enum.map(&Map.get(&1, :durable_version))
 
     durable_versions

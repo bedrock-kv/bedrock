@@ -352,12 +352,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
 
     def handle_call({:lock_for_recovery, epoch}, controller, %State{} = t) do
       with {:ok, t} <- Logic.lock_for_recovery(t, controller, epoch),
-           {:ok, info} <-
-             Logic.info(t, [
-               :last_version,
-               :oldest_version,
-               :minimum_durable_version
-             ]) do
+           {:ok, info} <- Logic.info(t, Log.recovery_info()) do
         {:reply, {:ok, self(), info}, t}
       else
         error -> {:reply, error, t}

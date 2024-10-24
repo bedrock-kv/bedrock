@@ -206,7 +206,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
             {:ok, t()} | {:error, :newer_epoch_exists | String.t()}
     def lock_for_recovery(t, cluster_controller, epoch) do
       State.transition_to(t, :locked, fn
-        t when not is_nil(t.epoch) and t.epoch >= epoch ->
+        t when not is_nil(t.epoch) and t.epoch > epoch ->
           {:halt, :newer_epoch_exists}
 
         t ->

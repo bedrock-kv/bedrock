@@ -37,8 +37,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   @spec durable_write_to_config_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
   def durable_write_to_config_completed(t, log, durable_txn_id) do
-    Logger.debug("durable_write_to_config_completed: #{inspect(durable_txn_id)}")
-
     log
     |> Log.transactions_from(t.last_durable_txn_id, durable_txn_id)
     |> Enum.reduce(t, fn {txn_id, newest_durable_config}, t ->

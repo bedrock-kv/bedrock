@@ -39,8 +39,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
     |> add_running_service(node, info)
   end
 
-  @spec ping_all_nodes(State.t()) :: State.t()
-  def ping_all_nodes(t) do
+  @spec ping_all_coordinators(State.t()) :: State.t()
+  def ping_all_coordinators(t) do
     t.cluster.ping_nodes(Config.coordinators(t.config), self(), t.epoch)
 
     t

@@ -8,6 +8,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
+      ping_all_coordinators: 1,
+      determine_dead_nodes: 2,
       request_to_rejoin: 5,
       node_added_worker: 4,
       node_last_seen_at: 3
@@ -17,7 +19,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     only: [
       claim_config: 1,
       recover: 1,
-      start_new_recovery_attempt: 1
+      start_new_recovery_attempt: 1,
+      try_to_fix_stalled_recovery_if_needed: 1
     ]
 
   @doc false
@@ -53,20 +56,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
       node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
       last_transaction_layout_id: config.transaction_system_layout.id
     }
-    |> then(fn
-      %{config: %{state: :uninitialized}} = t ->
-        {:ok, t, {:continue, :start_recovery}}
-
-      #        {:ok, t, {:continue, :initialization}}
-
-      t ->
-        {:ok, t, {:continue, :start_recovery}}
-    end)
+    |> then(&{:ok, &1, {:continue, :start_recovery}})
   end
 
   @impl true
   def handle_continue(:start_recovery, t) do
     t
+    # |> ping_all_coordinators()
     |> claim_config()
     |> start_new_recovery_attempt()
     |> recover()
@@ -83,7 +79,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   @impl true
   # def handle_info({:timeout, :ping_all_nodes}, t) do
   #   t
-  #   |> ping_all_nodes()
+  #   |> ping_all_coordinators()
   #   |> determine_dead_nodes(now())
   #   |> store_changes_to_config()
   #   |> noreply()
@@ -103,8 +99,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     t
     |> request_to_rejoin(node, capabilities, running_services, now())
     |> case do
-      {:ok, t} -> t |> store_changes_to_config() |> reply(:ok)
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} ->
+        t
+        |> try_to_fix_stalled_recovery_if_needed()
+        |> store_changes_to_config()
+        |> reply(:ok)
+
+      {:error, _reason} = error ->
+        t |> reply(error)
     end
   end
 
@@ -128,12 +130,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_cast({:node_added_worker, node, worker_info}, t) do
     t
     |> node_added_worker(node, worker_info, now())
+    |> try_to_fix_stalled_recovery_if_needed()
     |> store_changes_to_config()
     |> noreply()
   end
-
-  def handle_cast({:log_lock_complete, _id, _info}, t),
-    do: noreply(t)
 
   defp now, do: DateTime.utc_now()
 

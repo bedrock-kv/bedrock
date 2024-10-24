@@ -44,8 +44,8 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   end
 
   @impl true
-  def consensus_reached(log, transaction_id) do
-    send(self(), {:raft, :consensus_reached, log, transaction_id})
+  def consensus_reached(log, transaction_id, consistency) do
+    send(self(), {:raft, :consensus_reached, log, transaction_id, consistency})
     :ok
   end
 end

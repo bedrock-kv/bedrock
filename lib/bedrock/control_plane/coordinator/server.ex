@@ -28,7 +28,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
-      emit_cluster_leadership_changed: 1
+      emit_cluster_leadership_changed: 1,
+      trace_consensus_reached: 2
     ]
 
   require Logger
@@ -144,8 +145,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t |> noreply()
   end
 
-  def handle_info({:raft, :consensus_reached, log, durable_txn_id}, t) do
+  def handle_info({:raft, :consensus_reached, _log, _durable_txn_id, :behind}, t),
+    do: noreply(t)
+
+  def handle_info({:raft, :consensus_reached, log, durable_txn_id, :latest}, t) do
     t
+    |> trace_consensus_reached(durable_txn_id)
     |> durable_write_to_config_completed(log, durable_txn_id)
     |> noreply()
   end

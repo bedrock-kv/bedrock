@@ -1,5 +1,6 @@
 defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.Telemetry
 
   @doc """
   """
@@ -21,6 +22,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     :telemetry.execute([:bedrock, :cluster, :controller, :changed], %{}, %{
       cluster: t.cluster,
       controller: controller
+    })
+
+    t
+  end
+
+  def trace_consensus_reached(t, transaction_id) do
+    Telemetry.emit([:bedrock, :cluster, :coordination, :consensus_reached], %{}, %{
+      cluster: t.cluster,
+      transaction_id: transaction_id
     })
 
     t

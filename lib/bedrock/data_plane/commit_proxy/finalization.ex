@@ -133,11 +133,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {_log_id, {:error, _reason}}, count ->
         {:cont, count}
 
-      {_log_id, :ok}, count when count < m ->
+      {_log_id, :ok}, count when count == m ->
+        :ok = majority_reached.(commit_version)
         {:cont, count + 1}
 
       {_log_id, :ok}, count ->
-        :ok = majority_reached.(commit_version)
         {:cont, count + 1}
     end)
     |> case do

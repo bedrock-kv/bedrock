@@ -138,6 +138,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
+  @spec try_to_push_transaction_to_log(LogDescriptor.t(), Transaction.t(), Bedrock.version()) ::
+          :ok | {:error, :unavailable}
   def try_to_push_transaction_to_log(
         %{kind: :log, status: {:up, log_server}},
         encoded_transaction,

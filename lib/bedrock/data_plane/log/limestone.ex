@@ -73,7 +73,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     @type t :: %__MODULE__{
             state: state(),
             subscriber_liveness_timeout_in_s: integer(),
-            id: String.t(),
+            id: Log.id(),
             otp_name: atom(),
             transactions: Transactions.t(),
             controller: LogController.ref() | nil,

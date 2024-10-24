@@ -1,10 +1,10 @@
 defmodule Bedrock.DataPlane.CommitProxy.Finalization do
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Transaction
 
   import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 4]
@@ -64,12 +64,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_system_layout,
         batch.last_commit_version,
         transaction_to_log,
-        oks
+        &send_reply_with_commit_version(oks, &1)
       )
   end
 
-  @spec determine_majority([any()]) :: non_neg_integer()
-  defp determine_majority(n), do: 1 + (n |> length() |> div(2))
+  @spec determine_majority(n :: non_neg_integer()) :: non_neg_integer()
+  defp determine_majority(n), do: 1 + div(n, 2)
 
   @doc """
   Pushes a transaction to the logs and waits for acknowledgement from a
@@ -104,41 +104,59 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           TransactionSystemLayout.t(),
           last_commit_version :: Bedrock.version(),
           Transaction.t(),
-          oks :: [GenServer.from()]
+          majority_reached :: (Bedrock.version() -> :ok)
         ) :: :ok
-  def push_transaction_to_logs(transaction_system_layout, last_commit_version, transaction, oks) do
+  def push_transaction_to_logs(
+        transaction_system_layout,
+        last_commit_version,
+        transaction,
+        majority_reached
+      ) do
     encoded_transaction = Transaction.encode(transaction)
     commit_version = Transaction.version(transaction)
 
     log_descriptors = transaction_system_layout.logs
-    m = determine_majority(log_descriptors)
+    n = length(log_descriptors)
+    m = determine_majority(n)
 
     log_descriptors
+    |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
-      fn %LogDescriptor{log_id: log_id} ->
-        transaction_system_layout.services
-        |> ServiceDescriptor.find_by_id(log_id)
+      fn %ServiceDescriptor{id: log_id} = service_descriptor ->
+        service_descriptor
         |> try_to_push_transaction_to_log(encoded_transaction, last_commit_version)
         |> then(&{log_id, &1})
       end,
       timeout: 5_000
     )
     |> Enum.reduce_while(0, fn
-      {_log_id, {:error, _reason}}, count -> {:cont, count}
-      {_log_id, :ok}, count when count < m -> {:cont, count + 1}
-      {_log_id, :ok}, count -> {:halt, count}
+      {_log_id, {:error, _reason}}, count ->
+        {:cont, count}
+
+      {_log_id, :ok}, count when count < m ->
+        {:cont, count + 1}
+
+      {_log_id, :ok}, count ->
+        :ok = majority_reached.(commit_version)
+        {:cont, count + 1}
     end)
     |> case do
-      count when count >= m ->
-        :ok = oks |> send_reply_with_commit_version(commit_version)
-
-      _ ->
-        # If we haven't received enough responses, we need to abort
-        :error
+      ^n -> :ok
+      # If we haven't received enough responses, we need to abort
+      _ -> :error
     end
   end
 
-  @spec try_to_push_transaction_to_log(LogDescriptor.t(), Transaction.t(), Bedrock.version()) ::
+  @spec resolve_log_descriptors([LogDescriptor.t()], [ServiceDescriptor.t()]) :: [
+          ServiceDescriptor.t()
+        ]
+  def resolve_log_descriptors(log_descriptors, services) do
+    log_descriptors
+    |> Enum.map(&ServiceDescriptor.find_by_id(services, &1.log_id))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), Transaction.t(), Bedrock.version()) ::
           :ok | {:error, :unavailable}
   def try_to_push_transaction_to_log(
         %{kind: :log, status: {:up, log_server}},

@@ -10,9 +10,9 @@ defmodule Bedrock.DataPlane.Log do
   @type health :: Worker.health()
   @type fact_name ::
           Worker.fact_name()
-          | :last_tx_id
-          | :oldest_tx_id
-          | :minimum_durable_tx_id
+          | :last_version
+          | :oldest_version
+          | :minimum_durable_version
 
   @doc """
   Apply a new mutation to the log. The previous transaction id is given as a

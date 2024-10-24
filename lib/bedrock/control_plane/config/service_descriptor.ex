@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   @type t :: %__MODULE__{
           id: id(),
           kind: kind(),
-          last_seen: {otp_name(), node()},
+          last_seen: {otp_name(), node()} | nil,
           status: status()
         }
   defstruct [:id, :kind, :last_seen, :status]

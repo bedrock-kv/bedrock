@@ -167,7 +167,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     @type health :: Log.health()
 
     @spec startup(
-            id :: String.t(),
+            id :: Log.id(),
             otp_name :: atom(),
             controller :: pid(),
             Transactions.t()

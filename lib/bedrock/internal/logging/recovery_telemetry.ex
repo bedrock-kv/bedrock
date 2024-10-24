@@ -61,14 +61,14 @@ defmodule Bedrock.Internal.Logging.RecoveryTelemetry do
           _metadata,
         _config
       ) do
-    if degraded_teams != [] do
+    if Enum.empty?(degraded_teams) do
       Logger.info(
-        "Bedrock [#{cluster.name()}/#{epoch}]: Durable version chosen: #{durable_version} (degraded teams: #{degraded_teams |> Enum.join({", "})})",
+        "Bedrock [#{cluster.name()}/#{epoch}]: Durable version chosen: #{durable_version}, all teams healthy.",
         ansi_color: :magenta
       )
     else
       Logger.info(
-        "Bedrock [#{cluster.name()}/#{epoch}]: Durable version chosen: #{durable_version}",
+        "Bedrock [#{cluster.name()}/#{epoch}]: Durable version chosen: #{durable_version} (degraded teams: #{degraded_teams |> Enum.join(", ")})",
         ansi_color: :magenta
       )
     end

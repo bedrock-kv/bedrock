@@ -14,15 +14,15 @@ defmodule Bedrock.Service.Worker do
   @type health :: :ok | :starting | {:error, term()}
   @type otp_name :: atom()
 
-  @spec info(worker :: ref(), [fact_name()]) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec info(worker :: ref(), [fact_name()]) :: {:ok, map()} | {:error, :unavailable}
   @spec info(worker :: ref(), [fact_name()], opts :: keyword()) ::
-          {:ok, keyword()} | {:error, :unavailable}
+          {:ok, map()} | {:error, :unavailable}
   def info(worker, fact_names, opts \\ []) do
     call(worker, {:info, fact_names}, opts[:timeout] || :infinity)
   end
 
   @spec lock_for_recovery(worker :: ref(), epoch :: Bedrock.epoch(), opts :: keyword()) ::
-          {:ok, recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+          {:ok, pid(), recovery_info :: map()} | {:error, :newer_epoch_exists}
   def lock_for_recovery(worker, epoch, opts \\ []) do
     call(worker, {:lock_for_recovery, epoch}, opts[:timeout] || :infinity)
   end

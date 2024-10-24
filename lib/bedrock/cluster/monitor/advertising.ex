@@ -22,7 +22,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end
   end
 
-  @spec advertise_worker_to_cluster_controller(State.t(), worker_pid :: pid) :: State.t()
+  @spec advertise_worker_to_cluster_controller(State.t(), worker_pid :: pid()) :: State.t()
   def advertise_worker_to_cluster_controller(t, worker_pid) do
     with {:ok, info} <- gather_info_from_worker(worker_pid) do
       t.controller
@@ -69,7 +69,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end)
   end
 
-  @spec gather_info_from_worker(pid()) :: {:ok, keyword()} | {:error, :unavailable}
+  @spec gather_info_from_worker(pid()) :: {:ok, map()} | {:error, :unavailable}
   def gather_info_from_worker(worker_pid),
     do: Worker.info(worker_pid, [:id, :otp_name, :kind, :pid])
 

@@ -8,11 +8,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
-      determine_dead_nodes: 2,
       request_to_rejoin: 5,
       node_added_worker: 4,
-      node_last_seen_at: 3,
-      ping_all_nodes: 1
+      node_last_seen_at: 3
     ]
 
   import Bedrock.ControlPlane.ClusterController.Recovery,

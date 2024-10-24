@@ -119,7 +119,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_system_layout.services
         |> ServiceDescriptor.find_by_id(log_id)
         |> case do
-          %{kind: :log, status: {:up, log_server, _, _}} ->
+          %{kind: :log, status: {:up, log_server}} ->
             Log.push(log_server, encoded_transaction, last_commit_version)
             |> case do
               :ok -> :ok

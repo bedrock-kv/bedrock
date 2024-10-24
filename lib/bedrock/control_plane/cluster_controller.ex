@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
   ## Returns
   - `:ok`: Indicates the report was successfully sent.
   """
-  @spec advertise_worker(cluster_controller :: ref(), node(), keyword()) :: :ok
+  @spec advertise_worker(cluster_controller :: ref(), node(), info :: map()) :: :ok
   def advertise_worker(cluster_controller, node, worker_info),
     do: cluster_controller |> cast({:node_added_worker, node, worker_info})
 

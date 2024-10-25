@@ -1,44 +1,19 @@
-defmodule Bedrock.Service.Controller.Logic do
+defmodule Bedrock.Service.Controller.Workers do
   alias Bedrock.Cluster.Monitor
-  alias Bedrock.Service.Controller.Data
+  alias Bedrock.Service.Controller.State
   alias Bedrock.Service.Controller.WorkerInfo
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 
-  def startup(%{
-        subsystem: subsystem,
-        cluster: cluster,
-        path: path,
-        default_worker: default_worker,
-        worker_supervisor_otp_name: worker_supervisor_otp_name,
-        otp_name: otp_name
-      }) do
-    {:ok,
-     %Data{
-       subsystem: subsystem,
-       cluster: cluster,
-       path: path,
-       default_worker: default_worker,
-       worker_supervisor_otp_name: worker_supervisor_otp_name,
-       otp_name: otp_name,
-       #
-       health: :starting,
-       waiting_for_healthy: [],
-       workers: %{}
-     }}
-  end
-
-  def startup(_), do: {:error, :missing_required_params}
-
-  @spec worker_ids_from_disk(Data.t()) :: [Worker.id()]
-  def worker_ids_from_disk(t) do
-    t.path
+  @spec worker_ids_from_disk(Path.t()) :: [Worker.id()]
+  def worker_ids_from_disk(path) do
+    path
     |> Path.join("*")
     |> Path.wildcard()
     |> Enum.map(&Path.basename/1)
   end
 
-  @spec start_workers(Data.t(), [Worker.id()]) :: Data.t()
+  @spec start_workers(State.t(), [Worker.id()]) :: State.t()
   def start_workers(t, worker_ids) do
     workers =
       worker_ids
@@ -61,7 +36,7 @@ defmodule Bedrock.Service.Controller.Logic do
     %{t | workers: workers}
   end
 
-  @spec start_worker_if_necessary(Data.t(), Worker.id()) :: {:ok, pid()} | {:error, term()}
+  @spec start_worker_if_necessary(State.t(), Worker.id()) :: {:ok, pid()} | {:error, term()}
   def start_worker_if_necessary(t, id) do
     worker_otp_name = otp_name_for_worker(t.otp_name, id)
 
@@ -73,7 +48,7 @@ defmodule Bedrock.Service.Controller.Logic do
     end
   end
 
-  @spec start_worker(Data.t(), Worker.id(), Worker.otp_name()) ::
+  @spec start_worker(State.t(), Worker.id(), Worker.otp_name()) ::
           {:ok, pid()} | {:error, term()}
   def start_worker(t, worker_id, worker_otp_name) do
     with path <- Path.join(t.path, worker_id),
@@ -103,7 +78,7 @@ defmodule Bedrock.Service.Controller.Logic do
     end
   end
 
-  @spec advertise_new_worker(Data.t(), worker_pid :: pid()) :: :ok
+  @spec advertise_new_worker(State.t(), worker_pid :: pid()) :: :ok
   def advertise_new_worker(t, worker_pid) do
     Monitor.advertise_worker(
       t.cluster.otp_name(:monitor),
@@ -124,7 +99,7 @@ defmodule Bedrock.Service.Controller.Logic do
 
   defp check_manifest_cluster_name(_, _), do: {:error, :cluster_name_in_manifest_does_not_match}
 
-  @spec new_worker(Data.t()) :: {:ok, Worker.id()} | {:error, term()}
+  @spec new_worker(State.t()) :: {:ok, Worker.id()} | {:error, term()}
   def new_worker(t) do
     with id <- random_worker_id(),
          path <- Path.join(t.path, id),
@@ -142,7 +117,7 @@ defmodule Bedrock.Service.Controller.Logic do
   defp otp_name_for_worker(otp_name, id),
     do: :"#{otp_name}_#{id |> String.replace("-", "_")}"
 
-  @spec otp_names_for_running_workers(Data.t()) :: [atom()]
+  @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t) do
     t.workers
     |> Enum.map(fn
@@ -150,7 +125,7 @@ defmodule Bedrock.Service.Controller.Logic do
     end)
   end
 
-  @spec update_health_for_worker(Data.t(), Worker.id(), Worker.health()) :: Data.t()
+  @spec update_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()
   def update_health_for_worker(t, worker_id, health) do
     %{
       t
@@ -161,10 +136,10 @@ defmodule Bedrock.Service.Controller.Logic do
     }
   end
 
-  @spec recompute_controller_health(Data.t()) :: Data.t()
+  @spec recompute_controller_health(State.t()) :: State.t()
   def recompute_controller_health(t), do: %{t | health: compute_health(t)}
 
-  @spec compute_health(Data.t()) :: Worker.health()
+  @spec compute_health(State.t()) :: Worker.health()
   defp compute_health(t) do
     t.workers
     |> Map.values()
@@ -177,11 +152,11 @@ defmodule Bedrock.Service.Controller.Logic do
     end)
   end
 
-  @spec add_pid_to_waiting_for_healthy(Data.t(), pid()) :: Data.t()
+  @spec add_pid_to_waiting_for_healthy(State.t(), pid()) :: State.t()
   def add_pid_to_waiting_for_healthy(t, pid),
     do: %{t | waiting_for_healthy: [pid | t.waiting_for_healthy]}
 
-  @spec notify_waiting_for_healthy(Data.t()) :: Data.t()
+  @spec notify_waiting_for_healthy(State.t()) :: State.t()
   def notify_waiting_for_healthy(%{health: :ok, waiting_for_healthy: waiting_for_healthy} = t)
       when waiting_for_healthy != [] do
     Enum.each(t.waiting_for_healthy, fn from -> GenServer.reply(from, :ok) end)

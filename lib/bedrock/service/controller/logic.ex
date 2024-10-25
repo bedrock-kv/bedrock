@@ -5,7 +5,14 @@ defmodule Bedrock.Service.Controller.Logic do
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 
-  def startup(subsystem, cluster, path, default_worker, worker_supervisor_otp_name, otp_name) do
+  def startup(%{
+        subsystem: subsystem,
+        cluster: cluster,
+        path: path,
+        default_worker: default_worker,
+        worker_supervisor_otp_name: worker_supervisor_otp_name,
+        otp_name: otp_name
+      }) do
     {:ok,
      %Data{
        subsystem: subsystem,
@@ -20,6 +27,8 @@ defmodule Bedrock.Service.Controller.Logic do
        workers: %{}
      }}
   end
+
+  def startup(_), do: {:error, :missing_required_params}
 
   @spec worker_ids_from_disk(Data.t()) :: [Worker.id()]
   def worker_ids_from_disk(t) do

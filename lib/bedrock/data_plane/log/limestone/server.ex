@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   alias Bedrock.DataPlane.Log.Limestone.Logic
   alias Bedrock.DataPlane.Log.Limestone.State
   alias Bedrock.DataPlane.Log.Limestone.Subscriptions
-  alias Bedrock.DataPlane.Log.Limestone.Transactions
   alias Bedrock.Service.LogController
 
   import Bedrock.DataPlane.Log.Limestone.Pulling, only: [pull: 4]
@@ -29,26 +28,6 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
            [name: otp_name]
          ]}
     }
-  end
-
-  @spec startup(
-          id :: Log.id(),
-          otp_name :: atom(),
-          controller :: LogController.ref(),
-          transactions :: Transactions.t()
-        ) :: {:ok, State.t()}
-  def startup(id, otp_name, controller, transactions) do
-    {:ok,
-     %State{
-       state: :starting,
-       id: id,
-       otp_name: otp_name,
-       controller: controller,
-       subscriptions: Subscriptions.new(),
-       transactions: transactions,
-       oldest_version: :initial,
-       last_version: :initial
-     }}
   end
 
   @spec report_health_to_transaction_log_controller(State.t(), Log.health()) :: :ok
@@ -94,7 +73,17 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
 
   @impl true
   def handle_continue(:finish_startup, {id, otp_name, controller, transactions}) do
-    startup(id, otp_name, controller, transactions)
+    {:ok,
+     %State{
+       state: :starting,
+       id: id,
+       otp_name: otp_name,
+       controller: controller,
+       subscriptions: Subscriptions.new(),
+       transactions: transactions,
+       oldest_version: :initial,
+       last_version: :initial
+     }}
     |> case do
       {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
     end

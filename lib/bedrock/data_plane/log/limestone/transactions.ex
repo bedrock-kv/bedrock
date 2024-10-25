@@ -1,9 +1,11 @@
 defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
-  defstruct ~w[ets]a
-  @type t :: %__MODULE__{}
-
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Log.Limestone.Segment
+
+  @type t :: %__MODULE__{
+          ets: :ets.table()
+        }
+  defstruct [:ets]
 
   @spec new(atom()) :: t()
   def new(name) do
@@ -11,9 +13,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
       :ets.new(name, [
         :ordered_set,
         :named_table,
-        :public,
-        {:write_concurrency, true},
-        {:read_concurrency, true}
+        :public
       ])
 
     %__MODULE__{ets: ets}
@@ -74,7 +74,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
   """
   @spec append!(t(), Transaction.t() | [Transaction.t()]) :: :ok
   def append!(t, transaction) when is_tuple(transaction) or is_list(transaction) do
-    :ets.insert_new(t.ets, transaction) || raise "duplicate transaction"
+    true = :ets.insert_new(t.ets, transaction)
     :ok
   end
 end

@@ -44,53 +44,55 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
 
   @impl GenServer
   def handle_call({:info, fact_names}, _from, %State{} = t),
-    do: {:reply, info(t, fact_names), t}
+    do: t |> reply(info(t, fact_names))
 
   def handle_call({:push, transaction, prev_version}, _from, %State{} = t) do
     push(t, transaction, prev_version)
     |> case do
-      {:ok, t} -> {:reply, :ok, t}
-      {:error, _reason} = error -> {:reply, error, t}
+      {:ok, t} -> t |> reply(:ok)
+      {:error, _reason} = error -> t |> reply(error)
     end
   end
 
   def handle_call({:pull, last_version, count, opts}, _from, %State{} = t) do
     pull(t, last_version, count, opts)
     |> case do
-      {:ok, []} -> {:reply, {:ok, []}, t}
-      {:ok, transactions} -> {:reply, {:ok, transactions}, t}
+      {:ok, []} -> t |> reply({:ok, []})
+      {:ok, transactions} -> t |> reply({:ok, transactions})
     end
   end
 
   def handle_call({:lock_for_recovery, epoch}, controller, %State{} = t) do
     with {:ok, t} <- lock_for_recovery(t, controller, epoch),
          {:ok, info} <- info(t, Log.recovery_info()) do
-      {:reply, {:ok, self(), info}, t}
+      t |> reply({:ok, self(), info})
     else
-      error -> {:reply, error, t}
+      error -> t |> reply(error)
     end
   end
 
   @impl true
   def handle_continue(:finish_startup, {id, otp_name, controller, transactions}) do
-    {:ok,
-     %State{
-       state: :starting,
-       id: id,
-       otp_name: otp_name,
-       controller: controller,
-       subscriptions: Subscriptions.new(),
-       transactions: transactions,
-       oldest_version: :initial,
-       last_version: :initial
-     }}
-    |> case do
-      {:ok, t} -> {:noreply, t, {:continue, :report_health_to_controller}}
-    end
+    %State{
+      state: :starting,
+      id: id,
+      otp_name: otp_name,
+      controller: controller,
+      subscriptions: Subscriptions.new(),
+      transactions: transactions,
+      oldest_version: :initial,
+      last_version: :initial
+    }
+    |> noreply(continue: :report_health_to_controller)
   end
 
   def handle_continue(:report_health_to_controller, %State{} = t) do
     :ok = Logic.report_health_to_transaction_log_controller(t, :ok)
-    {:noreply, t}
+    t |> noreply()
   end
+
+  defp reply(t, reply), do: {:reply, reply, t}
+
+  defp noreply(t), do: {:noreply, t}
+  defp noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
 end

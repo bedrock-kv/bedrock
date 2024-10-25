@@ -8,7 +8,7 @@ defmodule Bedrock.Cluster.Monitor do
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
 
-  use Bedrock.Internal.GenServerApi
+  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.name()
   @type controller :: ClusterController.ref()

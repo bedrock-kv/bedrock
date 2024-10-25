@@ -5,7 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Config
 
-  use Bedrock.Internal.GenServerApi
+  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.name()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()

@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Resolver do
-  use Bedrock.Internal.GenServerApi
+  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.name()
 

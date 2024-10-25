@@ -22,17 +22,14 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end
   end
 
-  @spec advertise_worker_to_cluster_controller(State.t(), worker_pid :: pid()) :: State.t()
+  @spec advertise_worker_to_cluster_controller(State.t(), Worker.ref()) :: State.t()
   def advertise_worker_to_cluster_controller(t, worker_pid) do
-    with {:ok, info} <- gather_info_from_worker(worker_pid) do
-      t.controller
-      |> ClusterController.advertise_worker(
-        Node.self(),
-        info
-      )
+    with {:ok, info} <- gather_info_from_worker(worker_pid),
+         :ok <- t.controller |> ClusterController.advertise_worker(node(), info) do
+      t
+    else
+      _ -> t
     end
-
-    t
   end
 
   @spec running_services(State.t()) :: [keyword()]
@@ -69,9 +66,9 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end)
   end
 
-  @spec gather_info_from_worker(pid()) :: {:ok, map()} | {:error, :unavailable}
-  def gather_info_from_worker(worker_pid),
-    do: Worker.info(worker_pid, [:id, :otp_name, :kind, :pid])
+  @spec gather_info_from_worker(Worker.ref()) :: {:ok, map()} | {:error, :unavailable}
+  def gather_info_from_worker(worker),
+    do: Worker.info(worker, [:id, :otp_name, :kind, :pid])
 
   @spec publish_cluster_controller_replaced_to_pubsub(State.t()) :: State.t()
   def publish_cluster_controller_replaced_to_pubsub(t) do

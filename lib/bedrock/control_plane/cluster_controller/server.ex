@@ -8,8 +8,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
-      ping_all_coordinators: 1,
-      determine_dead_nodes: 2,
+      # ping_all_coordinators: 1,
+      # determine_dead_nodes: 2,
       request_to_rejoin: 5,
       node_added_worker: 4,
       node_last_seen_at: 3

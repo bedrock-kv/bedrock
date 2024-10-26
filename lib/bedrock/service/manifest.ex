@@ -1,14 +1,22 @@
 defmodule Bedrock.Service.Manifest do
-  @derive Jason.Encoder
-  defstruct ~w[cluster id worker]a
-  @type t :: %__MODULE__{}
+  alias Bedrock.Cluster
 
-  @spec new(cluster :: String.t(), id :: String.t(), worker :: module()) :: t()
-  def new(cluster, id, worker) do
+  @derive Jason.Encoder
+  @type t :: %__MODULE__{
+          cluster: Cluster.name(),
+          id: String.t(),
+          worker: module(),
+          params: map()
+        }
+  defstruct [:cluster, :id, :worker, :params]
+
+  @spec new(Cluster.name(), id :: String.t(), worker :: module(), params :: map()) :: t()
+  def new(cluster, id, worker, params \\ %{}) do
     %__MODULE__{
       cluster: cluster,
       id: id,
-      worker: worker
+      worker: worker,
+      params: params
     }
   end
 
@@ -18,7 +26,8 @@ defmodule Bedrock.Service.Manifest do
       %{
         cluster: manifest.cluster,
         id: manifest.id,
-        worker: manifest.worker |> Module.split() |> Enum.join(".")
+        worker: manifest.worker |> Module.split() |> Enum.join("."),
+        params: manifest.params
       }
       |> Jason.encode()
 
@@ -35,13 +44,9 @@ defmodule Bedrock.Service.Manifest do
          true <- is_map(json) || {:error, :manifest_is_not_a_dictionary},
          {:ok, cluster} <- cluster_from_json(json["cluster"]),
          {:ok, id} <- id_from_json(json["id"]),
-         {:ok, worker} <- worker_from_json(json["worker"]) do
-      {:ok,
-       %__MODULE__{
-         cluster: cluster,
-         id: id,
-         worker: worker
-       }}
+         {:ok, worker} <- worker_from_json(json["worker"]),
+         {:ok, params} <- params_from_json(json["params"]) do
+      {:ok, new(cluster, id, worker, params)}
     else
       {:error, %Jason.DecodeError{}} ->
         {:error, :manifest_is_invalid}
@@ -98,6 +103,10 @@ defmodule Bedrock.Service.Manifest do
       {:error, :worker_module_does_not_implement_behaviour}
     end
   end
+
+  def params_from_json(nil), do: {:ok, %{}}
+  def params_from_json(params) when is_map(params), do: {:ok, params}
+  def params_from_json(_), do: {:error, :invalid_params}
 
   @spec id_from_json(value :: binary()) ::
           {:ok, id :: String.t()} | {:error, :invalid_cluster_id}

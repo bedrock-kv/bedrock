@@ -1,5 +1,19 @@
 defmodule Bedrock.Service.Controller.State do
-  @type t :: %__MODULE__{}
+  alias Bedrock.Service.Controller.WorkerInfo
+  alias Bedrock.Service.Worker
+
+  @type t :: %__MODULE__{
+          cluster: module(),
+          default_worker: module(),
+          health: :starting | :ok | :error,
+          otp_name: atom(),
+          path: Path.t(),
+          registry: module(),
+          subsystem: atom(),
+          waiting_for_healthy: [pid()],
+          worker_supervisor_otp_name: atom(),
+          workers: %{Worker.id() => WorkerInfo.t()}
+        }
   defstruct [
     :cluster,
     :default_worker,

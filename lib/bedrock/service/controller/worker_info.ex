@@ -3,6 +3,8 @@ defmodule Bedrock.Service.Controller.WorkerInfo do
   defstruct [
     :id,
     :health,
-    :otp_name
+    :otp_name,
+    :path,
+    :pid
   ]
 end

@@ -40,8 +40,8 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
   describe "Basalt.PersistentKeyValues.last_version/1" do
     setup :with_empty_pkv
 
-    test "returns :undefined on a newly created key-value store", %{pkv: pkv} do
-      assert :undefined == PersistentKeyValues.last_version(pkv)
+    test "returns 0 on a newly created key-value store", %{pkv: pkv} do
+      assert 0 == PersistentKeyValues.last_version(pkv)
     end
 
     test "returns the correct version after storing one transaction", %{pkv: pkv} do

@@ -52,7 +52,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     transactions
     |> Enum.reduce(latest_version, fn
       {version, _kv_pairs}, newest_version
-      when newest_version != :undefined and version <= newest_version ->
+      when version <= newest_version ->
         raise "Transactions must be applied in order (new #{version}, old #{newest_version})"
 
       {version, _kv_pairs} = transaction, _newest_version ->

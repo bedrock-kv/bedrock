@@ -9,11 +9,14 @@ defmodule Bedrock.Service.Controller do
   Return a list of running workers.
   """
   @spec all(controller :: ref()) :: {:ok, [Worker.ref()]} | {:error, term()}
-  def all(controller) do
-    GenServer.call(controller, :workers)
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
+  def all(controller), do: call(controller, :workers, 5_000)
+
+  @doc """
+  Create a new worker.
+  """
+  @spec new_worker(controller :: ref(), id :: Worker.id(), kind :: :log | :storage) ::
+          {:ok, Worker.ref()} | {:error, term()}
+  def new_worker(controller, id, kind), do: call(controller, {:new_worker, id, kind}, 5_000)
 
   @doc """
   Wait until the controller signals that it (and all of it's workers) are
@@ -21,18 +24,14 @@ defmodule Bedrock.Service.Controller do
   first.
   """
   @spec wait_for_healthy(controller :: ref(), timeout()) :: :ok | {:error, :unavailable}
-  def wait_for_healthy(controller, timeout) do
-    GenServer.call(controller, :wait_for_healthy, timeout)
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
+  def wait_for_healthy(controller, timeout), do: call(controller, :wait_for_healthy, timeout)
 
   @doc """
   Called by a worker to report it's health to the controller.
   """
   @spec report_health(controller :: ref(), Worker.id(), any()) :: :ok
   def report_health(controller, worker_id, health),
-    do: GenServer.cast(controller, {:worker_health, worker_id, health})
+    do: cast(controller, {:worker_health, worker_id, health})
 
   defmacro __using__(opts) do
     kind = opts[:kind] || raise "Missing :kind option."
@@ -46,6 +45,10 @@ defmodule Bedrock.Service.Controller do
 
       @spec all(controller :: ref()) :: {:ok, [unquote(worker).ref()]} | {:error, term()}
       defdelegate all(controller), to: Controller
+
+      @spec new_worker(controller :: ref(), id :: Worker.id(), kind :: :log | :storage) ::
+              {:ok, unquote(worker).ref()} | {:error, term()}
+      defdelegate new_worker(controller, id, kind), to: Controller
 
       @spec wait_for_healthy(controller :: ref(), timeout()) :: :ok | {:error, :unavailable}
       defdelegate wait_for_healthy(controller, timeout), to: Controller

@@ -80,8 +80,8 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
       controller: controller,
       subscriptions: Subscriptions.new(),
       transactions: transactions,
-      oldest_version: :initial,
-      last_version: :initial
+      oldest_version: 0,
+      last_version: 0
     }
     |> noreply(continue: :report_health_to_controller)
   end

@@ -312,7 +312,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       team.storage_ids
       |> Enum.map(&Map.get(info_by_id, &1))
       |> Enum.reject(&is_nil/1)
-      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == :initial))
+      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == 0))
       |> Enum.map(&Map.get(&1, :durable_version))
 
     durable_versions

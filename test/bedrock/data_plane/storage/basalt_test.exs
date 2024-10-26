@@ -79,7 +79,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
       assert {:ok, all_supported_info} = Basalt.Logic.info(state, supported_info)
 
       assert all_supported_info
-             |> Keyword.keys()
+             |> Map.keys()
              |> Enum.sort() == supported_info |> Enum.sort()
     end
   end

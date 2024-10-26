@@ -1,6 +1,6 @@
 defmodule Bedrock.Service.Controller.Health do
   alias Bedrock.Service.Controller.State
-  alias Bedrock.Service.Controller.Worker
+  alias Bedrock.Service.Worker
 
   @spec update_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()
   def update_health_for_worker(t, worker_id, health),

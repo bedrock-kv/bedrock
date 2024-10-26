@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   alias Bedrock.DataPlane.Log.Limestone.Logic
   alias Bedrock.DataPlane.Log.Limestone.State
   alias Bedrock.DataPlane.Log.Limestone.Subscriptions
-  alias Bedrock.Service.LogController
 
   import Bedrock.DataPlane.Log.Limestone.Pulling, only: [pull: 4]
   import Bedrock.DataPlane.Log.Limestone.Pushing, only: [push: 3]
@@ -30,10 +29,6 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
     }
   end
 
-  @spec report_health_to_transaction_log_controller(State.t(), Log.health()) :: :ok
-  def report_health_to_transaction_log_controller(t, health),
-    do: :ok = LogController.report_health(t.controller, t.id, health)
-
   @impl true
   def init(args),
     # We use a continuation here to ensure that the controller isn't blocked
@@ -44,10 +39,11 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
 
   @impl GenServer
   def handle_call({:info, fact_names}, _from, %State{} = t),
-    do: t |> reply(info(t, fact_names))
+    do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
   def handle_call({:push, transaction, prev_version}, _from, %State{} = t) do
-    push(t, transaction, prev_version)
+    t
+    |> push(transaction, prev_version)
     |> case do
       {:ok, t} -> t |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)
@@ -55,7 +51,8 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   end
 
   def handle_call({:pull, last_version, count, opts}, _from, %State{} = t) do
-    pull(t, last_version, count, opts)
+    t
+    |> pull(last_version, count, opts)
     |> case do
       {:ok, []} -> t |> reply({:ok, []})
       {:ok, transactions} -> t |> reply({:ok, transactions})
@@ -83,16 +80,16 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
       oldest_version: 0,
       last_version: 0
     }
+    |> report_health_to_controller()
     |> noreply(continue: :report_health_to_controller)
   end
 
-  def handle_continue(:report_health_to_controller, %State{} = t) do
-    :ok = Logic.report_health_to_transaction_log_controller(t, :ok)
-    t |> noreply()
+  def report_health_to_controller(t) do
+    :ok = Logic.report_health_to_transaction_log_controller(t, {:ok, self()})
+    t
   end
 
   defp reply(t, reply), do: {:reply, reply, t}
 
-  defp noreply(t), do: {:noreply, t}
   defp noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
 end

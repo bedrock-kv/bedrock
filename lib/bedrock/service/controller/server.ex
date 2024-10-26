@@ -27,18 +27,35 @@ defmodule Bedrock.Service.Controller.Server do
   end
 
   @impl true
-  def handle_call(:ping, _from, t), do: do_pong(t)
-  def handle_call(:workers, _from, t), do: do_fetch_workers(t)
-  def handle_call({:new_worker, id, kind}, _from, t), do: do_new_worker(id, kind, t)
-  def handle_call(:wait_for_healthy, from, t), do: do_wait_for_healthy(from, t)
-  def handle_call(_, _from, t), do: {:reply, {:error, :unsupported}, t}
+  def handle_call(:ping, _from, t),
+    do: t |> reply(:pong)
+
+  def handle_call(:workers, _from, t),
+    do: do_fetch_workers(t) |> then(&(t |> reply({:ok, &1})))
+
+  def handle_call({:new_worker, id, kind}, _from, t),
+    do: do_new_worker(id, kind, t) |> then(fn {t, health} -> t |> reply(health) end)
+
+  def handle_call(:wait_for_healthy, from, t) do
+    do_wait_for_healthy(from, t)
+    |> case do
+      :ok -> t |> reply(:ok)
+      t -> t |> noreply()
+    end
+  end
+
+  def handle_call(_, _from, t),
+    do: t |> reply({:error, :unknown_command})
 
   @impl true
   def handle_cast({:worker_health, worker_id, health}, t),
-    do: do_worker_health(worker_id, health, t)
+    do: do_worker_health(worker_id, health, t) |> noreply()
 
-  def handle_cast(_, t), do: {:noreply, t}
+  def handle_cast(_, t), do: t |> noreply()
 
   @impl true
-  def handle_continue(:spin_up, t), do: do_spin_up(t)
+  def handle_continue(:spin_up, t), do: do_spin_up(t) |> noreply()
+
+  defp reply(t, result), do: {:reply, result, t}
+  defp noreply(t), do: {:noreply, t}
 end

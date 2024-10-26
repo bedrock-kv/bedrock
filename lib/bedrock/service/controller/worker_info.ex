@@ -7,5 +7,5 @@ defmodule Bedrock.Service.Controller.WorkerInfo do
     :path
   ]
 
-  def with_health_changed(worker_info, health), do: %{worker_info | health: health}
+  def update_health(worker_info, health), do: %{worker_info | health: health}
 end

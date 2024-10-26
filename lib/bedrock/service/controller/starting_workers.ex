@@ -5,7 +5,7 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
 
   import Bedrock.Service.Controller.WorkerInfo,
     only: [
-      with_health_changed: 2
+      update_health: 2
     ]
 
   import Bedrock.Service.Controller.WorkingDirectory,
@@ -38,7 +38,7 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
     |> Task.async_stream(&start_worker(&1, cluster, worker_supervisor))
     |> Enum.map(fn
       {:ok, worker_info} -> worker_info
-      {:error, reason} -> worker_info |> with_health_changed({:failed_to_start, reason})
+      {:error, reason} -> worker_info |> update_health({:failed_to_start, reason})
     end)
     |> Enum.to_list()
   end
@@ -51,7 +51,7 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
   @spec start_worker(WorkerInfo.t(), module(), Supervisor.name()) :: WorkerInfo.t()
   def start_worker(worker_info, cluster, supervisor) do
     worker_info
-    |> with_health_changed(
+    |> update_health(
       do_start_worker_op(%StartWorkerOp{
         otp_name: worker_info.otp_name,
         id: worker_info.id,
@@ -126,7 +126,7 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
 
     case initialize_working_directory(path, manifest) do
       :ok -> worker_info
-      {:error, reason} -> worker_info |> with_health_changed({:failed_to_start, reason})
+      {:error, reason} -> worker_info |> update_health({:failed_to_start, reason})
     end
   end
 

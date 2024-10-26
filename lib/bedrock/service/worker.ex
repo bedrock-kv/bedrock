@@ -11,7 +11,7 @@ defmodule Bedrock.Service.Worker do
   @type id :: Bedrock.service_id()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
-  @type health :: :ok | :starting | {:error, term()}
+  @type health :: {:ok, pid()} | :stopped | {:error, term()}
   @type otp_name :: atom()
 
   @spec info(worker :: ref(), [fact_name()]) :: {:ok, map()} | {:error, :unavailable}

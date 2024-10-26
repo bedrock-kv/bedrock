@@ -1,8 +1,12 @@
 defmodule Bedrock.Service.Controller.StartingWorkers do
-  alias Bedrock.Service.Controller.State
   alias Bedrock.Service.Controller.WorkerInfo
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
+
+  import Bedrock.Service.Controller.WorkerInfo,
+    only: [
+      with_health_changed: 2
+    ]
 
   import Bedrock.Service.Controller.WorkingDirectory,
     only: [
@@ -29,8 +33,15 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
 
   @spec start_workers([WorkerInfo.t()], cluster :: module(), Supervisor.name()) ::
           [WorkerInfo.t()]
-  def start_workers(worker_info, cluster, worker_supervisor),
-    do: Enum.map(worker_info, &start_worker(&1, cluster, worker_supervisor))
+  def start_workers(worker_info, cluster, worker_supervisor) do
+    worker_info
+    |> Task.async_stream(&start_worker(&1, cluster, worker_supervisor))
+    |> Enum.map(fn
+      {:ok, worker_info} -> worker_info
+      {:error, reason} -> worker_info |> with_health_changed({:failed_to_start, reason})
+    end)
+    |> Enum.to_list()
+  end
 
   defmodule(StartWorkerOp) do
     @type t :: %__MODULE__{}
@@ -39,7 +50,8 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
 
   @spec start_worker(WorkerInfo.t(), module(), Supervisor.name()) :: WorkerInfo.t()
   def start_worker(worker_info, cluster, supervisor) do
-    health =
+    worker_info
+    |> with_health_changed(
       do_start_worker_op(%StartWorkerOp{
         otp_name: worker_info.otp_name,
         id: worker_info.id,
@@ -47,10 +59,10 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
         supervisor: supervisor,
         cluster: cluster
       })
-
-    %{worker_info | health: health}
+    )
   end
 
+  @spec do_start_worker_op(StartWorkerOp.t()) :: {:ok, pid()} | {:failed_to_start, term()}
   defp do_start_worker_op(op) do
     with {:ok, op} <- load_manifest(op),
          {:ok, op} <- build_child_spec(op),
@@ -62,8 +74,7 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
     end
   end
 
-  @spec load_manifest(StartWorkerOp.t()) ::
-          {:ok, StartWorkerOp.t()} | {:error, term()}
+  @spec load_manifest(StartWorkerOp.t()) :: {:ok, StartWorkerOp.t()} | {:error, term()}
   defp load_manifest(op) do
     case read_and_validate_manifest(op.path, op.id, op.cluster.name()) do
       {:ok, manifest} -> {:ok, %{op | manifest: manifest}}
@@ -111,12 +122,11 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
   def initialize_new_worker(id, kind, params, path, cluster, otp_namer) do
     worker = worker_for_kind(kind)
     manifest = Manifest.new(cluster.name(), id, worker, params)
-    otp_name = otp_namer.(id)
-    worker_info = %WorkerInfo{id: id, otp_name: otp_name, path: path, health: :stopped}
+    worker_info = worker_info_for_id(id, path, otp_namer)
 
     case initialize_working_directory(path, manifest) do
       :ok -> worker_info
-      {:error, reason} -> %{worker_info | health: {:failed_to_start, reason}}
+      {:error, reason} -> worker_info |> with_health_changed({:failed_to_start, reason})
     end
   end
 
@@ -129,8 +139,4 @@ defmodule Bedrock.Service.Controller.StartingWorkers do
   @spec otp_name_for_worker(otp_name :: atom(), Worker.id()) :: atom()
   def otp_name_for_worker(otp_name, id),
     do: :"#{otp_name}_#{id}"
-
-  @spec otp_names_for_running_workers(State.t()) :: [atom()]
-  def otp_names_for_running_workers(t),
-    do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)
 end

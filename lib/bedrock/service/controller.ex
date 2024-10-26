@@ -5,6 +5,8 @@ defmodule Bedrock.Service.Controller do
 
   @type ref :: GenServer.server()
 
+  @type health :: :ok | {:failed_to_start, :at_least_one_failed_to_start}
+
   @doc """
   Return a list of running workers.
   """

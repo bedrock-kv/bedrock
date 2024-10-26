@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Controller.State do
+  alias Bedrock.Service.Controller.State
   alias Bedrock.Service.Controller.WorkerInfo
   alias Bedrock.Service.Worker
 
@@ -51,4 +52,17 @@ defmodule Bedrock.Service.Controller.State do
   end
 
   def new_state(_), do: {:error, :missing_required_params}
+
+  def update_workers(t, updater), do: %{t | workers: updater.(t.workers)}
+  def update_health(t, updater), do: %{t | health: updater.(t.health)}
+
+  def update_waiting_for_healthy(t, updater),
+    do: %{t | waiting_for_healthy: updater.(t.waiting_for_healthy)}
+
+  def put_waiting_for_healthy(t, waiting_for_healthy),
+    do: %{t | waiting_for_healthy: waiting_for_healthy}
+
+  @spec put_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()
+  def put_health_for_worker(t, worker_id, health),
+    do: put_in(t, [:workers, worker_id, :health], health)
 end

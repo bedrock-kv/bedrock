@@ -1,18 +1,10 @@
 defmodule Bedrock.Service.Controller.Health do
-  alias Bedrock.Service.Controller.State
-  alias Bedrock.Service.Worker
+  alias Bedrock.Service.Controller
+  alias Bedrock.Service.Controller.WorkerInfo
 
-  @spec update_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()
-  def update_health_for_worker(t, worker_id, health),
-    do: put_in(t, [:workers, worker_id, :health], health)
-
-  @spec recompute_controller_health(State.t()) :: State.t()
-  def recompute_controller_health(t), do: %{t | health: compute_health(t)}
-
-  @spec compute_health(State.t()) :: Worker.health()
-  defp compute_health(t) do
-    t.workers
-    |> Map.values()
+  @spec compute_health_from_worker_info([WorkerInfo.t()]) :: Controller.health()
+  def compute_health_from_worker_info(worker_info) do
+    worker_info
     |> Enum.map(& &1.health)
     |> Enum.reduce(:ok, fn
       {:ok, _}, :ok -> :ok

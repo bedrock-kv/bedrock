@@ -4,7 +4,8 @@ defmodule Bedrock.Service.Controller.WorkerInfo do
     :id,
     :health,
     :otp_name,
-    :path,
-    :pid
+    :path
   ]
+
+  def with_health_changed(worker_info, health), do: %{worker_info | health: health}
 end

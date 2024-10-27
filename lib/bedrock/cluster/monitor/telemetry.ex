@@ -8,7 +8,7 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
   """
   @spec emit_cluster_controller_replaced(t :: State.t()) :: State.t()
   def emit_cluster_controller_replaced(t) do
-    Telemetry.emit([:bedrock, :cluster, :controller_replaced], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :controller_replaced], %{}, %{
       cluster: t.cluster,
       controller: t.controller
     })

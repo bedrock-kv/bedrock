@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   end
 
   def trace_consensus_reached(t, transaction_id) do
-    Telemetry.emit([:bedrock, :cluster, :coordination, :consensus_reached], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :coordination, :consensus_reached], %{}, %{
       cluster: t.cluster,
       transaction_id: transaction_id
     })

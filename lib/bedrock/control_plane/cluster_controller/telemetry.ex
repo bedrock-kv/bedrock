@@ -8,7 +8,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Telemetry do
   """
   @spec trace_recovery_attempt_started(t :: State.t()) :: :ok
   def trace_recovery_attempt_started(t) do
-    Telemetry.emit([:bedrock, :cluster, :recovery, :started], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :recovery, :started], %{}, %{
       cluster: t.cluster,
       epoch: t.epoch,
       attempt: t.config.recovery_attempt.attempt,
@@ -22,7 +22,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Telemetry do
           n_reporting :: non_neg_integer()
         ) :: :ok
   def trace_recovery_services_locked(t, n_services, n_reporting) do
-    Telemetry.emit([:bedrock, :cluster, :recovery, :services_locked], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :recovery, :services_locked], %{}, %{
       cluster: t.cluster,
       epoch: t.epoch,
       n_services: n_services,
@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Telemetry do
           degraded_teams :: [Bedrock.range_tag()]
         ) :: :ok
   def trace_recovery_durable_version_chosen(t, durable_version, degraded_teams) do
-    Telemetry.emit([:bedrock, :cluster, :recovery, :durable_version_chosen], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :recovery, :durable_version_chosen], %{}, %{
       cluster: t.cluster,
       epoch: t.epoch,
       durable_version: durable_version,
@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Telemetry do
           log_version_vector :: Bedrock.version_vector()
         ) :: :ok
   def trace_recovery_suitable_logs_chosen(t, suitable_logs, log_version_vector) do
-    Telemetry.emit([:bedrock, :cluster, :recovery, :suitable_logs_chosen], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :recovery, :suitable_logs_chosen], %{}, %{
       cluster: t.cluster,
       epoch: t.epoch,
       suitable_logs: suitable_logs,

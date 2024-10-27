@@ -1,9 +1,9 @@
 defmodule Bedrock.Cluster.Monitor.Advertising do
   alias Bedrock.Cluster.Monitor.State
+  alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.Cluster.PubSub
 
   require Logger
 
@@ -34,9 +34,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
 
   @spec running_services(State.t()) :: [keyword()]
   def running_services(t) do
-    t.cluster.otp_name(:foreman)
-    |> Foreman.all()
-    |> case do
+    case Foreman.all(t.cluster.otp_name(:foreman)) do
       {:ok, worker_pids} ->
         worker_pids |> gather_info_from_workers()
 
@@ -51,8 +49,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
 
   @spec gather_info_from_workers([pid()]) :: [keyword()]
   def gather_info_from_workers(worker_pids) do
-    worker_pids
-    |> Enum.reduce([], fn worker_pid, list ->
+    Enum.reduce(worker_pids, [], fn worker_pid, list ->
       gather_info_from_worker(worker_pid)
       |> case do
         {:ok, info} -> [info | list]

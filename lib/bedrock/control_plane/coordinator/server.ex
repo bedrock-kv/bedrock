@@ -22,7 +22,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
-      set_leader_node: 2,
+      put_leader_node: 2,
       update_raft: 2
     ]
 
@@ -127,7 +127,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_info({:raft, :leadership_changed, {new_leader, _epoch}}, t) do
     t
-    |> set_leader_node(new_leader)
+    |> put_leader_node(new_leader)
     |> emit_cluster_leadership_changed()
     |> stop_any_cluster_controller_on_this_node!()
     |> start_cluster_controller_if_necessary()

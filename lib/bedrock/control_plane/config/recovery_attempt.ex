@@ -40,14 +40,14 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     }
   end
 
-  defmodule Mutations do
+  defmodule Changes do
     alias Bedrock.ControlPlane.Config.RecoveryAttempt
     @type t :: RecoveryAttempt.t()
 
-    @spec set_state(t(), RecoveryAttempt.state()) :: t()
-    def set_state(t, state), do: put_in(t.state, state)
+    @spec put_state(t(), RecoveryAttempt.state()) :: t()
+    def put_state(t, state), do: %{t | state: state}
 
-    @spec set_started_at(t(), DateTime.t()) :: t()
-    def set_started_at(t, started_at), do: put_in(t.started_at, started_at)
+    @spec put_started_at(t(), DateTime.t()) :: t()
+    def put_started_at(t, started_at), do: %{t | started_at: started_at}
   end
 end

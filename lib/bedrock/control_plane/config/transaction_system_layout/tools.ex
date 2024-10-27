@@ -7,8 +7,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
 
   @type t :: TransactionSystemLayout.t()
 
-  @spec set_controller(t(), pid()) :: t()
-  def set_controller(t, controller), do: put_in(t.controller, controller) |> update_id()
+  @spec put_controller(t(), pid()) :: t()
+  def put_controller(t, controller), do: put_in(t.controller, controller) |> update_id()
 
   @spec set_sequencer(t(), pid()) :: t()
   def set_sequencer(t, sequencer), do: put_in(t.sequencer, sequencer) |> update_id()

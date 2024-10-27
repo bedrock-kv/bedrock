@@ -14,15 +14,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
   import Bedrock.ControlPlane.Config.Changes,
     only: [
-      set_epoch: 2,
-      set_recovery_attempt: 2,
+      put_epoch: 2,
+      put_recovery_attempt: 2,
       update_recovery_attempt: 2,
       update_transaction_system_layout: 2
     ]
 
   import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools,
     only: [
-      set_controller: 2
+      put_controller: 2
     ]
 
   import Bedrock.ControlPlane.ClusterController.State.Changes,
@@ -30,23 +30,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       update_config: 2
     ]
 
-  import Bedrock.ControlPlane.ClusterController.Telemetry,
-    only: [
-      trace_recovery_attempt_started: 1,
-      trace_recovery_services_locked: 3,
-      trace_recovery_durable_version_chosen: 3,
-      trace_recovery_suitable_logs_chosen: 3
-    ]
+  import Bedrock.ControlPlane.ClusterController.Telemetry
 
   @spec claim_config(State.t()) :: State.t()
   def claim_config(t) do
     t
     |> update_config(fn config ->
       config
-      |> set_epoch(t.epoch)
+      |> put_epoch(t.epoch)
       |> update_transaction_system_layout(fn tsl ->
         tsl
-        |> set_controller(self())
+        |> put_controller(self())
       end)
     end)
   end
@@ -56,7 +50,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     t
     |> update_config(fn config ->
       config
-      |> set_recovery_attempt(
+      |> put_recovery_attempt(
         RecoveryAttempt.new(
           t.epoch,
           now(),
@@ -143,14 +137,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           tsl
           |> TransactionSystemLayout.Tools.set_services(services)
         end)
-        |> update_recovery_attempt(&RecoveryAttempt.Mutations.set_state(&1, :recruiting))
+        |> update_recovery_attempt(&RecoveryAttempt.Changes.put_state(&1, :recruiting))
       end)
     else
       {:error, _reason} ->
         t
         |> update_config(fn config ->
           config
-          |> update_recovery_attempt(&RecoveryAttempt.Mutations.set_state(&1, :stalled))
+          |> update_recovery_attempt(&RecoveryAttempt.Changes.put_state(&1, :stalled))
         end)
     end
   end

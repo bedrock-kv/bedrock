@@ -31,6 +31,6 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
     alias Bedrock.ControlPlane.ClusterController.State
 
     @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
-    def update_config(t, updater), do: update_in(t.config, updater)
+    def update_config(t, updater), do: %{t | config: updater.(t.config)}
   end
 end

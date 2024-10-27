@@ -12,9 +12,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
       set_raft: 2,
-      set_config: 2,
-      set_controller: 2,
-      set_last_durable_txn_id: 2
+      put_config: 2,
+      put_controller: 2,
+      put_last_durable_txn_id: 2
     ]
 
   require Logger
@@ -41,22 +41,22 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     |> Log.transactions_from(t.last_durable_txn_id, durable_txn_id)
     |> Enum.reduce(t, fn {txn_id, newest_durable_config}, t ->
       update_in(t.waiting_list, &reply_to_waiter(&1, txn_id))
-      |> set_config(newest_durable_config)
-      |> set_last_durable_txn_id(txn_id)
+      |> put_config(newest_durable_config)
+      |> put_last_durable_txn_id(txn_id)
     end)
-    |> maybe_set_controller_from_config()
+    |> maybe_put_controller_from_config()
   end
 
-  def maybe_set_controller_from_config(t)
+  def maybe_put_controller_from_config(t)
       when t.controller != t.config.transaction_system_layout.controller do
     new_controller = t.config.transaction_system_layout.controller
 
     t
-    |> set_controller(new_controller)
+    |> put_controller(new_controller)
     |> emit_cluster_controller_changed(new_controller)
   end
 
-  def maybe_set_controller_from_config(t), do: t
+  def maybe_put_controller_from_config(t), do: t
 
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list

@@ -7,11 +7,11 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ToolsTest do
 
   import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools
 
-  describe "set_controller/2" do
+  describe "put_controller/2" do
     test "sets the controller pid" do
       layout = %TransactionSystemLayout{}
       controller_pid = self()
-      updated_layout = set_controller(layout, controller_pid)
+      updated_layout = put_controller(layout, controller_pid)
 
       refute updated_layout.id == layout.id
       assert updated_layout.controller == controller_pid

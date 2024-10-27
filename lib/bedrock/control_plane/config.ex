@@ -79,22 +79,22 @@ defmodule Bedrock.ControlPlane.Config do
   defmodule Changes do
     alias Bedrock.ControlPlane.Config
 
-    @spec set_epoch(Config.t(), pos_integer()) :: Config.t()
-    def set_epoch(config, epoch), do: put_in(config.epoch, epoch)
+    @spec put_epoch(Config.t(), pos_integer()) :: Config.t()
+    def put_epoch(t, epoch), do: %{t | epoch: epoch}
 
-    @spec set_recovery_attempt(Config.t(), RecoveryAttempt.t()) :: Config.t()
-    def set_recovery_attempt(config, recovery_attempt),
-      do: put_in(config.recovery_attempt, recovery_attempt)
+    @spec put_recovery_attempt(Config.t(), RecoveryAttempt.t()) :: Config.t()
+    def put_recovery_attempt(t, recovery_attempt),
+      do: %{t | recovery_attempt: recovery_attempt}
 
     @spec update_recovery_attempt(Config.t(), (RecoveryAttempt.t() -> RecoveryAttempt.t())) ::
             Config.t()
-    def update_recovery_attempt(config, updater),
-      do: update_in(config.recovery_attempt, updater)
+    def update_recovery_attempt(t, updater),
+      do: %{t | recovery_attempt: updater.(t.recovery_attempt)}
 
-    def set_transaction_system_layout(config, layout),
-      do: put_in(config.transaction_system_layout, layout)
+    def put_transaction_system_layout(t, transaction_system_layout),
+      do: %{t | transaction_system_layout: transaction_system_layout}
 
-    def update_transaction_system_layout(config, updater),
-      do: update_in(config.transaction_system_layout, updater)
+    def update_transaction_system_layout(t, updater),
+      do: %{t | transaction_system_layout: updater.(t.transaction_system_layout)}
   end
 end

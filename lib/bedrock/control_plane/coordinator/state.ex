@@ -31,27 +31,28 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   defmodule Changes do
     alias Bedrock.ControlPlane.Coordinator.State
 
-    @spec set_controller(t :: State.t(), new_controller :: ClusterController.ref() | :unavailable) ::
+    @spec put_controller(t :: State.t(), new_controller :: ClusterController.ref() | :unavailable) ::
             State.t()
-    def set_controller(t, new_controller),
-      do: put_in(t.controller, new_controller)
+    def put_controller(t, new_controller),
+      do: %{t | controller: new_controller}
 
-    @spec set_leader_node(t :: State.t(), leader_node :: node()) :: State.t()
-    def set_leader_node(t, leader_node), do: put_in(t.leader_node, leader_node)
+    @spec put_leader_node(t :: State.t(), leader_node :: node()) :: State.t()
+    def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}
 
     @spec set_raft(t :: State.t(), Raft.t()) :: State.t()
-    def set_raft(t, raft), do: put_in(t.raft, raft)
+    def set_raft(t, raft), do: %{t | raft: raft}
 
     @spec update_raft(t :: State.t(), updater :: (Raft.t() -> Raft.t())) :: State.t()
-    def update_raft(t, updater), do: update_in(t.raft, updater)
+    def update_raft(t, updater), do: %{t | raft: updater.(t.raft)}
 
-    @spec set_config(t :: State.t(), Config.t()) :: State.t()
-    def set_config(t, config), do: put_in(t.config, config)
+    @spec put_config(t :: State.t(), Config.t()) :: State.t()
+    def put_config(t, config), do: %{t | config: config}
 
     @spec update_config(t :: State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
-    def update_config(t, updater), do: update_in(t.config, updater)
+    def update_config(t, updater), do: %{t | config: updater.(t.config)}
 
-    @spec set_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
-    def set_last_durable_txn_id(t, txn_id), do: put_in(t.last_durable_txn_id, txn_id)
+    @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
+    def put_last_durable_txn_id(t, last_durable_txn_id),
+      do: %{t | last_durable_txn_id: last_durable_txn_id}
   end
 end

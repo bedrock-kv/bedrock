@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
-      set_controller: 2
+      put_controller: 2
     ]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
     |> case do
       {:ok, new_controller} ->
         t
-        |> set_controller(new_controller)
+        |> put_controller(new_controller)
         |> emit_cluster_controller_changed(new_controller)
 
       {:error, reason} ->
@@ -52,7 +52,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
         DynamicSupervisor.terminate_child(t.supervisor_otp_name, controller_pid)
 
         t
-        |> set_controller(:unavailable)
+        |> put_controller(:unavailable)
         |> emit_cluster_controller_changed(:unavailable)
     end
   end

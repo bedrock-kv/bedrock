@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.SegmentTest do
   alias Bedrock.DataPlane.Log.Limestone.Segment
   alias Bedrock.DataPlane.Transaction
 
-  defdelegate random_worker_id, to: Bedrock.Service.Controller.StartingWorkers
+  defdelegate random_worker_id, to: Bedrock.Service.Foreman.StartingWorkers
 
   setup context do
     context

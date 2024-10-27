@@ -18,8 +18,10 @@ defmodule Bedrock.DataPlane.Log.Limestone.TransactionsTest do
 
   describe "Limestone.Transactions.new/1" do
     test "it returns an appropriately configured result" do
-      assert %Transactions{ets: :transactions} =
+      assert %Transactions{ets: table} =
                Transactions.new(:transactions)
+
+      assert is_reference(table)
     end
   end
 

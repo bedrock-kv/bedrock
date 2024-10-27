@@ -10,6 +10,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @type ref :: GenServer.name()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
+  def config_key, do: :coordinator
+
   @spec fetch_controller(coordinator :: ref(), timeout_in_ms()) ::
           {:ok, ClusterController.ref()} | {:error, :unavailable | :timeout}
   def fetch_controller(coordinator, timeout \\ 5_000),

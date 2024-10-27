@@ -1,12 +1,12 @@
 defmodule Bedrock.DataPlane.Storage.Basalt do
-  use Bedrock.Service.WorkerBehaviour
-
   alias Agent.Server
-  alias Bedrock.Service.StorageController
+  alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Database
+
+  use Bedrock.Service.WorkerBehaviour, kind: :storage
 
   @doc false
   @spec child_spec(opts :: keyword()) :: map()
@@ -17,14 +17,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
             otp_name: atom(),
             path: Path.t(),
             epoch: Bedrock.epoch() | nil,
-            controller: pid() | nil,
+            foreman: pid() | nil,
             id: Worker.id(),
             database: Database.t()
           }
     defstruct otp_name: nil,
               path: nil,
               epoch: nil,
-              controller: nil,
+              foreman: nil,
               id: nil,
               database: nil
   end
@@ -32,9 +32,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
   defmodule Logic do
     alias Bedrock.DataPlane.Version
 
-    @spec startup(otp_name :: atom(), controller :: pid(), id :: Worker.id(), Path.t()) ::
+    @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
             {:ok, State.t()} | {:error, term()}
-    def startup(otp_name, controller, id, path) do
+    def startup(otp_name, foreman, id, path) do
       with :ok <- ensure_directory_exists(path),
            {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
         {:ok,
@@ -42,7 +42,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
            path: path,
            otp_name: otp_name,
            id: id,
-           controller: controller,
+           foreman: foreman,
            database: database
          }}
       end
@@ -61,8 +61,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch,
       do: {:error, :newer_epoch_exists}
 
-    def lock_for_recovery(t, controller, epoch),
-      do: {:ok, %{t | epoch: epoch, controller: controller}}
+    def lock_for_recovery(t, foreman, epoch),
+      do: {:ok, %{t | epoch: epoch, foreman: foreman}}
 
     @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
             {:error, :key_out_of_range | :not_found | :tx_too_old} | {:ok, binary()}
@@ -119,7 +119,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     @spec child_spec(opts :: keyword()) :: map()
     def child_spec(opts) do
       otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-      controller = opts[:controller] || raise "Missing :controller option"
+      foreman = opts[:foreman] || raise "Missing :foreman option"
       id = opts[:id] || raise "Missing :id option"
       path = opts[:path] || raise "Missing :path option"
 
@@ -129,7 +129,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
           {GenServer, :start_link,
            [
              __MODULE__,
-             {otp_name, controller, id, path},
+             {otp_name, foreman, id, path},
              [name: otp_name]
            ]}
       }
@@ -137,9 +137,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
 
     @impl GenServer
     def init(args),
-      # We use a continuation here to ensure that the controller isn't blocked
+      # We use a continuation here to ensure that the foreman isn't blocked
       # waiting for the worker to finish it's startup sequence (which could take
-      # a few seconds or longer if the database is large.) The controller will
+      # a few seconds or longer if the database is large.) The foreman will
       # be notified when the worker is ready to accept requests.
       do: {:ok, args, {:continue, :finish_startup}}
 
@@ -156,8 +156,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     def handle_call({:info, fact_names}, _from, %State{} = t),
       do: {:reply, t |> Logic.info(fact_names), t}
 
-    def handle_call({:lock_for_recovery, epoch}, controller, t) do
-      with {:ok, t} <- t |> Logic.lock_for_recovery(controller, epoch),
+    def handle_call({:lock_for_recovery, epoch}, foreman, t) do
+      with {:ok, t} <- t |> Logic.lock_for_recovery(foreman, epoch),
            {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
         {:reply, {:ok, self(), info}, t}
       else
@@ -169,16 +169,16 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
       do: {:reply, {:error, :not_ready}, t}
 
     @impl GenServer
-    def handle_continue(:finish_startup, {otp_name, controller, id, path}) do
-      Logic.startup(otp_name, controller, id, path)
+    def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
+      Logic.startup(otp_name, foreman, id, path)
       |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_storage_controller}}
+        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_foreman}}
         {:error, reason} -> {:stop, reason, :nostate}
       end
     end
 
-    def handle_continue(:report_health_to_storage_controller, %State{} = t) do
-      :ok = StorageController.report_health(t.controller, t.id, :ok)
+    def handle_continue(:report_health_to_foreman, %State{} = t) do
+      :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
       {:noreply, t}
     end
   end

@@ -19,7 +19,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.InitTest do
           path: tmp_dir,
           id: id,
           otp_name: :test_transaction_log_engine,
-          controller: self()
+          foreman: self()
         )
 
       pid = start_supervised!(child_spec)

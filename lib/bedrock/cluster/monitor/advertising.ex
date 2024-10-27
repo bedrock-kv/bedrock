@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster.Monitor.Advertising do
   alias Bedrock.Cluster.Monitor.State
   alias Bedrock.ControlPlane.ClusterController
-  alias Bedrock.Service.Controller
+  alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
   alias Bedrock.Cluster.PubSub
 
@@ -34,24 +34,19 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
 
   @spec running_services(State.t()) :: [keyword()]
   def running_services(t) do
-    t.capabilities
-    |> Enum.flat_map(fn
-      service ->
-        service
-        |> t.cluster.otp_name()
-        |> Controller.all()
-        |> case do
-          {:ok, worker_pids} ->
-            worker_pids |> gather_info_from_workers()
+    t.cluster.otp_name(:foreman)
+    |> Foreman.all()
+    |> case do
+      {:ok, worker_pids} ->
+        worker_pids |> gather_info_from_workers()
 
-          {:error, :unavailable} ->
-            []
+      {:error, :unavailable} ->
+        []
 
-          {:error, reason} ->
-            Logger.error("Failed to get workers for #{service}: #{inspect(reason)}")
-            []
-        end
-    end)
+      {:error, reason} ->
+        Logger.error("Failed to get workers: #{inspect(reason)}")
+        []
+    end
   end
 
   @spec gather_info_from_workers([pid()]) :: [keyword()]

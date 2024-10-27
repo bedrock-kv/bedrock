@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.State do
   alias Bedrock.DataPlane.Log.Limestone.Subscriptions
   alias Bedrock.DataPlane.Log.Limestone.StateMachine
   alias Bedrock.DataPlane.Log.Limestone.Transactions
-  alias Bedrock.Service.LogController
+  alias Bedrock.Service.Foreman
 
   @type state :: :starting | :locked | :ready
   @type t :: %__MODULE__{
@@ -13,7 +13,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.State do
           id: Log.id(),
           otp_name: atom(),
           transactions: Transactions.t(),
-          controller: LogController.ref() | nil,
+          foreman: Foreman.ref() | nil,
           epoch: Bedrock.epoch() | nil,
           subscriptions: Subscriptions.t(),
           oldest_version: Bedrock.version(),
@@ -25,7 +25,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.State do
             id: nil,
             otp_name: nil,
             transactions: nil,
-            controller: nil,
+            foreman: nil,
             epoch: nil,
             subscriptions: nil,
             oldest_version: nil,

@@ -1,4 +1,4 @@
-defmodule Bedrock.Service.Controller.WorkingDirectory do
+defmodule Bedrock.Service.Foreman.WorkingDirectory do
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
   import Bedrock.Service.Manifest, only: [load_from_file: 1]

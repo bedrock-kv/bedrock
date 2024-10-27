@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
           path: tmp_dir,
           id: expected_id,
           otp_name: :test_storage_engine,
-          controller: self()
+          foreman: self()
         )
 
       assert %{
@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
           path: tmp_dir,
           id: expected_id,
           otp_name: :test_storage_engine,
-          controller: self()
+          foreman: self()
         )
 
       pid = start_supervised!(child_spec)
@@ -56,7 +56,8 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       # We expect the worker to eventually send a message to the controller
       # when it's ready to accept requests.
-      assert_receive {:"$gen_cast", {:worker_health, ^expected_id, :ok}}, 5_000
+      assert_receive {:"$gen_cast", {:worker_health, ^expected_id, {:ok, pid}}}, 5_000
+      assert is_pid(pid)
 
       # At this point, a physical database should have been created on disk.
       assert File.exists?(Path.join(tmp_dir, "dets"))

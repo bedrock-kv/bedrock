@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
   alias Bedrock.DataPlane.Log.Limestone.Transactions
 
   use Supervisor
-  use Bedrock.Service.WorkerBehaviour
+  use Bedrock.Service.WorkerBehaviour, kind: :log
 
   @doc false
   @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
@@ -10,7 +10,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
     id = Keyword.fetch!(opts, :id)
     path = Keyword.fetch!(opts, :path)
-    controller = Keyword.fetch!(opts, :controller)
+    foreman = Keyword.fetch!(opts, :foreman)
 
     %{
       id: {__MODULE__, id},
@@ -21,7 +21,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
            {
              otp_name,
              id,
-             controller,
+             foreman,
              path,
              opts[:min_spare_segments] || 3,
              opts[:max_spare_segments] || 5,
@@ -34,7 +34,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
 
   @impl true
   def init(
-        {otp_name, id, controller, _path, _min_spare_segments, _max_spare_segments, _segment_size}
+        {otp_name, id, foreman, _path, _min_spare_segments, _max_spare_segments, _segment_size}
       ) do
     transactions = Transactions.new(:"#{otp_name}_transactions")
 
@@ -44,7 +44,7 @@ defmodule Bedrock.DataPlane.Log.Limestone do
          [
            id: id,
            otp_name: otp_name,
-           controller: controller,
+           foreman: foreman,
            transactions: transactions
          ]}
       ]

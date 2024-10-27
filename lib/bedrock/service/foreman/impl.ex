@@ -1,31 +1,32 @@
-defmodule Bedrock.Service.Controller.Impl do
-  alias Bedrock.Service.Controller.State
-  alias Bedrock.Service.Controller.WorkerInfo
+defmodule Bedrock.Service.Foreman.Impl do
+  alias Bedrock.Service.Foreman.State
+  alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Worker
+  alias Bedrock.Cluster.Monitor
 
-  import Bedrock.Service.Controller.State
+  import Bedrock.Service.Foreman.State
 
-  import Bedrock.Service.Controller.StartingWorkers,
+  import Bedrock.Service.Foreman.StartingWorkers,
     only: [
-      worker_info_from_path: 2,
-      start_workers: 3,
-      start_worker: 3,
-      initialize_new_worker: 6,
-      otp_name_for_worker: 2
+      worker_info_from_path: 1,
+      try_to_start_workers: 2,
+      try_to_start_worker: 2,
+      initialize_new_worker: 5
     ]
 
-  import Bedrock.Service.Controller.Health,
+  import Bedrock.Service.Foreman.Health,
     only: [compute_health_from_worker_info: 1]
 
   def do_fetch_workers(t),
     do: otp_names_for_running_workers(t)
 
-  @spec do_new_worker(binary(), :log | :storage, any()) :: {State.t(), Worker.health()}
-  def do_new_worker(id, kind, t) do
+  @spec do_new_worker(State.t(), Worker.id(), :log | :storage) :: {State.t(), Worker.health()}
+  def do_new_worker(t, id, kind) do
     worker_info =
       id
-      |> initialize_new_worker(kind, %{}, t.path, t.cluster, otp_namer(t))
-      |> start_worker(t.cluster, t.worker_supervisor_otp_name)
+      |> initialize_new_worker(worker_for_kind(kind), %{}, t.path, t.cluster)
+      |> try_to_start_worker(t.cluster)
+      |> advertise_running_worker(t.cluster)
 
     t =
       t
@@ -34,11 +35,23 @@ defmodule Bedrock.Service.Controller.Impl do
     {t, worker_info.health}
   end
 
+  def advertise_running_workers(worker_infos, cluster) do
+    Enum.each(worker_infos, &advertise_running_worker(&1, cluster))
+    worker_infos
+  end
+
+  def advertise_running_worker(%{health: {:ok, pid}} = t, cluster) do
+    Monitor.advertise_worker(cluster.otp_name(:monitor), pid)
+    t
+  end
+
+  def advertise_running_worker(t, _), do: t
+
   @spec do_wait_for_healthy(State.t(), GenServer.from()) :: :ok | State.t()
   def do_wait_for_healthy(%{health: :ok}, _), do: :ok
   def do_wait_for_healthy(t, from), do: t |> add_pid_to_waiting_for_healthy(from)
 
-  def do_worker_health(worker_id, health, t) do
+  def do_worker_health(t, worker_id, health) do
     t
     |> put_health_for_worker(worker_id, health)
     |> recompute_health()
@@ -56,7 +69,8 @@ defmodule Bedrock.Service.Controller.Impl do
   def load_workers_from_disk(t) do
     t
     |> update_workers(fn workers ->
-      worker_info_from_path(t.path, otp_namer(t))
+      t.path
+      |> worker_info_from_path()
       |> merge_worker_info_into_workers(workers)
     end)
   end
@@ -68,18 +82,19 @@ defmodule Bedrock.Service.Controller.Impl do
       workers
       |> Map.values()
       |> Enum.filter(&(&1.health == :stopped))
-      |> start_workers(t.cluster, t.worker_supervisor_otp_name)
+      |> try_to_start_workers(t.cluster)
+      |> advertise_running_workers(t.cluster)
       |> merge_worker_info_into_workers(workers)
     end)
   end
 
   def recompute_health(t) do
     t
-    |> update_health(fn _ ->
-      t.workers()
+    |> put_health(
+      t.workers
       |> Map.values()
       |> compute_health_from_worker_info()
-    end)
+    )
   end
 
   @spec merge_worker_info_into_workers(
@@ -104,9 +119,11 @@ defmodule Bedrock.Service.Controller.Impl do
 
   def notify_waiting_for_healthy(t), do: t
 
+  @spec worker_for_kind(:log | :storage) :: module()
+  defp worker_for_kind(:log), do: Bedrock.DataPlane.Log.Limestone
+  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Basalt
+
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t),
     do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)
-
-  def otp_namer(t), do: &otp_name_for_worker(t.otp_name, &1)
 end

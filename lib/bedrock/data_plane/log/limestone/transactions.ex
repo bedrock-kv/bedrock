@@ -12,7 +12,6 @@ defmodule Bedrock.DataPlane.Log.Limestone.Transactions do
     ets =
       :ets.new(name, [
         :ordered_set,
-        :named_table,
         :public
       ])
 

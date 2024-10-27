@@ -1,13 +1,13 @@
-defmodule Bedrock.Service.Controller.Server do
-  alias Bedrock.Service.Controller.State
+defmodule Bedrock.Service.Foreman.Server do
+  alias Bedrock.Service.Foreman.State
 
-  import Bedrock.Service.Controller.State, only: [new_state: 1]
-  import Bedrock.Service.Controller.Impl
+  import Bedrock.Service.Foreman.State, only: [new_state: 1]
+  import Bedrock.Service.Foreman.Impl
 
   use GenServer
 
   def required_opt_keys,
-    do: [:cluster, :subsystem, :path, :otp_name, :default_worker, :worker_supervisor_otp_name]
+    do: [:cluster, :path, :capabilities, :otp_name]
 
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -31,13 +31,14 @@ defmodule Bedrock.Service.Controller.Server do
     do: t |> reply(:pong)
 
   def handle_call(:workers, _from, t),
-    do: do_fetch_workers(t) |> then(&(t |> reply({:ok, &1})))
+    do: t |> do_fetch_workers() |> then(&(t |> reply({:ok, &1})))
 
   def handle_call({:new_worker, id, kind}, _from, t),
-    do: do_new_worker(id, kind, t) |> then(fn {t, health} -> t |> reply(health) end)
+    do: t |> do_new_worker(id, kind) |> then(fn {t, health} -> t |> reply(health) end)
 
   def handle_call(:wait_for_healthy, from, t) do
-    do_wait_for_healthy(from, t)
+    t
+    |> do_wait_for_healthy(from)
     |> case do
       :ok -> t |> reply(:ok)
       t -> t |> noreply()
@@ -49,7 +50,7 @@ defmodule Bedrock.Service.Controller.Server do
 
   @impl true
   def handle_cast({:worker_health, worker_id, health}, t),
-    do: do_worker_health(worker_id, health, t) |> noreply()
+    do: t |> do_worker_health(worker_id, health) |> noreply()
 
   def handle_cast(_, t), do: t |> noreply()
 

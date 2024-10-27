@@ -1,9 +1,9 @@
 defmodule Bedrock.DataPlane.Log.Limestone.Logic do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Limestone.State
-  alias Bedrock.Service.LogController
+  alias Bedrock.Service.Foreman
 
-  @spec report_health_to_transaction_log_controller(State.t(), Log.health()) :: :ok
-  def report_health_to_transaction_log_controller(t, health),
-    do: :ok = LogController.report_health(t.controller, t.id, health)
+  @spec report_health_to_foreman(State.t(), Log.health()) :: :ok
+  def report_health_to_foreman(t, health),
+    do: :ok = Foreman.report_health(t.foreman, t.id, health)
 end

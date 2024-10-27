@@ -61,10 +61,10 @@ defmodule Bedrock.Cluster do
       @controller_otp_name Cluster.otp_name(@name, :controller)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
-      @log_otp_name Cluster.otp_name(@name, :log)
+      @foreman_otp_name Cluster.otp_name(@name, :foreman)
       @monitor_otp_name Cluster.otp_name(@name, :monitor)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
-      @storage_otp_name Cluster.otp_name(@name, :storage)
+      @worker_supervisor_otp_name Cluster.otp_name(@name, :worker_supervisor)
 
       @doc """
       Get the name of the cluster.
@@ -170,11 +170,13 @@ defmodule Bedrock.Cluster do
       def otp_name(:controller), do: @controller_otp_name
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:data_distributor), do: @data_distributor_otp_name
-      def otp_name(:log), do: @log_otp_name
       def otp_name(:monitor), do: @monitor_otp_name
       def otp_name(:sequencer), do: @sequencer_otp_name
-      def otp_name(:storage), do: @storage_otp_name
-      def otp_name(component) when is_atom(component), do: Cluster.otp_name(@name, component)
+      def otp_name(:foreman), do: @foreman_otp_name
+      def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
+
+      def otp_name(component) when is_atom(component) or is_binary(component),
+        do: Cluster.otp_name(@name, component)
 
       ######################################################################
       # Cluster Services
@@ -258,7 +260,7 @@ defmodule Bedrock.Cluster do
   @doc """
   Get the OTP name for a component within the cluster with the given name.
   """
-  @spec otp_name(name(), service :: atom()) :: atom()
+  @spec otp_name(name(), service :: atom() | String.t()) :: atom()
   def otp_name(cluster_name, service) when is_binary(cluster_name),
     do: :"#{otp_name(cluster_name)}_#{service}"
 end

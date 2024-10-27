@@ -119,19 +119,20 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   defp children_for_capabilities(cluster, capabilities) do
     capabilities
-    |> Enum.map(fn capability ->
-      {module_for_capability(capability),
+    |> Enum.map(&{module_for_capability(&1), &1})
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.map(fn {module, capabilities} ->
+      {module,
        [
-         {:cluster, cluster}
-         | cluster.node_config()
-           |> Keyword.get(capability, [])
-       ]}
+         cluster: cluster,
+         capabilities: capabilities
+       ] ++ Keyword.get(cluster.node_config(), module.config_key(), [])}
     end)
   end
 
   defp module_for_capability(:coordination), do: Bedrock.ControlPlane.Coordinator
-  defp module_for_capability(:storage), do: Bedrock.Service.StorageController
-  defp module_for_capability(:log), do: Bedrock.Service.LogController
+  defp module_for_capability(:storage), do: Bedrock.Service.Foreman
+  defp module_for_capability(:log), do: Bedrock.Service.Foreman
 
   defp module_for_capability(capability),
     do: raise("Unknown capability: #{inspect(capability)}")

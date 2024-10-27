@@ -44,11 +44,13 @@ defmodule Bedrock.Cluster do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote location: :keep do
       @behaviour Bedrock.Cluster
+
       alias Bedrock.Client
       alias Bedrock.Cluster
       alias Bedrock.Cluster.Monitor
       alias Bedrock.ControlPlane.Config
       alias Bedrock.Internal.ClusterSupervisor
+      alias Bedrock.Service.Worker
 
       @default_coordinator_ping_timeout_in_ms 300
       @default_monitor_ping_timeout_in_ms 300
@@ -177,6 +179,9 @@ defmodule Bedrock.Cluster do
 
       def otp_name(component) when is_atom(component) or is_binary(component),
         do: Cluster.otp_name(@name, component)
+
+      @spec otp_name_for_worker(Worker.id()) :: Worker.otp_name()
+      def otp_name_for_worker(id), do: otp_name("worker_#{id}")
 
       ######################################################################
       # Cluster Services

@@ -46,6 +46,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type id :: non_neg_integer()
 
+  @enforce_keys [:id, :logs, :storage_teams]
   defstruct id: 0,
             controller: nil,
             sequencer: nil,
@@ -57,6 +58,11 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
             storage_teams: [],
             services: []
 
-  @spec new() :: t()
-  def new, do: %__MODULE__{}
+  @spec new(logs :: [LogDescriptor.t()], storage_teams :: [StorageTeamDescriptor.t()]) :: t()
+  def new(logs, storage_teams),
+    do: %__MODULE__{
+      id: 0,
+      logs: logs,
+      storage_teams: storage_teams
+    }
 end

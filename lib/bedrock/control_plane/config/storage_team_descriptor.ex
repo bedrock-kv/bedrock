@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @type t :: %__MODULE__{
           tag: Bedrock.range_tag(),
           key_range: Bedrock.key_range(),
-          storage_ids: [Storage.id()]
+          storage_ids: [Storage.id() | :vacant]
         }
   defstruct tag: nil,
             key_range: nil,
@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @doc """
   Create a new storage team descriptor.
   """
-  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id()]) :: t()
+  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id() | :vacant]) :: t()
   def new(tag, key_range, storage_ids) do
     %__MODULE__{
       tag: tag,

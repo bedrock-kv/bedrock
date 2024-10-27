@@ -9,6 +9,8 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
   @typedoc """
   Struct representing the control plane configuration.
@@ -27,7 +29,7 @@ defmodule Bedrock.ControlPlane.Config do
           epoch: non_neg_integer(),
           parameters: Parameters.t() | nil,
           policies: Policies.t() | nil,
-          transaction_system_layout: TransactionSystemLayout.t() | nil
+          transaction_system_layout: TransactionSystemLayout.t()
         }
   defstruct state: :uninitialized,
             recovery_attempt: nil,
@@ -38,6 +40,9 @@ defmodule Bedrock.ControlPlane.Config do
             transaction_system_layout: nil
 
   @type state :: :uninitialized | :recovery | :running | :stopping
+
+  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
+    do: {min_key, max_key_exclusive}
 
   @doc """
   Creates a new `Config` struct.
@@ -50,7 +55,14 @@ defmodule Bedrock.ControlPlane.Config do
       epoch: 0,
       parameters: Parameters.new(coordinators),
       policies: Policies.new(),
-      transaction_system_layout: TransactionSystemLayout.new()
+      transaction_system_layout:
+        TransactionSystemLayout.new(
+          [LogDescriptor.new(:vacant, [0, 1])],
+          [
+            StorageTeamDescriptor.new(0, key_range(<<0xFF>>, <<0xFF, 0xFF>>), [:vacant]),
+            StorageTeamDescriptor.new(1, key_range(<<>>, <<0xFF>>), [:vacant])
+          ]
+        )
     }
   end
 

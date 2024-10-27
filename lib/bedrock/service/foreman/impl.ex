@@ -8,7 +8,7 @@ defmodule Bedrock.Service.Foreman.Impl do
 
   import Bedrock.Service.Foreman.StartingWorkers,
     only: [
-      worker_info_from_path: 1,
+      worker_info_from_path: 2,
       try_to_start_workers: 2,
       try_to_start_worker: 2,
       initialize_new_worker: 5
@@ -70,7 +70,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     t
     |> update_workers(fn workers ->
       t.path
-      |> worker_info_from_path()
+      |> worker_info_from_path(&t.cluster.otp_name_for_worker(&1))
       |> merge_worker_info_into_workers(workers)
     end)
   end

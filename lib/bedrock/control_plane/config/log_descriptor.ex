@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
       tags.
   """
   @type t :: %__MODULE__{
-          log_id: Log.id(),
+          log_id: Log.id() | :vacant,
           tags: [Bedrock.range_tag()]
         }
 
@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   @doc """
   Creates a new `LogDescriptor` struct.
   """
-  @spec new(Log.id(), tags :: [Bedrock.range_tag()]) :: t()
+  @spec new(Log.id() | :vacant, tags :: [Bedrock.range_tag()]) :: t()
   def new(log_id, tags),
     do: %__MODULE__{
       log_id: log_id,

@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.ConfigChanges do
+defmodule Bedrock.ControlPlane.ClusterController.ChangingParameters do
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config.Parameters
 

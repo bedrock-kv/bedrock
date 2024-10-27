@@ -87,6 +87,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     %{op | otp_name: otp_name}
   end
 
+  defp determine_otp_name(op), do: op
+
   @spec build_child_spec(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp build_child_spec(%{error: nil} = op) do
     op.manifest.worker.child_spec(
@@ -127,13 +129,11 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
           cluster :: module()
         ) :: WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
+    working_directory = Path.join(path, id)
+    worker_info = worker_info_for_id(id, working_directory)
     manifest = Manifest.new(cluster.name(), id, worker, params)
 
-    worker_info =
-      worker_info_for_id(id, path)
-      |> put_otp_name(otp_name_for_worker(cluster, worker.kind(), id))
-
-    case initialize_working_directory(path, manifest) do
+    case initialize_working_directory(working_directory, manifest) do
       :ok -> worker_info
       {:error, reason} -> worker_info |> put_health({:failed_to_start, reason})
     end
@@ -141,5 +141,6 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   defp otp_name_for_worker(cluster, kind, id), do: cluster.otp_name("#{kind}_worker_#{id}")
 
+  @spec random_worker_id() :: binary()
   def random_worker_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
 end

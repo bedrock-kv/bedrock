@@ -30,7 +30,7 @@ defmodule Bedrock.Service.Foreman.Impl do
 
     t =
       t
-      |> update_in([:workers], &Map.put(&1, id, worker_info))
+      |> update_workers(&Map.put(&1, id, worker_info))
 
     {t, worker_info.health}
   end

@@ -5,12 +5,11 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
 
   @spec initialize_working_directory(Path.t(), Bedrock.Service.Manifest.t()) ::
           :ok | {:error, term()}
-  def initialize_working_directory(path, manifest) do
-    path_to_root = Path.join(path, manifest.id)
-    path_to_manifest = Path.join(path_to_root, "manifest.json")
+  def initialize_working_directory(working_directory, manifest) do
+    path_to_manifest = Path.join(working_directory, "manifest.json")
 
-    with :ok <- File.mkdir_p(path_to_root),
-         :ok <- manifest.worker.one_time_initialization(path_to_root),
+    with :ok <- File.mkdir_p(working_directory),
+         :ok <- manifest.worker.one_time_initialization(working_directory),
          :ok <- Manifest.write_to_file(manifest, path_to_manifest) do
       :ok
     end

@@ -6,6 +6,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
 
+  import Bedrock.ControlPlane.ClusterController.State.Changes,
+    only: [put_last_transaction_layout_id: 2]
+
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
       # ping_all_coordinators: 1,
@@ -140,7 +143,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   defp store_changes_to_config(t)
        when t.config.transaction_system_layout.id != t.last_transaction_layout_id do
     with :ok <- Coordinator.write_config(t.coordinator, t.config) do
-      put_in(t.last_transaction_layout_id, t.config.transaction_system_layout.id)
+      t |> put_last_transaction_layout_id(t.config.transaction_system_layout.id)
     else
       {:error, _reason} -> t
     end
@@ -149,7 +152,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   defp store_changes_to_config(t), do: t
 
   defp noreply(t, opts \\ [])
-  #  defp noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
   defp noreply(t, _opts), do: {:noreply, t}
 
   defp reply(t, result), do: {:reply, result, t}

@@ -1,6 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.Parameters do
   @moduledoc """
-  A `Parameters` is a data structure that describes the parameters that are used
+  A `Parameters` is a data structure that describes the t that are used
   to configure the cluster.
   """
 
@@ -26,11 +26,15 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
   - `desired_transaction_resolvers` - The number of transaction resolvers that
     are to be made available as part of the transaction system.
   """
+
+  @type rate_in_hz :: pos_integer()
+  @type replication_factor :: pos_integer()
+
   @type t :: %__MODULE__{
           nodes: [node()],
-          ping_rate_in_hz: pos_integer(),
-          retransmission_rate_in_hz: pos_integer(),
-          replication_factor: pos_integer(),
+          ping_rate_in_hz: rate_in_hz(),
+          retransmission_rate_in_hz: rate_in_hz(),
+          replication_factor: replication_factor(),
           desired_coordinators: pos_integer(),
           desired_logs: pos_integer(),
           desired_read_version_proxies: pos_integer(),
@@ -55,4 +59,8 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
       nodes: coordinators,
       desired_coordinators: length(coordinators)
     }
+
+  @spec put_replication_factor(t(), replication_factor()) :: t()
+  def put_replication_factor(t, replication_factor),
+    do: %{t | replication_factor: replication_factor}
 end

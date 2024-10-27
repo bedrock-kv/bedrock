@@ -32,5 +32,9 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
 
     @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
     def update_config(t, updater), do: %{t | config: updater.(t.config)}
+
+    @spec put_last_transaction_layout_id(State.t(), TransactionSystemLayout.id()) :: State.t()
+    def put_last_transaction_layout_id(t, last_transaction_layout_id),
+      do: %{t | last_transaction_layout_id: last_transaction_layout_id}
   end
 end

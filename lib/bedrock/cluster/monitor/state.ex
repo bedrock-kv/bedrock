@@ -26,5 +26,11 @@ defmodule Bedrock.Cluster.Monitor.State do
             mode: :active,
             capabilities: []
 
-  def set_coordinator(t, coordinator), do: put_in(t.coordinator, coordinator)
+  def put_coordinator(t, coordinator), do: %{t | coordinator: coordinator}
+
+  def put_controller(t, controller), do: %{t | controller: controller}
+
+  def put_missed_pongs(t, missed_pongs), do: %{t | missed_pongs: missed_pongs}
+
+  def update_missed_pongs(t, updater), do: %{t | missed_pongs: updater.(t.missed_pongs)}
 end

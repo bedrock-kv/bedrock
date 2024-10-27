@@ -22,7 +22,7 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   def up(t, pid, otp_name, node), do: %{t | status: {:up, pid}, last_seen: {otp_name, node}}
 
   @spec down(t()) :: t()
-  def down(t), do: put_in(t.status, :down)
+  def down(t), do: t |> put_status(:down)
 
   @doc """
   Inserts a service descriptor into a list of service descriptors, replacing
@@ -45,7 +45,10 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   """
   @spec node_down(t(), node()) :: t()
   def node_down(%{last_seen: {_otp_name, node}, status: {:up, _pid}} = t, node),
-    do: put_in(t.status, :down)
+    do: t |> put_status(:down)
 
   def node_down(t, _node), do: t
+
+  @spec put_status(t(), status()) :: t()
+  def put_status(t, status), do: %{t | status: status}
 end

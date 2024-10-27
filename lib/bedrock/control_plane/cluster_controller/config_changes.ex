@@ -2,6 +2,15 @@ defmodule Bedrock.ControlPlane.ClusterController.ConfigChanges do
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config.Parameters
 
+  import Bedrock.ControlPlane.ClusterController.State.Changes,
+    only: [update_config: 2]
+
+  import Bedrock.ControlPlane.Config.Changes,
+    only: [put_parameters: 2]
+
+  import Bedrock.ControlPlane.Config.Parameters,
+    only: [put_replication_factor: 2]
+
   def settable_parameters_for_state(:uninitialized),
     do: [
       :ping_rate_in_hz,
@@ -24,7 +33,14 @@ defmodule Bedrock.ControlPlane.ClusterController.ConfigChanges do
   def try_to_set_parameters_in_config(t, list) do
     with :ok <- validate_settable_parameters_for_state(list, t.config.state),
          {:ok, updated_parameters} <- try_to_set_parameters(t.config.parameters, list) do
-      {:ok, put_in(t.config.parameters, updated_parameters)}
+      t =
+        t
+        |> update_config(fn config ->
+          config
+          |> put_parameters(updated_parameters)
+        end)
+
+      {:ok, t}
     end
   end
 
@@ -56,7 +72,7 @@ defmodule Bedrock.ControlPlane.ClusterController.ConfigChanges do
   end
 
   def try_to_set_parameter(parameters, :replication_factor, n),
-    do: {:ok, put_in(parameters.replication_factor, n)}
+    do: {:ok, put_replication_factor(parameters, n)}
 
-  def try_to_set_parameter(_parameters, _parameter_name, _value), do: {:error, :invalid_value}
+  def try_to_set_parameter(_, _, _), do: {:error, :invalid_value}
 end

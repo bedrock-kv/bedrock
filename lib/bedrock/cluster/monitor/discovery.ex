@@ -8,7 +8,8 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
 
   import Bedrock.Cluster.Monitor.State,
     only: [
-      set_coordinator: 2
+      put_coordinator: 2,
+      put_controller: 2
     ]
 
   require Logger
@@ -50,13 +51,13 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   @spec change_coordinator(State.t(), Coordinator.ref() | :unavailable) :: State.t()
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
 
-  def change_coordinator(t, :unavailable), do: t |> set_coordinator(:unavailable)
+  def change_coordinator(t, :unavailable), do: t |> put_coordinator(:unavailable)
 
   def change_coordinator(t, coordinator) do
     PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
 
     t
-    |> set_coordinator(coordinator)
+    |> put_coordinator(coordinator)
     |> start_monitoring_coordinator()
   end
 
@@ -75,7 +76,8 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
     do: t |> cancel_timer(:ping) |> maybe_set_ping_timer()
 
   def change_cluster_controller(t, controller) do
-    put_in(t.controller, controller)
+    t
+    |> put_controller(controller)
     |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
     |> notify_cluster_controller_changed()

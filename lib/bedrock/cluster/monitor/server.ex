@@ -5,6 +5,11 @@ defmodule Bedrock.Cluster.Monitor.Server do
   use GenServer
   use Bedrock.Internal.TimerManagement
 
+  import Bedrock.Cluster.Monitor.State,
+    only: [
+      put_controller: 2
+    ]
+
   import Bedrock.Cluster.Monitor.Advertising,
     only: [
       advertise_capabilities: 1,
@@ -175,7 +180,8 @@ defmodule Bedrock.Cluster.Monitor.Server do
         t |> noreply()
 
       {:error, reason} when reason in [:unavailable, :timeout] ->
-        put_in(t.controller, :unavailable)
+        t
+        |> put_controller(:unavailable)
         |> noreply(:find_current_cluster_controller)
 
       {:error, :nodes_must_be_added_by_an_administrator} ->

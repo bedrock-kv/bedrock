@@ -12,6 +12,7 @@ defmodule Bedrock do
            writes :: [key_value() | {:clear, key_range()}]}
 
   @type epoch :: non_neg_integer()
+  @type quorum :: pos_integer()
   @type timeout_in_ms :: :infinity | non_neg_integer()
   @type timestamp_in_ms :: non_neg_integer()
 

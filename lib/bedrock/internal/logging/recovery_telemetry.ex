@@ -44,7 +44,7 @@ defmodule Bedrock.Internal.Logging.RecoveryTelemetry do
         _config
       ) do
     Logger.info(
-      "Bedrock [#{cluster.name()}/#{epoch}]: Services locked: #{n_services} services, #{n_reporting} reporting",
+      "Bedrock [#{cluster.name()}/#{epoch}]: Services #{n_reporting}/#{n_services} reporting",
       ansi_color: :magenta
     )
   end

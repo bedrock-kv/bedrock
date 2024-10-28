@@ -14,7 +14,6 @@ defmodule Bedrock.Service.Worker do
   @type health :: {:ok, pid()} | :stopped | {:error, term()}
   @type otp_name :: atom()
 
-  @spec info(worker :: ref(), [fact_name()]) :: {:ok, map()} | {:error, :unavailable}
   @spec info(worker :: ref(), [fact_name()], opts :: keyword()) ::
           {:ok, map()} | {:error, :unavailable}
   def info(worker, fact_names, opts \\ []),

@@ -14,8 +14,15 @@ defmodule Bedrock.DataPlane.Log do
           | :oldest_version
           | :minimum_durable_version
 
+  @type recovery_info :: %{
+          kind: :log,
+          last_version: Bedrock.version(),
+          oldest_version: Bedrock.version(),
+          minimum_durable_version: Bedrock.version() | :unavailable
+        }
+
   @spec recovery_info :: [fact_name()]
-  def recovery_info, do: [:last_version, :oldest_version, :minimum_durable_version]
+  def recovery_info, do: [:kind, :last_version, :oldest_version, :minimum_durable_version]
 
   @doc """
   Apply a new mutation to the log. The previous transaction id is given as a

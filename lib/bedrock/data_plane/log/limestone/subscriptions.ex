@@ -31,11 +31,11 @@ defmodule Bedrock.DataPlane.Log.Limestone.Subscriptions do
     :ok
   end
 
-  @spec minimum_durable_version(t(), pos_integer()) :: :ets.match_spec()
+  @spec minimum_durable_version(t(), pos_integer()) :: Bedrock.version() | :unavailable
   def minimum_durable_version(t, max_age_in_s) do
     :ets.select(t, match_last_seen_for_live_subscribers(max_age_in_s))
     |> case do
-      [] -> nil
+      [] -> :unavailable
       last_durable_versions -> last_durable_versions |> Enum.min()
     end
   end

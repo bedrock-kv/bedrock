@@ -9,6 +9,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
 
   use Bedrock.Internal.TimerManagement
 
+  import Bedrock.ControlPlane.ClusterController.State.Changes,
+    only: [update_config: 2]
+
+  import Bedrock.ControlPlane.Config.Changes,
+    only: [update_transaction_system_layout: 2]
+
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools,
+    only: [upsert_service_descriptor: 2]
+
   @spec request_to_rejoin(
           State.t(),
           node(),
@@ -89,14 +98,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
 
   @spec add_running_service(State.t(), node(), info :: keyword()) :: State.t()
   def add_running_service(t, node, info) do
-    update_in(
-      t.config.transaction_system_layout,
-      &TransactionSystemLayout.Tools.upsert_service_descriptor(
-        &1,
-        ServiceDescriptor.new(info[:id], info[:kind])
-        |> ServiceDescriptor.up(info[:pid], info[:otp_name], node)
-      )
-    )
+    t
+    |> update_config(fn config ->
+      config
+      |> update_transaction_system_layout(fn transaction_system_layout ->
+        transaction_system_layout
+        |> upsert_service_descriptor(
+          ServiceDescriptor.new(info[:id], info[:kind])
+          |> ServiceDescriptor.up(info[:pid], info[:otp_name], node)
+        )
+      end)
+    end)
   end
 
   @spec node_up(State.t(), node()) :: State.t()
@@ -104,9 +116,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
 
   @spec node_down(State.t(), node()) :: State.t()
   def node_down(t, node) do
-    update_in(
-      t.config.transaction_system_layout,
-      &TransactionSystemLayout.Tools.node_down(&1, node)
-    )
+    t
+    |> update_config(fn config ->
+      config
+      |> update_transaction_system_layout(&TransactionSystemLayout.Tools.node_down(&1, node))
+    end)
   end
 end

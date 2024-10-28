@@ -177,10 +177,11 @@ defmodule Bedrock.Cluster do
       def otp_name(:foreman), do: @foreman_otp_name
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 
+      @spec otp_name(atom() | String.t()) :: atom()
       def otp_name(component) when is_atom(component) or is_binary(component),
         do: Cluster.otp_name(@name, component)
 
-      @spec otp_name_for_worker(Worker.id()) :: Worker.otp_name()
+      @spec otp_name_for_worker(Worker.id()) :: atom()
       def otp_name_for_worker(id), do: otp_name("worker_#{id}")
 
       ######################################################################

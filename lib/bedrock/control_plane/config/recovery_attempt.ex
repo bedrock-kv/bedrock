@@ -1,18 +1,22 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
 
   @type state ::
           :start
           | :lock_available_services
-          | :determine_suitable_logs
+          | :determine_old_logs_to_copy
           | :determine_durable_version
+          | :recruit_logs_to_fill_vacancies
+          | :recruit_storage_to_fill_vacancies
+          | :first_time_initialization
           #
-          | :recruiting
-          | :replaying_logs
-          | :repairing_data_distribution
+          | :replay_old_logs
+          | :repair_data_distribution
           | :defining_proxies_and_resolvers
           | :final_checks
           | :completed
@@ -22,6 +26,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           :newer_epoch_exists
           | :waiting_for_services
           | :unable_to_meet_log_quorum
+          | :no_unassigned_logs
           | {:insufficient_storage, failed_tags :: [Bedrock.range_tag()]}
 
   @type log_replication_factor :: pos_integer()
@@ -42,10 +47,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           locked_service_ids: [ServiceDescriptor.id()],
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),
-          suitable_log_ids: [Log.id()],
+          old_log_ids_to_copy: [Log.id()],
           version_vector: Bedrock.version_vector() | :undefined,
           durable_version: Bedrock.version() | :undefined,
-          degraded_teams: [Bedrock.range_tag()]
+          degraded_teams: [Bedrock.range_tag()],
+          logs: [LogDescriptor.t()],
+          storage_teams: [StorageTeamDescriptor.t()]
         }
   defstruct state: nil,
             attempt: nil,
@@ -58,10 +65,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
             locked_service_ids: [],
             log_recovery_info_by_id: %{},
             storage_recovery_info_by_id: %{},
-            suitable_log_ids: [],
+            old_log_ids_to_copy: [],
             version_vector: :undefined,
             durable_version: :undefined,
-            degraded_teams: []
+            degraded_teams: [],
+            logs: [],
+            storage_teams: []
 
   @spec new(
           Bedrock.epoch(),
@@ -99,13 +108,14 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec put_started_at(t(), DateTime.t()) :: t()
   def put_started_at(t, started_at), do: %{t | started_at: started_at}
 
-  @spec put_suitable_log_ids(t(), [Log.id()]) :: t()
-  def put_suitable_log_ids(t, suitable_log_ids), do: %{t | suitable_log_ids: suitable_log_ids}
+  @spec put_old_log_ids_to_copy(t(), [Log.id()]) :: t()
+  def put_old_log_ids_to_copy(t, old_log_ids_to_copy),
+    do: %{t | old_log_ids_to_copy: old_log_ids_to_copy}
 
   @spec put_version_vector(t(), Bedrock.version_vector()) :: t()
   def put_version_vector(t, version_vector), do: %{t | version_vector: version_vector}
 
-  @spec put_durable_version(t(), Bedrock.version()) :: t()
+  @spec put_durable_version(t(), Bedrock.version() | :undefined) :: t()
   def put_durable_version(t, durable_version), do: %{t | durable_version: durable_version}
 
   @spec put_degraded_teams(t(), [Bedrock.range_tag()]) :: t()
@@ -113,6 +123,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
 
   @spec update_attempt(t(), (pos_integer() -> pos_integer())) :: t()
   def update_attempt(t, f), do: %{t | attempt: f.(t.attempt)}
+
+  @spec put_logs(t(), [LogDescriptor.t()]) :: t()
+  def put_logs(t, logs), do: %{t | logs: logs}
+
+  @spec put_storage_teams(t(), [StorageTeamDescriptor.t()]) :: t()
+  def put_storage_teams(t, storage_teams), do: %{t | storage_teams: storage_teams}
 
   @spec update_log_recovery_info_by_id(
           t(),

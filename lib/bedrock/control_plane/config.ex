@@ -55,14 +55,7 @@ defmodule Bedrock.ControlPlane.Config do
       epoch: 0,
       parameters: Parameters.new(coordinators),
       policies: Policies.new(),
-      transaction_system_layout:
-        TransactionSystemLayout.new(
-          [LogDescriptor.new(:vacant, [0, 1])],
-          [
-            StorageTeamDescriptor.new(0, key_range(<<0xFF>>, <<0xFF, 0xFF>>), [:vacant]),
-            StorageTeamDescriptor.new(1, key_range(<<>>, <<0xFF>>), [:vacant])
-          ]
-        )
+      transaction_system_layout: TransactionSystemLayout.new()
     }
   end
 

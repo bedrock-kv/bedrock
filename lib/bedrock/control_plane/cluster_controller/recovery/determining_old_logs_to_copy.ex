@@ -1,14 +1,14 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingSuitableLogs do
+defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCopy do
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
 
-  @spec determine_suitable_logs(
+  @spec determine_old_logs_to_copy(
           logs :: [LogDescriptor.t()],
           %{Log.id() => Log.recovery_info()},
           Bedrock.quorum()
         ) ::
           {:ok, [Log.id()], Bedrock.version_vector()} | {:error, :unable_to_meet_log_quorum}
-  def determine_suitable_logs(logs, recovery_info_by_id, quorum) do
+  def determine_old_logs_to_copy(logs, recovery_info_by_id, quorum) do
     recovery_info_by_id
     |> recovery_info_for_logs(logs)
     |> version_vectors_by_id()

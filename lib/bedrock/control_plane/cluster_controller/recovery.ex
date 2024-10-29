@@ -2,19 +2,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   @moduledoc false
 
   alias Bedrock.ControlPlane.ClusterController.State
-  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+
+  alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
   import Bedrock.Internal.Time
 
-  import Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServices,
-    only: [lock_available_services: 4]
-
-  import Bedrock.ControlPlane.ClusterController.Recovery.DeterminingSuitableLogs,
-    only: [determine_suitable_logs: 3]
-
-  import Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVersion,
-    only: [determine_durable_version: 3]
+  import __MODULE__.LockingAvailableServices, only: [lock_available_services: 4]
+  import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
+  import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
+  import __MODULE__.FillingLogVacancies, only: [fill_log_vacancies: 3]
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -110,9 +108,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
             IO.inspect("recovery stalled: #{reason}")
             new_recovery_attempt
         end
+        |> IO.inspect()
       end)
     end)
   end
+
+  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
+    do: {min_key, max_key_exclusive}
 
   @spec run_recovery_attempt(RecoveryAttempt.t()) ::
           {:ok, RecoveryAttempt.t()}
@@ -120,7 +122,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           | {:error, term()}
   def run_recovery_attempt(t) do
     case recovery(t) do
-      %{state: :running} ->
+      %{state: :completed} = t ->
         {:ok, t}
 
       %{state: {:stalled, _reason} = stalled} = t ->
@@ -172,14 +174,57 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           |> Enum.uniq()
           |> Enum.sort()
         end)
-        |> RecoveryAttempt.put_state(:determine_suitable_logs)
+        |> case do
+          %{last_transaction_system_layout: %{logs: [], storage_teams: []}} = t ->
+            t |> RecoveryAttempt.put_state(:first_time_initialization)
+
+          t ->
+            t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
+        end
+    end
+  end
+
+  # Initialize a new system with empty logs and storage teams by creating
+  # placeholders based on desired logs and replication factor, then proceed
+  # to fill log vacancies.
+  def recovery(%{state: :first_time_initialization} = t) do
+    log_vacancies = 1..t.desired_logs |> Enum.map(&{:vacancy, &1})
+    storage_team_vacancies = 1..t.desired_replication_factor |> Enum.map(&{:vacancy, &1})
+
+    t
+    |> RecoveryAttempt.put_durable_version(0)
+    |> RecoveryAttempt.put_version_vector({:undefined, 0})
+    |> RecoveryAttempt.put_logs(
+      log_vacancies
+      |> Enum.map(&LogDescriptor.new(&1, [0, 1]))
+    )
+    |> RecoveryAttempt.put_storage_teams([
+      StorageTeamDescriptor.new(0, key_range(<<0xFF>>, <<0xFF, 0xFF>>), storage_team_vacancies),
+      StorageTeamDescriptor.new(1, key_range(<<>>, <<0xFF>>), storage_team_vacancies)
+    ])
+    |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
+  end
+
+  def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
+    fill_log_vacancies(t.logs, t.last_transaction_system_layout.logs, t.log_recovery_info_by_id)
+    |> case do
+      {:error, :no_unassigned_logs = reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
+
+      {:error, :no_vacancies_to_fill} ->
+        t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
+
+      {:ok, logs} ->
+        t
+        |> RecoveryAttempt.put_logs(logs)
+        |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
     end
   end
 
   #
   #
-  def recovery(%{state: :determine_suitable_logs} = t) do
-    determine_suitable_logs(
+  def recovery(%{state: :determine_old_logs_to_copy} = t) do
+    determine_old_logs_to_copy(
       t.last_transaction_system_layout.logs,
       t.log_recovery_info_by_id,
       t.desired_logs |> determine_quorum()
@@ -190,11 +235,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
       {:ok, log_ids, version_vector} ->
         t
-        |> RecoveryAttempt.put_suitable_log_ids(log_ids)
+        |> RecoveryAttempt.put_old_log_ids_to_copy(log_ids)
         |> RecoveryAttempt.put_version_vector(version_vector)
         |> RecoveryAttempt.put_state(:determine_durable_version)
     end
   end
+
+  def recovery(%{state: :recruit_storage_to_fill_vacancies} = t),
+    do: t |> RecoveryAttempt.put_state(:determine_durable_version)
 
   #
   #
@@ -216,24 +264,24 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     end
   end
 
-  def recovery(%{state: :recruiting} = t) do
-    %{t | state: :replaying_logs}
+  def recovery(%{state: :determine_old_logs_to_copy} = t) do
+    t |> RecoveryAttempt.put_state(:recruiting)
   end
 
-  def recovery(%{state: :replaying_logs} = t) do
-    %{t | state: :repairing_data_distribution}
+  def recovery(%{state: :replay_old_logs} = t) do
+    t |> RecoveryAttempt.put_state(:repair_data_distribution)
   end
 
-  def recovery(%{state: :repairing_data_distribution} = t) do
-    %{t | state: :defining_proxies_and_resolvers}
+  def recovery(%{state: :repair_data_distribution} = t) do
+    t |> RecoveryAttempt.put_state(:defining_proxies_and_resolvers)
   end
 
   def recovery(%{state: :defining_proxies_and_resolvers} = t) do
-    %{t | state: :final_checks}
+    t |> RecoveryAttempt.put_state(:final_checks)
   end
 
   def recovery(%{state: :final_checks} = t) do
-    %{t | state: :running}
+    t |> RecoveryAttempt.put_state(:completed)
   end
 
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")

@@ -5,7 +5,7 @@ defmodule Bedrock do
   @type key_value :: {key(), value()}
 
   @type version :: non_neg_integer()
-  @type version_vector :: {oldest :: version(), newest :: version()}
+  @type version_vector :: {oldest :: version(), newest :: version()} | {:undefined, 0}
 
   @type transaction ::
           {read_version :: version(), reads :: [key() | key_range()],

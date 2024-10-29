@@ -14,8 +14,10 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
     - `log_id` - The id of the log worker that is responsible for this set of
       tags.
   """
+
+  @type vacancy :: {:vacancy, tag :: term()}
   @type t :: %__MODULE__{
-          log_id: Log.id() | :vacant,
+          log_id: Log.id() | vacancy(),
           tags: [Bedrock.range_tag()]
         }
 
@@ -25,7 +27,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   @doc """
   Creates a new `LogDescriptor` struct.
   """
-  @spec new(Log.id() | :vacant, tags :: [Bedrock.range_tag()]) :: t()
+  @spec new(Log.id() | vacancy(), tags :: [Bedrock.range_tag()]) :: t()
   def new(log_id, tags),
     do: %__MODULE__{
       log_id: log_id,
@@ -46,4 +48,6 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
 
   @spec remove_by_id([t()], Log.id()) :: [t()]
   def remove_by_id(l, log_id), do: l |> Enum.reject(&(&1.log_id == log_id))
+
+  def put_log_id(t, log_id), do: %{t | log_id: log_id}
 end

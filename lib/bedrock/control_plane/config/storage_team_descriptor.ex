@@ -1,6 +1,8 @@
 defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   alias Bedrock.DataPlane.Storage
 
+  @type vacancy :: {:vacancy, tag :: term()}
+
   @typedoc """
   ## Fields:
   - `tag`: The tag that identifies the team.
@@ -10,7 +12,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @type t :: %__MODULE__{
           tag: Bedrock.range_tag(),
           key_range: Bedrock.key_range(),
-          storage_ids: [Storage.id() | :vacant]
+          storage_ids: [Storage.id() | vacancy()]
         }
   defstruct tag: nil,
             key_range: nil,
@@ -19,7 +21,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @doc """
   Create a new storage team descriptor.
   """
-  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id() | :vacant]) :: t()
+  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id() | vacancy()]) :: t()
   def new(tag, key_range, storage_ids) do
     %__MODULE__{
       tag: tag,

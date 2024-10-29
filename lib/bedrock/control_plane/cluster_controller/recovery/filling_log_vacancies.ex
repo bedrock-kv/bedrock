@@ -7,23 +7,30 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingLogVacancies do
           old_logs :: [LogDescriptor.t()],
           recovery_info_by_id :: %{Log.id() => Log.recovery_info()}
         ) ::
-          {:ok, [LogDescriptor.t()]} | {:error, :no_unassigned_logs | :no_vacancies_to_fill}
+          {:ok, [LogDescriptor.t()]}
+          | {:error, :no_vacancies_to_fill}
+          | {:error, :no_unassigned_logs}
   def fill_log_vacancies(logs, old_logs, recovery_info_by_id) do
     vacancies = all_vacancies(logs)
 
-    if Enum.empty?(vacancies) do
-      {:error, :no_vacancies_to_fill}
-    else
-      old_log_ids = old_logs |> Enum.map(& &1.log_id) |> Enum.uniq()
+    assigned_log_ids = old_logs |> MapSet.new(& &1.log_id)
 
-      candidates_by_id =
-        recovery_info_by_id |> Map.drop(old_log_ids)
+    candidates_ids =
+      recovery_info_by_id
+      |> Map.keys()
+      |> MapSet.new()
+      |> MapSet.difference(assigned_log_ids)
 
-      if map_size(candidates_by_id) < MapSet.size(vacancies) do
+    cond do
+      Enum.empty?(vacancies) ->
+        {:error, :no_vacancies_to_fill}
+
+      MapSet.size(candidates_ids) < MapSet.size(vacancies) ->
         {:error, :no_unassigned_logs}
-      else
+
+      true ->
         candidate_id_for_vacancy =
-          Enum.zip(vacancies, Map.keys(candidates_by_id)) |> Map.new()
+          Enum.zip(vacancies, candidates_ids) |> Map.new()
 
         updated_logs =
           logs
@@ -35,7 +42,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingLogVacancies do
           end)
 
         {:ok, updated_logs}
-      end
     end
   end
 
@@ -47,13 +53,4 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingLogVacancies do
     end)
     |> MapSet.new()
   end
-
-  @spec log_ids_in_use([LogDescriptor.t()]) :: [Log.id()]
-  def log_ids_in_use(logs),
-    do: logs |> Enum.group_by(& &1.log_id, & &1.tags) |> Map.keys()
-
-  def find_candidate_log_info(log_info, assigned_ids),
-    do: log_info |> Enum.reject(fn {id, _} -> id in assigned_ids end)
-
-  def vacancies?(log_ids), do: Enum.member?(log_ids, :vacant)
 end

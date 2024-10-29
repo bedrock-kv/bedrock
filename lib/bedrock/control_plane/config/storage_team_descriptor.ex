@@ -44,4 +44,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
 
   @spec remove_by_tag([t()], Bedrock.range_tag()) :: [t()]
   def remove_by_tag(l, tag), do: l |> Enum.reject(&(&1.tag == tag))
+
+  @spec update_storage_ids(t, ([Storage.id() | vacancy()] -> [Storage.id() | vacancy()])) :: t()
+  def update_storage_ids(t, f), do: %{t | storage_ids: f.(t.storage_ids)}
 end

@@ -13,6 +13,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
   import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
   import __MODULE__.FillingLogVacancies, only: [fill_log_vacancies: 3]
+  import __MODULE__.FillingStorageTeamVacancies, only: [fill_storage_team_vacancies: 2]
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -133,6 +134,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     end
   end
 
+  #
+  #
   def recovery(%{state: :start} = t) do
     t
     |> RecoveryAttempt.put_started_at(now())
@@ -205,22 +208,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
   end
 
-  def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
-    fill_log_vacancies(t.logs, t.last_transaction_system_layout.logs, t.log_recovery_info_by_id)
-    |> case do
-      {:error, :no_unassigned_logs = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
-
-      {:error, :no_vacancies_to_fill} ->
-        t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
-
-      {:ok, logs} ->
-        t
-        |> RecoveryAttempt.put_logs(logs)
-        |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
-    end
-  end
-
   #
   #
   def recovery(%{state: :determine_old_logs_to_copy} = t) do
@@ -240,9 +227,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         |> RecoveryAttempt.put_state(:determine_durable_version)
     end
   end
-
-  def recovery(%{state: :recruit_storage_to_fill_vacancies} = t),
-    do: t |> RecoveryAttempt.put_state(:replay_old_logs)
 
   #
   #
@@ -264,22 +248,68 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     end
   end
 
+  #
+  #
+  def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
+    fill_log_vacancies(t.logs, t.last_transaction_system_layout.logs, t.log_recovery_info_by_id)
+    |> case do
+      {:error, :no_unassigned_logs = reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
+
+      {:error, :no_vacancies_to_fill} ->
+        t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
+
+      {:ok, logs} ->
+        t
+        |> RecoveryAttempt.put_logs(logs)
+        |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
+    end
+  end
+
+  #
+  #
+  def recovery(%{state: :recruit_storage_to_fill_vacancies} = t) do
+    fill_storage_team_vacancies(t.storage_teams, t.storage_recovery_info_by_id)
+    |> case do
+      {:error, :no_unassigned_storage_teams = reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
+
+      {:error, :no_vacancies_to_fill} ->
+        t |> RecoveryAttempt.put_state(:replay_old_logs)
+
+      {:ok, storage_teams} ->
+        t
+        |> RecoveryAttempt.put_storage_teams(storage_teams)
+        |> RecoveryAttempt.put_state(:replay_old_logs)
+    end
+  end
+
+  #
+  #
   def recovery(%{state: :replay_old_logs} = t) do
     t |> RecoveryAttempt.put_state(:repair_data_distribution)
   end
 
+  #
+  #
   def recovery(%{state: :repair_data_distribution} = t) do
     t |> RecoveryAttempt.put_state(:defining_proxies_and_resolvers)
   end
 
+  #
+  #
   def recovery(%{state: :defining_proxies_and_resolvers} = t) do
     t |> RecoveryAttempt.put_state(:final_checks)
   end
 
+  #
+  #
   def recovery(%{state: :final_checks} = t) do
     t |> RecoveryAttempt.put_state(:completed)
   end
 
+  #
+  #
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")
 
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)

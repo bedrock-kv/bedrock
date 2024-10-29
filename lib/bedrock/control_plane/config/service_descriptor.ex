@@ -52,9 +52,9 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   @spec put_status(t(), status()) :: t()
   def put_status(t, status), do: %{t | status: status}
 
-  @spec is_log?(t()) :: boolean()
-  def is_log?(t), do: t.kind == :log
+  @spec log_worker?(t()) :: boolean()
+  def log_worker?(t), do: t.kind == :log
 
-  @spec is_storage?(t()) :: boolean()
-  def is_storage?(t), do: t.kind == :storage
+  @spec storage_worker?(t()) :: boolean()
+  def storage_worker?(t), do: t.kind == :storage
 end

@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   import Bedrock.Internal.Time
 
@@ -21,19 +22,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     only: [
       put_epoch: 2,
       put_recovery_attempt: 2,
-      update_recovery_attempt: 2,
       update_transaction_system_layout: 2
     ]
 
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools,
-    only: [
-      put_controller: 2
-    ]
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes,
+    only: [put_controller: 2]
 
   import Bedrock.ControlPlane.ClusterController.State.Changes,
-    only: [
-      update_config: 2
-    ]
+    only: [update_config: 2]
 
   import Bedrock.ControlPlane.ClusterController.Telemetry
 
@@ -65,16 +61,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         )
         |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
       )
-      |> update_transaction_system_layout(
-        &%{
-          &1
-          | sequencer: nil,
-            rate_keeper: nil,
-            data_distributor: nil,
-            proxies: [],
-            transaction_resolvers: []
-        }
-      )
+      |> update_transaction_system_layout(fn transaction_system_layout ->
+        transaction_system_layout
+        |> TransactionSystemLayout.Changes.put_controller(self())
+        |> TransactionSystemLayout.Changes.put_sequencer(nil)
+        |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
+        |> TransactionSystemLayout.Changes.put_data_distributor(nil)
+        |> TransactionSystemLayout.Changes.put_proxies([])
+        |> TransactionSystemLayout.Changes.put_transaction_resolvers([])
+      end)
     end)
   end
 
@@ -93,27 +88,41 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   def recover(t) do
     :ok = trace_recovery_attempt_started(t)
 
+    t.config.recovery_attempt
+    |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+    |> run_recovery_attempt()
+    |> case do
+      {:ok, completed_recovery_attempt} ->
+        t |> apply_completed_recovery_attempt(completed_recovery_attempt)
+
+      {{:stalled, reason}, stalled_recovery_attempt} ->
+        IO.inspect(reason, label: "Recovery attempt stalled")
+        t |> update_stalled_recovery_attempt(stalled_recovery_attempt)
+    end
+  end
+
+  def apply_completed_recovery_attempt(t, completed_recovery_attempt) do
     t
     |> update_config(fn config ->
       config
-      |> update_recovery_attempt(fn recovery_attempt ->
-        recovery_attempt
-        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
-        |> run_recovery_attempt()
-        |> case do
-          {:ok, new_recovery_attempt} ->
-            IO.inspect("recovery attempt completed")
-            new_recovery_attempt
-
-          {{:stalled, reason}, new_recovery_attempt} ->
-            IO.inspect("recovery stalled: #{reason}")
-            new_recovery_attempt
-        end
-        |> IO.inspect()
+      |> put_recovery_attempt(nil)
+      |> update_transaction_system_layout(fn transaction_system_layout ->
+        transaction_system_layout
+        |> TransactionSystemLayout.put_logs(completed_recovery_attempt.logs)
+        |> TransactionSystemLayout.put_storage_teams(completed_recovery_attempt.storage_teams)
       end)
     end)
   end
 
+  def update_stalled_recovery_attempt(t, stalled_recovery_attempt) do
+    t
+    |> update_config(fn config ->
+      config
+      |> put_recovery_attempt(stalled_recovery_attempt)
+    end)
+  end
+
+  @spec key_range(Bedrock.key(), Bedrock.key()) :: Bedrock.key_range()
   def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
     do: {min_key, max_key_exclusive}
 
@@ -237,7 +246,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       t.desired_replication_factor |> determine_quorum()
     )
     |> case do
-      {:error, {:insufficient_storage, _failed_tags} = reason} ->
+      {:error, {:insufficient_replication, _failed_tags} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:ok, durable_version, degraded_teams} ->
@@ -251,9 +260,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
-    fill_log_vacancies(t.logs, t.last_transaction_system_layout.logs, t.log_recovery_info_by_id)
+    fill_log_vacancies(
+      t.logs,
+      t.last_transaction_system_layout.logs |> MapSet.new(& &1.log_id),
+      t.log_recovery_info_by_id |> Map.keys() |> MapSet.new()
+    )
     |> case do
-      {:error, :no_unassigned_logs = reason} ->
+      {:error, {:need_log_workers, _} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:error, :no_vacancies_to_fill} ->
@@ -269,9 +282,12 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :recruit_storage_to_fill_vacancies} = t) do
-    fill_storage_team_vacancies(t.storage_teams, t.storage_recovery_info_by_id)
+    fill_storage_team_vacancies(
+      t.storage_teams,
+      t.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
+    )
     |> case do
-      {:error, :no_unassigned_storage = reason} ->
+      {:error, {:need_storage_workers, _} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:error, :no_vacancies_to_fill} ->
@@ -306,6 +322,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   def recovery(%{state: :final_checks} = t) do
     t |> RecoveryAttempt.put_state(:completed)
+  end
+
+  def recovery(%{state: :completed} = t) do
+    t
   end
 
   #

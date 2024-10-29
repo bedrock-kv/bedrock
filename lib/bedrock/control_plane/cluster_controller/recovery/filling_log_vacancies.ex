@@ -4,44 +4,32 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingLogVacancies do
 
   @spec fill_log_vacancies(
           logs :: [LogDescriptor.t()],
-          old_logs :: [LogDescriptor.t()],
-          recovery_info_by_id :: %{Log.id() => Log.recovery_info()}
+          assigned_log_ids :: MapSet.t(Log.id()),
+          all_log_ids :: MapSet.t(Log.id())
         ) ::
           {:ok, [LogDescriptor.t()]}
           | {:error, :no_vacancies_to_fill}
-          | {:error, :no_unassigned_logs}
-  def fill_log_vacancies(logs, old_logs, recovery_info_by_id) do
+          | {:error, {:need_log_workers, pos_integer()}}
+  def fill_log_vacancies(logs, assigned_log_ids, all_log_ids) do
     vacancies = all_vacancies(logs)
+    n_vacancies = MapSet.size(vacancies)
 
-    assigned_log_ids = old_logs |> MapSet.new(& &1.log_id)
-
-    candidates_ids =
-      recovery_info_by_id
-      |> Map.keys()
-      |> MapSet.new()
-      |> MapSet.difference(assigned_log_ids)
+    candidates_ids = all_log_ids |> MapSet.difference(assigned_log_ids)
+    n_candidates = MapSet.size(candidates_ids)
 
     cond do
-      Enum.empty?(vacancies) ->
+      0 == n_vacancies ->
         {:error, :no_vacancies_to_fill}
 
-      MapSet.size(candidates_ids) < MapSet.size(vacancies) ->
-        {:error, :no_unassigned_logs}
+      n_vacancies > n_candidates ->
+        {:error, {:need_log_workers, n_vacancies - n_candidates}}
 
       true ->
-        candidate_id_for_vacancy =
-          Enum.zip(vacancies, candidates_ids) |> Map.new()
-
-        updated_logs =
-          logs
-          |> Enum.map(fn log_descriptor ->
-            case Map.get(candidate_id_for_vacancy, log_descriptor.log_id) do
-              nil -> log_descriptor
-              candidate_id -> LogDescriptor.put_log_id(log_descriptor, candidate_id)
-            end
-          end)
-
-        {:ok, updated_logs}
+        {:ok,
+         replace_vacancies_with_log_ids(
+           logs,
+           Enum.zip(vacancies, candidates_ids) |> Map.new()
+         )}
     end
   end
 
@@ -52,5 +40,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingLogVacancies do
       _, list -> list
     end)
     |> MapSet.new()
+  end
+
+  def replace_vacancies_with_log_ids(logs, log_id_for_vacancy) do
+    logs
+    |> Enum.map(fn descriptor ->
+      case Map.get(log_id_for_vacancy, descriptor.log_id) do
+        nil -> descriptor
+        candidate_id -> LogDescriptor.put_log_id(descriptor, candidate_id)
+      end
+    end)
   end
 end

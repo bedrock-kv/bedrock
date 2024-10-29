@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
   import Bedrock.ControlPlane.Config.Changes,
     only: [update_transaction_system_layout: 2]
 
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools,
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes,
     only: [upsert_service_descriptor: 2]
 
   @spec request_to_rejoin(
@@ -119,7 +119,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
     t
     |> update_config(fn config ->
       config
-      |> update_transaction_system_layout(&TransactionSystemLayout.Tools.node_down(&1, node))
+      |> update_transaction_system_layout(&TransactionSystemLayout.Changes.node_down(&1, node))
     end)
   end
 end

@@ -1,11 +1,11 @@
-defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ToolsTest do
+defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes
 
   describe "put_controller/2" do
     test "sets the controller pid" do

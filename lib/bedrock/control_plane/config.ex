@@ -87,7 +87,7 @@ defmodule Bedrock.ControlPlane.Config do
     @spec put_epoch(Config.t(), pos_integer()) :: Config.t()
     def put_epoch(t, epoch), do: %{t | epoch: epoch}
 
-    @spec put_recovery_attempt(Config.t(), RecoveryAttempt.t()) :: Config.t()
+    @spec put_recovery_attempt(Config.t(), RecoveryAttempt.t() | nil) :: Config.t()
     def put_recovery_attempt(t, recovery_attempt),
       do: %{t | recovery_attempt: recovery_attempt}
 

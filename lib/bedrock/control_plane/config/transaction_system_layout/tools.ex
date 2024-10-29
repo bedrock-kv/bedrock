@@ -1,8 +1,9 @@
-defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
+defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   alias Bedrock.ControlPlane.Config.LogDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
 
   @type t :: TransactionSystemLayout.t()
@@ -57,11 +58,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
     do:
       t |> update_storage_teams(&StorageTeamDescriptor.remove_by_tag(&1, tag)) |> put_random_id()
 
-  # Services
-
-  @spec set_services(t(), [ServiceDescriptor.t()]) :: t()
-  def set_services(t, services), do: %{t | services: services} |> put_random_id()
-
   @doc """
   Inserts a service descriptor into the transaction system layout, replacing any
   existing service descriptor with the same id.
@@ -94,18 +90,25 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
   @spec put_controller(t(), pid()) :: t()
   def put_controller(t, controller), do: %{t | controller: controller} |> put_random_id()
 
-  @spec put_sequencer(t(), pid()) :: t()
+  @spec put_sequencer(t(), pid() | nil) :: t()
   def put_sequencer(t, sequencer), do: %{t | sequencer: sequencer} |> put_random_id()
 
-  @spec put_data_distributor(t(), pid()) :: t()
+  @spec put_data_distributor(t(), pid() | nil) :: t()
   def put_data_distributor(t, data_distributor),
     do: %{t | data_distributor: data_distributor} |> put_random_id()
 
-  @spec put_rate_keeper(t(), pid()) :: t()
+  @spec put_rate_keeper(t(), pid() | nil) :: t()
   def put_rate_keeper(t, rate_keeper), do: %{t | rate_keeper: rate_keeper} |> put_random_id()
 
   @spec put_services(t(), [ServiceDescriptor.t()]) :: t()
-  defp put_services(t, services), do: %{t | services: services} |> put_random_id()
+  def put_services(t, services), do: %{t | services: services} |> put_random_id()
+
+  @spec put_proxies(t(), [pid()]) :: t()
+  def put_proxies(t, proxies), do: %{t | proxies: proxies} |> put_random_id()
+
+  @spec put_transaction_resolvers(t(), [TransactionResolverDescriptor.t()]) :: t()
+  def put_transaction_resolvers(t, transaction_resolvers),
+    do: %{t | transaction_resolvers: transaction_resolvers} |> put_random_id()
 
   @spec random_id() :: TransactionSystemLayout.id()
   defp random_id, do: Enum.random(1..1_000_000)
@@ -115,9 +118,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Tools do
 
   @spec update_services(t(), ([ServiceDescriptor.t()] -> [ServiceDescriptor.t()])) ::
           t()
-  def update_services(t, updater), do: %{t | services: updater.(t.services)}
+  def update_services(t, updater), do: %{t | services: updater.(t.services)} |> put_random_id()
 
   @spec update_storage_teams(t(), ([StorageTeamDescriptor.t()] -> [StorageTeamDescriptor.t()])) ::
           t()
-  def update_storage_teams(t, updater), do: %{t | storage_teams: updater.(t.storage_teams)}
+  def update_storage_teams(t, updater),
+    do: %{t | storage_teams: updater.(t.storage_teams)} |> put_random_id()
 end

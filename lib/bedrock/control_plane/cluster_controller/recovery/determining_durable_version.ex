@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
       agreed upon, and `degraded_teams` lists teams not reaching the full
       healthy quorum.
 
-    - `{:error, {:insufficient_storage, failed_tags}}`: If any storage team
+    - `{:error, {:insufficient_replication, failed_tags}}`: If any storage team
       lacks sufficient storage servers to meet the quorum requirements. We
       return the full set of failed tags in this case.
   """
@@ -38,7 +38,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
           quorum :: non_neg_integer()
         ) ::
           {:ok, Bedrock.version(), degraded_teams :: [Bedrock.range_tag()]}
-          | {:error, {:insufficient_storage, failed_tags :: [Bedrock.range_tag()]}}
+          | {:error, {:insufficient_replication, failed_tags :: [Bedrock.range_tag()]}}
   def determine_durable_version(teams, info_by_id, quorum) do
     Enum.zip(
       teams |> Enum.map(& &1.tag),
@@ -52,11 +52,11 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
       {tag, {:ok, version, :degraded}}, {min_version, degraded, failed} ->
         {min(version, min_version), [tag | degraded], failed}
 
-      {tag, {:error, :insufficient_storage}}, {min_version, degraded, failed} ->
+      {tag, {:error, :insufficient_replication}}, {min_version, degraded, failed} ->
         {min_version, degraded, [tag | failed]}
     end)
     |> case do
-      {_, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_storage, failed}}
+      {_, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_replication, failed}}
       {min_version, degraded, []} -> {:ok, min_version, degraded}
     end
   end
@@ -86,7 +86,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
       storage where consensus was reached and an indicator of the team's status,
       both based on the `quorum`.
 
-    - `{:error, :insufficient_storage}`: Indicates that there aren't enough
+    - `{:error, :insufficient_replication}`: Indicates that there aren't enough
       storage servers available to meet the quorum requirements for a consensus
       on the durable version.
   """
@@ -101,7 +101,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
           quorum :: non_neg_integer()
         ) ::
           {:ok, Bedrock.version(), status :: :healthy | :degraded}
-          | {:error, :insufficient_storage}
+          | {:error, :insufficient_replication}
   def determine_durable_version_and_status_for_storage_team(team, info_by_id, quorum) do
     durable_versions =
       team.storage_ids
@@ -115,7 +115,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVers
     |> Enum.at(-quorum)
     |> case do
       nil ->
-        {:error, :insufficient_storage}
+        {:error, :insufficient_replication}
 
       version ->
         {:ok, version, durability_status_for_storage_team(length(durable_versions), quorum)}

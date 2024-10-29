@@ -9,9 +9,8 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
     path_to_manifest = Path.join(working_directory, "manifest.json")
 
     with :ok <- File.mkdir_p(working_directory),
-         :ok <- manifest.worker.one_time_initialization(working_directory),
-         :ok <- Manifest.write_to_file(manifest, path_to_manifest) do
-      :ok
+         :ok <- manifest.worker.one_time_initialization(working_directory) do
+      Manifest.write_to_file(manifest, path_to_manifest)
     end
   end
 

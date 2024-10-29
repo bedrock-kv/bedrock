@@ -28,7 +28,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :unable_to_meet_log_quorum
           | :no_unassigned_logs
           | :no_unassigned_storage
-          | {:insufficient_storage, failed_tags :: [Bedrock.range_tag()]}
+          | {:need_log_workers, pos_integer()}
+          | {:need_storage_workers, pos_integer()}
+          | {:insufficient_replication, [Bedrock.range_tag()]}
 
   @type log_replication_factor :: pos_integer()
   @type storage_replication_factor :: pos_integer()

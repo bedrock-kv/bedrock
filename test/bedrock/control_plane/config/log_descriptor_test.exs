@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptorTest do
     test "creates a new LogDescriptor struct" do
       log_id = 1
       tags = [1, 2, 3]
-      log_descriptor = LogDescriptor.new(log_id, tags)
+      log_descriptor = LogDescriptor.log_descriptor(log_id, tags)
 
       assert %LogDescriptor{log_id: ^log_id, tags: ^tags} = log_descriptor
     end

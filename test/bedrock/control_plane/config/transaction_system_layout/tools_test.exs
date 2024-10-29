@@ -22,7 +22,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
     test "inserts a log descriptor" do
       expected_id = "log1"
       layout = %TransactionSystemLayout{}
-      log_descriptor = LogDescriptor.new(expected_id, [1, 2, 3])
+      log_descriptor = LogDescriptor.log_descriptor(expected_id, [1, 2, 3])
       updated_layout = upsert_log_descriptor(layout, log_descriptor)
 
       refute updated_layout.id == layout.id
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
 
   describe "find_log_by_id/2" do
     test "finds a log descriptor by id" do
-      log_descriptor = LogDescriptor.new("log1", [1, 2, 3])
+      log_descriptor = LogDescriptor.log_descriptor("log1", [1, 2, 3])
       layout = %TransactionSystemLayout{logs: [log_descriptor]}
       found_log = find_log_by_id(layout, "log1")
 
@@ -49,7 +49,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
 
   describe "remove_log_with_id/2" do
     test "removes a log descriptor by id" do
-      log_descriptor = LogDescriptor.new("log1", [1, 2, 3])
+      log_descriptor = LogDescriptor.log_descriptor("log1", [1, 2, 3])
       layout = %TransactionSystemLayout{logs: [log_descriptor]}
       updated_layout = remove_log_with_id(layout, "log1")
 
@@ -63,7 +63,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
       layout = %TransactionSystemLayout{}
 
       storage_team_descriptor =
-        StorageTeamDescriptor.new(:team1, {<<0x00>>, <<0xFF>>}, ["storage1", "storage2"])
+        StorageTeamDescriptor.storage_team_descriptor(:team1, {<<0x00>>, <<0xFF>>}, [
+          "storage1",
+          "storage2"
+        ])
 
       updated_layout =
         upsert_storage_team_descriptor(layout, storage_team_descriptor)
@@ -76,7 +79,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
   describe "find_storage_team_by_tag/2" do
     test "finds a storage team descriptor by tag" do
       storage_team_descriptor =
-        StorageTeamDescriptor.new(:team1, {<<0x00>>, <<0xFF>>}, ["storage1", "storage2"])
+        StorageTeamDescriptor.storage_team_descriptor(:team1, {<<0x00>>, <<0xFF>>}, [
+          "storage1",
+          "storage2"
+        ])
 
       layout = %TransactionSystemLayout{storage_teams: [storage_team_descriptor]}
       found_team = find_storage_team_by_tag(layout, :team1)
@@ -95,7 +101,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.ChangesTest do
   describe "remove_storage_team_with_tag/2" do
     test "removes a storage team descriptor by tag" do
       storage_team_descriptor =
-        StorageTeamDescriptor.new(:team1, {<<0x00>>, <<0xFF>>}, ["storage1", "storage2"])
+        StorageTeamDescriptor.storage_team_descriptor(:team1, {<<0x00>>, <<0xFF>>}, [
+          "storage1",
+          "storage2"
+        ])
 
       layout = %TransactionSystemLayout{storage_teams: [storage_team_descriptor]}
       updated_layout = remove_storage_team_with_tag(layout, :team1)

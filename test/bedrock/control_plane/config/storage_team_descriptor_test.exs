@@ -8,7 +8,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       tag = 1
       storage_ids = ["1", "2"]
 
-      result = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      result = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       assert %StorageTeamDescriptor{
                tag: ^tag,
@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range = {1, 100}
       tag = 1
       storage_ids = ["1", "2"]
-      new_descriptor = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      new_descriptor = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       result = StorageTeamDescriptor.upsert([], new_descriptor)
 
@@ -34,11 +34,15 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range1 = {1, 100}
       tag = 1
       storage_ids1 = ["1", "2"]
-      existing_descriptor = StorageTeamDescriptor.new(tag, key_range1, storage_ids1)
+
+      existing_descriptor =
+        StorageTeamDescriptor.storage_team_descriptor(tag, key_range1, storage_ids1)
 
       key_range2 = {101, 200}
       storage_ids2 = ["1", "2"]
-      new_descriptor = StorageTeamDescriptor.new(tag, key_range2, storage_ids2)
+
+      new_descriptor =
+        StorageTeamDescriptor.storage_team_descriptor(tag, key_range2, storage_ids2)
 
       result = StorageTeamDescriptor.upsert([existing_descriptor], new_descriptor)
 
@@ -51,7 +55,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range = {1, 100}
       tag = 1
       storage_ids = ["1", "2"]
-      descriptor = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      descriptor = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       result = StorageTeamDescriptor.find_by_tag([descriptor], tag)
 
@@ -62,7 +66,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range = {1, 100}
       tag = 1
       storage_ids = ["1", "2"]
-      descriptor = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      descriptor = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       result = StorageTeamDescriptor.find_by_tag([descriptor], 2)
 
@@ -75,7 +79,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range = {1, 100}
       tag = 1
       storage_ids = ["1", "2"]
-      descriptor = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      descriptor = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       result = StorageTeamDescriptor.remove_by_tag([descriptor], tag)
 
@@ -86,7 +90,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       key_range = {1, 100}
       tag = 1
       storage_ids = ["1", "2"]
-      descriptor = StorageTeamDescriptor.new(tag, key_range, storage_ids)
+      descriptor = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
       result = StorageTeamDescriptor.remove_by_tag([descriptor], 2)
 

@@ -4,8 +4,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
-  alias Bedrock.ControlPlane.Config.LogDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   import Bedrock.Internal.Time
@@ -32,6 +30,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     only: [update_config: 2]
 
   import Bedrock.ControlPlane.ClusterController.Telemetry
+
+  import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
+  import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
 
   @spec claim_config(State.t()) :: State.t()
   def claim_config(t) do
@@ -208,11 +209,19 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     |> RecoveryAttempt.put_version_vector({:undefined, 0})
     |> RecoveryAttempt.put_logs(
       log_vacancies
-      |> Enum.map(&LogDescriptor.new(&1, [0, 1]))
+      |> Enum.map(&log_descriptor(&1, [0, 1]))
     )
     |> RecoveryAttempt.put_storage_teams([
-      StorageTeamDescriptor.new(0, key_range(<<0xFF>>, <<0xFF, 0xFF>>), storage_team_vacancies),
-      StorageTeamDescriptor.new(1, key_range(<<>>, <<0xFF>>), storage_team_vacancies)
+      storage_team_descriptor(
+        0,
+        key_range(<<0xFF>>, <<0xFF, 0xFF>>),
+        storage_team_vacancies
+      ),
+      storage_team_descriptor(
+        1,
+        key_range(<<>>, <<0xFF>>),
+        storage_team_vacancies
+      )
     ])
     |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
   end

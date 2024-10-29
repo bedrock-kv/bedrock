@@ -21,8 +21,10 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   @doc """
   Create a new storage team descriptor.
   """
-  @spec new(Bedrock.range_tag(), Bedrock.key_range(), [Storage.id() | vacancy()]) :: t()
-  def new(tag, key_range, storage_ids) do
+  @spec storage_team_descriptor(Bedrock.range_tag(), Bedrock.key_range(), [
+          Storage.id() | vacancy()
+        ]) :: t()
+  def storage_team_descriptor(tag, key_range, storage_ids) do
     %__MODULE__{
       tag: tag,
       key_range: key_range,

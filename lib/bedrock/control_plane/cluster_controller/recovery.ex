@@ -242,7 +242,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   end
 
   def recovery(%{state: :recruit_storage_to_fill_vacancies} = t),
-    do: t |> RecoveryAttempt.put_state(:determine_durable_version)
+    do: t |> RecoveryAttempt.put_state(:replay_old_logs)
 
   #
   #
@@ -260,12 +260,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         t
         |> RecoveryAttempt.put_durable_version(durable_version)
         |> RecoveryAttempt.put_degraded_teams(degraded_teams)
-        |> RecoveryAttempt.put_state(:recruiting)
+        |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
     end
-  end
-
-  def recovery(%{state: :determine_old_logs_to_copy} = t) do
-    t |> RecoveryAttempt.put_state(:recruiting)
   end
 
   def recovery(%{state: :replay_old_logs} = t) do

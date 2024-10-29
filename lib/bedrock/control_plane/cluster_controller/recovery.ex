@@ -271,7 +271,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   def recovery(%{state: :recruit_storage_to_fill_vacancies} = t) do
     fill_storage_team_vacancies(t.storage_teams, t.storage_recovery_info_by_id)
     |> case do
-      {:error, :no_unassigned_storage_teams = reason} ->
+      {:error, :no_unassigned_storage = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:error, :no_vacancies_to_fill} ->

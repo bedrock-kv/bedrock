@@ -9,8 +9,6 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.Policies
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.LogDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
   @typedoc """
   Struct representing the control plane configuration.

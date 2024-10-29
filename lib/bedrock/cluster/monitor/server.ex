@@ -7,6 +7,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.State,
     only: [
+      put_epoch: 2,
       put_controller: 2
     ]
 
@@ -20,7 +21,6 @@ defmodule Bedrock.Cluster.Monitor.Server do
   import Bedrock.Cluster.Monitor.Discovery,
     only: [
       change_coordinator: 2,
-      change_cluster_controller: 2,
       find_a_live_coordinator: 1
     ]
 
@@ -108,14 +108,14 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> case do
       {:ok, controller} ->
         t
+        |> maybe_change_cluster_controller(controller)
         |> cancel_timer(:find_current_cluster_controller)
-        |> change_cluster_controller(controller)
         |> noreply(:send_ping_to_controller)
 
       {:error, reason} when reason in [:timeout, :unavailable] ->
         t
+        |> maybe_change_cluster_controller(:unavailable)
         |> cancel_timer(:find_current_cluster_controller)
-        |> change_cluster_controller(:unavailable)
         |> set_timer(
           :find_current_cluster_controller,
           t.cluster.monitor_ping_timeout_in_ms()
@@ -129,6 +129,28 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> ping_cluster_controller_if_available()
     |> noreply()
   end
+
+  def maybe_change_cluster_controller(t, controller)
+      when t.controller != controller do
+    t
+    |> put_controller(controller)
+    |> emit_cluster_controller_replaced()
+    |> publish_cluster_controller_replaced_to_pubsub()
+    |> maybe_advertise_capabilities()
+  end
+
+  def maybe_change_cluster_controller(t, _), do: t
+
+  def maybe_advertise_capabilities(t) when t.controller != :unavailable do
+    t
+    |> advertise_capabilities()
+    |> case do
+      {:ok, t} -> t
+      {:error, _reason} -> t
+    end
+  end
+
+  def maybe_advertise_capabilities(t), do: t
 
   @doc false
   @impl GenServer
@@ -156,7 +178,6 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   def handle_info({:timeout, :ping}, t) when t.missed_pongs > 3 do
     t
-    |> change_cluster_controller(:unavailable)
     |> reset_missed_pongs()
     |> noreply(:find_current_cluster_controller)
   end
@@ -168,25 +189,6 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
     |> noreply()
-  end
-
-  def handle_info(:cluster_controller_replaced, t) do
-    t
-    |> emit_cluster_controller_replaced()
-    |> publish_cluster_controller_replaced_to_pubsub()
-    |> advertise_capabilities()
-    |> case do
-      {:ok, t} ->
-        t |> noreply()
-
-      {:error, reason} when reason in [:unavailable, :timeout] ->
-        t
-        |> put_controller(:unavailable)
-        |> noreply(:find_current_cluster_controller)
-
-      {:error, :nodes_must_be_added_by_an_administrator} ->
-        t |> noreply()
-    end
   end
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, t) do
@@ -201,8 +203,15 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   @doc false
   @impl GenServer
-  def handle_cast({:ping, cluster_controller, _epoch}, t),
-    do: t |> change_cluster_controller(cluster_controller) |> noreply(:send_ping_to_controller)
+  def handle_cast({:ping, cluster_controller, epoch}, t) when epoch > t.epoch do
+    t
+    |> put_epoch(epoch)
+    |> maybe_change_cluster_controller(cluster_controller)
+    |> noreply(:send_ping_to_controller)
+  end
+
+  def handle_cast({:ping, _cluster_controller, _epoch}, t),
+    do: t |> noreply(:send_ping_to_controller)
 
   def handle_cast({:pong, controller}, t) when t.controller == controller,
     do: t |> reset_missed_pongs() |> noreply()

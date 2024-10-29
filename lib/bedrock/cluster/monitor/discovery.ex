@@ -66,28 +66,6 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
     t
   end
 
-  @doc """
-  Change the cluster controller. If the controller is the same as the one we
-  already have we do nothing, otherwise we publish a message to a topic to let
-  everyone on this node know that the controller has changed.
-  """
-  @spec change_cluster_controller(State.t(), ClusterController.ref() | :unavailable) :: State.t()
-  def change_cluster_controller(t, controller) when t.controller == controller,
-    do: t |> cancel_timer(:ping) |> maybe_set_ping_timer()
-
-  def change_cluster_controller(t, controller) do
-    t
-    |> put_controller(controller)
-    |> cancel_timer(:ping)
-    |> maybe_set_ping_timer()
-    |> notify_cluster_controller_changed()
-  end
-
-  def notify_cluster_controller_changed(t) do
-    send(self(), :cluster_controller_replaced)
-    t
-  end
-
   def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),

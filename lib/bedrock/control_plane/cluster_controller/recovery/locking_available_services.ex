@@ -27,7 +27,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServic
   """
   @spec lock_available_services(
           [ServiceDescriptor.t()],
-          [ServiceDescriptor.id()],
+          MapSet.t(ServiceDescriptor.id()),
           Bedrock.quorum(),
           Bedrock.timeout_in_ms()
         ) ::
@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServic
           | {:error, :newer_epoch_exists}
   def lock_available_services(available_services, locked_service_ids, epoch, timeout_in_ms) do
     available_services
-    |> Enum.reject(&(&1.id in locked_service_ids))
+    |> Enum.reject(&MapSet.member?(locked_service_ids, &1.id))
     |> Task.async_stream(
       fn service ->
         case service do
@@ -76,10 +76,12 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServic
       {locked_services, info_by_id} ->
         grouped_recovery_info =
           info_by_id
-          |> Enum.group_by(&elem(&1, 1)[:kind])
+          |> Enum.group_by(&Map.get(elem(&1, 1), :kind))
 
-        {:ok, locked_services, grouped_recovery_info[:log] || %{},
-         grouped_recovery_info[:storage] || %{}}
+        log_recovery_info_by_id = Map.get(grouped_recovery_info, :log, []) |> Map.new()
+        storage_recovery_info_by_id = Map.get(grouped_recovery_info, :storage, []) |> Map.new()
+
+        {:ok, locked_services, log_recovery_info_by_id, storage_recovery_info_by_id}
     end
   end
 end

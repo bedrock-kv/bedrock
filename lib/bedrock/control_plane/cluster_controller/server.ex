@@ -20,10 +20,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   import Bedrock.ControlPlane.ClusterController.Recovery,
     only: [
-      claim_config: 1,
-      recover: 1,
-      start_new_recovery_attempt: 1,
-      try_to_fix_stalled_recovery_if_needed: 1
+      try_to_recover: 1
     ]
 
   @doc false
@@ -66,16 +63,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_continue(:start_recovery, t) do
     t
     # |> ping_all_coordinators()
-    |> claim_config()
-    |> start_new_recovery_attempt()
-    |> recover()
+    |> try_to_recover()
     |> store_changes_to_config()
-    |> noreply()
-  end
-
-  def handle_continue(:initialization, t) do
-    t
-    |> claim_config()
     |> noreply()
   end
 
@@ -104,7 +93,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     |> case do
       {:ok, t} ->
         t
-        |> try_to_fix_stalled_recovery_if_needed()
+        |> try_to_recover()
         |> store_changes_to_config()
         |> reply(:ok)
 
@@ -133,7 +122,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_cast({:node_added_worker, node, worker_info}, t) do
     t
     |> node_added_worker(node, worker_info, now())
-    |> try_to_fix_stalled_recovery_if_needed()
+    |> try_to_recover()
     |> store_changes_to_config()
     |> noreply()
   end

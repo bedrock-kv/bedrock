@@ -1,15 +1,13 @@
 defmodule Bedrock.Cluster.Monitor.Discovery do
   alias Bedrock.Cluster.Monitor.State
   alias Bedrock.Cluster.PubSub
-  alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
 
   use Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Monitor.State,
     only: [
-      put_coordinator: 2,
-      put_controller: 2
+      put_coordinator: 2
     ]
 
   require Logger

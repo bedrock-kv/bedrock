@@ -5,6 +5,8 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
+  @type state :: :starting | :recovery | :running | :stopping
+
   @type t :: %__MODULE__{
           epoch: Bedrock.epoch(),
           otp_name: atom(),
@@ -20,6 +22,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
             otp_name: nil,
             cluster: nil,
             config: nil,
+            state: :starting,
             coordinator: nil,
             node_tracking: nil,
             service_directory: nil,
@@ -29,6 +32,9 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
 
   defmodule Changes do
     alias Bedrock.ControlPlane.ClusterController.State
+
+    @spec put_state(State.t(), State.state()) :: State.t()
+    def put_state(t, state), do: %{t | state: state}
 
     @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
     def update_config(t, updater), do: %{t | config: updater.(t.config)}

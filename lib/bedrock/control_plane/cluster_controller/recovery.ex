@@ -20,68 +20,63 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     only: [
       put_epoch: 2,
       put_recovery_attempt: 2,
+      update_recovery_attempt: 2,
       update_transaction_system_layout: 2
     ]
 
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes,
-    only: [put_controller: 2]
-
   import Bedrock.ControlPlane.ClusterController.State.Changes,
-    only: [update_config: 2]
+    only: [put_state: 2, update_config: 2]
 
   import Bedrock.ControlPlane.ClusterController.Telemetry
 
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
   import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
 
-  @spec claim_config(State.t()) :: State.t()
-  def claim_config(t) do
-    t
-    |> update_config(fn config ->
-      config
-      |> put_epoch(t.epoch)
-      |> update_transaction_system_layout(fn tsl ->
-        tsl
-        |> put_controller(self())
-      end)
-    end)
-  end
+  @spec try_to_recover(State.t()) :: State.t()
+  def try_to_recover(t) do
+    case t.state do
+      :starting ->
+        t
+        |> put_state(:recovery)
+        |> update_config(fn config ->
+          config
+          |> put_epoch(t.epoch)
+          |> put_recovery_attempt(
+            RecoveryAttempt.new(
+              t.epoch,
+              now(),
+              config.parameters.desired_logs,
+              config.parameters.replication_factor,
+              config.transaction_system_layout
+            )
+            |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+          )
+          |> update_transaction_system_layout(fn transaction_system_layout ->
+            transaction_system_layout
+            |> TransactionSystemLayout.Changes.put_controller(self())
+            |> TransactionSystemLayout.Changes.put_sequencer(nil)
+            |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
+            |> TransactionSystemLayout.Changes.put_data_distributor(nil)
+            |> TransactionSystemLayout.Changes.put_proxies([])
+            |> TransactionSystemLayout.Changes.put_transaction_resolvers([])
+          end)
+        end)
+        |> recover()
 
-  @spec start_new_recovery_attempt(State.t()) :: State.t()
-  def start_new_recovery_attempt(t) when is_nil(t.config.recovery_attempt) do
-    t
-    |> update_config(fn config ->
-      config
-      |> put_recovery_attempt(
-        RecoveryAttempt.new(
-          t.epoch,
-          now(),
-          config.parameters.desired_logs,
-          config.parameters.replication_factor,
-          config.transaction_system_layout
-        )
-        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
-      )
-      |> update_transaction_system_layout(fn transaction_system_layout ->
-        transaction_system_layout
-        |> TransactionSystemLayout.Changes.put_controller(self())
-        |> TransactionSystemLayout.Changes.put_sequencer(nil)
-        |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
-        |> TransactionSystemLayout.Changes.put_data_distributor(nil)
-        |> TransactionSystemLayout.Changes.put_proxies([])
-        |> TransactionSystemLayout.Changes.put_transaction_resolvers([])
-      end)
-    end)
-  end
+      :recovery ->
+        t
+        |> update_config(fn config ->
+          config
+          |> update_recovery_attempt(fn recovery_attempt ->
+            recovery_attempt
+            |> RecoveryAttempt.reset(now())
+            |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+          end)
+        end)
+        |> recover()
 
-  def start_new_recovery_attempt(t), do: t
-
-  @spec try_to_fix_stalled_recovery_if_needed(State.t()) :: State.t()
-  def try_to_fix_stalled_recovery_if_needed(t) do
-    if RecoveryAttempt.stalled?(t.config.recovery_attempt) do
-      t |> recover()
-    else
-      t
+      :running ->
+        t
     end
   end
 
@@ -90,7 +85,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     :ok = trace_recovery_attempt_started(t)
 
     t.config.recovery_attempt
-    |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
     |> run_recovery_attempt()
     |> case do
       {:ok, completed_recovery_attempt} ->
@@ -104,6 +98,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
   def apply_completed_recovery_attempt(t, completed_recovery_attempt) do
     t
+    |> put_state(:running)
     |> update_config(fn config ->
       config
       |> put_recovery_attempt(nil)
@@ -165,9 +160,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       {:error, :newer_epoch_exists = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
-      {:ok, [], _, _} ->
-        t |> RecoveryAttempt.put_state({:stalled, :waiting_for_services})
-
       {:ok, locked_services, log_recovery_info_by_id, storage_recovery_info_by_id} ->
         t
         |> RecoveryAttempt.update_log_recovery_info_by_id(&Enum.into(log_recovery_info_by_id, &1))
@@ -179,13 +171,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           |> Map.new(&{&1.id, &1})
           |> Map.merge(locked_services |> Map.new(&{&1.id, &1}))
           |> Map.values()
-          |> Enum.sort_by(& &1.id)
         end)
         |> RecoveryAttempt.update_locked_service_ids(fn locked_service_ids ->
-          locked_service_ids
-          |> Enum.concat(locked_services |> Enum.map(& &1.id))
-          |> Enum.uniq()
-          |> Enum.sort()
+          locked_services |> Enum.map(& &1.id) |> Enum.into(locked_service_ids)
         end)
         |> case do
           %{last_transaction_system_layout: %{logs: [], storage_teams: []}} = t ->

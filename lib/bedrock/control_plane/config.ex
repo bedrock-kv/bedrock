@@ -14,14 +14,12 @@ defmodule Bedrock.ControlPlane.Config do
   Struct representing the control plane configuration.
 
   ## Fields
-    - `state` - The current state of the cluster.
     - `coordinators` - The coordinators of the cluster.
     - `parameters` - The parameters that are used to configure the cluster.
     - `policies` - The policies that are used to configure the cluster.
     - `transaction_system_layout` - The layout of the transaction system.
   """
   @type t :: %__MODULE__{
-          state: state(),
           recovery_attempt: RecoveryAttempt.t() | nil,
           coordinators: [node()],
           epoch: non_neg_integer(),
@@ -29,8 +27,7 @@ defmodule Bedrock.ControlPlane.Config do
           policies: Policies.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t()
         }
-  defstruct state: :uninitialized,
-            recovery_attempt: nil,
+  defstruct recovery_attempt: nil,
             coordinators: [],
             epoch: 0,
             parameters: nil,
@@ -48,7 +45,6 @@ defmodule Bedrock.ControlPlane.Config do
   @spec new(coordinators :: [node()]) :: t()
   def new(coordinators) do
     %__MODULE__{
-      state: :uninitialized,
       coordinators: coordinators,
       epoch: 0,
       parameters: Parameters.new(coordinators),
@@ -84,7 +80,7 @@ defmodule Bedrock.ControlPlane.Config do
 
     # Puts
 
-    @spec put_epoch(Config.t(), pos_integer()) :: Config.t()
+    @spec put_epoch(Config.t(), Bedrock.epoch()) :: Config.t()
     def put_epoch(t, epoch), do: %{t | epoch: epoch}
 
     @spec put_recovery_attempt(Config.t(), RecoveryAttempt.t() | nil) :: Config.t()

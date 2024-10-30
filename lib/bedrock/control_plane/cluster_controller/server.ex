@@ -93,7 +93,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
     t
-    |> request_to_rejoin(node, capabilities, running_services, now())
+    |> request_to_rejoin(node, capabilities, running_services |> Map.values(), now())
     |> case do
       {:ok, t} ->
         t

@@ -5,7 +5,10 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
-  require Logger
+  import Bedrock.Cluster.Monitor.Telemetry,
+    only: [
+      trace_advertising_capabilities: 3
+    ]
 
   @spec advertise_capabilities(State.t()) ::
           {:ok, State.t()}
@@ -13,12 +16,12 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
           | {:error, :nodes_must_be_added_by_an_administrator}
           | {:error, {:relieved_by, {Bedrock.epoch(), pid()}}}
   def advertise_capabilities(t) do
+    running_services = running_services(t)
+
+    trace_advertising_capabilities(t.cluster, t.capabilities, running_services)
+
     t.controller
-    |> ClusterController.request_to_rejoin(
-      Node.self(),
-      t.capabilities,
-      running_services(t)
-    )
+    |> ClusterController.request_to_rejoin(Node.self(), t.capabilities, running_services)
     |> case do
       :ok -> {:ok, t}
       {:error, _reason} = error -> error
@@ -35,33 +38,28 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end
   end
 
-  @spec running_services(State.t()) :: [keyword()]
+  @spec running_services(State.t()) :: ClusterController.running_service_info_by_id()
   def running_services(t) do
     case Foreman.all(t.cluster.otp_name(:foreman)) do
-      {:ok, worker_pids} ->
-        worker_pids |> gather_info_from_workers()
-
-      {:error, :unavailable} ->
-        []
-
-      {:error, reason} ->
-        Logger.error("Failed to get workers: #{inspect(reason)}")
-        []
+      {:ok, worker_pids} -> worker_pids |> gather_info_from_workers()
+      {:error, _reason} -> %{}
     end
   end
 
-  @spec gather_info_from_workers([pid()]) :: [keyword()]
+  @spec gather_info_from_workers([pid()]) :: ClusterController.running_service_info_by_id()
   def gather_info_from_workers(worker_pids) do
-    Enum.reduce(worker_pids, [], fn worker_pid, list ->
-      gather_info_from_worker(worker_pid)
-      |> case do
-        {:ok, info} -> [info | list]
-        _ -> list
-      end
+    worker_pids
+    |> Enum.map(&gather_info_from_worker/1)
+    |> Enum.filter(fn
+      {:ok, _} -> true
+      _ -> false
     end)
+    |> Map.new(fn {:ok, info} -> {info[:id], info} end)
   end
 
-  @spec gather_info_from_worker(Worker.ref()) :: {:ok, map()} | {:error, :unavailable}
+  @spec gather_info_from_worker(Worker.ref()) ::
+          {:ok, ClusterController.running_service_info()}
+          | {:error, :unavailable}
   def gather_info_from_worker(worker),
     do: Worker.info(worker, [:id, :otp_name, :kind, :pid])
 

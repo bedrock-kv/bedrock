@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.ClusterController.Nodes do
   @moduledoc false
 
+  alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config
@@ -22,7 +23,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
           State.t(),
           node(),
           capabilities :: [Bedrock.Cluster.capability()],
-          running_services :: [keyword()],
+          running_services :: [ClusterController.running_service_info()],
           at :: DateTime.t()
         ) ::
           {:ok, State.t()} | {:error, :nodes_must_be_added_by_an_administrator}
@@ -96,7 +97,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
     t
   end
 
-  @spec add_running_service(State.t(), node(), info :: keyword()) :: State.t()
+  @spec add_running_service(State.t(), node(), info :: [ClusterController.running_service_info()]) ::
+          State.t()
   def add_running_service(t, node, info) do
     t
     |> update_config(fn config ->

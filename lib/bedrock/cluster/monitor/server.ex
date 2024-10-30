@@ -34,7 +34,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.Telemetry,
     only: [
-      emit_cluster_controller_replaced: 1
+      trace_controller_replaced: 2
     ]
 
   require Logger
@@ -132,9 +132,10 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   def maybe_change_cluster_controller(t, controller)
       when t.controller < controller do
+    trace_controller_replaced(t.cluster, controller)
+
     t
     |> put_controller(controller)
-    |> emit_cluster_controller_replaced()
     |> publish_cluster_controller_replaced_to_pubsub()
     |> maybe_advertise_capabilities()
   end

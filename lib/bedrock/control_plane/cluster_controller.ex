@@ -4,11 +4,22 @@ defmodule Bedrock.ControlPlane.ClusterController do
   of the coordinator election. It is responsible for bringing up the data plane
   and putting the cluster into a writable state.
   """
+  alias Bedrock.Service.Worker
+  alias Bedrock.ControlPlane.ClusterController
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.server()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
+
+  @type running_service_info :: %{
+          id: String.t(),
+          otp_name: atom(),
+          kind: :log | :storage,
+          pid: pid()
+        }
+
+  @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
   @doc """
   Sends a 'pong' message to the specified cluster controller from the given node.
@@ -48,7 +59,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
   ## Returns
   - `:ok`: Indicates the report was successfully sent.
   """
-  @spec advertise_worker(cluster_controller :: ref(), node(), info :: map()) :: :ok
+  @spec advertise_worker(
+          cluster_controller :: ref(),
+          node(),
+          info :: running_service_info()
+        ) :: :ok
   def advertise_worker(cluster_controller, node, worker_info),
     do: cluster_controller |> cast({:node_added_worker, node, worker_info})
 
@@ -71,7 +86,7 @@ defmodule Bedrock.ControlPlane.ClusterController do
           cluster_controller :: ref(),
           node(),
           capabilities :: [atom()],
-          running_services :: [keyword()],
+          ClusterController.running_service_info_by_id(),
           timeout_in_ms()
         ) ::
           :ok

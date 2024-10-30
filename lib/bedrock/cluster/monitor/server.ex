@@ -25,16 +25,20 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.PingPong,
     only: [
-      ping_cluster_controller_if_available: 1,
-      reset_missed_pongs: 1,
+      ping_controller: 1,
       pong_missed: 1,
       pong_received: 1,
-      maybe_set_ping_timer: 1
+      reset_ping_timer: 1
     ]
 
   import Bedrock.Cluster.Monitor.Telemetry,
     only: [
-      trace_controller_replaced: 2
+      trace_searching_for_controller: 1,
+      trace_searching_for_coordinator: 1,
+      trace_found_coordinator: 2,
+      trace_found_controller: 2,
+      trace_lost_controller: 1,
+      trace_missed_pong: 2
     ]
 
   require Logger
@@ -81,83 +85,101 @@ defmodule Bedrock.Cluster.Monitor.Server do
   @doc false
   @impl GenServer
   def handle_continue(:find_a_live_coordinator, t) do
+    trace_searching_for_coordinator(t.cluster)
+
     t
     |> find_a_live_coordinator()
     |> case do
       {:ok, coordinator} ->
         t
-        |> cancel_timer(:find_a_live_coordinator)
-        |> change_coordinator(coordinator)
-        |> noreply(:find_current_cluster_controller)
+        |> found_coordinator(coordinator)
+        |> noreply(:find_current_controller)
 
       {:error, :unavailable} ->
         t
-        |> cancel_timer(:find_a_live_coordinator)
-        |> set_timer(
-          :find_a_live_coordinator,
-          t.cluster.monitor_ping_timeout_in_ms()
-        )
-        |> change_coordinator(:unavailable)
+        |> continue_search_for_coordinator()
         |> noreply()
     end
   end
 
-  def handle_continue(:find_current_cluster_controller, t) do
+  def handle_continue(:find_current_controller, t) do
+    trace_searching_for_controller(t.cluster)
+
     t.coordinator
     |> Coordinator.fetch_controller(100)
     |> case do
-      {:ok, controller} ->
+      {:ok, controller} when is_pid(controller) ->
         t
-        |> maybe_change_cluster_controller(controller)
-        |> cancel_timer(:find_current_cluster_controller)
-        |> noreply(:send_ping_to_controller)
+        |> found_controller(controller)
+        |> noreply()
 
       {:error, reason} when reason in [:timeout, :unavailable] ->
         t
-        |> maybe_change_cluster_controller(:unavailable)
-        |> cancel_timer(:find_current_cluster_controller)
-        |> set_timer(
-          :find_current_cluster_controller,
-          t.cluster.monitor_ping_timeout_in_ms()
-        )
+        |> continue_search_for_controller()
         |> noreply()
     end
   end
 
-  def handle_continue(:send_ping_to_controller, t) do
+  def found_coordinator(t, coordinator) do
+    trace_found_coordinator(t.cluster, coordinator)
+
     t
-    |> ping_cluster_controller_if_available()
-    |> noreply()
+    |> cancel_timer(:find_a_live_coordinator)
+    |> change_coordinator(coordinator)
   end
 
-  def maybe_change_cluster_controller(t, controller)
-      when t.controller < controller do
-    trace_controller_replaced(t.cluster, controller)
+  def continue_search_for_coordinator(t) do
+    t
+    |> cancel_timer(:find_a_live_coordinator)
+    |> set_timer(:find_a_live_coordinator, t.cluster.monitor_ping_timeout_in_ms())
+    |> change_coordinator(:unavailable)
+  end
 
+  def found_controller(t, controller) do
+    trace_found_controller(t.cluster, controller)
+
+    t
+    |> cancel_timer(:find_current_controller)
+    |> change_controller(controller)
+  end
+
+  def continue_search_for_controller(t) do
+    t
+    |> change_controller(:unavailable)
+    |> cancel_timer(:find_current_controller)
+    |> set_timer(:find_current_controller, t.cluster.monitor_ping_timeout_in_ms())
+  end
+
+  def change_controller(t, controller) when t.controller == controller, do: t
+
+  def change_controller(t, controller) do
     t
     |> put_controller(controller)
     |> publish_cluster_controller_replaced_to_pubsub()
-    |> maybe_advertise_capabilities()
-  end
-
-  def maybe_change_cluster_controller(t, _), do: t
-
-  def maybe_advertise_capabilities(t) when t.controller != :unavailable do
-    t
-    |> advertise_capabilities()
     |> case do
-      {:error, {:relieved_by, {_new_epoch, new_controller}}} ->
-        t |> maybe_change_cluster_controller(new_controller)
-
-      {:ok, t} ->
+      %{controller: :unavailable} ->
         t
 
-      {:error, _reason} ->
+      t ->
         t
+        |> reset_ping_timer()
+        |> ping_controller()
+        |> advertise_capabilities()
+        |> case do
+          {:error, {:relieved_by, {_new_epoch, new_controller}}} ->
+            t |> change_controller(new_controller)
+
+          {:error, :unavailable} ->
+            t |> change_controller(:unavailable)
+
+          {:ok, t} ->
+            t
+
+          {:error, _reason} ->
+            t
+        end
     end
   end
-
-  def maybe_advertise_capabilities(t), do: t
 
   @doc false
   @impl GenServer
@@ -180,21 +202,25 @@ defmodule Bedrock.Cluster.Monitor.Server do
   def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: t |> noreply(:find_a_live_coordinator)
 
-  def handle_info({:timeout, :find_current_cluster_controller}, t),
-    do: t |> noreply(:find_current_cluster_controller)
+  def handle_info({:timeout, :find_current_controller}, t),
+    do: t |> noreply(:find_current_controller)
 
   def handle_info({:timeout, :ping}, t) when t.missed_pongs > 3 do
+    trace_lost_controller(t.cluster)
+
     t
-    |> reset_missed_pongs()
-    |> noreply(:find_current_cluster_controller)
+    |> cancel_timer(:ping)
+    |> change_controller(:unavailable)
+    |> noreply(:find_current_controller)
   end
 
   def handle_info({:timeout, :ping}, t) do
+    trace_missed_pong(t.cluster, t.missed_pongs)
+
     t
     |> pong_missed()
-    |> ping_cluster_controller_if_available()
-    |> cancel_timer(:ping)
-    |> maybe_set_ping_timer()
+    |> reset_ping_timer()
+    |> ping_controller()
     |> noreply()
   end
 
@@ -210,11 +236,19 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   @doc false
   @impl GenServer
-  def handle_cast({:pong, controller}, t) do
+
+  def handle_cast({:pong, {_epoch, controller}}, t) when controller == t.controller do
     t
     |> pong_received()
-    |> maybe_change_cluster_controller(controller)
-    |> noreply(:send_ping_to_controller)
+    |> noreply()
+  end
+
+  def handle_cast({:pong, {_epoch, controller}}, t) do
+    t
+    |> pong_received()
+    |> cancel_all_timers()
+    |> change_controller(controller)
+    |> noreply()
   end
 
   def handle_cast({:advertise_worker, worker_pid}, t),

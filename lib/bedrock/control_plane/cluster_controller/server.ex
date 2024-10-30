@@ -8,15 +8,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   alias Bedrock.ControlPlane.Coordinator
 
   import Bedrock.ControlPlane.ClusterController.State.Changes,
-    only: [put_last_transaction_layout_id: 2, put_my_relief: 2]
+    only: [put_last_transaction_layout_id: 2, put_my_relief: 2, put_state: 2]
 
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
-      # ping_all_coordinators: 1,
-      # determine_dead_nodes: 2,
       request_to_rejoin: 5,
       node_added_worker: 4,
-      node_last_seen_at: 3
+      node_last_seen_at: 3,
+      ping_all_coordinators: 1
     ]
 
   import Bedrock.ControlPlane.ClusterController.Recovery,
@@ -60,28 +59,20 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   @impl true
   def handle_continue({:start_recovery, {_epoch, old_controller}}, t) do
-    old_controller |> ClusterController.stand_relieved({t.epoch, self()})
+    if :unavailable == old_controller do
+      old_controller |> ClusterController.stand_relieved({t.epoch, self()})
+    end
 
     t
+    |> ping_all_coordinators()
     |> try_to_recover()
     |> store_changes_to_config()
     |> noreply()
   end
 
   @impl true
-  def handle_info({:ping, from}, t) when not is_nil(t.my_relief) do
-    send(from, {:pong, t.my_relief})
-    t |> noreply()
-  end
-
-  def handle_info({:ping, from}, t) do
-    send(from, {:pong, self()})
-
-    t
-    |> node_last_seen_at(node(from), now())
-    |> store_changes_to_config()
-    |> noreply()
-  end
+  def handle_info({:timeout, :ping_all_coordinators}, t),
+    do: t |> ping_all_coordinators() |> noreply()
 
   @impl true
   # If we have been relieved by another controller in a newer epoch, we should
@@ -110,30 +101,29 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   # If we are relieved by another controller, we should not accept any casts
   # from the cluster. We will ignore them. We are no longer relevant and are of
   # no further use.
+  def handle_cast({:ping, from}, t) when not is_nil(t.my_relief),
+    do: GenServer.cast(from, {:pong, t.my_relief})
+
+  def handle_cast({:ping, from}, t) do
+    GenServer.cast(from, {:pong, {t.epoch, self()}})
+
+    t
+    |> node_last_seen_at(node(from), now())
+    |> store_changes_to_config()
+    |> noreply()
+  end
+
   def handle_cast(_, t) when not is_nil(t.my_relief),
+    do: t |> noreply()
+
+  def handle_cast({:pong, _from}, t),
     do: t |> noreply()
 
   def handle_cast({:stand_relieved, {new_epoch, _}}, t) when new_epoch <= t.epoch,
     do: t |> noreply()
 
   def handle_cast({:stand_relieved, {_new_epoch, _new_controller} = my_relief}, t),
-    do: t |> put_my_relief(my_relief) |> noreply()
-
-  def handle_cast({:pong, node}, t) do
-    t
-    |> node_last_seen_at(node, now())
-    |> store_changes_to_config()
-    |> noreply()
-  end
-
-  def handle_cast({:ping, pid}, t) do
-    GenServer.cast(pid, {:pong, self()})
-
-    t
-    |> node_last_seen_at(node(pid), now())
-    |> store_changes_to_config()
-    |> noreply()
-  end
+    do: t |> put_my_relief(my_relief) |> put_state(:stopped) |> noreply()
 
   def handle_cast({:node_added_worker, node, worker_info}, t) do
     t

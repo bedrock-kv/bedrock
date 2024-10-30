@@ -51,11 +51,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
 
   @spec ping_all_coordinators(State.t()) :: State.t()
   def ping_all_coordinators(t) do
-    t.cluster.ping_nodes(Config.coordinators(t.config), self(), t.epoch)
+    GenServer.abcast(
+      Config.coordinators(t.config),
+      t.cluster.otp_name(:coordinator),
+      {:ping, {t.epoch, self()}}
+    )
 
     t
-    |> cancel_timer(:ping_all_nodes)
-    |> set_timer(:ping_all_nodes, Config.ping_rate_in_ms(t.config))
+    |> cancel_timer(:ping_all_coordinators)
+    |> set_timer(:ping_all_coordinators, Config.ping_rate_in_ms(t.config))
   end
 
   @spec node_last_seen_at(State.t(), node(), at :: DateTime.t()) :: State.t()

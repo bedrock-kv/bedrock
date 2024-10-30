@@ -5,9 +5,10 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  @type state :: :starting | :recovery | :running | :stopping
+  @type state :: :starting | :recovery | :running | :stopped
 
   @type t :: %__MODULE__{
+          state: state(),
           epoch: Bedrock.epoch(),
           my_relief: {Bedrock.epoch(), controller :: pid()} | nil,
           cluster: module(),
@@ -18,11 +19,11 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           last_transaction_layout_id: TransactionSystemLayout.id()
         }
-  defstruct epoch: nil,
+  defstruct state: :starting,
+            epoch: nil,
             my_relief: nil,
             cluster: nil,
             config: nil,
-            state: :starting,
             coordinator: nil,
             node_tracking: nil,
             service_directory: nil,

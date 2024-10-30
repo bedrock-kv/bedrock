@@ -13,7 +13,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     only: [
       set_raft: 2,
       put_config: 2,
-      put_controller: 2,
       put_last_durable_txn_id: 2
     ]
 
@@ -49,11 +48,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   def maybe_put_controller_from_config(t)
       when t.controller != t.config.transaction_system_layout.controller do
-    new_controller = t.config.transaction_system_layout.controller
+    %{epoch: epoch, transaction_system_layout: %{controller: controller}} = t.config
 
     t
-    |> put_controller(new_controller)
-    |> emit_cluster_controller_changed(new_controller)
+    |> State.Changes.put_epoch(epoch)
+    |> State.Changes.put_controller(controller)
+    |> emit_cluster_controller_changed(controller)
   end
 
   def maybe_put_controller_from_config(t), do: t

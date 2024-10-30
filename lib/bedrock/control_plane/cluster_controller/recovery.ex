@@ -75,6 +75,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         end)
         |> recover()
 
+      :stopped ->
+        t
+
       :running ->
         t
     end

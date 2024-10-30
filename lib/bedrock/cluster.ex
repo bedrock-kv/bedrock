@@ -241,10 +241,6 @@ defmodule Bedrock.Cluster do
       @doc false
       def child_spec(opts),
         do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
-
-      @doc false
-      def ping_nodes(nodes, cluster_controller, epoch),
-        do: otp_name(:monitor) |> Monitor.ping_nodes(nodes, cluster_controller, epoch)
     end
   end
 

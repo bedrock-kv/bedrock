@@ -3,19 +3,6 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.ClusterController
 
-  @doc """
-  Emits a telemetry event indicating that the cluster controller has been
-  replaced. The event includes metadata for the cluster and controller.
-  """
-  @spec trace_controller_replaced(cluster :: module(), controller :: {Bedrock.epoch(), pid()}) ::
-          :ok
-  def trace_controller_replaced(cluster, controller) do
-    Telemetry.execute([:bedrock, :cluster, :monitor, :controller_replaced], %{}, %{
-      cluster: cluster,
-      controller: controller
-    })
-  end
-
   @spec trace_advertising_capabilities(
           cluster :: module(),
           capabilities :: [Cluster.capability()],
@@ -27,6 +14,44 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
       cluster: cluster,
       capabilities: capabilities,
       running_services: running_services
+    })
+  end
+
+  def trace_searching_for_controller(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :searching_for_controller], %{}, %{
+      cluster: cluster
+    })
+  end
+
+  def trace_found_controller(cluster, controller) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :found_controller], %{}, %{
+      cluster: cluster,
+      controller: controller
+    })
+  end
+
+  def trace_searching_for_coordinator(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :searching_for_coordinator], %{}, %{
+      cluster: cluster
+    })
+  end
+
+  def trace_found_coordinator(cluster, coordinator) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :found_coordinator], %{}, %{
+      cluster: cluster,
+      coordinator: coordinator
+    })
+  end
+
+  def trace_lost_controller(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :lost_controller], %{}, %{
+      cluster: cluster
+    })
+  end
+
+  def trace_missed_pong(cluster, n_missed) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :missed_pong], %{missed_pongs: n_missed}, %{
+      cluster: cluster
     })
   end
 end

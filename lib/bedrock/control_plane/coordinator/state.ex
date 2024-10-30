@@ -7,8 +7,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           cluster: module(),
           leader_node: node() | :undecided,
           my_node: node(),
+          epoch: Bedrock.epoch(),
           controller: ClusterController.ref() | :unavailable,
-          controller_otp_name: atom(),
           otp_name: atom(),
           raft: Raft.t(),
           supervisor_otp_name: atom(),
@@ -19,8 +19,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   defstruct cluster: nil,
             leader_node: :undecided,
             my_node: nil,
+            epoch: nil,
             controller: :unavailable,
-            controller_otp_name: nil,
             otp_name: nil,
             raft: nil,
             supervisor_otp_name: nil,
@@ -30,6 +30,9 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
   defmodule Changes do
     alias Bedrock.ControlPlane.Coordinator.State
+
+    @spec put_epoch(t :: State.t(), epoch :: Bedrock.epoch()) :: State.t()
+    def put_epoch(t, epoch), do: %{t | epoch: epoch}
 
     @spec put_controller(t :: State.t(), new_controller :: ClusterController.ref() | :unavailable) ::
             State.t()

@@ -29,7 +29,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
       emit_cluster_leadership_changed: 1,
-      trace_consensus_reached: 2
+      trace_consensus_reached: 2,
+      emit_cluster_controller_changed: 2
     ]
 
   require Logger
@@ -74,7 +75,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          cluster: cluster,
          my_node: my_node,
          otp_name: otp_name,
-         controller_otp_name: cluster.otp_name(:controller),
          supervisor_otp_name: cluster.otp_name(:sup),
          raft:
            Raft.new(
@@ -93,19 +93,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_call(:fetch_config, _from, t),
-    do: t |> reply({:ok, t.config})
+  def handle_call(:fetch_config, _from, t), do: t |> reply({:ok, t.config})
 
-  def handle_call(:fetch_controller, _from, t) do
-    if t.controller == :unavailable do
-      case get_in(t.config.transaction_system_layout.controller) do
-        nil -> t |> reply({:error, :unavailable})
-        controller -> t |> reply({:ok, controller})
-      end
-    else
-      t |> reply({:ok, t.controller})
-    end
-  end
+  def handle_call(:fetch_controller, _from, t) when t.controller == :unavailable,
+    do: t |> reply({:error, :unavailable})
+
+  def handle_call(:fetch_controller, _from, t), do: t |> reply({:ok, t.controller})
 
   def handle_call({:write_config, config}, from, t) do
     t
@@ -115,9 +108,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       {:error, _reason} -> t |> reply({:error, :failed})
     end
   end
-
-  def handle_call(:ping, _from, t),
-    do: t |> reply({:pong, self()})
 
   @impl true
   def handle_info({:raft, :leadership_changed, {:undecided, _epoch}}, t)
@@ -156,6 +146,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
+  def handle_cast({:ping, {epoch, controller}}, t) do
+    GenServer.cast(controller, {:pong, self()})
+
+    if epoch > t.epoch do
+      t
+      |> State.Changes.put_epoch(epoch)
+      |> State.Changes.put_controller(controller)
+      |> emit_cluster_controller_changed(controller)
+    else
+      t
+    end
+    |> noreply()
+  end
+
   def handle_cast({:raft, :rpc, event, source}, t) do
     t
     |> update_raft(&Raft.handle_event(&1, event, source))

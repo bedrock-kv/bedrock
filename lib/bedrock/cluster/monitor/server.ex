@@ -7,7 +7,6 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.State,
     only: [
-      put_epoch: 2,
       put_controller: 2
     ]
 
@@ -29,6 +28,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       ping_cluster_controller_if_available: 1,
       reset_missed_pongs: 1,
       pong_missed: 1,
+      pong_received: 1,
       maybe_set_ping_timer: 1
     ]
 
@@ -131,7 +131,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
   end
 
   def maybe_change_cluster_controller(t, controller)
-      when t.controller != controller do
+      when t.controller < controller do
     t
     |> put_controller(controller)
     |> emit_cluster_controller_replaced()
@@ -145,8 +145,14 @@ defmodule Bedrock.Cluster.Monitor.Server do
     t
     |> advertise_capabilities()
     |> case do
-      {:ok, t} -> t
-      {:error, _reason} -> t
+      {:error, {:relieved_by, {_new_epoch, new_controller}}} ->
+        t |> maybe_change_cluster_controller(new_controller)
+
+      {:ok, t} ->
+        t
+
+      {:error, _reason} ->
+        t
     end
   end
 
@@ -203,21 +209,12 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   @doc false
   @impl GenServer
-  def handle_cast({:ping, cluster_controller, epoch}, t) when epoch > t.epoch do
+  def handle_cast({:pong, controller}, t) do
     t
-    |> put_epoch(epoch)
-    |> maybe_change_cluster_controller(cluster_controller)
+    |> pong_received()
+    |> maybe_change_cluster_controller(controller)
     |> noreply(:send_ping_to_controller)
   end
-
-  def handle_cast({:ping, _cluster_controller, _epoch}, t),
-    do: t |> noreply(:send_ping_to_controller)
-
-  def handle_cast({:pong, controller}, t) when t.controller == controller,
-    do: t |> reset_missed_pongs() |> noreply()
-
-  def handle_cast({:pong, _controller}, t),
-    do: t |> noreply()
 
   def handle_cast({:advertise_worker, worker_pid}, t),
     do: t |> advertise_worker_to_cluster_controller(worker_pid) |> noreply()

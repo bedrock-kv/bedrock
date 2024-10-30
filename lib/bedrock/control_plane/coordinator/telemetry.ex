@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   """
   @spec emit_cluster_leadership_changed(State.t()) :: State.t()
   def emit_cluster_leadership_changed(t) do
-    :telemetry.execute([:bedrock, :cluster, :leadership, :changed], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :leadership, :changed], %{}, %{
       cluster: t.cluster,
       new_leader: t.leader_node
     })
@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   @spec emit_cluster_controller_changed(State.t(), controller :: pid() | :unavailable) ::
           State.t()
   def emit_cluster_controller_changed(t, controller) do
-    :telemetry.execute([:bedrock, :cluster, :controller, :changed], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :controller, :changed], %{}, %{
       cluster: t.cluster,
       controller: controller
     })

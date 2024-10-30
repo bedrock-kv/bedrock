@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
          config: t.config,
          epoch: t.config.epoch + 1,
          coordinator: self(),
-         otp_name: t.controller_otp_name
+         relieving: {t.config.epoch, t.controller}
        ]}
     )
     |> case do

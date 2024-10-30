@@ -1,6 +1,5 @@
 defmodule Bedrock.Cluster.Monitor.State do
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.Coordinator
 
   @type t :: %__MODULE__{
@@ -9,8 +8,7 @@ defmodule Bedrock.Cluster.Monitor.State do
           path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
           coordinator: Coordinator.ref() | :unavailable,
-          controller: ClusterController.ref() | :unavailable,
-          epoch: Bedrock.epoch() | nil,
+          controller: {Bedrock.epoch(), controller :: pid()} | :unavailable,
           timers: map() | nil,
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
@@ -22,16 +20,14 @@ defmodule Bedrock.Cluster.Monitor.State do
             descriptor: nil,
             coordinator: :unavailable,
             controller: :unavailable,
-            epoch: nil,
             timers: nil,
             missed_pongs: 0,
             mode: :active,
             capabilities: []
 
-  def put_epoch(t, epoch), do: %{t | epoch: epoch}
-
   def put_coordinator(t, coordinator), do: %{t | coordinator: coordinator}
 
+  @spec put_controller(t :: t(), {Bedrock.epoch(), controller :: pid()} | :unavailable) :: t()
   def put_controller(t, controller), do: %{t | controller: controller}
 
   def put_missed_pongs(t, missed_pongs), do: %{t | missed_pongs: missed_pongs}

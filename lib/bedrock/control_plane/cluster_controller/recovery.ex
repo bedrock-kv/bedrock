@@ -162,9 +162,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
       {:ok, locked_services, log_recovery_info_by_id, storage_recovery_info_by_id} ->
         t
-        |> RecoveryAttempt.update_log_recovery_info_by_id(&Enum.into(log_recovery_info_by_id, &1))
+        |> RecoveryAttempt.update_log_recovery_info_by_id(&Map.merge(log_recovery_info_by_id, &1))
         |> RecoveryAttempt.update_storage_recovery_info_by_id(
-          &Enum.into(storage_recovery_info_by_id, &1)
+          &Map.merge(storage_recovery_info_by_id, &1)
         )
         |> RecoveryAttempt.update_available_services(fn available_services ->
           available_services

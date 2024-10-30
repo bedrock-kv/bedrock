@@ -1,13 +1,14 @@
 defmodule Bedrock.ControlPlane.ClusterController.Server do
   use GenServer
 
+  alias Bedrock.ControlPlane.ClusterController
   alias Bedrock.ControlPlane.ClusterController.NodeTracking
   alias Bedrock.ControlPlane.ClusterController.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
 
   import Bedrock.ControlPlane.ClusterController.State.Changes,
-    only: [put_last_transaction_layout_id: 2]
+    only: [put_last_transaction_layout_id: 2, put_my_relief: 2]
 
   import Bedrock.ControlPlane.ClusterController.Nodes,
     only: [
@@ -30,7 +31,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     config = opts[:config] || raise "Missing :config param"
     epoch = opts[:epoch] || raise "Missing :epoch param"
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
-    otp_name = opts[:otp_name] || raise "Missing :otp_name param"
+    relieving = opts[:relieving]
 
     %{
       id: __MODULE__,
@@ -38,44 +39,40 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, epoch, coordinator, otp_name},
-           [name: otp_name]
+           {cluster, config, epoch, coordinator, relieving}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, epoch, coordinator, otp_name}) do
+  def init({cluster, config, epoch, coordinator, relieving}) do
     %State{
       epoch: epoch,
       cluster: cluster,
       config: config,
-      otp_name: otp_name,
       coordinator: coordinator,
       node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
       last_transaction_layout_id: config.transaction_system_layout.id
     }
-    |> then(&{:ok, &1, {:continue, :start_recovery}})
+    |> then(&{:ok, &1, {:continue, {:start_recovery, relieving}}})
   end
 
   @impl true
-  def handle_continue(:start_recovery, t) do
+  def handle_continue({:start_recovery, {_epoch, old_controller}}, t) do
+    old_controller |> ClusterController.stand_relieved({t.epoch, self()})
+
     t
-    # |> ping_all_coordinators()
     |> try_to_recover()
     |> store_changes_to_config()
     |> noreply()
   end
 
   @impl true
-  # def handle_info({:timeout, :ping_all_nodes}, t) do
-  #   t
-  #   |> ping_all_coordinators()
-  #   |> determine_dead_nodes(now())
-  #   |> store_changes_to_config()
-  #   |> noreply()
-  # end
+  def handle_info({:ping, from}, t) when not is_nil(t.my_relief) do
+    send(from, {:pong, t.my_relief})
+    t |> noreply()
+  end
 
   def handle_info({:ping, from}, t) do
     send(from, {:pong, self()})
@@ -87,6 +84,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   end
 
   @impl true
+  # If we have been relieved by another controller in a newer epoch, we should
+  # not accept any calls from the cluster. We should reply with an error
+  # informing the caller that we haven been relieved and who controls now
+  # controls the cluster (and for what epoch).
+  def handle_call(_, _from, t) when not is_nil(t.my_relief),
+    do: t |> reply({:error, {:relieved_by, t.my_relief}})
+
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
     t
     |> request_to_rejoin(node, capabilities, running_services, now())
@@ -103,6 +107,18 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   end
 
   @impl true
+  # If we are relieved by another controller, we should not accept any casts
+  # from the cluster. We will ignore them. We are no longer relevant and are of
+  # no further use.
+  def handle_cast(_, t) when not is_nil(t.my_relief),
+    do: t |> noreply()
+
+  def handle_cast({:stand_relieved, {new_epoch, _}}, t) when new_epoch <= t.epoch,
+    do: t |> noreply()
+
+  def handle_cast({:stand_relieved, {_new_epoch, _new_controller} = my_relief}, t),
+    do: t |> put_my_relief(my_relief) |> noreply()
+
   def handle_cast({:pong, node}, t) do
     t
     |> node_last_seen_at(node, now())

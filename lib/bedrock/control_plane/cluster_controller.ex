@@ -5,8 +5,6 @@ defmodule Bedrock.ControlPlane.ClusterController do
   and putting the cluster into a writable state.
   """
 
-  alias Bedrock.DataPlane.Log
-
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.server()
@@ -75,7 +73,11 @@ defmodule Bedrock.ControlPlane.ClusterController do
           capabilities :: [atom()],
           running_services :: [keyword()],
           timeout_in_ms()
-        ) :: :ok | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
+        ) ::
+          :ok
+          | {:error, :unavailable}
+          | {:error, :nodes_must_be_added_by_an_administrator}
+          | {:error, {:relieved_by, {Bedrock.epoch(), cluster_controller :: pid()}}}
   def request_to_rejoin(
         cluster_controller,
         node,
@@ -91,26 +93,15 @@ defmodule Bedrock.ControlPlane.ClusterController do
   end
 
   @doc """
-  Reports the completion of a log lock operation to the cluster controller.
-
-  ## Parameters
-  - `cluster_controller`: The reference to the cluster controller (a GenServer).
-  - `id`: The identifier of the log that was locked.
-  - `info`: A keyword list containing transaction information:
-    - `:last_tx_id`: The version of the last transaction.
-    - `:minimum_durable_tx_id`: The version of the minimum durable transaction.
-
-  ## Returns
-  - `:ok`: Indicates the report was successfully sent.
+  Relieves the cluster controller of its duties. This is used when a new
+  controller is elected and the old controller should no longer be used. The
+  old controller will ignore all messages from the cluster other than to
+  indicate that it has been relieved and by whom.
   """
-  @spec report_log_lock_complete(
+  @spec stand_relieved(
           cluster_controller :: ref(),
-          Log.id(),
-          info :: [
-            last_tx_id: Bedrock.version(),
-            minimum_durable_tx_id: Bedrock.version()
-          ]
+          {new_epoch :: Bedrock.epoch(), new_controller :: pid()}
         ) :: :ok
-  def report_log_lock_complete(controller, id, info),
-    do: controller |> cast({:log_lock_complete, id, info})
+  def stand_relieved(controller, {_new_epoch, _new_controller} = relief),
+    do: controller |> cast({:stand_relieved, relief})
 end

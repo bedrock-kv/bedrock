@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
 
   @type t :: %__MODULE__{
           epoch: Bedrock.epoch(),
-          otp_name: atom(),
+          my_relief: {Bedrock.epoch(), controller :: pid()} | nil,
           cluster: module(),
           config: Config.t() | nil,
           coordinator: pid(),
@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
           last_transaction_layout_id: TransactionSystemLayout.id()
         }
   defstruct epoch: nil,
-            otp_name: nil,
+            my_relief: nil,
             cluster: nil,
             config: nil,
             state: :starting,
@@ -35,6 +35,9 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
 
     @spec put_state(State.t(), State.state()) :: State.t()
     def put_state(t, state), do: %{t | state: state}
+
+    @spec put_my_relief(State.t(), {Bedrock.epoch(), pid()}) :: State.t()
+    def put_my_relief(t, my_relief), do: %{t | my_relief: my_relief}
 
     @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
     def update_config(t, updater), do: %{t | config: updater.(t.config)}

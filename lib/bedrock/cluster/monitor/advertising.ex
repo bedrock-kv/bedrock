@@ -8,7 +8,10 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
   require Logger
 
   @spec advertise_capabilities(State.t()) ::
-          {:ok, State.t()} | {:error, :unavailable | :nodes_must_be_added_by_an_administrator}
+          {:ok, State.t()}
+          | {:error, :unavailable}
+          | {:error, :nodes_must_be_added_by_an_administrator}
+          | {:error, {:relieved_by, {Bedrock.epoch(), pid()}}}
   def advertise_capabilities(t) do
     t.controller
     |> ClusterController.request_to_rejoin(

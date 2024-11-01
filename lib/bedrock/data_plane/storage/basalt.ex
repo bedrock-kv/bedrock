@@ -1,5 +1,4 @@
 defmodule Bedrock.DataPlane.Storage.Basalt do
-  alias Agent.Server
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.ClusterController

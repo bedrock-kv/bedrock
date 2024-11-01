@@ -28,6 +28,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :unable_to_meet_log_quorum
           | :no_unassigned_logs
           | :no_unassigned_storage
+          | {:failed_to_copy_some_logs,
+             [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:need_log_workers, pos_integer()}
           | {:need_storage_workers, pos_integer()}
           | {:insufficient_replication, [Bedrock.range_tag()]}
@@ -50,7 +52,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           locked_service_ids: MapSet.t(ServiceDescriptor.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),
-          old_log_ids_to_copy: [Log.id()],
+          old_log_ids_to_copy: [Log.id()] | :nothing,
           version_vector: Bedrock.version_vector() | :undefined,
           durable_version: Bedrock.version() | :undefined,
           degraded_teams: [Bedrock.range_tag()],
@@ -111,7 +113,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec put_started_at(t(), DateTime.t()) :: t()
   def put_started_at(t, started_at), do: %{t | started_at: started_at}
 
-  @spec put_old_log_ids_to_copy(t(), [Log.id()]) :: t()
+  @spec put_old_log_ids_to_copy(t(), [Log.id()] | :nothing) :: t()
   def put_old_log_ids_to_copy(t, old_log_ids_to_copy),
     do: %{t | old_log_ids_to_copy: old_log_ids_to_copy}
 

@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   import Bedrock.DataPlane.Log.Limestone.Pushing, only: [push: 3]
   import Bedrock.DataPlane.Log.Limestone.Facts, only: [info: 2]
   import Bedrock.DataPlane.Log.Limestone.Locking, only: [lock_for_recovery: 3]
+  #  import Bedrock.DataPlane.Log.Limestone.Recovery, only: [recover: 3]
 
   use GenServer
 
@@ -67,6 +68,14 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
       error -> t |> reply(error)
     end
   end
+
+  # def handle_call({:recover_from, source_log, version_vector}, from, t) do
+  #   recover(t, source_log, version_vector)
+  #   |> case do
+  #     {:ok, t} -> t |> reply(:ok)
+  #     {:error, _reason} = error -> t |> reply(error)
+  #   end
+  # end
 
   @impl true
   def handle_continue(:finish_startup, {id, otp_name, foreman, transactions}) do

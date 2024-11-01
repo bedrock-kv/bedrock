@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
   import Bedrock.Internal.Time
 
@@ -13,6 +14,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
   import __MODULE__.FillingLogVacancies, only: [fill_log_vacancies: 3]
   import __MODULE__.FillingStorageTeamVacancies, only: [fill_storage_team_vacancies: 2]
+  import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -197,6 +199,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
 
     t
     |> RecoveryAttempt.put_durable_version(0)
+    |> RecoveryAttempt.put_old_log_ids_to_copy(:nothing)
     |> RecoveryAttempt.put_version_vector({:undefined, 0})
     |> RecoveryAttempt.put_logs(
       log_vacancies
@@ -303,7 +306,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :replay_old_logs} = t) do
-    t |> RecoveryAttempt.put_state(:repair_data_distribution)
+    replay_old_logs_into_new_logs(
+      t.old_log_ids_to_copy,
+      t.logs |> Enum.map(& &1.log_id),
+      t.version_vector,
+      &ServiceDescriptor.find_pid_by_id(t.available_services, &1)
+    )
+    |> case do
+      :ok -> t |> RecoveryAttempt.put_state(:repair_data_distribution)
+      {:error, reason} -> t |> RecoveryAttempt.put_state({:stalled, reason})
+    end
   end
 
   #

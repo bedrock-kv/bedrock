@@ -5,6 +5,8 @@ defmodule Bedrock.DataPlane.Log do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
 
+  use Bedrock.Internal.GenServerApi
+
   @type ref :: Worker.ref()
   @type id :: Worker.id()
   @type health :: Worker.health()
@@ -37,38 +39,24 @@ defmodule Bedrock.DataPlane.Log do
     :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
   end
 
-  @doc """
-  Retrieve up to `demand` transactions, starting immediately after the given
-  `last_tx_id`.
-
-  If the `subscriber_id` option is present, we'll make a note of the
-  `last_tx_id` (and `lase_durable_tx_id` if present) for that subscriber along
-  with a timestamp of the pull.
-
-  (It is expected that storage workers will supply their id as the
-  `subscriber_id` and report their `last_durable_tx_id` when they pull. Other
-  clients of the log may not.)
-
-  ## Errors:
-  -- `:not_ready`: The worker is not ready to serve transactions.
-  -- `:tx_too_new`: The `last_tx_id` is newer than the latest
-     transaction.
-  """
   @spec pull(
           log :: ref(),
-          last_tx_id :: Bedrock.version(),
-          demand :: pos_integer(),
+          last_version :: Bedrock.version(),
           opts :: [
-            subscriber_id: String.t(),
-            last_durable_tx_id: Bedrock.version()
+            limit: pos_integer(),
+            last_version: Bedrock.version(),
+            recovery: boolean(),
+            subscriber: {id :: String.t(), last_durable_version :: Bedrock.version()}
           ]
         ) ::
-          {:ok, [Transaction.t()]} | {:error, :not_ready | :tx_too_new | :unavailable}
-  def pull(log, last_tx_id, demand, opts) do
-    GenServer.call(log, {:pull, last_tx_id, demand, opts})
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
+          {:ok, [Transaction.t()]}
+          | {:error, :not_ready}
+          | {:error, :version_too_new}
+          | {:error, :version_too_old}
+          | {:error, :version_not_found}
+          | {:error, :unavailable}
+  def pull(log, last_version, opts),
+    do: call(log, {:pull, last_version, opts}, :infinity)
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new
@@ -82,6 +70,33 @@ defmodule Bedrock.DataPlane.Log do
   @spec lock_for_recovery(log :: ref(), Bedrock.epoch()) ::
           {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
+
+  @doc """
+  Initiates a recovery process from the given `source_log` spanning the
+  transactions specified by the `version_vector`.
+
+  The function ensures that the transaction log is consistent with the
+  `source_log` by pulling from that log and applying the transactions.
+
+  ## Parameters:
+
+    - `log`: Reference to the target log where recovery should be applied.
+    - `source_log`: Reference to the source log from which transactions are
+      recovered. nil is sent for the initial recovery, since there is no
+      source log.
+    - `version_vector`: The version vector indicating the starting and ending
+      point of recovery.
+
+  ## Return Values:
+
+    - `:ok`: Recovery was successful.
+    - `{:error, :unavailable}`: The log is unavailable, and recovery cannot be
+      performed.
+  """
+  @spec recover_from(log :: ref(), source_log :: ref() | nil, Bedrock.version_vector()) ::
+          :ok | {:error, :unavailable}
+  def recover_from(log, source_log, version_vector),
+    do: call(log, {:recover_from, source_log, version_vector}, :infinity)
 
   @doc """
   Ask the transaction log worker for various facts about itself.

@@ -39,6 +39,14 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   @spec remove_by_id([t()], id()) :: [t()]
   def remove_by_id(l, id), do: l |> Enum.reject(&(&1.id == id))
 
+  @spec find_pid_by_id([t()], id()) :: pid() | nil
+  def find_pid_by_id(l, id) do
+    case Enum.find(l, &(&1.id == id)) do
+      %{status: {:up, pid}} -> pid
+      _ -> nil
+    end
+  end
+
   @doc """
   Changes the status of a service descriptor to `:down` if it is currently `:up`
   and running on the given node.

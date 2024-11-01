@@ -3,6 +3,24 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.CreatingVacancies do
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
 
+  @doc """
+  Creates vacancies for the specified logs to ensure the desired number of log instances.
+
+  This function takes a list of logs and a desired number of logs, generating
+  the necessary "vacancy" entries to reach the desired count for each distinct
+  set of log tags. Each vacancy is represented as a `LogDescriptor` with the
+  placeholder data.
+
+  ## Parameters
+
+    - logs: A list of `LogDescriptor.t()` representing the current logs.
+    - desired_logs: A positive integer specifying the desired number of log instances.
+
+  ## Returns
+
+  A list of `LogDescriptor.t()` with "vacancy" entries added to achieve the
+  desired number of log instances for each set of log tags.
+  """
   @spec create_vacancies_for_logs([LogDescriptor.t()], desired_logs :: pos_integer()) ::
           [LogDescriptor.t()]
   def create_vacancies_for_logs(logs, desired_logs) do
@@ -23,6 +41,24 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.CreatingVacancies do
   @type expanded_tag_set_roster ::
           %{[Bedrock.range_tag()] => [Storage.id() | StorageTeamDescriptor.vacancy()]}
 
+  @doc """
+  Creates vacancies for the given storage teams to achieve the desired replication.
+
+  This function calculates the necessary vacancies needed to reach the desired
+  replication factor for storage teams with specific tags. If no vacancies are
+  needed (i.e., if the current storage teams already meet the desired replication),
+  the original storage teams list is returned.
+
+  ## Parameters
+
+    - storage_teams: A list of `StorageTeamDescriptor.t()` representing the current storage teams.
+    - desired_replication: A positive integer specifying the desired number of replicas.
+
+  ## Returns
+
+  A list of `StorageTeamDescriptor.t()`, potentially with additional "vacancy" entries
+  added to achieve the desired replication factor.
+  """
   @spec create_vacancies_for_storage_teams(
           [StorageTeamDescriptor.t()],
           desired_replication :: pos_integer()

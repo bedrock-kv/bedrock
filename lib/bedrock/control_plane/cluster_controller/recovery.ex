@@ -298,7 +298,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:error, :no_vacancies_to_fill} ->
-        t |> RecoveryAttempt.put_state(:replay_old_logs)
+        t |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
 
       {:ok, logs} ->
         t

@@ -12,9 +12,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.LockingAvailableServices, only: [lock_available_services: 4]
   import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
   import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
-  import __MODULE__.FillingLogVacancies, only: [fill_log_vacancies: 3]
-  import __MODULE__.FillingStorageTeamVacancies, only: [fill_storage_team_vacancies: 2]
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
+
+  import __MODULE__.FillingVacancies,
+    only: [fill_log_vacancies: 3, fill_storage_team_vacancies: 2]
 
   import __MODULE__.CreatingVacancies,
     only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]

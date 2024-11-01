@@ -2,6 +2,37 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCo
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
 
+  @doc """
+  Determines the old logs that need to be copied to recover a cluster to a
+  consistent state.
+
+  This function takes a list of logs described by `LogDescriptor`s, a map of
+  recovery information indexed by log ID, and a quorum. We take a shortcut
+  if the quorum is 1, as we can just copy the one existing log and use it's
+  version vector.
+
+  Otherwise, we generate all possible combinations of logs that can satisfy the
+  quorum, and then rank them by the difference between the newest and oldest
+  log's version vectors. We then return the log IDs of the combination with the
+  smallest difference, as well as the version vector. We calculate the version
+  vector by taking the oldest version from the oldest log and the newest version
+  from the newest log in the set.
+
+  ## Parameters
+  - `logs`: A list of `LogDescriptor` structs representing the logs to consider.
+  - `recovery_info_by_id`: A map where each key is a `Log.id()` and the value is
+    `Log.recovery_info()`.
+  - `quorum`: The minimum number of log sources needed to satisfy the quorum.
+
+  ## Returns
+  - `{:ok, [Log.id()], Bedrock.version_vector()}` on success with log_ids and
+    version vector.
+  - `{:error, :unable_to_meet_log_quorum}` if quorum can't be met.
+
+  This function is critical for ensuring that a cluster's logs can be recovered
+  to a consistent and correct state after failures have occurred, guided by the
+  defined quorum.
+  """
   @spec determine_old_logs_to_copy(
           logs :: [LogDescriptor.t()],
           %{Log.id() => Log.recovery_info()},

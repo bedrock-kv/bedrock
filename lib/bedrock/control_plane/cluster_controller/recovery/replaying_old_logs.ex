@@ -1,6 +1,35 @@
 defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
   alias Bedrock.DataPlane.Log
 
+  @doc """
+  Replays a selected set of transactions from the old log servers into the new
+  ones. We use the provided `version_vector` and `pid_for_id` function to find
+  the pid for each log. Logs are processed in parallel to decrease the recovery
+  time.
+
+  ## Parameters
+
+    - `old_log_ids`: A list of old log IDs of type `Log.id()`, or `:nothing` if
+      not applicable.
+    - `new_log_ids`: A list of new log IDs of type `Log.id()` where entries will
+      be copied to.
+    - `version_vector`: A version vector used for handling log version control
+      and coherence.
+    - `pid_for_id`: A function that retrieves the process ID (`pid`) of a given
+      log ID.
+
+  ## Returns
+
+  - `:ok` if all logs were copied successfully.
+  - `{:error, {:failed_to_copy_some_logs, failures}}` if there was an error with
+    one or more logs, where `failures` is a list of tuples indicating each error
+    reason and the IDs involved.
+
+  ## Possible Errors
+
+  - `{:error, :failed_to_copy_some_logs}`: Occurs if one or more logs fail to
+    copy, providing details within the failures list.
+  """
   @spec replay_old_logs_into_new_logs(
           old_log_ids :: [Log.id()] | :nothing,
           new_log_ids :: [Log.id()],

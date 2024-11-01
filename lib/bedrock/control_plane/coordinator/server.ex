@@ -110,12 +110,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_info({:raft, :leadership_changed, {:undecided, _epoch}}, t)
+  def handle_info({:raft, :leadership_changed, {:undecided, _raft_epoch}}, t)
       when :undecided == t.leader_node do
     t |> noreply()
   end
 
-  def handle_info({:raft, :leadership_changed, {new_leader, _epoch}}, t) do
+  def handle_info({:raft, :leadership_changed, {new_leader, _raft_epoch}}, t) do
     t
     |> put_leader_node(new_leader)
     |> emit_cluster_leadership_changed()
@@ -149,7 +149,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_cast({:ping, {epoch, controller}}, t) do
     GenServer.cast(controller, {:pong, self()})
 
-    if epoch > t.epoch do
+    if is_nil(t.epoch) or t.epoch < epoch do
       t
       |> State.Changes.put_epoch(epoch)
       |> State.Changes.put_controller(controller)

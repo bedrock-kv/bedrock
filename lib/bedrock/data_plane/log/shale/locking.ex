@@ -8,8 +8,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Locking do
           controller :: ClusterController.ref()
         ) ::
           {:ok, State.t()} | {:error, :newer_epoch_exists}
-  def lock_for_recovery(t, epoch, _controller) when epoch < t.epoch and not is_nil(t.epoch),
-    do: {:error, :newer_epoch_exists}
+  def lock_for_recovery(t, epoch, _controller)
+      when not is_nil(t.epoch) and epoch < t.epoch,
+      do: {:error, :newer_epoch_exists}
 
   def lock_for_recovery(t, epoch, controller) do
     {:ok, %{t | mode: :locked, epoch: epoch, controller: controller}}

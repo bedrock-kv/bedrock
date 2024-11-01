@@ -16,6 +16,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.FillingStorageTeamVacancies, only: [fill_storage_team_vacancies: 2]
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
 
+  import __MODULE__.CreatingVacancies,
+    only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
+
   import Bedrock.Internal.Time, only: [now: 0]
 
   import Bedrock.ControlPlane.Config.Changes,
@@ -109,8 +112,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       |> put_recovery_attempt(nil)
       |> update_transaction_system_layout(fn transaction_system_layout ->
         transaction_system_layout
-        |> TransactionSystemLayout.put_logs(completed_recovery_attempt.logs)
-        |> TransactionSystemLayout.put_storage_teams(completed_recovery_attempt.storage_teams)
+        |> TransactionSystemLayout.Changes.put_logs(completed_recovery_attempt.logs)
+        |> TransactionSystemLayout.Changes.put_storage_teams(
+          completed_recovery_attempt.storage_teams
+        )
       end)
     end)
   end
@@ -236,8 +241,27 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         t
         |> RecoveryAttempt.put_old_log_ids_to_copy(log_ids)
         |> RecoveryAttempt.put_version_vector(version_vector)
-        |> RecoveryAttempt.put_state(:determine_durable_version)
+        |> RecoveryAttempt.put_state(:create_vacancies)
     end
+  end
+
+  #
+  #
+  def recovery(%{state: :create_vacancies} = t) do
+    t
+    |> RecoveryAttempt.put_logs(
+      create_vacancies_for_logs(
+        t.last_transaction_system_layout.logs,
+        t.desired_logs
+      )
+    )
+    |> RecoveryAttempt.put_storage_teams(
+      create_vacancies_for_storage_teams(
+        t.last_transaction_system_layout.storage_teams,
+        t.desired_replication_factor
+      )
+    )
+    |> RecoveryAttempt.put_state(:determine_durable_version)
   end
 
   #
@@ -273,7 +297,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:error, :no_vacancies_to_fill} ->
-        t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
+        t |> RecoveryAttempt.put_state(:replay_old_logs)
 
       {:ok, logs} ->
         t

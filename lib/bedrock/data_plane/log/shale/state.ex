@@ -18,16 +18,14 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           last_version: Bedrock.version(),
           pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}}
         }
-  defstruct [
-    :mode,
-    :id,
-    :otp_name,
-    :foreman,
-    :epoch,
-    :controller,
-    :log,
-    :oldest_version,
-    :last_version,
-    :pending_transactions
-  ]
+  defstruct mode: :waiting,
+            id: nil,
+            otp_name: nil,
+            foreman: nil,
+            epoch: nil,
+            controller: nil,
+            log: nil,
+            oldest_version: nil,
+            last_version: nil,
+            pending_transactions: %{}
 end

@@ -59,7 +59,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
 
   @impl true
   def handle_continue({:start_recovery, {_epoch, old_controller}}, t) do
-    if :unavailable == old_controller do
+    if :unavailable != old_controller do
       old_controller |> ClusterController.stand_relieved({t.epoch, self()})
     end
 

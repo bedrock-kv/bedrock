@@ -59,10 +59,4 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @spec new() :: t()
   def new, do: %__MODULE__{}
-
-  @spec put_logs(t(), [LogDescriptor.t()]) :: t()
-  def put_logs(t, logs), do: %{t | logs: logs}
-
-  @spec put_storage_teams(t(), [StorageTeamDescriptor.t()]) :: t()
-  def put_storage_teams(t, storage_teams), do: %{t | storage_teams: storage_teams}
 end

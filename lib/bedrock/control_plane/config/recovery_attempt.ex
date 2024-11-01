@@ -14,6 +14,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :recruit_logs_to_fill_vacancies
           | :recruit_storage_to_fill_vacancies
           | :first_time_initialization
+          | :create_vacancies
           #
           | :replay_old_logs
           | :repair_data_distribution

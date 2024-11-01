@@ -10,6 +10,9 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
 
   # Logs
 
+  @spec put_logs(t(), [LogDescriptor.t()]) :: t()
+  def put_logs(t, logs), do: %{t | logs: logs} |> put_random_id()
+
   @doc """
   Get a log descriptor by its id or nil if not found.
   """
@@ -33,6 +36,10 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
     do: t |> update_logs(&LogDescriptor.remove_by_id(&1, id)) |> put_random_id()
 
   # Storage
+
+  @spec put_storage_teams(t(), [StorageTeamDescriptor.t()]) :: t()
+  def put_storage_teams(t, storage_teams),
+    do: %{t | storage_teams: storage_teams} |> put_random_id()
 
   @doc """
   Get a storage team descriptor by its tag or nil if not found.

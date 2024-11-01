@@ -3,7 +3,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
   alias Bedrock.ControlPlane.Coordinator.State
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
-    only: [put_controller: 2]
+    only: [put_controller: 2, put_epoch: 2]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [emit_cluster_controller_changed: 2]
@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
   @spec start_cluster_controller_if_necessary(State.t()) :: State.t()
   def start_cluster_controller_if_necessary(t)
       when t.leader_node == t.my_node do
-    new_epoch = t.config.epoch + 1
+    new_epoch = 1 + t.config.epoch
 
     t.supervisor_otp_name
     |> DynamicSupervisor.start_child(
@@ -29,6 +29,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
     |> case do
       {:ok, new_controller} ->
         t
+        |> put_epoch(new_epoch)
         |> put_controller(new_controller)
         |> emit_cluster_controller_changed(new_controller)
 
@@ -49,6 +50,8 @@ defmodule Bedrock.ControlPlane.Coordinator.ControllerManagement do
       t
       |> put_controller(:unavailable)
       |> emit_cluster_controller_changed(:unavailable)
+    else
+      t
     end
   end
 end

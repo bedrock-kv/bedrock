@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Transaction
 
   @spec recover_from(State.t(), Log.ref(), version_vector :: Bedrock.version_vector()) ::
           {:ok, State.t()} | {:error, reason :: term()}
@@ -9,14 +10,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   def recover_from(t, nil, {:undefined, 0}) do
     :ets.delete_all_objects(t.log)
-
+    :ets.insert(t.log, Transaction.new(0, %{}))
     {:ok, %{t | oldest_version: 0, last_version: 0}}
   end
 
   def recover_from(t, source_log, {min_version, last_version}) do
     :ets.delete_all_objects(t.log)
 
-    case pull_transactions(t.log, source_log, min_version - 1, last_version) do
+    case pull_transactions(t.log, source_log, min_version, last_version) do
       :ok -> {:ok, %{t | oldest_version: min_version, last_version: last_version}}
       error -> error
     end

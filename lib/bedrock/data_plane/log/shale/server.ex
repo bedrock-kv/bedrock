@@ -50,7 +50,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:info, fact_names}, _from, %State{} = t),
+  def handle_call({:info, fact_names}, _from, t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
   def handle_call({:lock_for_recovery, epoch}, from, t) do
@@ -82,11 +82,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:pull, from_version, opts}, _from, t) do
     pull(t, from_version, opts)
     |> case do
-      {:ok, t} -> t |> reply(:ok)
+      {:ok, t, transactions} -> t |> reply({:ok, transactions})
       {:error, _reason} = error -> t |> reply(error)
     end
   end
 
-  defp reply(t, result), do: {:reply, result, t}
-  defp noreply(t), do: {:noreply, t}
+  defp reply(%State{} = t, result), do: {:reply, result, t}
+  defp noreply(%State{} = t), do: {:noreply, t}
 end

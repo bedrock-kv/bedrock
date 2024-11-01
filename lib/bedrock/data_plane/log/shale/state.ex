@@ -16,7 +16,11 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           mode: mode(),
           oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
-          pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}}
+          pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}},
+          params: %{
+            default_pull_limit: pos_integer(),
+            max_pull_limit: pos_integer()
+          }
         }
   defstruct mode: :waiting,
             id: nil,
@@ -27,5 +31,9 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             log: nil,
             oldest_version: nil,
             last_version: nil,
-            pending_transactions: %{}
+            pending_transactions: %{},
+            params: %{
+              default_pull_limit: 100,
+              max_pull_limit: 500
+            }
 end

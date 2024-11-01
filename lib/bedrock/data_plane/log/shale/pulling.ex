@@ -11,40 +11,30 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
             recovery: boolean()
           ]
         ) ::
-          {:ok, [Transaction.t()]}
+          {:ok, State.t(), [Transaction.t()]}
           | {:error, :not_ready}
           | {:error, :version_too_new}
           | {:error, :version_too_old}
           | {:error, :version_not_found}
   def pull(t, from_version, opts) do
-    cond do
-      t.mode == :locked && !Keyword.get(opts, :recovery) ->
-        {:error, :not_ready}
+    with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
+         :ok <- check_from_version(from_version, t),
+         {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
+         limit <- determine_pull_limit(opts[:limit], t) do
+      :ets.select(t.log, match_spec_for_version_range(from_version, last_version), limit)
+      |> case do
+        {[], _} ->
+          {:error, :version_not_found}
 
-      t.last_version > from_version ->
-        {:error, :version_too_new}
+        :"$end_of_table" ->
+          {:ok, t, []}
 
-      from_version < t.oldest_version ->
-        {:error, :version_too_old}
+        {[{^from_version, _}], _} ->
+          {:ok, t, []}
 
-      true ->
-        limit = Keyword.get(opts, :limit, 100)
-        last_version = Keyword.get(opts, :last_version)
-
-        :ets.select(t.log, match_spec_for_version_range(from_version, last_version), limit)
-        |> case do
-          {[], _} ->
-            {:error, :version_not_found}
-
-          :"$end_of_table" ->
-            {:ok, []}
-
-          {[{^from_version, _}], _} ->
-            {:ok, []}
-
-          {[{^from_version, _} | transactions], _} ->
-            {:ok, transactions}
-        end
+        {[{^from_version, _} | transactions], _} ->
+          {:ok, t, transactions}
+      end
     end
   end
 
@@ -58,4 +48,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   def match_spec_for_version_range(min_version, max_version_exclusive) do
     [{{:"$1", :_}, [{:>=, :"$1", min_version}, {:<, :"$1", max_version_exclusive}], [:"$_"]}]
   end
+
+  def check_for_locked_outside_of_recovery(in_recovery, t)
+  def check_for_locked_outside_of_recovery(true, %{mode: :locked}), do: :ok
+  def check_for_locked_outside_of_recovery(true, _), do: {:error, :not_locked}
+  def check_for_locked_outside_of_recovery(false, %{mode: :locked}), do: {:error, :not_ready}
+  def check_for_locked_outside_of_recovery(_, _), do: :ok
+
+  def check_from_version(from_version, t) when t.last_version > from_version,
+    do: {:error, :version_too_new}
+
+  def check_from_version(from_version, t) when from_version < t.oldest_version,
+    do: {:error, :version_too_old}
+
+  def check_from_version(_, _), do: :ok
+
+  def check_last_version(nil, _), do: {:ok, nil}
+
+  def check_last_version(last_version, from_version) when last_version >= from_version,
+    do: {:ok, last_version}
+
+  def check_last_version(_, _), do: {:error, :invalid_last_version}
+
+  def determine_pull_limit(nil, t), do: t.params.default_pull_limit
+  def determine_pull_limit(limit, t), do: min(limit, t.params.max_pull_limit)
 end

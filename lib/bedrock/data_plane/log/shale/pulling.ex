@@ -13,6 +13,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         ) ::
           {:ok, State.t(), [Transaction.t()]}
           | {:error, :not_ready}
+          | {:error, :not_locked}
+          | {:error, :invalid_from_version}
+          | {:error, :invalid_last_version}
           | {:error, :version_too_new}
           | {:error, :version_too_old}
           | {:error, :version_not_found}
@@ -24,7 +27,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
       :ets.select(t.log, match_spec_for_version_range(from_version, last_version), limit)
       |> case do
         {[], _} ->
-          {:error, :version_not_found}
+          {:error, :invalid_from_version}
 
         :"$end_of_table" ->
           {:ok, t, []}
@@ -38,15 +41,27 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
     end
   end
 
-  def match_spec_for_version_gte(min_version) do
-    [{{:"$1", :_}, [{:>=, :"$1", min_version}], [:"$_"]}]
+  def match_spec_for_version_gte(from_version) do
+    [
+      {
+        {:"$1", :_},
+        [{:>=, :"$1", from_version}],
+        [:"$_"]
+      }
+    ]
   end
 
-  def match_spec_for_version_range(min_version, nil),
-    do: match_spec_for_version_gte(min_version)
+  def match_spec_for_version_range(from_version, nil),
+    do: match_spec_for_version_gte(from_version)
 
-  def match_spec_for_version_range(min_version, max_version_exclusive) do
-    [{{:"$1", :_}, [{:>=, :"$1", min_version}, {:<, :"$1", max_version_exclusive}], [:"$_"]}]
+  def match_spec_for_version_range(from_version, last_version) do
+    [
+      {
+        {:"$1", :_},
+        [{:>=, :"$1", from_version}, {:"=<", :"$1", last_version}],
+        [:"$_"]
+      }
+    ]
   end
 
   def check_for_locked_outside_of_recovery(in_recovery, t)

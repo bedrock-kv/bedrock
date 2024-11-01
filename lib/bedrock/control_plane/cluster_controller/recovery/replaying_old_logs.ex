@@ -40,7 +40,12 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
           | {:error,
              {:failed_to_copy_some_logs,
               [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}}
-  def replay_old_logs_into_new_logs(old_log_ids, new_log_ids, version_vector, pid_for_id) do
+  def replay_old_logs_into_new_logs(
+        old_log_ids,
+        new_log_ids,
+        {first_version, last_version},
+        pid_for_id
+      ) do
     new_log_ids
     |> pair_with_old_log_ids(old_log_ids)
     |> Task.async_stream(
@@ -49,7 +54,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
          Log.recover_from(
            pid_for_id.(new_log_id),
            old_log_id && pid_for_id.(old_log_id),
-           version_vector
+           first_version,
+           last_version
          )}
       end,
       ordered: false,

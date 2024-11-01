@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Transaction
 
   @spec recover_from(State.t(), Log.ref(), version_vector :: Bedrock.version_vector()) ::
           {:ok, State.t()} | {:error, reason :: term()}
@@ -10,33 +9,34 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   def recover_from(t, nil, {:undefined, 0}) do
     :ets.delete_all_objects(t.log)
-    :ets.insert(t.log, Transaction.new(0, %{}))
+    :ets.insert(t.log, Log.initial_transaction())
     {:ok, %{t | oldest_version: 0, last_version: 0}}
   end
 
-  def recover_from(t, source_log, {min_version, last_version}) do
+  def recover_from(t, source_log, first_version, last_version) do
     :ets.delete_all_objects(t.log)
 
-    case pull_transactions(t.log, source_log, min_version, last_version) do
-      :ok -> {:ok, %{t | oldest_version: min_version, last_version: last_version}}
-      error -> error
+    if first_version == 0 do
+      :ets.insert(t.log, Log.initial_transaction())
+    end
+
+    case pull_transactions(t.log, source_log, first_version, last_version) do
+      :ok ->
+        {:ok, %{t | oldest_version: first_version, last_version: last_version}}
+
+      error ->
+        error
     end
   end
 
   @spec pull_transactions(
           log :: :ets.table(),
           log_to_pull :: Log.ref(),
-          min_version :: Bedrock.version(),
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
-        ) ::
-          :ok
-          | {:error, :not_ready}
-          | {:error, :version_too_new}
-          | {:error, :version_too_old}
-          | {:error, :version_not_found}
-          | {:error, :unavailable}
-  def pull_transactions(log, log_to_pull, min_version, last_version) do
-    case Log.pull(log_to_pull, min_version, recovery: true, last_version: last_version) do
+        ) :: :ok | Log.pull_errors()
+  def pull_transactions(log, log_to_pull, first_version, last_version) do
+    case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do
       {:ok, []} ->
         :ok
 

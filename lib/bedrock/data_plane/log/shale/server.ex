@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
   import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 3]
-  import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 3]
+  import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
@@ -62,8 +62,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_call({:recover_from, source_log, version_vector}, _, t) do
-    recover_from(t, source_log, version_vector)
+  def handle_call({:recover_from, source_log, first_version, last_version}, _, t) do
+    recover_from(t, source_log, first_version, last_version)
     |> case do
       {:ok, t} -> t |> reply(:ok)
       {:error, reason} -> t |> reply({:error, {:failed_to_recover, reason}})

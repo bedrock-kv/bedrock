@@ -1,7 +1,11 @@
 defmodule Bedrock.DataPlane.Transaction do
   @type t ::
           {Bedrock.version() | binary(),
-           %{Bedrock.key() => Bedrock.value() | nil, Bedrock.key_range() => nil} | binary()}
+           %{
+             Bedrock.key() => Bedrock.value() | nil,
+             Bedrock.key_range() => nil
+           }
+           | binary()}
 
   @doc """
   Create a new transaction.

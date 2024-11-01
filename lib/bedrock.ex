@@ -20,4 +20,26 @@ defmodule Bedrock do
 
   @type service :: :coordination | :log | :storage
   @type service_id :: String.t()
+
+  @doc """
+  Creates a key range from a minimum inclusive key to a maximum exclusive key.
+
+  ## Parameters
+
+    - `min_key`: The minimum key value (inclusive).
+    - `max_key_exclusive`: The maximum key value (exclusive).
+
+  ## Returns
+
+    - A tuple representing the key range.
+
+  ## Examples
+
+      iex> Bedrock.key_range("a", "z")
+      {"a", "z"}
+
+  """
+  @spec key_range(Bedrock.key(), Bedrock.key()) :: Bedrock.key_range()
+  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
+    do: {min_key, max_key_exclusive}
 end

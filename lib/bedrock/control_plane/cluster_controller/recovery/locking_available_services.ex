@@ -27,7 +27,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServic
   """
   @spec lock_available_services(
           [ServiceDescriptor.t()],
-          MapSet.t(ServiceDescriptor.id()),
           Bedrock.quorum(),
           Bedrock.timeout_in_ms()
         ) ::
@@ -35,9 +34,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServic
            new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
            new_storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}}
           | {:error, :newer_epoch_exists}
-  def lock_available_services(available_services, locked_service_ids, epoch, timeout_in_ms) do
+  def lock_available_services(available_services, epoch, timeout_in_ms) do
     available_services
-    |> Enum.reject(&MapSet.member?(locked_service_ids, &1.id))
     |> Task.async_stream(
       fn service ->
         case service do

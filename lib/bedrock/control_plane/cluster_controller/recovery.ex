@@ -7,9 +7,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
+  import Bedrock, only: [key_range: 2]
   import Bedrock.Internal.Time
 
-  import __MODULE__.LockingAvailableServices, only: [lock_available_services: 4]
+  import __MODULE__.LockingAvailableServices, only: [lock_available_services: 3]
   import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
   import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
@@ -67,7 +68,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
             |> TransactionSystemLayout.Changes.put_transaction_resolvers([])
           end)
         end)
-        |> recover()
+        |> do_recovery()
 
       :recovery ->
         t
@@ -79,7 +80,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
             |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
           end)
         end)
-        |> recover()
+        |> do_recovery()
 
       :stopped ->
         t
@@ -89,8 +90,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     end
   end
 
-  @spec recover(State.t()) :: State.t()
-  def recover(t) do
+  @spec do_recovery(State.t()) :: State.t()
+  def do_recovery(t) do
     :ok = trace_recovery_attempt_started(t)
 
     t.config.recovery_attempt
@@ -129,10 +130,6 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     end)
   end
 
-  @spec key_range(Bedrock.key(), Bedrock.key()) :: Bedrock.key_range()
-  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
-    do: {min_key, max_key_exclusive}
-
   @spec run_recovery_attempt(RecoveryAttempt.t()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
@@ -166,7 +163,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :lock_available_services} = t) do
-    lock_available_services(t.available_services, t.locked_service_ids, t.epoch, 200)
+    lock_available_services(t.available_services, t.epoch, 200)
     |> case do
       {:error, :newer_epoch_exists = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})

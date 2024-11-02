@@ -44,7 +44,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     {:ok, aborted} =
       resolve_transactions(
-        transaction_system_layout.resolver,
+        transaction_system_layout.resolvers |> List.first(),
         batch.last_commit_version,
         commit_version,
         transform_transactions_for_resolution(transactions_in_order)
@@ -64,7 +64,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_system_layout,
         batch.last_commit_version,
         transaction_to_log,
-        &send_reply_with_commit_version(oks, &1)
+        fn version ->
+          send_reply_with_commit_version(oks, version)
+        end
       )
   end
 
@@ -112,7 +114,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction,
         majority_reached
       ) do
-    encoded_transaction = Transaction.encode(transaction)
     commit_version = Transaction.version(transaction)
 
     log_descriptors = transaction_system_layout.logs
@@ -124,21 +125,23 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> Task.async_stream(
       fn %ServiceDescriptor{id: log_id} = service_descriptor ->
         service_descriptor
-        |> try_to_push_transaction_to_log(encoded_transaction, last_commit_version)
+        |> try_to_push_transaction_to_log(transaction, last_commit_version)
         |> then(&{log_id, &1})
       end,
       timeout: 5_000
     )
     |> Enum.reduce_while(0, fn
-      {_log_id, {:error, _reason}}, count ->
+      {:ok, {_log_id, {:error, _reason}}}, count ->
         {:cont, count}
 
-      {_log_id, :ok}, count when count == m ->
-        :ok = majority_reached.(commit_version)
-        {:cont, count + 1}
+      {:ok, {_log_id, :ok}}, count ->
+        count = 1 + count
 
-      {_log_id, :ok}, count ->
-        {:cont, count + 1}
+        if count == m do
+          :ok = majority_reached.(commit_version)
+        end
+
+        {:cont, count}
     end)
     |> case do
       ^n -> :ok
@@ -160,10 +163,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           :ok | {:error, :unavailable}
   def try_to_push_transaction_to_log(
         %{kind: :log, status: {:up, log_server}},
-        encoded_transaction,
+        transaction,
         last_commit_version
-      ),
-      do: Log.push(log_server, encoded_transaction, last_commit_version)
+      ) do
+    Log.push(log_server, transaction, last_commit_version)
+  end
 
   def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
 
@@ -214,7 +218,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # If there are no aborted transactions, we can make take some shortcuts.
   def prepare_transaction_to_log(transactions, [], commit_version) do
     transactions
-    |> Enum.reduce({[], %{}}, fn {from, _, _, writes}, {oks, all_writes} ->
+    |> Enum.reduce({[], %{}}, fn {from, {_, _, writes}}, {oks, all_writes} ->
       {[from | oks], Map.merge(all_writes, writes)}
     end)
     |> then(fn {oks, combined_writes} ->
@@ -230,7 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     transactions
     |> Enum.with_index()
     |> Enum.reduce({[], [], %{}}, fn
-      {{from, _, _, writes}, idx}, {oks, aborts, all_writes} ->
+      {{from, {_, _, writes}}, idx}, {oks, aborts, all_writes} ->
         if MapSet.member?(aborted_set, idx) do
           {oks, [from | aborts], writes}
         else

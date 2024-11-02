@@ -14,15 +14,12 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   def recover_from(t, _, _, _) when t.mode != :locked,
     do: {:error, :lock_required}
 
-  def recover_from(t, nil, :undefined, 0) do
-    initial_tree = Tree.insert(nil, Bedrock.key_range(<<>>, <<0xFF, 0xFF>>), 0)
-    {:ok, %{t | tree: initial_tree, oldest_version: 0, last_version: 0}}
+  def recover_from(t, _, :undefined, 0) do
+    {:ok, %{t | tree: nil, oldest_version: 0, last_version: 0}}
   end
 
   def recover_from(t, source_log, first_version, last_version) do
-    initial_tree = Tree.insert(nil, Bedrock.key_range(<<>>, <<0xFF, 0xFF>>), first_version)
-
-    case pull_transactions(initial_tree, source_log, first_version, last_version) do
+    case pull_transactions(t.tree, source_log, first_version, last_version) do
       {:ok, tree} ->
         {:ok, %{t | tree: tree, oldest_version: first_version, last_version: last_version}}
 

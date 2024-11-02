@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     t |> noreply()
   end
 
-  def ask_for_transaction_system_layout_if_needed(t) when t.transaction_system_layout == nil,
+  def ask_for_transaction_system_layout_if_needed(t) when t.transaction_system_layout != nil,
     do: t
 
   def ask_for_transaction_system_layout_if_needed(t) do

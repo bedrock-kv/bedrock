@@ -9,7 +9,10 @@ defmodule Bedrock do
 
   @type transaction ::
           {read_version :: version(), reads :: [key() | key_range()],
-           writes :: [key_value() | {:clear, key_range()}]}
+           writes :: %{
+             key() => value(),
+             key_range() => value() | nil
+           }}
 
   @type epoch :: non_neg_integer()
   @type quorum :: pos_integer()

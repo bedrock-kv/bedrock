@@ -196,7 +196,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec client(module()) :: {:ok, Client.t()} | {:error, :unavailable}
   def client(module) do
-    with {:ok, coordinator} <- module.coordinator() do
+    with {:ok, coordinator} <- module.fetch_coordinator() do
       Client.new(coordinator)
     end
   end

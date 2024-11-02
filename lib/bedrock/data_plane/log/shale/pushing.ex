@@ -11,9 +11,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   def push(t, _, _, _) when t.mode != :running,
     do: {:error, :unavailable}
 
-  def push(t, expected_version, transaction, from)
+  def push(t, transaction, expected_version, from)
       when expected_version == t.last_version do
-    {:ok, version} = push_transaction(t.log, transaction)
+    {:ok, version} = apply_transaction(t.log, transaction)
 
     GenServer.reply(from, :ok)
 
@@ -21,14 +21,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
     |> apply_pending_transactions()
   end
 
-  def push(t, expected_version, transaction, from)
+  def push(t, transaction, expected_version, from)
       when expected_version > t.last_version do
     {:waiting,
      %{
        t
        | pending_transactions:
            Map.put(
-             t.pending_transaction,
+             t.pending_transactions,
              expected_version,
              {transaction, from}
            )
@@ -37,19 +37,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
   def push(_, _, _, _from), do: {:error, :tx_out_of_order}
 
-  def push_transaction(t, transaction) do
-    version = Transaction.version(transaction)
-    true = :ets.insert_new(t.log, {version, transaction})
-    {:ok, version}
-  end
-
   def apply_pending_transactions(t) do
     case Map.pop(t.pending_transactions, t.last_version) do
       {nil, _} ->
         {:ok, t}
 
       {{transaction, from}, pending_transactions} ->
-        {:ok, version} = push_transaction(t.log, transaction)
+        {:ok, version} = apply_transaction(t.log, transaction)
 
         GenServer.reply(from, :ok)
 
@@ -60,5 +54,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         }
         |> apply_pending_transactions()
     end
+  end
+
+  def apply_transaction(log, transaction) do
+    version = Transaction.version(transaction)
+    true = :ets.insert_new(log, {version, transaction})
+    {:ok, version}
   end
 end

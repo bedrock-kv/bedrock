@@ -82,6 +82,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_call(_, _from, t) when not is_nil(t.my_relief),
     do: t |> reply({:error, {:relieved_by, t.my_relief}})
 
+  def handle_call(:fetch_transaction_system_layout, _from, t),
+    do: t |> reply({:ok, t.config.transaction_system_layout})
+
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
     t
     |> request_to_rejoin(node, capabilities, running_services |> Map.values(), now())

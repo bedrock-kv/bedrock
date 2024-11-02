@@ -14,12 +14,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
             n_transactions: 0,
             buffer: []
 
-  @spec new_builder(
+  @spec new_batch(
           Bedrock.timestamp_in_ms(),
           last_commit_version :: Bedrock.version(),
           commit_version :: Bedrock.version()
         ) :: t()
-  def new_builder(started_at, last_commit_version, commit_version) do
+  def new_batch(started_at, last_commit_version, commit_version) do
     %__MODULE__{
       started_at: started_at,
       last_commit_version: last_commit_version,

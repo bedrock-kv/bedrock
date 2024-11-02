@@ -1,7 +1,11 @@
 defmodule Bedrock.Client.Transaction do
+  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.Storage
+
   @type t :: pid()
 
-  @spec commit(txn :: pid()) :: :ok | {:error, :transaction_expired}
+  @spec commit(txn :: pid()) :: :ok | {:error, :aborted}
   def commit(txn),
     do: GenServer.call(txn, :commit)
 
@@ -18,110 +22,104 @@ defmodule Bedrock.Client.Transaction do
     do: GenServer.cast(txn, {:put, key, value})
 
   @doc false
-  def start_link(client, read_version) do
-    GenServer.start_link(__MODULE__.Impl, {client, read_version})
+  def start_link(_client, config) do
+    GenServer.start_link(__MODULE__.Impl, {config})
   end
 
   defmodule Impl do
     use GenServer
 
     alias Bedrock.DataPlane.Storage
-    alias Bedrock.Client
 
-    defstruct [:client, :read_version, :commit_proxy, :rx, :wx, :started_at]
+    defstruct [:read_version, :commit_proxy, :rx, :wx]
 
     @type t :: %__MODULE__{}
 
     @impl GenServer
-    def init({client, read_version}) do
-      with {:ok, state} <- new_state(client, read_version) do
-        {:ok, state, client.transaction_window_in_ms}
+    def init({config}) do
+      with {:ok, read_version} <-
+             Sequencer.next_read_version(config.transaction_system_layout.sequencer),
+           commit_proxy <- Enum.random(config.transaction_system_layout.proxies),
+           {:ok, t} <- new_t(read_version, commit_proxy) do
+        {:ok, t}
       end
     end
 
-    def new_state(client, read_version) do
+    def new_t(read_version, commit_proxy) do
       {:ok,
        %__MODULE__{
-         client: client,
          read_version: read_version,
-         commit_proxy: nil,
+         commit_proxy: commit_proxy,
          rx: %{},
-         wx: %{},
-         started_at: :erlang.monotonic_time()
+         wx: %{}
        }}
     end
 
     @impl GenServer
-    def handle_call(:commit, _from, state) do
-      {:reply, do_commit(state), state}
+    def handle_call(:commit, _from, t) do
+      t
+      |> do_commit()
+      |> case do
+        {:ok, t} -> {:reply, :ok, t}
+        {:error, _reason} = error -> {:reply, error, t}
+      end
     end
 
-    def handle_call({:get, key}, _from, state) do
-      {state, value} = state |> do_get(key)
-      {:reply, value, state}
+    def handle_call({:get, key}, _from, t) do
+      {t, value} = t |> do_get(key)
+      {:reply, value, t}
     end
 
     @impl GenServer
-    def handle_cast({:put, key, value}, state) do
-      {:noreply, state |> do_put(key, value)}
+    def handle_cast({:put, key, value}, t) do
+      {:noreply, t |> do_put(key, value)}
     end
 
     @impl GenServer
-    def handle_info(:timeout, state) do
-      {:stop, :normal, state}
+    def handle_info(:timeout, t) do
+      {:stop, :normal, t}
     end
 
     @doc false
-    def do_get(state, key) do
-      Map.fetch(state.wx, key)
+    def do_get(t, key) do
+      Map.fetch(t.wx, key)
       |> case do
         {:ok, value} ->
-          {state, value}
+          {t, value}
 
         :error ->
-          Map.fetch(state.rx, key)
+          Map.fetch(t.rx, key)
           |> case do
             {:ok, value} ->
-              {state, value}
+              {t, value}
 
             :error ->
               value =
-                state
+                t
                 |> storage_workers_for_key(key)
                 |> Enum.random()
-                |> Storage.fetch(key, state.read_version)
+                |> Storage.fetch(key, t.read_version)
 
-              {state |> Map.update!(:rx, &Map.put(&1, key, value)), value}
+              {t |> Map.update!(:rx, &Map.put(&1, key, value)), value}
           end
       end
     end
 
     @doc false
-    def do_put(state, key, value) do
-      state |> Map.update!(:wx, &Map.put(&1, key, value))
+    def do_put(t, key, value) do
+      t |> Map.update!(:wx, &Map.put(&1, key, value))
     end
 
     @doc false
-    def do_commit(state) do
-      elapsed_in_ms =
-        System.convert_time_unit(
-          :erlang.monotonic_time() - state.started_at,
-          :native,
-          :millisecond
-        )
-
-      if elapsed_in_ms > state.client.transaction_window_in_ms do
-        {:error, :transaction_expired}
-      else
-        :ok = GenServer.stop(self(), :normal)
-        raise "Not implemented"
-        :ok
+    def do_commit(t) do
+      with {:ok, _version} <- CommitProxy.commit(t.commit_proxy, {t.read_version, t.rx, t.wx}) do
+        {:ok, t}
       end
     end
 
     @doc false
     @spec storage_workers_for_key(transaction :: t(), Bedrock.key()) :: [Storage.ref()]
-    def storage_workers_for_key(%{client: client}, key),
-      do: client |> Client.storage_workers_for_key(key)
+    def storage_workers_for_key(%{client: _client}, _key),
+      do: []
   end
 end

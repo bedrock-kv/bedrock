@@ -6,9 +6,9 @@ defmodule Bedrock.Client do
   """
 
   alias Bedrock.Client.Transaction
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.DataDistributor
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.Proxy
   alias Bedrock.ControlPlane.DataDistributor.Team
 
   @type t :: %__MODULE__{
@@ -32,10 +32,10 @@ defmodule Bedrock.Client do
   Begin and return a transaction. Transactions are short-lived, and should be
   committed as soon as possible
   """
-  @spec transaction(client :: t()) :: {:ok, Transaction.t()}
-  def transaction(%__MODULE__{} = client) do
-    with {:ok, read_version} <- client.read_version_proxy |> Proxy.next_read_version() do
-      Transaction.start_link(client, read_version)
+  @spec transaction(t :: t()) :: {:ok, Transaction.t()}
+  def transaction(%__MODULE__{} = t) do
+    with {:ok, config} <- Coordinator.fetch_config(t.coordinator) do
+      Transaction.start_link(t, config)
     end
   end
 
@@ -53,17 +53,31 @@ defmodule Bedrock.Client do
   @spec transaction(client :: t(), transaction_fn()) :: any()
   def transaction(%__MODULE__{} = client, transaction_fn) do
     with {:ok, txn} <- transaction(client) do
-      txn
-      |> transaction_fn.()
-      |> case do
-        {:commit, txn, result} ->
-          :ok = commit(txn)
-          result
+      do_transaction(txn, transaction_fn, 5)
+    end
+  end
 
-        {:cancel, reason} ->
-          :ok = cancel(txn)
-          reason
-      end
+  @type transaction_fn(result) :: (Transaction.t() ->
+                                     {:commit, Transaction.t(), result} | {:cancel, result})
+
+  @spec do_transaction(
+          Transaction.t(),
+          transaction_fn(result),
+          n_retries :: non_neg_integer()
+        ) :: {:error, :aborted} | result
+        when result: term()
+  defp do_transaction(_txn, _transaction_fn, 0), do: {:error, :aborted}
+
+  defp do_transaction(txn, transaction_fn, n_retries) do
+    case transaction_fn.(txn) do
+      {:commit, txn, result} ->
+        case commit(txn) do
+          :ok -> result
+          {:error, :aborted} -> do_transaction(txn, transaction_fn, n_retries - 1)
+        end
+
+      {:cancel, result} ->
+        result
     end
   end
 
@@ -85,22 +99,13 @@ defmodule Bedrock.Client do
   @doc """
   Put a key/value pair into a transaction.
   """
-  @spec put(txn :: Transaction.t(), Bedrock.key(), Bedrock.value()) :: :ok
   defdelegate put(txn, key, value),
     to: Transaction
 
   @doc """
   Commits a transaction.
   """
-  @spec commit(txn :: Transaction.t()) :: :ok | {:error, :transaction_expired}
   defdelegate commit(txn),
-    to: Transaction
-
-  @doc """
-  Commits a transaction.
-  """
-  @spec cancel(txn :: Transaction.t()) :: :ok | {:error, :transaction_expired}
-  defdelegate cancel(txn),
     to: Transaction
 
   @spec storage_workers_for_key(client :: t(), Bedrock.key()) :: [Storage.ref()]

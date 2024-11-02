@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndResolvers do
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Resolver
+  alias Bedrock.DataPlane.Log
 
   #
   #
@@ -80,13 +81,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
 
     with {:ok, resolvers} <- start_resolvers(child_specs, available_nodes, supervisor_otp_name),
          {:ok, playback_logs_into_resolvers(resolvers, logs, version_vector)} do
-      resolvers
+      {:ok, resolvers}
     else
       {:error, reason} -> {:error, reason}
-      resolvers -> {:ok, resolvers}
     end
   end
 
+  @spec start_resolvers(
+          child_specs :: [Supervisor.child_spec()],
+          available_nodes :: [node()],
+          supervisor_otp_name :: atom()
+        ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
   def start_resolvers(child_specs, available_nodes, supervisor_otp_name) do
     available_nodes
     |> Stream.cycle()
@@ -113,8 +118,18 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
       {:exit, {node, reason}}, _ ->
         {:halt, {:error, {:failed_to_stary_proxy, node, reason}}}
     end)
+    |> case do
+      {:error, reason} -> {:error, reason}
+      pids -> {:ok, pids}
+    end
   end
 
+  @spec playback_logs_into_resolvers(
+          resolvers :: [pid()],
+          logs :: [pid()],
+          version_vector :: Bedrock.version_vector()
+        ) ::
+          :ok | {:error, {:failed_to_copy_some_logs, %{Log.ref() => reason :: term()} | term()}}
   def playback_logs_into_resolvers(resolvers, logs, {first_version, last_version}) do
     resolvers
     |> pair_resolvers_with_logs(logs)

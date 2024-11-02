@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.ClusterController.ChangingParameters do
     only: [put_parameters: 2]
 
   import Bedrock.ControlPlane.Config.Parameters,
-    only: [put_replication_factor: 2]
+    only: [put_desired_replication_factor: 2]
 
   def settable_parameters_for_state(:uninitialized),
     do: [
@@ -72,7 +72,7 @@ defmodule Bedrock.ControlPlane.ClusterController.ChangingParameters do
   end
 
   def try_to_set_parameter(parameters, :replication_factor, n),
-    do: {:ok, put_replication_factor(parameters, n)}
+    do: {:ok, put_desired_replication_factor(parameters, n)}
 
   def try_to_set_parameter(_, _, _), do: {:error, :invalid_value}
 end

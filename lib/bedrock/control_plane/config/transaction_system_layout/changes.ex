@@ -113,9 +113,9 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   @spec put_proxies(t(), [pid()]) :: t()
   def put_proxies(t, proxies), do: %{t | proxies: proxies} |> put_random_id()
 
-  @spec put_transaction_resolvers(t(), [TransactionResolverDescriptor.t()]) :: t()
-  def put_transaction_resolvers(t, transaction_resolvers),
-    do: %{t | transaction_resolvers: transaction_resolvers} |> put_random_id()
+  @spec put_resolvers(t(), [TransactionResolverDescriptor.t()]) :: t()
+  def put_resolvers(t, resolvers),
+    do: %{t | resolvers: resolvers} |> put_random_id()
 
   @spec random_id() :: TransactionSystemLayout.id()
   defp random_id, do: Enum.random(1..1_000_000)

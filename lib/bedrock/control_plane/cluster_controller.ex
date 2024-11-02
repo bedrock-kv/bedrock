@@ -21,6 +21,9 @@ defmodule Bedrock.ControlPlane.ClusterController do
 
   @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
+  def fetch_transaction_system_layout(cluster_controller, timeout_in_ms),
+    do: cluster_controller |> call(:fetch_transaction_system_layout, timeout_in_ms)
+
   @doc """
   Sends a 'pong' message to the specified cluster controller from the given node.
 

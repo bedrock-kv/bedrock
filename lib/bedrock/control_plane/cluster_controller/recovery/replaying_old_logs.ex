@@ -61,7 +61,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
       ordered: false,
       zip_input_on_exit: true
     )
-    |> Enum.reduce_while([], fn
+    |> Enum.reduce_while(%{}, fn
       {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}
 
@@ -69,13 +69,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
         {:cont, failures}
 
       {:ok, {log_id, {:error, reason}}}, failures ->
-        {:cont, [{reason, log_id} | failures]}
+        {:cont, Map.put(failures, log_id, reason)}
 
       {:exit, {log_id, reason}}, failures ->
-        {:cont, [{reason, log_id} | failures]}
+        {:cont, Map.put(failures, log_id, reason)}
     end)
     |> case do
-      [] -> :ok
+      failures when failures == %{} -> :ok
       failures -> {:error, {:failed_to_copy_some_logs, failures}}
     end
   end

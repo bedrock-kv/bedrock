@@ -34,23 +34,23 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
           nodes: [node()],
           ping_rate_in_hz: rate_in_hz(),
           retransmission_rate_in_hz: rate_in_hz(),
-          replication_factor: replication_factor(),
+          desired_replication_factor: replication_factor(),
           desired_coordinators: pos_integer(),
           desired_logs: pos_integer(),
           desired_read_version_proxies: pos_integer(),
           desired_commit_proxies: pos_integer(),
-          desired_transaction_resolvers: pos_integer(),
+          desired_resolvers: pos_integer(),
           transaction_window_in_ms: pos_integer()
         }
   defstruct nodes: [],
             ping_rate_in_hz: 10,
             retransmission_rate_in_hz: 20,
-            replication_factor: 1,
+            desired_replication_factor: 1,
             desired_coordinators: 1,
             desired_logs: 1,
             desired_read_version_proxies: 1,
             desired_commit_proxies: 1,
-            desired_transaction_resolvers: 1,
+            desired_resolvers: 1,
             transaction_window_in_ms: 5_000
 
   @spec new(coordinators :: [node()]) :: t()
@@ -60,7 +60,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
       desired_coordinators: length(coordinators)
     }
 
-  @spec put_replication_factor(t(), replication_factor()) :: t()
-  def put_replication_factor(t, replication_factor),
-    do: %{t | replication_factor: replication_factor}
+  @spec put_desired_replication_factor(t(), replication_factor()) :: t()
+  def put_desired_replication_factor(t, replication_factor),
+    do: %{t | desired_replication_factor: replication_factor}
 end

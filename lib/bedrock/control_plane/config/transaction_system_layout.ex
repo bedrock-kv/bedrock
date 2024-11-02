@@ -7,7 +7,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
-  alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
 
   @typedoc """
   Struct representing the layout of the transaction system within the cluster.
@@ -20,7 +19,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `data_distributor` - The full otp name of the cluster data distributor.
     - `read_version_proxies` - The full otp names of the read-version proxies.
     - `commit_proxies` - The full otp names of the commit proxies.
-    - `transaction_resolvers` - The full otp names of the transaction resolvers.
+    - `resolvers` - The pids of the transaction resolvers.
     - `logs` - A list of logs that are responsible for storing the transactions on
        their way to the storage teams. Each log contains a list of the tags
        that it services, and the full otp name of the log worker process that
@@ -38,7 +37,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           rate_keeper: pid() | nil,
           data_distributor: pid() | nil,
           proxies: [pid()],
-          transaction_resolvers: [TransactionResolverDescriptor.t()],
+          resolvers: [pid()],
           logs: [LogDescriptor.t()],
           storage_teams: [StorageTeamDescriptor.t()],
           services: [ServiceDescriptor.t()]
@@ -52,7 +51,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
             rate_keeper: nil,
             data_distributor: nil,
             proxies: [],
-            transaction_resolvers: [],
+            resolvers: [],
             logs: [],
             storage_teams: [],
             services: []

@@ -58,8 +58,7 @@ defmodule Bedrock.Cluster do
       @name unquote(name)
       @otp_name Cluster.otp_name(@name)
 
-      @sup_otp_name Cluster.otp_name(@name, :sup)
-
+      @supervisor_otp_name Cluster.otp_name(@name, :sup)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
       @foreman_otp_name Cluster.otp_name(@name, :foreman)
@@ -168,7 +167,7 @@ defmodule Bedrock.Cluster do
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:foreman), do: @foreman_otp_name
       def otp_name(:monitor), do: @monitor_otp_name
-      def otp_name(:sup), do: @sup_otp_name
+      def otp_name(:sup), do: @supervisor_otp_name
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 
       @spec otp_name(atom() | String.t()) :: atom()

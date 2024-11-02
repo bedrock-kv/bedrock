@@ -3,14 +3,14 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   alias Bedrock.DataPlane.CommitProxy.Batch
 
   @type t :: %__MODULE__{
-          cluster: Bedrock.Cluster.t(),
+          controller: pid(),
           transaction_system_layout: TransactionSystemLayout.t(),
           epoch: Bedrock.epoch(),
           batch: Batch.t() | nil,
           max_latency_in_ms: non_neg_integer(),
           max_per_batch: non_neg_integer()
         }
-  defstruct cluster: nil,
+  defstruct controller: nil,
             transaction_system_layout: nil,
             epoch: nil,
             batch: nil,

@@ -31,6 +31,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :no_unassigned_storage
           | {:failed_to_copy_some_logs,
              [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
+          | {:failed_to_start_proxy, node(), reason :: term()}
           | {:need_log_workers, pos_integer()}
           | {:need_storage_workers, pos_integer()}
           | {:insufficient_replication, [Bedrock.range_tag()]}
@@ -44,9 +45,14 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @type t :: %__MODULE__{
           state: state(),
           attempt: pos_integer(),
+          cluster: module(),
           epoch: non_neg_integer(),
-          desired_logs: log_replication_factor(),
-          desired_replication_factor: storage_replication_factor(),
+          parameters: %{
+            desired_logs: log_replication_factor(),
+            desired_replication_factor: storage_replication_factor(),
+            desired_commit_proxies: pos_integer(),
+            desired_resolvers: pos_integer()
+          },
           started_at: DateTime.t(),
           last_transaction_system_layout: TransactionSystemLayout.t(),
           available_services: [ServiceDescriptor.t()],
@@ -58,13 +64,15 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           durable_version: Bedrock.version() | :undefined,
           degraded_teams: [Bedrock.range_tag()],
           logs: [LogDescriptor.t()],
-          storage_teams: [StorageTeamDescriptor.t()]
+          storage_teams: [StorageTeamDescriptor.t()],
+          resolvers: [pid()],
+          proxies: [pid()]
         }
   defstruct state: nil,
             attempt: nil,
             epoch: nil,
-            desired_logs: nil,
-            desired_replication_factor: nil,
+            cluster: nil,
+            parameters: nil,
             started_at: nil,
             last_transaction_system_layout: nil,
             available_services: [],
@@ -76,23 +84,30 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
             durable_version: :undefined,
             degraded_teams: [],
             logs: [],
-            storage_teams: []
+            storage_teams: [],
+            resolvers: [],
+            proxies: []
 
   @spec new(
+          cluster :: module(),
           Bedrock.epoch(),
           started_at :: DateTime.t(),
-          log_replication_factor(),
-          storage_replication_factor(),
-          TransactionSystemLayout.t()
+          TransactionSystemLayout.t(),
+          params :: %{
+            desired_logs: log_replication_factor(),
+            desired_replication_factor: storage_replication_factor(),
+            desired_commit_proxies: pos_integer(),
+            desired_resolvers: pos_integer()
+          }
         ) :: t()
-  def new(epoch, started_at, desired_logs, desired_replication_factor, transaction_system_layout) do
+  def new(cluster, epoch, started_at, transaction_system_layout, params) do
     %__MODULE__{
+      cluster: cluster,
       attempt: 1,
       epoch: epoch,
       started_at: started_at,
       state: :start,
-      desired_logs: desired_logs,
-      desired_replication_factor: desired_replication_factor,
+      parameters: params,
       last_transaction_system_layout: transaction_system_layout
     }
   end
@@ -135,6 +150,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
 
   @spec put_storage_teams(t(), [StorageTeamDescriptor.t()]) :: t()
   def put_storage_teams(t, storage_teams), do: %{t | storage_teams: storage_teams}
+
+  @spec put_resolvers(t(), [pid()]) :: t()
+  def put_resolvers(t, resolvers), do: %{t | resolvers: resolvers}
+
+  @spec put_proxies(t(), [pid()]) :: t()
+  def put_proxies(t, proxies), do: %{t | proxies: proxies}
 
   @spec update_log_recovery_info_by_id(
           t(),

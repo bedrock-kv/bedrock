@@ -13,13 +13,17 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.LockingAvailableServices, only: [lock_available_services: 3]
   import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
   import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
-  import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
+
+  import __MODULE__.CreatingVacancies,
+    only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
 
   import __MODULE__.FillingVacancies,
     only: [fill_log_vacancies: 3, fill_storage_team_vacancies: 2]
 
-  import __MODULE__.CreatingVacancies,
-    only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
+  import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
+
+  import __MODULE__.DefiningProxiesAndResolvers,
+    only: [define_commit_proxies: 5, define_resolvers: 2]
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -50,11 +54,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
           |> put_epoch(t.epoch)
           |> put_recovery_attempt(
             RecoveryAttempt.new(
+              t.cluster,
               t.epoch,
               now(),
-              config.parameters.desired_logs,
-              config.parameters.replication_factor,
-              config.transaction_system_layout
+              config.transaction_system_layout,
+              Map.take(config.parameters, [
+                :desired_logs,
+                :desired_replication_factor,
+                :desired_commit_proxies,
+                :desired_resolvers
+              ])
             )
             |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
           )
@@ -65,7 +74,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
             |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
             |> TransactionSystemLayout.Changes.put_data_distributor(nil)
             |> TransactionSystemLayout.Changes.put_proxies([])
-            |> TransactionSystemLayout.Changes.put_transaction_resolvers([])
+            |> TransactionSystemLayout.Changes.put_resolvers([])
           end)
         end)
         |> do_recovery()
@@ -114,6 +123,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       |> put_recovery_attempt(nil)
       |> update_transaction_system_layout(fn transaction_system_layout ->
         transaction_system_layout
+        |> TransactionSystemLayout.Changes.put_resolvers(completed_recovery_attempt.resolvers)
+        |> TransactionSystemLayout.Changes.put_proxies(completed_recovery_attempt.proxies)
         |> TransactionSystemLayout.Changes.put_logs(completed_recovery_attempt.logs)
         |> TransactionSystemLayout.Changes.put_storage_teams(
           completed_recovery_attempt.storage_teams
@@ -197,8 +208,11 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   # placeholders based on desired logs and replication factor, then proceed
   # to fill log vacancies.
   def recovery(%{state: :first_time_initialization} = t) do
-    log_vacancies = 1..t.desired_logs |> Enum.map(&{:vacancy, &1})
-    storage_team_vacancies = 1..t.desired_replication_factor |> Enum.map(&{:vacancy, &1})
+    log_vacancies =
+      1..t.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
+
+    storage_team_vacancies =
+      1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
     t
     |> RecoveryAttempt.put_durable_version(0)
@@ -229,7 +243,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     determine_old_logs_to_copy(
       t.last_transaction_system_layout.logs,
       t.log_recovery_info_by_id,
-      t.desired_logs |> determine_quorum()
+      t.parameters.desired_logs |> determine_quorum()
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->
@@ -250,13 +264,13 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     |> RecoveryAttempt.put_logs(
       create_vacancies_for_logs(
         t.last_transaction_system_layout.logs,
-        t.desired_logs
+        t.parameters.desired_logs
       )
     )
     |> RecoveryAttempt.put_storage_teams(
       create_vacancies_for_storage_teams(
         t.last_transaction_system_layout.storage_teams,
-        t.desired_replication_factor
+        t.parameters.desired_replication_factor
       )
     )
     |> RecoveryAttempt.put_state(:determine_durable_version)
@@ -268,7 +282,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     determine_durable_version(
       t.last_transaction_system_layout.storage_teams,
       t.storage_recovery_info_by_id,
-      t.desired_replication_factor |> determine_quorum()
+      t.parameters.desired_replication_factor |> determine_quorum()
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
@@ -349,7 +363,26 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :defining_proxies_and_resolvers} = t) do
-    t |> RecoveryAttempt.put_state(:final_checks)
+    with {:ok, proxies} <-
+           define_commit_proxies(
+             t.parameters.desired_commit_proxies,
+             t.epoch,
+             self(),
+             Node.list(),
+             t.cluster.otp_name(:sup)
+           ),
+         {:ok, resolvers} <-
+           define_resolvers(
+             t.parameters.desired_resolvers,
+             t.logs
+           ) do
+      t
+      |> RecoveryAttempt.put_resolvers(resolvers)
+      |> RecoveryAttempt.put_proxies(proxies)
+      |> RecoveryAttempt.put_state(:final_checks)
+    else
+      {:error, reason} -> t |> RecoveryAttempt.put_state({:stalled, reason})
+    end
   end
 
   #

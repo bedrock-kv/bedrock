@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.ClusterController
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
@@ -12,12 +14,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   use GenServer
 
+  @spec child_spec(
+          opts :: [
+            controller: pid(),
+            transaction_system_layout: TransactionSystemLayout.t(),
+            epoch: Bedrock.epoch(),
+            max_latency_in_ms: non_neg_integer(),
+            max_per_batch: pos_integer()
+          ]
+        ) :: Supervisor.child_spec()
   def child_spec(opts) do
-    cluster = opts[:cluster] || raise "Missing :cluster option"
-
-    transaction_system_layout =
-      opts[:transaction_system_layout] || raise "Missing :transaction_system_layout option"
-
+    controller = opts[:controller] || raise "Missing :controller option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     max_latency_in_ms = opts[:max_latency_in_ms] || 2
     max_per_batch = opts[:max_per_batch] || 10
@@ -28,16 +35,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, transaction_system_layout, epoch, max_latency_in_ms, max_per_batch}
+           {controller, epoch, max_latency_in_ms, max_per_batch}
          ]},
       restart: :temporary
     }
   end
 
-  def init({cluster, transaction_system_layout, epoch, max_latency_in_ms, max_per_batch}) do
+  def init({controller, epoch, max_latency_in_ms, max_per_batch}) do
     %State{
-      cluster: cluster,
-      transaction_system_layout: transaction_system_layout,
+      controller: controller,
       epoch: epoch,
       max_latency_in_ms: max_latency_in_ms,
       max_per_batch: max_per_batch
@@ -53,6 +59,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # is submitted before re-considering finalizing the batch.
   def handle_call({:commit, transaction}, from, t) do
     t
+    |> ask_for_transaction_system_layout_if_needed()
     |> start_batch_if_needed()
     |> add_transaction_to_batch(transaction, from)
     |> apply_finalization_policy()
@@ -66,11 +73,29 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # we go ahead and finalize the batch -- No need to make everyone wait longer
   # than they absolutely need to!
   def handle_info(:timeout, %{batch: nil} = t),
-    do: t |> noreply(continue: {:finalize, t.batch})
+    do: t |> noreply()
+
+  def handle_info(:timeout, %{batch: batch} = t),
+    do: %{t | batch: nil} |> noreply(continue: {:finalize, batch})
 
   def handle_continue({:finalize, batch}, t) do
     :ok = finalize_batch(batch, t.transaction_system_layout)
     t |> noreply()
+  end
+
+  def ask_for_transaction_system_layout_if_needed(t) when t.transaction_system_layout == nil,
+    do: t
+
+  def ask_for_transaction_system_layout_if_needed(t) do
+    t.controller
+    |> ClusterController.fetch_transaction_system_layout(50)
+    |> case do
+      {:ok, transaction_system_layout} ->
+        %{t | transaction_system_layout: transaction_system_layout}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   defp noreply(t, opts \\ [])

@@ -69,7 +69,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           storage_teams: [StorageTeamDescriptor.t()],
           resolvers: [pid()],
           proxies: [pid()],
-          sequencer: pid()
+          sequencer: pid() | nil
         }
   defstruct state: nil,
             attempt: nil,

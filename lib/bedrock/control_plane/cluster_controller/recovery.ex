@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
 
   import __MODULE__.DefiningProxiesAndResolvers,
-    only: [define_commit_proxies: 5, define_resolvers: 2]
+    only: [define_commit_proxies: 5, define_resolvers: 6]
 
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -363,18 +363,27 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   #
   #
   def recovery(%{state: :defining_proxies_and_resolvers} = t) do
-    with {:ok, proxies} <-
+    log_pids =
+      t.logs
+      |> Enum.map(& &1.log_id)
+      |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
+
+    with {:ok, resolvers} <-
+           define_resolvers(
+             t.parameters.desired_resolvers,
+             t.version_vector,
+             log_pids,
+             t.epoch,
+             Node.list(),
+             t.cluster.otp_name(:sup)
+           ),
+         {:ok, proxies} <-
            define_commit_proxies(
              t.parameters.desired_commit_proxies,
              t.epoch,
              self(),
              Node.list(),
              t.cluster.otp_name(:sup)
-           ),
-         {:ok, resolvers} <-
-           define_resolvers(
-             t.parameters.desired_resolvers,
-             t.logs
            ) do
       t
       |> RecoveryAttempt.put_resolvers(resolvers)

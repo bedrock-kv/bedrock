@@ -1,35 +1,38 @@
 defmodule Bedrock.DataPlane.Resolver.Server do
   alias Bedrock.DataPlane.Resolver.State
 
+  import Bedrock.DataPlane.Resolver.Recovery, only: [recover_from: 4]
   import Bedrock.DataPlane.Resolver.ConflictResolution, only: [commit: 3]
 
   use GenServer
 
-  def child_spec(opts) do
-    last_committed_version =
-      opts[:last_committed_version] || raise "last_committed_version is required"
-
+  def child_spec(_opts) do
     %{
       id: __MODULE__,
       start:
         {GenServer, :start_link,
          [
            __MODULE__,
-           {last_committed_version}
+           {}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({last_committed_version}) do
-    %State{
-      last_version: last_committed_version
-    }
+  def init({}) do
+    %State{}
     |> then(&{:ok, &1})
   end
 
   @impl true
+  def handle_call({:recover_from, source_log, first_version, last_version}, _from, t) do
+    case recover_from(t, source_log, first_version, last_version) do
+      {:ok, t} -> t |> reply(:ok)
+      {:error, reason} -> t |> reply({:error, reason})
+    end
+  end
+
   # When transactions come in order, we can resolve them immediately. Once we're
   # done, we check if there are any transactions waiting for this version to be
   # resolved, and if so, we resolve them as well. We reply to this caller before
@@ -69,9 +72,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end
   end
 
-  defp reply(t, result), do: {:reply, result, t}
-  defp reply(t, result, continue: action), do: {:reply, result, t, {:continue, action}}
+  defp reply(%State{} = t, result), do: {:reply, result, t}
+  defp reply(%State{} = t, result, continue: action), do: {:reply, result, t, {:continue, action}}
 
-  defp noreply(t), do: {:noreply, t}
-  defp noreply(t, continue: action), do: {:noreply, t, {:continue, action}}
+  defp noreply(%State{} = t), do: {:noreply, t}
+  defp noreply(%State{} = t, continue: action), do: {:noreply, t, {:continue, action}}
 end

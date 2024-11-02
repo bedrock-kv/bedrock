@@ -29,6 +29,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :unable_to_meet_log_quorum
           | :no_unassigned_logs
           | :no_unassigned_storage
+          | {:source_log_unavailable, log_to_pull :: Log.ref()}
           | {:failed_to_copy_some_logs,
              [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:failed_to_start_proxy, node(), reason :: term()}

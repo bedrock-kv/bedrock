@@ -10,11 +10,8 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   use GenServer
 
   def child_spec(opts) do
-    cluster = opts[:cluster] || raise "Missing :cluster option"
     controller = opts[:controller] || raise "Missing :controller option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
-    started_at = opts[:started_at] || raise "Missing :started_at option"
-    otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
     last_committed_version =
       opts[:last_committed_version] || raise "Missing :last_committed_version option"
@@ -25,17 +22,15 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, controller, epoch, started_at, last_committed_version},
-           [name: otp_name]
+           {controller, epoch, last_committed_version}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, controller, epoch, last_committed_version}) do
+  def init({controller, epoch, last_committed_version}) do
     %State{
-      cluster: cluster,
       controller: controller,
       epoch: epoch,
       last_committed_version: last_committed_version

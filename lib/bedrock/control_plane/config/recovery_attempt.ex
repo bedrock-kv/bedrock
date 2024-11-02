@@ -30,6 +30,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :no_unassigned_logs
           | :no_unassigned_storage
           | {:source_log_unavailable, log_to_pull :: Log.ref()}
+          | {:failed_to_start_sequencer, reason :: term()}
           | {:failed_to_copy_some_logs,
              [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:failed_to_start_proxy, node(), reason :: term()}
@@ -67,7 +68,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           logs: [LogDescriptor.t()],
           storage_teams: [StorageTeamDescriptor.t()],
           resolvers: [pid()],
-          proxies: [pid()]
+          proxies: [pid()],
+          sequencer: pid()
         }
   defstruct state: nil,
             attempt: nil,
@@ -87,7 +89,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
             logs: [],
             storage_teams: [],
             resolvers: [],
-            proxies: []
+            proxies: [],
+            sequencer: nil
 
   @spec new(
           cluster :: module(),
@@ -157,6 +160,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
 
   @spec put_proxies(t(), [pid()]) :: t()
   def put_proxies(t, proxies), do: %{t | proxies: proxies}
+
+  @spec put_sequencer(t(), pid()) :: t()
+  def put_sequencer(t, sequencer), do: %{t | sequencer: sequencer}
 
   @spec update_log_recovery_info_by_id(
           t(),

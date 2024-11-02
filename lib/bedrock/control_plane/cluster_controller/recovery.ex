@@ -25,6 +25,8 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.DefiningProxiesAndResolvers,
     only: [define_commit_proxies: 5, define_resolvers: 6]
 
+  import __MODULE__.StartingSequencer, only: [start_sequencer: 4]
+
   import Bedrock.Internal.Time, only: [now: 0]
 
   import Bedrock.ControlPlane.Config.Changes,
@@ -123,6 +125,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       |> put_recovery_attempt(nil)
       |> update_transaction_system_layout(fn transaction_system_layout ->
         transaction_system_layout
+        |> TransactionSystemLayout.Changes.put_sequencer(completed_recovery_attempt.sequencer)
         |> TransactionSystemLayout.Changes.put_resolvers(completed_recovery_attempt.resolvers)
         |> TransactionSystemLayout.Changes.put_proxies(completed_recovery_attempt.proxies)
         |> TransactionSystemLayout.Changes.put_logs(completed_recovery_attempt.logs)
@@ -384,8 +387,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
              self(),
              Node.list(),
              t.cluster.otp_name(:sup)
+           ),
+         {:ok, sequencer} <-
+           start_sequencer(
+             self(),
+             t.epoch,
+             t.version_vector,
+             start_supervised_with(t.cluster.otp_name(:sup))
            ) do
       t
+      |> RecoveryAttempt.put_sequencer(sequencer)
       |> RecoveryAttempt.put_resolvers(resolvers)
       |> RecoveryAttempt.put_proxies(proxies)
       |> RecoveryAttempt.put_state(:final_checks)
@@ -409,4 +420,16 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")
 
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
+
+  defp start_supervised_with(supervisor_otp_name) do
+    fn child_spec, node ->
+      {supervisor_otp_name, node}
+      |> DynamicSupervisor.start_child(child_spec)
+      |> case do
+        {:ok, pid} -> {:ok, pid}
+        {:ok, pid, _} -> {:ok, pid}
+        {:error, reason} -> {:error, {:failed_to_start_sequencer, reason}}
+      end
+    end
+  end
 end

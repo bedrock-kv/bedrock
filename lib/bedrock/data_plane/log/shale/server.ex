@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:push, transaction, expected_version}, from, t) do
     trace_log_push_transaction(t.cluster, t.id, transaction, expected_version)
 
-    case push(t, expected_version, {transaction, fn -> GenServer.reply(from, :ok) end}) do
+    case push(t, expected_version, {transaction, ack_fn(from)}) do
       {:waiting, t} -> t |> noreply()
       {:ok, t} -> t |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)
@@ -103,6 +103,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       {:error, _reason} = error -> t |> reply(error)
     end
   end
+
+  def ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
 
   defp reply(%State{} = t, result), do: {:reply, result, t}
   defp noreply(%State{} = t), do: {:noreply, t}

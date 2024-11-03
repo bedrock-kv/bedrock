@@ -49,28 +49,35 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   @spec try_commit_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) ::
           {:ok, Tree.t()} | :abort
   def try_commit_transaction(tree, transaction, write_version) do
-    if tree |> conflict?(transaction) do
+    if tree |> conflict?(transaction, write_version) do
       :abort
     else
       {:ok, tree |> apply_transaction(transaction, write_version)}
     end
   end
 
-  @spec conflict?(Tree.t(), Resolver.transaction()) :: boolean()
-  def conflict?(tree, {read_version, reads, writes}),
-    do: write_conflict?(tree, writes) or read_write_conflict?(tree, reads, read_version)
+  @spec conflict?(Tree.t(), Resolver.transaction(), Bedrock.version()) :: boolean()
+  def conflict?(tree, {read_version, reads, writes}, write_version) do
+    write_conflict?(tree, writes, write_version) or
+      read_write_conflict?(tree, reads, read_version)
+  end
 
-  @spec write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()]) :: boolean()
-  def write_conflict?(tree, writes),
-    do: writes |> Enum.any?(&Tree.overlap?(tree, &1))
+  @spec write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()], Bedrock.version()) ::
+          boolean()
+  def write_conflict?(tree, writes, write_version) do
+    predicate = version_lt(write_version)
+    Enum.any?(writes, &Tree.overlap?(tree, &1, predicate))
+  end
 
   @spec read_write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()], Bedrock.version()) ::
           boolean()
-  def read_write_conflict?(tree, reads, read_version),
-    do: reads |> Enum.any?(&Tree.overlap?(tree, &1, check_version(read_version)))
+  def read_write_conflict?(tree, reads, read_version) do
+    predicate = version_lt(read_version)
+    Enum.any?(reads, &Tree.overlap?(tree, &1, predicate))
+  end
 
-  @spec check_version(Bedrock.version()) :: (Bedrock.version() -> boolean())
-  def check_version(read_version), do: fn version -> version > read_version end
+  @spec version_lt(Bedrock.version()) :: (Bedrock.version() -> boolean())
+  def version_lt(version), do: &(&1 > version)
 
   @spec apply_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) :: Tree.t()
   def apply_transaction(tree, {_, _, writes}, write_version),

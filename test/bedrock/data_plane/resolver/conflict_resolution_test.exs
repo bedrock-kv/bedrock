@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
   import Bedrock.DataPlane.Resolver.ConflictResolution,
     only: [
       commit: 3,
-      conflict?: 2,
+      conflict?: 3,
       try_commit_transaction: 3
     ]
 
@@ -85,7 +85,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
         # The failed transaction should have conflicts either on writes or
         # due to version mismatch.
-        assert conflict?(tree, failed_transaction)
+        assert conflict?(tree, failed_transaction, write_version)
 
         # If we try the transaction that failed, it should abort.
         assert :abort = try_commit_transaction(tree, failed_transaction, index)

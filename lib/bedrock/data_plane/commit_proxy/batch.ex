@@ -1,11 +1,13 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batch do
+  @type reply_fn :: ({:ok, Bedrock.version()} | {:error, :abort} -> :ok)
+
   @type t :: %__MODULE__{
           started_at: Bedrock.timestamp_in_ms(),
           finalized_at: Bedrock.timestamp_in_ms() | nil,
           last_commit_version: Bedrock.version(),
           commit_version: Bedrock.version(),
           n_transactions: non_neg_integer(),
-          buffer: [{GenServer.from(), Bedrock.transaction()}]
+          buffer: [{reply_fn(), Bedrock.transaction()}]
         }
   defstruct started_at: nil,
             finalized_at: nil,
@@ -36,9 +38,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
   def all_callers(t),
     do: t.buffer |> Enum.map(&elem(&1, 0))
 
-  @spec add_transaction(t(), Bedrock.transaction(), from :: GenServer.from()) :: t()
-  def add_transaction(t, transaction, from),
-    do: %{t | buffer: [{from, transaction} | t.buffer], n_transactions: t.n_transactions + 1}
+  @spec add_transaction(t(), Bedrock.transaction(), reply_fn()) :: t()
+  def add_transaction(t, transaction, reply_fn),
+    do: %{t | buffer: [{reply_fn, transaction} | t.buffer], n_transactions: t.n_transactions + 1}
 
   @spec set_finalized_at(t(), Bedrock.timestamp_in_ms()) :: t()
   def set_finalized_at(t, finalized_at),

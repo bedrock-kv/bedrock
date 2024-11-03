@@ -19,9 +19,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   def start_batch_if_needed(t), do: t
 
-  @spec add_transaction_to_batch(State.t(), Bedrock.transaction(), GenServer.from()) :: State.t()
-  def add_transaction_to_batch(t, transaction, from),
-    do: %{t | batch: t.batch |> add_transaction(transaction, from)}
+  @spec add_transaction_to_batch(State.t(), Bedrock.transaction(), Batch.reply_fn()) :: State.t()
+  def add_transaction_to_batch(t, transaction, reply_fn),
+    do: %{t | batch: t.batch |> add_transaction(transaction, reply_fn)}
 
   @spec apply_finalization_policy(State.t()) ::
           {State.t(), batch_to_finalize :: Batch.t()} | {State.t(), nil}

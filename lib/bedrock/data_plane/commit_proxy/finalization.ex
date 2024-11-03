@@ -101,8 +101,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       ensure consistency in log ordering.
     - `transaction`: The transaction to be committed to logs; this should
       include both data and a new commit version.
-    - `oks`: A list of GenServer `from` references to which successful
-      acknowledgements should be sent once enough logs have acknowledged.
+    - `oks`: A list of reply functions to which successful acknowledgements
+      should be sent once enough logs have acknowledged.
 
   ## Returns
     - `:ok` if enough acknowledgements have been received from the log servers.
@@ -178,16 +178,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
 
-  @spec reply_to_all_clients_with_aborted_transactions([GenServer.from()]) :: :ok
+  @spec reply_to_all_clients_with_aborted_transactions([Batch.reply_fn()]) :: :ok
   def reply_to_all_clients_with_aborted_transactions([]), do: :ok
 
   def reply_to_all_clients_with_aborted_transactions(aborts),
-    do: Enum.each(aborts, &GenServer.reply(&1, {:error, :aborted}))
+    do: Enum.each(aborts, & &1.({:error, :aborted}))
 
-  @spec send_reply_with_commit_version([GenServer.from()], Bedrock.version()) ::
+  @spec send_reply_with_commit_version([Batch.reply_fn()], Bedrock.version()) ::
           :ok
   def send_reply_with_commit_version(oks, commit_version),
-    do: Enum.each(oks, &GenServer.reply(&1, {:ok, commit_version}))
+    do: Enum.each(oks, & &1.({:ok, commit_version}))
 
   @doc """
   Prepare a transaction for logging by separating successful transactions
@@ -202,15 +202,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   to the relevant clients about the aborts.
 
   Returns a tuple with:
-    - A list of GenServer `from` references for successful transactions.
-    - A list of GenServer `from` references for aborted transactions.
+    - A list of reply functions for successful transactions.
+    - A list of reply functions for aborted transactions.
     - A Transaction.t() containing the commit version along with the aggregated
       writes from the successful transactions.
 
   ## Parameters
 
-    - `transactions`: A list of transactions, each containing the GenServer
-      `from` reference, read/write data, and other necessary details.
+    - `transactions`: A list of transactions, each containing the reply
+      function, read/write data, and other necessary details.
     - `aborts`: A list of integer indices indicating which transactions were
       aborted.
     - `commit_version`: The current commit version.
@@ -223,7 +223,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           aborts :: [integer()],
           commit_version :: Bedrock.version()
         ) ::
-          {oks :: [GenServer.from()], aborts :: [GenServer.from()], Transaction.t()}
+          {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()], Transaction.t()}
   # If there are no aborted transactions, we can make take some shortcuts.
   def prepare_transaction_to_log(transactions, [], commit_version) do
     transactions
@@ -245,7 +245,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> Enum.reduce({[], [], %{}}, fn
       {{from, {_, _, writes}}, idx}, {oks, aborts, all_writes} ->
         if MapSet.member?(aborted_set, idx) do
-          {oks, [from | aborts], writes}
+          {oks, [from | aborts], all_writes}
         else
           {[from | oks], aborts, Map.merge(all_writes, writes)}
         end

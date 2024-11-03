@@ -39,9 +39,8 @@ defmodule Bedrock.Client.Transaction do
     def init({config}) do
       with {:ok, read_version} <-
              Sequencer.next_read_version(config.transaction_system_layout.sequencer),
-           commit_proxy <- Enum.random(config.transaction_system_layout.proxies),
-           {:ok, t} <- new_t(read_version, commit_proxy) do
-        {:ok, t}
+           commit_proxy <- Enum.random(config.transaction_system_layout.proxies) do
+        new_t(read_version, commit_proxy)
       end
     end
 

@@ -46,59 +46,63 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
 
   @spec try_to_recover(State.t()) :: State.t()
-  def try_to_recover(t) do
-    case t.state do
-      :starting ->
-        t
-        |> put_state(:recovery)
-        |> update_config(fn config ->
-          config
-          |> put_epoch(t.epoch)
-          |> put_recovery_attempt(
-            RecoveryAttempt.new(
-              t.cluster,
-              t.epoch,
-              now(),
-              config.transaction_system_layout,
-              Map.take(config.parameters, [
-                :desired_logs,
-                :desired_replication_factor,
-                :desired_commit_proxies,
-                :desired_resolvers
-              ])
-            )
-            |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
-          )
-          |> update_transaction_system_layout(fn transaction_system_layout ->
-            transaction_system_layout
-            |> TransactionSystemLayout.Changes.put_controller(self())
-            |> TransactionSystemLayout.Changes.put_sequencer(nil)
-            |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
-            |> TransactionSystemLayout.Changes.put_data_distributor(nil)
-            |> TransactionSystemLayout.Changes.put_proxies([])
-            |> TransactionSystemLayout.Changes.put_resolvers([])
-          end)
-        end)
-        |> do_recovery()
+  def try_to_recover(%{state: :starting} = t) do
+    t
+    |> setup_for_initial_recovery()
+    |> do_recovery()
+  end
 
-      :recovery ->
-        t
-        |> update_config(fn config ->
-          config
-          |> update_recovery_attempt(fn recovery_attempt ->
-            recovery_attempt
-            |> RecoveryAttempt.reset(now())
-            |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
-          end)
-        end)
-        |> do_recovery()
+  def try_to_recover(%{state: :recovery} = t) do
+    t
+    |> setup_for_subsequent_recovery()
+    |> do_recovery()
+  end
 
-      :stopped ->
-        t
+  def try_to_recover(t), do: t
 
-      :running ->
-        t
-    end
+  def setup_for_initial_recovery(t) do
+    t
+    |> put_state(:recovery)
+    |> update_config(fn config ->
+      config
+      |> put_epoch(t.epoch)
+      |> put_recovery_attempt(
+        RecoveryAttempt.new(
+          t.cluster,
+          t.epoch,
+          now(),
+          config.transaction_system_layout,
+          Map.take(config.parameters, [
+            :desired_logs,
+            :desired_replication_factor,
+            :desired_commit_proxies,
+            :desired_resolvers
+          ])
+        )
+        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+      )
+      |> update_transaction_system_layout(fn transaction_system_layout ->
+        transaction_system_layout
+        |> TransactionSystemLayout.Changes.put_controller(self())
+        |> TransactionSystemLayout.Changes.put_sequencer(nil)
+        |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
+        |> TransactionSystemLayout.Changes.put_data_distributor(nil)
+        |> TransactionSystemLayout.Changes.put_proxies([])
+        |> TransactionSystemLayout.Changes.put_resolvers([])
+      end)
+    end)
+  end
+
+  def setup_for_subsequent_recovery(t) do
+    t
+    |> update_config(fn config ->
+      config
+      |> update_recovery_attempt(fn recovery_attempt ->
+        recovery_attempt
+        |> RecoveryAttempt.reset(now())
+        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+      end)
+    end)
   end
 
   @spec do_recovery(State.t()) :: State.t()

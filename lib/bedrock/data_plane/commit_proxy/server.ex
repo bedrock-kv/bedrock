@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
+  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.ClusterController
 
@@ -74,7 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     t
     |> ask_for_transaction_system_layout_if_needed()
     |> start_batch_if_needed()
-    |> add_transaction_to_batch(transaction, from)
+    |> add_transaction_to_batch(transaction, reply_fn(from))
     |> apply_finalization_policy()
     |> case do
       {t, nil} -> t |> noreply(timeout: 0)
@@ -117,6 +118,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {:stop, reason}
     end
   end
+
+  @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
+  def reply_fn(from), do: &GenServer.reply(from, &1)
 
   defp noreply(t, opts \\ [])
   defp noreply(t, continue: continue, timeout: ms), do: {:noreply, t, ms, {:continue, continue}}

@@ -13,97 +13,49 @@ defmodule Bedrock.Internal.Tracing.DataPlaneLogTelemetry do
         [:bedrock, :data_plane, :log, :push],
         [:bedrock, :data_plane, :log, :pull]
       ],
-      &__MODULE__.log_event/4,
+      &__MODULE__.handler/4,
       nil
     )
   end
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def log_event(
-        [:bedrock, :data_plane, :log, :started],
-        _measurements,
-        %{cluster: cluster, id: id, otp_name: otp_name} =
-          _metadata,
-        _config
-      ) do
-    Logger.info("Bedrock [#{cluster.name()}]: Log #{id} started with OTP name #{otp_name}")
+  def handler([:bedrock, :data_plane, :log, event], measurements, metadata, _),
+    do: log_event(event, measurements, metadata)
+
+  def log_event(:started, _, %{cluster: cluster, id: id, otp_name: otp_name}) do
+    Logger.metadata(
+      id: id,
+      cluster: cluster,
+      otp_name: otp_name
+    )
+
+    info("Started with OTP name #{otp_name}")
   end
 
-  def log_event(
-        [:bedrock, :data_plane, :log, :lock_for_recovery],
-        _measurements,
-        %{cluster: cluster, id: id, epoch: epoch} =
-          _metadata,
-        _config
-      ) do
-    Logger.info(
-      "Bedrock [#{cluster.name()}]: Log #{id} attempting to lock for recovery in epoch #{epoch}"
-    )
+  def log_event(:lock_for_recovery, _, %{epoch: epoch}),
+    do: info("Lock for recovery in epoch #{epoch}")
+
+  def log_event(:recover_from, _, %{source_log: nil, first_version: :undefined, last_version: 0}),
+    do: info("Reset to initial version")
+
+  def log_event(:recover_from, _, %{
+        source_log: source_log,
+        first_version: first_version,
+        last_version: last_version
+      }) do
+    info("Recover from #{inspect(source_log)} with versions #{first_version} to #{last_version}")
   end
 
-  def log_event(
-        [:bedrock, :data_plane, :log, :recover_from],
-        _measurements,
-        %{
-          cluster: cluster,
-          id: id,
-          source_log: nil,
-          first_version: :undefined,
-          last_version: last_version = 0
-        } =
-          _metadata,
-        _config
-      ) do
-    Logger.info(
-      "Bedrock [#{cluster.name()}]: Log #{id} attempting to reset back to version #{last_version}"
-    )
+  def log_event(:push, %{n_keys: n_keys}, %{expected_version: expected_version}) do
+    info("Push transaction (#{n_keys} keys) with expected version #{inspect(expected_version)}")
   end
 
-  def log_event(
-        [:bedrock, :data_plane, :log, :recover_from],
-        _measurements,
-        %{
-          cluster: cluster,
-          id: id,
-          source_log: source_log,
-          first_version: first_version,
-          last_version: last_version
-        } =
-          _metadata,
-        _config
-      ) do
-    Logger.info(
-      "Bedrock [#{cluster.name()}]: Log #{id} attempting to recover from #{inspect(source_log)} with versions #{first_version} to #{last_version}"
-    )
-  end
+  def log_event(:pull, _, %{from_version: from_version, opts: opts}),
+    do: info("Pull transactions from version #{from_version} with options #{inspect(opts)}")
 
-  def log_event(
-        [:bedrock, :data_plane, :log, :push],
-        %{n_keys: n_keys},
-        %{
-          cluster: cluster,
-          id: id,
-          expected_version: expected_version,
-          transaction: transaction
-        } = _metadata,
-        _config
-      ) do
-    Logger.info(
-      "Bedrock [#{cluster.name()}]: Log #{id} attempting to push transaction (#{n_keys} keys) with expected version #{inspect(expected_version)}",
-      transaction: transaction
-    )
-  end
-
-  def log_event(
-        [:bedrock, :data_plane, :log, :pull],
-        _measurements,
-        %{cluster: cluster, id: id, from_version: from_version, opts: opts} =
-          _metadata,
-        _config
-      ) do
-    Logger.info(
-      "Bedrock [#{cluster.name()}]: Log #{id} attempting to pull transactions from version #{from_version} with options #{inspect(opts)}"
-    )
+  defp info(message) do
+    metadata = Logger.metadata()
+    Logger.info("Bedrock [#{metadata[:cluster].name()}/#{metadata[:id]}]: #{message}")
   end
 end

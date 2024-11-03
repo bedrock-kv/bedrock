@@ -93,7 +93,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
       |> Enum.map(fn _ -> child_spec_for_transaction_resolver(epoch) end)
 
     with {:ok, resolvers} <- start_resolvers(child_specs, available_nodes, supervisor_otp_name),
-         {:ok, playback_logs_into_resolvers(resolvers, logs, version_vector)} do
+         :ok <- playback_logs_into_resolvers(resolvers, logs, version_vector) do
       {:ok, resolvers}
     else
       {:error, reason} -> {:error, reason}

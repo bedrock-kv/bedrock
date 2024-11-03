@@ -102,7 +102,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_call({:write_config, config}, from, t) do
     t
-    |> durably_write_config(config, from)
+    |> durably_write_config(config, ack_fn(from))
     |> case do
       {:ok, t} -> t |> noreply()
       {:error, _reason} -> t |> reply({:error, :failed})
@@ -165,6 +165,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> update_raft(&Raft.handle_event(&1, event, source))
     |> noreply()
   end
+
+  defp ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
 
   defp noreply(t), do: {:noreply, t}
   defp reply(t, result), do: {:reply, result, t}

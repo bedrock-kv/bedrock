@@ -18,21 +18,23 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   require Logger
 
-  @spec durably_write_config(State.t(), Config.t(), GenServer.from()) ::
+  @type ack_fn :: (-> :ok)
+
+  @spec durably_write_config(State.t(), Config.t(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader}
-  def durably_write_config(t, config, from) do
+  def durably_write_config(t, config, ack_fn) do
     with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(config) do
       {:ok,
        t
        |> set_raft(raft)
-       |> wait_for_durable_write_to_complete(from, txn_id)}
+       |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
     end
   end
 
-  @spec wait_for_durable_write_to_complete(State.t(), GenServer.from(), Raft.transaction_id()) ::
+  @spec wait_for_durable_write_to_complete(State.t(), ack_fn(), Raft.transaction_id()) ::
           State.t()
-  def wait_for_durable_write_to_complete(t, from, txn_id),
-    do: update_in(t.waiting_list, &Map.put(&1, txn_id, from))
+  def wait_for_durable_write_to_complete(t, ack_fn, txn_id),
+    do: update_in(t.waiting_list, &Map.put(&1, txn_id, ack_fn))
 
   @spec durable_write_to_config_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
   def durable_write_to_config_completed(t, log, durable_txn_id) do
@@ -65,8 +67,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       {nil, waiting_list} ->
         waiting_list
 
-      {reply_to, waiting_list} ->
-        GenServer.reply(reply_to, :ok)
+      {ack_fn, waiting_list} ->
+        ack_fn.()
         waiting_list
     end
   end

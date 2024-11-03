@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   @spec pull(
           t :: State.t(),
-          from_version :: Bedrock.version(),
+          from_version :: Bedrock.version() | :undefined,
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
@@ -36,6 +36,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           {:ok, t, []}
 
         {[{^from_version, _} | transactions], _} ->
+          {:ok, t, transactions}
+
+        {_transactions, _} when from_version != :undefined ->
+          {:error, :invalid_from_version}
+
+        {transactions, _} ->
           {:ok, t, transactions}
       end
     end
@@ -69,6 +75,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   def check_for_locked_outside_of_recovery(true, _), do: {:error, :not_locked}
   def check_for_locked_outside_of_recovery(false, %{mode: :locked}), do: {:error, :not_ready}
   def check_for_locked_outside_of_recovery(_, _), do: :ok
+
+  def check_from_version(:undefined, _t), do: :ok
 
   def check_from_version(from_version, t) when t.last_version < from_version,
     do: {:error, :version_too_new}

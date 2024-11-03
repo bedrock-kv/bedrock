@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
   import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 3]
   import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
-  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
+  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 3]
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
   import Bedrock.DataPlane.Log.Telemetry
@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:push, transaction, expected_version}, from, t) do
     trace_log_push_transaction(t.cluster, t.id, transaction, expected_version)
 
-    case push(t, transaction, expected_version, from) do
+    case push(t, expected_version, {transaction, fn -> GenServer.reply(from, :ok) end}) do
       {:waiting, t} -> t |> noreply()
       {:ok, t} -> t |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)

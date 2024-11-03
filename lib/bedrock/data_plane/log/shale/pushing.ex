@@ -2,11 +2,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Transaction
 
+  @type transaction_with_ack_fn :: {Transaction.t(), ack_fn()}
+  @type ack_fn :: (-> :ok)
+
   @spec push(
           State.t(),
-          Transaction.t(),
-          last_commit_version :: Bedrock.version(),
-          from :: GenServer.from()
+          expected_version :: Bedrock.version(),
+          transaction_with_ack_fn()
         ) ::
           {:ok | :waiting, State.t()}
           | {:error, :tx_out_of_order | :locked | :unavailable}
@@ -16,17 +18,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   def push(t, _, _, _) when t.mode != :running,
     do: {:error, :unavailable}
 
-  def push(t, transaction, expected_version, from)
+  def push(t, expected_version, transaction_with_ack_fn)
       when expected_version == t.last_version do
-    {:ok, version} = apply_transaction(t.log, transaction)
-
-    GenServer.reply(from, :ok)
+    {:ok, version} = apply_transaction(t.log, transaction_with_ack_fn)
 
     %{t | last_version: version, mode: :running}
     |> apply_pending_transactions()
   end
 
-  def push(t, transaction, expected_version, from)
+  def push(t, expected_version, transaction_with_ack_fn)
       when expected_version > t.last_version do
     {:waiting,
      %{
@@ -35,22 +35,20 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
            Map.put(
              t.pending_transactions,
              expected_version,
-             {transaction, from}
+             transaction_with_ack_fn
            )
      }}
   end
 
-  def push(_, _, _, _from), do: {:error, :tx_out_of_order}
+  def push(_, _, _), do: {:error, :tx_out_of_order}
 
   def apply_pending_transactions(t) do
     case Map.pop(t.pending_transactions, t.last_version) do
       {nil, _} ->
         {:ok, t}
 
-      {{transaction, from}, pending_transactions} ->
-        {:ok, version} = apply_transaction(t.log, transaction)
-
-        GenServer.reply(from, :ok)
+      {transaction_with_ack_fn, pending_transactions} ->
+        {:ok, version} = apply_transaction(t.log, transaction_with_ack_fn)
 
         %{
           t
@@ -61,9 +59,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
     end
   end
 
-  def apply_transaction(log, transaction) do
+  def apply_transaction(log, {transaction, ack_fn}) do
     version = Transaction.version(transaction)
     true = :ets.insert_new(log, {version, transaction})
+    ack_fn.()
     {:ok, version}
   end
 end

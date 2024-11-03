@@ -37,6 +37,10 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
           {:ok, Tree.t()}
           | Log.pull_errors()
           | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
+  def pull_transactions(tree, _, first_version, last_version)
+      when first_version == last_version,
+      do: {:ok, tree}
+
   def pull_transactions(tree, log_to_pull, first_version, last_version) do
     case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do
       {:ok, []} ->

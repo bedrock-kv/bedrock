@@ -31,6 +31,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :no_unassigned_storage
           | {:source_log_unavailable, log_to_pull :: Log.ref()}
           | {:failed_to_start_sequencer, reason :: term()}
+          | {:failed_to_playback_logs, %{(log_pid :: pid()) => reason :: term()}}
           | {:failed_to_copy_some_logs,
              [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:failed_to_start_proxy, node(), reason :: term()}
@@ -62,8 +63,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),
           old_log_ids_to_copy: [Log.id()] | :nothing,
-          version_vector: Bedrock.version_vector() | :undefined,
-          durable_version: Bedrock.version() | :undefined,
+          version_vector: Bedrock.version_vector() | {:start, 0},
+          durable_version: Bedrock.version() | :start,
           degraded_teams: [Bedrock.range_tag()],
           logs: [LogDescriptor.t()],
           storage_teams: [StorageTeamDescriptor.t()],
@@ -83,8 +84,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
             log_recovery_info_by_id: %{},
             storage_recovery_info_by_id: %{},
             old_log_ids_to_copy: [],
-            version_vector: :undefined,
-            durable_version: :undefined,
+            version_vector: {:start, 0},
+            durable_version: :start,
             degraded_teams: [],
             logs: [],
             storage_teams: [],
@@ -140,7 +141,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec put_version_vector(t(), Bedrock.version_vector()) :: t()
   def put_version_vector(t, version_vector), do: %{t | version_vector: version_vector}
 
-  @spec put_durable_version(t(), Bedrock.version() | :undefined) :: t()
+  @spec put_durable_version(t(), Bedrock.version() | :start) :: t()
   def put_durable_version(t, durable_version), do: %{t | durable_version: durable_version}
 
   @spec put_degraded_teams(t(), [Bedrock.range_tag()]) :: t()

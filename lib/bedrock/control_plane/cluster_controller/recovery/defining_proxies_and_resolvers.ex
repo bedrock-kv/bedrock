@@ -79,7 +79,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
           Bedrock.epoch(),
           available_nodes :: [node()],
           supervisor_otp_name :: atom()
-        ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
+        ) ::
+          {:ok, [pid()]}
+          | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
+          | {:error, {:failed_to_playback_logs, %{Log.ref() => reason :: term()}}}
   def define_resolvers(
         n_resolvers,
         version_vector,
@@ -142,7 +145,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
           logs :: [pid()],
           version_vector :: Bedrock.version_vector()
         ) ::
-          :ok | {:error, {:failed_to_copy_some_logs, %{Log.ref() => reason :: term()} | term()}}
+          :ok | {:error, {:failed_to_playback_logs, %{Log.ref() => reason :: term()}}}
   def playback_logs_into_resolvers(resolvers, logs, {first_version, last_version}) do
     resolvers
     |> pair_resolvers_with_logs(logs)
@@ -174,7 +177,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
     end)
     |> case do
       failures when failures == %{} -> :ok
-      failures -> {:error, {:failed_to_copy_some_logs, failures}}
+      failures -> {:error, {:failed_to_playback_logs, failures}}
     end
   end
 

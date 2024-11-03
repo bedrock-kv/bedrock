@@ -22,7 +22,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       when expected_version == t.last_version do
     {:ok, version} = apply_transaction(t.log, transaction_with_ack_fn)
 
-    %{t | last_version: version, mode: :running}
+    %{t | last_version: version}
     |> apply_pending_transactions()
   end
 
@@ -61,7 +61,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
   def apply_transaction(log, {transaction, ack_fn}) do
     version = Transaction.version(transaction)
-    true = :ets.insert_new(log, {version, transaction})
+    key_values = Transaction.key_values(transaction)
+    true = :ets.insert_new(log, {version, key_values})
     ack_fn.()
     {:ok, version}
   end

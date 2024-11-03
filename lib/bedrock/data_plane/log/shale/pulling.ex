@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   @spec pull(
           t :: State.t(),
-          from_version :: Bedrock.version() | :undefined,
+          from_version :: Bedrock.version() | :start,
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
@@ -38,24 +38,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         {[{^from_version, _} | transactions], _} ->
           {:ok, t, transactions}
 
-        {_transactions, _} when from_version != :undefined ->
-          {:error, :invalid_from_version}
-
-        {transactions, _} ->
+        {transactions, _} when from_version == :start ->
           {:ok, t, transactions}
+
+        _ ->
+          {:error, :version_not_found}
       end
     end
   end
 
-  def match_spec_for_version_gte(from_version) do
-    [
-      {
-        {:"$1", :_},
-        [{:>=, :"$1", from_version}],
-        [:"$_"]
-      }
-    ]
-  end
+  def match_spec_for_version_range(:start, last_version),
+    do: match_spec_for_version_lte(last_version)
 
   def match_spec_for_version_range(from_version, nil),
     do: match_spec_for_version_gte(from_version)
@@ -70,13 +63,33 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
     ]
   end
 
+  def match_spec_for_version_gte(version) do
+    [
+      {
+        {:"$1", :_},
+        [{:>=, :"$1", version}],
+        [:"$_"]
+      }
+    ]
+  end
+
+  def match_spec_for_version_lte(version) do
+    [
+      {
+        {:"$1", :_},
+        [{:"=<", :"$1", version}],
+        [:"$_"]
+      }
+    ]
+  end
+
   def check_for_locked_outside_of_recovery(in_recovery, t)
   def check_for_locked_outside_of_recovery(true, %{mode: :locked}), do: :ok
   def check_for_locked_outside_of_recovery(true, _), do: {:error, :not_locked}
   def check_for_locked_outside_of_recovery(false, %{mode: :locked}), do: {:error, :not_ready}
   def check_for_locked_outside_of_recovery(_, _), do: :ok
 
-  def check_from_version(:undefined, _t), do: :ok
+  def check_from_version(:start, _t), do: :ok
 
   def check_from_version(from_version, t) when t.last_version < from_version,
     do: {:error, :version_too_new}
@@ -88,8 +101,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def check_last_version(nil, _), do: {:ok, nil}
 
-  def check_last_version(last_version, from_version) when last_version >= from_version,
-    do: {:ok, last_version}
+  def check_last_version(last_version, from_version)
+      when last_version >= from_version or from_version == :start,
+      do: {:ok, last_version}
 
   def check_last_version(_, _), do: {:error, :invalid_last_version}
 

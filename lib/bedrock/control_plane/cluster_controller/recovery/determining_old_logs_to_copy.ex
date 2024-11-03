@@ -41,23 +41,24 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCo
           {:ok, [Log.id()], Bedrock.version_vector()} | {:error, :unable_to_meet_log_quorum}
   def determine_old_logs_to_copy([], _, _), do: {:error, :unable_to_meet_log_quorum}
 
-  def determine_old_logs_to_copy([log], recovery_info_by_id, 1) do
-    case Map.get(recovery_info_by_id, log.log_id) do
-      nil ->
-        {:error, :unable_to_meet_log_quorum}
+  # def determine_old_logs_to_copy([log], recovery_info_by_id, 1) do
+  #   case Map.get(recovery_info_by_id, log.log_id) do
+  #     nil ->
+  #       {:error, :unable_to_meet_log_quorum}
 
-      recovery_info ->
-        {:ok, [log.log_id], {recovery_info[:oldest_version], recovery_info[:last_version]}}
-    end
-  end
+  #     recovery_info ->
+  #       {:ok, [log.log_id], {recovery_info[:oldest_version], recovery_info[:last_version]}}
+  #   end
+  # end
 
-  def determine_old_logs_to_copy(logs, recovery_info_by_id, quorum) do
-    recovery_info_by_id
-    |> recovery_info_for_logs(logs)
+  def determine_old_logs_to_copy(old_logs, recovery_info_by_id, quorum) do
+    old_logs
+    |> recovery_info_for_logs(recovery_info_by_id)
     |> version_vectors_by_id()
     |> combinations(quorum)
     |> build_log_groups_and_vectors_from_combinations()
     |> rank_log_groups()
+    |> IO.inspect(label: "ranked_log_groups")
     |> List.first()
     |> case do
       nil ->
@@ -68,13 +69,14 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCo
     end
   end
 
-  @spec recovery_info_for_logs(%{Log.id() => Log.recovery_info()}, [LogDescriptor.t()]) ::
+  @spec recovery_info_for_logs([LogDescriptor.t()], %{Log.id() => Log.recovery_info()}) ::
           %{Log.id() => Log.recovery_info()}
-  def recovery_info_for_logs(recovery_info_by_id, logs) do
+  def recovery_info_for_logs(logs, recovery_info_by_id) do
     logs
     |> Enum.map(&{&1.log_id, Map.get(recovery_info_by_id, &1.log_id)})
     |> Enum.reject(&is_nil(elem(&1, 1)))
     |> Map.new()
+    |> IO.inspect(label: "recovery_info_for_logs")
   end
 
   @spec combinations([any()], non_neg_integer()) :: [[any()]]
@@ -104,8 +106,18 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCo
     |> Enum.filter(&valid_range?(&1))
   end
 
+  defp valid_range?({_, {:start, _newest}}), do: true
+  defp valid_range?({_, {_oldest, :start}}), do: false
   defp valid_range?({_, {oldest, newest}}), do: newest >= oldest
 
-  defp rank_log_groups(groups),
-    do: groups |> Enum.sort_by(fn {_, {oldest, newest}} -> newest - oldest end, :desc)
+  defp rank_log_groups(groups) do
+    groups
+    |> Enum.sort_by(
+      fn
+        {_, {:start, newest}} -> 1 + newest
+        {_, {oldest, newest}} -> newest - oldest
+      end,
+      :desc
+    )
+  end
 end

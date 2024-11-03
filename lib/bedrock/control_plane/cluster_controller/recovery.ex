@@ -224,7 +224,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
     t
     |> RecoveryAttempt.put_durable_version(0)
     |> RecoveryAttempt.put_old_log_ids_to_copy(:nothing)
-    |> RecoveryAttempt.put_version_vector({:undefined, 0})
+    |> RecoveryAttempt.put_version_vector({:start, 0})
     |> RecoveryAttempt.put_logs(
       log_vacancies
       |> Enum.map(&log_descriptor(&1, [0, 1]))

@@ -27,7 +27,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
 
   describe "Basalt.Database.last_durable_version/1" do
     @tag :tmp_dir
-    test "returns :undefined on a newly created database", %{tmp_dir: tmp_dir} do
+    test "returns 0 on a newly created database", %{tmp_dir: tmp_dir} do
       {:ok, db} = Database.open(random_name(), Path.join(tmp_dir, "c"))
       assert 0 == Database.last_durable_version(db)
     end

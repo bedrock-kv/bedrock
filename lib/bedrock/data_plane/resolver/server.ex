@@ -6,6 +6,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   use GenServer
 
+  @type reply_fn :: (aborted :: [integer()] -> :ok)
+
   def child_spec(_opts) do
     %{
       id: __MODULE__,
@@ -52,18 +54,18 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # When transactions come in a little out of order, we need to wait for the
   # previous transaction to be resolved before we can resolve the next one.
   def handle_call({:resolve_transactions, {last_version, next_version}, transactions}, from, t) do
-    %{t | waiting: Map.put(t.waiting, last_version, {next_version, transactions, from})}
+    %{t | waiting: Map.put(t.waiting, last_version, {next_version, transactions, reply_fn(from)})}
     |> noreply()
   end
 
   @impl true
   def handle_info({:resolve_next, next_version}, t) do
-    {{next_version, transactions, from}, waiting} = Map.pop(t.waiting, next_version)
+    {{next_version, transactions, reply_fn}, waiting} = Map.pop(t.waiting, next_version)
 
     {tree, aborted} = commit(t.tree, transactions, next_version)
     t = %{t | tree: tree, last_version: next_version, waiting: waiting}
 
-    GenServer.reply(from, {:ok, aborted})
+    reply_fn.(aborted)
 
     if Map.has_key?(t.waiting, next_version) do
       t |> noreply(continue: {:resolve_next, next_version})
@@ -71,6 +73,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       t |> noreply()
     end
   end
+
+  @spec reply_fn(GenServer.from()) :: reply_fn()
+  defp reply_fn(from), do: &GenServer.reply(from, &1)
 
   defp reply(%State{} = t, result), do: {:reply, result, t}
   defp reply(%State{} = t, result, continue: action), do: {:reply, result, t, {:continue, action}}

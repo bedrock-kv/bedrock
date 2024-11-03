@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.Transaction do
   defp decode_version(version) when is_integer(version), do: version
 
   defp decode_key_values(%{} = key_values), do: key_values
-  defp decode_key_values(key_values), do: key_values |> :erlang.binary_to_term()
+  defp decode_key_values(<<key_values::bytes>>), do: key_values |> :erlang.binary_to_term()
 
   @doc """
   Ensure that a transaction is encoded into on-disk form. If a transaction has

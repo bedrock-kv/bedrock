@@ -36,7 +36,7 @@ defmodule Bedrock.Internal.Tracing.DataPlaneLogTelemetry do
   def log_event(:lock_for_recovery, _, %{epoch: epoch}),
     do: info("Lock for recovery in epoch #{epoch}")
 
-  def log_event(:recover_from, _, %{source_log: nil, first_version: :undefined, last_version: 0}),
+  def log_event(:recover_from, _, %{source_log: nil, first_version: :start, last_version: 0}),
     do: info("Reset to initial version")
 
   def log_event(:recover_from, _, %{

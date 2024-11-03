@@ -7,16 +7,12 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   @spec recover_from(
           State.t(),
           Log.ref(),
-          first_version :: Bedrock.version() | :undefined,
+          first_version :: Bedrock.version() | :start,
           last_version :: Bedrock.version_vector()
         ) ::
           {:ok, State.t()} | {:error, reason :: term()}
   def recover_from(t, _, _, _) when t.mode != :locked,
     do: {:error, :lock_required}
-
-  def recover_from(t, _, :undefined, 0) do
-    {:ok, %{t | tree: nil, oldest_version: 0, last_version: 0}}
-  end
 
   def recover_from(t, source_log, first_version, last_version) do
     case pull_transactions(t.tree, source_log, first_version, last_version) do
@@ -31,18 +27,25 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   @spec pull_transactions(
           tree :: Tree.t() | nil,
           log_to_pull :: Log.ref(),
-          first_version :: Bedrock.version(),
+          first_version :: Bedrock.version() | :start,
           last_version :: Bedrock.version()
         ) ::
           {:ok, Tree.t()}
           | Log.pull_errors()
           | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
+  def pull_transactions(tree, nil, :start, 0),
+    do: {:ok, tree}
+
   def pull_transactions(tree, _, first_version, last_version)
       when first_version == last_version,
       do: {:ok, tree}
 
   def pull_transactions(tree, log_to_pull, first_version, last_version) do
-    case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do
+    IO.inspect({tree, log_to_pull, first_version, last_version},
+      label: "Resolver.pull_transactions"
+    )
+
+    case Log.pull(log_to_pull, first_version, last_version: last_version) do
       {:ok, []} ->
         {:ok, tree}
 
@@ -72,6 +75,6 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   @spec apply_transaction(Tree.t(), Transaction.t()) :: {Tree.t(), Bedrock.version()}
   def apply_transaction(tree, transaction) do
     {write_version, writes} = transaction |> Transaction.decode()
-    writes |> Enum.reduce(tree, &Tree.insert(&2, &1, write_version))
+    {writes |> Enum.reduce(tree, &Tree.insert(&2, &1, write_version)), write_version}
   end
 end

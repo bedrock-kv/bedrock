@@ -30,7 +30,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             id: nil,
             last_version: nil,
             log: nil,
-            mode: :waiting,
+            mode: :locked,
             oldest_version: nil,
             otp_name: nil,
             pending_transactions: %{},

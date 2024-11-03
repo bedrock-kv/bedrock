@@ -166,6 +166,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
+  @spec ack_fn(GenServer.from()) :: (-> :ok)
   defp ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
 
   defp noreply(t), do: {:noreply, t}

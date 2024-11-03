@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
-      emit_director_changed: 2
+      trace_director_changed: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -51,11 +51,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   def maybe_put_director_from_config(t)
       when t.director != t.config.transaction_system_layout.director do
     %{epoch: epoch, transaction_system_layout: %{director: director}} = t.config
+    trace_director_changed(director)
 
     t
     |> State.Changes.put_epoch(epoch)
     |> State.Changes.put_director(director)
-    |> emit_director_changed(director)
   end
 
   def maybe_put_director_from_config(t), do: t

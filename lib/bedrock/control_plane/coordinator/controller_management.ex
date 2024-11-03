@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     only: [put_director: 2, put_epoch: 2]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
-    only: [emit_director_changed: 2]
+    only: [trace_director_changed: 1]
 
   def timeout_in_ms(:old_director_stop), do: 100
 
@@ -28,10 +28,11 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     )
     |> case do
       {:ok, new_director} ->
+        trace_director_changed(new_director)
+
         t
         |> put_epoch(new_epoch)
         |> put_director(new_director)
-        |> emit_director_changed(new_director)
 
       {:error, reason} ->
         raise "Bedrock: failed to start director: #{inspect(reason)}"
@@ -46,10 +47,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   def stop_any_director_on_this_node!(t) do
     if node() == node(t.director) do
       DynamicSupervisor.terminate_child(t.supervisor_otp_name, t.director)
-
-      t
-      |> put_director(:unavailable)
-      |> emit_director_changed(:unavailable)
+      trace_director_changed(:unavailable)
+      t |> put_director(:unavailable)
     else
       t
     end

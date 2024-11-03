@@ -28,9 +28,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
-      emit_cluster_leadership_changed: 1,
-      trace_consensus_reached: 2,
-      emit_director_changed: 2
+      trace_started: 2,
+      trace_election_completed: 1,
+      trace_consensus_reached: 1,
+      trace_director_changed: 1
     ]
 
   require Logger
@@ -57,6 +58,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @impl true
   def init({cluster, otp_name}) do
+    trace_started(cluster, otp_name)
+
     with my_node <- Node.self(),
          {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
@@ -116,9 +119,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   def handle_info({:raft, :leadership_changed, {new_leader, _raft_epoch}}, t) do
+    trace_election_completed(new_leader)
+
     t
     |> put_leader_node(new_leader)
-    |> emit_cluster_leadership_changed()
     |> stop_any_director_on_this_node!()
     |> start_director_if_necessary()
     |> noreply()
@@ -139,8 +143,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     do: noreply(t)
 
   def handle_info({:raft, :consensus_reached, log, durable_txn_id, :latest}, t) do
+    trace_consensus_reached(durable_txn_id)
+
     t
-    |> trace_consensus_reached(durable_txn_id)
     |> durable_write_to_config_completed(log, durable_txn_id)
     |> noreply()
   end
@@ -150,10 +155,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     GenServer.cast(director, {:pong, self()})
 
     if is_nil(t.epoch) or t.epoch < epoch do
+      trace_director_changed(director)
+
       t
       |> State.Changes.put_epoch(epoch)
       |> State.Changes.put_director(director)
-      |> emit_director_changed(director)
     else
       t
     end

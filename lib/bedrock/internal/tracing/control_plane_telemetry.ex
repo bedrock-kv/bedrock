@@ -1,7 +1,7 @@
-defmodule Bedrock.Internal.Logging.ControlPlaneTelemetry do
+defmodule Bedrock.Internal.Tracing.ControlPlaneTelemetry do
   require Logger
 
-  defp handler_id, do: "bedrock_logging_controlplane_telemetry"
+  defp handler_id, do: "bedrock_trace_controlplane_telemetry"
 
   def start do
     :telemetry.attach_many(

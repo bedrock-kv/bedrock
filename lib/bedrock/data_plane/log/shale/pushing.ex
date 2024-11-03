@@ -2,7 +2,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Transaction
 
-  @spec push(State.t(), Transaction.t(), last_commit_version :: Bedrock.version(), from :: pid()) ::
+  @spec push(
+          State.t(),
+          Transaction.t(),
+          last_commit_version :: Bedrock.version(),
+          from :: GenServer.from()
+        ) ::
           {:ok | :waiting, State.t()}
           | {:error, :tx_out_of_order | :locked | :unavailable}
   def push(t, _, _, from) when t.mode == :locked and from != t.controller,

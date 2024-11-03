@@ -1,7 +1,7 @@
-defmodule Bedrock.Internal.Logging.MonitorTelemetry do
+defmodule Bedrock.Internal.Tracing.MonitorTelemetry do
   require Logger
 
-  defp handler_id, do: "bedrock_logging_monitor_telemetry"
+  defp handler_id, do: "bedrock_trace_monitor_telemetry"
 
   def start do
     :telemetry.attach_many(

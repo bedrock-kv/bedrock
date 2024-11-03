@@ -1,7 +1,7 @@
-defmodule Bedrock.Internal.Logging.CoordinationTelemetry do
+defmodule Bedrock.Internal.Tracing.CoordinationTelemetry do
   require Logger
 
-  defp handler_id, do: "bedrock_logging_coordination_telemetry"
+  defp handler_id, do: "bedrock_trace_coordination_telemetry"
 
   def start do
     :telemetry.attach_many(

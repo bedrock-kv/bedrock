@@ -42,9 +42,9 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   def handle_call({:info, fact_names}, _from, %State{} = t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
-  def handle_call({:push, transaction, prev_version}, _from, %State{} = t) do
+  def handle_call({:push, transaction, expected_version}, _from, %State{} = t) do
     t
-    |> push(transaction, prev_version)
+    |> push(transaction, expected_version)
     |> case do
       {:ok, t} -> t |> reply(:ok)
       {:error, _reason} = error -> t |> reply(error)

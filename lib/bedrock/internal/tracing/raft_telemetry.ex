@@ -1,7 +1,7 @@
-defmodule Bedrock.Internal.Logging.RaftTelemetry do
+defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   require Logger
 
-  defp handler_id, do: "bedrock_logging_raft_telemetry"
+  defp handler_id, do: "bedrock_trace_raft_telemetry"
 
   def start do
     :telemetry.attach_many(

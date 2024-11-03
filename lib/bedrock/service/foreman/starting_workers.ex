@@ -84,6 +84,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   @spec build_child_spec(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp build_child_spec(%{error: nil} = op) do
     op.manifest.worker.child_spec(
+      cluster: op.cluster,
       path: op.path,
       id: op.id,
       otp_name: op.otp_name,

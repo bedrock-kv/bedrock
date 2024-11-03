@@ -2,13 +2,13 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
   alias Bedrock.Service.Worker
   alias Bedrock.Service.Foreman
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
 
   @type mode :: :waiting | :locked | :running
 
   @type t :: %__MODULE__{
           cluster: module(),
-          controller: ClusterController.ref(),
+          director: Director.ref(),
           epoch: Bedrock.epoch(),
           id: Worker.id(),
           foreman: Foreman.ref(),
@@ -24,7 +24,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}}
         }
   defstruct cluster: nil,
-            controller: nil,
+            director: nil,
             epoch: nil,
             foreman: nil,
             id: nil,

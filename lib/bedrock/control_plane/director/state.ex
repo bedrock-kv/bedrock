@@ -1,7 +1,7 @@
-defmodule Bedrock.ControlPlane.ClusterController.State do
+defmodule Bedrock.ControlPlane.Director.State do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.ClusterController.NodeTracking
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
   @type t :: %__MODULE__{
           state: state(),
           epoch: Bedrock.epoch(),
-          my_relief: {Bedrock.epoch(), controller :: pid()} | nil,
+          my_relief: {Bedrock.epoch(), director :: pid()} | nil,
           cluster: module(),
           config: Config.t() | nil,
           coordinator: pid(),
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.ClusterController.State do
             last_transaction_layout_id: 0
 
   defmodule Changes do
-    alias Bedrock.ControlPlane.ClusterController.State
+    alias Bedrock.ControlPlane.Director.State
 
     @spec put_state(State.t(), State.state()) :: State.t()
     def put_state(t, state), do: %{t | state: state}

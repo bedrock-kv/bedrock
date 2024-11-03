@@ -1,34 +1,34 @@
 defmodule Bedrock.DataPlane.Proxy do
   use GenServer
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
 
   @type t :: %__MODULE__{
-          controller: ClusterController.ref(),
+          director: Director.ref(),
           layout: TransactionSystemLayout.t()
         }
 
-  defstruct ~w[controller layout]a
+  defstruct ~w[director layout]a
 
   def next_read_version(proxy), do: GenServer.call(proxy, :get_read_version)
 
   def child_spec(opts) do
     id = Keyword.get(opts, :id) || raise "Missing :id option"
-    controller = Keyword.get(opts, :controller) || raise "Missing :controller option"
+    director = Keyword.get(opts, :director) || raise "Missing :director option"
     layout = Keyword.get(opts, :layout) || raise "Missing :layout option"
 
     %{
       id: id,
-      start: {GenServer, :start_link, [__MODULE__, {controller, layout}]},
+      start: {GenServer, :start_link, [__MODULE__, {director, layout}]},
       restart: :transient
     }
   end
 
   @impl GenServer
-  def init({controller, layout}) do
+  def init({director, layout}) do
     {:ok,
      %__MODULE__{
-       controller: controller,
+       director: director,
        layout: layout
      }}
   end

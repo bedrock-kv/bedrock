@@ -8,9 +8,9 @@ defmodule Bedrock.Internal.Tracing.MonitorTelemetry do
       handler_id(),
       [
         [:bedrock, :cluster, :monitor, :advertise_capabilities],
-        [:bedrock, :cluster, :monitor, :searching_for_controller],
-        [:bedrock, :cluster, :monitor, :found_controller],
-        [:bedrock, :cluster, :monitor, :lost_controller],
+        [:bedrock, :cluster, :monitor, :searching_for_director],
+        [:bedrock, :cluster, :monitor, :found_director],
+        [:bedrock, :cluster, :monitor, :lost_director],
         [:bedrock, :cluster, :monitor, :searching_for_coordinator],
         [:bedrock, :cluster, :monitor, :found_coordinator]
       ],
@@ -29,35 +29,35 @@ defmodule Bedrock.Internal.Tracing.MonitorTelemetry do
         _config
       ) do
     Logger.info(
-      "Bedrock [#{cluster.name()}]: Advertising to controller (#{capabilities |> Enum.join(", ")}): #{inspect(running_services)}"
+      "Bedrock [#{cluster.name()}]: Advertising to director (#{capabilities |> Enum.join(", ")}): #{inspect(running_services)}"
     )
   end
 
   def log_event(
-        [:bedrock, :cluster, :monitor, :searching_for_controller],
+        [:bedrock, :cluster, :monitor, :searching_for_director],
         _measurements,
         %{cluster: cluster} = _metadata,
         _config
       ) do
-    Logger.info("Bedrock [#{cluster.name()}]: Searching for a controller")
+    Logger.info("Bedrock [#{cluster.name()}]: Searching for a director")
   end
 
   def log_event(
-        [:bedrock, :cluster, :monitor, :found_controller],
+        [:bedrock, :cluster, :monitor, :found_director],
         _measurements,
-        %{cluster: cluster, controller: controller} = _metadata,
+        %{cluster: cluster, director: director} = _metadata,
         _config
       ) do
-    Logger.info("Bedrock [#{cluster.name()}]: Found controller: #{inspect(controller)}")
+    Logger.info("Bedrock [#{cluster.name()}]: Found director: #{inspect(director)}")
   end
 
   def log_event(
-        [:bedrock, :cluster, :monitor, :lost_controller],
+        [:bedrock, :cluster, :monitor, :lost_director],
         _measurements,
         %{cluster: cluster} = _metadata,
         _config
       ) do
-    Logger.info("Bedrock [#{cluster.name()}]: Lost controller")
+    Logger.info("Bedrock [#{cluster.name()}]: Lost director")
   end
 
   def log_event(
@@ -86,7 +86,7 @@ defmodule Bedrock.Internal.Tracing.MonitorTelemetry do
         _config
       ) do
     Logger.info(
-      "Bedrock [#{cluster.name()}]: Missed #{inspect(missed_pongs)} pong#{if(missed_pongs > 1, do: "s", else: "")} from controller"
+      "Bedrock [#{cluster.name()}]: Missed #{inspect(missed_pongs)} pong#{if(missed_pongs > 1, do: "s", else: "")} from director"
     )
   end
 end

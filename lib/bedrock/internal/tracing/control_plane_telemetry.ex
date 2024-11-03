@@ -7,7 +7,7 @@ defmodule Bedrock.Internal.Tracing.ControlPlaneTelemetry do
     :telemetry.attach_many(
       handler_id(),
       [
-        [:bedrock, :cluster, :controller, :changed],
+        [:bedrock, :cluster, :director, :changed],
         [:bedrock, :cluster, :leadership, :changed]
       ],
       &__MODULE__.log_event/4,
@@ -36,17 +36,17 @@ defmodule Bedrock.Internal.Tracing.ControlPlaneTelemetry do
   end
 
   def log_event(
-        [:bedrock, :cluster, :controller, :changed],
+        [:bedrock, :cluster, :director, :changed],
         _measurements,
-        %{cluster: cluster, controller: controller} = _metadata,
+        %{cluster: cluster, director: director} = _metadata,
         _config
       ) do
-    if controller == :unavailable do
+    if director == :unavailable do
       Logger.info("Bedrock [#{cluster.name()}]: A quorum of coordinators is not present",
         ansi_color: :red
       )
     else
-      Logger.info("Bedrock [#{cluster.name()}]: Controller changed to #{inspect(controller)}",
+      Logger.info("Bedrock [#{cluster.name()}]: Director changed to #{inspect(director)}",
         ansi_color: :green
       )
     end

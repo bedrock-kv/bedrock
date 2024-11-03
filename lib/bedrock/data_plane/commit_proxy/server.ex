@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
@@ -24,7 +24,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec child_spec(
           opts :: [
             cluster: module(),
-            controller: pid(),
+            director: pid(),
             transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
             max_latency_in_ms: non_neg_integer(),
@@ -33,7 +33,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
-    controller = opts[:controller] || raise "Missing :controller option"
+    director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     max_latency_in_ms = opts[:max_latency_in_ms] || 2
     max_per_batch = opts[:max_per_batch] || 10
@@ -44,16 +44,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, controller, epoch, max_latency_in_ms, max_per_batch}
+           {cluster, director, epoch, max_latency_in_ms, max_per_batch}
          ]},
       restart: :temporary
     }
   end
 
-  def init({cluster, controller, epoch, max_latency_in_ms, max_per_batch}) do
+  def init({cluster, director, epoch, max_latency_in_ms, max_per_batch}) do
     %State{
       cluster: cluster,
-      controller: controller,
+      director: director,
       epoch: epoch,
       max_latency_in_ms: max_latency_in_ms,
       max_per_batch: max_per_batch
@@ -108,8 +108,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: t
 
   def ask_for_transaction_system_layout_if_needed(t) do
-    t.controller
-    |> ClusterController.fetch_transaction_system_layout(50)
+    t.director
+    |> Director.fetch_transaction_system_layout(50)
     |> case do
       {:ok, transaction_system_layout} ->
         %{t | transaction_system_layout: transaction_system_layout}

@@ -1,26 +1,26 @@
 defmodule Bedrock.Cluster.Monitor do
   @moduledoc """
   The `Bedrock.Cluster.Monitor` is the interface to a GenServer that is
-  responsible for finding and holding the current coordinator and controller for
+  responsible for finding and holding the current coordinator and director for
   a cluster.
   """
 
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: GenServer.name()
-  @type controller :: ClusterController.ref()
+  @type director :: Director.ref()
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @doc """
   Ping all of the nodes in the cluster.
   """
-  @spec ping_nodes(monitor_otp_name :: atom(), nodes :: [node()], controller, Bedrock.epoch()) ::
+  @spec ping_nodes(monitor_otp_name :: atom(), nodes :: [node()], director, Bedrock.epoch()) ::
           :ok
-  def ping_nodes(monitor_otp_name, nodes, cluster_controller, epoch),
-    do: nodes |> broadcast(monitor_otp_name, {:ping, cluster_controller, epoch})
+  def ping_nodes(monitor_otp_name, nodes, director, epoch),
+    do: nodes |> broadcast(monitor_otp_name, {:ping, director, epoch})
 
   @doc """
   Get a coordinator for the cluster. We ask the running instance of the cluster
@@ -32,12 +32,12 @@ defmodule Bedrock.Cluster.Monitor do
     do: monitor |> call(:fetch_coordinator, timeout_in_ms)
 
   @doc """
-  Get the current controller for the cluster.
+  Get the current director for the cluster.
   """
-  @spec fetch_controller(monitor :: ref(), timeout_in_ms()) ::
-          {:ok, ClusterController.ref()} | {:error, :unavailable}
-  def fetch_controller(monitor, timeout_in_ms \\ 5_000),
-    do: monitor |> call(:fetch_controller, timeout_in_ms)
+  @spec fetch_director(monitor :: ref(), timeout_in_ms()) ::
+          {:ok, Director.ref()} | {:error, :unavailable}
+  def fetch_director(monitor, timeout_in_ms \\ 5_000),
+    do: monitor |> call(:fetch_director, timeout_in_ms)
 
   @doc """
   Retrieve the list of nodes currently running the coordinator process for the
@@ -58,16 +58,16 @@ defmodule Bedrock.Cluster.Monitor do
     do: monitor |> call(:fetch_coordinator_nodes, timeout_in_ms)
 
   @doc """
-  Report the addition of a new worker to the cluster controller. It does so by
+  Report the addition of a new worker to the cluster director. It does so by
   sending an asynchronous message to the specified monitor process. The monitor
   process will then gather some information from the worker and pass it to the
-  cluster controller.
+  cluster director.
 
   ## Parameters
     - `monitor`: The GenServer name or PID of the monitor that will handle the
       new worker information.
     - `worker`: The PID of the new worker process that has been added. It will
-      be interrogated for details before passing it to the cluster controller.
+      be interrogated for details before passing it to the cluster director.
 
   ## Returns
     - `:ok`: Always returns `:ok` as the message is sent asynchronously.

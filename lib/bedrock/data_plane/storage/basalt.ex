@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Basalt do
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Database
 
@@ -55,7 +55,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     def shutdown(%State{} = t),
       do: :ok = Database.close(t.database)
 
-    @spec lock_for_recovery(State.t(), ClusterController.ref(), Bedrock.epoch()) ::
+    @spec lock_for_recovery(State.t(), Director.ref(), Bedrock.epoch()) ::
             {:ok, State.t()} | {:error, :newer_epoch_exists | String.t()}
     def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch,
       do: {:error, :newer_epoch_exists}

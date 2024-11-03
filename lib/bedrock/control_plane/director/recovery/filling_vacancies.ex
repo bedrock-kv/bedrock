@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.FillingVacancies do
+defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor

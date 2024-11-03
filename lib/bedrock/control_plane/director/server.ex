@@ -1,16 +1,16 @@
-defmodule Bedrock.ControlPlane.ClusterController.Server do
+defmodule Bedrock.ControlPlane.Director.Server do
   use GenServer
 
-  alias Bedrock.ControlPlane.ClusterController
-  alias Bedrock.ControlPlane.ClusterController.NodeTracking
-  alias Bedrock.ControlPlane.ClusterController.State
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Director.NodeTracking
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
 
-  import Bedrock.ControlPlane.ClusterController.State.Changes,
+  import Bedrock.ControlPlane.Director.State.Changes,
     only: [put_last_transaction_layout_id: 2, put_my_relief: 2, put_state: 2]
 
-  import Bedrock.ControlPlane.ClusterController.Nodes,
+  import Bedrock.ControlPlane.Director.Nodes,
     only: [
       request_to_rejoin: 5,
       node_added_worker: 4,
@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
       ping_all_coordinators: 1
     ]
 
-  import Bedrock.ControlPlane.ClusterController.Recovery,
+  import Bedrock.ControlPlane.Director.Recovery,
     only: [
       try_to_recover: 1
     ]
@@ -58,9 +58,9 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   end
 
   @impl true
-  def handle_continue({:start_recovery, {_epoch, old_controller}}, t) do
-    if :unavailable != old_controller do
-      old_controller |> ClusterController.stand_relieved({t.epoch, self()})
+  def handle_continue({:start_recovery, {_epoch, old_director}}, t) do
+    if :unavailable != old_director do
+      old_director |> Director.stand_relieved({t.epoch, self()})
     end
 
     t
@@ -75,7 +75,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
     do: t |> ping_all_coordinators() |> noreply()
 
   @impl true
-  # If we have been relieved by another controller in a newer epoch, we should
+  # If we have been relieved by another director in a newer epoch, we should
   # not accept any calls from the cluster. We should reply with an error
   # informing the caller that we haven been relieved and who controls now
   # controls the cluster (and for what epoch).
@@ -101,7 +101,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   end
 
   @impl true
-  # If we are relieved by another controller, we should not accept any casts
+  # If we are relieved by another director, we should not accept any casts
   # from the cluster. We will ignore them. We are no longer relevant and are of
   # no further use.
   def handle_cast({:ping, from}, t) when not is_nil(t.my_relief),
@@ -125,7 +125,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Server do
   def handle_cast({:stand_relieved, {new_epoch, _}}, t) when new_epoch <= t.epoch,
     do: t |> noreply()
 
-  def handle_cast({:stand_relieved, {_new_epoch, _new_controller} = my_relief}, t),
+  def handle_cast({:stand_relieved, {_new_epoch, _new_director} = my_relief}, t),
     do: t |> put_my_relief(my_relief) |> put_state(:stopped) |> noreply()
 
   def handle_cast({:node_added_worker, node, worker_info}, t) do

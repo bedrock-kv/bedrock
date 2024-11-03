@@ -125,7 +125,7 @@ defmodule Bedrock.DataPlane.Log do
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new
-  transactions. This mechanism is used by a newly elected cluster controller
+  transactions. This mechanism is used by a newly elected cluster director
   to prevent new transactions from being accepted while it is establishing
   its authority.
 

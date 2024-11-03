@@ -1,7 +1,7 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.Client
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
 
@@ -10,7 +10,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.Internal.Tracing.DataPlaneLogTelemetry
   alias Bedrock.Internal.Tracing.MonitorTelemetry
   alias Bedrock.Internal.Tracing.RaftTelemetry
-  alias Bedrock.Internal.Tracing.RecoveryTelemetry
+  alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
 
   require Logger
 
@@ -94,7 +94,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       :log -> :ok = DataPlaneLogTelemetry.start()
       :monitor -> :ok = MonitorTelemetry.start()
       :raft -> :ok = RaftTelemetry.start()
-      :recovery -> :ok = RecoveryTelemetry.start()
+      :recovery -> :ok = RecoveryTracing.start()
     end)
 
     children =
@@ -157,12 +157,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec controller!(module()) :: ClusterController.ref()
-  def controller!(module) do
-    module.fetch_controller()
+  @spec director!(module()) :: Director.ref()
+  def director!(module) do
+    module.fetch_director()
     |> case do
-      {:ok, controller} -> controller
-      {:error, _} -> raise "No controller available"
+      {:ok, director} -> director
+      {:error, _} -> raise "No director available"
     end
   end
 

@@ -1,8 +1,8 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.StartingSequencer do
+defmodule Bedrock.ControlPlane.Director.Recovery.StartingSequencer do
   alias Bedrock.DataPlane.Sequencer
 
   def start_sequencer(
-        controller,
+        director,
         epoch,
         {_first_version, last_committed_version},
         start_supervised
@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.StartingSequencer do
     with {:ok, sequencer} <-
            start_supervised.(
              Sequencer.child_spec(
-               controller: controller,
+               director: director,
                epoch: epoch,
                last_committed_version: last_committed_version
              ),

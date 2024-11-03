@@ -14,10 +14,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       durable_write_to_config_completed: 3
     ]
 
-  import Bedrock.ControlPlane.Coordinator.ControllerManagement,
+  import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
-      start_cluster_controller_if_necessary: 1,
-      stop_any_cluster_controller_on_this_node!: 1
+      start_director_if_necessary: 1,
+      stop_any_director_on_this_node!: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       emit_cluster_leadership_changed: 1,
       trace_consensus_reached: 2,
-      emit_cluster_controller_changed: 2
+      emit_director_changed: 2
     ]
 
   require Logger
@@ -95,10 +95,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_call(:fetch_config, _from, t), do: t |> reply({:ok, t.config})
 
-  def handle_call(:fetch_controller, _from, t) when t.controller == :unavailable,
+  def handle_call(:fetch_director, _from, t) when t.director == :unavailable,
     do: t |> reply({:error, :unavailable})
 
-  def handle_call(:fetch_controller, _from, t), do: t |> reply({:ok, t.controller})
+  def handle_call(:fetch_director, _from, t), do: t |> reply({:ok, t.director})
 
   def handle_call({:write_config, config}, from, t) do
     t
@@ -119,8 +119,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> put_leader_node(new_leader)
     |> emit_cluster_leadership_changed()
-    |> stop_any_cluster_controller_on_this_node!()
-    |> start_cluster_controller_if_necessary()
+    |> stop_any_director_on_this_node!()
+    |> start_director_if_necessary()
     |> noreply()
   end
 
@@ -146,14 +146,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_cast({:ping, {epoch, controller}}, t) do
-    GenServer.cast(controller, {:pong, self()})
+  def handle_cast({:ping, {epoch, director}}, t) do
+    GenServer.cast(director, {:pong, self()})
 
     if is_nil(t.epoch) or t.epoch < epoch do
       t
       |> State.Changes.put_epoch(epoch)
-      |> State.Changes.put_controller(controller)
-      |> emit_cluster_controller_changed(controller)
+      |> State.Changes.put_director(director)
+      |> emit_director_changed(director)
     else
       t
     end

@@ -41,7 +41,7 @@ defmodule Bedrock.DataPlane.Storage do
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions
-  from the logs. This mechanism is used by a newly elected cluster controller
+  from the logs. This mechanism is used by a newly elected cluster director
   to prevent new transactions from being accepted while it is establishing
   its authority.
 

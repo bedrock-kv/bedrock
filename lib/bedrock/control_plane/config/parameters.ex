@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
 
   ## Fields:
   - `nodes` - A list of nodes that are participating in the cluster.
-  - `ping_rate_in_hz` - The rate at which the controller is to ping the nodes,
+  - `ping_rate_in_hz` - The rate at which the director is to ping the nodes,
     expressed in Hertz.
   - `retransmission_rate_in_hz` - The rate at which the system is to retransmit
     messages, expressed in Hertz.

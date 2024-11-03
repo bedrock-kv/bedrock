@@ -1,7 +1,7 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery do
+defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.ClusterController.State
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
@@ -37,10 +37,10 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       update_transaction_system_layout: 2
     ]
 
-  import Bedrock.ControlPlane.ClusterController.State.Changes,
+  import Bedrock.ControlPlane.Director.State.Changes,
     only: [put_state: 2, update_config: 2]
 
-  import Bedrock.ControlPlane.ClusterController.Telemetry
+  import Bedrock.ControlPlane.Director.Telemetry
 
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
   import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
@@ -83,7 +83,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
       )
       |> update_transaction_system_layout(fn transaction_system_layout ->
         transaction_system_layout
-        |> TransactionSystemLayout.Changes.put_controller(self())
+        |> TransactionSystemLayout.Changes.put_director(self())
         |> TransactionSystemLayout.Changes.put_sequencer(nil)
         |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
         |> TransactionSystemLayout.Changes.put_data_distributor(nil)

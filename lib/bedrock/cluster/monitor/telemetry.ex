@@ -1,12 +1,12 @@
 defmodule Bedrock.Cluster.Monitor.Telemetry do
   alias Bedrock.Telemetry
   alias Bedrock.Cluster
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
 
   @spec trace_advertising_capabilities(
           cluster :: module(),
           capabilities :: [Cluster.capability()],
-          running_services :: ClusterController.running_service_info_by_id()
+          running_services :: Director.running_service_info_by_id()
         ) ::
           :ok
   def trace_advertising_capabilities(cluster, capabilities, running_services) do
@@ -17,16 +17,16 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
     })
   end
 
-  def trace_searching_for_controller(cluster) do
-    Telemetry.execute([:bedrock, :cluster, :monitor, :searching_for_controller], %{}, %{
+  def trace_searching_for_director(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :searching_for_director], %{}, %{
       cluster: cluster
     })
   end
 
-  def trace_found_controller(cluster, controller) do
-    Telemetry.execute([:bedrock, :cluster, :monitor, :found_controller], %{}, %{
+  def trace_found_director(cluster, director) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :found_director], %{}, %{
       cluster: cluster,
-      controller: controller
+      director: director
     })
   end
 
@@ -43,8 +43,8 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
     })
   end
 
-  def trace_lost_controller(cluster) do
-    Telemetry.execute([:bedrock, :cluster, :monitor, :lost_controller], %{}, %{
+  def trace_lost_director(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :lost_director], %{}, %{
       cluster: cluster
     })
   end

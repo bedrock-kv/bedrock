@@ -1,8 +1,8 @@
-defmodule Bedrock.ControlPlane.ClusterController.ChangingParameters do
-  alias Bedrock.ControlPlane.ClusterController.State
+defmodule Bedrock.ControlPlane.Director.ChangingParameters do
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.Parameters
 
-  import Bedrock.ControlPlane.ClusterController.State.Changes,
+  import Bedrock.ControlPlane.Director.State.Changes,
     only: [update_config: 2]
 
   import Bedrock.ControlPlane.Config.Changes,

@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.ReplayingOldLogs do
+defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
   alias Bedrock.DataPlane.Log
 
   @doc """

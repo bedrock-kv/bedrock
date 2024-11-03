@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Sequencer.Server do
   alias Bedrock.DataPlane.Sequencer.State
 
-  import Bedrock.DataPlane.Sequencer.ControllerFeedback,
+  import Bedrock.DataPlane.Sequencer.DirectorFeedback,
     only: [
       accept_invitation: 1,
       decline_invitation: 2
@@ -10,7 +10,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   use GenServer
 
   def child_spec(opts) do
-    controller = opts[:controller] || raise "Missing :controller option"
+    director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
 
     last_committed_version =
@@ -22,16 +22,16 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {controller, epoch, last_committed_version}
+           {director, epoch, last_committed_version}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({controller, epoch, last_committed_version}) do
+  def init({director, epoch, last_committed_version}) do
     %State{
-      controller: controller,
+      director: director,
       epoch: epoch,
       last_committed_version: last_committed_version
     }
@@ -39,11 +39,11 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
-  def handle_cast({:recruitment_invitation, controller, new_epoch, last_committed_version}, t)
+  def handle_cast({:recruitment_invitation, director, new_epoch, last_committed_version}, t)
       when new_epoch > t.epoch do
     %{
       t
-      | controller: controller,
+      | director: director,
         epoch: new_epoch,
         last_committed_version: last_committed_version
     }
@@ -51,8 +51,8 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     |> noreply()
   end
 
-  def handle_cast({:recruitment_invitation, controller, _, _, _}, t),
-    do: t |> decline_invitation(controller) |> noreply()
+  def handle_cast({:recruitment_invitation, director, _, _, _}, t),
+    do: t |> decline_invitation(director) |> noreply()
 
   @impl GenServer
   def handle_call(:next_read_version, _from, t),

@@ -64,7 +64,7 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
     t
   end
 
-  def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t
+  def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),
     do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())

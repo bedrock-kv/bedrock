@@ -7,14 +7,14 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.State,
     only: [
-      put_controller: 2
+      put_director: 2
     ]
 
   import Bedrock.Cluster.Monitor.Advertising,
     only: [
       advertise_capabilities: 1,
-      advertise_worker_to_cluster_controller: 2,
-      publish_cluster_controller_replaced_to_pubsub: 1
+      advertise_worker_to_director: 2,
+      publish_director_replaced_to_pubsub: 1
     ]
 
   import Bedrock.Cluster.Monitor.Discovery,
@@ -25,7 +25,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.PingPong,
     only: [
-      ping_controller: 1,
+      ping_director: 1,
       pong_missed: 1,
       pong_received: 1,
       reset_ping_timer: 1
@@ -33,11 +33,11 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   import Bedrock.Cluster.Monitor.Telemetry,
     only: [
-      trace_searching_for_controller: 1,
+      trace_searching_for_director: 1,
       trace_searching_for_coordinator: 1,
       trace_found_coordinator: 2,
-      trace_found_controller: 2,
-      trace_lost_controller: 1,
+      trace_found_director: 2,
+      trace_lost_director: 1,
       trace_missed_pong: 2
     ]
 
@@ -75,7 +75,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       descriptor: descriptor,
       path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
-      controller: :unavailable,
+      director: :unavailable,
       mode: mode,
       capabilities: capabilities
     }
@@ -93,7 +93,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       {:ok, coordinator} ->
         t
         |> found_coordinator(coordinator)
-        |> noreply(:find_current_controller)
+        |> noreply(:find_current_director)
 
       {:error, :unavailable} ->
         t
@@ -102,20 +102,20 @@ defmodule Bedrock.Cluster.Monitor.Server do
     end
   end
 
-  def handle_continue(:find_current_controller, t) do
-    trace_searching_for_controller(t.cluster)
+  def handle_continue(:find_current_director, t) do
+    trace_searching_for_director(t.cluster)
 
     t.coordinator
-    |> Coordinator.fetch_controller(100)
+    |> Coordinator.fetch_director(100)
     |> case do
-      {:ok, controller} when is_pid(controller) ->
+      {:ok, director} when is_pid(director) ->
         t
-        |> found_controller(controller)
+        |> found_director(director)
         |> noreply()
 
       {:error, reason} when reason in [:timeout, :unavailable] ->
         t
-        |> continue_search_for_controller()
+        |> continue_search_for_director()
         |> noreply()
     end
   end
@@ -135,42 +135,42 @@ defmodule Bedrock.Cluster.Monitor.Server do
     |> change_coordinator(:unavailable)
   end
 
-  def found_controller(t, controller) do
-    trace_found_controller(t.cluster, controller)
+  def found_director(t, director) do
+    trace_found_director(t.cluster, director)
 
     t
-    |> cancel_timer(:find_current_controller)
-    |> change_controller(controller)
+    |> cancel_timer(:find_current_director)
+    |> change_director(director)
   end
 
-  def continue_search_for_controller(t) do
+  def continue_search_for_director(t) do
     t
-    |> change_controller(:unavailable)
-    |> cancel_timer(:find_current_controller)
-    |> set_timer(:find_current_controller, t.cluster.monitor_ping_timeout_in_ms())
+    |> change_director(:unavailable)
+    |> cancel_timer(:find_current_director)
+    |> set_timer(:find_current_director, t.cluster.monitor_ping_timeout_in_ms())
   end
 
-  def change_controller(t, controller) when t.controller == controller, do: t
+  def change_director(t, director) when t.director == director, do: t
 
-  def change_controller(t, controller) do
+  def change_director(t, director) do
     t
-    |> put_controller(controller)
-    |> publish_cluster_controller_replaced_to_pubsub()
+    |> put_director(director)
+    |> publish_director_replaced_to_pubsub()
     |> case do
-      %{controller: :unavailable} ->
+      %{director: :unavailable} ->
         t
 
       t ->
         t
         |> reset_ping_timer()
-        |> ping_controller()
+        |> ping_director()
         |> advertise_capabilities()
         |> case do
-          {:error, {:relieved_by, {_new_epoch, new_controller}}} ->
-            t |> change_controller(new_controller)
+          {:error, {:relieved_by, {_new_epoch, new_director}}} ->
+            t |> change_director(new_director)
 
           {:error, :unavailable} ->
-            t |> change_controller(:unavailable)
+            t |> change_director(:unavailable)
 
           {:ok, t} ->
             t
@@ -189,11 +189,11 @@ defmodule Bedrock.Cluster.Monitor.Server do
   def handle_call(:fetch_coordinator, _from, t),
     do: t |> reply({:ok, t.coordinator})
 
-  def handle_call(:fetch_controller, _from, %{controller: :unavailable} = t),
+  def handle_call(:fetch_director, _from, %{director: :unavailable} = t),
     do: t |> reply({:error, :unavailable})
 
-  def handle_call(:fetch_controller, _from, t),
-    do: t |> reply({:ok, t.controller})
+  def handle_call(:fetch_director, _from, t),
+    do: t |> reply({:ok, t.director})
 
   def handle_call(:fetch_coordinator_nodes, _from, t),
     do: t |> reply({:ok, t.descriptor.coordinator_nodes})
@@ -202,16 +202,16 @@ defmodule Bedrock.Cluster.Monitor.Server do
   def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: t |> noreply(:find_a_live_coordinator)
 
-  def handle_info({:timeout, :find_current_controller}, t),
-    do: t |> noreply(:find_current_controller)
+  def handle_info({:timeout, :find_current_director}, t),
+    do: t |> noreply(:find_current_director)
 
   def handle_info({:timeout, :ping}, t) when t.missed_pongs > 3 do
-    trace_lost_controller(t.cluster)
+    trace_lost_director(t.cluster)
 
     t
     |> cancel_timer(:ping)
-    |> change_controller(:unavailable)
-    |> noreply(:find_current_controller)
+    |> change_director(:unavailable)
+    |> noreply(:find_current_director)
   end
 
   def handle_info({:timeout, :ping}, t) do
@@ -220,7 +220,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
     t
     |> pong_missed()
     |> reset_ping_timer()
-    |> ping_controller()
+    |> ping_director()
     |> noreply()
   end
 
@@ -237,22 +237,22 @@ defmodule Bedrock.Cluster.Monitor.Server do
   @doc false
   @impl GenServer
 
-  def handle_cast({:pong, {_epoch, controller}}, t) when controller == t.controller do
+  def handle_cast({:pong, {_epoch, director}}, t) when director == t.director do
     t
     |> pong_received()
     |> noreply()
   end
 
-  def handle_cast({:pong, {_epoch, controller}}, t) do
+  def handle_cast({:pong, {_epoch, director}}, t) do
     t
     |> pong_received()
     |> cancel_all_timers()
-    |> change_controller(controller)
+    |> change_director(director)
     |> noreply()
   end
 
   def handle_cast({:advertise_worker, worker_pid}, t),
-    do: t |> advertise_worker_to_cluster_controller(worker_pid) |> noreply()
+    do: t |> advertise_worker_to_director(worker_pid) |> noreply()
 
   defp noreply(t), do: {:noreply, t}
   defp noreply(t, continue), do: {:noreply, t, {:continue, continue}}

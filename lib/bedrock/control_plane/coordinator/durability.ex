@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
-      emit_cluster_controller_changed: 2
+      emit_director_changed: 2
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -45,20 +45,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       |> put_config(newest_durable_config)
       |> put_last_durable_txn_id(txn_id)
     end)
-    |> maybe_put_controller_from_config()
+    |> maybe_put_director_from_config()
   end
 
-  def maybe_put_controller_from_config(t)
-      when t.controller != t.config.transaction_system_layout.controller do
-    %{epoch: epoch, transaction_system_layout: %{controller: controller}} = t.config
+  def maybe_put_director_from_config(t)
+      when t.director != t.config.transaction_system_layout.director do
+    %{epoch: epoch, transaction_system_layout: %{director: director}} = t.config
 
     t
     |> State.Changes.put_epoch(epoch)
-    |> State.Changes.put_controller(controller)
-    |> emit_cluster_controller_changed(controller)
+    |> State.Changes.put_director(director)
+    |> emit_director_changed(director)
   end
 
-  def maybe_put_controller_from_config(t), do: t
+  def maybe_put_director_from_config(t), do: t
 
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list

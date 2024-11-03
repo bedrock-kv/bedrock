@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   require Logger
 
   defstruct ~w[
-    controller
+    director
     state
     tag_ranges
     log_info_table
@@ -17,9 +17,9 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   ]a
   @type t :: %__MODULE__{}
 
-  @spec invite_to_rejoin(t :: GenServer.name(), controller :: pid(), Bedrock.epoch()) :: :ok
-  def invite_to_rejoin(t, controller, epoch),
-    do: GenServer.cast(t, {:invite_to_rejoin, controller, epoch})
+  @spec invite_to_rejoin(t :: GenServer.name(), director :: pid(), Bedrock.epoch()) :: :ok
+  def invite_to_rejoin(t, director, epoch),
+    do: GenServer.cast(t, {:invite_to_rejoin, director, epoch})
 
   @spec storage_team_for_key(cluster_name :: Cluster.name(), Bedrock.key()) ::
           {:ok, Team.t()} | {:error, :not_found}
@@ -44,17 +44,17 @@ defmodule Bedrock.ControlPlane.DataDistributor do
   def otp_name(cluster), do: Cluster.otp_name(cluster, :data_distributor)
 
   def start_link(opts) do
-    controller = opts[:controller] || raise "Missing :controller option"
+    director = opts[:director] || raise "Missing :director option"
 
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-    GenServer.start_link(__MODULE__, {controller}, name: otp_name)
+    GenServer.start_link(__MODULE__, {director}, name: otp_name)
   end
 
   @impl GenServer
-  def init({controller}) do
+  def init({director}) do
     {:ok,
      %__MODULE__{
-       controller: controller,
+       director: director,
        state: :starting,
        tag_ranges: TagRanges.new(),
        log_info_table: LogInfoTable.new(),

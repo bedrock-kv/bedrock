@@ -5,12 +5,12 @@ defmodule Bedrock.DataPlane.Sequencer do
 
   @spec invite_to_rejoin(
           t :: ref(),
-          controller :: pid(),
+          director :: pid(),
           Bedrock.epoch(),
           last_committed_version :: Bedrock.version()
         ) :: :ok
-  def invite_to_rejoin(t, controller, epoch, last_committed_version),
-    do: t |> cast({:invite_to_rejoin, controller, epoch, last_committed_version})
+  def invite_to_rejoin(t, director, epoch, last_committed_version),
+    do: t |> cast({:invite_to_rejoin, director, epoch, last_committed_version})
 
   @spec next_read_version(ref()) :: {:ok, Bedrock.version()}
   def next_read_version(t),

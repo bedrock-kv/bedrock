@@ -1,6 +1,6 @@
-defmodule Bedrock.ControlPlane.ClusterController.NodeTrackingTest do
+defmodule Bedrock.ControlPlane.Director.NodeTrackingTest do
   use ExUnit.Case, async: true
-  alias Bedrock.ControlPlane.ClusterController.NodeTracking
+  alias Bedrock.ControlPlane.Director.NodeTracking
 
   defp nodes, do: [:node1, :node2, :node3]
 

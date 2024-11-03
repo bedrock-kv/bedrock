@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   ## Fields
     - `id` - The unique identifier of the layout.
-    - `controller` - The full otp name of the cluster controller.
+    - `director` - The full otp name of the cluster director.
     - `sequencer` - The full otp name of the cluster sequencer.
     - `rate_keeper` - The full otp name of the system rate-keeper.
     - `data_distributor` - The full otp name of the cluster data distributor.
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   """
   @type t :: %__MODULE__{
           id: id(),
-          controller: pid() | nil,
+          director: pid() | nil,
           sequencer: pid() | nil,
           rate_keeper: pid() | nil,
           data_distributor: pid() | nil,
@@ -46,7 +46,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   @type id :: non_neg_integer()
 
   defstruct id: 0,
-            controller: nil,
+            director: nil,
             sequencer: nil,
             rate_keeper: nil,
             data_distributor: nil,

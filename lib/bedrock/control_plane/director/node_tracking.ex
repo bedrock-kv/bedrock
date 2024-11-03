@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.NodeTracking do
+defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @moduledoc """
   The NodeTracking module is responsible for keeping track of the state of the
   nodes in the cluster. This includes the list of capabilities that the node is

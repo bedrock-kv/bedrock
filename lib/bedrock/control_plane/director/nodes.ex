@@ -1,16 +1,16 @@
-defmodule Bedrock.ControlPlane.ClusterController.Nodes do
+defmodule Bedrock.ControlPlane.Director.Nodes do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.ClusterController
-  alias Bedrock.ControlPlane.ClusterController.NodeTracking
-  alias Bedrock.ControlPlane.ClusterController.State
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Director.NodeTracking
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   use Bedrock.Internal.TimerManagement
 
-  import Bedrock.ControlPlane.ClusterController.State.Changes,
+  import Bedrock.ControlPlane.Director.State.Changes,
     only: [update_config: 2]
 
   import Bedrock.ControlPlane.Config.Changes,
@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
           State.t(),
           node(),
           capabilities :: [Bedrock.Cluster.capability()],
-          running_services :: [ClusterController.running_service_info()],
+          running_services :: [Director.running_service_info()],
           at :: DateTime.t()
         ) ::
           {:ok, State.t()} | {:error, :nodes_must_be_added_by_an_administrator}
@@ -101,7 +101,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Nodes do
     t
   end
 
-  @spec add_running_service(State.t(), node(), info :: [ClusterController.running_service_info()]) ::
+  @spec add_running_service(State.t(), node(), info :: [Director.running_service_info()]) ::
           State.t()
   def add_running_service(t, node, info) do
     t

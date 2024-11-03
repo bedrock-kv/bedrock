@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingOldLogsToCopy do
+defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
 

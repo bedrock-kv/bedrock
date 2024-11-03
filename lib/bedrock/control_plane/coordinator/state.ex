@@ -1,5 +1,5 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.Raft
 
@@ -8,7 +8,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           leader_node: node() | :undecided,
           my_node: node(),
           epoch: Bedrock.epoch(),
-          controller: ClusterController.ref() | :unavailable,
+          director: Director.ref() | :unavailable,
           otp_name: atom(),
           raft: Raft.t(),
           supervisor_otp_name: atom(),
@@ -20,7 +20,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             leader_node: :undecided,
             my_node: nil,
             epoch: nil,
-            controller: :unavailable,
+            director: :unavailable,
             otp_name: nil,
             raft: nil,
             supervisor_otp_name: nil,
@@ -34,10 +34,10 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_epoch(t :: State.t(), epoch :: Bedrock.epoch()) :: State.t()
     def put_epoch(t, epoch), do: %{t | epoch: epoch}
 
-    @spec put_controller(t :: State.t(), new_controller :: ClusterController.ref() | :unavailable) ::
+    @spec put_director(t :: State.t(), new_director :: Director.ref() | :unavailable) ::
             State.t()
-    def put_controller(t, new_controller),
-      do: %{t | controller: new_controller}
+    def put_director(t, new_director),
+      do: %{t | director: new_director}
 
     @spec put_leader_node(t :: State.t(), leader_node :: node()) :: State.t()
     def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}

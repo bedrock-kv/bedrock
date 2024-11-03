@@ -1,2 +1,0 @@
-defmodule Bedrock.ControlPlane.ClusterController.Initialization do
-end

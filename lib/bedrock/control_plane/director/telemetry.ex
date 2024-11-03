@@ -1,9 +1,9 @@
-defmodule Bedrock.ControlPlane.ClusterController.Telemetry do
-  alias Bedrock.ControlPlane.ClusterController.State
+defmodule Bedrock.ControlPlane.Director.Telemetry do
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Telemetry
 
   @doc """
-  Emits a telemetry event indicating that the cluster controller has started
+  Emits a telemetry event indicating that the cluster director has started
   the recovery process.
   """
   @spec trace_recovery_attempt_started(t :: State.t()) :: :ok

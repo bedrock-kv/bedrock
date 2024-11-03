@@ -2,7 +2,7 @@ defmodule Bedrock.Cluster do
   alias Bedrock.Cluster
   alias Bedrock.Client
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
@@ -28,8 +28,8 @@ defmodule Bedrock.Cluster do
   @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
-  @callback fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
-  @callback controller!() :: ClusterController.ref()
+  @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
+  @callback director!() :: Director.ref()
   @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback coordinator!() :: Coordinator.ref()
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
@@ -128,10 +128,10 @@ defmodule Bedrock.Cluster do
 
       @doc """
       Get the timeout (in milliseconds) for a monitor process waiting to
-      receives a ping from the currently active cluster controller. Once a
+      receives a ping from the currently active cluster director. Once a
       monitor has successfully joined a cluster, it will wait for a ping from
-      the controller. If it does not receive a ping within the timeout, it
-      will attempt to find a new controller.
+      the director. If it does not receive a ping within the timeout, it
+      will attempt to find a new director.
       """
       @impl Bedrock.Cluster
       @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
@@ -182,20 +182,20 @@ defmodule Bedrock.Cluster do
       ######################################################################
 
       @doc """
-      Fetch the current controller for the cluster. If we can't find one, we
+      Fetch the current director for the cluster. If we can't find one, we
       return an error.
       """
       @impl Bedrock.Cluster
-      @spec fetch_controller() :: {:ok, ClusterController.ref()} | {:error, :unavailable}
-      def fetch_controller, do: otp_name(:monitor) |> Monitor.fetch_controller()
+      @spec fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
+      def fetch_director, do: otp_name(:monitor) |> Monitor.fetch_director()
 
       @doc """
-      Get the current controller for the cluster. If we can't find one, we
+      Get the current director for the cluster. If we can't find one, we
       raise an error.
       """
       @impl Bedrock.Cluster
-      @spec controller!() :: ClusterController.ref()
-      def controller!, do: ClusterSupervisor.controller!(__MODULE__)
+      @spec director!() :: Director.ref()
+      def director!, do: ClusterSupervisor.director!(__MODULE__)
 
       @doc """
       Fetch a coordinator for the cluster. If there is an instance running on

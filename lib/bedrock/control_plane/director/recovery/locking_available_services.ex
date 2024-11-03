@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.LockingAvailableServices do
+defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage

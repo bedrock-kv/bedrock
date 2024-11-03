@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Limestone.State do
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Limestone.Subscriptions
   alias Bedrock.DataPlane.Log.Limestone.StateMachine
@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.State do
           subscriptions: Subscriptions.t(),
           oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
-          cluster_controller: ClusterController.ref() | nil
+          director: Director.ref() | nil
         }
   defstruct state: nil,
             subscriber_liveness_timeout_in_s: 60,
@@ -30,7 +30,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.State do
             subscriptions: nil,
             oldest_version: nil,
             last_version: nil,
-            cluster_controller: nil
+            director: nil
 
   @type transition_fn :: (t() -> t())
 

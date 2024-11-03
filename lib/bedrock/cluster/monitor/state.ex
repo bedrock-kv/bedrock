@@ -8,7 +8,7 @@ defmodule Bedrock.Cluster.Monitor.State do
           path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
           coordinator: Coordinator.ref() | :unavailable,
-          controller: {Bedrock.epoch(), controller :: pid()} | :unavailable,
+          director: {Bedrock.epoch(), director :: pid()} | :unavailable,
           timers: map() | nil,
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
@@ -19,7 +19,7 @@ defmodule Bedrock.Cluster.Monitor.State do
             path_to_descriptor: nil,
             descriptor: nil,
             coordinator: :unavailable,
-            controller: :unavailable,
+            director: :unavailable,
             timers: nil,
             missed_pongs: 0,
             mode: :active,
@@ -27,8 +27,8 @@ defmodule Bedrock.Cluster.Monitor.State do
 
   def put_coordinator(t, coordinator), do: %{t | coordinator: coordinator}
 
-  @spec put_controller(t :: t(), {Bedrock.epoch(), controller :: pid()} | :unavailable) :: t()
-  def put_controller(t, controller), do: %{t | controller: controller}
+  @spec put_director(t :: t(), {Bedrock.epoch(), director :: pid()} | :unavailable) :: t()
+  def put_director(t, director), do: %{t | director: director}
 
   def put_missed_pongs(t, missed_pongs), do: %{t | missed_pongs: missed_pongs}
 

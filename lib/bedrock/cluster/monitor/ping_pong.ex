@@ -1,5 +1,5 @@
 defmodule Bedrock.Cluster.Monitor.PingPong do
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
 
   import Bedrock.Cluster.Monitor.State,
     only: [
@@ -9,8 +9,8 @@ defmodule Bedrock.Cluster.Monitor.PingPong do
 
   use Bedrock.Internal.TimerManagement
 
-  def ping_controller(t) when t.controller != :unavailable do
-    :ok = ClusterController.send_ping(t.controller)
+  def ping_director(t) when t.director != :unavailable do
+    :ok = Director.send_ping(t.director)
     t
   end
 
@@ -26,7 +26,7 @@ defmodule Bedrock.Cluster.Monitor.PingPong do
     |> maybe_set_ping_timer()
   end
 
-  def maybe_set_ping_timer(%{controller: :unavailable} = t), do: t
+  def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),
     do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())

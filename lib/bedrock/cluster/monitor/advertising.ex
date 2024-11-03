@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster.Monitor.Advertising do
   alias Bedrock.Cluster.Monitor.State
   alias Bedrock.Cluster.PubSub
-  alias Bedrock.ControlPlane.ClusterController
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -20,25 +20,25 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
 
     trace_advertising_capabilities(t.cluster, t.capabilities, running_services)
 
-    t.controller
-    |> ClusterController.request_to_rejoin(Node.self(), t.capabilities, running_services)
+    t.director
+    |> Director.request_to_rejoin(Node.self(), t.capabilities, running_services)
     |> case do
       :ok -> {:ok, t}
       {:error, _reason} = error -> error
     end
   end
 
-  @spec advertise_worker_to_cluster_controller(State.t(), Worker.ref()) :: State.t()
-  def advertise_worker_to_cluster_controller(t, worker_pid) do
+  @spec advertise_worker_to_director(State.t(), Worker.ref()) :: State.t()
+  def advertise_worker_to_director(t, worker_pid) do
     with {:ok, info} <- gather_info_from_worker(worker_pid),
-         :ok <- t.controller |> ClusterController.advertise_worker(node(), info) do
+         :ok <- t.director |> Director.advertise_worker(node(), info) do
       t
     else
       _ -> t
     end
   end
 
-  @spec running_services(State.t()) :: ClusterController.running_service_info_by_id()
+  @spec running_services(State.t()) :: Director.running_service_info_by_id()
   def running_services(t) do
     case Foreman.all(t.cluster.otp_name(:foreman)) do
       {:ok, worker_pids} -> worker_pids |> gather_info_from_workers()
@@ -46,7 +46,7 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
     end
   end
 
-  @spec gather_info_from_workers([pid()]) :: ClusterController.running_service_info_by_id()
+  @spec gather_info_from_workers([pid()]) :: Director.running_service_info_by_id()
   def gather_info_from_workers(worker_pids) do
     worker_pids
     |> Enum.map(&gather_info_from_worker/1)
@@ -58,17 +58,17 @@ defmodule Bedrock.Cluster.Monitor.Advertising do
   end
 
   @spec gather_info_from_worker(Worker.ref()) ::
-          {:ok, ClusterController.running_service_info()}
+          {:ok, Director.running_service_info()}
           | {:error, :unavailable}
   def gather_info_from_worker(worker),
     do: Worker.info(worker, [:id, :otp_name, :kind, :pid])
 
-  @spec publish_cluster_controller_replaced_to_pubsub(State.t()) :: State.t()
-  def publish_cluster_controller_replaced_to_pubsub(t) do
+  @spec publish_director_replaced_to_pubsub(State.t()) :: State.t()
+  def publish_director_replaced_to_pubsub(t) do
     PubSub.publish(
       t.cluster,
-      :cluster_controller_replaced,
-      {:cluster_controller_replaced, t.controller}
+      :director_replaced,
+      {:director_replaced, t.director}
     )
 
     t

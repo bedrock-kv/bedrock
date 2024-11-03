@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.ClusterController.Recovery.DeterminingDurableVersion do
+defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
 

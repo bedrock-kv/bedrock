@@ -94,8 +94,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
 
   defp put_random_id(t), do: %{t | id: random_id()}
 
-  @spec put_controller(t(), pid()) :: t()
-  def put_controller(t, controller), do: %{t | controller: controller} |> put_random_id()
+  @spec put_director(t(), pid()) :: t()
+  def put_director(t, director), do: %{t | director: director} |> put_random_id()
 
   @spec put_sequencer(t(), pid() | nil) :: t()
   def put_sequencer(t, sequencer), do: %{t | sequencer: sequencer} |> put_random_id()

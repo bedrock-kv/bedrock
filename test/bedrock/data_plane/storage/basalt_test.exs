@@ -54,7 +54,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       assert Process.alive?(pid)
 
-      # We expect the worker to eventually send a message to the controller
+      # We expect the worker to eventually send a message to the director
       # when it's ready to accept requests.
       assert_receive {:"$gen_cast", {:worker_health, ^expected_id, {:ok, pid}}}, 5_000
       assert is_pid(pid)

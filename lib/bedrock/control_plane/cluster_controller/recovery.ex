@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
 
   import __MODULE__.DefiningProxiesAndResolvers,
-    only: [define_commit_proxies: 5, define_resolvers: 6]
+    only: [define_commit_proxies: 6, define_resolvers: 6]
 
   import __MODULE__.StartingSequencer, only: [start_sequencer: 4]
 
@@ -383,6 +383,7 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery do
          {:ok, proxies} <-
            define_commit_proxies(
              t.parameters.desired_commit_proxies,
+             t.cluster,
              t.epoch,
              self(),
              Node.list(),

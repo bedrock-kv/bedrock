@@ -8,14 +8,22 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
   #
   @spec define_commit_proxies(
           n_proxies :: pos_integer(),
+          cluster :: module(),
           Bedrock.epoch(),
           controller :: pid(),
           available_nodes :: [node()],
           supervisor_otp_name :: atom()
         ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
-  def define_commit_proxies(n_proxies, epoch, controller, available_nodes, supervisor_otp_name) do
+  def define_commit_proxies(
+        n_proxies,
+        cluster,
+        epoch,
+        controller,
+        available_nodes,
+        supervisor_otp_name
+      ) do
     child_spec =
-      child_spec_for_proxy(epoch, controller)
+      child_spec_for_commit_proxy(cluster, epoch, controller)
 
     available_nodes
     |> Enum.take(n_proxies)
@@ -47,10 +55,15 @@ defmodule Bedrock.ControlPlane.ClusterController.Recovery.DefiningProxiesAndReso
     end
   end
 
-  @spec child_spec_for_proxy(epoch :: Bedrock.epoch(), controller :: pid()) ::
+  @spec child_spec_for_commit_proxy(
+          cluster :: module(),
+          epoch :: Bedrock.epoch(),
+          controller :: pid()
+        ) ::
           Supervisor.child_spec()
-  def child_spec_for_proxy(epoch, controller) do
+  def child_spec_for_commit_proxy(cluster, epoch, controller) do
     CommitProxy.child_spec(
+      cluster: cluster,
       epoch: epoch,
       controller: controller
     )

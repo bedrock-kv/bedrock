@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Transaction
 
-  import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 4]
+  import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 5]
 
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
@@ -36,38 +36,45 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `:ok` when the batch has been processed, and all clients have been
       notified about the status of their transactions.
   """
-  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) :: :ok
+  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) :: :ok | {:error, term()}
   def finalize_batch(batch, transaction_system_layout) do
     transactions_in_order = transactions_in_order(batch)
 
     commit_version = batch.commit_version
 
-    {:ok, aborted} =
-      resolve_transactions(
-        transaction_system_layout.resolvers |> List.first(),
-        batch.last_commit_version,
-        commit_version,
-        transform_transactions_for_resolution(transactions_in_order)
-      )
+    with {:ok, aborted} <-
+           resolve_transactions(
+             transaction_system_layout.resolvers |> List.first(),
+             batch.last_commit_version,
+             commit_version,
+             transform_transactions_for_resolution(transactions_in_order),
+             timeout: 1_000
+           ),
+         {oks, aborts, compacted_transaction} <-
+           prepare_transaction_to_log(
+             transactions_in_order,
+             aborted,
+             commit_version
+           ),
+         :ok <- reply_to_all_clients_with_aborted_transactions(aborts),
+         :ok <-
+           push_transaction_to_logs(
+             transaction_system_layout,
+             batch.last_commit_version,
+             compacted_transaction,
+             fn version ->
+               send_reply_with_commit_version(oks, version)
+             end
+           ) do
+      :ok
+    else
+      {:error, _reason} = error ->
+        batch
+        |> Batch.all_callers()
+        |> reply_to_all_clients_with_aborted_transactions()
 
-    {oks, aborts, transaction_to_log} =
-      prepare_transaction_to_log(
-        transactions_in_order,
-        aborted,
-        commit_version
-      )
-
-    :ok = reply_to_all_clients_with_aborted_transactions(aborts)
-
-    :ok =
-      push_transaction_to_logs(
-        transaction_system_layout,
-        batch.last_commit_version,
-        transaction_to_log,
-        fn version ->
-          send_reply_with_commit_version(oks, version)
-        end
-      )
+        error
+    end
   end
 
   @spec determine_majority(n :: non_neg_integer()) :: non_neg_integer()
@@ -172,6 +179,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
 
   @spec reply_to_all_clients_with_aborted_transactions([GenServer.from()]) :: :ok
+  def reply_to_all_clients_with_aborted_transactions([]), do: :ok
+
   def reply_to_all_clients_with_aborted_transactions(aborts),
     do: Enum.each(aborts, &GenServer.reply(&1, {:error, :aborted}))
 

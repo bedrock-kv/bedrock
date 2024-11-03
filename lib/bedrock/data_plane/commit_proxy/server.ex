@@ -12,10 +12,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
+  import Bedrock.DataPlane.CommitProxy.Telemetry,
+    only: [
+      trace_commit_proxy_batch_failure: 4,
+      trace_commit_proxy_batch_succeeded: 3
+    ]
+
   use GenServer
 
   @spec child_spec(
           opts :: [
+            cluster: module(),
             controller: pid(),
             transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
@@ -24,6 +31,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
+    cluster = opts[:cluster] || raise "Missing :cluster option"
     controller = opts[:controller] || raise "Missing :controller option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     max_latency_in_ms = opts[:max_latency_in_ms] || 2
@@ -35,20 +43,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {controller, epoch, max_latency_in_ms, max_per_batch}
+           {cluster, controller, epoch, max_latency_in_ms, max_per_batch}
          ]},
       restart: :temporary
     }
   end
 
-  def init({controller, epoch, max_latency_in_ms, max_per_batch}) do
+  def init({cluster, controller, epoch, max_latency_in_ms, max_per_batch}) do
     %State{
+      cluster: cluster,
       controller: controller,
       epoch: epoch,
       max_latency_in_ms: max_latency_in_ms,
       max_per_batch: max_per_batch
     }
     |> then(&{:ok, &1})
+  end
+
+  def terminate(_reason, _t) do
+    :ok
   end
 
   # When a transaction is submitted, we check to see if we have a batch already
@@ -79,8 +92,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: %{t | batch: nil} |> noreply(continue: {:finalize, batch})
 
   def handle_continue({:finalize, batch}, t) do
-    :ok = finalize_batch(batch, t.transaction_system_layout)
-    t |> noreply()
+    case finalize_batch(batch, t.transaction_system_layout) do
+      :ok ->
+        trace_commit_proxy_batch_succeeded(t.cluster, self(), batch)
+        t |> noreply()
+
+      {:error, reason} ->
+        trace_commit_proxy_batch_failure(t.cluster, self(), batch, reason)
+        t |> noreply()
+    end
   end
 
   def ask_for_transaction_system_layout_if_needed(t) when t.transaction_system_layout != nil,

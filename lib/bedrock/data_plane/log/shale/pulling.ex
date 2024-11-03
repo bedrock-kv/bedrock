@@ -70,10 +70,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   def check_for_locked_outside_of_recovery(false, %{mode: :locked}), do: {:error, :not_ready}
   def check_for_locked_outside_of_recovery(_, _), do: :ok
 
-  def check_from_version(from_version, t) when t.last_version > from_version,
+  def check_from_version(from_version, t) when t.last_version < from_version,
     do: {:error, :version_too_new}
 
-  def check_from_version(from_version, t) when from_version < t.oldest_version,
+  def check_from_version(from_version, t) when t.oldest_version > from_version,
     do: {:error, :version_too_old}
 
   def check_from_version(_, _), do: :ok

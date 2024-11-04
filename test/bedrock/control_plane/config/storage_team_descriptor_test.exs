@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
 
       result = StorageTeamDescriptor.storage_team_descriptor(tag, key_range, storage_ids)
 
-      assert %StorageTeamDescriptor{
+      assert %{
                tag: ^tag,
                key_range: ^key_range,
                storage_ids: ^storage_ids

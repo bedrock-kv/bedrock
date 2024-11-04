@@ -10,12 +10,13 @@ defmodule Bedrock.ControlPlane.Config.Policies do
   ## Fields:
   - `allow_volunteer_nodes_to_join` - Should nodes that volunteer to join the cluster be allowed to do so?
   """
-  @type t :: %__MODULE__{
+  @type t :: %{
           allow_volunteer_nodes_to_join: boolean()
         }
 
-  defstruct allow_volunteer_nodes_to_join: true
-
-  @spec new() :: t()
-  def new, do: %__MODULE__{}
+  @spec default_policies() :: t()
+  def default_policies,
+    do: %{
+      allow_volunteer_nodes_to_join: true
+    }
 end

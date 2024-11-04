@@ -9,28 +9,26 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
   - `key_range`: The range of keys that the team is responsible for.
   - `ids`: The list of storage workers that are responsible for the team.
   """
-  @type t :: %__MODULE__{
+  @type t :: %{
           tag: Bedrock.range_tag(),
           key_range: Bedrock.key_range(),
           storage_ids: [Storage.id() | vacancy()]
         }
-  defstruct tag: nil,
-            key_range: nil,
-            storage_ids: []
 
   @doc """
   Create a new storage team descriptor.
   """
-  @spec storage_team_descriptor(Bedrock.range_tag(), Bedrock.key_range(), [
-          Storage.id() | vacancy()
-        ]) :: t()
-  def storage_team_descriptor(tag, key_range, storage_ids) do
-    %__MODULE__{
+  @spec storage_team_descriptor(
+          Bedrock.range_tag(),
+          Bedrock.key_range(),
+          [Storage.id() | vacancy()]
+        ) :: t()
+  def storage_team_descriptor(tag, key_range, storage_ids),
+    do: %{
       tag: tag,
       key_range: key_range,
       storage_ids: storage_ids
     }
-  end
 
   @doc """
   Inserts a storage team descriptor into a list of storage team descriptors,

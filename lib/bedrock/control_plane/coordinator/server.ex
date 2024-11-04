@@ -1,12 +1,16 @@
 defmodule Bedrock.ControlPlane.Coordinator.Server do
   @moduledoc false
-  alias Bedrock.ControlPlane.Config
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
 
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
+
+  import Bedrock.ControlPlane.Config,
+    only: [
+      config: 1
+    ]
 
   import Bedrock.ControlPlane.Coordinator.Durability,
     only: [
@@ -70,7 +74,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         |> Log.transactions_to(:newest_safe)
         |> List.last()
         |> case do
-          nil -> {Log.initial_transaction_id(raft_log), Config.new(coordinator_nodes)}
+          nil -> {Log.initial_transaction_id(raft_log), config(coordinator_nodes)}
           txn -> txn
         end
 

@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `services` - A list of all of the workers within the system, their types, ids and
        the otp names used to communicate with them.
   """
-  @type t :: %__MODULE__{
+  @type t :: %{
           id: id(),
           director: pid() | nil,
           sequencer: pid() | nil,
@@ -45,17 +45,18 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type id :: non_neg_integer()
 
-  defstruct id: 0,
-            director: nil,
-            sequencer: nil,
-            rate_keeper: nil,
-            data_distributor: nil,
-            proxies: [],
-            resolvers: [],
-            logs: [],
-            storage_teams: [],
-            services: []
-
-  @spec new() :: t()
-  def new, do: %__MODULE__{}
+  @spec transaction_system_layout() :: t()
+  def transaction_system_layout(),
+    do: %{
+      id: 0,
+      director: nil,
+      sequencer: nil,
+      rate_keeper: nil,
+      data_distributor: nil,
+      proxies: [],
+      resolvers: [],
+      logs: [],
+      storage_teams: [],
+      services: []
+    }
 end

@@ -4,16 +4,21 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   @type otp_name :: atom()
   @type status :: {:up, pid()} | :unknown | :down
 
-  @type t :: %__MODULE__{
+  @type t :: %{
           id: id(),
           kind: kind(),
           last_seen: {otp_name(), node()} | nil,
           status: status()
         }
-  defstruct [:id, :kind, :last_seen, :status]
 
-  @spec new(id(), kind(), status()) :: t()
-  def new(id, kind, status \\ :unknown), do: %__MODULE__{id: id, kind: kind, status: status}
+  @spec service_descriptor(id(), kind(), status()) :: t()
+  def service_descriptor(id, kind, status \\ :unknown),
+    do: %{
+      id: id,
+      kind: kind,
+      status: status,
+      last_seen: nil
+    }
 
   @spec up(t(), pid()) :: t()
   def up(t, pid), do: %{t | status: {:up, pid}}

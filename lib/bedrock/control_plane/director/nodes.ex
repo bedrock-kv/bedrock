@@ -10,6 +10,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
   use Bedrock.Internal.TimerManagement
 
+  import Bedrock.ControlPlane.Config.ServiceDescriptor, only: [service_descriptor: 2]
+
   import Bedrock.ControlPlane.Director.State.Changes,
     only: [update_config: 2]
 
@@ -110,7 +112,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
       |> update_transaction_system_layout(fn transaction_system_layout ->
         transaction_system_layout
         |> upsert_service_descriptor(
-          ServiceDescriptor.new(info[:id], info[:kind])
+          service_descriptor(info[:id], info[:kind])
           |> ServiceDescriptor.up(info[:pid], info[:otp_name], node)
         )
       end)

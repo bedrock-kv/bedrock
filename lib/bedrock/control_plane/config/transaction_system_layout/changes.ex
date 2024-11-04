@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   existing log descriptor with the same id.
   """
   @spec upsert_log_descriptor(t(), LogDescriptor.t()) :: t()
-  def upsert_log_descriptor(t, %LogDescriptor{} = descriptor),
+  def upsert_log_descriptor(t, descriptor),
     do: t |> update_logs(&LogDescriptor.upsert(&1, descriptor)) |> put_random_id()
 
   @doc """
@@ -53,7 +53,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   replacing any existing storage team descriptor with the same tag.
   """
   @spec upsert_storage_team_descriptor(t(), StorageTeamDescriptor.t()) :: t()
-  def upsert_storage_team_descriptor(t, %StorageTeamDescriptor{} = descriptor),
+  def upsert_storage_team_descriptor(t, descriptor),
     do:
       t |> update_storage_teams(&StorageTeamDescriptor.upsert(&1, descriptor)) |> put_random_id()
 

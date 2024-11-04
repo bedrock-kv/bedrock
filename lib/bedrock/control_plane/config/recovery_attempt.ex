@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @type log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()}
   @type storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}
 
-  @type t :: %__MODULE__{
+  @type t :: %{
           state: state(),
           attempt: pos_integer(),
           cluster: module(),
@@ -72,28 +72,32 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           proxies: [pid()],
           sequencer: pid() | nil
         }
-  defstruct state: nil,
-            attempt: nil,
-            epoch: nil,
-            cluster: nil,
-            parameters: nil,
-            started_at: nil,
-            last_transaction_system_layout: nil,
-            available_services: [],
-            locked_service_ids: MapSet.new(),
-            log_recovery_info_by_id: %{},
-            storage_recovery_info_by_id: %{},
-            old_log_ids_to_copy: [],
-            version_vector: {:start, 0},
-            durable_version: :start,
-            degraded_teams: [],
-            logs: [],
-            storage_teams: [],
-            resolvers: [],
-            proxies: [],
-            sequencer: nil
 
-  @spec new(
+  def recovery_attempt,
+    do: %{
+      attempt: 0,
+      available_services: [],
+      cluster: nil,
+      degraded_teams: [],
+      durable_version: :start,
+      epoch: 0,
+      last_transaction_system_layout: nil,
+      locked_service_ids: MapSet.new(),
+      log_recovery_info_by_id: %{},
+      logs: [],
+      old_log_ids_to_copy: [],
+      parameters: nil,
+      proxies: [],
+      resolvers: [],
+      sequencer: nil,
+      started_at: nil,
+      state: :start,
+      storage_recovery_info_by_id: %{},
+      storage_teams: [],
+      version_vector: {:start, 0}
+    }
+
+  @spec recovery_attempt(
           cluster :: module(),
           Bedrock.epoch(),
           started_at :: DateTime.t(),
@@ -105,15 +109,29 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
             desired_resolvers: pos_integer()
           }
         ) :: t()
-  def new(cluster, epoch, started_at, transaction_system_layout, params) do
-    %__MODULE__{
+  def recovery_attempt(cluster, epoch, started_at, transaction_system_layout, params) do
+    %{
       cluster: cluster,
       attempt: 1,
       epoch: epoch,
       started_at: started_at,
       state: :start,
       parameters: params,
-      last_transaction_system_layout: transaction_system_layout
+      last_transaction_system_layout: transaction_system_layout,
+      #
+      available_services: [],
+      locked_service_ids: MapSet.new(),
+      log_recovery_info_by_id: %{},
+      storage_recovery_info_by_id: %{},
+      old_log_ids_to_copy: [],
+      version_vector: {:start, 0},
+      durable_version: :start,
+      degraded_teams: [],
+      logs: [],
+      storage_teams: [],
+      resolvers: [],
+      proxies: [],
+      sequencer: nil
     }
   end
 

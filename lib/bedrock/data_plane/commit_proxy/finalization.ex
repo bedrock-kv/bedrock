@@ -130,7 +130,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     log_descriptors
     |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
-      fn %ServiceDescriptor{id: log_id} = service_descriptor ->
+      fn %{id: log_id} = service_descriptor ->
         service_descriptor
         |> try_to_push_transaction_to_log(transaction, last_commit_version)
         |> then(&{log_id, &1})

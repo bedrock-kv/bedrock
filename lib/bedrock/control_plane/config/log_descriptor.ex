@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   """
 
   @type vacancy :: {:vacancy, tag :: term()}
-  @type t :: %__MODULE__{
+  @type t :: %{
           log_id: Log.id() | vacancy(),
           tags: [Bedrock.range_tag()]
         }
@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   """
   @spec log_descriptor(Log.id() | vacancy(), tags :: [Bedrock.range_tag()]) :: t()
   def log_descriptor(log_id, tags),
-    do: %__MODULE__{
+    do: %{
       log_id: log_id,
       tags: tags
     }

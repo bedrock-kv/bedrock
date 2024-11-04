@@ -10,6 +10,10 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
+  import Bedrock.ControlPlane.Config.Policies
+  import Bedrock.ControlPlane.Config.Parameters
+  import Bedrock.ControlPlane.Config.TransactionSystemLayout
+
   @typedoc """
   Struct representing the control plane configuration.
 
@@ -19,20 +23,14 @@ defmodule Bedrock.ControlPlane.Config do
     - `policies` - The policies that are used to configure the cluster.
     - `transaction_system_layout` - The layout of the transaction system.
   """
-  @type t :: %__MODULE__{
-          recovery_attempt: RecoveryAttempt.t() | nil,
+  @type t :: %{
+          optional(:recovery_attempt) => RecoveryAttempt.t(),
           coordinators: [node()],
           epoch: non_neg_integer(),
           parameters: Parameters.t() | nil,
           policies: Policies.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t()
         }
-  defstruct recovery_attempt: nil,
-            coordinators: [],
-            epoch: 0,
-            parameters: nil,
-            policies: nil,
-            transaction_system_layout: nil
 
   @type state :: :uninitialized | :recovery | :running | :stopping
 
@@ -42,14 +40,14 @@ defmodule Bedrock.ControlPlane.Config do
   @doc """
   Creates a new `Config` struct.
   """
-  @spec new(coordinators :: [node()]) :: t()
-  def new(coordinators) do
-    %__MODULE__{
+  @spec config(coordinators :: [node()]) :: t()
+  def config(coordinators) do
+    %{
       coordinators: coordinators,
       epoch: 0,
-      parameters: Parameters.new(coordinators),
-      policies: Policies.new(),
-      transaction_system_layout: TransactionSystemLayout.new()
+      parameters: parameters(coordinators),
+      policies: default_policies(),
+      transaction_system_layout: transaction_system_layout()
     }
   end
 
@@ -85,7 +83,7 @@ defmodule Bedrock.ControlPlane.Config do
 
     @spec put_recovery_attempt(Config.t(), RecoveryAttempt.t() | nil) :: Config.t()
     def put_recovery_attempt(t, recovery_attempt),
-      do: %{t | recovery_attempt: recovery_attempt}
+      do: Map.put(t, :recovery_attempt, recovery_attempt)
 
     @spec put_transaction_system_layout(Config.t(), TransactionSystemLayout.t()) :: Config.t()
     def put_transaction_system_layout(t, transaction_system_layout),
@@ -96,10 +94,10 @@ defmodule Bedrock.ControlPlane.Config do
 
     # Updates
 
-    @spec update_recovery_attempt(Config.t(), (RecoveryAttempt.t() -> RecoveryAttempt.t())) ::
+    @spec update_recovery_attempt!(Config.t(), (RecoveryAttempt.t() -> RecoveryAttempt.t())) ::
             Config.t()
-    def update_recovery_attempt(t, updater),
-      do: %{t | recovery_attempt: updater.(t.recovery_attempt)}
+    def update_recovery_attempt!(t, f),
+      do: Map.update!(t, :recovery_attempt, f)
 
     @spec update_transaction_system_layout(
             Config.t(),

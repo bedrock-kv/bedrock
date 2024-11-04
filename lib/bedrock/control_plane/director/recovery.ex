@@ -6,6 +6,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
+  import Bedrock.ControlPlane.Config.RecoveryAttempt, only: [recovery_attempt: 5]
+
   import Bedrock, only: [key_range: 2]
   import Bedrock.Internal.Time, only: [now: 0]
 
@@ -30,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     only: [
       put_epoch: 2,
       put_recovery_attempt: 2,
-      update_recovery_attempt: 2,
+      update_recovery_attempt!: 2,
       update_transaction_system_layout: 2
     ]
 
@@ -64,7 +66,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       config
       |> put_epoch(t.epoch)
       |> put_recovery_attempt(
-        RecoveryAttempt.new(
+        recovery_attempt(
           t.cluster,
           t.epoch,
           now(),
@@ -94,7 +96,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t
     |> update_config(fn config ->
       config
-      |> update_recovery_attempt(fn recovery_attempt ->
+      |> update_recovery_attempt!(fn recovery_attempt ->
         recovery_attempt
         |> RecoveryAttempt.reset(now())
         |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)

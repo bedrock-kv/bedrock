@@ -181,17 +181,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
     end
   end
 
-  def pair_resolvers_with_logs(resolvers, logs) do
-    resolvers
-    |> Stream.zip(
-      if :nothing == logs do
-        [nil]
-      else
-        logs
-      end
-      |> Stream.cycle()
-    )
-  end
+  def pair_resolvers_with_logs(resolvers, []),
+    do: resolvers |> Stream.zip([nil] |> Stream.cycle())
+
+  def pair_resolvers_with_logs(resolvers, logs),
+    do: resolvers |> Stream.zip(logs |> Stream.cycle())
 
   @spec child_spec_for_transaction_resolver(epoch :: Bedrock.epoch()) :: Supervisor.child_spec()
   def child_spec_for_transaction_resolver(epoch) do

@@ -3,12 +3,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
 
   import Bedrock, only: [key_range: 2]
-  import Bedrock.Internal.Time
+  import Bedrock.Internal.Time, only: [now: 0]
 
   import __MODULE__.LockingAvailableServices, only: [lock_available_services: 3]
   import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
@@ -26,8 +25,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     only: [define_commit_proxies: 6, define_resolvers: 6]
 
   import __MODULE__.StartingSequencer, only: [start_sequencer: 4]
-
-  import Bedrock.Internal.Time, only: [now: 0]
 
   import Bedrock.ControlPlane.Config.Changes,
     only: [
@@ -223,7 +220,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
     t
     |> RecoveryAttempt.put_durable_version(0)
-    |> RecoveryAttempt.put_old_log_ids_to_copy(:nothing)
+    |> RecoveryAttempt.put_old_log_ids_to_copy([])
     |> RecoveryAttempt.put_version_vector({:start, 0})
     |> RecoveryAttempt.put_logs(
       log_vacancies

@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
 
   ## Parameters
 
-    - `old_log_ids`: A list of old log IDs of type `Log.id()`, or `:nothing` if
+    - `old_log_ids`: A list of old log IDs of type `Log.id()`, or `[]` if
       not applicable.
     - `new_log_ids`: A list of new log IDs of type `Log.id()` where entries will
       be copied to.
@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
     copy, providing details within the failures list.
   """
   @spec replay_old_logs_into_new_logs(
-          old_log_ids :: [Log.id()] | :nothing,
+          old_log_ids :: [Log.id()],
           new_log_ids :: [Log.id()],
           version_vector :: Bedrock.version_vector(),
           pid_for_id :: (Log.id() -> pid())
@@ -80,15 +80,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
     end
   end
 
-  def pair_with_old_log_ids(new_log_ids, old_log_ids) do
-    new_log_ids
-    |> Stream.zip(
-      if :nothing == old_log_ids do
-        [nil]
-      else
-        old_log_ids
-      end
-      |> Stream.cycle()
-    )
-  end
+  def pair_with_old_log_ids(new_log_ids, []),
+    do: new_log_ids |> Stream.zip([nil] |> Stream.cycle())
+
+  def pair_with_old_log_ids(new_log_ids, old_log_ids),
+    do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())
 end

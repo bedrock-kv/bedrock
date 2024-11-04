@@ -62,7 +62,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           locked_service_ids: MapSet.t(ServiceDescriptor.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),
-          old_log_ids_to_copy: [Log.id()] | :nothing,
+          old_log_ids_to_copy: [Log.id()],
           version_vector: Bedrock.version_vector() | {:start, 0},
           durable_version: Bedrock.version() | :start,
           degraded_teams: [Bedrock.range_tag()],
@@ -134,7 +134,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec put_started_at(t(), DateTime.t()) :: t()
   def put_started_at(t, started_at), do: %{t | started_at: started_at}
 
-  @spec put_old_log_ids_to_copy(t(), [Log.id()] | :nothing) :: t()
+  @spec put_old_log_ids_to_copy(t(), [Log.id()]) :: t()
   def put_old_log_ids_to_copy(t, old_log_ids_to_copy),
     do: %{t | old_log_ids_to_copy: old_log_ids_to_copy}
 

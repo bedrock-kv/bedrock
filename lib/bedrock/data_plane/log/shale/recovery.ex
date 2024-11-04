@@ -39,10 +39,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       do: :ok
 
   def pull_transactions(log, log_to_pull, first_version, last_version) do
-    IO.inspect({log, log_to_pull, first_version, last_version},
-      label: "Shale.pull_transactions"
-    )
-
     case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do
       {:ok, []} ->
         :ok

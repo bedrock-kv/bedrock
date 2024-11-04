@@ -83,7 +83,7 @@ defmodule Bedrock.Client.Transaction do
       t
       |> do_get(key)
       |> case do
-        {t, value} -> t |> IO.inspect() |> reply(value)
+        {t, value} -> t |> reply(value)
       end
     end
 

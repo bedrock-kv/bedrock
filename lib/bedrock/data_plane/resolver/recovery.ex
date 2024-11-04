@@ -41,10 +41,6 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
       do: {:ok, tree}
 
   def pull_transactions(tree, log_to_pull, first_version, last_version) do
-    IO.inspect({tree, log_to_pull, first_version, last_version},
-      label: "Resolver.pull_transactions"
-    )
-
     case Log.pull(log_to_pull, first_version, last_version: last_version) do
       {:ok, []} ->
         {:ok, tree}

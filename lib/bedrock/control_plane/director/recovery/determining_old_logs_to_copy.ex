@@ -58,7 +58,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     |> combinations(quorum)
     |> build_log_groups_and_vectors_from_combinations()
     |> rank_log_groups()
-    |> IO.inspect(label: "ranked_log_groups")
     |> List.first()
     |> case do
       nil ->
@@ -76,7 +75,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     |> Enum.map(&{&1.log_id, Map.get(recovery_info_by_id, &1.log_id)})
     |> Enum.reject(&is_nil(elem(&1, 1)))
     |> Map.new()
-    |> IO.inspect(label: "recovery_info_for_logs")
   end
 
   @spec combinations([any()], non_neg_integer()) :: [[any()]]

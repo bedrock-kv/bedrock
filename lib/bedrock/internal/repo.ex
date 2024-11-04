@@ -3,11 +3,9 @@ defmodule Bedrock.Internal.Repo do
 
   alias Bedrock.Internal.Transaction
 
-  @opaque transaction :: pid()
-
   @spec transaction(
           cluster :: module(),
-          (transaction() ->
+          (pid() ->
              :ok | {:ok, result} | :error | {:error, reason}),
           opts :: [
             retry_count: pos_integer(),
@@ -30,23 +28,23 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
-  @spec nested_transaction(transaction()) :: transaction()
+  @spec nested_transaction(pid()) :: pid()
   def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
-  @spec get(transaction(), Bedrock.key()) :: nil | Bedrock.value()
+  @spec get(pid(), Bedrock.key()) :: nil | Bedrock.value()
   def get(t, key) when is_binary(key),
     do: call(t, {:get, key}, :infinity)
 
-  @spec put(transaction(), Bedrock.key(), Bedrock.value()) :: :ok
+  @spec put(pid(), Bedrock.key(), Bedrock.value()) :: :ok
   def put(t, key, value) when is_binary(key) and is_binary(value),
     do: cast(t, {:put, key, value})
 
-  @spec commit(transaction(), opts :: [timeout_in_ms :: pos_integer()]) ::
+  @spec commit(pid(), opts :: [timeout_in_ms :: pos_integer()]) ::
           :ok | {:error, :aborted}
   def commit(t, opts \\ []),
     do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
 
-  @spec rollback(transaction()) :: :ok
+  @spec rollback(pid()) :: :ok
   def rollback(t),
     do: :ok = GenServer.stop(t, :normal)
 

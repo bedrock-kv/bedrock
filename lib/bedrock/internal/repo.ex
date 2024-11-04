@@ -30,6 +30,9 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
+  @spec nested_transaction(transaction()) :: transaction()
+  def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
+
   @spec get(transaction(), Bedrock.key()) :: nil | Bedrock.value()
   def get(t, key) when is_binary(key),
     do: call(t, {:get, key}, :infinity)

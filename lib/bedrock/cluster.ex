@@ -249,6 +249,9 @@ defmodule Bedrock.Cluster do
         def transaction(fun, opts \\ []),
           do: Bedrock.Internal.Repo.transaction(__MODULE__, fun, opts)
 
+        @spec nested_transaction(transaction()) :: transaction()
+        defdelegate nested_transaction(t), to: Bedrock.Internal.Repo
+
         @spec get(transaction(), Bedrock.key()) :: nil | Bedrock.value()
         defdelegate get(t, key), to: Bedrock.Internal.Repo
 

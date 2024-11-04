@@ -231,6 +231,37 @@ defmodule Bedrock.Cluster do
       @doc false
       def child_spec(opts),
         do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
+
+      defmodule Repo do
+        @opaque transaction :: pid()
+
+        @spec transaction(
+                cluster :: module(),
+                (transaction() ->
+                   :ok | {:ok, result} | :error | {:error, reason}),
+                opts :: [
+                  retry_count: pos_integer(),
+                  timeout_in_ms: Bedrock.timeout_in_ms()
+                ]
+              ) ::
+                :ok | {:ok, result} | :error | {:error, reason}
+              when result: term(), reason: term()
+        def transaction(fun, opts \\ []),
+          do: Bedrock.Internal.Repo.transaction(__MODULE__, fun, opts)
+
+        @spec get(transaction(), Bedrock.key()) :: nil | Bedrock.value()
+        defdelegate get(t, key), to: Bedrock.Internal.Repo
+
+        @spec put(transaction(), Bedrock.key(), Bedrock.value()) :: :ok
+        defdelegate put(t, key, value), to: Bedrock.Internal.Repo
+
+        @spec commit(transaction(), opts :: [timeout_in_ms :: pos_integer()]) ::
+                :ok | {:error, :aborted}
+        defdelegate commit(t, opts \\ []), to: Bedrock.Internal.Repo
+
+        @spec rollback(transaction()) :: :ok
+        defdelegate rollback(t), to: Bedrock.Internal.Repo
+      end
     end
   end
 

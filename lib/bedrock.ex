@@ -24,8 +24,6 @@ defmodule Bedrock do
   @type service :: :coordination | :log | :storage
   @type service_id :: String.t()
 
-  defdelegate get(tx, key), to: Bedrock.Client.Transaction
-
   @doc """
   Creates a key range from a minimum inclusive key to a maximum exclusive key.
 

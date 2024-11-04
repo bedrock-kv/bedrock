@@ -46,7 +46,7 @@ defmodule Bedrock.Internal.Repo do
 
   @spec rollback(pid()) :: :ok
   def rollback(t),
-    do: :ok = GenServer.stop(t, :normal)
+    do: cast(t, :rollback)
 
   def default_timeout_in_ms(), do: 1_000
 end

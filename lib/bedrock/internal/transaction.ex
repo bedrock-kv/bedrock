@@ -44,6 +44,11 @@ defmodule Bedrock.Internal.Transaction do
   end
 
   @impl true
+  def handle_call(:nested_transaction, _from, t),
+    do:
+      %{t | stack: [{t.reads, t.writes} | t.stack], reads: %{}, writes: %{}}
+      |> reply(:ok)
+
   def handle_call(:commit, _from, t) do
     case do_commit(t) do
       {:ok, t} -> t |> reply(:ok)
@@ -60,6 +65,13 @@ defmodule Bedrock.Internal.Transaction do
   @impl true
   def handle_cast({:put, key, value}, t),
     do: t |> do_put(key, value) |> noreply()
+
+  def handle_cast(:rollback, t) do
+    case do_rollback(t) do
+      :stop -> {:stop, :normal, nil}
+      t -> t |> noreply()
+    end
+  end
 
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
@@ -110,6 +122,9 @@ defmodule Bedrock.Internal.Transaction do
          stack: stack
      }}
   end
+
+  def do_rollback(%{stack: []}), do: :stop
+  def do_rollback(%{stack: [_ | stack]} = t), do: %{t | stack: stack}
 
   @spec fetch_from_stack(Bedrock.key(), [{reads :: map(), writes :: map()}]) ::
           :error | {t(), binary()}

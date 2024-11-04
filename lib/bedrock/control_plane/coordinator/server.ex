@@ -37,6 +37,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   require Logger
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -174,7 +175,4 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @spec ack_fn(GenServer.from()) :: (-> :ok)
   defp ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
-
-  defp noreply(t), do: {:noreply, t}
-  defp reply(t, result), do: {:reply, result, t}
 end

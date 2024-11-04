@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     ]
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   def child_spec(opts) do
     director = opts[:director] || raise "Missing :director option"
@@ -67,7 +68,4 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
 
   @impl GenServer
   def handle_info(:die, _t), do: raise("die!")
-
-  defp noreply(t), do: {:noreply, t}
-  defp reply(t, result), do: {:reply, result, t}
 end

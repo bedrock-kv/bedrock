@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   import Bedrock.DataPlane.Resolver.ConflictResolution, only: [commit: 3]
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @type reply_fn :: (aborted :: [integer()] -> :ok)
 
@@ -76,10 +77,4 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @spec reply_fn(GenServer.from()) :: reply_fn()
   defp reply_fn(from), do: &GenServer.reply(from, &1)
-
-  defp reply(%State{} = t, result), do: {:reply, result, t}
-  defp reply(%State{} = t, result, continue: action), do: {:reply, result, t, {:continue, action}}
-
-  defp noreply(%State{} = t), do: {:noreply, t}
-  defp noreply(%State{} = t, continue: action), do: {:noreply, t, {:continue, action}}
 end

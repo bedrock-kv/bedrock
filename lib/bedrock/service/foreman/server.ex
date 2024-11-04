@@ -5,6 +5,7 @@ defmodule Bedrock.Service.Foreman.Server do
   import Bedrock.Service.Foreman.Impl
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   def required_opt_keys,
     do: [:cluster, :path, :capabilities, :otp_name]
@@ -56,7 +57,4 @@ defmodule Bedrock.Service.Foreman.Server do
 
   @impl true
   def handle_continue(:spin_up, t), do: do_spin_up(t) |> noreply()
-
-  defp reply(t, result), do: {:reply, result, t}
-  defp noreply(t), do: {:noreply, t}
 end

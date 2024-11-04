@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.DataPlane.Log.Telemetry
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @doc false
   @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()
@@ -107,7 +108,4 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @spec ack_fn(GenServer.from()) :: (-> :ok)
   def ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
-
-  defp reply(%State{} = t, result), do: {:reply, result, t}
-  defp noreply(%State{} = t), do: {:noreply, t}
 end

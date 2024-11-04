@@ -4,6 +4,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   use GenServer
   use Bedrock.Internal.TimerManagement
+  import Bedrock.Internal.GenServer.Replies
 
   import Bedrock.Cluster.Monitor.State,
     only: [
@@ -93,7 +94,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       {:ok, coordinator} ->
         t
         |> found_coordinator(coordinator)
-        |> noreply(:find_current_director)
+        |> noreply(continue: :find_current_director)
 
       {:error, :unavailable} ->
         t
@@ -200,10 +201,10 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   @impl GenServer
   def handle_info({:timeout, :find_a_live_coordinator}, t),
-    do: t |> noreply(:find_a_live_coordinator)
+    do: t |> noreply(continue: :find_a_live_coordinator)
 
   def handle_info({:timeout, :find_current_director}, t),
-    do: t |> noreply(:find_current_director)
+    do: t |> noreply(continue: :find_current_director)
 
   def handle_info({:timeout, :ping}, t) when t.missed_pongs > 3 do
     trace_lost_director(t.cluster)
@@ -211,7 +212,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
     t
     |> cancel_timer(:ping)
     |> change_director(:unavailable)
-    |> noreply(:find_current_director)
+    |> noreply(continue: :find_current_director)
   end
 
   def handle_info({:timeout, :ping}, t) do
@@ -228,7 +229,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
     if pid == t.coordinator || pid == {t.cluster.otp_name(:coordinator), t.node} do
       t
       |> change_coordinator(:unavailable)
-      |> noreply(:find_a_live_coordinator)
+      |> noreply(continue: :find_a_live_coordinator)
     else
       t |> noreply()
     end
@@ -253,8 +254,4 @@ defmodule Bedrock.Cluster.Monitor.Server do
 
   def handle_cast({:advertise_worker, worker_pid}, t),
     do: t |> advertise_worker_to_director(worker_pid) |> noreply()
-
-  defp noreply(t), do: {:noreply, t}
-  defp noreply(t, continue), do: {:noreply, t, {:continue, continue}}
-  defp reply(t, reply), do: {:reply, reply, t}
 end

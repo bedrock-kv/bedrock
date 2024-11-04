@@ -1,6 +1,4 @@
 defmodule Bedrock.ControlPlane.Director.Server do
-  use GenServer
-
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
@@ -22,6 +20,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
     only: [
       try_to_recover: 1
     ]
+
+  use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @doc false
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
@@ -148,9 +149,4 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   defp store_changes_to_config(t), do: t
-
-  defp noreply(t, opts \\ [])
-  defp noreply(t, _opts), do: {:noreply, t}
-
-  defp reply(t, result), do: {:reply, result, t}
 end

@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
   #  import Bedrock.DataPlane.Log.Limestone.Recovery, only: [recover: 3]
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   def child_spec(opts) do
     id = Keyword.fetch!(opts, :id)
@@ -97,7 +98,4 @@ defmodule Bedrock.DataPlane.Log.Limestone.Server do
     :ok = Logic.report_health_to_foreman(t, {:ok, self()})
     t
   end
-
-  defp reply(t, reply), do: {:reply, reply, t}
-  defp noreply(t), do: {:noreply, t}
 end

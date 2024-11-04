@@ -1,6 +1,5 @@
 defmodule Bedrock.Cluster do
   alias Bedrock.Cluster
-  alias Bedrock.Client
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
@@ -34,7 +33,6 @@ defmodule Bedrock.Cluster do
   @callback coordinator!() :: Coordinator.ref()
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback coordinator_nodes!() :: [node()]
-  @callback client() :: {:ok, Bedrock.Client.t()} | {:error, :unavailable}
 
   @doc false
   defmacro __using__(opts) do
@@ -229,13 +227,6 @@ defmodule Bedrock.Cluster do
       @impl Bedrock.Cluster
       @spec coordinator_nodes!() :: [node()]
       def coordinator_nodes!, do: ClusterSupervisor.coordinator_nodes!(__MODULE__)
-
-      @doc """
-      Get a new instance of the `Client` configured for the cluster.
-      """
-      @impl Bedrock.Cluster
-      @spec client() :: {:ok, Client.t()} | {:error, :unavailable}
-      def client, do: ClusterSupervisor.client(__MODULE__)
 
       @doc false
       def child_spec(opts),

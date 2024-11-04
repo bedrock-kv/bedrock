@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage do
   alias Bedrock.Service.Worker
 
+  import Bedrock.Internal.GenServer.Calls
+
   @type ref :: Worker.ref()
   @type id :: Worker.id()
   @type key_range :: Bedrock.key_range()
@@ -25,7 +27,12 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Returns the value for the given key/version.
   """
-  @spec fetch(storage :: ref(), Bedrock.key(), Bedrock.version(), Bedrock.timeout_in_ms()) ::
+  @spec fetch(
+          storage :: ref(),
+          Bedrock.key(),
+          Bedrock.version(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) ::
           {:ok, Bedrock.value()}
           | {:error,
              :timeout
@@ -33,11 +40,8 @@ defmodule Bedrock.DataPlane.Storage do
              | :tx_too_old
              | :tx_too_new
              | :unavailable}
-  def fetch(storage, key, version, timeout \\ 5_000) when is_binary(key) do
-    GenServer.call(storage, {:fetch, key, version, [timeout: timeout]})
-  catch
-    :exit, {:noproc, {GenServer, :call, _}} -> {:error, :unavailable}
-  end
+  def fetch(storage, key, version, opts \\ []) when is_binary(key),
+    do: call(storage, {:fetch, key, version, opts}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions

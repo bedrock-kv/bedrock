@@ -13,32 +13,7 @@ defmodule Bedrock.Internal.GenServerApi do
         end
       end
 
-      import Bedrock.Internal.GenServerApi,
-        only: [
-          cast: 2,
-          call: 3,
-          broadcast: 3
-        ]
-    end
-  end
-
-  @spec broadcast([GenServer.name()], otp_name :: GenServer.name(), message :: any()) :: :ok
-  def broadcast(nodes, otp_name, message) do
-    GenServer.abcast(nodes, otp_name, message)
-    :ok
-  end
-
-  @spec cast(GenServer.name(), message :: any()) :: :ok
-  def cast(server, message), do: GenServer.cast(server, message)
-
-  @spec call(GenServer.name(), message :: any(), timeout() | :infinity) :: term()
-  def call(server, message, timeout) do
-    try do
-      GenServer.call(server, message, timeout)
-    catch
-      :exit, {:noproc, _} -> {:error, :unavailable}
-      :exit, {{:nodedown, _}, _} -> {:error, :unavailable}
-      :exit, {:timeout, _} -> {:error, :timeout}
+      import Bedrock.Internal.GenServer.Calls
     end
   end
 end

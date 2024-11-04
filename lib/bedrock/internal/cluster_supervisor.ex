@@ -1,5 +1,4 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
-  alias Bedrock.Client
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
@@ -192,12 +191,5 @@ defmodule Bedrock.Internal.ClusterSupervisor do
         Bedrock.Cluster.default_descriptor_file_name()
       )
     )
-  end
-
-  @spec client(module()) :: {:ok, Client.t()} | {:error, :unavailable}
-  def client(module) do
-    with {:ok, coordinator} <- module.fetch_coordinator() do
-      Client.new(coordinator)
-    end
   end
 end

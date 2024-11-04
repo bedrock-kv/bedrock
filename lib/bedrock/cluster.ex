@@ -236,7 +236,6 @@ defmodule Bedrock.Cluster do
         @opaque transaction :: pid()
 
         @spec transaction(
-                cluster :: module(),
                 (transaction() ->
                    :ok | {:ok, result} | :error | {:error, reason}),
                 opts :: [

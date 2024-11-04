@@ -32,15 +32,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       reset_ping_timer: 1
     ]
 
-  import Bedrock.Cluster.Monitor.Telemetry,
-    only: [
-      trace_searching_for_director: 1,
-      trace_searching_for_coordinator: 1,
-      trace_found_coordinator: 2,
-      trace_found_director: 2,
-      trace_lost_director: 1,
-      trace_missed_pong: 2
-    ]
+  import Bedrock.Cluster.Monitor.Telemetry
 
   require Logger
 
@@ -70,6 +62,8 @@ defmodule Bedrock.Cluster.Monitor.Server do
   @doc false
   @impl GenServer
   def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
+    trace_started(cluster)
+
     %State{
       node: Node.self(),
       cluster: cluster,

@@ -12,14 +12,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :director_changed],
         [:bedrock, :control_plane, :coordinator, :consensus_reached]
       ],
-      &__MODULE__.handle_event/4,
+      &__MODULE__.handler/4,
       nil
     )
   end
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def handle_event([:bedrock, :control_plane, :coordinator, event], measurements, metadata, _),
+  def handler([:bedrock, :control_plane, :coordinator, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
   def trace(:started, _, %{cluster: cluster}) do

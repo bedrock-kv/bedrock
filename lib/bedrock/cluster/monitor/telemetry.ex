@@ -3,6 +3,13 @@ defmodule Bedrock.Cluster.Monitor.Telemetry do
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Director
 
+  @spec trace_started(cluster :: module()) :: :ok
+  def trace_started(cluster) do
+    Telemetry.execute([:bedrock, :cluster, :monitor, :started], %{}, %{
+      cluster: cluster
+    })
+  end
+
   @spec trace_advertising_capabilities(
           cluster :: module(),
           capabilities :: [Cluster.capability()],

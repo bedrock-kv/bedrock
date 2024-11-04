@@ -55,7 +55,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :mode_change],
         %{at: at},
-        %{mode: :follower, term: term, leader: leader} = _metadata,
+        %{mode: :follower, term: term, leader: leader},
         start
       ) do
     info(
@@ -67,7 +67,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :mode_change],
         %{at: at},
-        %{mode: :candidate, term: term, quorum: quorum, peers: peers} = _metadata,
+        %{mode: :candidate, term: term, quorum: quorum, peers: peers},
         start
       ) do
     info(
@@ -79,7 +79,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :mode_change],
         %{at: at},
-        %{mode: :leader, term: term, quorum: quorum, peers: peers} = _metadata,
+        %{mode: :leader, term: term, quorum: quorum, peers: peers},
         start
       ) do
     info(
@@ -100,7 +100,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :leadership_change],
         %{at: at},
-        %{leader: leader, term: term} = _metadata,
+        %{leader: leader, term: term},
         start
       ) do
     info(at - start, "Leadership changed to #{leader} with term #{term}")
@@ -109,7 +109,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :request_votes],
         %{at: at},
-        %{term: term, peers: peers, newest_transaction_id: newest_transaction_id} = _metadata,
+        %{term: term, peers: peers, newest_transaction_id: newest_transaction_id},
         start
       ) do
     info(
@@ -121,7 +121,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :vote_received],
         %{at: at},
-        %{term: term, follower: follower} = _metadata,
+        %{term: term, follower: follower},
         start
       ) do
     info(at - start, "Received vote for from #{follower} in term #{term}")
@@ -130,7 +130,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :vote_sent],
         %{at: at},
-        %{term: term, candidate: candidate} = _metadata,
+        %{term: term, candidate: candidate},
         start
       ) do
     info(at - start, "Voted for candidate #{candidate} in term #{term}")
@@ -139,7 +139,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :election_ended],
         %{at: at},
-        %{term: term, votes: votes, quorum: quorum} = _metadata,
+        %{term: term, votes: votes, quorum: quorum},
         start
       ) do
     info(
@@ -151,7 +151,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :transaction_added],
         %{at: at},
-        %{term: term, transaction_id: transaction_id} = _metadata,
+        %{term: term, transaction_id: transaction_id},
         start
       ) do
     info(at - start, "Transaction #{inspect(transaction_id)} added to term #{term}")
@@ -186,7 +186,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :heartbeat],
         %{at: at},
-        %{term: term} = _metadata,
+        %{term: term},
         start
       ) do
     info(at - start, "Heartbeat for term #{term}")
@@ -201,7 +201,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
           prev_transaction_id: prev_transaction_id,
           transaction_ids: transaction_ids,
           newest_safe_transaction_id: newest_safe_transaction_id
-        } = _metadata,
+        },
         start
       ) do
     info(
@@ -219,7 +219,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
           prev_transaction_id: prev_transaction_id,
           transaction_ids: transaction_ids,
           commit_transaction_id: commit_transaction_id
-        } = _metadata,
+        },
         start
       ) do
     info(

@@ -14,14 +14,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :cluster, :recovery, :durable_version_chosen],
         [:bedrock, :cluster, :recovery, :suitable_logs_chosen]
       ],
-      &__MODULE__.handle_event/4,
+      &__MODULE__.handler/4,
       nil
     )
   end
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def handle_event([:bedrock, :cluster, :recovery, event], measurements, metadata, _),
+  def handler([:bedrock, :cluster, :recovery, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do

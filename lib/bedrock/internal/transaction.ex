@@ -84,8 +84,7 @@ defmodule Bedrock.Internal.Transaction do
     with :error <- Map.fetch(t.writes, encoded_key),
          :error <- Map.fetch(t.reads, encoded_key),
          :error <- fetch_from_stack(encoded_key, t.stack),
-         {:ok, t, value} <-
-           fetch_from_storage(t, encoded_key) do
+         {:ok, t, value} <- fetch_from_storage(t, encoded_key) do
       {%{t | reads: Map.put(t.reads, encoded_key, value)}, value}
     else
       {:ok, value} -> {t, value}
@@ -269,6 +268,8 @@ defmodule Bedrock.Internal.Transaction do
       timeout: fetch_timeout_in_ms
     )
     |> Enum.find_value(fn
+      {:ok, {:error, :version_too_old} = error} -> error
+      {:ok, {:error, :not_found} = error} -> error
       {:ok, {storage_server, value}} -> {:ok, storage_server, value}
       _ -> nil
     end) || :error

@@ -12,4 +12,7 @@ defmodule Bedrock.Internal.GenServer.Replies do
   @spec noreply(t, continue: continue) :: {:noreply, t, {:continue, continue}}
         when t: term(), continue: term()
   def noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
+
+  @spec stop(t, reason) :: {:stop, reason, t} when t: term(), reason: term()
+  def stop(t, reason), do: {:stop, reason, t}
 end

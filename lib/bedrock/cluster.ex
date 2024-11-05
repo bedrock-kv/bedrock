@@ -246,7 +246,7 @@ defmodule Bedrock.Cluster do
                 :ok | {:ok, result} | :error | {:error, reason}
               when result: term(), reason: term()
         def transaction(fun, opts \\ []),
-          do: Bedrock.Internal.Repo.transaction(__MODULE__, fun, opts)
+          do: Bedrock.Internal.Repo.transaction(unquote(__CALLER__.module), fun, opts)
 
         @spec nested_transaction(transaction()) :: transaction()
         defdelegate nested_transaction(t), to: Bedrock.Internal.Repo

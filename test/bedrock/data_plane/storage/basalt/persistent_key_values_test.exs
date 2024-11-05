@@ -77,7 +77,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
     test "does not allow older transactions to be written after newer ones", %{pkv: pkv} do
       assert :ok == PersistentKeyValues.apply_transaction(pkv, Transaction.new(2, foo: :baz))
 
-      assert {:error, :tx_too_old} ==
+      assert {:error, :version_too_old} ==
                PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar))
 
       assert {:ok, :baz} == PersistentKeyValues.fetch(pkv, :foo)

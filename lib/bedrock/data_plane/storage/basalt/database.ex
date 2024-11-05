@@ -79,11 +79,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     MVCC.fetch(database.mvcc, key, version)
     |> case do
       {:error, :not_found} ->
-        if Keyspace.key_exists?(database.keyspace, key) and
-             not Version.older?(version, MVCC.oldest_version(database.mvcc)) do
-          fetch_from_persistence_and_write_back_to_mvcc(database, key, version)
-        else
-          {:error, :tx_too_old}
+        cond do
+          not Keyspace.key_exists?(database.keyspace, key) ->
+            {:error, :not_found}
+
+          Version.older?(version, MVCC.oldest_version(database.mvcc)) ->
+            {:error, :version_too_old}
+
+          true ->
+            fetch_from_persistence_and_write_back_to_mvcc(database, key, version)
         end
 
       result ->
@@ -132,7 +136,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   are pruned from the store.
   """
   @spec ensure_durability_to_version(db :: t(), Bedrock.version()) :: :ok
-  def ensure_durability_to_version(_, :undefined), do: :ok
+  def ensure_durability_to_version(_, :start), do: :ok
 
   def ensure_durability_to_version(db, version) do
     MVCC.transaction_at_version(db.mvcc, version)

@@ -37,8 +37,8 @@ defmodule Bedrock.DataPlane.Storage do
           | {:error,
              :timeout
              | :not_found
-             | :tx_too_old
-             | :tx_too_new
+             | :version_too_old
+             | :version_too_new
              | :unavailable}
   def fetch(storage, key, version, opts \\ []) when is_binary(key),
     do: call(storage, {:fetch, key, version, opts}, opts[:timeout_in_ms] || :infinity)

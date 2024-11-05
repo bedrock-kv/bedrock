@@ -13,14 +13,14 @@ defmodule Bedrock.DataPlane.Log.Limestone.Pulling do
             last_durable_version: Bedrock.version()
           ]
         ) ::
-          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :tx_too_new}
+          {:ok, [] | [Transaction.t()]} | {:error, :not_ready | :version_too_new}
   def pull(t, _last_version, _count, _opts)
       when t.state != :ready,
       do: {:error, :not_ready}
 
   def pull(t, last_version, _count, _opts)
       when last_version > t.last_version,
-      do: {:error, :tx_too_new}
+      do: {:error, :version_too_new}
 
   def pull(t, last_version, count, subscriber_id: id = opts) do
     last_durable_version = opts[:last_durable_version] || :start

@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt do
-  alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.DataPlane.Storage.Basalt.Database
 
   use Bedrock.Service.WorkerBehaviour, kind: :storage
@@ -10,23 +10,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
   @doc false
   @spec child_spec(opts :: keyword()) :: map()
   defdelegate child_spec(opts), to: __MODULE__.Server
-
-  defmodule State do
-    @type t :: %__MODULE__{
-            otp_name: atom(),
-            path: Path.t(),
-            epoch: Bedrock.epoch() | nil,
-            foreman: pid() | nil,
-            id: Worker.id(),
-            database: Database.t()
-          }
-    defstruct otp_name: nil,
-              path: nil,
-              epoch: nil,
-              foreman: nil,
-              id: nil,
-              database: nil
-  end
 
   defmodule Logic do
     alias Bedrock.DataPlane.Version
@@ -64,7 +47,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
       do: {:ok, %{t | epoch: epoch, foreman: foreman}}
 
     @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
-            {:error, :key_out_of_range | :not_found | :tx_too_old} | {:ok, binary()}
+            {:error, :key_out_of_range | :not_found | :version_too_old} | {:ok, binary()}
     def fetch(%State{} = t, key, version),
       do: Database.fetch(t.database, key, version)
 
@@ -110,75 +93,5 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
     defp gather_info(:supported_info, _t), do: supported_info()
     defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)
     defp gather_info(_unsupported, _t), do: {:error, :unsupported_info}
-  end
-
-  defmodule Server do
-    use GenServer
-
-    @spec child_spec(opts :: keyword()) :: map()
-    def child_spec(opts) do
-      otp_name = opts[:otp_name] || raise "Missing :otp_name option"
-      foreman = opts[:foreman] || raise "Missing :foreman option"
-      id = opts[:id] || raise "Missing :id option"
-      path = opts[:path] || raise "Missing :path option"
-
-      %{
-        id: {__MODULE__, id},
-        start:
-          {GenServer, :start_link,
-           [
-             __MODULE__,
-             {otp_name, foreman, id, path},
-             [name: otp_name]
-           ]}
-      }
-    end
-
-    @impl GenServer
-    def init(args),
-      # We use a continuation here to ensure that the foreman isn't blocked
-      # waiting for the worker to finish it's startup sequence (which could take
-      # a few seconds or longer if the database is large.) The foreman will
-      # be notified when the worker is ready to accept requests.
-      do: {:ok, args, {:continue, :finish_startup}}
-
-    @impl GenServer
-    def terminate(_, %State{} = t) do
-      Logic.shutdown(t)
-      :normal
-    end
-
-    @impl GenServer
-    def handle_call({:fetch, key, version, 0}, _from, %State{} = t),
-      do: {:reply, t |> Logic.fetch(key, version), t}
-
-    def handle_call({:info, fact_names}, _from, %State{} = t),
-      do: {:reply, t |> Logic.info(fact_names), t}
-
-    def handle_call({:lock_for_recovery, epoch}, foreman, t) do
-      with {:ok, t} <- t |> Logic.lock_for_recovery(foreman, epoch),
-           {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
-        {:reply, {:ok, self(), info}, t}
-      else
-        error -> {:reply, error, t}
-      end
-    end
-
-    def handle_call(_, _from, t),
-      do: {:reply, {:error, :not_ready}, t}
-
-    @impl GenServer
-    def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
-      Logic.startup(otp_name, foreman, id, path)
-      |> case do
-        {:ok, t} -> {:noreply, t, {:continue, :report_health_to_foreman}}
-        {:error, reason} -> {:stop, reason, :nostate}
-      end
-    end
-
-    def handle_continue(:report_health_to_foreman, %State{} = t) do
-      :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
-      {:noreply, t}
-    end
   end
 end

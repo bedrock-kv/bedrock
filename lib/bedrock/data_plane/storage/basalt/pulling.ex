@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.DataPlane.Storage.Basalt.Database
 
   import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
@@ -10,13 +10,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
           Bedrock.version(),
           [LogDescriptor.t()],
           [ServiceDescriptor.t()],
-          Database.t()
+          apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
         ) ::
           Task.t()
-  def start_pulling(start_after, logs, services, database) do
+  def start_pulling(start_after, logs, services, apply_transactions_fn) do
     state = %{
       start_after: start_after,
-      database: database,
+      apply_transactions_fn: apply_transactions_fn,
       logs: logs,
       services: services,
       failed_logs: %{}
@@ -31,16 +31,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     :ok
   end
 
-  # 10 seconds before trying a failed log again
   def circuit_breaker_timeout, do: 10_000
-
-  # 5 seconds before retrying if all logs fail
   def retry_delay, do: 5_000
-
-  # 5-second timeout for GenServer calls
   def call_timeout, do: 5_000
 
-  def long_pull_loop(state) do
+  def long_pull_loop(%{apply_transactions_fn: apply_transactions_fn} = state) do
     timestamp = System.system_time(:millisecond)
 
     case select_log(state) do
@@ -55,7 +50,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
             trace_log_pull_succeeded(timestamp, length(transactions))
             :timer.sleep(1000)
 
-            next_version = Database.apply_transactions(state.database, transactions)
+            next_version = apply_transactions_fn.(transactions)
 
             %{state | start_after: next_version}
             |> long_pull_loop()
@@ -71,7 +66,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
       :no_available_logs ->
         IO.puts("All logs are marked failed. Retrying after a delay.")
         ms_to_wait = retry_delay()
-        trace_all_logs_failed(timestamp, ms_to_wait)
+        trace_log_pull_circuit_breaker_tripped(timestamp, ms_to_wait)
 
         :timer.sleep(ms_to_wait)
         long_pull_loop(reset_failed_logs(state))
@@ -113,7 +108,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   # Reset all failed logs, clearing the circuit breakers
   def reset_failed_logs(state) do
     now = System.monotonic_time(:millisecond)
-    trace_log_circuit_breaker_reset(now)
+    trace_log_pull_circuit_breaker_reset(now)
 
     %{state | failed_logs: %{}}
   end

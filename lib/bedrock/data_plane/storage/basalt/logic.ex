@@ -61,7 +61,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
     with :ok <- Database.purge_transactions_newer_than(t.database, durable_version),
-         puller <- Pulling.start_pulling(durable_version, logs, services, t.database) do
+         puller <-
+           Pulling.start_pulling(
+             durable_version,
+             logs,
+             services,
+             &Database.apply_transactions(t.database, &1)
+           ) do
       t
       |> update_mode(:running)
       |> put_puller(puller)

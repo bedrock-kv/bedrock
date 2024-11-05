@@ -7,11 +7,11 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     :telemetry.attach_many(
       handler_id(),
       [
-        [:bedrock, :data_plane, :log, :started],
-        [:bedrock, :data_plane, :log, :lock_for_recovery],
-        [:bedrock, :data_plane, :log, :recover_from],
-        [:bedrock, :data_plane, :log, :push],
-        [:bedrock, :data_plane, :log, :pull]
+        [:bedrock, :log, :started],
+        [:bedrock, :log, :lock_for_recovery],
+        [:bedrock, :log, :recover_from],
+        [:bedrock, :log, :push],
+        [:bedrock, :log, :pull]
       ],
       &__MODULE__.handler/4,
       nil
@@ -20,7 +20,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def handler([:bedrock, :data_plane, :log, event], measurements, metadata, _),
+  def handler([:bedrock, :log, event], measurements, metadata, _),
     do: log_event(event, measurements, metadata)
 
   def log_event(:started, _, %{cluster: cluster, id: id, otp_name: otp_name}) do

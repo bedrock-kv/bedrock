@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
   alias Bedrock.DataPlane.Log
 
   def trace_log_started(cluster, id, otp_name) do
-    Telemetry.execute([:bedrock, :data_plane, :log, :started], %{}, %{
+    Telemetry.execute([:bedrock, :log, :started], %{}, %{
       cluster: cluster,
       id: id,
       otp_name: otp_name
@@ -12,7 +12,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
   end
 
   def trace_log_lock_for_recovery(cluster, id, epoch) do
-    Telemetry.execute([:bedrock, :data_plane, :log, :lock_for_recovery], %{}, %{
+    Telemetry.execute([:bedrock, :log, :lock_for_recovery], %{}, %{
       cluster: cluster,
       id: id,
       epoch: epoch
@@ -20,7 +20,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
   end
 
   def trace_log_recover_from(cluster, id, source_log, first_version, last_version) do
-    Telemetry.execute([:bedrock, :data_plane, :log, :recover_from], %{}, %{
+    Telemetry.execute([:bedrock, :log, :recover_from], %{}, %{
       cluster: cluster,
       id: id,
       source_log: source_log,
@@ -37,7 +37,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
         ) :: :ok
   def trace_log_push_transaction(cluster, id, transaction, expected_version) do
     Telemetry.execute(
-      [:bedrock, :data_plane, :log, :push],
+      [:bedrock, :log, :push],
       %{
         n_keys: map_size(transaction |> Transaction.key_values())
       },
@@ -51,7 +51,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
   end
 
   def trace_log_pull_transactions(cluster, id, from_version, opts) do
-    Telemetry.execute([:bedrock, :data_plane, :log, :pull], %{}, %{
+    Telemetry.execute([:bedrock, :log, :pull], %{}, %{
       cluster: cluster,
       id: id,
       from_version: from_version,

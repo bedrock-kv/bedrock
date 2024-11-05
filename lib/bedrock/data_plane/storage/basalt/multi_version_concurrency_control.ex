@@ -125,6 +125,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   defp match_value_for_key_with_version_lte(key, version),
     do: [{{{:"$1", :"$2"}, :"$3"}, [{:"=:=", key, :"$1"}, {:"=<", :"$2", version}], [:"$3"]}]
 
+  defp match_rows_with_with_version_gt(version),
+    do: [{{{:_, :"$2"}, :_}, [{:>=, :"$2", version}], [true]}]
+
   defp value_from_ets_row({value}), do: value
   defp value_from_ets_row(value), do: value
 
@@ -197,6 +200,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
       )
 
     {version, snapshot}
+  end
+
+  def purge_keys_newer_than_version(mvcc, version) do
+    :ets.select_delete(mvcc, match_rows_with_with_version_gt(version))
+    :ok
   end
 
   @doc """

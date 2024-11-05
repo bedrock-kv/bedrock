@@ -9,10 +9,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     :telemetry.attach_many(
       handler_id(),
       [
-        [:bedrock, :cluster, :recovery, :started],
-        [:bedrock, :cluster, :recovery, :services_locked],
-        [:bedrock, :cluster, :recovery, :durable_version_chosen],
-        [:bedrock, :cluster, :recovery, :suitable_logs_chosen]
+        [:bedrock, :recovery, :started],
+        [:bedrock, :recovery, :services_locked],
+        [:bedrock, :recovery, :durable_version_chosen],
+        [:bedrock, :recovery, :suitable_logs_chosen],
+        [:bedrock, :recovery, :storage_unlocking]
       ],
       &__MODULE__.handler/4,
       nil
@@ -21,7 +22,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def handler([:bedrock, :cluster, :recovery, event], measurements, metadata, _),
+  def handler([:bedrock, :recovery, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do
@@ -54,6 +55,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     info("Suitable logs chosen: #{suitable_logs |> Enum.join(", ")}")
     info("Version vector: #{inspect(log_version_vector)}")
   end
+
+  def trace(:storage_unlocking, _, %{storage_worker_id: storage_worker_id}),
+    do: info("Storage worker #{storage_worker_id} unlocking")
 
   defp info(message) do
     metadata = Logger.metadata()

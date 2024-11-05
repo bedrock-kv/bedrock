@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Storage do
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
 
   import Bedrock.Internal.GenServer.Calls
@@ -55,6 +56,27 @@ defmodule Bedrock.DataPlane.Storage do
   @spec lock_for_recovery(storage :: ref(), Bedrock.epoch()) ::
           {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
+
+  @doc """
+  Unlocks the storage after recovery is complete. This allows the storage
+  to start accepting new transactions again and continue normal operation.
+
+  The durable version and transaction system layout must be provided to
+  ensure that the storage is unlocked at the correct state.
+  """
+  @spec unlock_after_recovery(
+          storage :: ref(),
+          durable_version :: Bedrock.version(),
+          TransactionSystemLayout.t(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) :: :ok | {:error, term()}
+  def unlock_after_recovery(storage, durable_version, transaction_system_layout, opts \\ []) do
+    call(
+      storage,
+      {:unlock_after_recovery, durable_version, transaction_system_layout},
+      opts[:timeout_in_ms] || :infinity
+    )
+  end
 
   @doc """
   Ask the storage storage for various facts about itself.

@@ -47,12 +47,25 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   def handle_call({:info, fact_names}, _from, %State{} = t),
     do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
-  def handle_call({:lock_for_recovery, epoch}, foreman, t) do
-    with {:ok, t} <- t |> Logic.lock_for_recovery(foreman, epoch),
+  def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
+    with {:ok, t} <- t |> Logic.lock_for_recovery(director, epoch),
          {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
       t |> reply({:ok, self(), info})
     else
       error -> t |> reply(error)
+    end
+  end
+
+  def handle_call(
+        {:unlock_after_recovery, durable_version, transaction_system_layout},
+        {_director, _},
+        t
+      ) do
+    t
+    |> Logic.unlock_after_recovery(durable_version, transaction_system_layout)
+    |> case do
+      {:ok, t} -> t |> reply(:ok)
+      {:error, reason} -> t |> reply(reason)
     end
   end
 

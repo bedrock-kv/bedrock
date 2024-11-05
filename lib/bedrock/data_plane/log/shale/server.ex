@@ -41,7 +41,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   def init({cluster, otp_name, id, foreman}) do
     log = :ets.new(:log, [:protected, :ordered_set])
-    :ets.insert(log, Log.initial_transaction())
+    :ets.insert(log, [Log.initial_transaction()])
 
     {:ok,
      %State{

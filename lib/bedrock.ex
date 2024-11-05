@@ -19,6 +19,8 @@ defmodule Bedrock do
   @type timeout_in_ms :: :infinity | non_neg_integer()
   @type timestamp_in_ms :: non_neg_integer()
 
+  @type interval_in_ms :: :infinity | non_neg_integer()
+
   @type range_tag :: non_neg_integer()
 
   @type service :: :coordination | :log | :storage

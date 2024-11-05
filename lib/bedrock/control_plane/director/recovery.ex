@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.DataPlane.Storage
 
   import Bedrock.ControlPlane.Config.RecoveryAttempt, only: [recovery_attempt: 5]
 
@@ -106,7 +107,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec do_recovery(State.t()) :: State.t()
   def do_recovery(t) do
-    :ok = trace_recovery_attempt_started(t)
+    trace_recovery_attempt_started(
+      t.cluster,
+      t.epoch,
+      t.config.recovery_attempt.attempt,
+      t.config.recovery_attempt.started_at
+    )
 
     t.config.recovery_attempt
     |> run_recovery_attempt()
@@ -137,6 +143,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         )
       end)
     end)
+    |> unlock_storage_after_recovery(completed_recovery_attempt.durable_version)
+  end
+
+  def unlock_storage_after_recovery(t, durable_version) do
+    t.config.transaction_system_layout.services
+    |> Enum.filter(&(&1.kind == :storage))
+    |> Enum.each(fn %{status: {:up, worker}} = storage_descriptor ->
+      trace_recovery_storage_unlocking(storage_descriptor.id)
+
+      Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
+        timeout_in_ms: 1_000
+      )
+    end)
+
+    t
   end
 
   def update_stalled_recovery_attempt(t, stalled_recovery_attempt) do

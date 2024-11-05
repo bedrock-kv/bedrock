@@ -109,6 +109,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     end
   end
 
+  @spec purge_transactions_newer_than(t(), Bedrock.version()) :: :ok
+  def purge_transactions_newer_than(database, version) do
+    MVCC.purge_keys_newer_than_version(database.mvcc, version)
+  end
+
   @doc """
   Returns information about the database. The following statistics are
   available:

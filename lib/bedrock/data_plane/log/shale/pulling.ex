@@ -8,7 +8,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
-            recovery: boolean()
+            recovery: boolean(),
+            willing_to_wait_in_ms: Bedrock.interval_in_ms()
           ]
         ) ::
           {:ok, State.t(), [Transaction.t()]}
@@ -93,6 +94,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def check_from_version(from_version, t) when t.last_version < from_version,
     do: {:error, :version_too_new}
+
+  def check_from_version(_, t) when t.oldest_version == :start,
+    do: :ok
 
   def check_from_version(from_version, t) when t.oldest_version > from_version,
     do: {:error, :version_too_old}

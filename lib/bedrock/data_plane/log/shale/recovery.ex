@@ -31,8 +31,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           last_version :: Bedrock.version()
         ) ::
           :ok | Log.pull_errors() | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
-  def pull_transactions(_, nil, :start, 0),
-    do: :ok
+  def pull_transactions(log, nil, :start, 0) do
+    initial_transaction = Log.initial_transaction()
+    true = :ets.insert_new(log, [initial_transaction])
+    :ok
+  end
 
   def pull_transactions(_, _, first_version, last_version)
       when first_version == last_version,

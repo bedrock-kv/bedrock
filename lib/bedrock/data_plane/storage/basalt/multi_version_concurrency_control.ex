@@ -7,9 +7,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
 
   alias Bedrock.DataPlane.Transaction
 
-  @type t :: :ets.table()
+  @opaque t :: :ets.table()
 
-  @spec new(otp_name :: atom(), Bedrock.version()) :: t()
+  @spec new(otp_name :: atom(), Bedrock.version() | :undefined) :: t()
   def new(otp_name, version) when is_atom(otp_name) do
     with mvcc <-
            :ets.new(otp_name, [
@@ -52,7 +52,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     transactions
     |> Enum.reduce(latest_version, fn
       {version, _kv_pairs}, newest_version
-      when version <= newest_version ->
+      when newest_version != :undefined and version <= newest_version ->
         raise "Transactions must be applied in order (new #{version}, old #{newest_version})"
 
       {version, _kv_pairs} = transaction, _newest_version ->

@@ -2,15 +2,20 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   @moduledoc """
   """
 
-  defstruct ~w[mvcc keyspace pkv key_range]a
-  @type t :: %__MODULE__{}
-
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
   alias Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl, as: MVCC
   alias Bedrock.DataPlane.Storage.Basalt.Keyspace
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+
+  @opaque t :: %__MODULE__{
+            mvcc: MVCC.t(),
+            keyspace: Keyspace.t(),
+            pkv: PersistentKeyValues.t()
+          }
+  defstruct mvcc: nil,
+            keyspace: nil,
+            pkv: nil
 
   @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}
   def open(otp_name, file_path) when is_atom(otp_name) do
@@ -18,15 +23,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
          last_durable_version <- PersistentKeyValues.last_version(pkv),
          mvcc <- MVCC.new(:"#{otp_name}_mvcc", last_durable_version),
          keyspace <- Keyspace.new(:"#{otp_name}_keyspace"),
-         key_range <- PersistentKeyValues.key_range(pkv),
          :ok <- load_keys_into_keyspace(pkv, keyspace) do
       {:ok,
        %__MODULE__{
          mvcc: mvcc,
          keyspace: keyspace,
-         pkv: pkv,
-         key_range: key_range
+         pkv: pkv
        }}
+    else
+      {:error, _reason} = error -> error
     end
   end
 
@@ -46,9 +51,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
 
   @spec last_durable_version(database :: t()) :: Bedrock.version()
   def last_durable_version(database), do: database.pkv |> PersistentKeyValues.last_version()
-
-  @spec key_range(database :: t()) :: Storage.key_range() | :undefined
-  def key_range(database), do: database.key_range
 
   @spec load_keys_into_keyspace(PersistentKeyValues.t(), Keyspace.t()) :: :ok
   def load_keys_into_keyspace(pkv, keyspace) do
@@ -142,6 +144,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   """
   @spec ensure_durability_to_version(db :: t(), Bedrock.version()) :: :ok
   def ensure_durability_to_version(_, :start), do: :ok
+  def ensure_durability_to_version(_, :undefined), do: :ok
 
   def ensure_durability_to_version(db, version) do
     MVCC.transaction_at_version(db.mvcc, version)

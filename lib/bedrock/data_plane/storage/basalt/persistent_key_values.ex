@@ -2,16 +2,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc """
   """
 
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.Version
 
-  @type t :: :dets.tab_name()
+  @opaque t :: :dets.tab_name()
 
   @doc """
   Opens a persistent key-value store.
   """
-  @spec open(atom(), String.t()) :: {:ok, t()} | {:error, any()}
+  @spec open(atom(), String.t()) :: {:ok, t()} | {:error, term()}
   def open(name, file_path) when is_atom(name) do
     :dets.open_file(name,
       access: :read_write,
@@ -31,11 +29,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec oldest_version(t()) :: Bedrock.version()
+  @spec oldest_version(t()) :: Bedrock.version() | :undefined
   def oldest_version(pkv) do
     fetch(pkv, :oldest_version)
     |> case do
-      {:error, :not_found} -> 0
+      {:error, :not_found} -> :undefined
       {:ok, version} -> version
     end
   end
@@ -43,24 +41,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec last_version(t()) :: Bedrock.version()
+  @spec last_version(t()) :: Bedrock.version() | :undefined
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do
-      {:error, :not_found} -> 0
-      {:ok, version} -> version
-    end
-  end
-
-  @doc """
-  Returns the key range of the key-value store.
-  """
-  @spec key_range(t()) :: Storage.key_range() | :undefined
-  def key_range(pkv) do
-    fetch(pkv, :key_range)
-    |> case do
       {:error, :not_found} -> :undefined
-      {:ok, {_min, _max}} = key_range -> key_range
+      {:ok, version} -> version
     end
   end
 
@@ -70,16 +56,20 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   """
   @spec apply_transaction(pkv :: t(), Transaction.t()) :: :ok | {:error, term()}
   def apply_transaction(pkv, transaction) do
-    with transaction_version <- Transaction.version(transaction),
-         true <-
-           Version.newer?(transaction_version, last_version(pkv)) ||
-             {:error, :version_too_old},
-         :ok <-
-           :dets.insert(pkv, [
-             {:last_version, transaction_version}
-             | Transaction.key_values(transaction) |> Enum.to_list()
-           ]) do
-      :dets.sync(pkv)
+    version = Transaction.version(transaction)
+
+    case last_version(pkv) do
+      last_version when last_version != :undefined and last_version >= version ->
+        {:error, :version_too_old}
+
+      _ ->
+        writes = Transaction.key_values(transaction) |> Enum.to_list()
+
+        :dets.insert(pkv, [{:last_version, version} | writes])
+        |> case do
+          :ok -> :dets.sync(pkv)
+          {:error, :key_already_exists} -> {:error, :version_too_old}
+        end
     end
   end
 

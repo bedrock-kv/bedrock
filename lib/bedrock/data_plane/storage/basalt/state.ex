@@ -7,20 +7,21 @@ defmodule Bedrock.DataPlane.Storage.Basalt.State do
   @type t :: %__MODULE__{
           otp_name: atom(),
           path: Path.t(),
-          epoch: Bedrock.epoch() | nil,
           foreman: Foreman.ref(),
           id: Worker.id(),
           database: Database.t(),
-          pull_task: Task.t(),
-          director: Director.ref()
+          pull_task: Task.t() | nil,
+          epoch: Bedrock.epoch() | nil,
+          director: Director.ref() | nil,
+          mode: :locked | :running
         }
   defstruct otp_name: nil,
             path: nil,
-            epoch: nil,
             foreman: nil,
             id: nil,
             database: nil,
             pull_task: nil,
+            epoch: nil,
             director: nil,
             mode: :locked
 

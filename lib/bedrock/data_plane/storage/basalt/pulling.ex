@@ -28,6 +28,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @spec stop(Task.t()) :: :ok
   def stop(puller) do
     Task.shutdown(puller)
+    :ok
   end
 
   # 10 seconds before trying a failed log again

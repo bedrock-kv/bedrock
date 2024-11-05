@@ -13,7 +13,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
 
   alias Bedrock.DataPlane.Transaction
 
-  @type t :: :ets.tid()
+  @opaque t :: :ets.tid()
 
   @spec new(atom()) :: t()
   def new(name) when is_atom(name),

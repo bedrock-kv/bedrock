@@ -65,7 +65,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     |> Logic.unlock_after_recovery(durable_version, transaction_system_layout)
     |> case do
       {:ok, t} -> t |> reply(:ok)
-      {:error, reason} -> t |> reply(reason)
     end
   end
 

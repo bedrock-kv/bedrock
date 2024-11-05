@@ -12,7 +12,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
     only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
-          {:ok, State.t()} | {:error, term()}
+          {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path) do
     with :ok <- ensure_directory_exists(path),
          {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
@@ -24,6 +24,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
          foreman: foreman,
          database: database
        }}
+    else
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -92,7 +94,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
       id
       pid
       path
-      key_range
       kind
       n_keys
       otp_name
@@ -104,7 +105,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   defp gather_info(:oldest_durable_version, t), do: Database.oldest_durable_version(t.database)
   defp gather_info(:durable_version, t), do: Database.last_durable_version(t.database)
   defp gather_info(:id, t), do: t.id
-  defp gather_info(:key_range, t), do: Database.key_range(t.database)
   defp gather_info(:kind, _t), do: :storage
   defp gather_info(:n_keys, t), do: Database.info(t.database, :n_keys)
   defp gather_info(:otp_name, t), do: t.otp_name

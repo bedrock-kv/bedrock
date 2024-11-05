@@ -37,7 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
           info_by_id :: %{Storage.id() => Storage.recovery_info()},
           quorum :: non_neg_integer()
         ) ::
-          {:ok, Bedrock.version(), degraded_teams :: [Bedrock.range_tag()]}
+          {:ok, Bedrock.version() | :start, degraded_teams :: [Bedrock.range_tag()]}
           | {:error, {:insufficient_replication, failed_tags :: [Bedrock.range_tag()]}}
   def determine_durable_version(teams, info_by_id, quorum) do
     Enum.zip(
@@ -47,10 +47,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
     )
     |> Enum.reduce({nil, [], []}, fn
       {_tag, {:ok, version, :healthy}}, {min_version, degraded, failed} ->
-        {min(version, min_version), degraded, failed}
+        {smallest_version(version, min_version), degraded, failed}
 
       {tag, {:ok, version, :degraded}}, {min_version, degraded, failed} ->
-        {min(version, min_version), [tag | degraded], failed}
+        {smallest_version(version, min_version), [tag | degraded], failed}
 
       {tag, {:error, :insufficient_replication}}, {min_version, degraded, failed} ->
         {min_version, degraded, [tag | failed]}
@@ -60,6 +60,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
       {min_version, degraded, []} -> {:ok, min_version, degraded}
     end
   end
+
+  def smallest_version(:start, _), do: :start
+  def smallest_version(a, b), do: min(a, b)
 
   @doc """
   Determine the most recent durable version available among a list of storage
@@ -107,7 +110,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
       team.storage_ids
       |> Enum.map(&Map.get(info_by_id, &1))
       |> Enum.reject(&is_nil/1)
-      |> Enum.filter(&(Map.get(&1, :oldest_durable_version) == 0))
       |> Enum.map(&Map.get(&1, :durable_version))
 
     durable_versions

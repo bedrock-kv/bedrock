@@ -242,7 +242,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
     t
-    |> RecoveryAttempt.put_durable_version(0)
+    |> RecoveryAttempt.put_durable_version(:start)
     |> RecoveryAttempt.put_old_log_ids_to_copy([])
     |> RecoveryAttempt.put_version_vector({:start, 0})
     |> RecoveryAttempt.put_logs(

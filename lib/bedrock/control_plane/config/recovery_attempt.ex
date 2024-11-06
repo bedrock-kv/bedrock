@@ -15,10 +15,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :recruit_storage_to_fill_vacancies
           | :first_time_initialization
           | :create_vacancies
+          | :define_sequencer
+          | :define_commit_proxies
+          | :define_resolvers
           #
           | :replay_old_logs
           | :repair_data_distribution
-          | :defining_proxies_and_resolvers
           | :final_checks
           | :completed
           | {:stalled, reason_for_stall()}

@@ -24,11 +24,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     only: [fill_log_vacancies: 3, fill_storage_team_vacancies: 2]
 
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
-
-  import __MODULE__.DefiningProxiesAndResolvers,
-    only: [define_commit_proxies: 6, define_resolvers: 6]
-
-  import __MODULE__.StartingSequencer, only: [start_sequencer: 4]
+  import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
+  import __MODULE__.DefiningResolvers, only: [define_resolvers: 6]
+  import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
 
   import Bedrock.ControlPlane.Config.Changes,
     only: [
@@ -397,52 +395,80 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :repair_data_distribution} = t) do
-    t |> RecoveryAttempt.put_state(:defining_proxies_and_resolvers)
+    t |> RecoveryAttempt.put_state(:define_sequencer)
   end
 
   #
   #
-  def recovery(%{state: :defining_proxies_and_resolvers} = t) do
+  def recovery(%{state: :define_sequencer} = t) do
+    sup_otp_name = t.cluster.otp_name(:sup)
+    starter_fn = starter_for(sup_otp_name)
+
+    define_sequencer(
+      self(),
+      t.epoch,
+      t.version_vector,
+      starter_fn
+    )
+    |> case do
+      {:error, reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
+
+      {:ok, sequencer} ->
+        t
+        |> RecoveryAttempt.put_sequencer(sequencer)
+        |> RecoveryAttempt.put_state(:define_commit_proxies)
+    end
+  end
+
+  def recovery(%{state: :define_commit_proxies} = t) do
+    sup_otp_name = t.cluster.otp_name(:sup)
+    starter_fn = starter_for(sup_otp_name)
+
+    define_commit_proxies(
+      t.parameters.desired_commit_proxies,
+      t.cluster,
+      t.epoch,
+      self(),
+      Node.list(),
+      starter_fn
+    )
+    |> case do
+      {:error, reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
+
+      {:ok, commit_proxies} ->
+        t
+        |> RecoveryAttempt.put_proxies(commit_proxies)
+        |> RecoveryAttempt.put_state(:define_resolvers)
+    end
+  end
+
+  def recovery(%{state: :define_resolvers} = t) do
+    sup_otp_name = t.cluster.otp_name(:sup)
+    starter_fn = starter_for(sup_otp_name)
+
     log_pids =
       t.logs
       |> Enum.map(& &1.log_id)
       |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
 
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
+    define_resolvers(
+      t.parameters.desired_resolvers,
+      t.version_vector,
+      log_pids,
+      t.epoch,
+      Node.list(),
+      starter_fn
+    )
+    |> case do
+      {:error, reason} ->
+        t |> RecoveryAttempt.put_state({:stalled, reason})
 
-    with {:ok, resolvers} <-
-           define_resolvers(
-             t.parameters.desired_resolvers,
-             t.version_vector,
-             log_pids,
-             t.epoch,
-             Node.list(),
-             starter_fn
-           ),
-         {:ok, proxies} <-
-           define_commit_proxies(
-             t.parameters.desired_commit_proxies,
-             t.cluster,
-             t.epoch,
-             self(),
-             Node.list(),
-             starter_fn
-           ),
-         {:ok, sequencer} <-
-           start_sequencer(
-             self(),
-             t.epoch,
-             t.version_vector,
-             starter_fn
-           ) do
-      t
-      |> RecoveryAttempt.put_sequencer(sequencer)
-      |> RecoveryAttempt.put_resolvers(resolvers)
-      |> RecoveryAttempt.put_proxies(proxies)
-      |> RecoveryAttempt.put_state(:final_checks)
-    else
-      {:error, reason} -> t |> RecoveryAttempt.put_state({:stalled, reason})
+      {:ok, resolvers} ->
+        t
+        |> RecoveryAttempt.put_resolvers(resolvers)
+        |> RecoveryAttempt.put_state(:final_checks)
     end
   end
 

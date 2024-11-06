@@ -1,7 +1,7 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.StartingSequencer do
+defmodule Bedrock.ControlPlane.Director.Recovery.DefiningSequencer do
   alias Bedrock.DataPlane.Sequencer
 
-  def start_sequencer(
+  def define_sequencer(
         director,
         epoch,
         {_first_version, last_committed_version},

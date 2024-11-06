@@ -11,13 +11,7 @@ defmodule Bedrock.Cluster.PubSub do
 
     %{
       id: __MODULE__,
-      start: {
-        Registry,
-        :start_link,
-        [
-          [keys: :duplicate, partitions: System.schedulers_online(), name: otp_name]
-        ]
-      },
+      start: {Registry, :start_link, [[keys: :duplicate, name: otp_name]]},
       restart: :permanent
     }
   end

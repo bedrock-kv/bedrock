@@ -38,16 +38,14 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   Inserts a log descriptor into a list of log descriptors, replacing any
   existing log descriptor with the same id.
   """
-  @spec upsert([t()], t()) :: [t()]
-  def upsert([], n), do: [n]
-  def upsert([%{log_id: id} | t], %{log_id: id} = n), do: [n | t]
-  def upsert([h | t], n), do: [h | upsert(t, n)]
+  @spec(upsert(%{Log.id() => t()}, t()) :: %{Log.id() => t()}, Log.id())
+  def upsert(l, n), do: Map.put(l, n.log_id, n)
 
-  @spec find_by_id([t()], Log.id()) :: t() | nil
-  def find_by_id(l, log_id), do: l |> Enum.find(&(&1.log_id == log_id))
+  @spec find_by_id(%{Log.id() => t()}, Log.id()) :: t() | nil
+  def find_by_id(l, log_id), do: Map.get(l, log_id)
 
-  @spec remove_by_id([t()], Log.id()) :: [t()]
-  def remove_by_id(l, log_id), do: l |> Enum.reject(&(&1.log_id == log_id))
+  @spec remove_by_id(%{Log.id() => t()}, Log.id()) :: %{Log.id() => t()}
+  def remove_by_id(l, log_id), do: Map.delete(l, log_id)
 
   def put_log_id(t, log_id), do: %{t | log_id: log_id}
 end

@@ -8,7 +8,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
 
   @spec start_pulling(
           Bedrock.version(),
-          [LogDescriptor.t()],
+          %{Log.id() => LogDescriptor.t()},
           [ServiceDescriptor.t()],
           apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
         ) ::
@@ -78,13 +78,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     now = System.monotonic_time(:millisecond)
 
     available_log_services =
-      Enum.filter(logs, fn log ->
-        case Map.get(failed_logs, log.log_id) do
+      logs
+      |> Map.keys()
+      |> Enum.filter(fn log_id ->
+        case Map.get(failed_logs, log_id) do
           nil -> true
           retry_timestamp -> now >= retry_timestamp
         end
       end)
-      |> Enum.map(&ServiceDescriptor.find_by_id(services, &1.log_id))
+      |> Enum.map(&ServiceDescriptor.find_by_id(services, &1))
       |> Enum.reject(&is_nil/1)
 
     if available_log_services == [] do

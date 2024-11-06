@@ -67,7 +67,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           version_vector: Bedrock.version_vector() | {:start, 0},
           durable_version: Bedrock.version() | :start,
           degraded_teams: [Bedrock.range_tag()],
-          logs: [LogDescriptor.t()],
+          logs: %{Log.id() => LogDescriptor.t()},
           storage_teams: [StorageTeamDescriptor.t()],
           resolvers: [pid()],
           proxies: [pid()],
@@ -85,7 +85,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       last_transaction_system_layout: nil,
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},
-      logs: [],
+      logs: %{},
       old_log_ids_to_copy: [],
       parameters: nil,
       proxies: [],
@@ -128,7 +128,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       version_vector: {:start, 0},
       durable_version: :start,
       degraded_teams: [],
-      logs: [],
+      logs: %{},
       storage_teams: [],
       resolvers: [],
       proxies: [],
@@ -169,8 +169,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec update_attempt(t(), (pos_integer() -> pos_integer())) :: t()
   def update_attempt(t, f), do: %{t | attempt: f.(t.attempt)}
 
-  @spec put_logs(t(), [LogDescriptor.t()]) :: t()
-  def put_logs(t, logs), do: %{t | logs: logs}
+  @spec put_logs(t(), %{Log.id() => LogDescriptor.t()}) :: t()
+  def put_logs(t, %{} = logs), do: %{t | logs: logs}
 
   @spec put_storage_teams(t(), [StorageTeamDescriptor.t()]) :: t()
   def put_storage_teams(t, storage_teams), do: %{t | storage_teams: storage_teams}

@@ -222,7 +222,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           locked_services |> Enum.map(& &1.id) |> Enum.into(locked_service_ids)
         end)
         |> case do
-          %{last_transaction_system_layout: %{logs: [], storage_teams: []}} = t ->
+          %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = t ->
             t |> RecoveryAttempt.put_state(:first_time_initialization)
 
           t ->
@@ -249,7 +249,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> RecoveryAttempt.put_version_vector({:start, 0})
     |> RecoveryAttempt.put_logs(
       log_vacancies
-      |> Enum.map(&log_descriptor(&1, [0, 1]))
+      |> Map.new(&{&1, log_descriptor(&1, [0, 1])})
     )
     |> RecoveryAttempt.put_storage_teams([
       storage_team_descriptor(
@@ -338,7 +338,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
     fill_log_vacancies(
       t.logs,
-      t.last_transaction_system_layout.logs |> MapSet.new(& &1.log_id),
+      t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new(),
       t.log_recovery_info_by_id |> Map.keys() |> MapSet.new()
     )
     |> case do
@@ -377,7 +377,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :replay_old_logs} = t) do
-    new_log_ids = t.logs |> Enum.map(& &1.log_id)
+    new_log_ids = t.logs |> Map.keys()
     trace_recovery_replaying_old_logs(t.old_log_ids_to_copy, new_log_ids, t.version_vector)
 
     replay_old_logs_into_new_logs(
@@ -450,7 +450,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
     log_pids =
       t.logs
-      |> Enum.map(& &1.log_id)
+      |> Map.keys()
       |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
 
     define_resolvers(

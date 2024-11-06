@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   the transaction system within the cluster.
   """
 
+  alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
@@ -38,7 +39,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           data_distributor: pid() | nil,
           proxies: [pid()],
           resolvers: [pid()],
-          logs: [LogDescriptor.t()],
+          logs: %{Log.id() => LogDescriptor.t()},
           storage_teams: [StorageTeamDescriptor.t()],
           services: [ServiceDescriptor.t()]
         }
@@ -55,7 +56,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
       data_distributor: nil,
       proxies: [],
       resolvers: [],
-      logs: [],
+      logs: %{},
       storage_teams: [],
       services: []
     }

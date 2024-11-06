@@ -124,7 +124,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     commit_version = Transaction.version(transaction)
 
     log_descriptors = transaction_system_layout.logs
-    n = length(log_descriptors)
+    n = map_size(log_descriptors)
     m = determine_majority(n)
 
     log_descriptors
@@ -157,12 +157,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec resolve_log_descriptors([LogDescriptor.t()], [ServiceDescriptor.t()]) :: [
-          ServiceDescriptor.t()
-        ]
+  @spec resolve_log_descriptors(%{Log.id() => LogDescriptor.t()}, [ServiceDescriptor.t()]) ::
+          [ServiceDescriptor.t()]
   def resolve_log_descriptors(log_descriptors, services) do
     log_descriptors
-    |> Enum.map(&ServiceDescriptor.find_by_id(services, &1.log_id))
+    |> Map.keys()
+    |> Enum.map(&ServiceDescriptor.find_by_id(services, &1))
     |> Enum.reject(&is_nil/1)
   end
 

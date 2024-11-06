@@ -10,15 +10,15 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
 
   # Logs
 
-  @spec put_logs(t(), [LogDescriptor.t()]) :: t()
-  def put_logs(t, logs), do: %{t | logs: logs} |> put_random_id()
+  @spec put_logs(t(), %{Log.id() => LogDescriptor.t()}) :: t()
+  def put_logs(t, %{} = logs), do: %{t | logs: logs} |> put_random_id()
 
   @doc """
   Get a log descriptor by its id or nil if not found.
   """
   @spec find_log_by_id(t(), Log.id()) :: LogDescriptor.t() | nil
   def find_log_by_id(t, id),
-    do: get_in(t.logs) |> LogDescriptor.find_by_id(id)
+    do: get_in(t.logs) |> Map.get(id)
 
   @doc """
   Inserts a log descriptor into the transaction system layout, replacing any
@@ -120,7 +120,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   @spec random_id() :: TransactionSystemLayout.id()
   defp random_id, do: Enum.random(1..1_000_000)
 
-  @spec update_logs(t(), (LogDescriptor.t() -> [LogDescriptor.t()])) :: t()
+  @spec update_logs(t(), (%{Log.id() => LogDescriptor.t()} -> %{Log.id() => LogDescriptor.t()})) ::
+          t()
   def update_logs(t, updater), do: %{t | logs: updater.(t.logs)}
 
   @spec update_services(t(), ([ServiceDescriptor.t()] -> [ServiceDescriptor.t()])) ::

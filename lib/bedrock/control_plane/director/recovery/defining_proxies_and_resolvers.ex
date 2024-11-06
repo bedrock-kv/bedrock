@@ -13,7 +13,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
           director :: pid(),
           available_nodes :: [node()],
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
-        ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
+        ) ::
+          {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), reason :: term()}}
   def define_commit_proxies(
         n_proxies,
         cluster,
@@ -41,10 +42,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
         {:cont, [pid | pids]}
 
       {:ok, {node, {:error, reason}}}, _ ->
-        {:halt, {:error, {:failed_to_start_proxy, node, reason}}}
+        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
 
       {:exit, {node, reason}}, _ ->
-        {:halt, {:error, {:failed_to_stary_proxy, node, reason}}}
+        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
     end)
     |> case do
       {:error, reason} -> {:error, reason}
@@ -78,7 +79,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) ::
           {:ok, [pid()]}
-          | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
+          | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
           | {:error, {:failed_to_playback_logs, %{Log.ref() => reason :: term()}}}
   def define_resolvers(
         n_resolvers,
@@ -104,7 +105,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
           child_specs :: [Supervisor.child_spec()],
           available_nodes :: [node()],
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
-        ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
+        ) :: {:ok, [pid()]} | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def start_resolvers(child_specs, available_nodes, start_supervised) do
     available_nodes
     |> Stream.cycle()
@@ -124,10 +125,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
         {:cont, [pid | pids]}
 
       {:ok, {node, {:error, reason}}}, _ ->
-        {:halt, {:error, {:failed_to_start_proxy, node, reason}}}
+        {:halt, {:error, {:failed_to_start, :resolver, node, reason}}}
 
       {:exit, {node, reason}}, _ ->
-        {:halt, {:error, {:failed_to_stary_proxy, node, reason}}}
+        {:halt, {:error, {:failed_to_stary, :resolver, node, reason}}}
     end)
     |> case do
       {:error, reason} -> {:error, reason}

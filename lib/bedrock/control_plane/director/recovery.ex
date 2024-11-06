@@ -409,6 +409,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
 
     sup_otp_name = t.cluster.otp_name(:sup)
+    starter_fn = starter_for(sup_otp_name)
 
     with {:ok, resolvers} <-
            define_resolvers(
@@ -417,7 +418,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
              log_pids,
              t.epoch,
              Node.list(),
-             starter_for(:resolver, sup_otp_name)
+             starter_fn
            ),
          {:ok, proxies} <-
            define_commit_proxies(
@@ -426,14 +427,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
              t.epoch,
              self(),
              Node.list(),
-             starter_for(:commit_proxy, sup_otp_name)
+             starter_fn
            ),
          {:ok, sequencer} <-
            start_sequencer(
              self(),
              t.epoch,
              t.version_vector,
-             starter_for(:sequencer, sup_otp_name)
+             starter_fn
            ) do
       t
       |> RecoveryAttempt.put_sequencer(sequencer)
@@ -457,14 +458,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 
-  defp starter_for(process, supervisor_otp_name) do
+  defp starter_for(supervisor_otp_name) do
     fn child_spec, node ->
       {supervisor_otp_name, node}
       |> DynamicSupervisor.start_child(child_spec)
       |> case do
         {:ok, pid} -> {:ok, pid}
         {:ok, pid, _} -> {:ok, pid}
-        {:error, reason} -> {:error, {:failed_to_start, process, reason}}
+        {:error, reason} -> {:error, reason}
       end
     end
   end

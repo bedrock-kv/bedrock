@@ -7,6 +7,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartingSequencer do
         {_first_version, last_committed_version},
         start_supervised
       ) do
+    node = Node.self()
+
     with {:ok, sequencer} <-
            start_supervised.(
              Sequencer.child_spec(
@@ -14,11 +16,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartingSequencer do
                epoch: epoch,
                last_committed_version: last_committed_version
              ),
-             Node.self()
+             node
            ) do
       {:ok, sequencer}
     else
-      {:error, reason} -> {:error, {:failed_to_start_sequencer, reason}}
+      {:error, reason} -> {:error, {:failed_to_start, :sequencer, node, reason}}
     end
   end
 end

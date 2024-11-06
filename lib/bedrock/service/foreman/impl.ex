@@ -2,7 +2,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Worker
-  alias Bedrock.Cluster.Monitor
+  alias Bedrock.Cluster.Gateway
 
   import Bedrock.Service.Foreman.State
 
@@ -41,7 +41,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   def advertise_running_worker(%{health: {:ok, pid}} = t, cluster) do
-    Monitor.advertise_worker(cluster.otp_name(:monitor), pid)
+    Gateway.advertise_worker(cluster.otp_name(:gateway), pid)
     t
   end
 

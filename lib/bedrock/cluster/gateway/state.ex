@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.Monitor.State do
+defmodule Bedrock.Cluster.Gateway.State do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Coordinator
 

@@ -1,7 +1,7 @@
-defmodule Bedrock.Cluster.Monitor.PingPong do
+defmodule Bedrock.Cluster.Gateway.PingPong do
   alias Bedrock.ControlPlane.Director
 
-  import Bedrock.Cluster.Monitor.State,
+  import Bedrock.Cluster.Gateway.State,
     only: [
       put_missed_pongs: 2,
       update_missed_pongs: 2
@@ -29,5 +29,5 @@ defmodule Bedrock.Cluster.Monitor.PingPong do
   def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),
-    do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
+    do: t |> set_timer(:ping, t.cluster.gateway_ping_timeout_in_ms())
 end

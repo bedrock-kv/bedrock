@@ -24,7 +24,7 @@ defmodule Bedrock.Cluster do
   @callback capabilities() :: [Bedrock.Cluster.capability()]
   @callback path_to_descriptor() :: Path.t()
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
-  @callback monitor_ping_timeout_in_ms() :: non_neg_integer()
+  @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
   @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
@@ -45,13 +45,13 @@ defmodule Bedrock.Cluster do
 
       alias Bedrock.Client
       alias Bedrock.Cluster
-      alias Bedrock.Cluster.Monitor
+      alias Bedrock.Cluster.Gateway
       alias Bedrock.ControlPlane.Config
       alias Bedrock.Internal.ClusterSupervisor
       alias Bedrock.Service.Worker
 
       @default_coordinator_ping_timeout_in_ms 300
-      @default_monitor_ping_timeout_in_ms 300
+      @default_gateway_ping_timeout_in_ms 300
 
       @name unquote(name)
       @otp_name Cluster.otp_name(@name)
@@ -60,7 +60,7 @@ defmodule Bedrock.Cluster do
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
       @foreman_otp_name Cluster.otp_name(@name, :foreman)
-      @monitor_otp_name Cluster.otp_name(@name, :monitor)
+      @gateway_otp_name Cluster.otp_name(@name, :gateway)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
       @worker_supervisor_otp_name Cluster.otp_name(@name, :worker_supervisor)
 
@@ -125,17 +125,17 @@ defmodule Bedrock.Cluster do
       end
 
       @doc """
-      Get the timeout (in milliseconds) for a monitor process waiting to
+      Get the timeout (in milliseconds) for a gateway process waiting to
       receives a ping from the currently active cluster director. Once a
-      monitor has successfully joined a cluster, it will wait for a ping from
+      gateway has successfully joined a cluster, it will wait for a ping from
       the director. If it does not receive a ping within the timeout, it
       will attempt to find a new director.
       """
       @impl Bedrock.Cluster
-      @spec monitor_ping_timeout_in_ms() :: non_neg_integer()
-      def monitor_ping_timeout_in_ms do
+      @spec gateway_ping_timeout_in_ms() :: non_neg_integer()
+      def gateway_ping_timeout_in_ms do
         node_config()
-        |> Keyword.get(:monitor_ping_timeout_in_ms, @default_monitor_ping_timeout_in_ms)
+        |> Keyword.get(:gateway_ping_timeout_in_ms, @default_gateway_ping_timeout_in_ms)
       end
 
       ######################################################################
@@ -158,13 +158,13 @@ defmodule Bedrock.Cluster do
               :sup
               | :foreman
               | :coordinator
-              | :monitor
+              | :gateway
               | :storage
               | :log
             ) :: atom()
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:foreman), do: @foreman_otp_name
-      def otp_name(:monitor), do: @monitor_otp_name
+      def otp_name(:gateway), do: @gateway_otp_name
       def otp_name(:sup), do: @supervisor_otp_name
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 
@@ -185,7 +185,7 @@ defmodule Bedrock.Cluster do
       """
       @impl Bedrock.Cluster
       @spec fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
-      def fetch_director, do: otp_name(:monitor) |> Monitor.fetch_director()
+      def fetch_director, do: otp_name(:gateway) |> Gateway.fetch_director()
 
       @doc """
       Get the current director for the cluster. If we can't find one, we
@@ -202,7 +202,7 @@ defmodule Bedrock.Cluster do
       """
       @impl Bedrock.Cluster
       @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-      def fetch_coordinator, do: otp_name(:monitor) |> Monitor.fetch_coordinator()
+      def fetch_coordinator, do: otp_name(:gateway) |> Gateway.fetch_coordinator()
 
       @doc """
       Get a coordinator for the cluster. If there is an instance running on
@@ -218,7 +218,7 @@ defmodule Bedrock.Cluster do
       """
       @impl Bedrock.Cluster
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def fetch_coordinator_nodes, do: otp_name(:monitor) |> Monitor.fetch_coordinator_nodes()
+      def fetch_coordinator_nodes, do: otp_name(:gateway) |> Gateway.fetch_coordinator_nodes()
 
       @doc """
       Get the nodes that are running coordinators for the cluster. If we can't

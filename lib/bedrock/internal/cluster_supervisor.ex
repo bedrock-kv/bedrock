@@ -5,7 +5,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Coordinator
 
   alias Bedrock.Internal.Tracing.RaftTelemetry
-  alias Bedrock.Cluster.Monitor.Tracing, as: MonitorTracing
+  alias Bedrock.Cluster.Gateway.Tracing, as: GatewayTracing
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
@@ -89,7 +89,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Enum.each(fn
       :coordinator -> :ok = CoordinatorTracing.start()
       :log -> :ok = LogTracing.start()
-      :monitor -> :ok = MonitorTracing.start()
+      :gateway -> :ok = GatewayTracing.start()
       :raft -> :ok = RaftTelemetry.start()
       :recovery -> :ok = RecoveryTracing.start()
     end)
@@ -98,12 +98,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
         {Bedrock.Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
-        {Bedrock.Cluster.Monitor,
+        {Bedrock.Cluster.Gateway,
          [
            cluster: cluster,
            descriptor: descriptor,
            path_to_descriptor: path_to_descriptor,
-           otp_name: cluster.otp_name(:monitor),
+           otp_name: cluster.otp_name(:gateway),
            capabilities: capabilities,
            mode: mode_for_capabilities(capabilities)
          ]}

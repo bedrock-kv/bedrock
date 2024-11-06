@@ -1,11 +1,11 @@
-defmodule Bedrock.Cluster.Monitor.Discovery do
-  alias Bedrock.Cluster.Monitor.State
+defmodule Bedrock.Cluster.Gateway.Discovery do
+  alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Coordinator
 
   use Bedrock.Internal.TimerManagement
 
-  import Bedrock.Cluster.Monitor.State,
+  import Bedrock.Cluster.Gateway.State,
     only: [
       put_coordinator: 2
     ]
@@ -67,5 +67,5 @@ defmodule Bedrock.Cluster.Monitor.Discovery do
   def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),
-    do: t |> set_timer(:ping, t.cluster.monitor_ping_timeout_in_ms())
+    do: t |> set_timer(:ping, t.cluster.gateway_ping_timeout_in_ms())
 end

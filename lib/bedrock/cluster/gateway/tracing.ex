@@ -1,19 +1,19 @@
-defmodule Bedrock.Cluster.Monitor.Tracing do
+defmodule Bedrock.Cluster.Gateway.Tracing do
   require Logger
 
-  defp handler_id, do: "bedrock_trace_monitor"
+  defp handler_id, do: "bedrock_trace_gateway"
 
   def start do
     :telemetry.attach_many(
       handler_id(),
       [
-        [:bedrock, :cluster, :monitor, :started],
-        [:bedrock, :cluster, :monitor, :advertise_capabilities],
-        [:bedrock, :cluster, :monitor, :searching_for_director],
-        [:bedrock, :cluster, :monitor, :found_director],
-        [:bedrock, :cluster, :monitor, :lost_director],
-        [:bedrock, :cluster, :monitor, :searching_for_coordinator],
-        [:bedrock, :cluster, :monitor, :found_coordinator]
+        [:bedrock, :cluster, :gateway, :started],
+        [:bedrock, :cluster, :gateway, :advertise_capabilities],
+        [:bedrock, :cluster, :gateway, :searching_for_director],
+        [:bedrock, :cluster, :gateway, :found_director],
+        [:bedrock, :cluster, :gateway, :lost_director],
+        [:bedrock, :cluster, :gateway, :searching_for_coordinator],
+        [:bedrock, :cluster, :gateway, :found_coordinator]
       ],
       &__MODULE__.handler/4,
       nil
@@ -22,13 +22,13 @@ defmodule Bedrock.Cluster.Monitor.Tracing do
 
   def stop, do: :telemetry.detach(handler_id())
 
-  def handler([:bedrock, :cluster, :monitor, event], measurements, metadata, _),
+  def handler([:bedrock, :cluster, :gateway, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
   def trace(:started, _, %{cluster: cluster}) do
     Logger.metadata(cluster: cluster)
 
-    info("Monitor started")
+    info("Gateway started")
   end
 
   def trace(:advertise_capabilities, _, %{

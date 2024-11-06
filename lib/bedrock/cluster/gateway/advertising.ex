@@ -1,11 +1,11 @@
-defmodule Bedrock.Cluster.Monitor.Advertising do
-  alias Bedrock.Cluster.Monitor.State
+defmodule Bedrock.Cluster.Gateway.Advertising do
+  alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
-  import Bedrock.Cluster.Monitor.Telemetry,
+  import Bedrock.Cluster.Gateway.Telemetry,
     only: [
       trace_advertising_capabilities: 3
     ]

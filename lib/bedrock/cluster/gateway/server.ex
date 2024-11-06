@@ -1,30 +1,30 @@
-defmodule Bedrock.Cluster.Monitor.Server do
-  alias Bedrock.Cluster.Monitor.State
+defmodule Bedrock.Cluster.Gateway.Server do
+  alias Bedrock.Cluster.Gateway.State
   alias Bedrock.ControlPlane.Coordinator
 
   use GenServer
   use Bedrock.Internal.TimerManagement
   import Bedrock.Internal.GenServer.Replies
 
-  import Bedrock.Cluster.Monitor.State,
+  import Bedrock.Cluster.Gateway.State,
     only: [
       put_director: 2
     ]
 
-  import Bedrock.Cluster.Monitor.Advertising,
+  import Bedrock.Cluster.Gateway.Advertising,
     only: [
       advertise_capabilities: 1,
       advertise_worker_to_director: 2,
       publish_director_replaced_to_pubsub: 1
     ]
 
-  import Bedrock.Cluster.Monitor.Discovery,
+  import Bedrock.Cluster.Gateway.Discovery,
     only: [
       change_coordinator: 2,
       find_a_live_coordinator: 1
     ]
 
-  import Bedrock.Cluster.Monitor.PingPong,
+  import Bedrock.Cluster.Gateway.PingPong,
     only: [
       ping_director: 1,
       pong_missed: 1,
@@ -32,7 +32,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
       reset_ping_timer: 1
     ]
 
-  import Bedrock.Cluster.Monitor.Telemetry
+  import Bedrock.Cluster.Gateway.Telemetry
 
   require Logger
 
@@ -126,7 +126,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
   def continue_search_for_coordinator(t) do
     t
     |> cancel_timer(:find_a_live_coordinator)
-    |> set_timer(:find_a_live_coordinator, t.cluster.monitor_ping_timeout_in_ms())
+    |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
     |> change_coordinator(:unavailable)
   end
 
@@ -142,7 +142,7 @@ defmodule Bedrock.Cluster.Monitor.Server do
     t
     |> change_director(:unavailable)
     |> cancel_timer(:find_current_director)
-    |> set_timer(:find_current_director, t.cluster.monitor_ping_timeout_in_ms())
+    |> set_timer(:find_current_director, t.cluster.gateway_ping_timeout_in_ms())
   end
 
   def change_director(t, director) when t.director == director, do: t

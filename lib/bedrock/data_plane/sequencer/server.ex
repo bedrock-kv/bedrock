@@ -1,13 +1,8 @@
 defmodule Bedrock.DataPlane.Sequencer.Server do
   alias Bedrock.DataPlane.Sequencer.State
 
-  import Bedrock.DataPlane.Sequencer.DirectorFeedback,
-    only: [
-      accept_invitation: 1,
-      decline_invitation: 2
-    ]
-
   use GenServer
+
   import Bedrock.Internal.GenServer.Replies
 
   def child_spec(opts) do
@@ -40,22 +35,6 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
-  def handle_cast({:recruitment_invitation, director, new_epoch, last_committed_version}, t)
-      when new_epoch > t.epoch do
-    %{
-      t
-      | director: director,
-        epoch: new_epoch,
-        last_committed_version: last_committed_version
-    }
-    |> accept_invitation()
-    |> noreply()
-  end
-
-  def handle_cast({:recruitment_invitation, director, _, _, _}, t),
-    do: t |> decline_invitation(director) |> noreply()
-
-  @impl GenServer
   def handle_call(:next_read_version, _from, t),
     do: t |> reply({:ok, t.last_committed_version})
 
@@ -65,7 +44,4 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     %{t | last_committed_version: next_version}
     |> reply({:ok, t.last_committed_version, next_version})
   end
-
-  @impl GenServer
-  def handle_info(:die, _t), do: raise("die!")
 end

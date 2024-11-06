@@ -12,7 +12,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
           Bedrock.epoch(),
           director :: pid(),
           available_nodes :: [node()],
-          supervisor_otp_name :: atom()
+          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
   def define_commit_proxies(
         n_proxies,
@@ -20,20 +20,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
         epoch,
         director,
         available_nodes,
-        supervisor_otp_name
+        start_supervised
       ) do
-    child_spec =
-      child_spec_for_commit_proxy(cluster, epoch, director)
+    child_spec = child_spec_for_commit_proxy(cluster, epoch, director)
 
     available_nodes
     |> Enum.take(n_proxies)
     |> Task.async_stream(
       fn node ->
-        DynamicSupervisor.start_child({supervisor_otp_name, node}, child_spec)
+        start_supervised.(child_spec, node)
         |> case do
           {:ok, pid} -> {node, pid}
-          {:ok, pid, _info} -> {node, pid}
-          {:error, {:already_started, pid}} -> {node, pid}
           {:error, reason} -> {node, {:error, reason}}
         end
       end,
@@ -78,7 +75,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
           logs :: [pid],
           Bedrock.epoch(),
           available_nodes :: [node()],
-          supervisor_otp_name :: atom()
+          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) ::
           {:ok, [pid()]}
           | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
@@ -89,13 +86,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
         logs,
         epoch,
         available_nodes,
-        supervisor_otp_name
+        start_supervised
       ) do
     child_specs =
       1..n_resolvers
       |> Enum.map(fn _ -> child_spec_for_transaction_resolver(epoch) end)
 
-    with {:ok, resolvers} <- start_resolvers(child_specs, available_nodes, supervisor_otp_name),
+    with {:ok, resolvers} <- start_resolvers(child_specs, available_nodes, start_supervised),
          :ok <- playback_logs_into_resolvers(resolvers, logs, version_vector) do
       {:ok, resolvers}
     else
@@ -106,19 +103,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningProxiesAndResolvers do
   @spec start_resolvers(
           child_specs :: [Supervisor.child_spec()],
           available_nodes :: [node()],
-          supervisor_otp_name :: atom()
+          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) :: {:ok, [pid()]} | {:error, {:failed_to_start_proxy, node(), reason :: term()}}
-  def start_resolvers(child_specs, available_nodes, supervisor_otp_name) do
+  def start_resolvers(child_specs, available_nodes, start_supervised) do
     available_nodes
     |> Stream.cycle()
     |> Enum.zip(child_specs)
     |> Task.async_stream(
       fn {node, child_spec} ->
-        DynamicSupervisor.start_child({supervisor_otp_name, node}, child_spec)
+        start_supervised.(child_spec, node)
         |> case do
           {:ok, pid} -> {node, pid}
-          {:ok, pid, _info} -> {node, pid}
-          {:error, {:already_started, pid}} -> {node, pid}
           {:error, reason} -> {node, {:error, reason}}
         end
       end,

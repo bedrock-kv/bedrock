@@ -324,7 +324,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
-      {:ok, durable_version, degraded_teams} ->
+      {:ok, durable_version, healthy_teams, degraded_teams} ->
+        trace_recovery_durable_version_chosen(durable_version)
+        trace_recovery_team_health(healthy_teams, degraded_teams)
+
         t
         |> RecoveryAttempt.put_durable_version(durable_version)
         |> RecoveryAttempt.put_degraded_teams(degraded_teams)
@@ -345,6 +348,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:ok, logs} ->
+        trace_recovery_all_log_vacancies_filled()
+
         t
         |> RecoveryAttempt.put_logs(logs)
         |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
@@ -362,10 +367,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {:error, {:need_storage_workers, _} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
-      {:error, :no_vacancies_to_fill} ->
-        t |> RecoveryAttempt.put_state(:replay_old_logs)
-
       {:ok, storage_teams} ->
+        trace_recovery_all_storage_team_vacancies_filled()
+
         t
         |> RecoveryAttempt.put_storage_teams(storage_teams)
         |> RecoveryAttempt.put_state(:replay_old_logs)
@@ -375,15 +379,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :replay_old_logs} = t) do
+    new_log_ids = t.logs |> Enum.map(& &1.log_id)
+    trace_recovery_replaying_old_logs(t.old_log_ids_to_copy, new_log_ids, t.version_vector)
+
     replay_old_logs_into_new_logs(
       t.old_log_ids_to_copy,
-      t.logs |> Enum.map(& &1.log_id),
+      new_log_ids,
       t.version_vector,
       &ServiceDescriptor.find_pid_by_id(t.available_services, &1)
     )
     |> case do
-      :ok -> t |> RecoveryAttempt.put_state(:repair_data_distribution)
       {:error, reason} -> t |> RecoveryAttempt.put_state({:stalled, reason})
+      :ok -> t |> RecoveryAttempt.put_state(:repair_data_distribution)
     end
   end
 
@@ -401,6 +408,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       |> Enum.map(& &1.log_id)
       |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
 
+    sup_otp_name = t.cluster.otp_name(:sup)
+
     with {:ok, resolvers} <-
            define_resolvers(
              t.parameters.desired_resolvers,
@@ -408,7 +417,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
              log_pids,
              t.epoch,
              Node.list(),
-             t.cluster.otp_name(:sup)
+             starter_for(:resolver, sup_otp_name)
            ),
          {:ok, proxies} <-
            define_commit_proxies(
@@ -417,14 +426,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
              t.epoch,
              self(),
              Node.list(),
-             t.cluster.otp_name(:sup)
+             starter_for(:commit_proxy, sup_otp_name)
            ),
          {:ok, sequencer} <-
            start_sequencer(
              self(),
              t.epoch,
              t.version_vector,
-             start_supervised_with(t.cluster.otp_name(:sup))
+             starter_for(:sequencer, sup_otp_name)
            ) do
       t
       |> RecoveryAttempt.put_sequencer(sequencer)
@@ -442,24 +451,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t |> RecoveryAttempt.put_state(:completed)
   end
 
-  def recovery(%{state: :completed} = t) do
-    t
-  end
-
   #
   #
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")
 
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 
-  defp start_supervised_with(supervisor_otp_name) do
+  defp starter_for(process, supervisor_otp_name) do
     fn child_spec, node ->
       {supervisor_otp_name, node}
       |> DynamicSupervisor.start_child(child_spec)
       |> case do
         {:ok, pid} -> {:ok, pid}
         {:ok, pid, _} -> {:ok, pid}
-        {:error, reason} -> {:error, {:failed_to_start_sequencer, reason}}
+        {:error, reason} -> {:error, {:failed_to_start, process, reason}}
       end
     end
   end

@@ -5,23 +5,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
   alias Bedrock.DataPlane.Storage
 
   @doc """
-  Fills vacancies in logs with available log IDs.
-
-  Takes a list of logs and assigned log IDs, and attempts to fill
-  any vacancies with unassigned log IDs from the pool of all log IDs.
-
-  ## Parameters
-
-    - logs: List of `LogDescriptor` structs representing logs.
-    - assigned_log_ids: A `MapSet` of log IDs that are already assigned.
-    - all_log_ids: A `MapSet` of all possible log IDs.
-
-  ## Returns
-
-    - `{:ok, updated_logs}` if vacancies are filled successfully.
-    - `{:error, :no_vacancies_to_fill}` if there are no vacancies to fill.
-    - `{:error, {:need_log_workers, num}}` if there are not enough log IDs to fill all vacancies.
-
+  Fills vacancies in logs with log IDs that are not part of the previous
+  transaction system. If there are not enough log workers to fill all vacancies,
+  an error is returned.
   """
   @spec fill_log_vacancies(
           logs :: [LogDescriptor.t()],
@@ -68,36 +54,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
   end
 
   @doc """
-  Fills vacancies in storage teams with available storage IDs.
-
-  This function attempts to fill storage team vacancies by assigning
-  unassigned storage IDs to the vacancies present in the storage teams.
-
-  ## Parameters
-
-    - storage_teams: A list of `StorageTeamDescriptor` structs representing the current
-      state of storage teams, some of which may have vacancies.
-    - all_storage_ids: A `MapSet` containing all available storage IDs that can be assigned
-      to fill vacancies.
-
-  ## Returns
-
-    - `{:ok, filled_teams}`: A tuple indicating successful filling of vacancies, with
-      `filled_teams` representing the updated list of storage team descriptors with
-      no vacancies.
-    - `{:error, :no_vacancies_to_fill}`: An error indicating that there are no vacancies
-      to fill in the storage teams.
-    - `{:error, {:need_storage_workers, n}}`: An error indicating that there are not enough
-      available storage workers to fill existing vacancies, with `n` being the number
-      of additional storage IDs needed.
-
+  Fills vacancies in storage teams by assigning IDs of storage workers that are
+  not currently part of the transaction system. If there are not enough storage
+  workers to fill all vacancies, an error is returned.
   """
   @spec fill_storage_team_vacancies(
           storage_teams :: [StorageTeamDescriptor.t()],
           all_storage_ids :: MapSet.t(Storage.id())
         ) ::
           {:ok, [StorageTeamDescriptor.t()]}
-          | {:error, :no_vacancies_to_fill}
           | {:error, {:need_storage_workers, pos_integer()}}
   def fill_storage_team_vacancies(storage_teams, all_storage_ids) do
     assigned_storage_ids =
@@ -109,19 +74,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     candidate_ids = all_storage_ids |> MapSet.difference(assigned_storage_ids)
     n_candidates = MapSet.size(candidate_ids)
 
-    cond do
-      0 == n_vacancies ->
-        {:error, :no_vacancies_to_fill}
-
-      n_vacancies > n_candidates ->
-        {:error, {:need_storage_workers, n_vacancies - n_candidates}}
-
-      true ->
-        {:ok,
-         replace_vacancies_with_storage_ids(
-           storage_teams,
-           vacancies |> Enum.zip(candidate_ids) |> Map.new()
-         )}
+    if n_vacancies > n_candidates do
+      {:error, {:need_storage_workers, n_vacancies - n_candidates}}
+    else
+      {:ok,
+       replace_vacancies_with_storage_ids(
+         storage_teams,
+         vacancies |> Enum.zip(candidate_ids) |> Map.new()
+       )}
     end
   end
 

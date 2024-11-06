@@ -18,7 +18,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :first_time_initialization],
         [:bedrock, :recovery, :creating_vacancies],
         [:bedrock, :recovery, :durable_version_chosen],
+        [:bedrock, :recovery, :team_health],
         [:bedrock, :recovery, :suitable_logs_chosen],
+        [:bedrock, :recovery, :all_log_vacancies_filled],
+        [:bedrock, :recovery, :all_storage_team_vacancies_filled],
+        [:bedrock, :recovery, :replaying_old_logs],
         [:bedrock, :recovery, :storage_unlocking]
       ],
       &__MODULE__.handler/4,
@@ -66,26 +70,49 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     end
   end
 
-  def trace(
-        :creating_vacancies_for_storage_teams,
-        %{n_storage_team_vacancies: n_storage_team_vacancies},
-        _
-      ) do
-    info("Creating #{n_storage_team_vacancies} storage team vacancies")
+  def trace(:durable_version_chosen, _, %{durable_version: durable_version}),
+    do: info("Durable version chosen: #{durable_version}")
+
+  def trace(:team_health, _, metadata) do
+    case {metadata[:healthy_teams], metadata[:degraded_teams]} do
+      {[], []} ->
+        info("No teams available")
+
+      {healthy, []} ->
+        info("All teams healthy (#{healthy |> Enum.sort() |> Enum.join(", ")})")
+
+      {[], degraded} ->
+        info("All teams degraded (#{degraded |> Enum.sort() |> Enum.join(", ")})")
+
+      {healthy, degraded} ->
+        info(
+          "Healthy teams are #{healthy |> Enum.join(", ")}, with some teams degraded (#{degraded |> Enum.join(", ")})"
+        )
+    end
   end
 
-  def trace(:durable_version_chosen, _, %{degraded_teams: [], durable_version: durable_version}),
-    do: info("Durable version chosen: #{durable_version}, all teams healthy.")
+  def trace(:all_log_vacancies_filled, _, _),
+    do: info("All log vacancies filled")
 
-  def trace(:durable_version_chosen, _, %{
-        degraded_teams: degraded_teams,
-        durable_version: durable_version
+  def trace(:all_storage_team_vacancies_filled, _, _),
+    do: info("All storage team vacancies filled")
+
+  def trace(:replaying_old_logs, _, %{
+        old_log_ids: old_log_ids,
+        new_log_ids: new_log_ids,
+        version_vector: version_vector
       }) do
-    formatted_degraded_teams = degraded_teams |> Enum.join(", ")
+    info("Version vector chosen: #{inspect(version_vector)}")
 
-    info(
-      "Durable version chosen: #{durable_version} (degraded teams: #{formatted_degraded_teams})"
-    )
+    case old_log_ids do
+      [] ->
+        info("No logs to replay")
+
+      _ ->
+        info(
+          "Replaying logs: {#{old_log_ids |> Enum.join(", ")}} -> {#{new_log_ids |> Enum.join(", ")}}"
+        )
+    end
   end
 
   def trace(:suitable_logs_chosen, _, %{

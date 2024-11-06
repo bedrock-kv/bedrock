@@ -37,7 +37,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
           info_by_id :: %{Storage.id() => Storage.recovery_info()},
           quorum :: non_neg_integer()
         ) ::
-          {:ok, Bedrock.version() | :start, degraded_teams :: [Bedrock.range_tag()]}
+          {:ok, Bedrock.version() | :start, healthy_teams :: [Bedrock.range_tag()],
+           degraded_teams :: [Bedrock.range_tag()]}
           | {:error, {:insufficient_replication, failed_tags :: [Bedrock.range_tag()]}}
   def determine_durable_version(teams, info_by_id, quorum) do
     Enum.zip(
@@ -45,23 +46,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
       teams
       |> Enum.map(&determine_durable_version_and_status_for_storage_team(&1, info_by_id, quorum))
     )
-    |> Enum.reduce({nil, [], []}, fn
-      {_tag, {:ok, version, :healthy}}, {min_version, degraded, failed} ->
-        {smallest_version(version, min_version), degraded, failed}
+    |> Enum.reduce({nil, [], [], []}, fn
+      {tag, {:ok, version, :healthy}}, {min_version, healthy, degraded, failed} ->
+        {smallest_version(version, min_version), [tag | healthy], degraded, failed}
 
-      {tag, {:ok, version, :degraded}}, {min_version, degraded, failed} ->
-        {smallest_version(version, min_version), [tag | degraded], failed}
+      {tag, {:ok, version, :degraded}}, {min_version, healthy, degraded, failed} ->
+        {smallest_version(version, min_version), healthy, [tag | degraded], failed}
 
-      {tag, {:error, :insufficient_replication}}, {min_version, degraded, failed} ->
-        {min_version, degraded, [tag | failed]}
+      {tag, {:error, :insufficient_replication}}, {min_version, healthy, degraded, failed} ->
+        {min_version, healthy, degraded, [tag | failed]}
     end)
     |> case do
-      {_, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_replication, failed}}
-      {min_version, degraded, []} -> {:ok, min_version, degraded}
+      {_, _, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_replication, failed}}
+      {min_version, healthy, degraded, []} -> {:ok, min_version || :start, healthy, degraded}
     end
   end
 
   def smallest_version(:start, _), do: :start
+  def smallest_version(nil, b), do: b
   def smallest_version(a, b), do: min(a, b)
 
   @doc """

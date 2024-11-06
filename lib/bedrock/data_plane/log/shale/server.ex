@@ -64,13 +64,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:info, fact_names}, _from, t),
+  def handle_call({:info, fact_names}, _, t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
-  def handle_call({:lock_for_recovery, epoch}, from, t) do
+  def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     trace_log_lock_for_recovery(t.cluster, t.id, epoch)
 
-    with {:ok, t} <- lock_for_recovery(t, epoch, from),
+    with {:ok, t} <- lock_for_recovery(t, epoch, director),
          {:ok, info} <- info(t, Log.recovery_info()) do
       t |> reply({:ok, self(), info})
     else
@@ -78,7 +78,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_call({:recover_from, source_log, first_version, last_version}, _, t) do
+  def handle_call({:recover_from, source_log, first_version, last_version}, {_director, _}, t) do
     trace_log_recover_from(t.cluster, t.id, source_log, first_version, last_version)
 
     case recover_from(t, source_log, first_version, last_version) do

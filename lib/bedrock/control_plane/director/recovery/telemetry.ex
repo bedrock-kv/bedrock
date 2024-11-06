@@ -51,13 +51,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_durable_version_chosen(
-          durable_version :: Bedrock.version(),
+  @spec trace_recovery_durable_version_chosen(durable_version :: Bedrock.version()) :: :ok
+  def trace_recovery_durable_version_chosen(durable_version) do
+    Telemetry.execute([:bedrock, :recovery, :durable_version_chosen], %{}, %{
+      durable_version: durable_version
+    })
+  end
+
+  @spec trace_recovery_team_health(
+          healthy_teams :: [Bedrock.range_tag()],
           degraded_teams :: [Bedrock.range_tag()]
         ) :: :ok
-  def trace_recovery_durable_version_chosen(durable_version, degraded_teams) do
-    Telemetry.execute([:bedrock, :recovery, :durable_version_chosen], %{}, %{
-      durable_version: durable_version,
+  def trace_recovery_team_health(healthy_teams, degraded_teams) do
+    Telemetry.execute([:bedrock, :recovery, :team_health], %{}, %{
+      healthy_teams: healthy_teams,
       degraded_teams: degraded_teams
     })
   end
@@ -70,6 +77,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     Telemetry.execute([:bedrock, :recovery, :suitable_logs_chosen], %{}, %{
       suitable_logs: suitable_logs,
       log_version_vector: log_version_vector
+    })
+  end
+
+  def trace_recovery_all_log_vacancies_filled,
+    do: Telemetry.execute([:bedrock, :recovery, :all_log_vacancies_filled], %{}, %{})
+
+  def trace_recovery_all_storage_team_vacancies_filled,
+    do: Telemetry.execute([:bedrock, :recovery, :all_storage_team_vacancies_filled], %{}, %{})
+
+  def trace_recovery_replaying_old_logs(old_log_ids, new_log_ids, version_vector) do
+    Telemetry.execute([:bedrock, :recovery, :replaying_old_logs], %{}, %{
+      old_log_ids: old_log_ids,
+      new_log_ids: new_log_ids,
+      version_vector: version_vector
     })
   end
 

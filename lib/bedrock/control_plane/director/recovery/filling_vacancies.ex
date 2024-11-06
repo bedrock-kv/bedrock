@@ -29,7 +29,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
           all_log_ids :: MapSet.t(Log.id())
         ) ::
           {:ok, [LogDescriptor.t()]}
-          | {:error, :no_vacancies_to_fill}
           | {:error, {:need_log_workers, pos_integer()}}
   def fill_log_vacancies(logs, assigned_log_ids, all_log_ids) do
     vacancies = all_vacancies(logs)
@@ -38,19 +37,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     candidates_ids = all_log_ids |> MapSet.difference(assigned_log_ids)
     n_candidates = MapSet.size(candidates_ids)
 
-    cond do
-      0 == n_vacancies ->
-        {:error, :no_vacancies_to_fill}
-
-      n_vacancies > n_candidates ->
-        {:error, {:need_log_workers, n_vacancies - n_candidates}}
-
-      true ->
-        {:ok,
-         replace_vacancies_with_log_ids(
-           logs,
-           Enum.zip(vacancies, candidates_ids) |> Map.new()
-         )}
+    if n_vacancies > n_candidates do
+      {:error, {:need_log_workers, n_vacancies - n_candidates}}
+    else
+      {:ok,
+       replace_vacancies_with_log_ids(
+         logs,
+         Enum.zip(vacancies, candidates_ids) |> Map.new()
+       )}
     end
   end
 

@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Internal.Time.Interval
 
   import Bedrock.ControlPlane.Config.RecoveryAttempt, only: [recovery_attempt: 5]
 
@@ -40,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import Bedrock.ControlPlane.Director.State.Changes,
     only: [put_state: 2, update_config: 2]
 
-  import Bedrock.ControlPlane.Director.Telemetry
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
   import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
@@ -117,12 +118,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t.config.recovery_attempt
     |> run_recovery_attempt()
     |> case do
-      {:ok, completed_recovery_attempt} ->
-        t |> apply_completed_recovery_attempt(completed_recovery_attempt)
+      {:ok, completed} ->
+        trace_recovery_completed(Interval.between(completed.started_at, now()))
+        t |> apply_completed_recovery_attempt(completed)
 
-      {{:stalled, reason}, stalled_recovery_attempt} ->
-        IO.inspect(reason, label: "Recovery attempt stalled")
-        t |> update_stalled_recovery_attempt(stalled_recovery_attempt)
+      {{:stalled, reason}, stalled} ->
+        trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
+        t |> update_stalled_recovery_attempt(stalled)
     end
   end
 
@@ -235,6 +237,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   # placeholders based on desired logs and replication factor, then proceed
   # to fill log vacancies.
   def recovery(%{state: :first_time_initialization} = t) do
+    trace_recovery_first_time_initialization()
+
     log_vacancies =
       1..t.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
 
@@ -277,6 +281,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
       {:ok, log_ids, version_vector} ->
+        trace_recovery_suitable_logs_chosen(log_ids, version_vector)
+
         t
         |> RecoveryAttempt.put_old_log_ids_to_copy(log_ids)
         |> RecoveryAttempt.put_version_vector(version_vector)
@@ -287,20 +293,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :create_vacancies} = t) do
-    t
-    |> RecoveryAttempt.put_logs(
-      create_vacancies_for_logs(
-        t.last_transaction_system_layout.logs,
-        t.parameters.desired_logs
-      )
-    )
-    |> RecoveryAttempt.put_storage_teams(
-      create_vacancies_for_storage_teams(
-        t.last_transaction_system_layout.storage_teams,
-        t.parameters.desired_replication_factor
-      )
-    )
-    |> RecoveryAttempt.put_state(:determine_durable_version)
+    with {:ok, logs, n_log_vacancies} <-
+           create_vacancies_for_logs(
+             t.last_transaction_system_layout.logs,
+             t.parameters.desired_logs
+           ),
+         {:ok, storage_teams, n_storage_team_vacancies} <-
+           create_vacancies_for_storage_teams(
+             t.last_transaction_system_layout.storage_teams,
+             t.parameters.desired_replication_factor
+           ) do
+      trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
+
+      t
+      |> RecoveryAttempt.put_logs(logs)
+      |> RecoveryAttempt.put_storage_teams(storage_teams)
+      |> RecoveryAttempt.put_state(:determine_durable_version)
+    end
   end
 
   #
@@ -334,9 +343,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> case do
       {:error, {:need_log_workers, _} = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
-
-      {:error, :no_vacancies_to_fill} ->
-        t |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
 
       {:ok, logs} ->
         t

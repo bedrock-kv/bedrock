@@ -41,16 +41,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
           {:ok, [Log.id()], Bedrock.version_vector()} | {:error, :unable_to_meet_log_quorum}
   def determine_old_logs_to_copy([], _, _), do: {:error, :unable_to_meet_log_quorum}
 
-  # def determine_old_logs_to_copy([log], recovery_info_by_id, 1) do
-  #   case Map.get(recovery_info_by_id, log.log_id) do
-  #     nil ->
-  #       {:error, :unable_to_meet_log_quorum}
-
-  #     recovery_info ->
-  #       {:ok, [log.log_id], {recovery_info[:oldest_version], recovery_info[:last_version]}}
-  #   end
-  # end
-
   def determine_old_logs_to_copy(old_logs, recovery_info_by_id, quorum) do
     old_logs
     |> recovery_info_for_logs(recovery_info_by_id)

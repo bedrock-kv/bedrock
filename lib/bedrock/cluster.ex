@@ -254,7 +254,7 @@ defmodule Bedrock.Cluster do
         @spec get(transaction(), Bedrock.key()) :: nil | Bedrock.value()
         defdelegate get(t, key), to: Bedrock.Internal.Repo
 
-        @spec put(transaction(), Bedrock.key(), Bedrock.value()) :: :ok
+        @spec put(transaction(), Bedrock.key(), Bedrock.value()) :: transaction()
         defdelegate put(t, key, value), to: Bedrock.Internal.Repo
 
         @spec commit(transaction(), opts :: [timeout_in_ms :: pos_integer()]) ::

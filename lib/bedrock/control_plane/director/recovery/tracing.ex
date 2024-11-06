@@ -1,6 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   @moduledoc false
 
+  import Bedrock.Internal.Time.Interval, only: [humanize: 1]
+
   require Logger
 
   defp handler_id, do: "bedrock_trace_director_recovery"
@@ -10,7 +12,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
       handler_id(),
       [
         [:bedrock, :recovery, :started],
+        [:bedrock, :recovery, :stalled],
+        [:bedrock, :recovery, :completed],
         [:bedrock, :recovery, :services_locked],
+        [:bedrock, :recovery, :first_time_initialization],
+        [:bedrock, :recovery, :creating_vacancies],
         [:bedrock, :recovery, :durable_version_chosen],
         [:bedrock, :recovery, :suitable_logs_chosen],
         [:bedrock, :recovery, :storage_unlocking]
@@ -31,8 +37,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     info("Recovery attempt ##{attempt} started")
   end
 
+  def trace(:stalled, _, %{elapsed: elapsed, reason: reason}),
+    do: error("Recovery stalled after #{humanize(elapsed)}: #{inspect(reason)}")
+
+  def trace(:completed, _, %{elapsed: elapsed}),
+    do: info("Recovery completed in #{humanize(elapsed)}!")
+
   def trace(:services_locked, %{n_services: n_services, n_reporting: n_reporting}, _),
     do: info("Services #{n_reporting}/#{n_services} reporting")
+
+  def trace(:first_time_initialization, _, _), do: info("Initializing a brand new system")
+
+  def trace(:creating_vacancies, measurements, _) do
+    case {measurements[:n_log_vacancies], measurements[:n_storage_team_vacancies]} do
+      {0, 0} ->
+        info("No vacancies to create")
+
+      {0, n_storage_team_vacancies} ->
+        info("Creating #{n_storage_team_vacancies} storage team vacancies")
+
+      {n_log_vacancies, 0} ->
+        info("Creating #{n_log_vacancies} log vacancies")
+
+      {n_log_vacancies, n_storage_team_vacancies} ->
+        info(
+          "Creating #{n_log_vacancies} log vacancies and #{n_storage_team_vacancies} storage team vacancies"
+        )
+    end
+  end
+
+  def trace(
+        :creating_vacancies_for_storage_teams,
+        %{n_storage_team_vacancies: n_storage_team_vacancies},
+        _
+      ) do
+    info("Creating #{n_storage_team_vacancies} storage team vacancies")
+  end
 
   def trace(:durable_version_chosen, _, %{degraded_teams: [], durable_version: durable_version}),
     do: info("Durable version chosen: #{durable_version}, all teams healthy.")
@@ -52,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         suitable_logs: suitable_logs,
         log_version_vector: log_version_vector
       }) do
-    info("Suitable logs chosen: #{suitable_logs |> Enum.join(", ")}")
+    info("Suitable logs chosen for copying: #{suitable_logs |> Enum.join(", ")}")
     info("Version vector: #{inspect(log_version_vector)}")
   end
 
@@ -64,6 +104,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
     Logger.info("Bedrock [#{metadata[:cluster].name()}/#{metadata[:epoch]}]: #{message}",
       ansi_color: :magenta
+    )
+  end
+
+  defp error(message) do
+    metadata = Logger.metadata()
+
+    Logger.error("Bedrock [#{metadata[:cluster].name()}/#{metadata[:epoch]}]: #{message}",
+      ansi_color: :red
     )
   end
 end

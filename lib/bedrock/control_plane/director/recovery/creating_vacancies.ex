@@ -10,30 +10,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
   the necessary "vacancy" entries to reach the desired count for each distinct
   set of log tags. Each vacancy is represented as a `LogDescriptor` with the
   placeholder data.
-
-  ## Parameters
-
-    - logs: A list of `LogDescriptor.t()` representing the current logs.
-    - desired_logs: A positive integer specifying the desired number of log instances.
-
-  ## Returns
-
-  A list of `LogDescriptor.t()` with "vacancy" entries added to achieve the
-  desired number of log instances for each set of log tags.
   """
   @spec create_vacancies_for_logs([LogDescriptor.t()], desired_logs :: pos_integer()) ::
-          [LogDescriptor.t()]
+          {:ok, [LogDescriptor.t()], n_log_vacancies :: non_neg_integer()}
   def create_vacancies_for_logs(logs, desired_logs) do
-    logs
-    |> Enum.group_by(&Enum.sort(&1.tags))
-    |> Enum.map(fn {tags, _descriptors} ->
-      1..desired_logs
-      |> Enum.map(&{:vacancy, &1})
-      |> Enum.map(fn vacancy ->
-        LogDescriptor.log_descriptor(vacancy, tags)
+    update_logs =
+      logs
+      |> Enum.group_by(&Enum.sort(&1.tags))
+      |> Enum.map(fn {tags, _descriptors} ->
+        1..desired_logs
+        |> Enum.map(&{:vacancy, &1})
+        |> Enum.map(fn vacancy ->
+          LogDescriptor.log_descriptor(vacancy, tags)
+        end)
       end)
-    end)
-    |> List.flatten()
+      |> List.flatten()
+
+    {:ok, update_logs, length(update_logs) * desired_logs}
   end
 
   @type tag_set_roster ::
@@ -48,31 +41,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
   replication factor for storage teams with specific tags. If no vacancies are
   needed (i.e., if the current storage teams already meet the desired replication),
   the original storage teams list is returned.
-
-  ## Parameters
-
-    - storage_teams: A list of `StorageTeamDescriptor.t()` representing the current storage teams.
-    - desired_replication: A positive integer specifying the desired number of replicas.
-
-  ## Returns
-
-  A list of `StorageTeamDescriptor.t()`, potentially with additional "vacancy" entries
-  added to achieve the desired replication factor.
   """
   @spec create_vacancies_for_storage_teams(
           [StorageTeamDescriptor.t()],
           desired_replication :: pos_integer()
-        ) :: [StorageTeamDescriptor.t()]
+        ) :: {:ok, [StorageTeamDescriptor.t()], n_storage_team_vacancies :: non_neg_integer()}
   def create_vacancies_for_storage_teams(storage_teams, desired_replication) do
     rosters_by_tag_set = tag_set_rosters_from_storage_teams(storage_teams)
 
-    {expanded_rosters_by_tag_set, total_vacancies_added} =
-      expand_rosters_and_add_vacancies(rosters_by_tag_set, desired_replication)
+    case expand_rosters_and_add_vacancies(rosters_by_tag_set, desired_replication) do
+      {_expanded_rosters_by_tag_set, 0} ->
+        {:ok, storage_teams, 0}
 
-    if total_vacancies_added == 0 do
-      storage_teams
-    else
-      apply_expanded_roster_to_storage_teams(storage_teams, expanded_rosters_by_tag_set)
+      {expanded_rosters_by_tag_set, n_storage_team_vacancies} ->
+        {:ok, apply_expanded_roster_to_storage_teams(storage_teams, expanded_rosters_by_tag_set),
+         n_storage_team_vacancies}
     end
   end
 

@@ -1,5 +1,6 @@
-defmodule Bedrock.ControlPlane.Director.Telemetry do
+defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   alias Bedrock.Telemetry
+  alias Bedrock.Internal.Time.Interval
 
   @doc """
   Emits a telemetry event indicating that the cluster director has started
@@ -20,6 +21,15 @@ defmodule Bedrock.ControlPlane.Director.Telemetry do
     })
   end
 
+  @spec trace_recovery_stalled(elapsed :: Interval.t(), reason :: any()) :: :ok
+  def trace_recovery_stalled(elapsed, reason) do
+    Telemetry.execute([:bedrock, :recovery, :stalled], %{}, %{elapsed: elapsed, reason: reason})
+  end
+
+  @spec trace_recovery_completed(elapsed :: Interval.t()) :: :ok
+  def trace_recovery_completed(elapsed),
+    do: Telemetry.execute([:bedrock, :recovery, :completed], %{}, %{elapsed: elapsed})
+
   @spec trace_recovery_services_locked(
           n_services :: non_neg_integer(),
           n_reporting :: non_neg_integer()
@@ -28,6 +38,16 @@ defmodule Bedrock.ControlPlane.Director.Telemetry do
     Telemetry.execute([:bedrock, :recovery, :services_locked], %{}, %{
       n_services: n_services,
       n_reporting: n_reporting
+    })
+  end
+
+  def trace_recovery_first_time_initialization,
+    do: Telemetry.execute([:bedrock, :recovery, :first_time_initialization], %{}, %{})
+
+  def trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies) do
+    Telemetry.execute([:bedrock, :recovery, :creating_vacancies], %{}, %{
+      n_log_vacancies: n_log_vacancies,
+      n_storage_team_vacancies: n_storage_team_vacancies
     })
   end
 

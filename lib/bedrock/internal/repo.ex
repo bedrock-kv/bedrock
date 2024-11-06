@@ -35,9 +35,11 @@ defmodule Bedrock.Internal.Repo do
   def get(t, key) when is_binary(key),
     do: call(t, {:get, key}, :infinity)
 
-  @spec put(pid(), Bedrock.key(), Bedrock.value()) :: :ok
-  def put(t, key, value) when is_binary(key) and is_binary(value),
-    do: cast(t, {:put, key, value})
+  @spec put(pid(), Bedrock.key(), Bedrock.value()) :: pid()
+  def put(t, key, value) when is_binary(key) and is_binary(value) do
+    cast(t, {:put, key, value})
+    t
+  end
 
   @spec commit(pid(), opts :: [timeout_in_ms :: pos_integer()]) ::
           :ok | {:error, :aborted}

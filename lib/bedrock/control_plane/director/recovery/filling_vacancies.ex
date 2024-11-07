@@ -51,11 +51,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     logs
     |> Enum.map(fn {log_id, descriptor} ->
       case Map.get(log_id_for_vacancy, log_id) do
-        nil -> descriptor
-        candidate_id -> LogDescriptor.put_log_id(descriptor, candidate_id)
+        nil -> {log_id, descriptor}
+        candidate_id -> {candidate_id, descriptor}
       end
     end)
-    |> Map.new(&{&1.log_id, &1})
+    |> Map.new()
   end
 
   @doc """

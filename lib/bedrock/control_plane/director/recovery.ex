@@ -28,7 +28,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
-  import Bedrock.ControlPlane.Config.LogDescriptor, only: [log_descriptor: 2]
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
@@ -238,7 +237,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.put(:durable_version, :start)
     |> Map.put(:old_log_ids_to_copy, [])
     |> Map.put(:version_vector, {:start, 0})
-    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, log_descriptor(&1, [0, 1])}))
+    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
     |> Map.put(:storage_teams, [
       storage_team_descriptor(
         0,

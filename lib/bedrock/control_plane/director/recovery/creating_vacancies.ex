@@ -17,17 +17,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
   def create_vacancies_for_logs(logs, desired_logs) do
     updated_logs =
       logs
-      |> Map.values()
-      |> Enum.group_by(&Enum.sort(&1.tags))
-      |> Enum.map(fn {tags, _descriptors} ->
+      |> Enum.group_by(&Enum.sort(elem(&1, 1)), &elem(&1, 0))
+      |> Enum.flat_map(fn {tags, _ids} ->
         1..desired_logs
-        |> Enum.map(&{:vacancy, &1})
-        |> Enum.map(fn vacancy ->
-          LogDescriptor.log_descriptor(vacancy, tags)
-        end)
+        |> Enum.map(&{{:vacancy, &1}, tags})
       end)
-      |> List.flatten()
-      |> Map.new(&{&1.log_id, &1})
+      |> Map.new()
 
     {:ok, updated_logs, map_size(updated_logs) * desired_logs}
   end

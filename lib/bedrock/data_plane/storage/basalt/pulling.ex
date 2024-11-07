@@ -3,13 +3,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.Service.Worker
 
   import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
   @spec start_pulling(
           Bedrock.version(),
           %{Log.id() => LogDescriptor.t()},
-          [ServiceDescriptor.t()],
+          %{Worker.id() => ServiceDescriptor.t()},
           apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
         ) ::
           Task.t()

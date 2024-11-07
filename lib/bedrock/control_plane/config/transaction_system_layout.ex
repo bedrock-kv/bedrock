@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   """
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
@@ -41,7 +42,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           resolvers: [pid()],
           logs: %{Log.id() => LogDescriptor.t()},
           storage_teams: [StorageTeamDescriptor.t()],
-          services: [ServiceDescriptor.t()]
+          services: %{Worker.id() => ServiceDescriptor.t()}
         }
 
   @type id :: non_neg_integer()
@@ -58,6 +59,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
       resolvers: [],
       logs: %{},
       storage_teams: [],
-      services: []
+      services: %{}
     }
 end

@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Service.Worker
 
   import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 5]
 
@@ -157,13 +158,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec resolve_log_descriptors(%{Log.id() => LogDescriptor.t()}, [ServiceDescriptor.t()]) ::
-          [ServiceDescriptor.t()]
+  @spec resolve_log_descriptors(
+          %{Log.id() => LogDescriptor.t()},
+          %{Worker.id() => ServiceDescriptor.t()}
+        ) ::
+          %{Worker.id() => ServiceDescriptor.t()}
   def resolve_log_descriptors(log_descriptors, services) do
     log_descriptors
     |> Map.keys()
-    |> Enum.map(&ServiceDescriptor.find_by_id(services, &1))
+    |> Enum.map(&Map.get(services, &1))
     |> Enum.reject(&is_nil/1)
+    |> Map.new(&{&1.id, &1})
   end
 
   @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), Transaction.t(), Bedrock.version()) ::

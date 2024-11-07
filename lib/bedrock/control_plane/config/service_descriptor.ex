@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
+  alias Bedrock.Service.Worker
+
   @type id :: String.t()
   @type kind :: :log | :storage
   @type otp_name :: atom()
@@ -33,20 +35,19 @@ defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
   Inserts a service descriptor into a list of service descriptors, replacing
   any existing service descriptor with the same id.
   """
-  @spec upsert([t()], t()) :: [t()]
-  def upsert([], n), do: [n]
-  def upsert([%{id: id} | t], %{id: id} = n), do: [n | t]
-  def upsert([h | t], n), do: [h | upsert(t, n)]
+  @spec upsert(%{Worker.id() => ServiceDescriptor.t()}, t()) ::
+          %{Worker.id() => ServiceDescriptor.t()}
+  def upsert(t, n), do: Map.put(t, n.id, n)
 
-  @spec find_by_id([t()], id()) :: t() | nil
-  def find_by_id(l, id), do: l |> Enum.find(&(&1.id == id))
+  @spec find_by_id(%{Worker.id() => t()}, id()) :: t() | nil
+  def find_by_id(l, id), do: Map.get(l, id)
 
-  @spec remove_by_id([t()], id()) :: [t()]
-  def remove_by_id(l, id), do: l |> Enum.reject(&(&1.id == id))
+  @spec remove_by_id(%{Worker.id() => t()}, id()) :: %{Worker.id() => t()}
+  def remove_by_id(l, id), do: Map.delete(l, id)
 
-  @spec find_pid_by_id([t()], id()) :: pid() | nil
+  @spec find_pid_by_id(%{Worker.id() => t()}, id()) :: pid() | nil
   def find_pid_by_id(l, id) do
-    case Enum.find(l, &(&1.id == id)) do
+    case Map.get(l, id) do
       %{status: {:up, pid}} -> pid
       _ -> nil
     end

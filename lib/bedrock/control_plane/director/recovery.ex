@@ -148,8 +148,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   def unlock_storage_after_recovery(t, durable_version) do
     t.config.transaction_system_layout.services
+    |> Map.values()
     |> Enum.filter(&(&1.kind == :storage))
-    |> Enum.each(fn %{status: {:up, worker}} = storage_descriptor ->
+    |> Enum.each(fn %{kind: :storage, status: {:up, worker}} = storage_descriptor ->
       trace_recovery_storage_unlocking(storage_descriptor.id)
 
       Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
@@ -206,21 +207,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {:error, :newer_epoch_exists = reason} ->
         t |> RecoveryAttempt.put_state({:stalled, reason})
 
-      {:ok, locked_services, log_recovery_info_by_id, storage_recovery_info_by_id} ->
+      {:ok, locked_service_ids, updated_services, log_recovery_info_by_id,
+       storage_recovery_info_by_id} ->
         t
-        |> RecoveryAttempt.update_log_recovery_info_by_id(&Map.merge(log_recovery_info_by_id, &1))
-        |> RecoveryAttempt.update_storage_recovery_info_by_id(
-          &Map.merge(storage_recovery_info_by_id, &1)
-        )
-        |> RecoveryAttempt.update_available_services(fn available_services ->
-          available_services
-          |> Map.new(&{&1.id, &1})
-          |> Map.merge(locked_services |> Map.new(&{&1.id, &1}))
-          |> Map.values()
-        end)
-        |> RecoveryAttempt.update_locked_service_ids(fn locked_service_ids ->
-          locked_services |> Enum.map(& &1.id) |> Enum.into(locked_service_ids)
-        end)
+        |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
+        |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
+        |> Map.update!(:available_services, &Map.merge(&1, updated_services))
+        |> Map.put(:locked_service_ids, locked_service_ids)
         |> case do
           %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = t ->
             t |> RecoveryAttempt.put_state(:first_time_initialization)

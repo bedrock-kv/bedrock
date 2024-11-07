@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Service.Worker
 
   @type state ::
           :start
@@ -59,7 +60,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           },
           started_at: DateTime.t(),
           last_transaction_system_layout: TransactionSystemLayout.t(),
-          available_services: [ServiceDescriptor.t()],
+          available_services: %{Worker.id() => ServiceDescriptor.t()},
           locked_service_ids: MapSet.t(ServiceDescriptor.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),
@@ -77,7 +78,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   def recovery_attempt,
     do: %{
       attempt: 0,
-      available_services: [],
+      available_services: %{},
       cluster: nil,
       degraded_teams: [],
       durable_version: :start,
@@ -120,7 +121,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       parameters: params,
       last_transaction_system_layout: transaction_system_layout,
       #
-      available_services: [],
+      available_services: %{},
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},
       storage_recovery_info_by_id: %{},
@@ -198,11 +199,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   def update_storage_recovery_info_by_id(t, f),
     do: %{t | storage_recovery_info_by_id: f.(t.storage_recovery_info_by_id)}
 
-  @spec put_available_services(t(), [ServiceDescriptor.t()]) :: t()
+  @spec put_available_services(t(), %{Worker.id() => ServiceDescriptor.t()}) :: t()
   def put_available_services(t, available_services),
     do: %{t | available_services: available_services}
 
-  @spec update_available_services(t(), ([ServiceDescriptor.t()] -> [ServiceDescriptor.t()])) ::
+  @spec update_available_services(t(), (%{Worker.id() => ServiceDescriptor.t()} ->
+                                          %{Worker.id() => ServiceDescriptor.t()})) ::
           t()
   def update_available_services(t, f),
     do: %{t | available_services: f.(t.available_services)}

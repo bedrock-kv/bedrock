@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   alias Bedrock.ControlPlane.Config.TransactionResolverDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
 
   @type t :: TransactionSystemLayout.t()
 
@@ -83,13 +84,12 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   """
   @spec node_down(t(), node()) :: t()
   def node_down(t, node) do
-    updated_services = Enum.map(t.services, &ServiceDescriptor.node_down(&1, node))
+    updated_services =
+      t.services
+      |> Enum.map(fn {id, service} -> {id, ServiceDescriptor.node_down(service, node)} end)
+      |> Map.new()
 
-    if updated_services == t.services do
-      t
-    else
-      t |> put_services(updated_services)
-    end
+    t |> put_services(updated_services)
   end
 
   defp put_random_id(t), do: %{t | id: random_id()}
@@ -107,7 +107,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
   @spec put_rate_keeper(t(), pid() | nil) :: t()
   def put_rate_keeper(t, rate_keeper), do: %{t | rate_keeper: rate_keeper} |> put_random_id()
 
-  @spec put_services(t(), [ServiceDescriptor.t()]) :: t()
+  @spec put_services(t(), %{Worker.id() => ServiceDescriptor.t()}) :: t()
   def put_services(t, services), do: %{t | services: services} |> put_random_id()
 
   @spec put_proxies(t(), [pid()]) :: t()
@@ -124,7 +124,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes do
           t()
   def update_logs(t, updater), do: %{t | logs: updater.(t.logs)}
 
-  @spec update_services(t(), ([ServiceDescriptor.t()] -> [ServiceDescriptor.t()])) ::
+  @spec update_services(t(), (%{Worker.id() => ServiceDescriptor.t()} ->
+                                %{Worker.id() => ServiceDescriptor.t()})) ::
           t()
   def update_services(t, updater), do: %{t | services: updater.(t.services)} |> put_random_id()
 

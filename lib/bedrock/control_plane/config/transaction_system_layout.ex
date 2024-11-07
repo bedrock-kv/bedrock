@@ -61,4 +61,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
       storage_teams: [],
       services: %{}
     }
+
+  def random_id, do: :rand.uniform(1_000_000)
 end

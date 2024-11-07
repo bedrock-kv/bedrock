@@ -52,11 +52,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
 
       {:ok, {id, service, {:ok, pid, info}}}, {locked_ids, services, info_by_id} ->
         {:cont,
-         {MapSet.put(locked_ids, id), Map.put(services, id, ServiceDescriptor.up(service, pid)),
+         {MapSet.put(locked_ids, id), Map.put(services, id, up(service, pid)),
           Map.put(info_by_id, id, info)}}
 
       {:ok, {id, service, {:error, _}}}, {locked_ids, services, info_by_id} ->
-        {:cont, {locked_ids, Map.put(services, id, ServiceDescriptor.down(service)), info_by_id}}
+        {:cont, {locked_ids, Map.put(services, id, down(service)), info_by_id}}
     end)
     |> case do
       {:error, _reason} = error ->
@@ -85,4 +85,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
     do: Storage.lock_for_recovery(name, epoch)
 
   def lock_service_for_recovery(_, _), do: {:error, :unavailable}
+
+  defp up(service, pid), do: %{service | status: {:up, pid}}
+
+  def down(service), do: %{service | status: :down}
 end

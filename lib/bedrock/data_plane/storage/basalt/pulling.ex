@@ -40,7 +40,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     timestamp = System.system_time(:millisecond)
 
     case select_log(state) do
-      {:ok, %{id: log_id, status: {:up, worker_pid}}} ->
+      {:ok, {log_id, %{status: {:up, worker_pid}}}} ->
         trace_log_pull_start(timestamp, state.start_after)
 
         case Log.pull(worker_pid, state.start_after,
@@ -87,10 +87,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
           retry_timestamp -> now >= retry_timestamp
         end
       end)
-      |> Enum.map(&ServiceDescriptor.find_by_id(services, &1))
-      |> Enum.reject(&is_nil/1)
+      |> Enum.map(&{&1, Map.get(services, &1)})
+      |> Enum.reject(&is_nil(elem(&1, 1)))
+      |> Map.new()
 
-    if available_log_services == [] do
+    if Enum.empty?(available_log_services) do
       :no_available_logs
     else
       {:ok, Enum.random(available_log_services)}

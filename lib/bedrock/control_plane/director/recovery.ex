@@ -4,11 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Internal.Time.Interval
-
-  import Bedrock.ControlPlane.Config.RecoveryAttempt, only: [recovery_attempt: 5]
 
   import Bedrock, only: [key_range: 2]
   import Bedrock.Internal.Time, only: [now: 0]
@@ -27,17 +24,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
   import __MODULE__.DefiningResolvers, only: [define_resolvers: 6]
   import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
-
-  import Bedrock.ControlPlane.Config.Changes,
-    only: [
-      put_epoch: 2,
-      put_recovery_attempt: 2,
-      update_recovery_attempt!: 2,
-      update_transaction_system_layout: 2
-    ]
-
-  import Bedrock.ControlPlane.Director.State.Changes,
-    only: [put_state: 2, update_config: 2]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -61,45 +47,59 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   def setup_for_initial_recovery(t) do
     t
-    |> put_state(:recovery)
-    |> update_config(fn config ->
+    |> Map.put(:state, :recovery)
+    |> Map.update!(:config, fn config ->
       config
-      |> put_epoch(t.epoch)
-      |> put_recovery_attempt(
-        recovery_attempt(
-          t.cluster,
-          t.epoch,
-          now(),
-          config.transaction_system_layout,
+      |> Map.put(:recovery_attempt, %{
+        cluster: t.cluster,
+        attempt: 1,
+        epoch: t.epoch,
+        state: :start,
+        started_at: now(),
+        parameters:
           Map.take(config.parameters, [
             :desired_logs,
             :desired_replication_factor,
             :desired_commit_proxies,
             :desired_resolvers
-          ])
-        )
-        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
-      )
-      |> update_transaction_system_layout(fn transaction_system_layout ->
+          ]),
+        last_transaction_system_layout: config.transaction_system_layout,
+        available_services: t.config.transaction_system_layout.services,
+        #
+        locked_service_ids: MapSet.new(),
+        log_recovery_info_by_id: %{},
+        storage_recovery_info_by_id: %{},
+        old_log_ids_to_copy: [],
+        version_vector: {:start, 0},
+        durable_version: :start,
+        degraded_teams: [],
+        logs: %{},
+        storage_teams: [],
+        resolvers: [],
+        proxies: [],
+        sequencer: nil
+      })
+      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
         transaction_system_layout
-        |> TransactionSystemLayout.Changes.put_director(self())
-        |> TransactionSystemLayout.Changes.put_sequencer(nil)
-        |> TransactionSystemLayout.Changes.put_rate_keeper(nil)
-        |> TransactionSystemLayout.Changes.put_data_distributor(nil)
-        |> TransactionSystemLayout.Changes.put_proxies([])
-        |> TransactionSystemLayout.Changes.put_resolvers([])
+        |> Map.put(:director, self())
+        |> Map.put(:sequencer, nil)
+        |> Map.put(:rate_keeper, nil)
+        |> Map.put(:data_distributor, nil)
+        |> Map.put(:proxies, [])
+        |> Map.put(:resolvers, [])
       end)
     end)
   end
 
   def setup_for_subsequent_recovery(t) do
     t
-    |> update_config(fn config ->
+    |> Map.update!(:config, fn config ->
       config
-      |> update_recovery_attempt!(fn recovery_attempt ->
+      |> Map.update!(:recovery_attempt, fn recovery_attempt ->
         recovery_attempt
-        |> RecoveryAttempt.reset(now())
-        |> RecoveryAttempt.put_available_services(t.config.transaction_system_layout.services)
+        |> Map.update(:attempt, 0, &(&1 + 1))
+        |> Map.put(:state, :start)
+        |> Map.put(:available_services, t.config.transaction_system_layout.services)
       end)
     end)
   end
@@ -118,55 +118,50 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> case do
       {:ok, completed} ->
         trace_recovery_completed(Interval.between(completed.started_at, now()))
-        t |> apply_completed_recovery_attempt(completed)
+
+        t
+        |> Map.put(:state, :running)
+        |> Map.update!(:config, fn config ->
+          config
+          |> Map.delete(:recovery_attempt)
+          |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
+            transaction_system_layout
+            |> Map.put(:id, TransactionSystemLayout.random_id())
+            |> Map.put(:sequencer, completed.sequencer)
+            |> Map.put(:resolvers, completed.resolvers)
+            |> Map.put(:proxies, completed.proxies)
+            |> Map.put(:logs, completed.logs)
+            |> Map.put(:storage_teams, completed.storage_teams)
+          end)
+        end)
+        |> unlock_storage_after_recovery(completed.durable_version)
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
-        t |> update_stalled_recovery_attempt(stalled)
-    end
-  end
 
-  def apply_completed_recovery_attempt(t, completed_recovery_attempt) do
-    t
-    |> put_state(:running)
-    |> update_config(fn config ->
-      config
-      |> put_recovery_attempt(nil)
-      |> update_transaction_system_layout(fn transaction_system_layout ->
-        transaction_system_layout
-        |> TransactionSystemLayout.Changes.put_sequencer(completed_recovery_attempt.sequencer)
-        |> TransactionSystemLayout.Changes.put_resolvers(completed_recovery_attempt.resolvers)
-        |> TransactionSystemLayout.Changes.put_proxies(completed_recovery_attempt.proxies)
-        |> TransactionSystemLayout.Changes.put_logs(completed_recovery_attempt.logs)
-        |> TransactionSystemLayout.Changes.put_storage_teams(
-          completed_recovery_attempt.storage_teams
-        )
-      end)
-    end)
-    |> unlock_storage_after_recovery(completed_recovery_attempt.durable_version)
+        t
+        |> Map.update!(:config, fn config ->
+          config
+          |> Map.put(:recovery_attempt, stalled)
+        end)
+    end
   end
 
   def unlock_storage_after_recovery(t, durable_version) do
     t.config.transaction_system_layout.services
-    |> Map.values()
-    |> Enum.filter(&(&1.kind == :storage))
-    |> Enum.each(fn %{kind: :storage, status: {:up, worker}} = storage_descriptor ->
-      trace_recovery_storage_unlocking(storage_descriptor.id)
+    |> Enum.each(fn
+      {id, %{kind: :storage, status: {:up, worker}}} ->
+        trace_recovery_storage_unlocking(id)
 
-      Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
-        timeout_in_ms: 1_000
-      )
+        Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
+          timeout_in_ms: 1_000
+        )
+
+      _ ->
+        :ok
     end)
 
     t
-  end
-
-  def update_stalled_recovery_attempt(t, stalled_recovery_attempt) do
-    t
-    |> update_config(fn config ->
-      config
-      |> put_recovery_attempt(stalled_recovery_attempt)
-    end)
   end
 
   @spec run_recovery_attempt(RecoveryAttempt.t()) ::
@@ -186,18 +181,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
+  @spec recovery(RecoveryAttempt.t()) :: RecoveryAttempt.t()
+  def recovery(recovery_attempt)
+
   #
   #
   def recovery(%{state: :start} = t) do
     t
-    |> RecoveryAttempt.put_started_at(now())
-    |> RecoveryAttempt.put_state(:lock_available_services)
+    |> Map.put(:started_at, now())
+    |> Map.put(:state, :lock_available_services)
   end
 
   #
   #
   def recovery(%{state: {:stalled, _}} = t),
-    do: t |> RecoveryAttempt.reset(now())
+    do: t |> Map.put(:state, :start)
 
   #
   #
@@ -205,7 +203,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     lock_available_services(t.available_services, t.epoch, 200)
     |> case do
       {:error, :newer_epoch_exists = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, locked_service_ids, updated_services, log_recovery_info_by_id,
        storage_recovery_info_by_id} ->
@@ -216,10 +214,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.put(:locked_service_ids, locked_service_ids)
         |> case do
           %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = t ->
-            t |> RecoveryAttempt.put_state(:first_time_initialization)
+            t |> Map.put(:state, :first_time_initialization)
 
           t ->
-            t |> RecoveryAttempt.put_state(:determine_old_logs_to_copy)
+            t |> Map.put(:state, :determine_old_logs_to_copy)
         end
     end
   end
@@ -237,14 +235,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
     t
-    |> RecoveryAttempt.put_durable_version(:start)
-    |> RecoveryAttempt.put_old_log_ids_to_copy([])
-    |> RecoveryAttempt.put_version_vector({:start, 0})
-    |> RecoveryAttempt.put_logs(
-      log_vacancies
-      |> Map.new(&{&1, log_descriptor(&1, [0, 1])})
-    )
-    |> RecoveryAttempt.put_storage_teams([
+    |> Map.put(:durable_version, :start)
+    |> Map.put(:old_log_ids_to_copy, [])
+    |> Map.put(:version_vector, {:start, 0})
+    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, log_descriptor(&1, [0, 1])}))
+    |> Map.put(:storage_teams, [
       storage_team_descriptor(
         0,
         key_range(<<0xFF>>, <<0xFF, 0xFF>>),
@@ -256,7 +251,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         storage_team_vacancies
       )
     ])
-    |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
+    |> Map.put(:state, :recruit_logs_to_fill_vacancies)
   end
 
   #
@@ -269,15 +264,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, log_ids, version_vector} ->
         trace_recovery_suitable_logs_chosen(log_ids, version_vector)
 
         t
-        |> RecoveryAttempt.put_old_log_ids_to_copy(log_ids)
-        |> RecoveryAttempt.put_version_vector(version_vector)
-        |> RecoveryAttempt.put_state(:create_vacancies)
+        |> Map.put(:old_log_ids_to_copy, log_ids)
+        |> Map.put(:version_vector, version_vector)
+        |> Map.put(:state, :create_vacancies)
     end
   end
 
@@ -297,9 +292,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
 
       t
-      |> RecoveryAttempt.put_logs(logs)
-      |> RecoveryAttempt.put_storage_teams(storage_teams)
-      |> RecoveryAttempt.put_state(:determine_durable_version)
+      |> Map.put(:logs, logs)
+      |> Map.put(:storage_teams, storage_teams)
+      |> Map.put(:state, :determine_durable_version)
     end
   end
 
@@ -313,16 +308,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, durable_version, healthy_teams, degraded_teams} ->
         trace_recovery_durable_version_chosen(durable_version)
         trace_recovery_team_health(healthy_teams, degraded_teams)
 
         t
-        |> RecoveryAttempt.put_durable_version(durable_version)
-        |> RecoveryAttempt.put_degraded_teams(degraded_teams)
-        |> RecoveryAttempt.put_state(:recruit_logs_to_fill_vacancies)
+        |> Map.put(:durable_version, durable_version)
+        |> Map.put(:degraded_teams, degraded_teams)
+        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
     end
   end
 
@@ -336,14 +331,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, {:need_log_workers, _} = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, logs} ->
         trace_recovery_all_log_vacancies_filled()
 
         t
-        |> RecoveryAttempt.put_logs(logs)
-        |> RecoveryAttempt.put_state(:recruit_storage_to_fill_vacancies)
+        |> Map.put(:logs, logs)
+        |> Map.put(:state, :recruit_storage_to_fill_vacancies)
     end
   end
 
@@ -356,14 +351,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, {:need_storage_workers, _} = reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, storage_teams} ->
         trace_recovery_all_storage_team_vacancies_filled()
 
         t
-        |> RecoveryAttempt.put_storage_teams(storage_teams)
-        |> RecoveryAttempt.put_state(:replay_old_logs)
+        |> Map.put(:storage_teams, storage_teams)
+        |> Map.put(:state, :replay_old_logs)
     end
   end
 
@@ -377,18 +372,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       t.old_log_ids_to_copy,
       new_log_ids,
       t.version_vector,
-      &ServiceDescriptor.find_pid_by_id(t.available_services, &1)
+      fn log_id ->
+        case Map.get(t.available_services, log_id) do
+          %{status: {:up, pid}} -> pid
+          _ -> nil
+        end
+      end
     )
     |> case do
-      {:error, reason} -> t |> RecoveryAttempt.put_state({:stalled, reason})
-      :ok -> t |> RecoveryAttempt.put_state(:repair_data_distribution)
+      {:error, reason} -> t |> Map.put(:state, {:stalled, reason})
+      :ok -> t |> Map.put(:state, :repair_data_distribution)
     end
   end
 
   #
   #
   def recovery(%{state: :repair_data_distribution} = t) do
-    t |> RecoveryAttempt.put_state(:define_sequencer)
+    t |> Map.put(:state, :define_sequencer)
   end
 
   #
@@ -405,12 +405,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, sequencer} ->
         t
-        |> RecoveryAttempt.put_sequencer(sequencer)
-        |> RecoveryAttempt.put_state(:define_commit_proxies)
+        |> Map.put(:sequencer, sequencer)
+        |> Map.put(:state, :define_commit_proxies)
     end
   end
 
@@ -428,12 +428,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, commit_proxies} ->
         t
-        |> RecoveryAttempt.put_proxies(commit_proxies)
-        |> RecoveryAttempt.put_state(:define_resolvers)
+        |> Map.put(:proxies, commit_proxies)
+        |> Map.put(:state, :define_resolvers)
     end
   end
 
@@ -442,9 +442,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     starter_fn = starter_for(sup_otp_name)
 
     log_pids =
-      t.logs
-      |> Map.keys()
-      |> Enum.map(&ServiceDescriptor.find_pid_by_id(t.available_services, &1))
+      t.available_services
+      |> Map.take(t.logs |> Map.keys())
+      |> Enum.map(fn
+        {_id, %{status: {:up, pid}}} -> pid
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
 
     define_resolvers(
       t.parameters.desired_resolvers,
@@ -456,19 +460,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
     |> case do
       {:error, reason} ->
-        t |> RecoveryAttempt.put_state({:stalled, reason})
+        t |> Map.put(:state, {:stalled, reason})
 
       {:ok, resolvers} ->
         t
-        |> RecoveryAttempt.put_resolvers(resolvers)
-        |> RecoveryAttempt.put_state(:final_checks)
+        |> Map.put(:resolvers, resolvers)
+        |> Map.put(:state, :final_checks)
     end
   end
 
   #
   #
   def recovery(%{state: :final_checks} = t) do
-    t |> RecoveryAttempt.put_state(:completed)
+    t |> Map.put(:state, :completed)
   end
 
   #

@@ -131,7 +131,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     log_descriptors
     |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
-      fn %{id: log_id} = service_descriptor ->
+      fn {log_id, service_descriptor} ->
         service_descriptor
         |> try_to_push_transaction_to_log(transaction, last_commit_version)
         |> then(&{log_id, &1})
@@ -166,9 +166,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def resolve_log_descriptors(log_descriptors, services) do
     log_descriptors
     |> Map.keys()
-    |> Enum.map(&Map.get(services, &1))
-    |> Enum.reject(&is_nil/1)
-    |> Map.new(&{&1.id, &1})
+    |> Enum.map(&{&1, Map.get(services, &1)})
+    |> Enum.reject(&is_nil(elem(&1, 1)))
+    |> Map.new()
   end
 
   @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), Transaction.t(), Bedrock.version()) ::

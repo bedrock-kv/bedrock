@@ -102,7 +102,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     storage_teams
     |> Enum.map(fn descriptor ->
       descriptor
-      |> StorageTeamDescriptor.update_storage_ids(fn storage_ids ->
+      |> Map.update!(:storage_ids, fn storage_ids ->
         storage_ids
         |> Enum.map(&Map.get(storage_id_for_vacancy, &1, &1))
       end)

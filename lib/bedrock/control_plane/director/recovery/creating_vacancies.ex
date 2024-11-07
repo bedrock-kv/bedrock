@@ -105,7 +105,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
 
     Enum.map(
       storage_teams,
-      &StorageTeamDescriptor.put_storage_ids(&1, Map.get(new_rosters_by_tag, &1.tag))
+      &Map.put(&1, :storage_ids, Map.get(new_rosters_by_tag, &1.tag))
     )
   end
 end

@@ -49,7 +49,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
              ) do
           {:ok, transactions} ->
             trace_log_pull_succeeded(timestamp, length(transactions))
-            :timer.sleep(1000)
 
             next_version = apply_transactions_fn.(transactions)
 

@@ -21,7 +21,10 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             default_pull_limit: pos_integer(),
             max_pull_limit: pos_integer()
           },
-          pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}}
+          pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}},
+          waiting_pullers: %{
+            Bedrock.version() => [{Bedrock.timestamp_in_ms(), pid(), opts :: keyword()}]
+          }
         }
   defstruct cluster: nil,
             director: nil,
@@ -34,6 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             oldest_version: nil,
             otp_name: nil,
             pending_transactions: %{},
+            waiting_pullers: %{},
             params: %{
               default_pull_limit: 100,
               max_pull_limit: 500

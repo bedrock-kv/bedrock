@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.DataPlane.Log.Shale.LongPulls,
     only: [
       process_expired_deadlines_for_waiting_pullers: 2,
-      try_to_add_to_waiting_pullers: 4,
+      try_to_add_to_waiting_pullers: 5,
       determine_timeout_for_next_puller_deadline: 2,
       notify_waiting_pullers: 3
     ]
@@ -81,22 +81,18 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   def handle_continue(:check_for_expired_pullers, t) do
-    monotonic_now = :erlang.monotonic_time(:millisecond)
-
     t
     |> Map.update!(
       :waiting_pullers,
-      &process_expired_deadlines_for_waiting_pullers(&1, monotonic_now)
+      &process_expired_deadlines_for_waiting_pullers(&1, monotonic_now())
     )
     |> noreply(continue: :wait_for_next_puller_deadline)
   end
 
   def handle_continue(:wait_for_next_puller_deadline, t) do
-    monotonic_now = :erlang.monotonic_time(:millisecond)
-
     t
     |> Map.get(:waiting_pullers)
-    |> determine_timeout_for_next_puller_deadline(monotonic_now)
+    |> determine_timeout_for_next_puller_deadline(monotonic_now())
     |> case do
       nil -> t |> noreply()
       timeout -> {:noreply, t, timeout}
@@ -153,7 +149,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         t |> reply({:ok, transactions})
 
       {:waiting_for, from_version} ->
-        try_to_add_to_waiting_pullers(t.waiting_pullers, reply_to_fn(from), from_version, opts)
+        try_to_add_to_waiting_pullers(
+          t.waiting_pullers,
+          monotonic_now(),
+          reply_to_fn(from),
+          from_version,
+          opts
+        )
         |> case do
           {:error, _reason} = error ->
             t |> reply(error, continue: :check_for_expired_pullers)
@@ -174,4 +176,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @spec reply_to_fn(GenServer.from()) :: (any() -> :ok)
   def reply_to_fn(from), do: &GenServer.reply(from, &1)
+
+  def monotonic_now, do: :erlang.monotonic_time(:millisecond)
 end

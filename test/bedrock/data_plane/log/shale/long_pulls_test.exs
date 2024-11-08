@@ -41,6 +41,7 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
   describe "try_to_add_to_waiting_pullers/4" do
     test "returns an error if not willing to wait" do
       waiting_pullers = %{}
+      montonic_now = :erlang.monotonic_time(:millisecond)
       reply_to_fn = fn _ -> :ok end
       from_version = 1
       opts = []
@@ -48,6 +49,7 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
       assert {:error, :version_too_new} ==
                LongPulls.try_to_add_to_waiting_pullers(
                  waiting_pullers,
+                 montonic_now,
                  reply_to_fn,
                  from_version,
                  opts
@@ -56,14 +58,69 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
     test "adds puller to the waiting pullers map" do
       waiting_pullers = %{}
+      montonic_now = :erlang.monotonic_time(:millisecond)
       reply_to_fn = fn _ -> :ok end
       from_version = 1
       opts = [willing_to_wait_in_ms: 1000]
 
       {:ok, updated_waiting_pullers} =
-        LongPulls.try_to_add_to_waiting_pullers(waiting_pullers, reply_to_fn, from_version, opts)
+        LongPulls.try_to_add_to_waiting_pullers(
+          waiting_pullers,
+          montonic_now,
+          reply_to_fn,
+          from_version,
+          opts
+        )
 
       assert Map.has_key?(updated_waiting_pullers, from_version)
+
+      assert Map.get(updated_waiting_pullers, from_version) == [
+               {montonic_now + 1000, reply_to_fn, []}
+             ]
+    end
+
+    test "adds a second puller to the waiting pullers map" do
+      waiting_pullers = %{}
+      monotonic_now = :erlang.monotonic_time(:millisecond)
+      reply_to_fn = fn _ -> :ok end
+      from_version = 1
+      opts = [willing_to_wait_in_ms: 1000]
+
+      {:ok, updated_waiting_pullers} =
+        LongPulls.try_to_add_to_waiting_pullers(
+          waiting_pullers,
+          monotonic_now,
+          reply_to_fn,
+          from_version,
+          opts
+        )
+
+      assert Map.has_key?(updated_waiting_pullers, from_version)
+
+      assert Map.get(updated_waiting_pullers, from_version) == [
+               {monotonic_now + 1000, reply_to_fn, []}
+             ]
+
+      reply_to_fn_2 = fn _ -> :ok end
+      monotonic_now_2 = monotonic_now + :rand.uniform(1000)
+      from_version_2 = 1
+      opts_2 = [willing_to_wait_in_ms: 1000, some_other_option: :value]
+
+      {:ok, updated_waiting_pullers} =
+        LongPulls.try_to_add_to_waiting_pullers(
+          updated_waiting_pullers,
+          monotonic_now_2,
+          reply_to_fn_2,
+          from_version_2,
+          opts_2
+        )
+
+      assert Map.has_key?(updated_waiting_pullers, from_version)
+
+      assert Map.get(updated_waiting_pullers, from_version_2) == [
+               {monotonic_now_2 + 1000, reply_to_fn_2, [some_other_option: :value]},
+               {monotonic_now + 1000, reply_to_fn, []}
+             ]
     end
   end
 

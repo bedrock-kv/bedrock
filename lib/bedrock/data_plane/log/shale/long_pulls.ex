@@ -17,12 +17,19 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
 
   @spec try_to_add_to_waiting_pullers(
           waiting_pullers :: map(),
+          monotonic_now :: integer(),
           reply_to_fn :: (any() -> :ok),
           from_version :: Bedrock.version(),
           opts :: keyword()
         ) ::
           {:error, :version_too_new} | {:ok, updated_waiting_pullers :: map()}
-  def try_to_add_to_waiting_pullers(waiting_pullers, reply_to_fn, from_version, opts) do
+  def try_to_add_to_waiting_pullers(
+        waiting_pullers,
+        monotonic_now,
+        reply_to_fn,
+        from_version,
+        opts
+      ) do
     {timeout_in_ms, opts} = opts |> Keyword.pop(:willing_to_wait_in_ms)
 
     if timeout_in_ms == nil do
@@ -30,7 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
       {:error, :version_too_new}
     else
       # Calculate the deadline for this puller and add it to the waiting pullers
-      deadline = :erlang.monotonic_time(:millisecond) + normalize_timeout_to_ms(timeout_in_ms)
+      deadline = monotonic_now + normalize_timeout_to_ms(timeout_in_ms)
       puller = {deadline, reply_to_fn, opts}
       {:ok, Map.update(waiting_pullers, from_version, [puller], &[puller | &1])}
     end

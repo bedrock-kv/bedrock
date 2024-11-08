@@ -8,6 +8,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 3]
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
+  import Bedrock.DataPlane.Log.Shale.LongPulls,
+    only: [
+      process_expired_deadlines_for_waiting_pullers: 2,
+      try_to_add_to_waiting_pullers: 4,
+      determine_timeout_for_next_puller_deadline: 2,
+      notify_waiting_pullers: 3
+    ]
+
   import Bedrock.DataPlane.Log.Telemetry
 
   use GenServer
@@ -63,6 +71,41 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     t |> noreply()
   end
 
+  def handle_continue({:notify_waiting_pullers, version, transaction}, t) do
+    t
+    |> Map.update!(
+      :waiting_pullers,
+      &notify_waiting_pullers(&1, version, transaction)
+    )
+    |> noreply(continue: :check_for_expired_pullers)
+  end
+
+  def handle_continue(:check_for_expired_pullers, t) do
+    monotonic_now = :erlang.monotonic_time(:millisecond)
+
+    t
+    |> Map.update!(
+      :waiting_pullers,
+      &process_expired_deadlines_for_waiting_pullers(&1, monotonic_now)
+    )
+    |> noreply(continue: :wait_for_next_puller_deadline)
+  end
+
+  def handle_continue(:wait_for_next_puller_deadline, t) do
+    monotonic_now = :erlang.monotonic_time(:millisecond)
+
+    t
+    |> Map.get(:waiting_pullers)
+    |> determine_timeout_for_next_puller_deadline(monotonic_now)
+    |> case do
+      nil -> t |> noreply()
+      timeout -> {:noreply, t, timeout}
+    end
+  end
+
+  @impl true
+  def handle_info(:timeout, t), do: t |> noreply(continue: :check_for_expired_pullers)
+
   @impl true
   def handle_call({:info, fact_names}, _, t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
@@ -91,21 +134,44 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     trace_log_push_transaction(t.cluster, t.id, transaction, expected_version)
 
     case push(t, expected_version, {transaction, ack_fn(from)}) do
-      {:waiting, t} -> t |> noreply()
-      {:ok, t} -> t |> reply(:ok)
-      {:error, _reason} = error -> t |> reply(error)
+      {:waiting, t} ->
+        t |> noreply(continue: :check_for_expired_pullers)
+
+      {:ok, t} ->
+        t |> reply(:ok, continue: {:notify_waiting_pullers, expected_version, transaction})
+
+      {:error, _reason} = error ->
+        t |> reply(error)
     end
   end
 
-  def handle_call({:pull, from_version, opts}, _from, t) do
+  def handle_call({:pull, from_version, opts}, from, t) do
     trace_log_pull_transactions(t.cluster, t.id, from_version, opts)
 
     case pull(t, from_version, opts) do
-      {:ok, t, transactions} -> t |> reply({:ok, transactions})
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t, transactions} ->
+        t |> reply({:ok, transactions})
+
+      {:waiting_for, from_version} ->
+        try_to_add_to_waiting_pullers(t.waiting_pullers, reply_to_fn(from), from_version, opts)
+        |> case do
+          {:error, _reason} = error ->
+            t |> reply(error, continue: :check_for_expired_pullers)
+
+          {:ok, waiting_pullers} ->
+            t
+            |> Map.put(:waiting_pullers, waiting_pullers)
+            |> noreply(continue: :check_for_expired_pullers)
+        end
+
+      {:error, _reason} = error ->
+        t |> reply(error)
     end
   end
 
   @spec ack_fn(GenServer.from()) :: (-> :ok)
   def ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
+
+  @spec reply_to_fn(GenServer.from()) :: (any() -> :ok)
+  def reply_to_fn(from), do: &GenServer.reply(from, &1)
 end

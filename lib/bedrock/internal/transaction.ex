@@ -5,6 +5,7 @@ defmodule Bedrock.Internal.Transaction do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Service.Worker
 
   @doc false
   @spec start_link(cluster :: module(), opts :: keyword()) :: {:ok, pid()} | {:error, term()}
@@ -215,10 +216,15 @@ defmodule Bedrock.Internal.Transaction do
     end)
   end
 
-  @spec resolve_storage_ids_to_pids([ServiceDescriptor.t()], [Storage.id()]) :: [pid()]
+  @spec resolve_storage_ids_to_pids(%{Worker.id() => ServiceDescriptor.t()}, [Storage.id()]) ::
+          [pid()]
   def resolve_storage_ids_to_pids(services, storage_ids) do
-    storage_ids
-    |> Enum.map(&ServiceDescriptor.find_pid_by_id(services, &1))
+    services
+    |> Map.take(storage_ids)
+    |> Enum.map(fn
+      %{status: {:up, pid}} -> pid
+      _ -> nil
+    end)
     |> Enum.reject(&is_nil/1)
   end
 

@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
 
   @doc """
@@ -11,22 +12,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
   set of log tags. Each vacancy is represented as a `LogDescriptor` with the
   placeholder data.
   """
-  @spec create_vacancies_for_logs([LogDescriptor.t()], desired_logs :: pos_integer()) ::
-          {:ok, [LogDescriptor.t()], n_log_vacancies :: non_neg_integer()}
+  @spec create_vacancies_for_logs(%{Log.id() => LogDescriptor.t()}, desired_logs :: pos_integer()) ::
+          {:ok, %{Log.id() => LogDescriptor.t()}, n_log_vacancies :: non_neg_integer()}
   def create_vacancies_for_logs(logs, desired_logs) do
-    update_logs =
+    updated_logs =
       logs
-      |> Enum.group_by(&Enum.sort(&1.tags))
-      |> Enum.map(fn {tags, _descriptors} ->
+      |> Enum.group_by(&Enum.sort(elem(&1, 1)), &elem(&1, 0))
+      |> Enum.flat_map(fn {tags, _ids} ->
         1..desired_logs
-        |> Enum.map(&{:vacancy, &1})
-        |> Enum.map(fn vacancy ->
-          LogDescriptor.log_descriptor(vacancy, tags)
-        end)
+        |> Enum.map(&{{:vacancy, &1}, tags})
       end)
-      |> List.flatten()
+      |> Map.new()
 
-    {:ok, update_logs, length(update_logs) * desired_logs}
+    {:ok, updated_logs, map_size(updated_logs) * desired_logs}
   end
 
   @type tag_set_roster ::
@@ -107,7 +105,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
 
     Enum.map(
       storage_teams,
-      &StorageTeamDescriptor.put_storage_ids(&1, Map.get(new_rosters_by_tag, &1.tag))
+      &Map.put(&1, :storage_ids, Map.get(new_rosters_by_tag, &1.tag))
     )
   end
 end

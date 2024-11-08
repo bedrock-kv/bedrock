@@ -10,11 +10,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
   an error is returned.
   """
   @spec fill_log_vacancies(
-          logs :: [LogDescriptor.t()],
+          logs :: %{Log.id() => LogDescriptor.t()},
           assigned_log_ids :: MapSet.t(Log.id()),
           all_log_ids :: MapSet.t(Log.id())
         ) ::
-          {:ok, [LogDescriptor.t()]}
+          {:ok, %{Log.id() => LogDescriptor.t()}}
           | {:error, {:need_log_workers, pos_integer()}}
   def fill_log_vacancies(logs, assigned_log_ids, all_log_ids) do
     vacancies = all_vacancies(logs)
@@ -34,23 +34,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     end
   end
 
-  @spec all_vacancies([LogDescriptor.t()]) :: MapSet.t()
+  @spec all_vacancies(%{Log.id() => LogDescriptor.t()}) :: MapSet.t()
   def all_vacancies(logs) do
     Enum.reduce(logs, [], fn
-      %{log_id: {:vacancy, _} = vacancy}, list -> [vacancy | list]
+      {{:vacancy, _} = vacancy, _}, list -> [vacancy | list]
       _, list -> list
     end)
     |> MapSet.new()
   end
 
+  @spec replace_vacancies_with_log_ids(
+          logs :: %{Log.id() => LogDescriptor.t()},
+          log_id_for_vacancy :: %{LogDescriptor.vacancy() => Log.id()}
+        ) :: %{Log.id() => LogDescriptor.t()}
   def replace_vacancies_with_log_ids(logs, log_id_for_vacancy) do
     logs
-    |> Enum.map(fn descriptor ->
-      case Map.get(log_id_for_vacancy, descriptor.log_id) do
-        nil -> descriptor
-        candidate_id -> LogDescriptor.put_log_id(descriptor, candidate_id)
+    |> Enum.map(fn {log_id, descriptor} ->
+      case Map.get(log_id_for_vacancy, log_id) do
+        nil -> {log_id, descriptor}
+        candidate_id -> {candidate_id, descriptor}
       end
     end)
+    |> Map.new()
   end
 
   @doc """
@@ -97,7 +102,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
     storage_teams
     |> Enum.map(fn descriptor ->
       descriptor
-      |> StorageTeamDescriptor.update_storage_ids(fn storage_ids ->
+      |> Map.update!(:storage_ids, fn storage_ids ->
         storage_ids
         |> Enum.map(&Map.get(storage_id_for_vacancy, &1, &1))
       end)

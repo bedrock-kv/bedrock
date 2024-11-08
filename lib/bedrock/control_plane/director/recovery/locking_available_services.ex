@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Service.Worker
 
   @spec lock_available_services_timeout() :: Bedrock.timeout_in_ms()
   def lock_available_services_timeout, do: 200
@@ -26,64 +27,66 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
       services to respond to rejoin invitations.
   """
   @spec lock_available_services(
-          [ServiceDescriptor.t()],
+          %{Worker.id() => ServiceDescriptor.t()},
           Bedrock.quorum(),
           Bedrock.timeout_in_ms()
         ) ::
-          {:ok, locked_services :: [ServiceDescriptor.t()],
+          {:ok, locked_ids :: MapSet.t(Worker.id()),
+           updated_services :: %{Worker.id() => ServiceDescriptor.t()},
            new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
            new_storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}}
           | {:error, :newer_epoch_exists}
   def lock_available_services(available_services, epoch, timeout_in_ms) do
     available_services
     |> Task.async_stream(
-      fn service ->
-        case service do
-          %{kind: :log, last_seen: name} ->
-            Log.lock_for_recovery(name, epoch)
-
-          %{kind: :storage, last_seen: name} ->
-            Storage.lock_for_recovery(name, epoch)
-
-          _ ->
-            {:error, :unavailable}
-        end
-        |> then(&{service, &1})
+      fn {id, service} ->
+        {id, service, lock_service_for_recovery(service, epoch)}
       end,
       timeout: timeout_in_ms,
       ordered: false,
       zip_input_on_exit: true
     )
-    |> Enum.reduce_while({[], %{}}, fn
+    |> Enum.reduce_while({MapSet.new(), %{}, %{}}, fn
       {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}
 
-      {:ok, {%{id: id} = service, {:ok, pid, info}}}, {services, info_by_id} ->
+      {:ok, {id, service, {:ok, pid, info}}}, {locked_ids, services, info_by_id} ->
         {:cont,
-         {[service |> ServiceDescriptor.up(pid) | services], Map.put(info_by_id, id, info)}}
+         {MapSet.put(locked_ids, id), Map.put(services, id, up(service, pid)),
+          Map.put(info_by_id, id, info)}}
 
-      {:ok, {service, {:error, _}}}, {services, info_by_id} ->
-        {:cont, {[service |> ServiceDescriptor.down() | services], info_by_id}}
-
-      {:exit, {service, _}}, {services, info_by_id} ->
-        {:cont, {[service |> ServiceDescriptor.down() | services], info_by_id}}
+      {:ok, {id, service, {:error, _}}}, {locked_ids, services, info_by_id} ->
+        {:cont, {locked_ids, Map.put(services, id, down(service)), info_by_id}}
     end)
     |> case do
       {:error, _reason} = error ->
         error
 
-      {locked_services, info_by_id} ->
+      {locked_ids, updated_services, info_by_id} ->
         grouped_recovery_info =
           info_by_id
           |> Enum.group_by(&Map.get(elem(&1, 1), :kind))
 
         new_log_recovery_info_by_id =
-          Map.get(grouped_recovery_info, :log, []) |> Map.new()
+          Map.new(Map.get(grouped_recovery_info, :log, []))
 
         new_storage_recovery_info_by_id =
-          Map.get(grouped_recovery_info, :storage, []) |> Map.new()
+          Map.new(Map.get(grouped_recovery_info, :storage, []))
 
-        {:ok, locked_services, new_log_recovery_info_by_id, new_storage_recovery_info_by_id}
+        {:ok, locked_ids, updated_services, new_log_recovery_info_by_id,
+         new_storage_recovery_info_by_id}
     end
   end
+
+  def lock_service_for_recovery(%{kind: :log, last_seen: name}, epoch),
+    do: Log.lock_for_recovery(name, epoch)
+
+  def lock_service_for_recovery(%{kind: :storage, last_seen: name}, epoch),
+    do: Storage.lock_for_recovery(name, epoch)
+
+  def lock_service_for_recovery(_, _), do: {:error, :unavailable}
+
+  defp up(service, pid), do: %{service | status: {:up, pid}}
+
+  def down(service), do: %{service | status: :down}
 end

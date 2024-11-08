@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
   defined quorum.
   """
   @spec determine_old_logs_to_copy(
-          logs :: [LogDescriptor.t()],
+          old_logs :: %{Log.id() => LogDescriptor.t()},
           %{Log.id() => Log.recovery_info()},
           Bedrock.quorum()
         ) ::
@@ -58,11 +58,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     end
   end
 
-  @spec recovery_info_for_logs([LogDescriptor.t()], %{Log.id() => Log.recovery_info()}) ::
+  @spec recovery_info_for_logs(
+          %{Log.id() => LogDescriptor.t()},
+          %{Log.id() => Log.recovery_info()}
+        ) ::
           %{Log.id() => Log.recovery_info()}
   def recovery_info_for_logs(logs, recovery_info_by_id) do
     logs
-    |> Enum.map(&{&1.log_id, Map.get(recovery_info_by_id, &1.log_id)})
+    |> Map.keys()
+    |> Enum.map(&{&1, Map.get(recovery_info_by_id, &1)})
     |> Enum.reject(&is_nil(elem(&1, 1)))
     |> Map.new()
   end

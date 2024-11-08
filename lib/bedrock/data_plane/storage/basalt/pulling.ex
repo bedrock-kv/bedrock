@@ -3,13 +3,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.Service.Worker
 
   import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
   @spec start_pulling(
           Bedrock.version(),
-          [LogDescriptor.t()],
-          [ServiceDescriptor.t()],
+          %{Log.id() => LogDescriptor.t()},
+          %{Worker.id() => ServiceDescriptor.t()},
           apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
         ) ::
           Task.t()
@@ -39,7 +40,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     timestamp = System.system_time(:millisecond)
 
     case select_log(state) do
-      {:ok, %{id: log_id, status: {:up, worker_pid}}} ->
+      {:ok, {log_id, %{status: {:up, worker_pid}}}} ->
         trace_log_pull_start(timestamp, state.start_after)
 
         case Log.pull(worker_pid, state.start_after,
@@ -48,7 +49,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
              ) do
           {:ok, transactions} ->
             trace_log_pull_succeeded(timestamp, length(transactions))
-            :timer.sleep(1000)
 
             next_version = apply_transactions_fn.(transactions)
 
@@ -78,16 +78,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     now = System.monotonic_time(:millisecond)
 
     available_log_services =
-      Enum.filter(logs, fn log ->
-        case Map.get(failed_logs, log.log_id) do
+      logs
+      |> Map.keys()
+      |> Enum.filter(fn log_id ->
+        case Map.get(failed_logs, log_id) do
           nil -> true
           retry_timestamp -> now >= retry_timestamp
         end
       end)
-      |> Enum.map(&ServiceDescriptor.find_by_id(services, &1.log_id))
-      |> Enum.reject(&is_nil/1)
+      |> Enum.map(&{&1, Map.get(services, &1)})
+      |> Enum.reject(&is_nil(elem(&1, 1)))
+      |> Map.new()
 
-    if available_log_services == [] do
+    if Enum.empty?(available_log_services) do
       :no_available_logs
     else
       {:ok, Enum.random(available_log_services)}

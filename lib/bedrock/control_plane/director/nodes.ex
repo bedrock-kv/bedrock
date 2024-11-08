@@ -5,21 +5,9 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   use Bedrock.Internal.TimerManagement
-
-  import Bedrock.ControlPlane.Config.ServiceDescriptor, only: [service_descriptor: 2]
-
-  import Bedrock.ControlPlane.Director.State.Changes,
-    only: [update_config: 2]
-
-  import Bedrock.ControlPlane.Config.Changes,
-    only: [update_transaction_system_layout: 2]
-
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout.Changes,
-    only: [upsert_service_descriptor: 2]
 
   @spec request_to_rejoin(
           State.t(),
@@ -107,14 +95,22 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
           State.t()
   def add_running_service(t, node, info) do
     t
-    |> update_config(fn config ->
+    |> Map.update!(:config, fn config ->
       config
-      |> update_transaction_system_layout(fn transaction_system_layout ->
+      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
         transaction_system_layout
-        |> upsert_service_descriptor(
-          service_descriptor(info[:id], info[:kind])
-          |> ServiceDescriptor.up(info[:pid], info[:otp_name], node)
-        )
+        |> Map.put(:id, TransactionSystemLayout.random_id())
+        |> Map.update(:services, %{}, fn services ->
+          services
+          |> Map.put(
+            info[:id],
+            %{
+              kind: info[:kind],
+              last_seen: {info[:otp_name], node},
+              status: {:up, info[:pid]}
+            }
+          )
+        end)
       end)
     end)
   end
@@ -125,9 +121,20 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   @spec node_down(State.t(), node()) :: State.t()
   def node_down(t, node) do
     t
-    |> update_config(fn config ->
+    |> Map.update!(:config, fn config ->
       config
-      |> update_transaction_system_layout(&TransactionSystemLayout.Changes.node_down(&1, node))
+      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
+        transaction_system_layout
+        |> Map.put(:id, TransactionSystemLayout.random_id())
+        |> Map.update(:services, %{}, fn services ->
+          services
+          |> Enum.map(fn
+            {id, %{last_seen: {_, ^node}} = service} -> {id, %{service | status: :down}}
+            service -> service
+          end)
+          |> Map.new()
+        end)
+      end)
     end)
   end
 end

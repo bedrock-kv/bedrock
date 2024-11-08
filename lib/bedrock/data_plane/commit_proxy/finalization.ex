@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Service.Worker
 
   import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 5]
 
@@ -124,13 +125,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     commit_version = Transaction.version(transaction)
 
     log_descriptors = transaction_system_layout.logs
-    n = length(log_descriptors)
+    n = map_size(log_descriptors)
     m = determine_majority(n)
 
     log_descriptors
     |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
-      fn %{id: log_id} = service_descriptor ->
+      fn {log_id, service_descriptor} ->
         service_descriptor
         |> try_to_push_transaction_to_log(transaction, last_commit_version)
         |> then(&{log_id, &1})
@@ -157,13 +158,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec resolve_log_descriptors([LogDescriptor.t()], [ServiceDescriptor.t()]) :: [
-          ServiceDescriptor.t()
-        ]
+  @spec resolve_log_descriptors(
+          %{Log.id() => LogDescriptor.t()},
+          %{Worker.id() => ServiceDescriptor.t()}
+        ) ::
+          %{Worker.id() => ServiceDescriptor.t()}
   def resolve_log_descriptors(log_descriptors, services) do
     log_descriptors
-    |> Enum.map(&ServiceDescriptor.find_by_id(services, &1.log_id))
-    |> Enum.reject(&is_nil/1)
+    |> Map.keys()
+    |> Enum.map(&{&1, Map.get(services, &1)})
+    |> Enum.reject(&is_nil(elem(&1, 1)))
+    |> Map.new()
   end
 
   @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), Transaction.t(), Bedrock.version()) ::

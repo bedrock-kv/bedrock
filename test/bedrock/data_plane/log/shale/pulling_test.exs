@@ -2,7 +2,6 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
   alias Bedrock.DataPlane.Log.Shale.Pulling
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Transaction
 
   setup do
     # Setup initial t for tests
@@ -15,11 +14,11 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     }
 
     # Insert some dummy transactions
-    :ets.insert(t.log, {1, Transaction.new(1, %{a: :b})})
-    :ets.insert(t.log, {2, Transaction.new(2, %{c: 21})})
-    :ets.insert(t.log, {3, Transaction.new(3, %{j: 16})})
-    :ets.insert(t.log, {4, Transaction.new(4, %{c: 32})})
-    :ets.insert(t.log, {5, Transaction.new(5, %{m: "asd"})})
+    :ets.insert(t.log, {1, %{a: :b}})
+    :ets.insert(t.log, {2, %{c: 21}})
+    :ets.insert(t.log, {3, %{j: 16}})
+    :ets.insert(t.log, {4, %{c: 32}})
+    :ets.insert(t.log, {5, %{m: "asd"}})
 
     {:ok, t: t}
   end
@@ -28,8 +27,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:ok, ^t, transactions} = Pulling.pull(t, 1, limit: 3, last_version: 3)
 
     assert [
-             {2, {2, %{c: 21}}},
-             {3, {3, %{j: 16}}}
+             {2, %{c: 21}},
+             {3, %{j: 16}}
            ] = transactions
   end
 
@@ -37,7 +36,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:ok, ^t, transactions} = Pulling.pull(t, 1, limit: 1, last_version: 3)
 
     assert [
-             {2, {2, %{c: 21}}}
+             {2, %{c: 21}}
            ] = transactions
   end
 
@@ -55,7 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:ok, ^t, transactions} = Pulling.pull(t, :start, limit: 1, last_version: 3)
 
     assert [
-             {1, {1, %{a: :b}}}
+             {1, %{a: :b}}
            ] = transactions
   end
 
@@ -64,11 +63,11 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:ok, ^t, transactions} = Pulling.pull(t, :start)
 
     assert [
-             {1, {1, %{a: :b}}},
-             {2, {2, %{c: 21}}},
-             {3, {3, %{j: 16}}},
-             {4, {4, %{c: 32}}},
-             {5, {5, %{m: "asd"}}}
+             {1, %{a: :b}},
+             {2, %{c: 21}},
+             {3, %{j: 16}},
+             {4, %{c: 32}},
+             {5, %{m: "asd"}}
            ] = transactions
   end
 
@@ -77,7 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:ok, ^t, transactions} = Pulling.pull(t, :start, limit: 1, last_version: 3)
 
     assert [
-             {1, {1, %{a: :b}}}
+             {1, %{a: :b}}
            ] = transactions
   end
 

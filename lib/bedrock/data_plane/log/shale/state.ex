@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.ControlPlane.Director
 
-  @type mode :: :waiting | :locked | :running
+  @type mode :: :locked | :running
 
   @type t :: %__MODULE__{
           cluster: module(),

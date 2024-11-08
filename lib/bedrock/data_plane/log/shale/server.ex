@@ -54,7 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     {:ok,
      %State{
        cluster: cluster,
-       mode: :starting,
+       mode: :locked,
        id: id,
        otp_name: otp_name,
        foreman: foreman,
@@ -109,13 +109,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     trace_log_lock_for_recovery(t.cluster, t.id, epoch)
 
-    with true <- (t.mode == :locked and director == t.director) || {:error, :locked},
-         true <- t.mode == :running || {:error, :unavailable},
+    with :ok <- check_mode_for_locking(t, director),
          {:ok, t} <- lock_for_recovery(t, epoch, director),
          {:ok, info} <- info(t, Log.recovery_info()) do
       t |> reply({:ok, self(), info})
     else
-      error -> t |> reply(error)
+      error -> t |> reply(error) |> IO.inspect()
     end
   end
 
@@ -172,6 +171,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         t |> reply(error)
     end
   end
+
+  def check_mode_for_locking(t, director) do
+    case {t.mode, t.director} do
+      {:locked, ^director} -> :ok
+      {:locked, nil} -> :ok
+      {:locked, _} -> {:error, :locked}
+      _ -> :ok
+    end
+  end
+
+  def check_running(_t), do: {:error, :unavailable}
 
   @spec ack_fn(GenServer.from()) :: (-> :ok)
   def ack_fn(from), do: fn -> GenServer.reply(from, :ok) end

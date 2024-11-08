@@ -12,6 +12,16 @@ defmodule Bedrock.Cluster.Gateway do
 
   @type ref :: GenServer.server()
 
+  @spec begin_transaction(
+          ref(),
+          opts :: [
+            retry_count: pos_integer(),
+            timeout_in_ms: Bedrock.timeout_in_ms()
+          ]
+        ) :: {:ok, pid()} | {:error, term()}
+  def begin_transaction(gateway, opts \\ []),
+    do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
+
   @doc """
   Ping all of the nodes in the cluster.
   """

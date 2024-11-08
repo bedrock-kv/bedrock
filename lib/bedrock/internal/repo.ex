@@ -1,7 +1,7 @@
 defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls
 
-  alias Bedrock.Internal.Transaction
+  alias Bedrock.Cluster.Gateway
 
   @spec transaction(
           cluster :: module(),
@@ -15,7 +15,8 @@ defmodule Bedrock.Internal.Repo do
           :ok | {:ok, result} | :error | {:error, reason}
         when result: term(), reason: term()
   def transaction(cluster, fun, opts \\ []) do
-    with {:ok, txn} <- Transaction.start_link(cluster, opts) do
+    with {:ok, gateway} <- cluster.fetch_gateway(),
+         {:ok, txn} <- Gateway.begin_transaction(gateway, opts) do
       result = fun.(txn)
 
       case result do

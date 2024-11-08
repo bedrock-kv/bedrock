@@ -1,6 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.Server do
   alias Bedrock.Cluster.Gateway.State
+  alias Bedrock.Cluster.TransactionBuilder
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
 
   use GenServer
   use Bedrock.Internal.TimerManagement
@@ -71,6 +73,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
       path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
       director: :unavailable,
+      tranasction_system_layout: nil,
       mode: mode,
       capabilities: capabilities
     }
@@ -178,6 +181,16 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   @doc false
   @impl GenServer
+  def handle_call({:begin_transaction, opts}, _from, t) do
+    with {:ok, transaction_system_layout} <-
+           Director.fetch_transaction_system_layout(t.director, 100),
+         {:ok, txn} <- TransactionBuilder.start_link(transaction_system_layout, opts) do
+      t |> reply({:ok, txn})
+    else
+      error -> t |> reply(error)
+    end
+  end
+
   def handle_call(:fetch_coordinator, _from, %{coordinator: :unavailable} = t),
     do: t |> reply({:error, :unavailable})
 

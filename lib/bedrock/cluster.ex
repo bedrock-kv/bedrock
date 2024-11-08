@@ -1,5 +1,6 @@
 defmodule Bedrock.Cluster do
   alias Bedrock.Cluster
+  alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
@@ -17,22 +18,23 @@ defmodule Bedrock.Cluster do
   @type log :: Log.ref()
   @type capability :: :coordination | :log | :storage
 
-  @callback name() :: String.t()
-  @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
-  @callback config!() :: Config.t()
-  @callback node_config() :: Keyword.t()
   @callback capabilities() :: [Bedrock.Cluster.capability()]
-  @callback path_to_descriptor() :: Path.t()
+  @callback config!() :: Config.t()
+  @callback coordinator!() :: Coordinator.ref()
+  @callback coordinator_nodes!() :: [node()]
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
+  @callback director!() :: Director.ref()
+  @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
+  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+  @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
+  @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
+  @callback fetch_gateway() :: {:ok, Gateway.ref()} | {:error, :unavailable}
   @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
+  @callback name() :: String.t()
+  @callback node_config() :: Keyword.t()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
-  @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
-  @callback director!() :: Director.ref()
-  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-  @callback coordinator!() :: Coordinator.ref()
-  @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-  @callback coordinator_nodes!() :: [node()]
+  @callback path_to_descriptor() :: Path.t()
 
   @doc false
   defmacro __using__(opts) do
@@ -67,7 +69,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the name of the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec name() :: Cluster.name()
       def name, do: @name
 
@@ -78,28 +80,28 @@ defmodule Bedrock.Cluster do
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
       def fetch_config, do: ClusterSupervisor.fetch_config(__MODULE__)
 
       @doc """
       Fetch the configuration for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec config!() :: Config.t()
       def config!, do: ClusterSupervisor.config!(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec node_config() :: Keyword.t()
       def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec capabilities() :: [Cluster.capability()]
       def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
 
@@ -109,7 +111,7 @@ defmodule Bedrock.Cluster do
       "#{Cluster.default_descriptor_file_name()}" in the `priv` directory for the
       application.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor,
         do: ClusterSupervisor.path_to_descriptor(__MODULE__, unquote(otp_app))
@@ -117,7 +119,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms do
         node_config()
@@ -131,7 +133,7 @@ defmodule Bedrock.Cluster do
       the director. If it does not receive a ping within the timeout, it
       will attempt to find a new director.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec gateway_ping_timeout_in_ms() :: non_neg_integer()
       def gateway_ping_timeout_in_ms do
         node_config()
@@ -145,7 +147,7 @@ defmodule Bedrock.Cluster do
       @doc """
       Get the OTP name for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec otp_name() :: atom()
       def otp_name, do: @otp_name
 
@@ -153,7 +155,7 @@ defmodule Bedrock.Cluster do
       Get the OTP name for a component within the cluster. These names are
       limited in scope to the current node.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec otp_name(
               :sup
               | :foreman
@@ -180,10 +182,17 @@ defmodule Bedrock.Cluster do
       ######################################################################
 
       @doc """
+      Fetch the gateway for this node of the cluster.
+      """
+      @impl true
+      @spec fetch_gateway() :: {:ok, Gateway.ref()} | {:error, :unavailable}
+      def fetch_gateway, do: {:ok, otp_name(:gateway)}
+
+      @doc """
       Fetch the current director for the cluster. If we can't find one, we
       return an error.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
       def fetch_director, do: otp_name(:gateway) |> Gateway.fetch_director()
 
@@ -191,7 +200,7 @@ defmodule Bedrock.Cluster do
       Get the current director for the cluster. If we can't find one, we
       raise an error.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec director!() :: Director.ref()
       def director!, do: ClusterSupervisor.director!(__MODULE__)
 
@@ -200,7 +209,7 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we return an error.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
       def fetch_coordinator, do: otp_name(:gateway) |> Gateway.fetch_coordinator()
 
@@ -209,14 +218,14 @@ defmodule Bedrock.Cluster do
       the local node, we return it. Otherwise, we look for a live coordinator
       on the cluster. If we can't find one, we raise an error.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec coordinator!() :: Coordinator.ref()
       def coordinator!, do: ClusterSupervisor.coordinator!(__MODULE__)
 
       @doc """
       Fetch the nodes that are running coordinators for the cluster.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
       def fetch_coordinator_nodes, do: otp_name(:gateway) |> Gateway.fetch_coordinator_nodes()
 
@@ -224,7 +233,7 @@ defmodule Bedrock.Cluster do
       Get the nodes that are running coordinators for the cluster. If we can't
       find any, we raise an error.
       """
-      @impl Bedrock.Cluster
+      @impl true
       @spec coordinator_nodes!() :: [node()]
       def coordinator_nodes!, do: ClusterSupervisor.coordinator_nodes!(__MODULE__)
 

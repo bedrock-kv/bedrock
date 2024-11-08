@@ -1,4 +1,4 @@
-defmodule Bedrock.Internal.Transaction do
+defmodule Bedrock.Cluster.TransactionBuilder do
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Storage
@@ -9,8 +9,8 @@ defmodule Bedrock.Internal.Transaction do
 
   @doc false
   @spec start_link(cluster :: module(), opts :: keyword()) :: {:ok, pid()} | {:error, term()}
-  def start_link(cluster, opts),
-    do: GenServer.start_link(__MODULE__, {cluster.config!().transaction_system_layout, opts})
+  def start_link(transaction_system_layout, opts),
+    do: GenServer.start_link(__MODULE__, {transaction_system_layout, opts})
 
   @type t :: %__MODULE__{
           read_version: Bedrock.version() | nil,

@@ -18,6 +18,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:error, :invalid_last_version}
           | {:error, :version_too_old}
   def pull(t, from_version, opts \\ []) do
+    :timer.sleep(1000)
+    IO.inspect({from_version, t.last_version, t.oldest_version})
+
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
          :ok <- check_from_version(from_version, t),
          {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
@@ -34,6 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           {:ok, t, transactions |> Enum.take(limit)}
       end
     end
+    |> IO.inspect(label: "result")
   end
 
   def match_spec_for_version_range(:start, last_version),

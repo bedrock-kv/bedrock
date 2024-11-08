@@ -1,6 +1,7 @@
 defmodule Bedrock.Cluster.Gateway.State do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @type t :: %__MODULE__{
           node: node(),
@@ -12,7 +13,8 @@ defmodule Bedrock.Cluster.Gateway.State do
           timers: map() | nil,
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
-          capabilities: [Bedrock.Cluster.capability()]
+          capabilities: [Bedrock.Cluster.capability()],
+          tranasction_system_layout: TransactionSystemLayout.t() | nil
         }
   defstruct node: nil,
             cluster: nil,
@@ -23,6 +25,7 @@ defmodule Bedrock.Cluster.Gateway.State do
             timers: nil,
             missed_pongs: 0,
             mode: :active,
+            tranasction_system_layout: nil,
             capabilities: []
 
   def put_coordinator(t, coordinator), do: %{t | coordinator: coordinator}

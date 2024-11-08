@@ -3,8 +3,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
   alias Bedrock.DataPlane.Log
 
   @spec info(State.t(), Log.fact_name() | [Log.fact_name()]) ::
-          {:ok, term() | %{Log.fact_name() => term()}} | {:error, :unsupported_info}
-  def info(%State{} = t, fact) when is_atom(fact), do: {:ok, gather_info(fact, t)}
+          {:ok, term() | %{Log.fact_name() => term()}} | {:error, :unsupported}
+  def info(%State{} = t, fact) when is_atom(fact) do
+    case gather_info(fact, t) do
+      {:error, _reason} = error -> error
+      info -> {:ok, info}
+    end
+  end
 
   def info(%State{} = t, facts) when is_list(facts) do
     {:ok,
@@ -14,7 +19,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
      end)}
   end
 
-  defp supported_info,
+  def supported_info,
     do: [
       :id,
       :kind,

@@ -109,7 +109,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     trace_log_lock_for_recovery(t.cluster, t.id, epoch)
 
-    with {:ok, t} <- lock_for_recovery(t, epoch, director),
+    with true <- (t.mode == :locked and director == t.director) || {:error, :locked},
+         true <- t.mode == :running || {:error, :unavailable},
+         {:ok, t} <- lock_for_recovery(t, epoch, director),
          {:ok, info} <- info(t, Log.recovery_info()) do
       t |> reply({:ok, self(), info})
     else

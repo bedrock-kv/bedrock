@@ -12,12 +12,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         ) ::
           {:ok | :waiting, State.t()}
           | {:error, :tx_out_of_order | :locked | :unavailable}
-  def push(t, _, from) when t.mode == :locked and from != t.director,
-    do: {:error, :locked}
-
-  def push(t, _, _) when t.mode != :running,
-    do: {:error, :unavailable}
-
   def push(t, expected_version, transaction_with_ack_fn)
       when expected_version == t.last_version do
     {:ok, version} = apply_transaction(t.log, transaction_with_ack_fn)

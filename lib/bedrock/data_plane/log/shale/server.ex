@@ -8,11 +8,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 3]
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
-  import Bedrock.DataPlane.Log.Telemetry
-
-  use GenServer
-  import Bedrock.Internal.GenServer.Replies
-
   import Bedrock.DataPlane.Log.Shale.LongPulls,
     only: [
       process_expired_deadlines_for_waiting_pullers: 2,
@@ -20,6 +15,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       determine_timeout_for_next_puller_deadline: 2,
       notify_waiting_pullers: 3
     ]
+
+  import Bedrock.DataPlane.Log.Telemetry
+
+  use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @doc false
   @spec child_spec(opts :: keyword() | []) :: Supervisor.child_spec()

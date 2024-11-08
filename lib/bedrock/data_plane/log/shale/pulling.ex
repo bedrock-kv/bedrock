@@ -15,23 +15,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:waiting_for, Bedrock.version()}
           | {:error, :not_ready}
           | {:error, :not_locked}
-          | {:error, :invalid_from_version}
           | {:error, :invalid_last_version}
           | {:error, :version_too_old}
-          | {:error, :version_not_found}
-  def pull(t, from_version, opts) do
+  def pull(t, from_version, opts \\ []) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
          :ok <- check_from_version(from_version, t),
          {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
          limit <- determine_pull_limit(opts[:limit], t) do
-      :ets.select(t.log, match_spec_for_version_range(from_version, last_version), limit)
+      :ets.select(t.log, match_spec_for_version_range(from_version, last_version), 1 + limit)
       |> case do
-        {[], _} ->
-          {:error, :invalid_from_version}
-
-        :"$end_of_table" ->
-          {:ok, t, []}
-
         {[{^from_version, _}], _} ->
           {:ok, t, []}
 
@@ -39,10 +31,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           {:ok, t, transactions}
 
         {transactions, _} when from_version == :start ->
-          {:ok, t, transactions}
-
-        _ ->
-          {:error, :version_not_found}
+          {:ok, t, transactions |> Enum.take(limit)}
       end
     end
   end
@@ -97,7 +86,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         ) :: :ok | {:waiting_for, Bedrock.version()} | {:error, :version_too_old}
   def check_from_version(:start, _t), do: :ok
 
-  def check_from_version(from_version, t) when t.last_version <= from_version,
+  def check_from_version(from_version, t) when t.last_version < from_version,
     do: {:waiting_for, from_version}
 
   def check_from_version(_, t) when t.oldest_version == :start,

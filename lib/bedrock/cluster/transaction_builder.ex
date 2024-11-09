@@ -1,47 +1,83 @@
 defmodule Bedrock.Cluster.TransactionBuilder do
+  alias Bedrock.Cluster.Gateway
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
 
   @doc false
-  @spec start_link(cluster :: module(), opts :: keyword()) :: {:ok, pid()} | {:error, term()}
-  def start_link(transaction_system_layout, opts),
-    do: GenServer.start_link(__MODULE__, {transaction_system_layout, opts})
+  @spec start_link(
+          gateway: Gateway.ref(),
+          transaction_system_layout: TransactionSystemLayout.t()
+        ) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    gateway = Keyword.fetch!(opts, :gateway)
+    transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
+    GenServer.start_link(__MODULE__, {gateway, transaction_system_layout})
+  end
 
   @type t :: %__MODULE__{
+          state: :valid | :committed | :rolled_back | :expired,
+          gateway: pid(),
+          transaction_system_layout: map(),
+          #
           read_version: Bedrock.version() | nil,
+          read_version_lease_expiration: integer() | nil,
+          #
           reads: %{},
           writes: %{},
           stack: [%{reads: map(), writes: map()}],
-          transaction_system_layout: map(),
           storage_servers: map(),
-          fetch_timeout_in_ms: pos_integer()
+          fetch_timeout_in_ms: pos_integer(),
+          lease_renewal_threshold: pos_integer()
         }
-  defstruct read_version: nil,
+  defstruct state: nil,
+            gateway: nil,
+            transaction_system_layout: nil,
+            #
+            read_version: nil,
+            read_version_lease_expiration: nil,
+            #
             reads: %{},
             writes: %{},
             stack: [],
-            transaction_system_layout: nil,
             storage_servers: %{},
-            fetch_timeout_in_ms: 50
+            fetch_timeout_in_ms: 50,
+            lease_renewal_threshold: 100
 
   use GenServer
   import Bedrock.Internal.GenServer.Replies
 
   @impl true
-  def init({transaction_system_layout, _opts}),
-    do: {:ok, transaction_system_layout, {:continue, :initialization}}
+  def init(arg),
+    do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, transaction_system_layout) do
+  def handle_continue(:initialization, {gateway, transaction_system_layout}) do
     %__MODULE__{
+      state: :valid,
+      gateway: gateway,
       transaction_system_layout: transaction_system_layout
     }
     |> noreply()
+  end
+
+  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version),
+    do: t |> noreply()
+
+  def handle_continue(:update_version_lease_if_needed, t) do
+    now = :erlang.monotonic_time(:millisecond)
+    ms_remaining = t.read_version_lease_expiration - now
+
+    cond do
+      ms_remaining <= 0 -> %{t | state: :expired} |> noreply()
+      ms_remaining < t.lease_renewal_threshold -> t |> renew_read_version_lease() |> noreply()
+      true -> t |> noreply()
+    end
   end
 
   @impl true
@@ -59,7 +95,7 @@ defmodule Bedrock.Cluster.TransactionBuilder do
 
   def handle_call({:get, key}, _from, t) do
     case do_get(t, key) do
-      {t, value} -> t |> reply(value)
+      {t, value} -> t |> reply(value, continue: :update_version_lease_if_needed)
     end
   end
 
@@ -139,8 +175,15 @@ defmodule Bedrock.Cluster.TransactionBuilder do
 
   @spec fetch_from_storage(t(), key :: binary()) :: {:ok, t(), binary()} | :error
   def fetch_from_storage(%{read_version: nil} = t, key) do
-    with {:ok, read_version} <- next_read_version(t) do
-      %{t | read_version: read_version}
+    with {:ok, read_version} <- next_read_version(t),
+         {:ok, read_version_lease_expiration_in_ms} <-
+           Gateway.renew_read_version_lease(t.gateway, read_version) do
+      read_version_lease_expiration =
+        :erlang.monotonic_time(:millisecond) + read_version_lease_expiration_in_ms
+
+      t
+      |> Map.put(:read_version, read_version)
+      |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
       |> fetch_from_storage(key)
     end
   end
@@ -281,8 +324,15 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     end) || :error
   end
 
-  def next_read_version(t),
-    do: Sequencer.next_read_version(t.transaction_system_layout.sequencer)
+  def next_read_version(t), do: Sequencer.next_read_version(t.transaction_system_layout.sequencer)
+
+  def renew_read_version_lease(t) do
+    with {:ok, lease_will_expire_in_ms} <-
+           Gateway.renew_read_version_lease(t.gateway, t.read_version) do
+      now = :erlang.monotonic_time(:millisecond)
+      %{t | read_version_lease_expiration: now + lease_will_expire_in_ms}
+    end
+  end
 
   def encode_key(key) when is_binary(key), do: {:ok, key}
   def encode_key(_key), do: :key_error

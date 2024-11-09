@@ -19,7 +19,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:error, :version_too_old}
   def pull(t, from_version, opts \\ [])
 
-  def pull(t, from_version, _) when from_version > t.last_version,
+  def pull(t, from_version, _) when from_version >= t.last_version,
     do: {:waiting_for, from_version}
 
   def pull(t, from_version, _) when from_version < t.oldest_version,

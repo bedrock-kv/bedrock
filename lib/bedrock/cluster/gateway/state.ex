@@ -14,7 +14,11 @@ defmodule Bedrock.Cluster.Gateway.State do
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()],
-          tranasction_system_layout: TransactionSystemLayout.t() | nil
+          tranasction_system_layout: TransactionSystemLayout.t() | nil,
+          #
+          deadline_by_version: %{Bedrock.version() => Bedrock.timestamp_in_ms()},
+          minimum_read_version: Bedrock.version() | nil,
+          lease_renewal_interval_in_ms: pos_integer()
         }
   defstruct node: nil,
             cluster: nil,
@@ -26,14 +30,9 @@ defmodule Bedrock.Cluster.Gateway.State do
             missed_pongs: 0,
             mode: :active,
             tranasction_system_layout: nil,
-            capabilities: []
-
-  def put_coordinator(t, coordinator), do: %{t | coordinator: coordinator}
-
-  @spec put_director(t :: t(), {Bedrock.epoch(), director :: pid()} | :unavailable) :: t()
-  def put_director(t, director), do: %{t | director: director}
-
-  def put_missed_pongs(t, missed_pongs), do: %{t | missed_pongs: missed_pongs}
-
-  def update_missed_pongs(t, updater), do: %{t | missed_pongs: updater.(t.missed_pongs)}
+            capabilities: [],
+            #
+            deadline_by_version: %{},
+            minimum_read_version: nil,
+            lease_renewal_interval_in_ms: 5_000
 end

@@ -108,7 +108,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_cast({:ping, from}, t) when not is_nil(t.my_relief),
     do: GenServer.cast(from, {:pong, t.my_relief})
 
-  def handle_cast({:ping, from}, t) do
+  def handle_cast({:ping, from, minimum_read_version}, t) do
+    IO.inspect(minimum_read_version)
     GenServer.cast(from, {:pong, {t.epoch, self()}})
 
     t

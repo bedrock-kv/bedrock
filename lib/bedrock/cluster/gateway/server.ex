@@ -1,40 +1,28 @@
 defmodule Bedrock.Cluster.Gateway.Server do
   alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Cluster.TransactionBuilder
-  alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director
 
   use GenServer
   use Bedrock.Internal.TimerManagement
+
   import Bedrock.Internal.GenServer.Replies
 
-  import Bedrock.Cluster.Gateway.State,
-    only: [
-      put_director: 2
-    ]
-
-  import Bedrock.Cluster.Gateway.Advertising,
-    only: [
-      advertise_capabilities: 1,
-      advertise_worker_to_director: 2,
-      publish_director_replaced_to_pubsub: 1
-    ]
+  import Bedrock.Cluster.Gateway.Calls
 
   import Bedrock.Cluster.Gateway.Discovery,
     only: [
       change_coordinator: 2,
-      find_a_live_coordinator: 1
-    ]
-
-  import Bedrock.Cluster.Gateway.PingPong,
-    only: [
-      ping_director: 1,
-      pong_missed: 1,
-      pong_received: 1,
-      reset_ping_timer: 1
+      find_a_live_coordinator: 1,
+      find_current_director: 1
     ]
 
   import Bedrock.Cluster.Gateway.Telemetry
+
+  import Bedrock.Cluster.Gateway.DirectorRelations,
+    only: [
+      advertise_worker_to_director: 2,
+      pong_received_from_director: 2,
+      pong_was_not_received: 1
+    ]
 
   require Logger
 
@@ -62,7 +50,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
   end
 
   @doc false
-  @impl GenServer
+  @impl true
   def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
     trace_started(cluster)
 
@@ -81,159 +69,70 @@ defmodule Bedrock.Cluster.Gateway.Server do
   end
 
   @doc false
-  @impl GenServer
+  @impl true
   def handle_continue(:find_a_live_coordinator, t) do
-    trace_searching_for_coordinator(t.cluster)
-
     t
     |> find_a_live_coordinator()
     |> case do
-      {:ok, coordinator} ->
-        t
-        |> found_coordinator(coordinator)
-        |> noreply(continue: :find_current_director)
-
-      {:error, :unavailable} ->
-        t
-        |> continue_search_for_coordinator()
-        |> noreply()
+      {t, :ok} -> t |> noreply(continue: :find_current_director)
+      {t, {:error, :unavailable}} -> t |> noreply()
     end
   end
 
   def handle_continue(:find_current_director, t) do
-    trace_searching_for_director(t.cluster)
-
-    t.coordinator
-    |> Coordinator.fetch_director(100)
-    |> case do
-      {:ok, director} when is_pid(director) ->
-        t
-        |> found_director(director)
-        |> noreply()
-
-      {:error, reason} when reason in [:timeout, :unavailable] ->
-        t
-        |> continue_search_for_director()
-        |> noreply()
-    end
-  end
-
-  def found_coordinator(t, coordinator) do
-    trace_found_coordinator(t.cluster, coordinator)
-
     t
-    |> cancel_timer(:find_a_live_coordinator)
-    |> change_coordinator(coordinator)
-  end
-
-  def continue_search_for_coordinator(t) do
-    t
-    |> cancel_timer(:find_a_live_coordinator)
-    |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
-    |> change_coordinator(:unavailable)
-  end
-
-  def found_director(t, director) do
-    trace_found_director(t.cluster, director)
-
-    t
-    |> cancel_timer(:find_current_director)
-    |> change_director(director)
-  end
-
-  def continue_search_for_director(t) do
-    t
-    |> change_director(:unavailable)
-    |> cancel_timer(:find_current_director)
-    |> set_timer(:find_current_director, t.cluster.gateway_ping_timeout_in_ms())
-  end
-
-  def change_director(t, director) when t.director == director, do: t
-
-  def change_director(t, director) do
-    t
-    |> put_director(director)
-    |> publish_director_replaced_to_pubsub()
-    |> case do
-      %{director: :unavailable} ->
-        t
-
-      t ->
-        t
-        |> reset_ping_timer()
-        |> ping_director()
-        |> advertise_capabilities()
-        |> case do
-          {:error, {:relieved_by, {_new_epoch, new_director}}} ->
-            t |> change_director(new_director)
-
-          {:error, :unavailable} ->
-            t |> change_director(:unavailable)
-
-          {:ok, t} ->
-            t
-
-          {:error, _reason} ->
-            t
-        end
-    end
+    |> find_current_director()
+    |> then(&noreply(&1))
   end
 
   @doc false
-  @impl GenServer
-  def handle_call({:begin_transaction, opts}, _from, t) do
-    with {:ok, transaction_system_layout} <-
-           Director.fetch_transaction_system_layout(t.director, 100),
-         {:ok, txn} <- TransactionBuilder.start_link(transaction_system_layout, opts) do
-      t |> reply({:ok, txn})
-    else
-      error -> t |> reply(error)
-    end
+  @impl true
+  def handle_call({:begin_transaction, opts}, _, t) do
+    t
+    |> begin_transaction(opts)
+    |> then(&reply(t, &1))
   end
 
-  def handle_call(:fetch_coordinator, _from, %{coordinator: :unavailable} = t),
-    do: t |> reply({:error, :unavailable})
+  def handle_call({:renew_read_version_lease, read_version}, _, t) do
+    t
+    |> renew_read_version_lease(read_version)
+    |> then(fn {t, result} -> t |> reply(result) end)
+  end
 
-  def handle_call(:fetch_coordinator, _from, t),
-    do: t |> reply({:ok, t.coordinator})
+  def handle_call(:fetch_coordinator, _, t) do
+    t
+    |> fetch_coordinator()
+    |> then(&reply(t, &1))
+  end
 
-  def handle_call(:fetch_director, _from, %{director: :unavailable} = t),
-    do: t |> reply({:error, :unavailable})
+  def handle_call(:fetch_director, _, t) do
+    t
+    |> fetch_director()
+    |> then(&reply(t, &1))
+  end
 
-  def handle_call(:fetch_director, _from, t),
-    do: t |> reply({:ok, t.director})
+  def handle_call(:fetch_coordinator_nodes, _, t) do
+    t
+    |> fetch_coordinator_nodes()
+    |> then(&reply(t, &1))
+  end
 
-  def handle_call(:fetch_coordinator_nodes, _from, t),
-    do: t |> reply({:ok, t.descriptor.coordinator_nodes})
-
-  @impl GenServer
+  @doc false
+  @impl true
   def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: t |> noreply(continue: :find_a_live_coordinator)
 
   def handle_info({:timeout, :find_current_director}, t),
     do: t |> noreply(continue: :find_current_director)
 
-  def handle_info({:timeout, :ping}, t) when t.missed_pongs > 3 do
-    trace_lost_director(t.cluster)
-
-    t
-    |> cancel_timer(:ping)
-    |> change_director(:unavailable)
-    |> noreply(continue: :find_current_director)
-  end
-
   def handle_info({:timeout, :ping}, t) do
-    trace_missed_pong(t.cluster, t.missed_pongs)
-
     t
-    |> pong_missed()
-    |> reset_ping_timer()
-    |> ping_director()
+    |> pong_was_not_received()
     |> noreply()
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, t) do
-    if pid == t.coordinator || pid == {t.cluster.otp_name(:coordinator), t.node} do
+  def handle_info({:DOWN, _ref, :process, name, _reason}, t) do
+    if name == t.coordinator || elem(name, 0) == t.cluster.otp_name(:coordinator) do
       t
       |> change_coordinator(:unavailable)
       |> noreply(continue: :find_a_live_coordinator)
@@ -243,19 +142,10 @@ defmodule Bedrock.Cluster.Gateway.Server do
   end
 
   @doc false
-  @impl GenServer
-
-  def handle_cast({:pong, {_epoch, director}}, t) when director == t.director do
-    t
-    |> pong_received()
-    |> noreply()
-  end
-
+  @impl true
   def handle_cast({:pong, {_epoch, director}}, t) do
     t
-    |> pong_received()
-    |> cancel_all_timers()
-    |> change_director(director)
+    |> pong_received_from_director(director)
     |> noreply()
   end
 

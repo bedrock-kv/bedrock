@@ -1,9 +1,17 @@
 defmodule Bedrock.Internal.Time do
-  @doc """
+  @moduledoc """
+  Utility functions for retrieving the current system time in various formats.
   """
+
+  @doc "Return the current system time (UTC)."
   @spec now() :: DateTime.t()
   def now, do: DateTime.utc_now()
 
+  @doc "Return the current system time in milliseconds."
   @spec now_in_ms() :: Bedrock.timestamp_in_ms()
   def now_in_ms, do: :os.system_time(:millisecond)
+
+  @doc "Return the current system monotic time in milliseconds."
+  @spec monotonic_now_in_ms() :: Bedrock.timestamp_in_ms()
+  def monotonic_now_in_ms, do: :erlang.monotonic_time(:millisecond)
 end

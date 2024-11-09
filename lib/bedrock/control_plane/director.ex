@@ -40,16 +40,12 @@ defmodule Bedrock.ControlPlane.Director do
 
   @doc """
   Sends a 'ping' message to the specified cluster director from the given node.
-
-  ## Parameters
-  - `director`: The reference to the cluster director (a GenServer).
-
-  ## Returns
-  - `:ok`: Indicates the message was successfully sent.
+  We also include the minimum read version. The director will respond with a
+  'pong' message if it is alive and the read version is acceptable.
   """
-  @spec send_ping(director :: ref()) :: :ok
-  def send_ping(director),
-    do: director |> cast({:ping, self()})
+  @spec send_ping(director :: ref(), minimum_read_version :: Bedrock.version()) :: :ok
+  def send_ping(director, minimum_read_version),
+    do: director |> cast({:ping, self(), minimum_read_version})
 
   @doc """
   Reports a new worker to the cluster director.

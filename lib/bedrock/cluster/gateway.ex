@@ -23,6 +23,19 @@ defmodule Bedrock.Cluster.Gateway do
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
+  Renew the lease for a transaction based on the read version.
+  """
+  @spec renew_read_version_lease(
+          ref(),
+          read_version :: Bedrock.version(),
+          opts :: [
+            timeout_in_ms: Bedrock.timeout_in_ms()
+          ]
+        ) :: {:ok, new_lease_deadline_in_ms :: Bedrock.interval_in_ms()} | {:error, term()}
+  def renew_read_version_lease(t, read_version, opts \\ []),
+    do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
+
+  @doc """
   Ping all of the nodes in the cluster.
   """
   @spec ping_nodes(gateway_otp_name :: atom(), nodes :: [node()], Director.ref(), Bedrock.epoch()) ::

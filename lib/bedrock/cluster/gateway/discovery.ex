@@ -19,24 +19,10 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   def find_a_live_coordinator(t) do
     trace_searching_for_coordinator(t.cluster)
 
-    coordinator_otp_name = t.cluster.otp_name(:coordinator)
-
     if t.node in t.descriptor.coordinator_nodes do
-      {:ok, coordinator_otp_name}
+      {:ok, t.cluster.otp_name(:coordinator)}
     else
-      GenServer.multi_call(
-        t.descriptor.coordinator_nodes,
-        coordinator_otp_name,
-        :ping,
-        t.cluster.coordinator_ping_timeout_in_ms()
-      )
-      |> case do
-        {[{_first_node, {:pong, coordinator_pid}} | _other_coordinators], _failures} ->
-          {:ok, coordinator_pid}
-
-        {[], _failures} ->
-          {:error, :unavailable}
-      end
+      first_coordinator_that_responds(t.cluster, t.descriptor.coordinator_nodes)
     end
     |> case do
       {:ok, coordinator} ->
@@ -53,6 +39,22 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
         |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
         |> change_coordinator(:unavailable)
         |> then(&{&1, error})
+    end
+  end
+
+  defp first_coordinator_that_responds(cluster, coordinator_nodes) do
+    GenServer.multi_call(
+      coordinator_nodes,
+      cluster.otp_name(:coordinator),
+      :ping,
+      cluster.coordinator_ping_timeout_in_ms()
+    )
+    |> case do
+      {[{_first_node, {:pong, coordinator_pid}} | _other_coordinators], _failures} ->
+        {:ok, coordinator_pid}
+
+      {[], _failures} ->
+        {:error, :unavailable}
     end
   end
 

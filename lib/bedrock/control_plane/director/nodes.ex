@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     t =
       t
       |> maybe_add_node(node)
-      |> node_last_seen_at(node, at)
+      |> update_last_seen_at(node, at)
       |> update_capabilities(node, capabilities)
 
     if NodeTracking.authorized?(t.node_tracking, node) do
@@ -35,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
   def node_added_worker(t, node, info, at) do
     t
-    |> node_last_seen_at(node, at)
+    |> update_last_seen_at(node, at)
     |> add_running_service(node, info)
   end
 
@@ -52,11 +52,21 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     |> set_timer(:ping_all_coordinators, Config.ping_rate_in_ms(t.config))
   end
 
-  @spec node_last_seen_at(State.t(), node(), at :: DateTime.t()) :: State.t()
-  def node_last_seen_at(t, node, at) do
+  @spec update_last_seen_at(State.t(), node(), at :: DateTime.t()) :: State.t()
+  def update_last_seen_at(t, node, at) do
     node_up = not NodeTracking.alive?(t.node_tracking, node)
     NodeTracking.update_last_seen_at(t.node_tracking, node, at |> to_milliseconds())
     if node_up, do: t |> node_up(node), else: t
+  end
+
+  @spec update_minimum_read_version(
+          State.t(),
+          node(),
+          minimum_read_version :: Bedrock.version() | nil
+        ) :: State.t()
+  def update_minimum_read_version(t, node, minimum_read_version) do
+    NodeTracking.update_minimum_read_version(t.node_tracking, node, minimum_read_version)
+    t
   end
 
   @spec determine_dead_nodes(State.t(), at :: DateTime.t()) :: State.t()

@@ -36,14 +36,6 @@ defmodule Bedrock.Cluster.Gateway do
     do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
-  Ping all of the nodes in the cluster.
-  """
-  @spec ping_nodes(gateway_otp_name :: atom(), nodes :: [node()], Director.ref(), Bedrock.epoch()) ::
-          :ok
-  def ping_nodes(gateway_otp_name, nodes, director, epoch),
-    do: nodes |> broadcast(gateway_otp_name, {:ping, director, epoch})
-
-  @doc """
   Get a coordinator for the cluster. We ask the running instance of the cluster
   gateway to find one for us.
   """

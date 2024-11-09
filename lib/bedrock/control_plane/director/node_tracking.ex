@@ -13,10 +13,18 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @typep up_down :: :up | :down
   @typep authorized :: boolean()
 
-  @spec row(node(), last_seen_at(), capabilities(), up_down(), authorized()) ::
-          {node(), last_seen_at(), capabilities(), up_down(), authorized()}
-  defp row(node, last_seen_at, capabilities, up_down, authorized),
-    do: {node, last_seen_at, capabilities, up_down, authorized}
+  @spec row(
+          node(),
+          last_seen_at(),
+          capabilities(),
+          up_down(),
+          authorized(),
+          Bedrock.version() | nil
+        ) ::
+          {node(), last_seen_at(), capabilities(), up_down(), authorized(),
+           Bedrock.version() | nil}
+  defp row(node, last_seen_at, capabilities, up_down, authorized, minimum_read_version),
+    do: {node, last_seen_at, capabilities, up_down, authorized, minimum_read_version}
 
   @doc """
   Create a new node tracking table with the given nodes.
@@ -24,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @spec new(nodes :: [node()]) :: t()
   def new(nodes) do
     t = :ets.new(:node_tracking, [:ordered_set])
-    :ets.insert(t, nodes |> Enum.map(&row(&1, :unknown, :unknown, :down, true)))
+    :ets.insert(t, nodes |> Enum.map(&row(&1, :unknown, :unknown, :down, true, nil)))
     t
   end
 
@@ -33,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   """
   @spec add_node(t(), node(), authorized :: boolean()) :: t()
   def add_node(t, node, authorized) do
-    :ets.insert(t, row(node, :unknown, :unknown, :up, authorized))
+    :ets.insert(t, row(node, :unknown, :unknown, :up, authorized, nil))
     t
   end
 
@@ -45,7 +53,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
           [node()]
   def dying_nodes(t, now, liveness_timeout_in_ms) do
     :ets.select(t, [
-      {{:"$1", :"$2", :_, :up, :_},
+      {{:"$1", :"$2", :_, :up, :_, :_},
        [
          {:orelse, {:==, :"$2", :unknown}, {:<, :"$2", {:const, now - liveness_timeout_in_ms}}}
        ], [:"$1"]}
@@ -61,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
           [node()]
   def dead_nodes(t, now, liveness_timeout_in_ms) do
     :ets.select(t, [
-      {{:"$1", :"$2", :_, :"$4", :_},
+      {{:"$1", :"$2", :_, :"$4", :_, :_},
        [
          {:orelse, {:==, :"$4", :down},
           {:orelse, {:==, :"$2", :unknown}, {:<, :"$2", {:const, now - liveness_timeout_in_ms}}}}
@@ -85,7 +93,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
       [] ->
         false
 
-      [_row = {^node, _last_seen_at, _capabilities, up_down, _authorized}] ->
+      [_row = {^node, _last_seen_at, _capabilities, up_down, _authorized, _minimum_read_version}] ->
         :up == up_down
     end
   end
@@ -97,8 +105,11 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   def authorized?(t, node) do
     :ets.lookup(t, node)
     |> case do
-      [] -> false
-      [_row = {^node, _last_seen_at, _capabilities, _up_down, authorized}] -> authorized
+      [] ->
+        false
+
+      [_row = {^node, _last_seen_at, _capabilities, _up_down, authorized, _minimum_read_version}] ->
+        authorized
     end
   end
 
@@ -112,18 +123,36 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
       [] ->
         :unknown
 
-      [_row = {^node, _last_seen_at, capabilities, _up_down, _authorized}] ->
+      [_row = {^node, _last_seen_at, capabilities, _up_down, _authorized, _minimum_read_version}] ->
         capabilities
     end
   end
 
   @doc """
-  Get the last time that a node responded to a ping.
+  Update the last time that a node responded to a ping.
   """
-  @spec update_last_seen_at(t(), node(), last_seen_at :: integer()) ::
+  @spec update_last_seen_at(
+          t(),
+          node(),
+          last_seen_at :: integer()
+        ) ::
           t()
   def update_last_seen_at(t, node, last_seen_at) do
     :ets.update_element(t, node, [{2, last_seen_at}, {4, :up}])
+    t
+  end
+
+  @doc """
+  Get the last time that a node responded to a ping.
+  """
+  @spec update_minimum_read_version(
+          t(),
+          node(),
+          minimum_read_version :: Bedrock.version() | nil
+        ) ::
+          t()
+  def update_minimum_read_version(t, node, minimum_read_version) do
+    :ets.update_element(t, node, {6, minimum_read_version})
     t
   end
 
@@ -141,7 +170,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   """
   @spec down(t(), node()) :: t()
   def down(t, node) do
-    :ets.update_element(t, node, {4, :down})
+    :ets.update_element(t, node, [{4, :down}, {6, nil}])
     t
   end
 end

@@ -12,7 +12,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
     only: [
       request_to_rejoin: 5,
       node_added_worker: 4,
-      node_last_seen_at: 3,
+      update_last_seen_at: 3,
+      update_minimum_read_version: 3,
       ping_all_coordinators: 1
     ]
 
@@ -105,15 +106,16 @@ defmodule Bedrock.ControlPlane.Director.Server do
   # If we are relieved by another director, we should not accept any casts
   # from the cluster. We will ignore them. We are no longer relevant and are of
   # no further use.
-  def handle_cast({:ping, from}, t) when not is_nil(t.my_relief),
+  def handle_cast({:ping, from, _}, t) when not is_nil(t.my_relief),
     do: GenServer.cast(from, {:pong, t.my_relief})
 
   def handle_cast({:ping, from, minimum_read_version}, t) do
-    IO.inspect(minimum_read_version)
     GenServer.cast(from, {:pong, {t.epoch, self()}})
+    node = node(from)
 
     t
-    |> node_last_seen_at(node(from), now())
+    |> update_last_seen_at(node, now())
+    |> update_minimum_read_version(node, minimum_read_version)
     |> store_changes_to_config()
     |> noreply()
   end

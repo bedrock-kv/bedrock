@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.Log.Limestone.Pulling do
       do: {:error, :version_too_new}
 
   def pull(t, last_version, count, subscriber_id: id = opts) do
-    last_durable_version = opts[:last_durable_version] || :start
+    last_durable_version = opts[:last_durable_version] || 0
 
     t.transactions
     |> Transactions.get(last_version, count)

@@ -98,17 +98,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     |> Enum.filter(&valid_range?(&1))
   end
 
-  defp valid_range?({_, {:start, _newest}}), do: true
-  defp valid_range?({_, {_oldest, :start}}), do: false
+  defp valid_range?({_, {0, _newest}}), do: true
+  defp valid_range?({_, {_oldest, 0}}), do: false
   defp valid_range?({_, {oldest, newest}}), do: newest >= oldest
 
   defp rank_log_groups(groups) do
     groups
     |> Enum.sort_by(
-      fn
-        {_, {:start, newest}} -> 1 + newest
-        {_, {oldest, newest}} -> newest - oldest
-      end,
+      fn {_, {oldest, newest}} -> newest - oldest end,
       :desc
     )
   end

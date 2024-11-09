@@ -69,8 +69,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         log_recovery_info_by_id: %{},
         storage_recovery_info_by_id: %{},
         old_log_ids_to_copy: [],
-        version_vector: {:start, 0},
-        durable_version: :start,
+        version_vector: {0, 0},
+        durable_version: 0,
         degraded_teams: [],
         logs: %{},
         storage_teams: [],
@@ -234,9 +234,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
     t
-    |> Map.put(:durable_version, :start)
+    |> Map.put(:durable_version, 0)
     |> Map.put(:old_log_ids_to_copy, [])
-    |> Map.put(:version_vector, {:start, 0})
+    |> Map.put(:version_vector, {0, 0})
     |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
     |> Map.put(:storage_teams, [
       storage_team_descriptor(

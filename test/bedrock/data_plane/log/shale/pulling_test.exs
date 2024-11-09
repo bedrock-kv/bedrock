@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
   alias Bedrock.DataPlane.Log.Shale.Pulling
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Log
 
   setup do
     # Setup initial t for tests
@@ -9,9 +10,11 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       log: :ets.new(:log, [:protected, :ordered_set]),
       mode: :running,
       last_version: 5,
-      oldest_version: 1,
-      params: %{default_pull_limit: 5, max_pull_limit: 10}
+      oldest_version: 0,
+      params: %{default_pull_limit: 7, max_pull_limit: 10}
     }
+
+    :ets.insert_new(t.log, Log.initial_transaction())
 
     # Insert some dummy transactions
     :ets.insert(t.log, {1, %{a: :b}})
@@ -51,7 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
 
   test "pull returns transactions within the specified range, up to it's limit, from the start",
        %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, :start, limit: 1, last_version: 3)
+    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 1, last_version: 3)
 
     assert [
              {1, %{a: :b}}
@@ -60,7 +63,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
 
   test "pull returns all transactions when pulling from the start",
        %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, :start)
+    assert {:ok, ^t, transactions} = Pulling.pull(t, 0)
 
     assert [
              {1, %{a: :b}},
@@ -73,7 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
 
   test "pull returns transactions wirt",
        %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, :start, limit: 1, last_version: 3)
+    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 1, last_version: 3)
 
     assert [
              {1, %{a: :b}}
@@ -99,8 +102,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     assert {:waiting_for, 11} = Pulling.pull(t, 11, limit: 3, last_version: 12)
   end
 
-  test "pull returns transactions when from_version is :start", %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, :start, limit: 3, last_version: 3)
+  test "pull returns transactions when from_version is 0", %{t: t} do
+    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 3, last_version: 3)
     assert length(transactions) == 3
   end
 end

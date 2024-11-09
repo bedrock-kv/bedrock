@@ -29,11 +29,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec oldest_version(t()) :: Bedrock.version() | :undefined
+  @spec oldest_version(t()) :: Bedrock.version()
   def oldest_version(pkv) do
     fetch(pkv, :oldest_version)
     |> case do
-      {:error, :not_found} -> :undefined
+      {:error, :not_found} -> 0
       {:ok, version} -> version
     end
   end
@@ -41,11 +41,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Returns the last version of the key-value store.
   """
-  @spec last_version(t()) :: Bedrock.version() | :undefined
+  @spec last_version(t()) :: Bedrock.version()
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do
-      {:error, :not_found} -> :undefined
+      {:error, :not_found} -> 0
       {:ok, version} -> version
     end
   end
@@ -54,24 +54,23 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   Apply a transaction to the key-value store, atomically. The transaction must
   be applied in order.
   """
-  @spec apply_transaction(pkv :: t(), Transaction.t()) :: :ok | {:error, term()}
+  @spec apply_transaction(pkv :: t(), Transaction.t()) ::
+          :ok
+          | {:error, :version_too_new}
+          | {:error, :version_too_old}
   def apply_transaction(pkv, transaction) do
     version = Transaction.version(transaction)
+    last_version = last_version(pkv)
 
-    case last_version(pkv) do
-      last_version when last_version != :undefined and last_version >= version ->
-        {:error, :version_too_old}
-
-      _ ->
-        writes = Transaction.key_values(transaction) |> Enum.to_list()
-
-        :dets.insert(pkv, [{:last_version, version} | writes])
-        |> case do
-          :ok -> :dets.sync(pkv)
-          {:error, :key_already_exists} -> {:error, :version_too_old}
-        end
+    with :ok <- check_version(version, last_version),
+         writes <- Transaction.key_values(transaction) |> Enum.to_list(),
+         :ok <- :dets.insert(pkv, [{:last_version, version} | writes]) do
+      :dets.sync(pkv)
     end
   end
+
+  defp check_version(version, last_version) when version >= last_version, do: :ok
+  defp check_version(_, _), do: {:error, :version_too_old}
 
   @doc """
   Attempt to find the value for the given key in the key-value store. Returns

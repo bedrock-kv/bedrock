@@ -49,7 +49,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   def init({cluster, otp_name, id, foreman}) do
     log = :ets.new(:log, [:protected, :ordered_set])
-    :ets.insert(log, [Log.initial_transaction()])
+    true = :ets.insert_new(log, Log.initial_transaction())
 
     {:ok,
      %State{
@@ -59,7 +59,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        otp_name: otp_name,
        foreman: foreman,
        log: log,
-       oldest_version: :start,
+       oldest_version: 0,
        last_version: 0
      }, {:continue, :initialization}}
   end
@@ -114,7 +114,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
          {:ok, info} <- info(t, Log.recovery_info()) do
       t |> reply({:ok, self(), info})
     else
-      error -> t |> reply(error) |> IO.inspect()
+      error -> t |> reply(error)
     end
   end
 

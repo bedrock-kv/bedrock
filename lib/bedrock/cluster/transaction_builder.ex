@@ -222,7 +222,7 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     services
     |> Map.take(storage_ids)
     |> Enum.map(fn
-      %{status: {:up, pid}} -> pid
+      {_storage_id, %{status: {:up, pid}}} -> pid
       _ -> nil
     end)
     |> Enum.reject(&is_nil/1)

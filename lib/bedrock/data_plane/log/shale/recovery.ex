@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   @spec recover_from(
           State.t(),
           Log.ref(),
-          first_version :: Bedrock.version() | :start,
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version_vector()
         ) ::
           {:ok, State.t()} | {:error, reason :: term()}
@@ -13,7 +13,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     do: {:error, :lock_required}
 
   def recover_from(t, source_log, first_version, last_version) do
-    :ets.delete_all_objects(t.log)
+    true = :ets.delete_all_objects(t.log)
+
+    if first_version == 0 do
+      true = :ets.insert_new(t.log, Log.initial_transaction())
+    end
 
     case pull_transactions(t.log, source_log, first_version, last_version) do
       :ok ->
@@ -27,19 +31,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   @spec pull_transactions(
           log :: :ets.table(),
           log_to_pull :: Log.ref(),
-          first_version :: Bedrock.version() | :start,
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           :ok | Log.pull_errors() | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
-  def pull_transactions(log, nil, :start, 0) do
-    initial_transaction = Log.initial_transaction()
-    true = :ets.insert_new(log, [initial_transaction])
-    :ok
-  end
-
-  def pull_transactions(_, _, first_version, last_version)
-      when first_version == last_version,
-      do: :ok
+  def pull_transactions(_, _, first_version, last_version) when first_version == last_version,
+    do: :ok
 
   def pull_transactions(log, log_to_pull, first_version, last_version) do
     case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do

@@ -37,7 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
           info_by_id :: %{Storage.id() => Storage.recovery_info()},
           quorum :: non_neg_integer()
         ) ::
-          {:ok, Bedrock.version() | :start, healthy_teams :: [Bedrock.range_tag()],
+          {:ok, Bedrock.version(), healthy_teams :: [Bedrock.range_tag()],
            degraded_teams :: [Bedrock.range_tag()]}
           | {:error, {:insufficient_replication, failed_tags :: [Bedrock.range_tag()]}}
   def determine_durable_version(teams, info_by_id, quorum) do
@@ -58,11 +58,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
     end)
     |> case do
       {_, _, _, [_at_least_one | _rest] = failed} -> {:error, {:insufficient_replication, failed}}
-      {min_version, healthy, degraded, []} -> {:ok, min_version || :start, healthy, degraded}
+      {min_version, healthy, degraded, []} -> {:ok, min_version, healthy, degraded}
     end
   end
 
-  def smallest_version(:start, _), do: :start
   def smallest_version(nil, b), do: b
   def smallest_version(a, b), do: min(a, b)
 

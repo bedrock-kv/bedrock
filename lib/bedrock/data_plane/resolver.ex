@@ -14,7 +14,7 @@ defmodule Bedrock.DataPlane.Resolver do
   @spec recover_from(
           ref(),
           source_log :: Log.ref(),
-          first_version :: Bedrock.version() | :start,
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           :ok

@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
 
   @opaque t :: :ets.table()
 
-  @spec new(otp_name :: atom(), Bedrock.version() | :undefined) :: t()
+  @spec new(otp_name :: atom(), Bedrock.version()) :: t()
   def new(otp_name, version) when is_atom(otp_name) do
     with mvcc <-
            :ets.new(otp_name, [
@@ -51,11 +51,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
 
     transactions
     |> Enum.reduce(latest_version, fn
-      {version, _kv_pairs}, newest_version
-      when newest_version != :undefined and version <= newest_version ->
-        raise "Transactions must be applied in order (new #{version}, old #{newest_version})"
+      {version, _kv_pairs}, latest_version
+      when version <= latest_version and latest_version != 0 ->
+        raise "Transactions must be applied in order (new #{version}, old #{latest_version})"
 
-      {version, _kv_pairs} = transaction, _newest_version ->
+      {version, _kv_pairs} = transaction, _latest_version ->
         :ok = apply_one_transaction!(mvcc, transaction)
         version
     end)
@@ -202,6 +202,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     {version, snapshot}
   end
 
+  @spec purge_keys_newer_than_version(mvcc :: t(), Bedrock.version()) :: :ok
   def purge_keys_newer_than_version(mvcc, version) do
     :ets.select_delete(mvcc, match_rows_with_with_version_gt(version))
     :ok

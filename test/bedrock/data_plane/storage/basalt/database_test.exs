@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
     @tag :tmp_dir
     test "returns 0 on a newly created database", %{tmp_dir: tmp_dir} do
       {:ok, db} = Database.open(random_name(), Path.join(tmp_dir, "c"))
-      assert :undefined == Database.last_durable_version(db)
+      assert 0 == Database.last_durable_version(db)
     end
   end
 
@@ -40,6 +40,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
 
       # Write a series of transactions to the DB, each overwriting the previous
       # transaction.
+      assert 0 = Database.apply_transactions(db, [Transaction.new(0, %{})])
       assert 1 = Database.apply_transactions(db, [Transaction.new(1, %{"foo" => "bar"})])
 
       assert 2 =
@@ -52,7 +53,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
                  Transaction.new(3, %{"foo" => "biz", "bam" => "bom"})
                ])
 
-      assert :undefined = Database.last_durable_version(db)
+      assert 0 = Database.last_durable_version(db)
       assert 3 = Database.last_committed_version(db)
       assert 0 = Database.info(db, :n_keys)
 

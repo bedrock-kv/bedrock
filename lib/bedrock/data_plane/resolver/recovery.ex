@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   @spec recover_from(
           State.t(),
           Log.ref(),
-          first_version :: Bedrock.version() | :start,
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version_vector()
         ) ::
           {:ok, State.t()} | {:error, reason :: term()}
@@ -27,13 +27,13 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   @spec pull_transactions(
           tree :: Tree.t() | nil,
           log_to_pull :: Log.ref(),
-          first_version :: Bedrock.version() | :start,
+          first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           {:ok, Tree.t()}
           | Log.pull_errors()
           | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
-  def pull_transactions(tree, nil, :start, 0),
+  def pull_transactions(tree, nil, 0, 0),
     do: {:ok, tree}
 
   def pull_transactions(tree, _, first_version, last_version)

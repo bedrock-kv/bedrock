@@ -64,10 +64,6 @@ defmodule Bedrock.ControlPlane.Config do
   @spec sequencer(t()) :: pid() | nil
   def sequencer(t), do: get_in(t.transaction_system_layout.sequencer)
 
-  @doc "Returns the pid of the current `DataDistributor`."
-  @spec data_distributor(t()) :: pid() | nil
-  def data_distributor(t), do: get_in(t.transaction_system_layout.data_distributor)
-
   @doc "Returns the ping rate in milliseconds."
   @spec ping_rate_in_ms(t()) :: pos_integer()
   def ping_rate_in_ms(t),

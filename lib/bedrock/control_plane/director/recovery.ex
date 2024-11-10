@@ -83,7 +83,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.put(:director, self())
         |> Map.put(:sequencer, nil)
         |> Map.put(:rate_keeper, nil)
-        |> Map.put(:data_distributor, nil)
         |> Map.put(:proxies, [])
         |> Map.put(:resolvers, [])
       end)

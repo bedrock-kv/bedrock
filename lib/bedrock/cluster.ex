@@ -60,7 +60,6 @@ defmodule Bedrock.Cluster do
 
       @supervisor_otp_name Cluster.otp_name(@name, :sup)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
-      @data_distributor_otp_name Cluster.otp_name(@name, :data_distributor)
       @foreman_otp_name Cluster.otp_name(@name, :foreman)
       @gateway_otp_name Cluster.otp_name(@name, :gateway)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)

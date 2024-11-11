@@ -13,6 +13,8 @@ defmodule Bedrock.Internal.GenServerApi do
         end
       end
 
+      @type call_errors :: :unavailable | :timeout
+
       import Bedrock.Internal.GenServer.Calls
     end
   end

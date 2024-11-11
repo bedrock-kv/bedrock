@@ -35,7 +35,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
-    max_latency_in_ms = opts[:max_latency_in_ms] || 2
+    max_latency_in_ms = opts[:max_latency_in_ms] || 1
     max_per_batch = opts[:max_per_batch] || 10
 
     %{

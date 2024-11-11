@@ -18,7 +18,7 @@ defmodule Bedrock.Cluster.Gateway do
             retry_count: pos_integer(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, pid()} | {:error, term()}
+        ) :: {:ok, pid()} | call_errors()
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 

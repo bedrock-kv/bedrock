@@ -8,8 +8,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
 
-  import Bedrock.DataPlane.Resolver, only: [resolve_transactions: 5]
-
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
 
@@ -45,7 +43,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     with {:ok, aborted} <-
            resolve_transactions(
-             transaction_system_layout.resolvers |> List.first(),
+             transaction_system_layout.resolvers,
              batch.last_commit_version,
              commit_version,
              transform_transactions_for_resolution(transactions_in_order),
@@ -77,6 +75,73 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         error
     end
   end
+
+  @spec resolve_transactions(
+          resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
+          last_version :: Bedrock.version(),
+          commit_version :: Bedrock.version(),
+          [Resolver.transaction()],
+          opts :: [timeout: :infinity | non_neg_integer()]
+        ) ::
+          {:ok, aborted :: [index :: integer()]}
+          | {:error, :timeout}
+          | {:error, :unavailable}
+  def resolve_transactions(
+        resolvers,
+        last_version,
+        commit_version,
+        transaction_summaries,
+        opts \\ []
+      ) do
+    ranges =
+      resolvers
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.concat([:end])
+      |> Enum.chunk_every(2, 1, :discard)
+
+    transaction_summaries_by_start_key =
+      ranges
+      |> Enum.map(fn
+        [start_key, end_key] ->
+          filtered_summaries =
+            filter_transaction_summaries(
+              transaction_summaries,
+              filter_fn(start_key, end_key)
+            )
+
+          {start_key, filtered_summaries}
+      end)
+      |> Enum.into(%{})
+
+    resolvers
+    |> Enum.map(fn {start_key, ref} ->
+      Resolver.resolve_transactions(
+        ref,
+        last_version,
+        commit_version,
+        Map.get(transaction_summaries_by_start_key, start_key, opts)
+      )
+    end)
+    |> Enum.reduce({:ok, []}, fn
+      {:ok, aborted}, {:ok, acc} ->
+        {:ok, Enum.uniq(acc ++ aborted)}
+
+      {:error, reason}, _ ->
+        {:error, reason}
+    end)
+  end
+
+  defp filter_fn(start_key, :end), do: &(&1 >= start_key)
+  defp filter_fn(start_key, end_key), do: &(&1 >= start_key and &1 < end_key)
+
+  defp filter_transaction_summaries(transaction_summaries, filter_fn),
+    do: Enum.map(transaction_summaries, &filter_transaction_summary(&1, filter_fn))
+
+  defp filter_transaction_summary({nil, writes}, filter_fn),
+    do: {nil, Enum.filter(writes, filter_fn)}
+
+  defp filter_transaction_summary({{read_version, reads}, writes}, filter_fn),
+    do: {{read_version, Enum.filter(reads, filter_fn)}, Enum.filter(writes, filter_fn)}
 
   @spec determine_majority(n :: non_neg_integer()) :: non_neg_integer()
   defp determine_majority(n), do: 1 + div(n, 2)
@@ -232,7 +297,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # If there are no aborted transactions, we can make take some shortcuts.
   def prepare_transaction_to_log(transactions, [], commit_version) do
     transactions
-    |> Enum.reduce({[], %{}}, fn {from, {_, _, writes}}, {oks, all_writes} ->
+    |> Enum.reduce({[], %{}}, fn {from, {_, writes}}, {oks, all_writes} ->
       {[from | oks], Map.merge(all_writes, writes)}
     end)
     |> then(fn {oks, combined_writes} ->
@@ -267,24 +332,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   resolution logic. For each transaction, it extracts the read version,
   the reads, and the keys of the writes, discarding the values of the writes
   as they are not needed for resolution.
-
-  ## Parameters
-
-    - `transactions`: A list of transactions where each transaction is
-      represented as a tuple containing the process `from` identifier,
-      read version, read data, and write data.
-
-  ## Returns
-    - A list of transformed transactions as tuples, each containing:
-      - The read version
-      - The read data
-      - The keys of the write data
   """
   @spec transform_transactions_for_resolution([Bedrock.transaction()]) :: [Resolver.transaction()]
   def transform_transactions_for_resolution(transactions) do
     transactions
-    |> Enum.map(fn {_from, {read_version, reads, writes}} ->
-      {read_version, reads, writes |> Map.keys()}
+    |> Enum.map(fn
+      {_from, {nil, writes}} ->
+        {nil, writes |> Map.keys()}
+
+      {_from, {{read_version, reads}, writes}} ->
+        {{read_version, reads |> Enum.uniq()}, writes |> Map.keys()}
     end)
   end
 end

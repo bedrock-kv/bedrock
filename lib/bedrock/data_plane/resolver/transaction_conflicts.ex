@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
     - tree: The interval tree of transactions to check against.
     - transactions: A list of transactions, each with read/write versions
-      and operations (reads/writes) to commit.
+      and operations (reads/writes) to resolve.
 
   ## Returns
 
@@ -26,17 +26,17 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
   Transactions are rolled back in the order they are processed when conflicts are detected.
   """
-  @spec commit(Tree.t(), [Resolver.transaction()], write_version :: Bedrock.version()) ::
+  @spec resolve(Tree.t(), [Resolver.transaction()], write_version :: Bedrock.version()) ::
           {Tree.t(), aborted :: [non_neg_integer()]}
-  def commit(tree, [], _), do: {tree, []}
+  def resolve(tree, [], _), do: {tree, []}
 
-  def commit(tree, transactions, write_version) do
+  def resolve(tree, transactions, write_version) do
     {tree, failed_indexes} =
       transactions
       |> Enum.with_index()
       |> Enum.reduce({tree, []}, fn {tx, index}, {tree, failed} ->
         tree
-        |> try_commit_transaction(tx, write_version)
+        |> try_resolve_transaction(tx, write_version)
         |> case do
           {:ok, tree} -> {tree, failed}
           :abort -> {tree, [index | failed]}
@@ -46,9 +46,9 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     {tree, failed_indexes}
   end
 
-  @spec try_commit_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) ::
+  @spec try_resolve_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) ::
           {:ok, Tree.t()} | :abort
-  def try_commit_transaction(tree, transaction, write_version) do
+  def try_resolve_transaction(tree, transaction, write_version) do
     if tree |> conflict?(transaction, write_version) do
       :abort
     else
@@ -57,9 +57,9 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   end
 
   @spec conflict?(Tree.t(), Resolver.transaction(), Bedrock.version()) :: boolean()
-  def conflict?(tree, {read_version, reads, writes}, write_version) do
+  def conflict?(tree, {read_info, writes}, write_version) do
     write_conflict?(tree, writes, write_version) or
-      read_write_conflict?(tree, reads, read_version)
+      read_write_conflict?(tree, read_info)
   end
 
   @spec write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()], Bedrock.version()) ::
@@ -69,9 +69,14 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     Enum.any?(writes, &Tree.overlap?(tree, &1, predicate))
   end
 
-  @spec read_write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()], Bedrock.version()) ::
+  @spec read_write_conflict?(
+          Tree.t(),
+          nil | {Bedrock.version(), [Bedrock.key() | Bedrock.key_range()]}
+        ) ::
           boolean()
-  def read_write_conflict?(tree, reads, read_version) do
+  def read_write_conflict?(_, nil), do: false
+
+  def read_write_conflict?(tree, {read_version, reads}) do
     predicate = version_lt(read_version)
     Enum.any?(reads, &Tree.overlap?(tree, &1, predicate))
   end
@@ -80,7 +85,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   def version_lt(version), do: &(&1 > version)
 
   @spec apply_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) :: Tree.t()
-  def apply_transaction(tree, {_, _, writes}, write_version),
+  def apply_transaction(tree, {_, writes}, write_version),
     do: writes |> Enum.reduce(tree, &Tree.insert(&2, &1, write_version))
 
   @spec remove_old_transactions(Tree.t(), Bedrock.version()) :: Tree.t()

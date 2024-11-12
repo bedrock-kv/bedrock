@@ -10,17 +10,23 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version_vector()
         ) ::
-          {:ok, State.t()} | {:error, reason :: term()}
+          {:ok, State.t()} | {:error, {:failed_to_pull_log, Log.id(), reason :: term()}}
   def recover_from(t, _, _, _) when t.mode != :locked,
     do: {:error, :lock_required}
 
-  def recover_from(t, source_log, first_version, last_version) do
-    case pull_transactions(t.tree, source_log, first_version, last_version) do
-      {:ok, tree} ->
-        {:ok, %{t | tree: tree, oldest_version: first_version, last_version: last_version}}
+  def recover_from(t, source_logs, first_version, last_version) do
+    Enum.reduce_while(source_logs, t, fn {log_id, log_ref}, t ->
+      case pull_transactions(t.tree, log_ref, first_version, last_version) do
+        {:ok, tree} ->
+          {:cont, %{t | tree: tree}}
 
-      {:error, _reason} = error ->
-        error
+        {:error, reason} ->
+          {:halt, {:error, {:failed_to_pull_log, log_id, reason}}}
+      end
+    end)
+    |> case do
+      {:error, _reason} = error -> error
+      %{} = t -> {:ok, %{t | last_version: last_version, oldest_version: first_version}}
     end
   end
 
@@ -32,7 +38,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
         ) ::
           {:ok, Tree.t()}
           | Log.pull_errors()
-          | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
+          | {:error, {:log_unavailable, log_to_pull :: Log.ref()}}
   def pull_transactions(tree, nil, 0, 0),
     do: {:ok, tree}
 
@@ -50,7 +56,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
         pull_transactions(tree, log_to_pull, last_version_in_batch, last_version)
 
       {:error, :unavailable} ->
-        {:error, {:source_log_unavailable, log_to_pull}}
+        {:error, {:log_unavailable, log_to_pull}}
 
       {:error, reason} ->
         {:error, reason}

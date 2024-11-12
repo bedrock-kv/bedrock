@@ -20,6 +20,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     ]
 
   use GenServer
+  import Bedrock.Internal.GenServer.Replies
 
   @spec child_spec(
           opts :: [
@@ -79,7 +80,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     |> apply_finalization_policy()
     |> case do
       {t, nil} -> t |> noreply(timeout: 0)
-      {t, batch} -> t |> noreply(timeout: 0, continue: {:finalize, batch})
+      {t, batch} -> t |> noreply(continue: {:finalize, batch})
     end
   end
 
@@ -121,10 +122,4 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
   def reply_fn(from), do: &GenServer.reply(from, &1)
-
-  defp noreply(t, opts \\ [])
-  defp noreply(t, continue: continue, timeout: ms), do: {:noreply, t, ms, {:continue, continue}}
-  defp noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
-  defp noreply(t, timeout: ms), do: {:noreply, t, ms}
-  defp noreply(t, []), do: {:noreply, t}
 end

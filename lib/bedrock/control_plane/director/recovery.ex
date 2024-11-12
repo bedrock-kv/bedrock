@@ -22,11 +22,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
   import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
-  import __MODULE__.DefiningResolvers, only: [define_resolvers: 6]
+  import __MODULE__.DefiningResolvers, only: [define_resolvers: 7]
   import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
 
   @spec try_to_recover(State.t()) :: State.t()
@@ -59,8 +60,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           Map.take(config.parameters, [
             :desired_logs,
             :desired_replication_factor,
-            :desired_commit_proxies,
-            :desired_resolvers
+            :desired_commit_proxies
           ]),
         last_transaction_system_layout: config.transaction_system_layout,
         available_services: t.config.transaction_system_layout.services,
@@ -236,11 +236,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.put(:durable_version, 0)
     |> Map.put(:old_log_ids_to_copy, [])
     |> Map.put(:version_vector, {0, 0})
+    |> Map.put(:resolvers, [
+      resolver_descriptor(<<>>, nil),
+      resolver_descriptor(<<0xFF>>, nil)
+    ])
     |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
     |> Map.put(:storage_teams, [
       storage_team_descriptor(
         0,
-        key_range(<<0xFF>>, <<0xFF, 0xFF>>),
+        key_range(<<0xFF>>, :end),
         storage_team_vacancies
       ),
       storage_team_descriptor(
@@ -435,25 +439,30 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
+  import __MODULE__.DefiningResolvers
+
   def recovery(%{state: :define_resolvers} = t) do
     sup_otp_name = t.cluster.otp_name(:sup)
     starter_fn = starter_for(sup_otp_name)
 
-    log_pids =
+    running_logs_by_id =
       t.available_services
       |> Map.take(t.logs |> Map.keys())
       |> Enum.map(fn
-        {_id, %{status: {:up, pid}}} -> pid
+        {id, %{status: {:up, pid}}} -> {id, pid}
         _ -> nil
       end)
       |> Enum.reject(&is_nil/1)
+      |> Map.new()
 
     define_resolvers(
-      t.parameters.desired_resolvers,
-      t.version_vector,
-      log_pids,
+      t.resolvers,
+      t.storage_teams,
+      t.logs,
+      running_logs_by_id,
       t.epoch,
       Node.list(),
+      t.version_vector,
       starter_fn
     )
     |> case do

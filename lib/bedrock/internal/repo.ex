@@ -33,14 +33,14 @@ defmodule Bedrock.Internal.Repo do
           :ok ->
             result
 
-          {:error, :aborted} ->
+          {:error, reason} when reason in [:timeout, :aborted] ->
             retry_count = opts[:retry_count] || 0
 
             if retry_count > 0 do
               opts = Keyword.put(opts, :retry_count, retry_count - 1)
               transaction(cluster, fun, opts)
             else
-              result
+              raise "Transaction failed: #{inspect(reason)}"
             end
         end
       else

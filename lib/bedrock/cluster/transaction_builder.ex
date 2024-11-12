@@ -139,12 +139,9 @@ defmodule Bedrock.Cluster.TransactionBuilder do
 
   @doc false
   def do_commit(%{stack: []} = t) do
-    with commit_proxy <- t.transaction_system_layout.proxies |> Enum.random(),
-         {:ok, _version} <-
-           CommitProxy.commit(
-             commit_proxy,
-             {t.read_version, t.reads, t.writes}
-           ) do
+    with transaction <- prepare_transaction_for_commit(t.read_version, t.reads, t.writes),
+         commit_proxy <- t.transaction_system_layout.proxies |> Enum.random(),
+         {:ok, _version} <- CommitProxy.commit(commit_proxy, transaction) do
       {:ok, t}
     end
   end
@@ -157,6 +154,14 @@ defmodule Bedrock.Cluster.TransactionBuilder do
          writes: Map.merge(t.writes, writes),
          stack: stack
      }}
+  end
+
+  defp prepare_transaction_for_commit(nil, _, %{} = writes),
+    do: {nil, writes}
+
+  defp prepare_transaction_for_commit(read_version, %{} = reads, %{} = writes)
+       when map_size(reads) > 0 do
+    {{read_version, reads |> Map.keys()}, writes}
   end
 
   def do_rollback(%{stack: []}), do: :stop

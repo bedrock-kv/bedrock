@@ -1,6 +1,6 @@
 defmodule Bedrock do
   @type key :: binary()
-  @type key_range :: {min_inclusive :: key(), max_exclusive :: key()}
+  @type key_range :: {min_inclusive :: key(), max_exclusive :: key() | :end}
   @type value :: binary()
   @type key_value :: {key(), value()}
 
@@ -8,7 +8,7 @@ defmodule Bedrock do
   @type version_vector :: {oldest :: version(), newest :: version()}
 
   @type transaction ::
-          {read_version :: version(), reads :: [key() | key_range()],
+          {reads :: nil | {version(), [key() | key_range()]},
            writes :: %{
              key() => value(),
              key_range() => value() | nil
@@ -44,7 +44,8 @@ defmodule Bedrock do
       {"a", "z"}
 
   """
-  @spec key_range(Bedrock.key(), Bedrock.key()) :: Bedrock.key_range()
-  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
-    do: {min_key, max_key_exclusive}
+  @spec key_range(Bedrock.key(), Bedrock.key() | :end) :: Bedrock.key_range()
+  def key_range(min_key, max_key_exclusive)
+      when min_key < max_key_exclusive or max_key_exclusive == :end,
+      do: {min_key, max_key_exclusive}
 end

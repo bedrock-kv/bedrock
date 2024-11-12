@@ -6,12 +6,21 @@ defmodule Bedrock.Internal.GenServer.Replies do
         when t: term(), result: term(), continue: term()
   def reply(t, result, continue: action), do: {:reply, result, t, {:continue, action}}
 
-  @spec noreply(t) :: {:noreply, t} when t: term()
-  def noreply(t), do: {:noreply, t}
-
-  @spec noreply(t, continue: continue) :: {:noreply, t, {:continue, continue}}
+  @spec noreply(
+          t,
+          opts :: [
+            continue: continue,
+            timeout: timeout()
+          ]
+        ) ::
+          {:noreply, t}
+          | {:noreply, t, {:continue, continue} | timeout()}
         when t: term(), continue: term()
+  def noreply(t, opts \\ [])
   def noreply(t, continue: continue), do: {:noreply, t, {:continue, continue}}
+  def noreply(t, timeout: ms), do: {:noreply, t, ms}
+  def noreply(t, []), do: {:noreply, t}
+  def noreply(_, opts), do: raise("Invalid options: #{inspect(opts)}")
 
   @spec stop(t, reason) :: {:stop, reason, t} when t: term(), reason: term()
   def stop(t, reason), do: {:stop, reason, t}

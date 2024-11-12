@@ -7,6 +7,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
@@ -37,7 +38,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           sequencer: pid() | nil,
           rate_keeper: pid() | nil,
           proxies: [pid()],
-          resolvers: [pid()],
+          resolvers: [ResolverDescriptor.t()],
           logs: %{Log.id() => LogDescriptor.t()},
           storage_teams: [StorageTeamDescriptor.t()],
           services: %{Worker.id() => ServiceDescriptor.t()}

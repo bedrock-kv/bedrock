@@ -55,8 +55,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           parameters: %{
             desired_logs: log_replication_factor(),
             desired_replication_factor: storage_replication_factor(),
-            desired_commit_proxies: pos_integer(),
-            desired_resolvers: pos_integer()
+            desired_commit_proxies: pos_integer()
           },
           started_at: DateTime.t(),
           last_transaction_system_layout: TransactionSystemLayout.t(),

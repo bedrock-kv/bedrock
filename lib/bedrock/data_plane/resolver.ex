@@ -5,23 +5,24 @@ defmodule Bedrock.DataPlane.Resolver do
 
   @type ref :: GenServer.name()
 
+  @type read_info :: {version :: Bedrock.version(), keys :: [Bedrock.key() | Bedrock.key_range()]}
+
   @type transaction :: {
-          read_version :: Bedrock.version(),
-          read_keys :: [Bedrock.key() | Bedrock.key_range()],
+          read_info :: read_info() | nil,
           write_keys :: [Bedrock.key() | Bedrock.key_range()]
         }
 
   @spec recover_from(
           ref(),
-          source_log :: Log.ref(),
+          logs_to_copy :: %{Log.id() => Log.ref()},
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           :ok
           | {:error, :timeout}
           | {:error, :unavailable}
-  def recover_from(ref, source_log, first_version, last_version),
-    do: call(ref, {:recover_from, source_log, first_version, last_version}, :infinity)
+  def recover_from(ref, logs_to_copy, first_version, last_version),
+    do: call(ref, {:recover_from, logs_to_copy, first_version, last_version}, :infinity)
 
   @spec resolve_transactions(
           ref(),

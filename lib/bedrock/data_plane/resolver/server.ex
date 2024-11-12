@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   alias Bedrock.DataPlane.Resolver.State
 
   import Bedrock.DataPlane.Resolver.Recovery, only: [recover_from: 4]
-  import Bedrock.DataPlane.Resolver.ConflictResolution, only: [commit: 3]
+  import Bedrock.DataPlane.Resolver.ConflictResolution, only: [resolve: 3]
 
   use GenServer
   import Bedrock.Internal.GenServer.Replies
@@ -42,7 +42,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # we do to avoid blocking them.
   def handle_call({:resolve_transactions, {last_version, next_version}, transactions}, _from, t)
       when last_version == t.last_version do
-    {tree, aborted} = commit(t.tree, transactions, next_version)
+    {tree, aborted} = resolve(t.tree, transactions, next_version)
     t = %{t | tree: tree, last_version: next_version}
 
     if Map.has_key?(t.waiting, next_version) do
@@ -63,7 +63,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   def handle_info({:resolve_next, next_version}, t) do
     {{next_version, transactions, reply_fn}, waiting} = Map.pop(t.waiting, next_version)
 
-    {tree, aborted} = commit(t.tree, transactions, next_version)
+    {tree, aborted} = resolve(t.tree, transactions, next_version)
     t = %{t | tree: tree, last_version: next_version, waiting: waiting}
 
     reply_fn.(aborted)

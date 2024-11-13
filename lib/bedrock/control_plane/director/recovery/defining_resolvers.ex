@@ -147,7 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningResolvers do
     end)
     |> case do
       {:error, reason} -> {:error, reason}
-      resolvers -> {:ok, resolvers}
+      resolvers -> {:ok, resolvers |> Enum.sort_by(&elem(&1, 0))}
     end
   end
 

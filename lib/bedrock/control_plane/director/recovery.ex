@@ -22,7 +22,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
   import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
-  import __MODULE__.DefiningResolvers, only: [define_resolvers: 7]
+  import __MODULE__.DefiningResolvers, only: [define_resolvers: 8]
   import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry

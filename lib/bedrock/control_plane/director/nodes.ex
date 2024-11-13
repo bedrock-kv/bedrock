@@ -126,7 +126,30 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   end
 
   @spec node_up(State.t(), node()) :: State.t()
-  def node_up(t, _node), do: t
+  def node_up(t, node) do
+    t
+    |> Map.update!(:config, fn config ->
+      config
+      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
+        transaction_system_layout
+        |> Map.put(:id, TransactionSystemLayout.random_id())
+        |> Map.update(:services, %{}, fn services ->
+          services
+          |> Enum.map(fn
+            {id, %{last_seen: {service_name, ^node}} = service} = id_and_service ->
+              case :rpc.call(node, Process, :whereis, [service_name]) do
+                nil -> id_and_service
+                pid when is_pid(pid) -> {id, %{service | status: {:up, pid}}}
+              end
+
+            id_and_service ->
+              id_and_service
+          end)
+          |> Map.new()
+        end)
+      end)
+    end)
+  end
 
   @spec node_down(State.t(), node()) :: State.t()
   def node_down(t, node) do

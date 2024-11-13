@@ -13,6 +13,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
       request_to_rejoin: 5,
       node_added_worker: 4,
       update_last_seen_at: 3,
+      determine_dead_nodes: 2,
       update_minimum_read_version: 3,
       ping_all_coordinators: 1
     ]
@@ -73,8 +74,13 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
-  def handle_info({:timeout, :ping_all_coordinators}, t),
-    do: t |> ping_all_coordinators() |> noreply()
+  def handle_info({:timeout, :ping_all_coordinators}, t) do
+    t
+    |> ping_all_coordinators()
+    |> determine_dead_nodes(now())
+    |> store_changes_to_config()
+    |> noreply()
+  end
 
   @impl true
   # If we have been relieved by another director in a newer epoch, we should

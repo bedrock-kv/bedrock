@@ -33,7 +33,7 @@ defmodule Bedrock.Internal.Repo do
           :ok ->
             result
 
-          {:error, reason} when reason in [:timeout, :aborted] ->
+          {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
             retry_count = opts[:retry_count] || 0
 
             if retry_count > 0 do

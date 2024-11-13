@@ -22,6 +22,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     t
     |> Map.put(:director, director)
     |> publish_director_replaced_to_pubsub()
+    |> IO.inspect(label: "change_director")
     |> case do
       %{director: :unavailable} ->
         t

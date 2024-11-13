@@ -1,0 +1,29 @@
+defmodule Bedrock.Cluster.TransactionBuilder.Committing do
+  alias Bedrock.DataPlane.CommitProxy
+
+  def do_commit(%{stack: []} = t) do
+    with transaction <- prepare_transaction_for_commit(t.read_version, t.reads, t.writes),
+         commit_proxy <- t.transaction_system_layout.proxies |> Enum.random(),
+         {:ok, _version} <- CommitProxy.commit(commit_proxy, transaction) do
+      {:ok, %{t | state: :committed}}
+    end
+  end
+
+  def do_commit(%{stack: [{reads, writes} | stack]} = t) do
+    {:ok,
+     %{
+       t
+       | reads: Map.merge(t.reads, reads),
+         writes: Map.merge(t.writes, writes),
+         stack: stack
+     }}
+  end
+
+  defp prepare_transaction_for_commit(nil, _, %{} = writes),
+    do: {nil, writes}
+
+  defp prepare_transaction_for_commit(read_version, %{} = reads, %{} = writes)
+       when map_size(reads) > 0 do
+    {{read_version, reads |> Map.keys()}, writes}
+  end
+end

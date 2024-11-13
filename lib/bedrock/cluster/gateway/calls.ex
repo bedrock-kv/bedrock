@@ -3,7 +3,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.TransactionBuilder
   alias Bedrock.ControlPlane.Director
 
-  @spec begin_transaction(State.t(), opts :: keyword()) :: {:ok, TransactionBuilder.t()}
+  @spec begin_transaction(State.t(), opts :: keyword()) :: {:ok, pid()}
   def begin_transaction(t, _opts \\ []) do
     with {:ok, transaction_system_layout} <-
            Director.fetch_transaction_system_layout(t.director, 100),

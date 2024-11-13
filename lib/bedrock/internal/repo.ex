@@ -54,24 +54,24 @@ defmodule Bedrock.Internal.Repo do
   def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | :error
-  def fetch(t, key) do
-    case get(t, key) do
-      nil -> :error
-      value -> {:ok, value}
-    end
-  end
+  def fetch(t, key),
+    do: call(t, {:fetch, key}, :infinity)
 
   @spec fetch!(transaction(), key()) :: value()
   def fetch!(t, key) do
-    case get(t, key) do
-      nil -> raise "Key not found: #{inspect(key)}"
-      value -> value
+    case fetch(t, key) do
+      :error -> raise "Key not found: #{inspect(key)}"
+      {:ok, value} -> value
     end
   end
 
   @spec get(transaction(), key()) :: nil | value()
-  def get(t, key),
-    do: call(t, {:get, key}, :infinity)
+  def get(t, key) do
+    case fetch(t, key) do
+      :error -> nil
+      {:ok, value} -> value
+    end
+  end
 
   @spec put(transaction(), key(), value()) :: transaction()
   def put(t, key, value) do
@@ -79,7 +79,7 @@ defmodule Bedrock.Internal.Repo do
     t
   end
 
-  @spec commit(transaction(), opts :: [timeout_in_ms :: pos_integer()]) ::
+  @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
           :ok | {:error, :aborted}
   def commit(t, opts \\ []),
     do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())

@@ -4,9 +4,9 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
   import Bedrock.DataPlane.Resolver.ConflictResolution,
     only: [
-      commit: 3,
+      resolve: 3,
       conflict?: 3,
-      try_commit_transaction: 3
+      try_to_resolve_transaction: 3
     ]
 
   # Generate a random alphanumeric string of length 5 or less.
@@ -58,10 +58,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         reads_and_writes
         |> Enum.with_index()
         |> Enum.map(fn {{reads, writes}, index} ->
-          {rem(write_version, index + 1) - 1, reads, writes}
+          {{rem(write_version, index + 1) - 1, reads}, writes}
         end)
 
-      {_final_tree, failed_indexes} = commit(initial_tree, transactions, write_version)
+      {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
 
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
@@ -70,7 +70,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       Enum.each(failed_indexes, fn index ->
         transactions_up_to_failure = Enum.take(transactions, index)
 
-        {tree, failed_indexes} = commit(initial_tree, transactions_up_to_failure, write_version)
+        {tree, failed_indexes} = resolve(initial_tree, transactions_up_to_failure, write_version)
 
         # The first transaction has an empty tree and should never conflict
         # with anything.
@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         assert conflict?(tree, failed_transaction, write_version)
 
         # If we try the transaction that failed, it should abort.
-        assert :abort = try_commit_transaction(tree, failed_transaction, index)
+        assert :abort = try_to_resolve_transaction(tree, failed_transaction, index)
       end)
     end
   end

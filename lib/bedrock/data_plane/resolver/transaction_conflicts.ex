@@ -36,7 +36,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
       |> Enum.with_index()
       |> Enum.reduce({tree, []}, fn {tx, index}, {tree, failed} ->
         tree
-        |> try_resolve_transaction(tx, write_version)
+        |> try_to_resolve_transaction(tx, write_version)
         |> case do
           {:ok, tree} -> {tree, failed}
           :abort -> {tree, [index | failed]}
@@ -46,9 +46,9 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     {tree, failed_indexes}
   end
 
-  @spec try_resolve_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) ::
+  @spec try_to_resolve_transaction(Tree.t(), Resolver.transaction(), Bedrock.version()) ::
           {:ok, Tree.t()} | :abort
-  def try_resolve_transaction(tree, transaction, write_version) do
+  def try_to_resolve_transaction(tree, transaction, write_version) do
     if tree |> conflict?(transaction, write_version) do
       :abort
     else

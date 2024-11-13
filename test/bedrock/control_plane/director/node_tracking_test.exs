@@ -51,19 +51,19 @@ defmodule Bedrock.ControlPlane.Director.NodeTrackingTest do
   test "update_last_seen_at/3 updates the last seen time of a node", %{table: table} do
     last_seen_at = :os.system_time(:millisecond)
     NodeTracking.update_last_seen_at(table, :node1, last_seen_at)
-    [{_, updated_last_seen_at, _, _, _}] = :ets.lookup(table, :node1)
+    [{_, updated_last_seen_at, _, _, _, _}] = :ets.lookup(table, :node1)
     assert updated_last_seen_at == last_seen_at
   end
 
   test "update_capabilities/3 updates the advertised services of a node", %{table: table} do
     NodeTracking.update_capabilities(table, :node1, [:service1, :service2])
-    [{_, _, updated_services, _, _}] = :ets.lookup(table, :node1)
+    [{_, _, updated_services, _, _, _}] = :ets.lookup(table, :node1)
     assert updated_services == [:service1, :service2]
   end
 
   test "down/2 marks a node as down", %{table: table} do
     NodeTracking.down(table, :node1)
-    [{_, _, _, status, _}] = :ets.lookup(table, :node1)
+    [{_, _, _, status, _, _}] = :ets.lookup(table, :node1)
     assert status == :down
   end
 end

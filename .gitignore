@@ -30,3 +30,6 @@ bedrock-*.tar
 
 # MacOS cruft
 .DS_Store
+
+# Editor cruft
+.vscode/

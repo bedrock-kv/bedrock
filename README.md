@@ -13,9 +13,10 @@ end
 
 ## About
 
-Bedrock is an embedded, distributed key-value store with ACID guarantees, strict
-serialization, with a simple API. It is designed to store your data without
-cluttering up your code with storage concerns.
+Bedrock is an embedded, distributed key-value store with guarantees beyond ACID.
+It features repeatable reads, strict serialization and a simple API. It is
+designed to store your data without cluttering up _your_ code with storage
+concerns.
 
 \# In your config.exs file
 

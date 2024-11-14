@@ -6,35 +6,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
   ones. We use the provided `version_vector` and `pid_for_id` function to find
   the pid for each log. Logs are processed in parallel to decrease the recovery
   time.
-
-  ## Parameters
-
-    - `old_log_ids`: A list of old log IDs of type `Log.id()`, or `[]` if
-      not applicable.
-    - `new_log_ids`: A list of new log IDs of type `Log.id()` where entries will
-      be copied to.
-    - `version_vector`: A version vector used for handling log version control
-      and coherence.
-    - `pid_for_id`: A function that retrieves the process ID (`pid`) of a given
-      log ID.
-
-  ## Returns
-
-  - `:ok` if all logs were copied successfully.
-  - `{:error, {:failed_to_copy_some_logs, failures}}` if there was an error with
-    one or more logs, where `failures` is a list of tuples indicating each error
-    reason and the IDs involved.
-
-  ## Possible Errors
-
-  - `{:error, :failed_to_copy_some_logs}`: Occurs if one or more logs fail to
-    copy, providing details within the failures list.
   """
   @spec replay_old_logs_into_new_logs(
           old_log_ids :: [Log.id()],
           new_log_ids :: [Log.id()],
           version_vector :: Bedrock.version_vector(),
-          pid_for_id :: (Log.id() -> pid())
+          pid_for_id :: (Log.id() -> pid() | :none)
         ) ::
           :ok
           | {:error,
@@ -81,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
   end
 
   def pair_with_old_log_ids(new_log_ids, []),
-    do: new_log_ids |> Stream.zip([nil] |> Stream.cycle())
+    do: new_log_ids |> Stream.zip([:none] |> Stream.cycle())
 
   def pair_with_old_log_ids(new_log_ids, old_log_ids),
     do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())

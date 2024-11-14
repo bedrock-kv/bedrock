@@ -17,21 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
   smallest difference, as well as the version vector. We calculate the version
   vector by taking the oldest version from the oldest log and the newest version
   from the newest log in the set.
-
-  ## Parameters
-  - `logs`: A list of `LogDescriptor` structs representing the logs to consider.
-  - `recovery_info_by_id`: A map where each key is a `Log.id()` and the value is
-    `Log.recovery_info()`.
-  - `quorum`: The minimum number of log sources needed to satisfy the quorum.
-
-  ## Returns
-  - `{:ok, [Log.id()], Bedrock.version_vector()}` on success with log_ids and
-    version vector.
-  - `{:error, :unable_to_meet_log_quorum}` if quorum can't be met.
-
-  This function is critical for ensuring that a cluster's logs can be recovered
-  to a consistent and correct state after failures have occurred, guided by the
-  defined quorum.
   """
   @spec determine_old_logs_to_copy(
           old_logs :: %{Log.id() => LogDescriptor.t()},

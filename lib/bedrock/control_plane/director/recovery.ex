@@ -377,7 +377,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       fn log_id ->
         case Map.get(t.available_services, log_id) do
           %{status: {:up, pid}} -> pid
-          _ -> nil
+          _ -> :none
         end
       end
     )

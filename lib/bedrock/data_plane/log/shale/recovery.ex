@@ -6,7 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           State.t(),
           Log.ref(),
           first_version :: Bedrock.version(),
-          last_version :: Bedrock.version_vector()
+          last_version :: Bedrock.version()
         ) ::
           {:ok, State.t()} | {:error, reason :: term()}
   def recover_from(t, _, _, _) when t.mode != :locked,
@@ -30,26 +30,26 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   @spec pull_transactions(
           log :: :ets.table(),
-          log_to_pull :: Log.ref(),
+          log_ref :: Log.ref(),
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
-          :ok | Log.pull_errors() | {:error, {:source_log_unavailable, log_to_pull :: Log.ref()}}
+          :ok | Log.pull_errors() | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
   def pull_transactions(_, _, first_version, last_version) when first_version == last_version,
     do: :ok
 
-  def pull_transactions(log, log_to_pull, first_version, last_version) do
-    case Log.pull(log_to_pull, first_version, recovery: true, last_version: last_version) do
+  def pull_transactions(log, log_ref, first_version, last_version) do
+    case Log.pull(log_ref, first_version, recovery: true, last_version: last_version) do
       {:ok, []} ->
         :ok
 
       {:ok, transactions} ->
         true = :ets.insert_new(log, transactions)
         next_first_transaction = transactions |> List.last() |> elem(0)
-        pull_transactions(log, log_to_pull, next_first_transaction, last_version)
+        pull_transactions(log, log_ref, next_first_transaction, last_version)
 
       {:error, :unavailable} ->
-        {:error, {:source_log_unavailable, log_to_pull}}
+        {:error, {:source_log_unavailable, log_ref}}
 
       {:error, reason} ->
         {:error, reason}

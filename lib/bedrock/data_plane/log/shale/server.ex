@@ -66,7 +66,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @impl true
   def handle_continue(:initialization, t) do
-    trace_log_started(t.cluster, t.id, t.otp_name)
+    trace_metadata(
+      cluster: t.cluster,
+      id: t.id,
+      otp_name: t.otp_name
+    )
+
+    trace_started()
 
     t |> noreply()
   end
@@ -107,10 +113,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
-    trace_log_lock_for_recovery(t.cluster, t.id, epoch)
+    trace_lock_for_recovery(epoch)
 
-    with :ok <- check_mode_for_locking(t, director),
-         {:ok, t} <- lock_for_recovery(t, epoch, director),
+    with {:ok, t} <- lock_for_recovery(t, epoch, director),
          {:ok, info} <- info(t, Log.recovery_info()) do
       t |> reply({:ok, self(), info})
     else
@@ -119,7 +124,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   def handle_call({:recover_from, source_log, first_version, last_version}, {_director, _}, t) do
-    trace_log_recover_from(t.cluster, t.id, source_log, first_version, last_version)
+    trace_recover_from(source_log, first_version, last_version)
 
     case recover_from(t, source_log, first_version, last_version) do
       {:ok, t} -> t |> reply(:ok)
@@ -128,7 +133,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   def handle_call({:push, transaction, expected_version}, from, t) do
-    trace_log_push_transaction(t.cluster, t.id, transaction, expected_version)
+    trace_push_transaction(transaction, expected_version)
 
     case push(t, expected_version, {transaction, ack_fn(from)}) do
       {:waiting, t} ->
@@ -143,7 +148,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   def handle_call({:pull, from_version, opts}, from, t) do
-    trace_log_pull_transactions(t.cluster, t.id, from_version, opts)
+    trace_pull_transactions(from_version, opts)
 
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
@@ -169,15 +174,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
       {:error, _reason} = error ->
         t |> reply(error)
-    end
-  end
-
-  def check_mode_for_locking(t, director) do
-    case {t.mode, t.director} do
-      {:locked, ^director} -> :ok
-      {:locked, nil} -> :ok
-      {:locked, _} -> {:error, :locked}
-      _ -> :ok
     end
   end
 

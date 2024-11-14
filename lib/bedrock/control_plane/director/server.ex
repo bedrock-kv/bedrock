@@ -78,7 +78,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
     t
     |> ping_all_coordinators()
     |> determine_dead_nodes(now())
-    |> store_changes_to_config()
     |> noreply()
   end
 

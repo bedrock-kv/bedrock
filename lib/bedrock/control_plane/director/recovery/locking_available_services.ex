@@ -68,10 +68,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
           |> Enum.group_by(&Map.get(elem(&1, 1), :kind))
 
         new_log_recovery_info_by_id =
-          Map.new(Map.get(grouped_recovery_info, :log, []))
+          grouped_recovery_info |> Map.get(:log, []) |> Map.new()
 
         new_storage_recovery_info_by_id =
-          Map.new(Map.get(grouped_recovery_info, :storage, []))
+          grouped_recovery_info |> Map.get(:storage, []) |> Map.new()
 
         {:ok, locked_ids, updated_services, new_log_recovery_info_by_id,
          new_storage_recovery_info_by_id}

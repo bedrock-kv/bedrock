@@ -14,13 +14,13 @@ end
 ## About
 
 Bedrock is an embedded, distributed key-value store with guarantees beyond ACID.
-It features repeatable reads, strict serialization and a simple API. It is
-designed to store your data without cluttering up _your_ code with storage
-concerns.
-
-\# In your config.exs file
+It features consistent reads, strict serialization, transactions across the
+key-space and a simple API. It is designed to store your data without cluttering
+up _your_ code with storage concerns.
 
 ```elixir
+# In your config.exs file
+
 config :my_app,
   bedrock_clusters: [Sample.Cluster]
 
@@ -29,9 +29,9 @@ config :my_app, Sample.Cluster,
   capabilities: [:coordination, :log, :storage]
 ```
 
-\# In your application code
-
 ```elixir
+# In your application code
+
 defmodule Sample.Cluster do
   use Bedrock.Cluster,
     otp_app: :my_app,
@@ -41,7 +41,7 @@ end
 defmodule Sample.App do
   import Sample.Cluster.Repo
 
-  def move_money(amount, account1, account2) do
+  def move_money(amount, account1, account2) when amount > 0 do
     Repo.transaction(fn repo ->
       with :ok <- check_sufficient_account_balance_for_transfer(repo, account1, amount),
            {:ok, new_balance1} <- adjust_balance(repo, account1, -amount),
@@ -89,4 +89,3 @@ defmodule Sample.App do
   end
 end
 ```
-

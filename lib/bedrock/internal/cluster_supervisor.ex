@@ -4,11 +4,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
 
-  alias Bedrock.Internal.Tracing.RaftTelemetry
   alias Bedrock.Cluster.Gateway.Tracing, as: GatewayTracing
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
+  alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
+  alias Bedrock.Internal.Tracing.RaftTelemetry
 
   require Logger
 
@@ -88,6 +89,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Keyword.get(:trace, [])
     |> Enum.each(fn
       :coordinator -> :ok = CoordinatorTracing.start()
+      :commit_proxy -> :ok = CommitProxyTracing.start()
       :log -> :ok = LogTracing.start()
       :gateway -> :ok = GatewayTracing.start()
       :raft -> :ok = RaftTelemetry.start()

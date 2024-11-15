@@ -54,6 +54,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
   def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
     trace_started(cluster)
 
+    storage_table = :ets.new(:storage, [:ordered_set, :protected, read_concurrency: true])
+
     %State{
       node: Node.self(),
       cluster: cluster,
@@ -61,7 +63,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
       path_to_descriptor: path_to_descriptor,
       coordinator: :unavailable,
       director: :unavailable,
-      tranasction_system_layout: nil,
+      transaction_system_layout: nil,
+      storage_table: storage_table,
       mode: mode,
       capabilities: capabilities
     }
@@ -93,6 +96,12 @@ defmodule Bedrock.Cluster.Gateway.Server do
     |> then(&reply(t, &1))
   end
 
+  def handle_call(:next_read_version, _, t) do
+    t
+    |> next_read_version()
+    |> then(&reply(t, &1))
+  end
+
   def handle_call({:renew_read_version_lease, read_version}, _, t) do
     t
     |> renew_read_version_lease(read_version)
@@ -108,6 +117,12 @@ defmodule Bedrock.Cluster.Gateway.Server do
   def handle_call(:fetch_director, _, t) do
     t
     |> fetch_director()
+    |> then(&reply(t, &1))
+  end
+
+  def handle_call(:fetch_commit_proxy, _, t) do
+    t
+    |> fetch_commit_proxy()
     |> then(&reply(t, &1))
   end
 
@@ -132,7 +147,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
   end
 
   def handle_info({:DOWN, _ref, :process, name, _reason}, t) do
-    if name == t.coordinator || elem(name, 0) == t.cluster.otp_name(:coordinator) do
+    if name == t.coordinator ||
+         (is_tuple(name) and elem(name, 0) == t.cluster.otp_name(:coordinator)) do
       t
       |> change_coordinator(:unavailable)
       |> noreply(continue: :find_a_live_coordinator)
@@ -143,9 +159,9 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   @doc false
   @impl true
-  def handle_cast({:pong, {_epoch, director}}, t) do
+  def handle_cast({:pong, {epoch, director}}, t) do
     t
-    |> pong_received_from_director(director)
+    |> pong_received_from_director({director, epoch})
     |> noreply()
   end
 

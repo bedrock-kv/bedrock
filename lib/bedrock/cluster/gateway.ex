@@ -22,6 +22,17 @@ defmodule Bedrock.Cluster.Gateway do
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
+  @spec next_read_version(
+          ref(),
+          opts :: [
+            timeout_in_ms: Bedrock.timeout_in_ms()
+          ]
+        ) ::
+          {:ok, Bedrock.version(), new_lease_deadline_in_ms :: Bedrock.interval_in_ms()}
+          | {:error, term()}
+  def next_read_version(gateway, opts \\ []),
+    do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
+
   @doc """
   Renew the lease for a transaction based on the read version.
   """
@@ -51,6 +62,14 @@ defmodule Bedrock.Cluster.Gateway do
           {:ok, Director.ref()} | {:error, :unavailable}
   def fetch_director(gateway, timeout_in_ms \\ 5_000),
     do: gateway |> call(:fetch_director, timeout_in_ms)
+
+  @doc """
+  Get one of the current commit proxies
+  """
+  @spec fetch_commit_proxy(gateway :: ref(), Bedrock.timeout_in_ms()) ::
+          {:ok, Director.ref()} | {:error, :unavailable}
+  def fetch_commit_proxy(gateway, timeout_in_ms \\ 5_000),
+    do: gateway |> call(:fetch_commit_proxy, timeout_in_ms)
 
   @doc """
   Retrieve the list of nodes currently running the coordinator process for the

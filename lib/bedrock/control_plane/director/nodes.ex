@@ -1,13 +1,10 @@
 defmodule Bedrock.ControlPlane.Director.Nodes do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.Service.Worker
 
   use Bedrock.Internal.TimerManagement
 
@@ -27,8 +24,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
       |> update_capabilities(node, capabilities)
 
     if NodeTracking.authorized?(t.node_tracking, node) do
-      running_services
-      |> Enum.reduce(t, &add_running_service(&2, node, &1))
+      t
+      |> add_running_services(node, running_services)
       |> then(&{:ok, &1})
     else
       {:error, :nodes_must_be_added_by_an_administrator}
@@ -56,9 +53,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
   @spec update_last_seen_at(State.t(), node(), at :: DateTime.t()) :: State.t()
   def update_last_seen_at(t, node, at) do
-    node_up = not NodeTracking.alive?(t.node_tracking, node)
     NodeTracking.update_last_seen_at(t.node_tracking, node, at |> to_milliseconds())
-    if node_up, do: t |> node_up(node), else: t
+    t
   end
 
   @spec update_minimum_read_version(
@@ -103,64 +99,57 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     t
   end
 
-  @spec add_running_service(State.t(), node(), info :: [Director.running_service_info()]) ::
+  @spec add_running_services(
+          State.t(),
+          node(),
+          service_infos :: [Director.running_service_info()]
+        ) ::
           State.t()
-  def add_running_service(t, node, info) do
-    update_services(t, fn services ->
+  def add_running_services(t, node, service_infos) do
+    t
+    |> Map.update!(:services, fn services ->
+      service_infos
+      |> Enum.reduce(services, fn service_info, services ->
+        services
+        |> Map.put(
+          service_info[:id],
+          %{
+            kind: service_info[:kind],
+            last_seen: {service_info[:otp_name], node},
+            status: {:up, service_info[:pid]}
+          }
+        )
+      end)
+    end)
+  end
+
+  @spec add_running_service(State.t(), node(), service_info :: Director.running_service_info()) ::
+          State.t()
+  def add_running_service(t, node, service_info) do
+    t
+    |> Map.update!(:services, fn services ->
       services
       |> Map.put(
-        info[:id],
+        service_info[:id],
         %{
-          kind: info[:kind],
-          last_seen: {info[:otp_name], node},
-          status: {:up, info[:pid]}
+          kind: service_info[:kind],
+          last_seen: {service_info[:otp_name], node},
+          status: {:up, service_info[:pid]}
         }
       )
     end)
   end
 
-  @spec node_up(State.t(), node()) :: State.t()
-  def node_up(t, node) do
-    update_services(t, fn services ->
-      services
-      |> Enum.map(fn
-        {id, %{last_seen: {service_name, ^node}} = service} = id_and_service ->
-          case :rpc.call(node, Process, :whereis, [service_name]) do
-            nil -> id_and_service
-            pid when is_pid(pid) -> {id, %{service | status: {:up, pid}}}
-          end
-
-        id_and_service ->
-          id_and_service
-      end)
-      |> Map.new()
-    end)
-  end
-
   @spec node_down(State.t(), node()) :: State.t()
   def node_down(t, node) do
-    update_services(t, fn services ->
+    t
+    |> Map.update!(:services, fn services ->
       services
       |> Enum.map(fn
         {id, %{last_seen: {_, ^node}} = service} -> {id, %{service | status: :down}}
-        service -> service
+        id_and_service -> id_and_service
       end)
       |> Map.new()
-    end)
-  end
-
-  @spec update_services(State.t(), (%{Worker.id() => ServiceDescriptor.t()} ->
-                                      %{Worker.id() => ServiceDescriptor.t()})) ::
-          State.t()
-  defp update_services(t, fun) do
-    t
-    |> Map.update!(:config, fn config ->
-      config
-      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
-        transaction_system_layout
-        |> Map.put(:id, TransactionSystemLayout.random_id())
-        |> Map.update!(:services, fun)
-      end)
     end)
   end
 end

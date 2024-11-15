@@ -1,6 +1,5 @@
 defmodule Bedrock.Cluster.TransactionBuilder do
   alias Bedrock.Cluster.Gateway
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Cluster.TransactionBuilder.State
 
   import __MODULE__.Committing, only: [do_commit: 1]
@@ -9,14 +8,12 @@ defmodule Bedrock.Cluster.TransactionBuilder do
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
 
   @doc false
-  @spec start_link(
-          gateway: Gateway.ref(),
-          transaction_system_layout: TransactionSystemLayout.t()
-        ) :: {:ok, pid()} | {:error, term()}
+  @spec start_link(gateway: Gateway.ref(), storage_table: :ets.table()) ::
+          {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
-    transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
-    GenServer.start_link(__MODULE__, {gateway, transaction_system_layout})
+    storage_table = Keyword.fetch!(opts, :storage_table)
+    GenServer.start_link(__MODULE__, {gateway, storage_table})
   end
 
   use GenServer
@@ -27,11 +24,11 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, transaction_system_layout}) do
+  def handle_continue(:initialization, {gateway, storage_table}) do
     %State{
       state: :valid,
       gateway: gateway,
-      transaction_system_layout: transaction_system_layout
+      storage_table: storage_table
     }
     |> noreply()
   end

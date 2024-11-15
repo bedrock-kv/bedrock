@@ -60,6 +60,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           started_at: DateTime.t(),
           last_transaction_system_layout: TransactionSystemLayout.t(),
           available_services: %{Worker.id() => ServiceDescriptor.t()},
+          required_services: %{Worker.id() => ServiceDescriptor.t()},
           locked_service_ids: MapSet.t(Worker.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
           storage_recovery_info_by_id: storage_recovery_info_by_id(),

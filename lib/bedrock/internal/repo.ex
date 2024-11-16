@@ -11,6 +11,7 @@ defmodule Bedrock.Internal.Repo do
           cluster :: module(),
           (transaction() -> result),
           opts :: [
+            key_codec: module(),
             retry_count: pos_integer(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]

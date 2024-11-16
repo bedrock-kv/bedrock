@@ -8,12 +8,19 @@ defmodule Bedrock.Cluster.TransactionBuilder do
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
 
   @doc false
-  @spec start_link(gateway: Gateway.ref(), storage_table: :ets.table()) ::
+  @spec start_link(
+          opts :: [
+            gateway: Gateway.ref(),
+            storage_table: :ets.table(),
+            key_codec: module()
+          ]
+        ) ::
           {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     storage_table = Keyword.fetch!(opts, :storage_table)
-    GenServer.start_link(__MODULE__, {gateway, storage_table})
+    key_codec = Keyword.fetch!(opts, :key_codec)
+    GenServer.start_link(__MODULE__, {gateway, storage_table, key_codec})
   end
 
   use GenServer
@@ -24,11 +31,12 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, storage_table}) do
+  def handle_continue(:initialization, {gateway, storage_table, key_codec}) do
     %State{
       state: :valid,
       gateway: gateway,
-      storage_table: storage_table
+      storage_table: storage_table,
+      key_codec: key_codec
     }
     |> noreply()
   end

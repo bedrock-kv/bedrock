@@ -1,6 +1,6 @@
-defmodule Bedrock.Cluster.TransactionBuilder do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   alias Bedrock.Cluster.Gateway
-  alias Bedrock.Cluster.TransactionBuilder.State
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   import __MODULE__.Committing, only: [do_commit: 1]
   import __MODULE__.Fetching, only: [do_fetch: 2]
@@ -12,7 +12,8 @@ defmodule Bedrock.Cluster.TransactionBuilder do
           opts :: [
             gateway: Gateway.ref(),
             storage_table: :ets.table(),
-            key_codec: module()
+            key_codec: module(),
+            value_codec: module()
           ]
         ) ::
           {:ok, pid()} | {:error, term()}
@@ -20,7 +21,8 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     gateway = Keyword.fetch!(opts, :gateway)
     storage_table = Keyword.fetch!(opts, :storage_table)
     key_codec = Keyword.fetch!(opts, :key_codec)
-    GenServer.start_link(__MODULE__, {gateway, storage_table, key_codec})
+    value_codec = Keyword.fetch!(opts, :value_codec)
+    GenServer.start_link(__MODULE__, {gateway, storage_table, key_codec, value_codec})
   end
 
   use GenServer
@@ -31,12 +33,13 @@ defmodule Bedrock.Cluster.TransactionBuilder do
     do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, storage_table, key_codec}) do
+  def handle_continue(:initialization, {gateway, storage_table, key_codec, value_codec}) do
     %State{
       state: :valid,
       gateway: gateway,
       storage_table: storage_table,
-      key_codec: key_codec
+      key_codec: key_codec,
+      value_codec: value_codec
     }
     |> noreply()
   end
@@ -77,8 +80,12 @@ defmodule Bedrock.Cluster.TransactionBuilder do
   end
 
   @impl true
-  def handle_cast({:put, key, value}, t),
-    do: t |> do_put(key, value) |> noreply()
+  def handle_cast({:put, key, value}, t) do
+    case do_put(t, key, value) do
+      {:ok, t} -> t |> noreply()
+      :key_error -> raise KeyError, "key must be a binary"
+    end
+  end
 
   def handle_cast(:rollback, t) do
     case do_rollback(t) do

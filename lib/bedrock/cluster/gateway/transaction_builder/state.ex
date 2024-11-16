@@ -1,9 +1,10 @@
-defmodule Bedrock.Cluster.TransactionBuilder.State do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back | :expired,
           gateway: pid(),
           storage_table: :ets.table(),
           key_codec: module(),
+          value_codec: module(),
           #
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
@@ -19,6 +20,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
             gateway: nil,
             storage_table: nil,
             key_codec: nil,
+            value_codec: nil,
             #
             read_version: nil,
             read_version_lease_expiration: nil,

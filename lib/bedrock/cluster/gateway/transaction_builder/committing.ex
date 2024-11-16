@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.TransactionBuilder.Committing do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
   alias Bedrock.Cluster.Gateway
   alias Bedrock.DataPlane.CommitProxy
 

@@ -1,5 +1,5 @@
-defmodule Bedrock.Cluster.TransactionBuilder.ReadVersions do
-  alias Bedrock.Cluster.TransactionBuilder.State
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway
 
   @spec next_read_version(State.t()) ::

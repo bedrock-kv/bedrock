@@ -239,19 +239,6 @@ defmodule Bedrock.Cluster do
       @doc false
       def child_spec(opts),
         do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
-
-      defmodule Repo do
-        def transaction(fun, opts \\ []),
-          do: Bedrock.Internal.Repo.transaction(unquote(__CALLER__.module), fun, opts)
-
-        defdelegate nested_transaction(t), to: Bedrock.Internal.Repo
-        defdelegate fetch(t, key), to: Bedrock.Internal.Repo
-        defdelegate fetch!(t, key), to: Bedrock.Internal.Repo
-        defdelegate get(t, key), to: Bedrock.Internal.Repo
-        defdelegate put(t, key, value), to: Bedrock.Internal.Repo
-        defdelegate commit(t, opts \\ []), to: Bedrock.Internal.Repo
-        defdelegate rollback(t), to: Bedrock.Internal.Repo
-      end
     end
   end
 

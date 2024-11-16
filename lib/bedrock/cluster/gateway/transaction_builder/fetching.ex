@@ -1,8 +1,8 @@
-defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.Cluster.TransactionBuilder.State
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
-  import Bedrock.Cluster.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
+  import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 
   @doc false
   @spec do_fetch(State.t(), key :: binary()) :: {State.t(), term()}
@@ -12,7 +12,8 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
     with :error <- Map.fetch(t.writes, encoded_key),
          :error <- Map.fetch(t.reads, encoded_key),
          :error <- fetch_from_stack(encoded_key, t.stack),
-         {:ok, t, value} <- fetch_from_storage(t, encoded_key) do
+         {:ok, t, encoded_value} <- fetch_from_storage(t, encoded_key),
+         {:ok, value} <- t.value_codec.decode_value(encoded_value) do
       {%{t | reads: Map.put(t.reads, encoded_key, value)}, {:ok, value}}
     else
       {:ok, _value} = ok -> {t, ok}

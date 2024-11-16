@@ -1,6 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Cluster.TransactionBuilder
+  alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.DataPlane.Sequencer
 
   @spec begin_transaction(State.t(), opts :: [key_codec: module()]) :: {:ok, pid()}
@@ -8,7 +8,8 @@ defmodule Bedrock.Cluster.Gateway.Calls do
     TransactionBuilder.start_link(
       gateway: self(),
       storage_table: t.storage_table,
-      key_codec: Keyword.get(opts, :key_codec, Bedrock.KeyCodec.DefaultKeyCodec)
+      key_codec: Keyword.fetch!(opts, :key_codec),
+      value_codec: Keyword.fetch!(opts, :value_codec)
     )
   end
 

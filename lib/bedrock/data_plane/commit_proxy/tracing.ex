@@ -61,7 +61,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   defp error(message) do
     metadata = Logger.metadata()
 
-    Logger.error("Bedrock [#{metadata[:cluster].name()}}]: #{message}",
+    Logger.error("Bedrock [#{metadata[:cluster].name()}]: #{message}",
       ansi_color: :red
     )
   end

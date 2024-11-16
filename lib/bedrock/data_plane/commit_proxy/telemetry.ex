@@ -10,7 +10,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   @spec trace_commit_proxy_batch_started(
           commit_version :: Bedrock.version(),
           n_transactions :: non_neg_integer(),
-          started_at :: Bedrock.timestamp()
+          started_at :: Bedrock.timestamp_in_ms()
         ) :: :ok
   def trace_commit_proxy_batch_started(commit_version, n_transactions, started_at) do
     Telemetry.execute(

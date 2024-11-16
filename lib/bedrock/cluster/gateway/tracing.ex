@@ -43,8 +43,8 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
   def trace(:searching_for_director, _, _),
     do: info("Searching for a director")
 
-  def trace(:found_director, _, %{director: director}),
-    do: info("Found director: #{inspect(director)}")
+  def trace(:found_director, _, %{director: director, epoch: epoch}),
+    do: info("Found director: #{inspect(director)} for epoch #{inspect(epoch)}")
 
   def trace(:lost_director, _, _),
     do: info("Lost director")

@@ -1,9 +1,5 @@
 defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
-  alias Bedrock.Cluster.Gateway
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.Service.Worker
   alias Bedrock.Cluster.TransactionBuilder.State
 
   import Bedrock.Cluster.TransactionBuilder.KeyEncoding
@@ -39,9 +35,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
 
   @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | :error
   def fetch_from_storage(%{read_version: nil} = t, key) do
-    with {:ok, read_version} <- next_read_version(t),
-         {:ok, read_version_lease_expiration_in_ms} <-
-           Gateway.renew_read_version_lease(t.gateway, read_version) do
+    with {:ok, read_version, read_version_lease_expiration_in_ms} <- next_read_version(t) do
       read_version_lease_expiration =
         :erlang.monotonic_time(:millisecond) + read_version_lease_expiration_in_ms
 
@@ -66,23 +60,26 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
           error -> error
         end
 
-      storage_team when is_map(storage_team) ->
+      storage_team when is_list(storage_team) ->
         fetch_from_storage_team(t, storage_team, key)
     end
   end
 
-  @spec fetch_from_storage_team(State.t(), StorageTeamDescriptor.t(), key :: binary()) ::
+  @spec fetch_from_storage_team(
+          State.t(),
+          storage_team :: [{Bedrock.key_range(), pid()}],
+          key :: binary()
+        ) ::
           {:ok, State.t(), binary()} | :error
   def fetch_from_storage_team(t, storage_team, key) do
-    t.transaction_system_layout.services
-    |> resolve_storage_ids_to_pids(storage_team.storage_ids)
+    storage_team
     |> horse_race_storage_servers_for_key(t.read_version, key, t.fetch_timeout_in_ms)
     |> case do
-      {:ok, storage_server, value} ->
+      {:ok, key_range, storage_server, value} ->
         {:ok,
          %{
            t
-           | storage_servers: Map.put(t.storage_servers, storage_team.key_range, storage_server)
+           | storage_servers: Map.put(t.storage_servers, key_range, storage_server)
          }, value}
 
       error ->
@@ -91,10 +88,10 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
   end
 
   @spec determine_storage_server_or_team_for_key(State.t(), key :: binary()) ::
-          nil | pid() | StorageTeamDescriptor.t()
+          nil | pid() | {Bedrock.key_range(), [pid()]}
   def determine_storage_server_or_team_for_key(t, key) do
     selected_storage_server_for_key(t.storage_servers, key) ||
-      storage_team_for_key(t.transaction_system_layout.storage_teams, key)
+      storage_team_for_key(t.storage_table, key)
   end
 
   @spec selected_storage_server_for_key(%{Bedrock.key_range() => pid()}, key :: binary()) ::
@@ -110,29 +107,18 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
     end)
   end
 
-  @spec storage_team_for_key([StorageTeamDescriptor.t()], key :: binary()) ::
-          StorageTeamDescriptor.t() | nil
-  def storage_team_for_key(storage_teams, key) do
-    Enum.find_value(storage_teams, fn
-      %{key_range: {min_key, max_key_exclusive}} = storage_team
-      when min_key <= key and key < max_key_exclusive ->
-        storage_team
-
-      _ ->
-        nil
-    end)
-  end
-
-  @spec resolve_storage_ids_to_pids(%{Worker.id() => ServiceDescriptor.t()}, [Storage.id()]) ::
-          [pid()]
-  def resolve_storage_ids_to_pids(services, storage_ids) do
-    services
-    |> Map.take(storage_ids)
-    |> Enum.map(fn
-      {_storage_id, %{status: {:up, pid}}} -> pid
-      _ -> nil
-    end)
-    |> Enum.reject(&is_nil/1)
+  @spec storage_team_for_key(:ets.table(), key :: binary()) :: [{Bedrock.key_range(), pid()}]
+  def storage_team_for_key(storage_table, key) do
+    storage_table
+    |> :ets.select([
+      {
+        {{:"$1", :"$2"}, :"$3", :"$4", :"$5"},
+        [
+          {:and, {:"=<", :"$1", key}, {:<, key, :"$2"}}
+        ],
+        [{{{{:"$1", :"$2"}}, :"$5"}}]
+      }
+    ])
   end
 
   @doc """
@@ -140,22 +126,9 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
   for a given key. Each storage server is queried in parallel, and the first
   successful response is returned. If none of the servers return a value
   within the specified timeout, `:error` is returned.
-
-  ## Parameters
-  - `storage_servers`: A list of PIDs representing the storage servers to
-    query.
-  - `read_version`: The read version used to ensure consistency.
-  - `key`: The binary key for which to fetch the value.
-  - `fetch_timeout_in_ms`: The maximum time in milliseconds to wait for each
-    server's response.
-
-  ## Returns
-  - `{:ok, pid(), binary()}` if a storage server returns a value successfully.
-  - `:error` if no storage server returns a value within the specified
-    timeout.
   """
   @spec horse_race_storage_servers_for_key(
-          storage_servers :: [pid()],
+          storage_servers :: [{Bedrock.key_range(), pid()}],
           read_version :: non_neg_integer(),
           key :: binary(),
           fetch_timeout_in_ms :: pos_integer()
@@ -170,10 +143,10 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
       ) do
     storage_servers
     |> Task.async_stream(
-      fn storage_server ->
+      fn {key_range, storage_server} ->
         Storage.fetch(storage_server, key, read_version, timeout_in_ms: fetch_timeout_in_ms)
         |> case do
-          {:ok, value} -> {storage_server, value}
+          {:ok, value} -> {key_range, storage_server, value}
           error -> error
         end
       end,
@@ -183,7 +156,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
     |> Enum.find_value(fn
       {:ok, {:error, :version_too_old} = error} -> error
       {:ok, {:error, :not_found} = error} -> error
-      {:ok, {storage_server, value}} -> {:ok, storage_server, value}
+      {:ok, {key_range, storage_server, value}} -> {:ok, key_range, storage_server, value}
       _ -> nil
     end) || :error
   end

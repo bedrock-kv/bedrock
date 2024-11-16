@@ -63,7 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
             :desired_commit_proxies
           ]),
         last_transaction_system_layout: config.transaction_system_layout,
-        available_services: t.config.transaction_system_layout.services,
+        available_services: t.services,
         #
         locked_service_ids: MapSet.new(),
         log_recovery_info_by_id: %{},
@@ -97,7 +97,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         recovery_attempt
         |> Map.update(:attempt, 0, &(&1 + 1))
         |> Map.put(:state, :start)
-        |> Map.put(:available_services, t.config.transaction_system_layout.services)
+        |> Map.put(:available_services, t.services)
       end)
     end)
   end
@@ -130,6 +130,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
             |> Map.put(:proxies, completed.proxies)
             |> Map.put(:logs, completed.logs)
             |> Map.put(:storage_teams, completed.storage_teams)
+            |> Map.put(:services, completed.required_services)
           end)
         end)
         |> unlock_storage_after_recovery(completed.durable_version)
@@ -472,8 +473,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {:ok, resolvers} ->
         t
         |> Map.put(:resolvers, resolvers)
-        |> Map.put(:state, :final_checks)
+        |> Map.put(:state, :define_required_services)
     end
+  end
+
+  def recovery(%{state: :define_required_services} = t) do
+    required_service_ids =
+      Enum.concat(
+        t.logs |> Map.keys(),
+        t.storage_teams |> Enum.flat_map(& &1.storage_ids)
+      )
+      |> Enum.uniq()
+
+    required_services =
+      t.available_services
+      |> Map.take(required_service_ids)
+
+    t
+    |> Map.put(:required_services, required_services)
+    |> Map.put(:state, :final_checks)
   end
 
   #

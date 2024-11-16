@@ -17,14 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
   service indicating that a newer epoch exists, it will halt further processing
   and return that as an error. Otherwise, it will collect the process IDs and
   lock/status information and return that in a success tuple.
-
-  ## Parameters
-
-    - `available_services` - A list of service descriptors that describe the
-      services available.
-    - `epoch` - The epoch within which to begin recovery.
-    - `timeout_in_ms` - The maximum time in milliseconds to wait for
-      services to respond to rejoin invitations.
   """
   @spec lock_available_services(
           %{Worker.id() => ServiceDescriptor.t()},

@@ -89,10 +89,10 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     timeout_in_ms = t.cluster.gateway_ping_timeout_in_ms()
 
     t.coordinator
-    |> Coordinator.fetch_director(timeout_in_ms: timeout_in_ms)
+    |> Coordinator.fetch_director_and_epoch(timeout_in_ms: timeout_in_ms)
     |> case do
-      {:ok, director} when is_pid(director) ->
-        trace_found_director(t.cluster, director)
+      {:ok, {director_pid, epoch} = director} ->
+        trace_found_director(t.cluster, director_pid, epoch)
 
         t
         |> change_director(director)

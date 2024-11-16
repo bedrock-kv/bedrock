@@ -2,7 +2,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back | :expired,
           gateway: pid(),
-          transaction_system_layout: map(),
+          storage_table: :ets.table(),
           #
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
@@ -16,7 +16,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
         }
   defstruct state: nil,
             gateway: nil,
-            transaction_system_layout: nil,
+            storage_table: nil,
             #
             read_version: nil,
             read_version_lease_expiration: nil,

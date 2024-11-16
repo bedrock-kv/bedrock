@@ -30,10 +30,11 @@ defmodule Bedrock.Cluster.Gateway.Telemetry do
     })
   end
 
-  def trace_found_director(cluster, director) do
+  def trace_found_director(cluster, director, epoch) do
     Telemetry.execute([:bedrock, :cluster, :gateway, :found_director], %{}, %{
       cluster: cluster,
-      director: director
+      director: director,
+      epoch: epoch
     })
   end
 

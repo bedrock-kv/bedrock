@@ -17,7 +17,7 @@ defmodule Bedrock.DataPlane.Sequencer do
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, Bedrock.version()}
+        ) :: {:ok, Bedrock.version()} | {:error, :unavailable}
   def next_read_version(t, opts \\ []),
     do: t |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
 

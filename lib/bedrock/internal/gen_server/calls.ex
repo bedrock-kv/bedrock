@@ -12,6 +12,8 @@ defmodule Bedrock.Internal.GenServer.Calls do
   def call(server, message, timeout) do
     try do
       GenServer.call(server, message, timeout)
+    rescue
+      _ -> {:error, :unknown}
     catch
       :exit, {:noproc, _} -> {:error, :unavailable}
       :exit, {{:nodedown, _}, _} -> {:error, :unavailable}

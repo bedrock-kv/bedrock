@@ -103,10 +103,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_call(:fetch_config, _from, t), do: t |> reply({:ok, t.config})
 
-  def handle_call(:fetch_director, _from, t) when t.director == :unavailable,
+  def handle_call(:fetch_director_and_epoch, _from, t) when t.director == :unavailable,
     do: t |> reply({:error, :unavailable})
 
-  def handle_call(:fetch_director, _from, t), do: t |> reply({:ok, t.director})
+  def handle_call(:fetch_director_and_epoch, _from, t),
+    do: t |> reply({:ok, {t.director, t.epoch}})
 
   def handle_call({:write_config, config}, from, t) do
     t
@@ -120,7 +121,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_info({:raft, :leadership_changed, {:undecided, _raft_epoch}}, t)
       when :undecided == t.leader_node do
-    t |> noreply()
+    t
+    |> put_leader_node(:undecided)
+    |> stop_any_director_on_this_node!()
+    |> noreply()
   end
 
   def handle_info({:raft, :leadership_changed, {new_leader, _raft_epoch}}, t) do

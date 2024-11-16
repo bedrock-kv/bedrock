@@ -72,27 +72,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
   the initial transaction) of the data. We also use the quorum to determine
   whether or not the team is healthy or degraded.
 
-  ## Parameters
-
-    - `team`: A `StorageTeamDescriptor` struct representing a storage
-      teams involved in the operation.
-
-    - `info_by_id`: A map where each key is a storage identifier and each value
-      is a map (hopefully) containing the `:durable_version` and
-      `:oldest_version`.
-
-    - `quorum`: The minimum number of storage servers that must agree on the
-      version to form a consensus.
-
-  ## Returns
-
-    - `{:ok, durable_version, status}`: The most recent durable version of the
-      storage where consensus was reached and an indicator of the team's status,
-      both based on the `quorum`.
-
-    - `{:error, :insufficient_replication}`: Indicates that there aren't enough
-      storage servers available to meet the quorum requirements for a consensus
-      on the durable version.
   """
   @spec determine_durable_version_and_status_for_storage_team(
           team :: StorageTeamDescriptor.t(),

@@ -1,9 +1,10 @@
 defmodule Bedrock.Cluster.TransactionBuilder.Committing do
+  alias Bedrock.Cluster.Gateway
   alias Bedrock.DataPlane.CommitProxy
 
   def do_commit(%{stack: []} = t) do
     with transaction <- prepare_transaction_for_commit(t.read_version, t.reads, t.writes),
-         commit_proxy <- t.transaction_system_layout.proxies |> Enum.random(),
+         {:ok, commit_proxy} <- Gateway.fetch_commit_proxy(t.gateway),
          {:ok, _version} <- CommitProxy.commit(commit_proxy, transaction) do
       {:ok, %{t | state: :committed}}
     end

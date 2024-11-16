@@ -39,7 +39,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     def put_director(t, new_director),
       do: %{t | director: new_director}
 
-    @spec put_leader_node(t :: State.t(), leader_node :: node()) :: State.t()
+    @spec put_leader_node(t :: State.t(), leader_node :: node() | :undecided) :: State.t()
     def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}
 
     @spec set_raft(t :: State.t(), Raft.t()) :: State.t()

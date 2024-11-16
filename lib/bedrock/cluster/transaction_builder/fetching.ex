@@ -2,13 +2,12 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Cluster.TransactionBuilder.State
 
-  import Bedrock.Cluster.TransactionBuilder.KeyEncoding
   import Bedrock.Cluster.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 
   @doc false
   @spec do_fetch(State.t(), key :: binary()) :: {State.t(), term()}
   def do_fetch(t, key) do
-    {:ok, encoded_key} = encode_key(key)
+    {:ok, encoded_key} = t.key_codec.encode_key(key)
 
     with :error <- Map.fetch(t.writes, encoded_key),
          :error <- Map.fetch(t.reads, encoded_key),

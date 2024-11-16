@@ -3,6 +3,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
           state: :valid | :committed | :rolled_back | :expired,
           gateway: pid(),
           storage_table: :ets.table(),
+          key_codec: module(),
           #
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
@@ -17,6 +18,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
   defstruct state: nil,
             gateway: nil,
             storage_table: nil,
+            key_codec: nil,
             #
             read_version: nil,
             read_version_lease_expiration: nil,

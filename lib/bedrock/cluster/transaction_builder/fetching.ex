@@ -48,58 +48,52 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
 
   @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | :error
   def fetch_from_storage(t, key) do
-    determine_storage_server_or_team_for_key(t, key)
+    fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do
       nil ->
-        raise "No storage server or team found for key: #{inspect(key)}"
+        storage_servers_for_key(t.storage_table, key)
+        |> case do
+          [] ->
+            raise "No storage server or team found for key: #{inspect(key)}"
 
-      storage_server when is_pid(storage_server) ->
+          storage_servers when is_list(storage_servers) ->
+            fetch_from_fastest_storage_server(t, storage_servers, key)
+        end
+
+      storage_server ->
         Storage.fetch(storage_server, key, t.read_version, timeout_in_ms: t.fetch_timeout_in_ms)
         |> case do
           {:ok, value} -> {:ok, t, value}
           error -> error
         end
-
-      storage_team when is_list(storage_team) ->
-        fetch_from_storage_team(t, storage_team, key)
     end
   end
 
-  @spec fetch_from_storage_team(
+  @spec fetch_from_fastest_storage_server(
           State.t(),
-          storage_team :: [{Bedrock.key_range(), pid()}],
+          storage_servers :: [{Bedrock.key_range(), pid()}],
           key :: binary()
         ) ::
           {:ok, State.t(), binary()} | :error
-  def fetch_from_storage_team(t, storage_team, key) do
-    storage_team
+  def fetch_from_fastest_storage_server(t, storage_servers, key) do
+    storage_servers
     |> horse_race_storage_servers_for_key(t.read_version, key, t.fetch_timeout_in_ms)
     |> case do
       {:ok, key_range, storage_server, value} ->
-        {:ok,
-         %{
-           t
-           | storage_servers: Map.put(t.storage_servers, key_range, storage_server)
-         }, value}
+        {:ok, t |> Map.update!(:fastest_storage_servers, &Map.put(&1, key_range, storage_server)),
+         value}
 
       error ->
         error
     end
   end
 
-  @spec determine_storage_server_or_team_for_key(State.t(), key :: binary()) ::
-          nil | pid() | {Bedrock.key_range(), [pid()]}
-  def determine_storage_server_or_team_for_key(t, key) do
-    selected_storage_server_for_key(t.storage_servers, key) ||
-      storage_team_for_key(t.storage_table, key)
-  end
-
-  @spec selected_storage_server_for_key(%{Bedrock.key_range() => pid()}, key :: binary()) ::
+  @spec fastest_storage_server_for_key(%{Bedrock.key_range() => pid()}, key :: binary()) ::
           pid() | nil
-  def selected_storage_server_for_key(storage_servers, key) do
+  def fastest_storage_server_for_key(storage_servers, key) do
     Enum.find_value(storage_servers, fn
       {{min_key, max_key_exclusive}, storage_server}
-      when min_key <= key and key < max_key_exclusive ->
+      when min_key <= key and (key < max_key_exclusive or :end == max_key_exclusive) ->
         storage_server
 
       _ ->
@@ -107,14 +101,17 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
     end)
   end
 
-  @spec storage_team_for_key(:ets.table(), key :: binary()) :: [{Bedrock.key_range(), pid()}]
-  def storage_team_for_key(storage_table, key) do
-    storage_table
-    |> :ets.select([
+  @doc """
+  Retrieves the set of storage servers responsible for a given key from the ETS
+  table that is maintained by the Gateway.
+  """
+  @spec storage_servers_for_key(:ets.table(), key :: binary()) :: [{Bedrock.key_range(), pid()}]
+  def storage_servers_for_key(storage_table, key) do
+    :ets.select(storage_table, [
       {
         {{:"$1", :"$2"}, :"$3", :"$4", :"$5"},
         [
-          {:and, {:"=<", :"$1", key}, {:<, key, :"$2"}}
+          {:and, {:"=<", :"$1", key}, {:or, {:<, key, :"$2"}, {:==, :end, :"$2"}}}
         ],
         [{{{{:"$1", :"$2"}}, :"$5"}}]
       }
@@ -123,8 +120,8 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
 
   @doc """
   Performs a "horse race" across multiple storage servers to fetch the value
-  for a given key. Each storage server is queried in parallel, and the first
-  successful response is returned. If none of the servers return a value
+  for a given key. All of the storage servers are queried in parallel, and the
+  first successful response is returned. If none of the servers return a value
   within the specified timeout, `:error` is returned.
   """
   @spec horse_race_storage_servers_for_key(
@@ -132,7 +129,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.Fetching do
           read_version :: non_neg_integer(),
           key :: binary(),
           fetch_timeout_in_ms :: pos_integer()
-        ) :: {:ok, pid(), binary()} | :error
+        ) :: {:ok, Bedrock.key_range(), pid(), binary()} | :error
   def horse_race_storage_servers_for_key([], _, _, _), do: :error
 
   def horse_race_storage_servers_for_key(

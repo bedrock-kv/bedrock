@@ -10,7 +10,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
           reads: %{},
           writes: %{},
           stack: [%{reads: map(), writes: map()}],
-          storage_servers: map(),
+          fastest_storage_servers: %{Bedrock.key_range() => pid()},
           fetch_timeout_in_ms: pos_integer(),
           lease_renewal_threshold: pos_integer()
         }
@@ -24,7 +24,7 @@ defmodule Bedrock.Cluster.TransactionBuilder.State do
             reads: %{},
             writes: %{},
             stack: [],
-            storage_servers: %{},
+            fastest_storage_servers: %{},
             fetch_timeout_in_ms: 50,
             lease_renewal_threshold: 100
 end

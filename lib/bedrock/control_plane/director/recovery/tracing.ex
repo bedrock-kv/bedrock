@@ -64,6 +64,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         info("Creating #{n_log_vacancies} log vacancies")
 
       {n_log_vacancies, n_storage_team_vacancies} ->
+        IO.inspect(measurements)
+
         info(
           "Creating #{n_log_vacancies} log vacancies and #{n_storage_team_vacancies} storage team vacancies"
         )

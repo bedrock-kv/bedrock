@@ -12,16 +12,16 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   def config_key, do: :coordinator
 
-  @spec fetch_director(
+  @spec fetch_director_and_epoch(
           coordinator :: ref(),
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
-          {:ok, Director.ref()}
+          {:ok, {Director.ref(), Bedrock.epoch()}}
           | {:error, :unavailable | :timeout}
-  def fetch_director(coordinator, opts \\ []),
-    do: coordinator |> call(:fetch_director, opts[:timeout_in_ms] || :infinity)
+  def fetch_director_and_epoch(coordinator, opts \\ []),
+    do: coordinator |> call(:fetch_director_and_epoch, opts[:timeout_in_ms] || :infinity)
 
   @spec fetch_config(coordinator :: ref(), timeout_in_ms()) ::
           {:ok, Config.t()} | {:error, :unavailable | :timeout}

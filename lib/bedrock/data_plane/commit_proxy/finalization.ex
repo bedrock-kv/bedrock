@@ -35,7 +35,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `:ok` when the batch has been processed, and all clients have been
       notified about the status of their transactions.
   """
-  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) :: :ok | {:error, term()}
+  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) ::
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
   def finalize_batch(batch, transaction_system_layout) do
     transactions_in_order = transactions_in_order(batch)
 
@@ -65,7 +66,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                send_reply_with_commit_version(oks, version)
              end
            ) do
-      :ok
+      {:ok, length(aborts), length(oks)}
     else
       {:error, _reason} = error ->
         batch

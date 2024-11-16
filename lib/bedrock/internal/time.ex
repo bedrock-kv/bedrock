@@ -14,4 +14,8 @@ defmodule Bedrock.Internal.Time do
   @doc "Return the current system monotic time in milliseconds."
   @spec monotonic_now_in_ms() :: Bedrock.timestamp_in_ms()
   def monotonic_now_in_ms, do: :erlang.monotonic_time(:millisecond)
+
+  @doc "Return the elapsed time in milliseconds since the given (monotonic) start time."
+  @spec elapsed_monotonic_in_ms(Bedrock.timestamp_in_ms()) :: Bedrock.timestamp_in_ms()
+  def elapsed_monotonic_in_ms(start_time), do: monotonic_now_in_ms() - start_time
 end

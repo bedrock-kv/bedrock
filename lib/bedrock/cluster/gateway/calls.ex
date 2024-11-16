@@ -1,18 +1,21 @@
 defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.TransactionBuilder
-  alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Sequencer
 
   @spec begin_transaction(State.t(), opts :: keyword()) :: {:ok, pid()}
-  def begin_transaction(t, _opts \\ []) do
-    with {:ok, transaction_system_layout} <-
-           Director.fetch_transaction_system_layout(t.director, 100),
-         {:ok, txn} <-
-           TransactionBuilder.start_link(
-             gateway: self(),
-             transaction_system_layout: transaction_system_layout
-           ) do
-      {:ok, txn}
+  def begin_transaction(t, _opts \\ []),
+    do: TransactionBuilder.start_link(gateway: self(), storage_table: t.storage_table)
+
+  @spec next_read_version(State.t()) ::
+          {:ok, {Bedrock.version(), Bedrock.interval_in_ms()}}
+          | {:error, :unavailable}
+  def next_read_version(t) when is_nil(t.transaction_system_layout), do: {:error, :unavailable}
+
+  def next_read_version(t) do
+    case Sequencer.next_read_version(t.transaction_system_layout.sequencer) do
+      {:ok, version} -> {:ok, version, t.lease_renewal_interval_in_ms}
+      {:error, _} -> {:error, :unavailable}
     end
   end
 
@@ -49,6 +52,14 @@ defmodule Bedrock.Cluster.Gateway.Calls do
 
   def fetch_director(%{director: :unavailable}), do: {:error, :unavailable}
   def fetch_director(t), do: {:ok, t.director}
+
+  def fetch_commit_proxy(%{director: :unavailable}), do: {:error, :unavailable}
+
+  def fetch_commit_proxy(%{transaction_system_layout: nil}), do: {:error, :unavailable}
+
+  def fetch_commit_proxy(%{transaction_system_layout: %{proxies: []}}), do: {:error, :unavailable}
+
+  def fetch_commit_proxy(t), do: {:ok, t.transaction_system_layout.proxies |> Enum.random()}
 
   def fetch_coordinator_nodes(t), do: {:ok, t.descriptor.coordinator_nodes}
 end

@@ -6,14 +6,14 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Coordinator
 
   import Bedrock.ControlPlane.Director.State.Changes,
-    only: [put_last_transaction_layout_id: 2, put_my_relief: 2, put_state: 2]
+    only: [put_my_relief: 2, put_state: 2]
 
   import Bedrock.ControlPlane.Director.Nodes,
     only: [
       request_to_rejoin: 5,
       node_added_worker: 4,
       update_last_seen_at: 3,
-      determine_dead_nodes: 2,
+      # determine_dead_nodes: 2,
       update_minimum_read_version: 3,
       ping_all_coordinators: 1
     ]
@@ -25,6 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   use GenServer
   import Bedrock.Internal.GenServer.Replies
+  require Logger
 
   @doc false
   @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
@@ -54,19 +55,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
       cluster: cluster,
       config: config,
       coordinator: coordinator,
-      node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
-      last_transaction_layout_id: config.transaction_system_layout.id
+      node_tracking: config |> Config.coordinators() |> NodeTracking.new()
     }
     |> then(&{:ok, &1, {:continue, {:start_recovery, relieving}}})
   end
 
   @impl true
-  def handle_continue({:start_recovery, {_epoch, old_director}}, t) do
+  def handle_continue({:start_recovery, {_epoch, old_director}}, %State{} = t) do
     if :unavailable != old_director do
       old_director |> Director.stand_relieved({t.epoch, self()})
     end
 
     t
+    |> Map.put(:services, get_services_from_config(t.config))
     |> ping_all_coordinators()
     |> try_to_recover()
     |> store_changes_to_config()
@@ -77,7 +78,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_info({:timeout, :ping_all_coordinators}, t) do
     t
     |> ping_all_coordinators()
-    |> determine_dead_nodes(now())
     |> noreply()
   end
 
@@ -121,7 +121,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
     t
     |> update_last_seen_at(node, now())
     |> update_minimum_read_version(node, minimum_read_version)
-    |> store_changes_to_config()
     |> noreply()
   end
 
@@ -137,7 +136,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_cast({:stand_relieved, {_new_epoch, _new_director} = my_relief}, t),
     do: t |> put_my_relief(my_relief) |> put_state(:stopped) |> noreply()
 
-  def handle_cast({:node_added_worker, node, worker_info}, t) do
+  def handle_cast({:node_added_worker, node, worker_info}, %State{} = t) do
     t
     |> node_added_worker(node, worker_info, now())
     |> try_to_recover()
@@ -147,14 +146,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   defp now, do: DateTime.utc_now()
 
-  defp store_changes_to_config(t)
-       when t.config.transaction_system_layout.id != t.last_transaction_layout_id do
-    with :ok <- Coordinator.write_config(t.coordinator, t.config) do
-      t |> put_last_transaction_layout_id(t.config.transaction_system_layout.id)
-    else
-      {:error, _reason} -> t
+  def get_services_from_config(%{transaction_system_layout: %{services: services}}),
+    do: services || %{}
+
+  def store_changes_to_config(%{config: nil} = t), do: t
+
+  def store_changes_to_config(%State{coordinator: coordinator, config: config} = t) do
+    case Coordinator.write_config(coordinator, config) do
+      :ok ->
+        t
+
+      unexpected ->
+        Logger.warning("Unexpected response from write_config: #{inspect(unexpected)}")
+        t
     end
   end
-
-  defp store_changes_to_config(t), do: t
 end

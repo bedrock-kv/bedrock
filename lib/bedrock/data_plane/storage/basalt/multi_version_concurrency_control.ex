@@ -205,6 +205,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   @spec purge_keys_newer_than_version(mvcc :: t(), Bedrock.version()) :: :ok
   def purge_keys_newer_than_version(mvcc, version) do
     :ets.select_delete(mvcc, match_rows_with_with_version_gt(version))
+    :ets.insert(mvcc, [{:newest_version, version}])
     :ok
   end
 

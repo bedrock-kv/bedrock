@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.Internal.Time
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
@@ -15,8 +16,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
     only: [
-      trace_commit_proxy_batch_failure: 4,
-      trace_commit_proxy_batch_succeeded: 3
+      trace_metadata: 1,
+      trace_commit_proxy_batch_started: 3,
+      trace_commit_proxy_batch_finished: 4,
+      trace_commit_proxy_batch_failed: 3
     ]
 
   use GenServer
@@ -52,6 +55,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   end
 
   def init({cluster, director, epoch, max_latency_in_ms, max_per_batch}) do
+    trace_metadata(cluster: cluster, pid: self())
+
     %State{
       cluster: cluster,
       director: director,
@@ -94,13 +99,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: %{t | batch: nil} |> noreply(continue: {:finalize, batch})
 
   def handle_continue({:finalize, batch}, t) do
-    case finalize_batch(batch, t.transaction_system_layout) do
-      :ok ->
-        trace_commit_proxy_batch_succeeded(t.cluster, self(), batch)
+    trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
+
+    case :timer.tc(fn -> finalize_batch(batch, t.transaction_system_layout) end) do
+      {n_usec, {:ok, n_aborts, n_oks}} ->
+        trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
         t |> noreply()
 
-      {:error, reason} ->
-        trace_commit_proxy_batch_failure(t.cluster, self(), batch, reason)
+      {n_usec, {:error, reason}} ->
+        trace_commit_proxy_batch_failed(batch, reason, n_usec)
         t |> noreply()
     end
   end

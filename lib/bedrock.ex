@@ -20,6 +20,7 @@ defmodule Bedrock do
   @type timestamp_in_ms :: integer()
 
   @type interval_in_ms :: :infinity | non_neg_integer()
+  @type interval_in_us :: :infinity | non_neg_integer()
 
   @type range_tag :: non_neg_integer()
 

@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Telemetry do
   alias Bedrock.Telemetry
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Log
 
   def trace_metadata, do: Process.get(:trace_metadata, %{})
@@ -35,20 +34,6 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
         source_log: source_log,
         first_version: first_version,
         last_version: last_version
-      })
-    )
-  end
-
-  @spec trace_push_transaction(Transaction.t(), expected_version :: Bedrock.version()) :: :ok
-  def trace_push_transaction(transaction, expected_version) do
-    Telemetry.execute(
-      [:bedrock, :log, :push],
-      %{
-        n_keys: map_size(transaction |> Transaction.key_values())
-      },
-      Map.merge(trace_metadata(), %{
-        expected_version: expected_version,
-        transaction: transaction
       })
     )
   end

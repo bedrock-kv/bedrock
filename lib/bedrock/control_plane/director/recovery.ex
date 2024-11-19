@@ -330,7 +330,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     fill_log_vacancies(
       t.logs,
       t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new(),
-      t.log_recovery_info_by_id |> Map.keys() |> MapSet.new()
+      t.available_services
+      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
+      |> Enum.map(&elem(&1, 0))
+      |> MapSet.new()
     )
     |> case do
       {:error, {:need_log_workers, _} = reason} ->

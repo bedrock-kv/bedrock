@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.State do
   alias Bedrock.Service.Worker
   alias Bedrock.Service.Foreman
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.Writer
+  alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
 
   @type mode :: :locked | :running
 
@@ -12,8 +14,18 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           epoch: Bedrock.epoch(),
           id: Worker.id(),
           foreman: Foreman.ref(),
+          path: String.t(),
+          segment_recycler: SegmentRecycler.server(),
+          #
           last_version: Bedrock.version(),
-          log: :ets.table(),
+          writer: Writer.t() | nil,
+          active_segment: Segment.t() | nil,
+          segments: [Segment.t()],
+          pending_pushes: %{
+            Bedrock.version() =>
+              {encoded_transaction :: binary(), ack_fn :: (:ok | {:error, term()} -> :ok)}
+          },
+          #
           mode: mode(),
           oldest_version: Bedrock.version(),
           otp_name: Worker.otp_name(),
@@ -21,7 +33,6 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             default_pull_limit: pos_integer(),
             max_pull_limit: pos_integer()
           },
-          pending_transactions: %{Bedrock.version() => {Transaction.t(), pid()}},
           waiting_pullers: %{
             Bedrock.version() => [{Bedrock.timestamp_in_ms(), pid(), opts :: keyword()}]
           }
@@ -31,8 +42,15 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             epoch: nil,
             foreman: nil,
             id: nil,
+            path: nil,
+            segment_recycler: nil,
+            #
             last_version: nil,
-            log: nil,
+            writer: nil,
+            segments: [],
+            active_segment: nil,
+            pending_pushes: %{},
+            #
             mode: :locked,
             oldest_version: nil,
             otp_name: nil,

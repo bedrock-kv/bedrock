@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
@@ -198,8 +199,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
       fn {log_id, service_descriptor} ->
+        encoded_transacton = EncodedTransaction.encode(transaction)
+
         service_descriptor
-        |> try_to_push_transaction_to_log(transaction, last_commit_version)
+        |> try_to_push_transaction_to_log(encoded_transacton, last_commit_version)
         |> then(&{log_id, &1})
       end,
       timeout: 5_000

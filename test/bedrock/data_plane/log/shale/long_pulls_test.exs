@@ -1,17 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Shale.LongPulls
 
-  defp reply_fn(tag) do
-    fn reply ->
-      send(self(), {tag, reply})
-      :ok
-    end
-  end
-
   describe "normalize_timeout_to_ms/1" do
-    test "returns a value between 10 and 10_000" do
+    test "normalizes timeout to within the range" do
       assert LongPulls.normalize_timeout_to_ms(5) == 10
       assert LongPulls.normalize_timeout_to_ms(15_000) == 10_000
       assert LongPulls.normalize_timeout_to_ms(500) == 500
@@ -19,22 +12,28 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
   end
 
   describe "notify_waiting_pullers/3" do
-    test "notifies the correct pullers and removes them from the map" do
-      waiting_pullers = %{
-        1 => [{0, reply_fn(1), []}],
-        2 => [{0, reply_fn(2), []}]
-      }
-
+    test "notifies pullers and removes them from waiting list" do
+      reply_to_fn = fn _ -> send(self(), :notified) end
+      waiting_pullers = %{1 => [{0, reply_to_fn, []}]}
       version = 1
       transaction = :transaction
 
-      updated_waiting_pullers =
+      remaining_waiting_pullers =
         LongPulls.notify_waiting_pullers(waiting_pullers, version, transaction)
 
-      assert_receive {1, {:ok, [^transaction]}}
-      refute_receive {2, {:ok, [^transaction]}}
+      assert_received :notified
+      assert remaining_waiting_pullers == %{}
+    end
 
-      assert Map.has_key?(updated_waiting_pullers, version) == false
+    test "does nothing if no pullers are waiting" do
+      waiting_pullers = %{}
+      version = 1
+      transaction = :transaction
+
+      remaining_waiting_pullers =
+        LongPulls.notify_waiting_pullers(waiting_pullers, version, transaction)
+
+      assert remaining_waiting_pullers == %{}
     end
   end
 
@@ -125,19 +124,16 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
   end
 
   describe "process_expired_deadlines_for_waiting_pullers/2" do
-    test "removes expired pullers" do
-      monotic_now = :erlang.monotonic_time(:millisecond)
-
-      waiting_pullers = %{
-        1 => [{monotic_now - 1, fn _ -> :ok end, []}],
-        2 => [{monotic_now + 1000, fn _ -> :ok end, []}]
-      }
+    test "removes expired pullers and notifies them" do
+      reply_to_fn = fn _ -> send(self(), :notified) end
+      waiting_pullers = %{1 => [{500, reply_to_fn, []}], 2 => [{1_500, reply_to_fn, []}]}
+      monotonic_now = 1_000
 
       updated_waiting_pullers =
-        LongPulls.process_expired_deadlines_for_waiting_pullers(waiting_pullers, monotic_now)
+        LongPulls.process_expired_deadlines_for_waiting_pullers(waiting_pullers, monotonic_now)
 
-      assert Map.has_key?(updated_waiting_pullers, 1) == false
-      assert Map.has_key?(updated_waiting_pullers, 2)
+      assert_received :notified
+      assert updated_waiting_pullers == %{2 => [{1_500, reply_to_fn, []}]}
     end
   end
 

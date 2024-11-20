@@ -42,7 +42,8 @@ defmodule Bedrock.MixProject do
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
         {:mox, "~> 1.1", only: :test},
-        {:excoveralls, "~> 0.18", only: :test}
+        {:excoveralls, "~> 0.18", only: :test},
+        {:benchee, "~> 1.3", only: :dev}
       ]
   end
 

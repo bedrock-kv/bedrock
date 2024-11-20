@@ -45,10 +45,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     do: Telemetry.execute([:bedrock, :recovery, :first_time_initialization], %{}, %{})
 
   def trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies) do
-    Telemetry.execute([:bedrock, :recovery, :creating_vacancies], %{}, %{
-      n_log_vacancies: n_log_vacancies,
-      n_storage_team_vacancies: n_storage_team_vacancies
-    })
+    Telemetry.execute(
+      [:bedrock, :recovery, :creating_vacancies],
+      %{
+        n_log_vacancies: n_log_vacancies,
+        n_storage_team_vacancies: n_storage_team_vacancies
+      },
+      %{}
+    )
   end
 
   @spec trace_recovery_durable_version_chosen(durable_version :: Bedrock.version()) :: :ok

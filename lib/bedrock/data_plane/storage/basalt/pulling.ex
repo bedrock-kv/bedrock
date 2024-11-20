@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.Service.Worker
@@ -47,10 +48,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
                limit: 100,
                willing_to_wait_in_ms: call_timeout()
              ) do
-          {:ok, transactions} ->
-            trace_log_pull_succeeded(timestamp, length(transactions))
+          {:ok, encoded_transactions} ->
+            trace_log_pull_succeeded(timestamp, length(encoded_transactions))
 
-            next_version = apply_transactions_fn.(transactions)
+            next_version =
+              encoded_transactions
+              |> Enum.map(&EncodedTransaction.decode!/1)
+              |> apply_transactions_fn.()
 
             %{state | start_after: next_version}
             |> long_pull_loop()

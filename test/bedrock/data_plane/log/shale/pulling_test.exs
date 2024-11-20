@@ -1,109 +1,107 @@
 defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
-  alias Bedrock.DataPlane.Log.Shale.Pulling
-  alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.{Pulling, State, Segment}
+  alias Bedrock.DataPlane.Log.EncodedTransaction
 
-  setup do
-    # Setup initial t for tests
-    t = %State{
-      log: :ets.new(:log, [:protected, :ordered_set]),
-      mode: :running,
-      last_version: 5,
-      oldest_version: 0,
-      params: %{default_pull_limit: 7, max_pull_limit: 10}
-    }
+  @default_params %{default_pull_limit: 1000, max_pull_limit: 2000}
 
-    :ets.insert_new(t.log, Log.initial_transaction())
+  describe "pull/3" do
+    setup do
+      transactions =
+        [
+          {0, %{}},
+          {1, %{"a" => "1"}},
+          {2, %{"b" => "2"}},
+          {3, %{"c" => "3"}}
+        ]
+        |> Enum.map(&EncodedTransaction.encode/1)
+        |> Enum.reverse()
 
-    # Insert some dummy transactions
-    :ets.insert(t.log, {1, %{a: :b}})
-    :ets.insert(t.log, {2, %{c: 21}})
-    :ets.insert(t.log, {3, %{j: 16}})
-    :ets.insert(t.log, {4, %{c: 32}})
-    :ets.insert(t.log, {5, %{m: "asd"}})
+      segment = %Segment{
+        min_version: 0,
+        transactions: transactions
+      }
 
-    {:ok, t: t}
+      state = %State{
+        active_segment: segment,
+        segments: [],
+        oldest_version: 0,
+        last_version: 3,
+        mode: :ready,
+        params: @default_params
+      }
+
+      {:ok, %{state: state, segment: segment}}
+    end
+
+    test "returns waiting_for when from_version >= last_version", %{state: state} do
+      assert {:waiting_for, 3} = Pulling.pull(state, 3)
+      assert {:waiting_for, 4} = Pulling.pull(state, 4)
+    end
+
+    test "returns error when from_version is too old", %{state: state} do
+      assert {:error, :version_too_old} = Pulling.pull(state, -1)
+    end
+
+    test "returns transactions within version range", %{state: state} do
+      {:ok, _state, transactions} = Pulling.pull(state, 1)
+      assert length(transactions) == 2
+      assert Enum.map(transactions, &EncodedTransaction.version(&1)) == [2, 3]
+    end
+
+    test "respects last_version parameter", %{state: state} do
+      {:ok, _state, transactions} = Pulling.pull(state, 1, last_version: 2)
+      assert length(transactions) == 1
+      assert EncodedTransaction.version(hd(transactions)) == 2
+    end
+
+    test "handles recovery mode correctly", %{state: state} do
+      locked_state = %{state | mode: :locked}
+      assert {:error, :not_ready} = Pulling.pull(locked_state, 1)
+      assert {:ok, _, _} = Pulling.pull(locked_state, 1, recovery: true)
+    end
+
+    test "respects pull limits", %{state: state} do
+      {:ok, _state, transactions} = Pulling.pull(state, 1, limit: 1)
+      assert length(transactions) == 1
+    end
+
+    test "filters by key range", %{state: state} do
+      {:ok, _state, transactions} = Pulling.pull(state, 0, key_range: {"a", "c"})
+
+      assert transactions
+             |> Enum.map(&EncodedTransaction.decode!/1)
+             |> Enum.map(&elem(&1, 1))
+             |> Enum.flat_map(&Map.keys/1)
+             |> Enum.sort() ==
+               ["a", "b"]
+    end
+
+    test "can exclude values", %{state: state} do
+      {:ok, _state, transactions} = Pulling.pull(state, 1, exclude_values: true)
+
+      assert transactions
+             |> Enum.map(&EncodedTransaction.decode!/1)
+             |> Enum.map(&elem(&1, 1))
+             |> Enum.map(&Map.values/1)
+             |> Enum.all?(&(&1 == [<<>>]))
+    end
   end
 
-  test "pull returns transactions within the specified range", %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 1, limit: 3, last_version: 3)
-
-    assert [
-             {2, %{c: 21}},
-             {3, %{j: 16}}
-           ] = transactions
+  describe "check_last_version/2" do
+    test "validates last_version correctly" do
+      assert {:ok, nil} = Pulling.check_last_version(nil, 1)
+      assert {:ok, 2} = Pulling.check_last_version(2, 1)
+      assert {:error, :invalid_last_version} = Pulling.check_last_version(1, 2)
+    end
   end
 
-  test "pull returns transactions within the specified range, up to it's limit", %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 1, limit: 1, last_version: 3)
-
-    assert [
-             {2, %{c: 21}}
-           ] = transactions
-  end
-
-  test "pull returns no transactions when the last_version is the same as the from_version",
-       %{
-         t: t
-       } do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 1, last_version: 1)
-
-    assert [] = transactions
-  end
-
-  test "pull returns transactions within the specified range, up to it's limit, from the start",
-       %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 1, last_version: 3)
-
-    assert [
-             {1, %{a: :b}}
-           ] = transactions
-  end
-
-  test "pull returns all transactions when pulling from the start",
-       %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 0)
-
-    assert [
-             {1, %{a: :b}},
-             {2, %{c: 21}},
-             {3, %{j: 16}},
-             {4, %{c: 32}},
-             {5, %{m: "asd"}}
-           ] = transactions
-  end
-
-  test "pull returns transactions wirt",
-       %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 1, last_version: 3)
-
-    assert [
-             {1, %{a: :b}}
-           ] = transactions
-  end
-
-  test "pull returns error for invalid last_version", %{t: t} do
-    assert {:error, :invalid_last_version} = Pulling.pull(t, 1, limit: 3, last_version: 0)
-  end
-
-  test "pull returns error when locked and not in recovery", %{t: t} do
-    t = %{t | mode: :locked}
-    assert {:error, :not_ready} = Pulling.pull(t, 1, limit: 3, last_version: 3)
-  end
-
-  test "pull returns transactions when locked and in recovery", %{t: t} do
-    t = %{t | mode: :locked}
-
-    assert {:ok, ^t, _transactions} = Pulling.pull(t, 1, recovery: true)
-  end
-
-  test "pull returns waiting_for when from_version is greater than last_version", %{t: t} do
-    assert {:waiting_for, 11} = Pulling.pull(t, 11, limit: 3, last_version: 12)
-  end
-
-  test "pull returns transactions when from_version is 0", %{t: t} do
-    assert {:ok, ^t, transactions} = Pulling.pull(t, 0, limit: 3, last_version: 3)
-    assert length(transactions) == 3
+  describe "determine_pull_limit/2" do
+    test "respects default and max limits" do
+      state = %State{params: @default_params}
+      assert Pulling.determine_pull_limit(nil, state) == 1000
+      assert Pulling.determine_pull_limit(500, state) == 500
+      assert Pulling.determine_pull_limit(3000, state) == 2000
+    end
   end
 end

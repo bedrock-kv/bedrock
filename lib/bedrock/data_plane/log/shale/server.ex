@@ -1,11 +1,15 @@
 defmodule Bedrock.DataPlane.Log.Shale.Server do
+  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
 
+  import Bedrock.DataPlane.Log.Shale.ColdStarting, only: [reload_segments_at_path: 1]
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
   import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 3]
   import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
-  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 3]
+  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
   import Bedrock.DataPlane.Log.Shale.LongPulls,
@@ -28,6 +32,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
     id = Keyword.fetch!(opts, :id) || raise "Missing :id option"
     foreman = Keyword.fetch!(opts, :foreman)
+    path = Keyword.fetch!(opts, :path)
 
     %{
       id: {__MODULE__, id},
@@ -39,7 +44,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              cluster,
              otp_name,
              id,
-             foreman
+             foreman,
+             path
            },
            [name: otp_name]
          ]}
@@ -47,18 +53,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def init({cluster, otp_name, id, foreman}) do
-    log = :ets.new(:log, [:protected, :ordered_set])
-    true = :ets.insert_new(log, Log.initial_transaction())
-
+  def init({cluster, otp_name, id, foreman, path}) do
     {:ok,
      %State{
+       path: path,
        cluster: cluster,
        mode: :locked,
        id: id,
        otp_name: otp_name,
        foreman: foreman,
-       log: log,
        oldest_version: 0,
        last_version: 0
      }, {:continue, :initialization}}
@@ -74,7 +77,48 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
     trace_started()
 
-    t |> noreply()
+    {:ok, pid} =
+      SegmentRecycler.start_link(
+        path: t.path,
+        min_available: 2,
+        max_available: 3,
+        segment_size: 1 * 1024 * 1024
+      )
+
+    {oldest_version, last_version, active_segment, segments} =
+      reload_segments_at_path(t.path)
+      |> case do
+        [] ->
+          {0, 0, nil, []}
+
+        [active_segment | segments] ->
+          case Segment.load_transactions(active_segment) do
+            {:ok, active_segment} ->
+              last_version = Segment.last_version(active_segment)
+
+              oldest_version =
+                segments
+                |> Enum.reduce(
+                  active_segment.min_version,
+                  fn segment, last_version ->
+                    min(segment.min_version, last_version)
+                  end
+                )
+
+              {oldest_version, last_version, active_segment, segments}
+
+            {:error, _reason} ->
+              raise "Failed to load transactions from most recent active segment"
+          end
+      end
+
+    t
+    |> Map.put(:oldest_version, oldest_version)
+    |> Map.put(:last_version, last_version)
+    |> Map.put(:active_segment, active_segment)
+    |> Map.put(:segments, segments)
+    |> Map.put(:segment_recycler, pid)
+    |> noreply()
   end
 
   def handle_continue({:notify_waiting_pullers, version, transaction}, t) do
@@ -132,18 +176,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_call({:push, transaction, expected_version}, from, t) do
-    trace_push_transaction(transaction, expected_version)
-
-    case push(t, expected_version, {transaction, ack_fn(from)}) do
-      {:waiting, t} ->
-        t |> noreply(continue: :check_for_expired_pullers)
-
-      {:ok, t} ->
-        t |> reply(:ok, continue: {:notify_waiting_pullers, expected_version, transaction})
-
-      {:error, _reason} = error ->
-        t |> reply(error)
+  def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
+    with {:ok, transaction} <- EncodedTransaction.validate(transaction_bytes),
+         {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
+      t |> noreply(continue: {:notify_waiting_pullers, expected_version, transaction})
+    else
+      {:wait, t} -> t |> noreply(continue: :check_for_expired_pullers)
+      {:error, _reason} = error -> t |> reply(error, continue: :check_for_expired_pullers)
     end
   end
 
@@ -179,8 +218,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   def check_running(_t), do: {:error, :unavailable}
 
-  @spec ack_fn(GenServer.from()) :: (-> :ok)
-  def ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
+  @spec ack_fn(GenServer.from()) :: (:ok | {:error, term()} -> :ok)
+  def ack_fn(from), do: fn result -> GenServer.reply(from, result) end
 
   @spec reply_to_fn(GenServer.from()) :: (any() -> :ok)
   def reply_to_fn(from), do: &GenServer.reply(from, &1)

@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log do
   @moduledoc """
   """
 
+  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
 
@@ -53,7 +54,7 @@ defmodule Bedrock.DataPlane.Log do
   This call will not return until the transaction has been made durable on the
   log, ensuring that the transactions that precede it are also durable.
   """
-  @spec push(log :: ref(), Transaction.t(), last_commit_version :: Bedrock.version()) ::
+  @spec push(log :: ref(), EncodedTransaction.t(), last_commit_version :: Bedrock.version()) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable}
   def push(log, transaction, last_commit_version),
     do: call(log, {:push, transaction, last_commit_version}, :infinity)
@@ -102,7 +103,7 @@ defmodule Bedrock.DataPlane.Log do
             timeout_in_ms: pos_integer()
           ]
         ) ::
-          {:ok, [Transaction.t()]} | pull_errors()
+          {:ok, [EncodedTransaction.t()]} | pull_errors()
   @type pull_errors ::
           {:error, :not_ready}
           | {:error, :not_locked}
@@ -121,7 +122,7 @@ defmodule Bedrock.DataPlane.Log do
   entire key range.
   """
   @spec initial_transaction :: Transaction.t()
-  def initial_transaction, do: Transaction.new(0, %{{<<>>, <<0xFF>>} => nil})
+  def initial_transaction, do: Transaction.new(0, %{})
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new

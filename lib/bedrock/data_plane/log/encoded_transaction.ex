@@ -39,7 +39,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
   def version(<<version::unsigned-big-64, _::binary>>), do: version
 
-  @spec validate(binary()) :: {:ok, t()} | {:error, :crc32_mismatch}
+  @spec validate(binary()) :: {:ok, t()} | {:error, :crc32_mismatch} | {:error, :invalid}
   def validate(
         <<_version::unsigned-big-64, size_in_bytes::unsigned-big-32,
           payload::binary-size(size_in_bytes), crc32::unsigned-big-32>> = transaction
@@ -50,6 +50,8 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
       {:ok, transaction}
     end
   end
+
+  def validate(_), do: {:error, :invalid}
 
   @doc """
   Encodes a transaction tuple into a binary format that includes the version

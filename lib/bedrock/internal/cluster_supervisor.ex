@@ -94,6 +94,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       :gateway -> :ok = GatewayTracing.start()
       :raft -> :ok = RaftTelemetry.start()
       :recovery -> :ok = RecoveryTracing.start()
+      unsupported -> Logger.warning("Unsupported tracing module: #{inspect(unsupported)}")
     end)
 
     children =

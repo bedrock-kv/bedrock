@@ -20,6 +20,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   def recover_from(t, source_log, first_version, last_version) do
     %{t | mode: :recovering}
+    |> abort_all_waiting_pullers()
     |> close_writer()
     |> discard_all_segments()
     |> ensure_active_segment(first_version)
@@ -78,6 +79,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  def abort_all_waiting_pullers(%{waiting_pullers: waiting_pullers} = t) do
+    waiting_pullers
+    |> Enum.reduce(%{t | waiting_pullers: %{}}, fn {_version, reply_to_fn, _}, t ->
+      reply_to_fn.({:ok, []})
+      t
+    end)
   end
 
   def close_writer(%{writer: nil} = t), do: t

@@ -34,7 +34,9 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             max_pull_limit: pos_integer()
           },
           waiting_pullers: %{
-            Bedrock.version() => [{Bedrock.timestamp_in_ms(), pid(), opts :: keyword()}]
+            Bedrock.version() => [
+              {Bedrock.timestamp_in_ms(), reply_to_fn :: (any() -> :ok), opts :: keyword()}
+            ]
           }
         }
   defstruct cluster: nil,

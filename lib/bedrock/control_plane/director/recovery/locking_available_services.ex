@@ -35,6 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
         {id, service, lock_service_for_recovery(service, epoch)}
       end,
       timeout: timeout_in_ms,
+      on_timeout: :kill_task,
       ordered: false,
       zip_input_on_exit: true
     )

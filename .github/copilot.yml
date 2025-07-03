@@ -1,0 +1,4 @@
+# This file tells Copilot Chat to use the .clinerules file and docs folder as knowledge sources.
+knowledge_files:
+  - .clinerules/**
+  - docs/**

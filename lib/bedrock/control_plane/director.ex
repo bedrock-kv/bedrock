@@ -107,6 +107,33 @@ defmodule Bedrock.ControlPlane.Director do
   end
 
   @doc """
+  Requests a foreman on a specific node to create a new worker.
+
+  ## Parameters
+  - `director`: The reference to the cluster director (a GenServer).
+  - `node`: The node where the worker should be created.
+  - `worker_id`: The ID for the new worker.
+  - `kind`: The type of worker (:log or :storage).
+  - `timeout_in_ms`: (Optional) The timeout for this request in milliseconds, default is 10000ms.
+
+  ## Returns
+  - `{:ok, worker_info}`: If the worker was successfully created.
+  - `{:error, reason}`: If the worker creation failed.
+  """
+  @spec request_worker_creation(
+          director :: ref(),
+          node(),
+          Worker.id(),
+          :log | :storage,
+          timeout_in_ms()
+        ) ::
+          {:ok, running_service_info()} | {:error, term()}
+  def request_worker_creation(director, node, worker_id, kind, timeout_in_ms \\ 10_000) do
+    director
+    |> call({:request_worker_creation, node, worker_id, kind}, timeout_in_ms)
+  end
+
+  @doc """
   Relieves the cluster director of its duties. This is used when a new
   director is elected and the old director should no longer be used. The
   old director will ignore all messages from the cluster other than to

@@ -123,7 +123,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
         ) :: WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
     working_directory = Path.join(path, id)
-    worker_info = worker_info_for_id(id, working_directory, cluster.otp_name_for_worker(id))
+    worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)
     manifest = Manifest.new(cluster.name(), id, worker, params)
 
     case initialize_working_directory(working_directory, manifest) do

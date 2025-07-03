@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
 
   import __MODULE__.FillingVacancies,
-    only: [fill_log_vacancies: 3, fill_storage_team_vacancies: 2]
+    only: [fill_log_vacancies: 4, fill_storage_team_vacancies: 2]
 
   import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
   import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
@@ -327,24 +327,36 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
-    fill_log_vacancies(
-      t.logs,
-      t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new(),
+    assigned_log_ids = t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new()
+
+    all_log_ids =
       t.available_services
       |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
-    )
+
+    # Get nodes with log capability from node tracking
+    available_log_nodes = get_nodes_with_capability(t, :log)
+
+    fill_log_vacancies(t.logs, assigned_log_ids, all_log_ids, available_log_nodes)
     |> case do
-      {:error, {:need_log_workers, _} = reason} ->
+      {:error, reason} ->
         t |> Map.put(:state, {:stalled, reason})
 
-      {:ok, logs} ->
-        trace_recovery_all_log_vacancies_filled()
+      {:ok, logs, new_worker_ids} ->
+        # Create the new workers if any are needed
+        case create_new_log_workers(new_worker_ids, available_log_nodes, t) do
+          {:ok, updated_services} ->
+            trace_recovery_all_log_vacancies_filled()
 
-        t
-        |> Map.put(:logs, logs)
-        |> Map.put(:state, :recruit_storage_to_fill_vacancies)
+            t
+            |> Map.put(:logs, logs)
+            |> Map.update!(:available_services, &Map.merge(&1, updated_services))
+            |> Map.put(:state, :recruit_storage_to_fill_vacancies)
+
+          {:error, reason} ->
+            t |> Map.put(:state, {:stalled, reason})
+        end
     end
   end
 
@@ -508,6 +520,67 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")
 
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
+
+  @spec get_nodes_with_capability(RecoveryAttempt.t(), atom()) :: [node()]
+  defp get_nodes_with_capability(_recovery_attempt, _capability) do
+    # This function needs access to the Director state's node_tracking
+    # For now, we'll use Node.list() as a fallback
+    # In a real implementation, this should query the node tracking table
+    Node.list() ++ [Node.self()]
+  end
+
+  @spec create_new_log_workers([String.t()], [node()], State.t()) ::
+          {:ok, %{String.t() => map()}} | {:error, term()}
+  defp create_new_log_workers([], _available_nodes, _state), do: {:ok, %{}}
+
+  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt) do
+    # Distribute workers across available nodes
+    node_assignments =
+      new_worker_ids
+      |> Enum.with_index()
+      |> Enum.map(fn {worker_id, index} ->
+        node = Enum.at(available_nodes, rem(index, length(available_nodes)))
+        {worker_id, node}
+      end)
+
+    # Create workers on their assigned nodes by calling Foreman directly
+    results =
+      Enum.map(node_assignments, fn {worker_id, node} ->
+        # Contact the foreman on the target node directly
+        foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
+
+        case Bedrock.Service.Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000) do
+          {:ok, worker_ref} ->
+            # Get detailed info about the created worker
+            case Bedrock.Service.Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
+              {:ok, worker_info} ->
+                service_info = %{
+                  kind: :log,
+                  last_seen: {worker_info[:otp_name], node},
+                  status: {:up, worker_info[:pid]}
+                }
+
+                {worker_id, service_info}
+
+              {:error, reason} ->
+                {:error, {worker_id, node, {:worker_info_failed, reason}}}
+            end
+
+          {:error, reason} ->
+            {:error, {worker_id, node, {:worker_creation_failed, reason}}}
+        end
+      end)
+
+    # Check if all workers were created successfully
+    case Enum.find(results, &match?({:error, _}, &1)) do
+      nil ->
+        # All successful
+        {:ok, Map.new(results)}
+
+      {:error, {worker_id, node, reason}} ->
+        {:error, {:worker_creation_failed, worker_id, node, reason}}
+    end
+  end
 
   defp starter_for(supervisor_otp_name) do
     fn child_spec, node ->

@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.Segment do
+  require Logger
+
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
@@ -58,7 +60,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     |> Enum.reverse()
     |> case do
       [{:corrupted, offset} | transactions] ->
-        "Corrupted segment at offset #{offset}"
+        Logger.error("Segment corruption detected",
+          segment_path: segment.path,
+          corruption_offset: offset,
+          min_version: segment.min_version,
+          recovered_transactions: length(transactions)
+        )
+
         %{segment | transactions: transactions}
 
       transactions ->

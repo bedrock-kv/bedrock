@@ -7,30 +7,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.FillingVacancies do
   @doc """
   Fills vacancies in logs with log IDs that are not part of the previous
   transaction system. If there are not enough log workers to fill all vacancies,
-  an error is returned.
+  it will attempt to create new workers on available nodes.
   """
   @spec fill_log_vacancies(
           logs :: %{Log.id() => LogDescriptor.t()},
           assigned_log_ids :: MapSet.t(Log.id()),
-          all_log_ids :: MapSet.t(Log.id())
+          all_log_ids :: MapSet.t(Log.id()),
+          available_nodes :: [node()]
         ) ::
-          {:ok, %{Log.id() => LogDescriptor.t()}}
-          | {:error, {:need_log_workers, pos_integer()}}
-  def fill_log_vacancies(logs, assigned_log_ids, all_log_ids) do
+          {:ok, %{Log.id() => LogDescriptor.t()}, [Log.id()]}
+          | {:error, term()}
+  def fill_log_vacancies(logs, assigned_log_ids, all_log_ids, available_nodes) do
     vacancies = all_vacancies(logs)
     n_vacancies = MapSet.size(vacancies)
 
     candidates_ids = all_log_ids |> MapSet.difference(assigned_log_ids)
     n_candidates = MapSet.size(candidates_ids)
 
-    if n_vacancies > n_candidates do
-      {:error, {:need_log_workers, n_vacancies - n_candidates}}
-    else
+    if n_vacancies <= n_candidates do
+      # We have enough existing workers
       {:ok,
        replace_vacancies_with_log_ids(
          logs,
          Enum.zip(vacancies, candidates_ids) |> Map.new()
-       )}
+       ), []}
+    else
+      # We need to create new workers
+      needed_workers = n_vacancies - n_candidates
+
+      if length(available_nodes) < needed_workers do
+        {:error, {:insufficient_nodes, needed_workers, length(available_nodes)}}
+      else
+        # Create new worker IDs
+        new_worker_ids =
+          1..needed_workers
+          |> Enum.map(&"log_#{System.unique_integer([:positive])}_#{&1}")
+
+        # Use existing candidates plus new worker IDs
+        all_worker_ids = Enum.concat(candidates_ids, new_worker_ids)
+
+        {:ok,
+         replace_vacancies_with_log_ids(
+           logs,
+           Enum.zip(vacancies, all_worker_ids) |> Map.new()
+         ), new_worker_ids}
+      end
     end
   end
 

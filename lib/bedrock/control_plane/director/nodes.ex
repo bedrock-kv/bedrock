@@ -5,6 +5,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
 
   use Bedrock.Internal.TimerManagement
 
@@ -151,5 +153,31 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
       end)
       |> Map.new()
     end)
+  end
+
+  @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :storage) ::
+          {:ok, Director.running_service_info()} | {:error, term()}
+  def request_worker_creation(t, node, worker_id, kind) do
+    # Check if the node has the required capability
+    capabilities = NodeTracking.capabilities(t.node_tracking, node)
+
+    if capabilities == :unknown or not Enum.member?(capabilities, kind) do
+      {:error, {:node_lacks_capability, node, kind}}
+    else
+      # Contact the foreman on the target node to create the worker
+      foreman_ref = {t.cluster.otp_name(:foreman), node}
+
+      case Foreman.new_worker(foreman_ref, worker_id, kind, timeout: 10_000) do
+        {:ok, worker_ref} ->
+          # Get detailed info about the created worker
+          case Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
+            {:ok, worker_info} -> {:ok, worker_info}
+            {:error, reason} -> {:error, {:worker_info_failed, reason}}
+          end
+
+        {:error, reason} ->
+          {:error, {:worker_creation_failed, reason}}
+      end
+    end
   end
 end

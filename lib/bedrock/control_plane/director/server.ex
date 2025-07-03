@@ -15,7 +15,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
       update_last_seen_at: 3,
       # determine_dead_nodes: 2,
       update_minimum_read_version: 3,
-      ping_all_coordinators: 1
+      ping_all_coordinators: 1,
+      request_worker_creation: 4
     ]
 
   import Bedrock.ControlPlane.Director.Recovery,
@@ -91,6 +92,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   def handle_call(:fetch_transaction_system_layout, _from, t),
     do: t |> reply({:ok, t.config.transaction_system_layout})
+
+  def handle_call({:request_worker_creation, node, worker_id, kind}, _from, t) do
+    t
+    |> request_worker_creation(node, worker_id, kind)
+    |> then(&reply(t, &1))
+  end
 
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
     t

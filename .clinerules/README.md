@@ -8,6 +8,7 @@ This knowledgebase contains documentation, guides, and best practices for develo
 - **01-architecture/**: Architectural concepts, component relationships, and design patterns
 - **02-development/**: Development workflows, debugging strategies, and practical guides
 - **03-implementation/**: Detailed implementation guides for specific components
+- **/docs/plans/**: Detailed plans for making specific, evolutionary changes the system
 
 ## Key Documents
 
@@ -24,6 +25,7 @@ This knowledgebase contains documentation, guides, and best practices for develo
 
 ### Development
 
+- [Best Practices](02-development/best-practices.md) - Development best practices and lessons learned
 - [Debugging Strategies](02-development/debugging-strategies.md) - Approaches for debugging distributed systems
 - [Testing Strategies](02-development/testing-strategies.md) - Testing patterns including deterministic simulation ideas
 

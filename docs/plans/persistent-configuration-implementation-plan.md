@@ -7,11 +7,11 @@ Implement self-bootstrapping persistent cluster configuration using the system's
 
 ## Implementation Checklist
 
-### Phase 1: Foundation - Storage Discovery
-- [ ] Add `Foreman.storage_workers/2` function to filter storage workers
-- [ ] Test storage worker identification via `Worker.info/2`
-- [ ] Verify foreman wait mechanism works reliably
-- [ ] Handle graceful fallback when no storage workers exist
+### Phase 1: Foundation - Storage Discovery ✅ COMPLETED
+- [x] Add `Foreman.storage_workers/2` function to filter storage workers
+- [x] Test storage worker identification via `Worker.info/2`
+- [x] Verify foreman wait mechanism works reliably
+- [x] Handle graceful fallback when no storage workers exist
 
 **📖 Reference**: [Control Plane Components - Coordinator Bootstrap](.clinerules/03-implementation/control-plane-components.md#coordinator-bootstrap-with-persistent-configuration)
 

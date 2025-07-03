@@ -31,6 +31,14 @@ defmodule Bedrock.Service.Foreman do
     do: call(foreman, {:new_worker, id, kind}, to_timeout(opts[:timeout] || :infinity))
 
   @doc """
+  Return a list of running storage workers only.
+  """
+  @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
+          {:ok, [Worker.ref()]} | {:error, term()}
+  def storage_workers(foreman, opts \\ []),
+    do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
+
+  @doc """
   Wait until the foreman signals that it (and all of it's workers) are
   reporting that they are healthy, or the timeout happens... whichever comes
   first.

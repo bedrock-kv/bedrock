@@ -20,6 +20,9 @@ defmodule Bedrock.Service.Foreman.Impl do
   def do_fetch_workers(t),
     do: otp_names_for_running_workers(t)
 
+  def do_fetch_storage_workers(t),
+    do: otp_names_for_running_storage_workers(t)
+
   @spec do_new_worker(State.t(), Worker.id(), :log | :storage) :: {State.t(), Worker.ref()}
   def do_new_worker(t, id, kind) do
     worker_info =
@@ -128,4 +131,19 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t),
     do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)
+
+  @spec otp_names_for_running_storage_workers(State.t()) :: [atom()]
+  def otp_names_for_running_storage_workers(t) do
+    t.workers
+    |> Enum.filter(fn {_id, worker_info} ->
+      storage_worker?(worker_info)
+    end)
+    |> Enum.map(fn {_id, %{otp_name: otp_name}} -> otp_name end)
+  end
+
+  @spec storage_worker?(WorkerInfo.t()) :: boolean()
+  def storage_worker?(%{manifest: %{worker: worker}}) when not is_nil(worker),
+    do: worker.kind() == :storage
+
+  def storage_worker?(_), do: false
 end

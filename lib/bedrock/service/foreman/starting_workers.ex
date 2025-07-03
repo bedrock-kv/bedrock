@@ -95,6 +95,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> then(&%{op | child_spec: &1})
   end
 
+  defp build_child_spec(op), do: op
+
   @spec start_supervised_child(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp start_supervised_child(%{error: nil} = op) do
     case DynamicSupervisor.start_child(op.cluster.otp_name(:worker_supervisor), op.child_spec) do
@@ -103,6 +105,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       error -> %{op | error: error}
     end
   end
+
+  defp start_supervised_child(op), do: op
 
   @spec find_worker(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp find_worker(%{error: nil} = op) do

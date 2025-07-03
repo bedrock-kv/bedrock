@@ -529,9 +529,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     Node.list() ++ [Node.self()]
   end
 
-  @spec create_new_log_workers([String.t()], [node()], State.t()) ::
+  @spec create_new_log_workers([String.t()], [node()], RecoveryAttempt.t()) ::
           {:ok, %{String.t() => map()}} | {:error, term()}
-  defp create_new_log_workers([], _available_nodes, _state), do: {:ok, %{}}
+  defp create_new_log_workers([], _available_nodes, _recovery_attempt), do: {:ok, %{}}
 
   defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt) do
     # Distribute workers across available nodes

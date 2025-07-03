@@ -2,7 +2,7 @@ defmodule Bedrock.Internal.GenServer.Replies do
   @spec reply(t, result) :: {:reply, result, t} when t: term(), result: term()
   def reply(t, result), do: {:reply, result, t}
 
-  @spec reply(t, result, continue: continue) :: {:reply, result, t, {:continue, continue}}
+  @spec reply(t, result, [{:continue, continue}]) :: {:reply, result, t, {:continue, continue}}
         when t: term(), result: term(), continue: term()
   def reply(t, result, continue: action), do: {:reply, result, t, {:continue, action}}
 

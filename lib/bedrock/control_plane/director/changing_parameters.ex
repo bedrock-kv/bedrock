@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
 
   @spec try_to_set_parameters_in_config(t :: State.t(), list :: keyword()) ::
           {:ok, State.t()}
-          | {:error, :invalid_parameters_for_state, [atom()]}
+          | {:error, :invalid_parameters_for_state, [{atom(), any()}]}
           | {:error, :invalid_value}
   def try_to_set_parameters_in_config(t, list) do
     with :ok <- validate_settable_parameters_for_state(list, t.config.state),

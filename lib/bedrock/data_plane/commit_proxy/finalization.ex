@@ -145,7 +145,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp filter_transaction_summary({{read_version, reads}, writes}, filter_fn),
     do: {{read_version, Enum.filter(reads, filter_fn)}, Enum.filter(writes, filter_fn)}
 
-  @spec determine_majority(n :: non_neg_integer()) :: non_neg_integer()
+  @spec determine_majority(n :: non_neg_integer()) :: pos_integer()
   defp determine_majority(n), do: 1 + div(n, 2)
 
   @doc """

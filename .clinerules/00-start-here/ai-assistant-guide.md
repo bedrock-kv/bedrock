@@ -183,6 +183,22 @@ When encountering issues:
 3. **Monitor telemetry events** for system behavior
 4. **Use Observer** for visual process monitoring
 
+### Collaboration Best Practices
+
+#### Planning and Design Phase
+1. **Present choices** when multiple approaches are viable - users appreciate having options to evaluate
+2. **Engage in back-and-forth** during design phase to refine ideas before implementation
+3. **Ask clarifying questions** to understand user preferences and constraints
+4. **Document design decisions** in knowledge base before implementing
+5. **Reference existing infrastructure** rather than creating new patterns unnecessarily
+
+#### Implementation Approach
+1. **Use existing APIs** and interfaces rather than direct GenServer calls for future-proofing
+2. **Leverage established patterns** like foreman/worker, fail-fast recovery, and self-healing
+3. **Minimize special cases** - prefer normal transaction flow over custom handling
+4. **Focus on prose over code** in documentation unless specific examples add value
+5. **Reference knowledge base** heavily in implementation plans rather than repeating content
+
 ## Context for AI Responses
 
 When providing assistance:
@@ -200,5 +216,7 @@ When providing assistance:
 - **Version Management**: Global ordering via Sequencer
 - **Transaction Batching**: Commit Proxies batch for efficiency
 - **Durability**: Logs provide durability before client notification
+- **Persistent Configuration**: Coordinators bootstrap from storage, Director persists via system transaction
+- **Self-Healing**: Failed system transactions trigger director restart and coordinator retry
 
 This guide should be updated as the project evolves to maintain accuracy and usefulness.

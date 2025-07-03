@@ -166,10 +166,76 @@ The Director tracks available nodes and their capabilities:
 # Manages node state and capabilities
 ```
 
+### Coordinator Bootstrap with Persistent Configuration
+
+The Coordinator now supports bootstrapping from persistent storage, enabling warm starts and cluster state continuity across restarts.
+
+**Key Changes:**
+- Reads system configuration from local storage workers on startup
+- Uses foreman to discover available storage workers
+- Falls back to default configuration if no storage available
+- Initializes Raft with storage-derived version (not 0)
+
+**Bootstrap Flow:**
+1. Query foreman for local storage workers with timeout
+2. Read `\xff/system/config` from available storage
+3. Deserialize BERT-encoded configuration and epoch
+4. Initialize Raft with storage version as starting point
+5. Fall back to defaults on any failure
+
+**Error Handling:**
+- Graceful fallback when storage unavailable
+- BERT deserialization error recovery
+- Timeout handling for foreman queries
+- Corrupted data detection and recovery
+
+**Benefits:**
+- Coordinators with existing storage win Raft elections
+- System state persists across full cluster restarts
+- Natural conflict resolution during startup
+- No complex Raft log persistence required
+
+### Director System State Persistence
+
+The Director persists cluster state after successful recovery using a system transaction that serves dual purposes: persistence and comprehensive system testing.
+
+**Key Concepts:**
+- System transaction tests entire data plane pipeline
+- Direct submission to commit proxy (bypassing gateway)
+- Fail-fast behavior: transaction failure triggers director restart
+- Uses system keyspace (`\xff/system/*`) for cluster state
+
+**Persistence Flow:**
+1. Recovery completes successfully
+2. Director builds system transaction with cluster state
+3. Submits directly to available commit proxy
+4. Transaction tests: Sequencer → Commit Proxy → Resolver → Logs → Storage
+5. Success indicates fully operational system
+6. Failure triggers director exit and coordinator retry
+
+**System Transaction Contents:**
+- `\xff/system/config`: Complete cluster configuration (BERT-encoded)
+- `\xff/system/epoch`: Current epoch number
+- `\xff/system/last_recovery`: Recovery completion timestamp
+
+**Error Handling:**
+- Transaction failure causes director to exit immediately
+- Coordinator detects director failure and starts fresh director
+- New director attempts recovery with incremented epoch
+- System eventually converges to stable state or fails obviously
+
+**Benefits:**
+- Comprehensive system validation after recovery
+- Automatic persistence of cluster state
+- Self-healing through fail-fast behavior
+- No partial recovery states to debug
+
 ### Common Issues
 - **Recovery Hangs**: Check which recovery phase is failing
 - **Service Assignment Failures**: Verify node capabilities and availability
 - **Configuration Inconsistencies**: Ensure all nodes have the same configuration
+- **Bootstrap Fails**: Check foreman health and storage worker availability
+- **Config Corruption**: Verify BERT serialization/deserialization works
 
 ## Configuration Management
 

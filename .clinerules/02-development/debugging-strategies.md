@@ -300,6 +300,16 @@ Track multiple interconnected issues:
 
 When debugging, always separate what you observe from what's actually broken. For example, an "Enumerable protocol error" might be the symptom, but the root cause could be an error handler returning the wrong data type. Fix the error handler to always return consistent data structures, and the enumerable error disappears. This approach prevents band-aid fixes that mask deeper issues.
 
+### Key Design Patterns for Debugging
+
+**Ephemeral Raft + Storage Bootstrap**: When debugging coordinator issues, remember that Raft logs are ephemeral but coordinators bootstrap from persistent storage. The coordinator with the highest storage version should win elections.
+
+**System Transaction as Comprehensive Test**: Director persistence transactions serve dual purposes - they both persist state AND test the entire data plane pipeline. If this transaction fails, it indicates a systemic issue, not just a persistence problem.
+
+**Fail-Fast Self-Healing**: Components should exit cleanly on unrecoverable errors rather than entering partial states. This triggers automatic retry mechanisms and prevents complex debugging scenarios.
+
+**Leverage Existing Infrastructure**: Before creating special handling, check if existing APIs can be used. For example, use normal transaction flow for system operations rather than creating special transaction types.
+
 ## Debugging Checklist
 
 When encountering issues, work through this checklist:

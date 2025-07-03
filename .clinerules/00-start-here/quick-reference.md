@@ -47,6 +47,15 @@ Logger.configure(level: :debug)
 GenServer.call(:bedrock_coordinator, :get_state)
 GenServer.call(:bedrock_director, :get_state)
 GenServer.call(:bedrock_gateway, :get_state)
+
+# Check persistent configuration
+Storage.fetch(storage_worker, "\xff/system/config", :latest)
+Storage.fetch(storage_worker, "\xff/system/epoch", :latest)
+Storage.fetch(storage_worker, "\xff/system/last_recovery", :latest)
+
+# Check foreman and storage workers
+Foreman.storage_workers(foreman)
+Foreman.wait_for_healthy(foreman, timeout: 5_000)
 ```
 
 ## Architecture Quick Reference

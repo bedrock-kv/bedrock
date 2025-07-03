@@ -10,9 +10,20 @@ defmodule Bedrock.MixProject do
       deps: deps(),
       test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
-        coveralls: :test
+        coveralls: :test,
+        dialyzer: :dev
       ],
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+      dialyzer: dialyzer()
+    ]
+  end
+
+  defp dialyzer do
+    [
+      plt_core_path: "priv/plts",
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      plt_add_apps: [:ex_unit, :mix],
+      ignore_warnings: ".dialyzer_ignore.exs"
     ]
   end
 
@@ -39,6 +50,7 @@ defmodule Bedrock.MixProject do
       [
         {:stream_data, "~> 1.1", only: :test},
         {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+        {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
         {:mox, "~> 1.1", only: :test},

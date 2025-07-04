@@ -103,4 +103,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
       storage_worker_id: storage_worker_id
     })
   end
+
+  def trace_recovery_persisting_system_state do
+    Telemetry.execute([:bedrock, :recovery, :persisting_system_state], %{}, %{})
+  end
+
+  def trace_recovery_system_state_persisted do
+    Telemetry.execute([:bedrock, :recovery, :system_state_persisted], %{}, %{})
+  end
+
+  def trace_recovery_system_transaction_failed(reason) do
+    Telemetry.execute([:bedrock, :recovery, :system_transaction_failed], %{}, %{
+      reason: reason
+    })
+  end
 end

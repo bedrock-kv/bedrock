@@ -132,9 +132,9 @@ end
 
 **System Transaction Building**:
 ```elixir
-system_transaction = %{
-  reads: [],  # System writes don't need reads
-  writes: %{
+system_transaction = {
+  nil,  # reads - system writes don't need reads
+  %{    # writes
     "\xff/system/config" => :erlang.term_to_binary({epoch, sanitized_config}),
     "\xff/system/epoch" => :erlang.term_to_binary(epoch),
     "\xff/system/last_recovery" => :erlang.term_to_binary(System.system_time(:millisecond))

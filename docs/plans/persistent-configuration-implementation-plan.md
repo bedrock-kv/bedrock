@@ -26,13 +26,15 @@ Implement self-bootstrapping persistent cluster configuration using the system's
 
 **📖 Reference**: [Persistent Configuration - Bootstrap Flow](.clinerules/01-architecture/persistent-configuration.md#bootstrap-flow)
 
-### Phase 3: Director System Transaction
-- [ ] **CRITICAL**: Verify `CommitProxy.commit/2` transaction format requirements
-- [ ] Add config sanitization (remove PIDs/refs before BERT encoding)
-- [ ] Add system transaction building in director recovery completion
-- [ ] Add explicit readiness check before system transaction
-- [ ] Implement fail-fast on system transaction failure (director exit)
-- [ ] Test system transaction submission and error handling
+### Phase 3: Director System Transaction ✅ COMPLETED
+- [x] **CRITICAL**: Verify `CommitProxy.commit/2` transaction format requirements (tuple format confirmed)
+- [x] Update documentation to match actual tuple-based transaction format
+- [x] Add config persistence module with PID → {otp_name, node} encoding/decoding
+- [x] Add system transaction building in director recovery completion
+- [x] Add explicit readiness check before system transaction (via `:persist_system_state` state)
+- [x] Implement fail-fast on system transaction failure (director exit)
+- [x] Add telemetry events for system transaction monitoring
+- [x] **TESTING**: Test system transaction submission and error handling
 
 **📖 Reference**: [Control Plane Components - Director Persistence](.clinerules/03-implementation/control-plane-components.md#director-system-state-persistence)
 

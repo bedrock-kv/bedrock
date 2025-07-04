@@ -4,7 +4,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.Internal.Time.Interval
 
   import Bedrock, only: [key_range: 2]
@@ -512,7 +514,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   #
   #
   def recovery(%{state: :final_checks} = t) do
-    t |> Map.put(:state, :completed)
+    t |> Map.put(:state, :persist_system_state)
+  end
+
+  #
+  # Persist cluster state via system transaction
+  #
+  def recovery(%{state: :persist_system_state} = t) do
+    trace_recovery_persisting_system_state()
+
+    # Build the complete cluster configuration
+    cluster_config = build_cluster_config(t)
+
+    # Create system transaction
+    system_transaction = build_system_transaction(t.epoch, cluster_config, t.cluster)
+
+    # Submit to commit proxy (tests entire data plane)
+    case submit_system_transaction(system_transaction, t.proxies) do
+      {:ok, _version} ->
+        trace_recovery_system_state_persisted()
+        t |> Map.put(:state, :completed)
+
+      {:error, reason} ->
+        trace_recovery_system_transaction_failed(reason)
+        # Fail fast - exit director and let coordinator retry
+        exit({:recovery_system_test_failed, reason})
+    end
   end
 
   #
@@ -592,5 +619,72 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         {:error, reason} -> {:error, reason}
       end
     end
+  end
+
+  # Build complete cluster configuration from recovery state
+  defp build_cluster_config(recovery_attempt) do
+    %{
+      # Will be filled by coordinator
+      coordinators: [],
+      epoch: recovery_attempt.epoch,
+      parameters: recovery_attempt.parameters,
+      # Default policies
+      policies: %{},
+      transaction_system_layout: %{
+        id: TransactionSystemLayout.random_id(),
+        director: self(),
+        sequencer: recovery_attempt.sequencer,
+        rate_keeper: nil,
+        proxies: recovery_attempt.proxies,
+        resolvers: recovery_attempt.resolvers,
+        logs: recovery_attempt.logs,
+        storage_teams: recovery_attempt.storage_teams,
+        services: recovery_attempt.required_services
+      }
+    }
+  end
+
+  # Build system transaction with cluster state
+  defp build_system_transaction(epoch, cluster_config, cluster) do
+    # Encode config for storage (PIDs -> {otp_name, node} tuples)
+    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
+
+    # Build transaction tuple: {reads, writes}
+    {
+      # reads - system writes don't need reads
+      nil,
+      # writes
+      %{
+        "\xff/system/config" => :erlang.term_to_binary({epoch, encoded_config}),
+        "\xff/system/epoch" => :erlang.term_to_binary(epoch),
+        "\xff/system/last_recovery" => :erlang.term_to_binary(System.system_time(:millisecond))
+      }
+    }
+  end
+
+  # Submit system transaction to available commit proxy
+  defp submit_system_transaction(system_transaction, proxies) do
+    case get_available_commit_proxy(proxies) do
+      {:ok, commit_proxy} ->
+        CommitProxy.commit(commit_proxy, system_transaction)
+
+      {:error, reason} ->
+        {:error, {:no_available_commit_proxy, reason}}
+    end
+  end
+
+  # Get first available commit proxy
+  defp get_available_commit_proxy([]), do: {:error, :no_commit_proxies}
+
+  defp get_available_commit_proxy([proxy | rest]) when is_pid(proxy) do
+    if Process.alive?(proxy) do
+      {:ok, proxy}
+    else
+      get_available_commit_proxy(rest)
+    end
+  end
+
+  defp get_available_commit_proxy([_invalid | rest]) do
+    get_available_commit_proxy(rest)
   end
 end

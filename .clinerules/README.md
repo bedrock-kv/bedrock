@@ -27,7 +27,8 @@ This knowledgebase contains documentation, guides, and best practices for develo
 
 - [Best Practices](02-development/best-practices.md) - Development best practices and lessons learned
 - [Debugging Strategies](02-development/debugging-strategies.md) - Approaches for debugging distributed systems
-- [Testing Strategies](02-development/testing-strategies.md) - Testing patterns including deterministic simulation ideas
+- [Testing Strategies](02-development/testing-strategies.md) - Testing philosophy and deterministic simulation ideas
+- [Testing Patterns](02-development/testing-patterns.md) - Specific testing techniques and patterns discovered during development
 
 ### Implementation
 

@@ -74,10 +74,9 @@ During the write phase:
 # The transaction block returns, triggering commit
 
 # Under the hood
-CommitProxy.commit_transaction(%{
-  read_version: read_version,
-  reads: read_keys_and_ranges,
-  writes: write_key_values
+CommitProxy.commit({
+  {read_version, read_keys_and_ranges},  # reads
+  write_key_values                       # writes
 })
 ```
 

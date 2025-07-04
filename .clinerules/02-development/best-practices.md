@@ -5,87 +5,65 @@ based on real development sessions and experience.
 
 ## Code Style and Organization
 
+### Code as Source of Truth Principle
+
+**Rule**: When documentation and implementation disagree, the code is the source of truth.
+
+**Application**: Always verify actual implementation before making assumptions based on documentation. For example, when implementing persistent configuration, the actual `CommitProxy.commit/2` function signature (tuple format) took precedence over documentation examples (map format).
+
+**Benefits**: Prevents implementation bugs, ensures consistency, reduces debugging time.
+
+### DRY (Don't Repeat Yourself) Implementation
+
+**Rule**: Eliminate repetitive code patterns through generic helper functions.
+
+**Pattern**: When you see similar code repeated 3+ times, extract it into a reusable function.
+
+**Example**: Instead of separate `encode_director_reference/2`, `encode_sequencer_reference/2`, etc., create `encode_single_reference/3` that handles all single PID references generically.
+
+**Benefits**: Reduces maintenance burden, improves consistency, makes changes easier to implement across the codebase.
+
+### Leverage Existing Infrastructure
+
+**Rule**: Before creating new mechanisms, thoroughly investigate existing patterns and infrastructure.
+
+**Application**: Use established `otp_name` patterns for process references rather than inventing new naming schemes. Build upon existing behaviours and contracts.
+
+**Benefits**: Consistency with existing patterns, automatic compatibility with new types, reduced maintenance burden.
+
 ### Separate Implementation from GenServer Concerns
 
-When building GenServer-based components, separate complex business logic from
-process lifecycle management by creating dedicated implementation modules. This
-pattern improves testability, maintainability, and code clarity.
+When building GenServer-based components, separate complex business logic from process lifecycle management by creating dedicated implementation modules.
 
 **Structure Pattern:**
 - Main module provides public API and delegates to implementation
 - Implementation module (`impl.ex`) contains pure business logic functions
-- GenServer module handles only process lifecycle, state management, and message
-  routing
+- GenServer module handles only process lifecycle, state management, and message routing
 
 **Benefits:**
 - Business logic can be unit tested without GenServer overhead
 - Complex algorithms become easier to reason about and debug
 - Implementation details are cleanly separated from process concerns
 - Enables comprehensive testing of edge cases and error conditions
-- Follows single responsibility principle at the module level
-
-**When to Apply:**
-- Components with complex initialization or bootstrap logic
-- Modules with intricate business rules that deserve focused testing
-- GenServers that coordinate multiple external services
-- Any component where the business logic is substantial enough to warrant
-  isolation
-
-This pattern is particularly valuable for distributed system components like
-coordinators, directors, and gateways where the business logic complexity can
-overshadow the process management concerns.
 
 ### Use Long-Form Aliases
 
-Prefer explicit, long-form aliases over grouped imports for better readability
-and maintainability. Instead of grouping multiple aliases from the same module,
-write each alias on its own line. This makes dependencies more visible at a
-glance, improves code navigation in IDEs, and makes diffs clearer when reviewing
-changes. The slight increase in line count is worth the improved readability and
-reduced cognitive load.
+Prefer explicit, long-form aliases over grouped imports for better readability and maintainability. Write each alias on its own line to make dependencies more visible and improve code navigation.
 
 ### Follow Elixir Style Guide
 
-Avoid using `is_` prefixes for predicate functions, as this goes against Elixir
-conventions. Functions that return boolean values should end with a question
-mark but not start with `is_`. Let the formatter handle spacing and indentation
-consistently. Use single-line function definitions for simple cases, but break
-complex function definitions across multiple lines for clarity.
-
-### Leverage Existing Contracts
-
-Before creating new mechanisms, always check if existing behaviours and
-contracts can be used. This approach provides several benefits: new types work
-automatically without code changes, compile-time verification ensures type
-safety, consistency with existing patterns reduces surprises, and maintenance
-burden is reduced over time. For example, when determining worker types, use the
-existing WorkerBehaviour.kind() callback rather than hardcoding module names.
+Avoid `is_` prefixes for predicate functions. Use question marks for boolean-returning functions. Let the formatter handle spacing and indentation consistently.
 
 ## Testing Strategies
 
-### Make Helper Functions Public for Testing
+**Reference**: See [Testing Patterns](testing-patterns.md) for specific testing techniques and [Testing Strategies](testing-strategies.md) for overall testing philosophy.
 
-When testing internal logic, consider making helper functions public rather than
-testing only through the public API. This approach is particularly valuable for
-complex logic that deserves direct testing, helper functions with multiple edge
-cases, functions that implement important business logic, and when the public
-API would be too cumbersome to test thoroughly.
-
-### Test Edge Cases Thoroughly
-
-Always test nil values, missing data, and error conditions. Common edge cases
-include nil values in expected places, empty collections, malformed data
-structures, network timeouts and failures, and resource exhaustion scenarios.
-These tests often reveal assumptions in the code that may not hold in production
-environments.
-
-### Comprehensive Test Coverage
-
-Structure tests to cover multiple levels: public API testing through the main
-interface, helper function testing for complex internal logic, integration
-testing for component interactions, and edge case testing for error conditions
-and boundary cases. This layered approach ensures both the interface and
-implementation are robust.
+### Key Testing Principles
+- Testing is non-negotiable - always implement comprehensive tests
+- Use reliable synchronization patterns (`assert_receive` vs delays)
+- Apply DRY principle to test helpers and setup code
+- Test edge cases thoroughly (nil values, empty collections, error conditions)
+- Structure tests at multiple levels (unit, integration, system)
 
 ## Development Workflow Efficiency
 

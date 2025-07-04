@@ -119,36 +119,14 @@ node_config = YourCluster.node_config()
 
 ## Testing Patterns
 
-### Unit Tests
-```elixir
-defmodule Bedrock.Component.Test do
-  use ExUnit.Case
-  
-  test "component behavior" do
-    # Test individual component logic
-  end
-end
-```
+**Reference**: See [Testing Patterns](../02-development/testing-patterns.md) for detailed testing techniques and [Testing Strategies](../02-development/testing-strategies.md) for overall testing philosophy.
 
-### Property-Based Tests
-```elixir
-use ExUnitProperties
-
-property "invariant holds" do
-  check all input <- generator() do
-    # Test property across many inputs
-  end
-end
-```
-
-### Integration Tests
-```elixir
-test "components work together" do
-  # Start multiple components
-  # Test interactions
-  # Verify expected behavior
-end
-```
+### Key Testing Principles
+- Use `assert_receive` for reliable test synchronization (never `Process.sleep`)
+- Use `on_exit` for automatic test cleanup
+- Extract repetitive test setup into DRY helper functions
+- Test round-trip encoding/decoding for serialization logic
+- Testing is non-negotiable - always implement comprehensive tests
 
 ## Debugging Checklist
 
@@ -176,6 +154,9 @@ When encountering issues:
 5. **Place imports at module top** - `require`, `alias`, `import` go at the top, never inside functions
 6. **Question nil values** - investigate why something is nil before handling it
 7. **Understand design intent** - learn the architectural purpose before suggesting changes
+8. **Verify code over documentation** - when implementation and docs disagree, code is source of truth
+9. **Apply DRY principle** - extract repetitive patterns into generic helper functions
+10. **Leverage existing infrastructure** - use established `otp_name` patterns rather than creating new mechanisms
 
 ### When Debugging
 1. **Use the debugging strategies guide** for systematic approaches

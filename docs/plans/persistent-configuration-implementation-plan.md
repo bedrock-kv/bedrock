@@ -15,12 +15,14 @@ Implement self-bootstrapping persistent cluster configuration using the system's
 
 **📖 Reference**: [Control Plane Components - Coordinator Bootstrap](.clinerules/03-implementation/control-plane-components.md#coordinator-bootstrap-with-persistent-configuration)
 
-### Phase 2: Coordinator Bootstrap
-- [ ] Modify `coordinator/server.ex` init to read from storage first
-- [ ] Add system config reading using `Storage.fetch/3`
-- [ ] Handle BERT deserialization errors gracefully
-- [ ] Test bootstrap with and without existing storage
-- [ ] Verify Raft initialization with storage version
+### Phase 2: Coordinator Bootstrap ✅ COMPLETED
+- [x] Modify `coordinator/server.ex` init to read from storage first
+- [x] Add system config reading using `Storage.fetch/3`
+- [x] Handle BERT deserialization errors gracefully
+- [x] Test bootstrap with and without existing storage
+- [x] Verify Raft initialization with storage version
+- [x] Refactor bootstrap logic into separate `impl.ex` module for better testability
+- [x] Create comprehensive unit tests for bootstrap functionality
 
 **📖 Reference**: [Persistent Configuration - Bootstrap Flow](.clinerules/01-architecture/persistent-configuration.md#bootstrap-flow)
 

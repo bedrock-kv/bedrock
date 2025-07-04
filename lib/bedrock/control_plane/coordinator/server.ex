@@ -7,9 +7,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
 
-  import Bedrock.ControlPlane.Config,
+  import Bedrock.ControlPlane.Coordinator.Impl,
     only: [
-      config: 1
+      bootstrap_from_storage: 2
     ]
 
   import Bedrock.ControlPlane.Coordinator.Durability,
@@ -69,13 +69,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          raft_log <- InMemoryLog.new() do
-      {last_durable_txn_id, config} =
-        raft_log
-        |> Log.transactions_to(:newest_safe)
-        |> List.last()
-        |> case do
-          nil -> {Log.initial_transaction_id(raft_log), config(coordinator_nodes)}
-          txn -> txn
+      # Bootstrap from storage or use defaults
+      {bootstrap_version, config} = bootstrap_from_storage(cluster, coordinator_nodes)
+
+      # Use bootstrap version instead of hardcoded logic
+      last_durable_txn_id =
+        case bootstrap_version do
+          0 -> Log.initial_transaction_id(raft_log)
+          version -> version
         end
 
       {:ok,

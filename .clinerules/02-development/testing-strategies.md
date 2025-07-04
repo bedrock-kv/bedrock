@@ -245,6 +245,47 @@ defmodule Bedrock.SimulationTest do
 end
 ```
 
+## Testing Distributed System Components
+
+### Fake Server Pattern for Component Testing
+
+When testing components that interact with GenServer-based services, create lightweight fake server processes that can respond to calls with controlled behavior. This approach enables testing of complex interaction patterns without requiring full service implementations.
+
+**Key Principles:**
+- Use a single response function that receives the actual GenServer call tuple
+- Let the response function pattern match on call structure to return appropriate responses
+- Keep fake servers alive with recursive loops to handle multiple sequential calls
+- Always include catch-all patterns for unexpected calls
+
+**Benefits:**
+- **Maximum Flexibility**: Response functions can handle any call pattern by examining the full call structure
+- **Real Protocol Testing**: Tests use the actual message formats and call patterns of the system
+- **DRY Implementation**: Single helper function works for any GenServer-like component
+- **Pattern Matching Power**: Leverage Elixir's pattern matching to create sophisticated response behaviors
+
+**When to Use:**
+- Testing sequential fallback logic across multiple services
+- Validating version comparison and selection algorithms
+- Testing error handling and recovery scenarios
+- Simulating various service availability patterns
+
+This pattern is particularly valuable for testing coordinator bootstrap logic, storage discovery, and other distributed coordination scenarios where multiple services must be queried in sequence.
+
+### Implementation Separation for Testability
+
+Separate complex logic from GenServer concerns by creating dedicated implementation modules. This pattern enables comprehensive unit testing of business logic without the overhead of GenServer lifecycle management.
+
+**Structure:**
+- Main module provides public API and delegates to implementation
+- Implementation module contains pure business logic
+- GenServer module handles only process lifecycle and message routing
+
+**Benefits:**
+- Business logic can be tested in isolation with simple function calls
+- Complex algorithms become easier to reason about and debug
+- Implementation details are separated from process management concerns
+- Enables property-based testing of core algorithms
+
 ## Testing Patterns
 
 ### Transaction Testing

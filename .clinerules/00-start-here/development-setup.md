@@ -2,6 +2,13 @@
 
 This guide covers the practical setup for developing Bedrock, including working with the multi-node test harness.
 
+## See Also
+- **Getting Started**: [Project Reentry Guide](project-reentry-guide.md) - Overview and context for returning to development
+- **Quick Commands**: [Quick Reference](quick-reference.md) - Common commands and troubleshooting
+- **Debugging Support**: [Debugging Strategies](../02-development/debugging-strategies.md) - Multi-node debugging approaches
+- **Architecture Context**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **AI Collaboration**: [AI Assistant Guide](ai-assistant-guide.md) - Effective AI-assisted development
+
 ## Prerequisites
 
 - Elixir 1.15+ (check with `elixir --version`)

@@ -2,50 +2,98 @@
 
 This knowledgebase contains documentation, guides, and best practices for developing Bedrock, an embedded, distributed key-value store inspired by FoundationDB.
 
-## Directory Structure
+## How to Use This Knowledge Base
 
-- **00-start-here/**: Essential guides for getting started or returning to development
-- **01-architecture/**: Architectural concepts, component relationships, and design patterns
-- **02-development/**: Development workflows, debugging strategies, and practical guides
-- **03-implementation/**: Detailed implementation guides for specific components
-- **/docs/plans/**: Detailed plans for making specific, evolutionary changes the system
+This knowledge base is organized for both **human developers** and **AI assistants** working on Bedrock. Choose your entry point based on your current needs:
 
-## Key Documents
+### 🚀 Common Workflows
 
-### Getting Started
+#### Getting Started / Returning to Development
+1. **[Project Reentry Guide](00-start-here/project-reentry-guide.md)** - Start here when returning to development
+2. **[Development Setup](00-start-here/development-setup.md)** - Environment setup and multi-node testing  
+3. **[Quick Reference](00-start-here/quick-reference.md)** - Common commands and troubleshooting
 
-- [Project Reentry Guide](00-start-here/project-reentry-guide.md) - Start here when returning to development
-- [Development Setup](00-start-here/development-setup.md) - Environment setup and multi-node testing
-- [Quick Reference](00-start-here/quick-reference.md) - Common commands and troubleshooting guide
+#### Debugging Issues
+1. **[Debugging Strategies](02-development/debugging-strategies.md)** - Systematic debugging approaches
+2. **[Component Implementation Guides](03-implementation/)** - Component-specific debugging
+3. **[Quick Reference](00-start-here/quick-reference.md)** - Common commands and solutions
 
-### Architecture
+#### Testing and Development
+1. **[Testing Strategies](02-development/testing-strategies.md)** - Overall testing philosophy and approach
+2. **[Testing Patterns](02-development/testing-patterns.md)** - Specific techniques and examples
+3. **[Best Practices](02-development/best-practices.md)** - Development guidelines and lessons learned
 
-- [FoundationDB Concepts](01-architecture/foundationdb-concepts.md) - Core architectural concepts
-- [Transaction Lifecycle](01-architecture/transaction-lifecycle.md) - End-to-end transaction flow
+#### AI Assistant Collaboration
+1. **[AI Assistant Guide](00-start-here/ai-assistant-guide.md)** - Structured context and collaboration patterns
+2. **[Best Practices](02-development/best-practices.md)** - Development principles and patterns
+3. **[Testing Patterns](02-development/testing-patterns.md)** - Testing techniques for AI-assisted development
 
-### Development
+### 📚 By Topic
 
-- [Best Practices](02-development/best-practices.md) - Development best practices and lessons learned
-- [Debugging Strategies](02-development/debugging-strategies.md) - Approaches for debugging distributed systems
-- [Testing Strategies](02-development/testing-strategies.md) - Testing philosophy and deterministic simulation ideas
-- [Testing Patterns](02-development/testing-patterns.md) - Specific testing techniques and patterns discovered during development
+#### Recovery and System Startup
+- **[Recovery Architecture](01-architecture/foundationdb-concepts.md#system-recovery)** - High-level recovery concepts
+- **[Director Recovery Implementation](03-implementation/control-plane-components.md#recovery-process-implementation)** - Detailed recovery phases
+- **[Persistent Configuration](01-architecture/persistent-configuration.md)** - Self-bootstrapping cluster state
+- **[Debugging Recovery Issues](02-development/debugging-strategies.md#director-recovery-issues)** - Recovery troubleshooting
 
-### Implementation
+#### Transaction Processing
+- **[Transaction Lifecycle](01-architecture/transaction-lifecycle.md)** - End-to-end transaction flow
+- **[Data Plane Components](03-implementation/data-plane-components.md)** - Sequencer, Commit Proxy, Resolver, Log, Storage
+- **[MVCC and Conflict Resolution](01-architecture/foundationdb-concepts.md#multi-version-concurrency-control-mvcc)** - Conflict detection concepts
 
-- [Control Plane Components](03-implementation/control-plane-components.md) - Coordinator, Director, and configuration management
-- [Data Plane Components](03-implementation/data-plane-components.md) - Sequencer, Commit Proxy, Resolver, Log, and Storage
+#### Testing and Quality Assurance
+- **[Testing Philosophy](02-development/testing-strategies.md)** - Multi-layered testing approach
+- **[Testing Patterns](02-development/testing-patterns.md)** - Specific techniques and examples
+- **[Component Testing](03-implementation/control-plane-components.md#testing-control-plane-components)** - Testing distributed components
+- **[Deterministic Simulation](02-development/testing-strategies.md#deterministic-simulation-testing)** - FoundationDB-style testing ideas
+
+#### Configuration and Persistence
+- **[Persistent Configuration Architecture](01-architecture/persistent-configuration.md)** - Self-bootstrapping design
+- **[Configuration Management](03-implementation/control-plane-components.md#configuration-management)** - Implementation details
+- **[System Transaction Design](01-architecture/persistent-configuration.md#system-transaction-as-comprehensive-test)** - Dual-purpose persistence
+
 
 ## Comprehensive Documentation
 
-For a complete architectural overview, see the [Bedrock Architecture Livebook](../docs/bedrock-architecture.livemd).
+For a complete architectural overview with detailed explanations and motivation, see the **[Bedrock Architecture Livebook](../docs/bedrock-architecture.livemd)**. This serves as the authoritative reference, while this knowledge base provides practical development guidance.
 
-## Contributing to the Knowledgebase
+## Current Implementation Status
 
-As you develop Bedrock, consider adding to this knowledgebase:
+### ✅ Completed Features
+- **Persistent Configuration**: Self-bootstrapping cluster state using system's own storage
+- **Recovery Process**: Multi-phase director-managed recovery with comprehensive testing
+- **Component Structure**: All major control plane and data plane components defined
+- **Testing Infrastructure**: Unit, integration, and property-based testing patterns
+
+### 🚧 In Development
+- **Complete Transaction Flow**: End-to-end transaction processing integration
+- **Multi-Node Coordination**: Distributed system coordination and failure handling
+- **Performance Optimization**: Throughput and latency improvements
+
+### 📋 Planned Features
+- **Deterministic Simulation**: FoundationDB-style comprehensive testing
+- **Automatic Sharding**: Dynamic key range management and rebalancing
+- **Advanced Monitoring**: Comprehensive observability and performance tracking
+
+## Contributing to the Knowledge Base
+
+As you develop Bedrock, consider adding to this knowledge base:
 
 1. **Implementation Guides**: Add detailed guides for specific components
-2. **Common Issues**: Document solutions to problems you encounter
+2. **Common Issues**: Document solutions to problems you encounter  
 3. **Testing Strategies**: Add patterns for testing distributed behavior
 4. **Performance Optimization**: Document performance considerations
+5. **Debugging Scenarios**: Add real-world debugging examples and solutions
 
-The goal is to make this knowledgebase a living resource that grows with the project.
+**📖 See [CONTRIBUTING.md](CONTRIBUTING.md)** for detailed guidance on maintaining and extending this knowledge base, including document templates, cross-referencing standards, and quality guidelines.
+
+The goal is to make this knowledge base a living resource that grows with the project and serves both human developers and AI assistants effectively.
+
+## Quick Navigation
+
+- **Need to get started?** → [Project Reentry Guide](00-start-here/project-reentry-guide.md)
+- **Debugging an issue?** → [Debugging Strategies](02-development/debugging-strategies.md)
+- **Understanding architecture?** → [FoundationDB Concepts](01-architecture/foundationdb-concepts.md)
+- **Implementing a feature?** → [Implementation Guides](03-implementation/)
+- **Writing tests?** → [Testing Patterns](02-development/testing-patterns.md)
+- **AI assistant starting work?** → [AI Assistant Guide](00-start-here/ai-assistant-guide.md)

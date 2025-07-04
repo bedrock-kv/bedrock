@@ -2,6 +2,13 @@
 
 Welcome back to Bedrock! This guide will help you quickly get back into development after a break.
 
+## See Also
+- **Development Setup**: [Development Setup](development-setup.md) - Detailed environment setup and multi-node testing
+- **Quick Commands**: [Quick Reference](quick-reference.md) - Common commands and troubleshooting
+- **Architecture Overview**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **AI Collaboration**: [AI Assistant Guide](ai-assistant-guide.md) - Effective AI-assisted development
+- **Complete Reference**: [Bedrock Architecture Livebook](../../docs/bedrock-architecture.livemd) - Comprehensive architectural overview
+
 ## What is Bedrock?
 
 Bedrock is an embedded, distributed key-value store inspired by FoundationDB, designed to scale from ephemeral test instances to multi-node production clusters. It provides ACID guarantees with strict serialization and is built in Elixir.

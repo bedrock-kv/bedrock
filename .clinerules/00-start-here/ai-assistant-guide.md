@@ -2,6 +2,14 @@
 
 This guide helps AI assistants (like Claude/Cline) work more effectively with the Bedrock codebase by providing structured context and common patterns.
 
+## See Also
+- **Getting Started**: [Project Reentry Guide](project-reentry-guide.md) - Context for returning to development
+- **Development Setup**: [Development Setup](development-setup.md) - Environment setup and multi-node testing
+- **Quick Commands**: [Quick Reference](quick-reference.md) - Common commands and troubleshooting
+- **Architecture Overview**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **Development Principles**: [Best Practices](../02-development/best-practices.md) - Development guidelines and lessons learned
+- **Testing Approaches**: [Testing Strategies](../02-development/testing-strategies.md) and [Testing Patterns](../02-development/testing-patterns.md)
+
 ## Quick Context Loading
 
 When an AI assistant joins a Bedrock development session, they should:
@@ -58,64 +66,20 @@ When implementing or fixing components:
 - **Data Plane**: Sequencer (versions), Commit Proxy (batching), Resolver (MVCC), Log (durability), Storage (serving)
 - **Transaction Flow**: Read version → reads → writes → commit → conflict resolution → logging
 
-## Key File Patterns
+## Key Patterns
 
 ### Module Organization
-```
-lib/bedrock/
-├── cluster.ex                    # Main cluster interface
-├── control_plane/               # Coordination and management
-│   ├── coordinator.ex           # Raft consensus
-│   ├── director.ex              # System recovery
-│   └── config.ex                # Configuration management
-├── data_plane/                 # Transaction processing
-│   ├── sequencer.ex             # Version assignment
-│   ├── commit_proxy.ex          # Transaction batching
-│   ├── resolver.ex              # Conflict detection
-│   ├── log/                     # Durable storage
-│   └── storage/                 # Data serving
-└── cluster/
-    └── gateway.ex               # Client interface
-```
+- **Control Plane**: `lib/bedrock/control_plane/` (coordinator, director, config)
+- **Data Plane**: `lib/bedrock/data_plane/` (sequencer, commit_proxy, resolver, log, storage)
+- **Gateway**: `lib/bedrock/cluster/gateway.ex`
 
 ### GenServer Patterns
-Most components follow this pattern:
-- `component.ex` - Public API
-- `component/server.ex` - GenServer implementation
-- `component/state.ex` - State management
-- `component/telemetry.ex` - Observability
-- `component/tracing.ex` - Distributed tracing
+Most components follow: `component.ex` (API) → `component/server.ex` (GenServer) → `component/state.ex` (state management)
 
-## Common Code Patterns
-
-### Error Handling
-```elixir
-# Standard error returns
-{:ok, result} | {:error, reason}
-
-# Common error reasons
-{:error, :unavailable}
-{:error, :timeout}
-{:error, :conflict}
-```
-
-### Telemetry Events
-```elixir
-# Event naming pattern
-[:bedrock, :component, :operation, :status]
-
-# Example
-:telemetry.execute([:bedrock, :director, :recovery, :started], %{}, %{phase: phase})
-```
-
-### Configuration Access
-```elixir
-# Get cluster configuration
-{:ok, config} = YourCluster.fetch_config()
-
-# Access node-specific config
-node_config = YourCluster.node_config()
-```
+### Common Conventions
+- Standard error returns: `{:ok, result} | {:error, reason}`
+- Telemetry events: `[:bedrock, :component, :operation, :status]`
+- Configuration access via cluster interface
 
 ## Testing Patterns
 

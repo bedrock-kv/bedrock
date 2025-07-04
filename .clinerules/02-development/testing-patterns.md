@@ -1,6 +1,12 @@
 # Testing Patterns for Bedrock
 
-This document covers specific testing patterns and techniques discovered during Bedrock development. For general testing philosophy and strategies, see [Testing Strategies](testing-strategies.md). For broader development principles, see [Best Practices](best-practices.md).
+This document covers specific testing patterns and techniques discovered during Bedrock development.
+
+## See Also
+- **Testing Philosophy**: [Testing Strategies](testing-strategies.md) - Overall testing approach and deterministic simulation
+- **Development Principles**: [Best Practices](best-practices.md) - General development guidelines and lessons learned
+- **Implementation Testing**: [Control Plane Testing](../03-implementation/control-plane-components.md#testing-control-plane-components) and [Data Plane Testing](../03-implementation/data-plane-components.md#testing-data-plane-components)
+- **AI Collaboration**: [AI Assistant Guide](../00-start-here/ai-assistant-guide.md#testing-patterns) - Testing in AI-assisted development
 
 ## Process Testing Patterns
 

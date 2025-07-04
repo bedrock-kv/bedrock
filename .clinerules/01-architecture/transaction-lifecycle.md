@@ -2,6 +2,13 @@
 
 This document explains the complete lifecycle of a transaction in Bedrock, from initiation to commit.
 
+## See Also
+- **Architecture Overview**: [FoundationDB Concepts](foundationdb-concepts.md) - Core architectural principles and component relationships
+- **Persistent State**: [Persistent Configuration](persistent-configuration.md) - How cluster state is maintained across restarts
+- **Implementation Details**: [Data Plane Components](../03-implementation/data-plane-components.md) - Detailed implementation of transaction processing components
+- **Development Support**: [Best Practices](../02-development/best-practices.md) and [Debugging Strategies](../02-development/debugging-strategies.md)
+- **Complete Reference**: [Bedrock Architecture Livebook](../../docs/bedrock-architecture.livemd) - Comprehensive architectural overview
+
 ## Overview
 
 Bedrock transactions follow a multi-phase lifecycle inspired by FoundationDB:

@@ -2,6 +2,13 @@
 
 This is a quick reference guide for common development tasks and debugging scenarios in Bedrock.
 
+## See Also
+- **Getting Started**: [Project Reentry Guide](project-reentry-guide.md) - Overview and context for returning to development
+- **Detailed Setup**: [Development Setup](development-setup.md) - Comprehensive environment setup
+- **Debugging Guide**: [Debugging Strategies](../02-development/debugging-strategies.md) - Systematic debugging approaches
+- **Architecture Overview**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **AI Collaboration**: [AI Assistant Guide](ai-assistant-guide.md) - Effective AI-assisted development
+
 ## Getting Started Checklist
 
 - [ ] Read the [Project Reentry Guide](project-reentry-guide.md)
@@ -106,37 +113,12 @@ Foreman.wait_for_healthy(foreman, timeout: 5_000)
 
 ## File Locations Quick Reference
 
-### Key Implementation Files
-```
-lib/bedrock/cluster.ex                    # Main cluster interface
-lib/bedrock/control_plane/coordinator.ex # Raft coordination
-lib/bedrock/control_plane/director.ex    # System recovery
-lib/bedrock/cluster/gateway.ex           # Client interface
-lib/bedrock/data_plane/sequencer.ex      # Version assignment
-lib/bedrock/data_plane/commit_proxy.ex   # Transaction batching
-lib/bedrock/data_plane/resolver.ex       # Conflict detection
-lib/bedrock/data_plane/log/shale.ex      # Transaction logging
-lib/bedrock/data_plane/storage/basalt.ex # Data storage
-```
-
-### Configuration Files
-```
-lib/bedrock/control_plane/config.ex      # Main configuration
-lib/bedrock/control_plane/config/        # Configuration components
-```
-
-### Recovery Implementation
-```
-lib/bedrock/control_plane/director/recovery/
-├── determining_durable_version.ex
-├── creating_vacancies.ex
-├── locking_available_services.ex
-├── defining_sequencer.ex
-├── defining_commit_proxies.ex
-├── defining_resolvers.ex
-├── filling_vacancies.ex
-└── replaying_old_logs.ex
-```
+### Key Implementation Areas
+- **Main Interface**: `lib/bedrock/cluster.ex`
+- **Control Plane**: `lib/bedrock/control_plane/` (coordinator, director, config)
+- **Data Plane**: `lib/bedrock/data_plane/` (sequencer, commit_proxy, resolver, log, storage)
+- **Recovery Phases**: `lib/bedrock/control_plane/director/recovery/`
+- **Gateway**: `lib/bedrock/cluster/gateway.ex`
 
 ## Testing Quick Reference
 

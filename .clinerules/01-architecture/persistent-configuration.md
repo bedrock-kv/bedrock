@@ -2,6 +2,14 @@
 
 This document describes Bedrock's approach to persistent cluster configuration, enabling the system to survive cold starts and maintain cluster state across restarts.
 
+## See Also
+- **Architecture Overview**: [FoundationDB Concepts](foundationdb-concepts.md) - Core architectural principles and component relationships
+- **Transaction Flow**: [Transaction Lifecycle](transaction-lifecycle.md) - How system transactions work within the broader transaction model
+- **Implementation Details**: [Control Plane Components](../03-implementation/control-plane-components.md) - Coordinator and Director implementation specifics
+- **Development Support**: [Best Practices](../02-development/best-practices.md) and [Debugging Strategies](../02-development/debugging-strategies.md)
+- **Implementation Plan**: [Persistent Configuration Plan](../../docs/plans/persistent-configuration-implementation-plan.md) - Current implementation progress
+- **Complete Reference**: [Bedrock Architecture Livebook](../../docs/bedrock-architecture.livemd) - Comprehensive architectural overview
+
 ## Overview
 
 Bedrock uses a self-bootstrapping persistence strategy where:

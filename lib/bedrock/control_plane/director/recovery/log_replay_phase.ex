@@ -1,5 +1,40 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
+defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
+  @moduledoc """
+  Handles the :replay_old_logs phase of recovery.
+
+  This phase is responsible for replaying transactions from old logs
+  into the new log configuration to ensure data consistency.
+  """
+
   alias Bedrock.DataPlane.Log
+
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  @doc """
+  Execute the log replay phase of recovery.
+
+  Replays transactions from old logs into new logs based on the
+  determined version vector and log configuration.
+  """
+  @spec execute(map()) :: map()
+  def execute(%{state: :replay_old_logs} = recovery_attempt) do
+    replay_old_logs_into_new_logs(
+      recovery_attempt.old_log_ids_to_copy,
+      Map.keys(recovery_attempt.logs),
+      recovery_attempt.version_vector,
+      &pid_for_log_id(&1, recovery_attempt.available_services)
+    )
+    |> case do
+      :ok ->
+        trace_recovery_old_logs_replayed()
+
+        recovery_attempt
+        |> Map.put(:state, :repair_data_distribution)
+
+      {:error, reason} ->
+        recovery_attempt |> Map.put(:state, {:stalled, reason})
+    end
+  end
 
   @doc """
   Replays a selected set of transactions from the old log servers into the new
@@ -62,4 +97,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ReplayingOldLogs do
 
   def pair_with_old_log_ids(new_log_ids, old_log_ids),
     do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())
+
+  defp pid_for_log_id(log_id, available_services) do
+    case Map.get(available_services, log_id) do
+      %{status: {:up, pid}} -> pid
+      _ -> :none
+    end
+  end
 end

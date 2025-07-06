@@ -1,6 +1,43 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
+defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
+  @moduledoc """
+  Handles the :determine_old_logs_to_copy phase of recovery.
+
+  This phase is responsible for determining which logs from the previous
+  transaction system layout should be copied and what version vector
+  should be used for recovery.
+  """
+
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
+
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  @doc """
+  Execute the log discovery phase of recovery.
+
+  Determines which old logs need to be copied based on the previous layout
+  and available log recovery information.
+  """
+  @spec execute(map()) :: map()
+  def execute(%{state: :determine_old_logs_to_copy} = recovery_attempt) do
+    determine_old_logs_to_copy(
+      recovery_attempt.last_transaction_system_layout.logs,
+      recovery_attempt.log_recovery_info_by_id,
+      recovery_attempt.parameters.desired_logs |> determine_quorum()
+    )
+    |> case do
+      {:error, :unable_to_meet_log_quorum = reason} ->
+        recovery_attempt |> Map.put(:state, {:stalled, reason})
+
+      {:ok, log_ids, version_vector} ->
+        trace_recovery_suitable_logs_chosen(log_ids, version_vector)
+
+        recovery_attempt
+        |> Map.put(:old_log_ids_to_copy, log_ids)
+        |> Map.put(:version_vector, version_vector)
+        |> Map.put(:state, :create_vacancies)
+    end
+  end
 
   @doc """
   Determines the old logs that need to be copied to recover a cluster to a
@@ -57,15 +94,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
   end
 
   @spec combinations([any()], non_neg_integer()) :: [[any()]]
-  defp combinations(_list, 0), do: [[]]
-  defp combinations([], _num), do: []
+  def combinations(_list, 0), do: [[]]
+  def combinations([], _num), do: []
 
-  defp combinations([head | tail], num),
+  def combinations([head | tail], num),
     do: Enum.map(combinations(tail, num - 1), &[head | &1]) ++ combinations(tail, num)
 
   @spec version_vectors_by_id(%{Log.id() => Log.recovery_info()}) ::
           [{Log.id(), Bedrock.version_vector()}]
-  defp version_vectors_by_id(log_info) do
+  def version_vectors_by_id(log_info) do
     log_info
     |> Enum.map(fn
       {id, info} ->
@@ -73,7 +110,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     end)
   end
 
-  defp build_log_groups_and_vectors_from_combinations(combinations) do
+  def build_log_groups_and_vectors_from_combinations(combinations) do
     combinations
     |> Enum.map(fn group ->
       oldest = group |> Enum.map(fn {_, {oldest, _}} -> oldest end) |> Enum.max()
@@ -83,15 +120,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingOldLogsToCopy do
     |> Enum.filter(&valid_range?(&1))
   end
 
-  defp valid_range?({_, {0, _newest}}), do: true
-  defp valid_range?({_, {_oldest, 0}}), do: false
-  defp valid_range?({_, {oldest, newest}}), do: newest >= oldest
+  def valid_range?({_, {0, _newest}}), do: true
+  def valid_range?({_, {_oldest, 0}}), do: false
+  def valid_range?({_, {oldest, newest}}), do: newest >= oldest
 
-  defp rank_log_groups(groups) do
+  def rank_log_groups(groups) do
     groups
     |> Enum.sort_by(
       fn {_, {oldest, newest}} -> newest - oldest end,
       :desc
     )
   end
+
+  defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 end

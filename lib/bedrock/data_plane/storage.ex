@@ -81,7 +81,7 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Ask the storage storage for various facts about itself.
   """
-  @spec info(storage :: ref(), [fact_name()], opts :: keyword()) ::
-          {:ok, keyword()} | {:error, term()}
+  @spec info(storage :: ref(), [fact_name()], opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, %{fact_name() => any()}} | {:error, :unavailable}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

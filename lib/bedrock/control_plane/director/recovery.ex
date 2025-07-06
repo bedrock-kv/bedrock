@@ -4,33 +4,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.Internal.Time.Interval
 
-  import Bedrock, only: [key_range: 2]
+  require Logger
+
   import Bedrock.Internal.Time, only: [now: 0]
 
-  import __MODULE__.LockingAvailableServices, only: [lock_available_services: 3]
-  import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
-  import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
-
-  import __MODULE__.CreatingVacancies,
-    only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
-
-  import __MODULE__.FillingVacancies,
-    only: [fill_log_vacancies: 4, fill_storage_team_vacancies: 2]
-
-  import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
-  import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
-  import __MODULE__.DefiningResolvers, only: [define_resolvers: 8]
-  import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
+  alias __MODULE__.StartPhase
+  alias __MODULE__.LockServicesPhase
+  alias __MODULE__.InitializationPhase
+  alias __MODULE__.LogDiscoveryPhase
+  alias __MODULE__.VacancyCreationPhase
+  alias __MODULE__.DurableVersionPhase
+  alias __MODULE__.LogRecruitmentPhase
+  alias __MODULE__.StorageRecruitmentPhase
+  alias __MODULE__.LogReplayPhase
+  alias __MODULE__.DataDistributionPhase
+  alias __MODULE__.SequencerPhase
+  alias __MODULE__.CommitProxyPhase
+  alias __MODULE__.ResolverPhase
+  alias __MODULE__.ServiceCollectionPhase
+  alias __MODULE__.ValidationPhase
+  alias __MODULE__.PersistencePhase
+  alias __MODULE__.MonitoringPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
-
-  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
-  import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
@@ -52,34 +51,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.put(:state, :recovery)
     |> Map.update!(:config, fn config ->
       config
-      |> Map.put(:recovery_attempt, %{
-        cluster: t.cluster,
-        attempt: 1,
-        epoch: t.epoch,
-        state: :start,
-        started_at: now(),
-        parameters:
+      |> Map.put(
+        :recovery_attempt,
+        RecoveryAttempt.new(
+          t.cluster,
+          t.epoch,
+          now(),
+          config.coordinators,
           Map.take(config.parameters, [
             :desired_logs,
             :desired_replication_factor,
             :desired_commit_proxies
           ]),
-        last_transaction_system_layout: config.transaction_system_layout,
-        available_services: t.services,
-        #
-        locked_service_ids: MapSet.new(),
-        log_recovery_info_by_id: %{},
-        storage_recovery_info_by_id: %{},
-        old_log_ids_to_copy: [],
-        version_vector: {0, 0},
-        durable_version: 0,
-        degraded_teams: [],
-        logs: %{},
-        storage_teams: [],
-        resolvers: [],
-        proxies: [],
-        sequencer: nil
-      })
+          config.transaction_system_layout,
+          t.services
+        )
+      )
       |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
         transaction_system_layout
         |> Map.put(:director, self())
@@ -96,10 +83,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.update!(:config, fn config ->
       config
       |> Map.update!(:recovery_attempt, fn recovery_attempt ->
-        recovery_attempt
-        |> Map.update(:attempt, 0, &(&1 + 1))
-        |> Map.put(:state, :start)
-        |> Map.put(:available_services, t.services)
+        %{
+          recovery_attempt
+          | attempt: recovery_attempt.attempt + 1,
+            state: :start,
+            available_services: t.services
+        }
       end)
     end)
   end
@@ -179,512 +168,75 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
       %{state: new_state} = new_t when t.state != new_state ->
         new_t |> run_recovery_attempt()
+
+      # Catch any unexpected states
+      %{state: unexpected_state} = recovery_state ->
+        Logger.error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
+        Logger.debug("Full recovery state: #{inspect(recovery_state)}")
+        {:error, {:unexpected_recovery_state, unexpected_state}}
     end
   end
 
   @spec recovery(RecoveryAttempt.t()) :: RecoveryAttempt.t()
   def recovery(recovery_attempt)
 
-  #
-  #
-  def recovery(%{state: :start} = t) do
-    t
-    |> Map.put(:started_at, now())
-    |> Map.put(:state, :lock_available_services)
+  def recovery(%{state: :start} = recovery_attempt) do
+    StartPhase.execute(recovery_attempt)
   end
 
-  #
-  #
-  def recovery(%{state: {:stalled, _}} = t),
-    do: t |> Map.put(:state, :start)
+  def recovery(%{state: :lock_available_services} = recovery_attempt),
+    do: LockServicesPhase.execute(recovery_attempt)
 
-  #
-  #
-  def recovery(%{state: :lock_available_services} = t) do
-    lock_available_services(t.available_services, t.epoch, 200)
-    |> case do
-      {:error, :newer_epoch_exists = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
+  def recovery(%{state: :first_time_initialization} = recovery_attempt),
+    do: InitializationPhase.execute(recovery_attempt)
 
-      {:ok, locked_service_ids, updated_services, log_recovery_info_by_id,
-       storage_recovery_info_by_id} ->
-        t
-        |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
-        |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
-        |> Map.update!(:available_services, &Map.merge(&1, updated_services))
-        |> Map.put(:locked_service_ids, locked_service_ids)
-        |> case do
-          %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = t ->
-            t |> Map.put(:state, :first_time_initialization)
+  def recovery(%{state: :determine_old_logs_to_copy} = recovery_attempt),
+    do: LogDiscoveryPhase.execute(recovery_attempt)
 
-          t ->
-            t |> Map.put(:state, :determine_old_logs_to_copy)
-        end
-    end
+  def recovery(%{state: :create_vacancies} = recovery_attempt),
+    do: VacancyCreationPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :determine_durable_version} = recovery_attempt),
+    do: DurableVersionPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt),
+    do: LogRecruitmentPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt),
+    do: StorageRecruitmentPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :replay_old_logs} = recovery_attempt),
+    do: LogReplayPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :repair_data_distribution} = recovery_attempt),
+    do: DataDistributionPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :define_sequencer} = recovery_attempt),
+    do: SequencerPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :define_commit_proxies} = recovery_attempt),
+    do: CommitProxyPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :define_resolvers} = recovery_attempt),
+    do: ResolverPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :define_required_services} = recovery_attempt),
+    do: ServiceCollectionPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :final_checks} = recovery_attempt),
+    do: ValidationPhase.execute(recovery_attempt)
+
+  def recovery(%{state: :persist_system_state} = recovery_attempt),
+    do: PersistencePhase.execute(recovery_attempt)
+
+  def recovery(%{state: :monitor_components} = recovery_attempt),
+    do: MonitoringPhase.execute(recovery_attempt)
+
+  def recovery(%{state: {:stalled, reason}} = recovery_attempt) do
+    Logger.warning("Recovery is stalled: #{inspect(reason)}")
+    # Stay stalled - don't automatically retry
+    recovery_attempt
   end
 
-  # Initialize a new system with empty logs and storage teams by creating
-  # placeholders based on desired logs and replication factor, then proceed
-  # to fill log vacancies.
-  def recovery(%{state: :first_time_initialization} = t) do
-    trace_recovery_first_time_initialization()
-
-    log_vacancies =
-      1..t.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
-
-    storage_team_vacancies =
-      1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
-
-    t
-    |> Map.put(:durable_version, 0)
-    |> Map.put(:old_log_ids_to_copy, [])
-    |> Map.put(:version_vector, {0, 0})
-    |> Map.put(:resolvers, [
-      resolver_descriptor(<<>>, nil),
-      resolver_descriptor(<<0xFF>>, nil)
-    ])
-    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
-    |> Map.put(:storage_teams, [
-      storage_team_descriptor(
-        0,
-        key_range(<<0xFF>>, :end),
-        storage_team_vacancies
-      ),
-      storage_team_descriptor(
-        1,
-        key_range(<<>>, <<0xFF>>),
-        storage_team_vacancies
-      )
-    ])
-    |> Map.put(:state, :recruit_logs_to_fill_vacancies)
-  end
-
-  #
-  #
-  def recovery(%{state: :determine_old_logs_to_copy} = t) do
-    determine_old_logs_to_copy(
-      t.last_transaction_system_layout.logs,
-      t.log_recovery_info_by_id,
-      t.parameters.desired_logs |> determine_quorum()
-    )
-    |> case do
-      {:error, :unable_to_meet_log_quorum = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, log_ids, version_vector} ->
-        trace_recovery_suitable_logs_chosen(log_ids, version_vector)
-
-        t
-        |> Map.put(:old_log_ids_to_copy, log_ids)
-        |> Map.put(:version_vector, version_vector)
-        |> Map.put(:state, :create_vacancies)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :create_vacancies} = t) do
-    with {:ok, logs, n_log_vacancies} <-
-           create_vacancies_for_logs(
-             t.last_transaction_system_layout.logs,
-             t.parameters.desired_logs
-           ),
-         {:ok, storage_teams, n_storage_team_vacancies} <-
-           create_vacancies_for_storage_teams(
-             t.last_transaction_system_layout.storage_teams,
-             t.parameters.desired_replication_factor
-           ) do
-      trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
-
-      t
-      |> Map.put(:logs, logs)
-      |> Map.put(:storage_teams, storage_teams)
-      |> Map.put(:state, :determine_durable_version)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :determine_durable_version} = t) do
-    determine_durable_version(
-      t.last_transaction_system_layout.storage_teams,
-      t.storage_recovery_info_by_id,
-      t.parameters.desired_replication_factor |> determine_quorum()
-    )
-    |> case do
-      {:error, {:insufficient_replication, _failed_tags} = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, durable_version, healthy_teams, degraded_teams} ->
-        trace_recovery_durable_version_chosen(durable_version)
-        trace_recovery_team_health(healthy_teams, degraded_teams)
-
-        t
-        |> Map.put(:durable_version, durable_version)
-        |> Map.put(:degraded_teams, degraded_teams)
-        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
-    assigned_log_ids = t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new()
-
-    all_log_ids =
-      t.available_services
-      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
-      |> Enum.map(&elem(&1, 0))
-      |> MapSet.new()
-
-    # Get nodes with log capability from node tracking
-    available_log_nodes = get_nodes_with_capability(t, :log)
-
-    fill_log_vacancies(t.logs, assigned_log_ids, all_log_ids, available_log_nodes)
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, logs, new_worker_ids} ->
-        # Create the new workers if any are needed
-        case create_new_log_workers(new_worker_ids, available_log_nodes, t) do
-          {:ok, updated_services} ->
-            trace_recovery_all_log_vacancies_filled()
-
-            t
-            |> Map.put(:logs, logs)
-            |> Map.update!(:available_services, &Map.merge(&1, updated_services))
-            |> Map.put(:state, :recruit_storage_to_fill_vacancies)
-
-          {:error, reason} ->
-            t |> Map.put(:state, {:stalled, reason})
-        end
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :recruit_storage_to_fill_vacancies} = t) do
-    fill_storage_team_vacancies(
-      t.storage_teams,
-      t.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
-    )
-    |> case do
-      {:error, {:need_storage_workers, _} = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, storage_teams} ->
-        trace_recovery_all_storage_team_vacancies_filled()
-
-        t
-        |> Map.put(:storage_teams, storage_teams)
-        |> Map.put(:state, :replay_old_logs)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :replay_old_logs} = t) do
-    new_log_ids = t.logs |> Map.keys()
-    trace_recovery_replaying_old_logs(t.old_log_ids_to_copy, new_log_ids, t.version_vector)
-
-    replay_old_logs_into_new_logs(
-      t.old_log_ids_to_copy,
-      new_log_ids,
-      t.version_vector,
-      fn log_id ->
-        case Map.get(t.available_services, log_id) do
-          %{status: {:up, pid}} -> pid
-          _ -> :none
-        end
-      end
-    )
-    |> case do
-      {:error, reason} -> t |> Map.put(:state, {:stalled, reason})
-      :ok -> t |> Map.put(:state, :repair_data_distribution)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :repair_data_distribution} = t) do
-    t |> Map.put(:state, :define_sequencer)
-  end
-
-  #
-  #
-  def recovery(%{state: :define_sequencer} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    define_sequencer(
-      self(),
-      t.epoch,
-      t.version_vector,
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, sequencer} ->
-        t
-        |> Map.put(:sequencer, sequencer)
-        |> Map.put(:state, :define_commit_proxies)
-    end
-  end
-
-  def recovery(%{state: :define_commit_proxies} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    define_commit_proxies(
-      t.parameters.desired_commit_proxies,
-      t.cluster,
-      t.epoch,
-      self(),
-      Node.list(),
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, commit_proxies} ->
-        t
-        |> Map.put(:proxies, commit_proxies)
-        |> Map.put(:state, :define_resolvers)
-    end
-  end
-
-  import __MODULE__.DefiningResolvers
-
-  def recovery(%{state: :define_resolvers} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    running_logs_by_id =
-      t.available_services
-      |> Map.take(t.logs |> Map.keys())
-      |> Enum.map(fn
-        {id, %{status: {:up, pid}}} -> {id, pid}
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Map.new()
-
-    define_resolvers(
-      t.resolvers,
-      t.storage_teams,
-      t.logs,
-      running_logs_by_id,
-      t.epoch,
-      Node.list(),
-      t.version_vector,
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, resolvers} ->
-        t
-        |> Map.put(:resolvers, resolvers)
-        |> Map.put(:state, :define_required_services)
-    end
-  end
-
-  def recovery(%{state: :define_required_services} = t) do
-    required_service_ids =
-      Enum.concat(
-        t.logs |> Map.keys(),
-        t.storage_teams |> Enum.flat_map(& &1.storage_ids)
-      )
-      |> Enum.uniq()
-
-    required_services =
-      t.available_services
-      |> Map.take(required_service_ids)
-
-    t
-    |> Map.put(:required_services, required_services)
-    |> Map.put(:state, :final_checks)
-  end
-
-  #
-  #
-  def recovery(%{state: :final_checks} = t) do
-    t |> Map.put(:state, :persist_system_state)
-  end
-
-  #
-  # Persist cluster state via system transaction
-  #
-  def recovery(%{state: :persist_system_state} = t) do
-    trace_recovery_persisting_system_state()
-
-    # Build the complete cluster configuration
-    cluster_config = build_cluster_config(t)
-
-    # Create system transaction
-    system_transaction = build_system_transaction(t.epoch, cluster_config, t.cluster)
-
-    # Submit to commit proxy (tests entire data plane)
-    case submit_system_transaction(system_transaction, t.proxies) do
-      {:ok, _version} ->
-        trace_recovery_system_state_persisted()
-        t |> Map.put(:state, :completed)
-
-      {:error, reason} ->
-        trace_recovery_system_transaction_failed(reason)
-        # Fail fast - exit director and let coordinator retry
-        exit({:recovery_system_test_failed, reason})
-    end
-  end
-
-  #
-  #
   def recovery(t), do: raise("Invalid state: #{inspect(t)}")
-
-  defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
-
-  @spec get_nodes_with_capability(RecoveryAttempt.t(), atom()) :: [node()]
-  defp get_nodes_with_capability(_recovery_attempt, _capability) do
-    # This function needs access to the Director state's node_tracking
-    # For now, we'll use Node.list() as a fallback
-    # In a real implementation, this should query the node tracking table
-    Node.list() ++ [Node.self()]
-  end
-
-  @spec create_new_log_workers([String.t()], [node()], RecoveryAttempt.t()) ::
-          {:ok, %{String.t() => map()}} | {:error, term()}
-  defp create_new_log_workers([], _available_nodes, _recovery_attempt), do: {:ok, %{}}
-
-  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt) do
-    # Distribute workers across available nodes
-    node_assignments =
-      new_worker_ids
-      |> Enum.with_index()
-      |> Enum.map(fn {worker_id, index} ->
-        node = Enum.at(available_nodes, rem(index, length(available_nodes)))
-        {worker_id, node}
-      end)
-
-    # Create workers on their assigned nodes by calling Foreman directly
-    results =
-      Enum.map(node_assignments, fn {worker_id, node} ->
-        # Contact the foreman on the target node directly
-        foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
-
-        case Bedrock.Service.Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000) do
-          {:ok, worker_ref} ->
-            # Get detailed info about the created worker
-            case Bedrock.Service.Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
-              {:ok, worker_info} ->
-                service_info = %{
-                  kind: :log,
-                  last_seen: {worker_info[:otp_name], node},
-                  status: {:up, worker_info[:pid]}
-                }
-
-                {worker_id, service_info}
-
-              {:error, reason} ->
-                {:error, {worker_id, node, {:worker_info_failed, reason}}}
-            end
-
-          {:error, reason} ->
-            {:error, {worker_id, node, {:worker_creation_failed, reason}}}
-        end
-      end)
-
-    # Check if all workers were created successfully
-    case Enum.find(results, &match?({:error, _}, &1)) do
-      nil ->
-        # All successful
-        {:ok, Map.new(results)}
-
-      {:error, {worker_id, node, reason}} ->
-        {:error, {:worker_creation_failed, worker_id, node, reason}}
-    end
-  end
-
-  defp starter_for(supervisor_otp_name) do
-    fn child_spec, node ->
-      {supervisor_otp_name, node}
-      |> DynamicSupervisor.start_child(child_spec)
-      |> case do
-        {:ok, pid} -> {:ok, pid}
-        {:ok, pid, _} -> {:ok, pid}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
-
-  # Build complete cluster configuration from recovery state
-  defp build_cluster_config(recovery_attempt) do
-    %{
-      # Will be filled by coordinator
-      coordinators: [],
-      epoch: recovery_attempt.epoch,
-      parameters: recovery_attempt.parameters,
-      # Default policies
-      policies: %{},
-      transaction_system_layout: %{
-        id: TransactionSystemLayout.random_id(),
-        director: self(),
-        sequencer: recovery_attempt.sequencer,
-        rate_keeper: nil,
-        proxies: recovery_attempt.proxies,
-        resolvers: recovery_attempt.resolvers,
-        logs: recovery_attempt.logs,
-        storage_teams: recovery_attempt.storage_teams,
-        services: recovery_attempt.required_services
-      }
-    }
-  end
-
-  # Build system transaction with cluster state
-  defp build_system_transaction(epoch, cluster_config, cluster) do
-    # Encode config for storage (PIDs -> {otp_name, node} tuples)
-    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
-
-    # Build transaction tuple: {reads, writes}
-    {
-      # reads - system writes don't need reads
-      nil,
-      # writes
-      %{
-        "\xff/system/config" => :erlang.term_to_binary({epoch, encoded_config}),
-        "\xff/system/epoch" => :erlang.term_to_binary(epoch),
-        "\xff/system/last_recovery" => :erlang.term_to_binary(System.system_time(:millisecond))
-      }
-    }
-  end
-
-  # Submit system transaction to available commit proxy
-  defp submit_system_transaction(system_transaction, proxies) do
-    case get_available_commit_proxy(proxies) do
-      {:ok, commit_proxy} ->
-        CommitProxy.commit(commit_proxy, system_transaction)
-
-      {:error, reason} ->
-        {:error, {:no_available_commit_proxy, reason}}
-    end
-  end
-
-  # Get first available commit proxy
-  defp get_available_commit_proxy([]), do: {:error, :no_commit_proxies}
-
-  defp get_available_commit_proxy([proxy | rest]) when is_pid(proxy) do
-    if Process.alive?(proxy) do
-      {:ok, proxy}
-    else
-      get_available_commit_proxy(rest)
-    end
-  end
-
-  defp get_available_commit_proxy([_invalid | rest]) do
-    get_available_commit_proxy(rest)
-  end
 end

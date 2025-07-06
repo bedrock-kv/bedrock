@@ -1,9 +1,43 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DefiningCommitProxies do
-  alias Bedrock.DataPlane.CommitProxy
+defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
+  @moduledoc """
+  Handles the :define_commit_proxies phase of recovery.
 
-  #
-  #
-  #
+  This phase is responsible for starting commit proxy components
+  which batch transactions and coordinate commits.
+  """
+
+  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.Shared
+
+  @doc """
+  Execute the commit proxy definition phase of recovery.
+
+  Starts the desired number of commit proxy components across
+  available nodes.
+  """
+  @spec execute(RecoveryAttempt.t()) :: RecoveryAttempt.t()
+  def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt) do
+    sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
+    starter_fn = Shared.starter_for(sup_otp_name)
+
+    define_commit_proxies(
+      recovery_attempt.parameters.desired_commit_proxies,
+      recovery_attempt.cluster,
+      recovery_attempt.epoch,
+      self(),
+      Node.list(),
+      starter_fn
+    )
+    |> case do
+      {:error, reason} ->
+        %{recovery_attempt | state: {:stalled, reason}}
+
+      {:ok, commit_proxies} ->
+        %{recovery_attempt | proxies: commit_proxies, state: :define_resolvers}
+    end
+  end
+
   @spec define_commit_proxies(
           n_proxies :: pos_integer(),
           cluster :: module(),

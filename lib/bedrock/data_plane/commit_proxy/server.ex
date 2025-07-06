@@ -1,12 +1,12 @@
 defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.Internal.Time
+  alias Bedrock.SystemKeys
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
+      single_transaction_batch: 3,
       start_batch_if_needed: 1,
       add_transaction_to_batch: 3,
       apply_finalization_policy: 1
@@ -25,11 +25,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   use GenServer
   import Bedrock.Internal.GenServer.Replies
 
+  require Logger
+
   @spec child_spec(
           opts :: [
             cluster: module(),
             director: pid(),
-            transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
             max_latency_in_ms: non_neg_integer(),
             max_per_batch: pos_integer()
@@ -71,6 +72,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     :ok
   end
 
+  def handle_call(
+        {:commit, {nil, writes} = transaction},
+        from,
+        %{transaction_system_layout: nil} = t
+      ) do
+    with {:ok, transaction_system_layout} <- extract_transaction_system_layout(writes),
+         t <- %{t | transaction_system_layout: transaction_system_layout},
+         {:ok, batch} <- single_transaction_batch(t, transaction, reply_fn(from)) do
+      t |> noreply(continue: {:finalize, batch})
+    else
+      {:error, :no_transaction_system_layout} = error ->
+        IO.puts("DEBUG: No transaction system layout found in writes")
+        t |> reply(error)
+
+      {:error, :sequencer_unavailable} = error ->
+        IO.puts("DEBUG: Sequencer unavailable error")
+        t |> reply(error)
+    end
+  end
+
   # When a transaction is submitted, we check to see if we have a batch already
   # in progress. If we do, we add the transaction to the batch. If we don't, we
   # create a new batch and add the transaction to it. Once added, we check to
@@ -79,13 +100,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # is submitted before re-considering finalizing the batch.
   def handle_call({:commit, transaction}, from, t) do
     t
-    |> ask_for_transaction_system_layout_if_needed()
-    |> start_batch_if_needed()
-    |> add_transaction_to_batch(transaction, reply_fn(from))
-    |> apply_finalization_policy()
+    |> maybe_update_layout_from_transaction(transaction)
     |> case do
-      {t, nil} -> t |> noreply(timeout: 0)
-      {t, batch} -> t |> noreply(continue: {:finalize, batch})
+      %{transaction_system_layout: nil} ->
+        t |> reply({:error, :no_transaction_system_layout})
+
+      t ->
+        t
+        |> start_batch_if_needed()
+        |> add_transaction_to_batch(transaction, reply_fn(from))
+        |> apply_finalization_policy()
+        |> case do
+          {t, nil} -> t |> noreply(timeout: 0)
+          {t, batch} -> t |> noreply(continue: {:finalize, batch})
+        end
     end
   end
 
@@ -112,20 +140,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def ask_for_transaction_system_layout_if_needed(t) when t.transaction_system_layout != nil,
-    do: t
-
-  def ask_for_transaction_system_layout_if_needed(t) do
-    t.director
-    |> Director.fetch_transaction_system_layout(50)
-    |> case do
-      {:ok, transaction_system_layout} ->
-        %{t | transaction_system_layout: transaction_system_layout}
-
-      {:error, reason} ->
-        {:stop, reason}
+  defp extract_transaction_system_layout(writes) do
+    case Map.get(writes, SystemKeys.layout_monolithic()) do
+      nil -> {:error, :no_transaction_system_layout}
+      encoded_layout -> {:ok, :erlang.binary_to_term(encoded_layout)}
     end
   end
+
+  # Extract transaction system layout from transaction if present
+  def maybe_update_layout_from_transaction(state, {_reads, writes}) when is_map(writes) do
+    case Map.get(writes, SystemKeys.layout_monolithic()) do
+      nil ->
+        state
+
+      encoded_layout ->
+        layout = :erlang.binary_to_term(encoded_layout)
+        %{state | transaction_system_layout: layout}
+    end
+  end
+
+  def maybe_update_layout_from_transaction(state, _transaction), do: state
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
   def reply_fn(from), do: &GenServer.reply(from, &1)

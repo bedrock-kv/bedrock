@@ -5,9 +5,11 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  @doc false
   def child_spec(opts) do
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
+    otp_name = opts[:otp_name] || raise "Missing :name option"
 
     last_committed_version =
       opts[:last_committed_version] || raise "Missing :last_committed_version option"
@@ -18,7 +20,8 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {director, epoch, last_committed_version}
+           {director, epoch, last_committed_version},
+           [name: otp_name]
          ]},
       restart: :temporary
     }

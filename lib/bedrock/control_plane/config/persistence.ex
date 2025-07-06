@@ -48,6 +48,29 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     |> decode_transaction_system_layout(cluster)
   end
 
+  @doc """
+  Encodes a transaction system layout for persistent storage.
+
+  Converts all PIDs to {otp_name, node} tuples that can be safely serialized
+  with BERT encoding.
+
+  ## Parameters
+  - `layout`: The runtime transaction system layout
+  - `cluster`: The cluster module for OTP name resolution
+
+  ## Returns
+  - Sanitized layout suitable for BERT encoding
+  """
+  @spec encode_transaction_system_layout_for_storage(map(), module()) :: map()
+  def encode_transaction_system_layout_for_storage(layout, cluster) do
+    layout
+    |> encode_single_reference(:director, cluster)
+    |> encode_single_reference(:sequencer, cluster)
+    |> encode_single_reference(:rate_keeper, cluster)
+    |> encode_proxy_list(cluster)
+    |> encode_service_map(cluster)
+  end
+
   # Remove state that shouldn't be persisted
   defp remove_ephemeral_state(config) do
     config

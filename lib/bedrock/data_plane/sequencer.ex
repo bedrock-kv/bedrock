@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Sequencer do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.name()
+  @type ref :: GenServer.server()
 
   @spec invite_to_rejoin(
           t :: ref(),
@@ -29,6 +29,7 @@ defmodule Bedrock.DataPlane.Sequencer do
         ) ::
           {:ok, last_commit_version :: Bedrock.version(),
            next_commit_version :: Bedrock.version()}
+          | {:error, :unavailable}
   def next_commit_version(t, opts \\ []),
     do: t |> call(:next_commit_version, opts[:timeout_in_ms] || :infinity)
 end

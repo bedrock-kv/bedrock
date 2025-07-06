@@ -77,7 +77,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ImplTest do
     test "successfully gets durable version from fake storage server" do
       fake_storage =
         fake_storage_server(fn
-          {:info, [:durable_version]} -> {:ok, [durable_version: 42]}
+          {:info, [:durable_version]} -> {:ok, %{durable_version: 42}}
           _ -> {:error, :not_implemented}
         end)
 
@@ -94,24 +94,24 @@ defmodule Bedrock.ControlPlane.Coordinator.ImplTest do
 
       storage_high =
         fake_storage_server(fn
-          {:info, [:durable_version]} -> {:ok, [durable_version: 100]}
+          {:info, [:durable_version]} -> {:ok, %{durable_version: 100}}
           # No fetch handler - will fail config fetch
           _ -> {:error, :not_implemented}
         end)
 
       storage_broken =
         fake_storage_server(fn
-          {:info, [:durable_version]} -> {:ok, [durable_version: 75]}
-          {:fetch, "\xff/system/config", :latest, _opts} -> {:error, :not_found}
+          {:info, [:durable_version]} -> {:ok, %{durable_version: 75}}
+          {:fetch, "\xff/system/config", 75, _opts} -> {:error, :not_found}
           _ -> {:error, :not_implemented}
         end)
 
       storage_low =
         fake_storage_server(fn
           {:info, [:durable_version]} ->
-            {:ok, [durable_version: 50]}
+            {:ok, %{durable_version: 50}}
 
-          {:fetch, "\xff/system/config", :latest, _opts} ->
+          {:fetch, "\xff/system/config", 50, _opts} ->
             bert_data = :erlang.term_to_binary({50, config})
             {:ok, bert_data}
 

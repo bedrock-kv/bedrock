@@ -38,12 +38,15 @@ Implement self-bootstrapping persistent cluster configuration using the system's
 
 **📖 Reference**: [Control Plane Components - Director Persistence](.clinerules/03-implementation/control-plane-components.md#director-system-state-persistence)
 
-### Phase 4: Integration & Self-Healing
-- [ ] Add director monitoring in coordinator
-- [ ] Add automatic director restart on failure detection
-- [ ] Test full recovery retry cycle
-- [ ] Test edge cases (partial failures, network issues, corrupted data)
-- [ ] Verify system converges to stable state without infinite retries
+### Phase 4: Integration & Self-Healing ✅ COMPLETED
+- [x] Add director monitoring in coordinator
+- [x] Add automatic director restart on failure detection
+- [x] **COMPLETED**: Simplify to "let it crash" approach (removed circuit breaker complexity)
+- [x] **COMPLETED**: Add component monitoring in director (monitor all transaction components)
+- [x] **COMPLETED**: Implement immediate director exit on any component failure
+- [x] Test simplified recovery retry cycle
+- [x] Test edge cases (partial failures, network issues, corrupted data)
+- [x] Verify system converges to stable state with fast recovery cycles
 
 **📖 Reference**: [Persistent Configuration - Error Handling](.clinerules/01-architecture/persistent-configuration.md#error-handling-and-edge-cases)
 

@@ -9,12 +9,42 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   defp timestamp, do: :erlang.monotonic_time(:millisecond)
 
+  @spec single_transaction_batch(
+          state :: State.t(),
+          transaction :: Bedrock.transaction(),
+          reply_fn :: Batch.reply_fn()
+        ) ::
+          {:ok, Batch.t()}
+          | {:error, :sequencer_unavailable}
+  def single_transaction_batch(
+        %{transaction_system_layout: %{sequencer: nil}},
+        _transaction,
+        _reply_fn
+      ),
+      do: {:error, :sequencer_unavailable}
+
+  def single_transaction_batch(state, transaction, reply_fn) do
+    with {:ok, last_commit_version, commit_version} <-
+           next_commit_version(state.transaction_system_layout.sequencer) do
+      {:ok,
+       new_batch(timestamp(), last_commit_version, commit_version)
+       |> add_transaction(transaction, reply_fn)
+       |> set_finalized_at(timestamp())}
+    else
+      {:error, :unavailable} -> {:error, :sequencer_unavailable}
+    end
+  end
+
   @spec start_batch_if_needed(State.t()) :: State.t()
   def start_batch_if_needed(%{batch: nil} = t) do
-    {:ok, last_commit_version, commit_version} =
-      next_commit_version(t.transaction_system_layout.sequencer)
+    case next_commit_version(t.transaction_system_layout.sequencer) do
+      {:ok, last_commit_version, commit_version} ->
+        %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
 
-    %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
+      {:error, reason} ->
+        # Sequencer not available - this is a system error that should propagate
+        exit({:sequencer_unavailable, reason})
+    end
   end
 
   def start_batch_if_needed(t), do: t

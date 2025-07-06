@@ -83,6 +83,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
+  def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, _t) do
+    # ANY transaction component failure triggers immediate director exit
+    Logger.error(
+      "Transaction component #{inspect(failed_pid)} failed with reason: #{inspect(reason)}"
+    )
+
+    Logger.error("Director exiting immediately due to component failure")
+
+    # Exit immediately - let coordinator restart us with fresh epoch
+    exit({:component_failure, failed_pid, reason})
+  end
+
+  @impl true
   # If we have been relieved by another director in a newer epoch, we should
   # not accept any calls from the cluster. We should reply with an error
   # informing the caller that we haven been relieved and who controls now

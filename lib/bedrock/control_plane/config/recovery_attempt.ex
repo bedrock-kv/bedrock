@@ -47,11 +47,37 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @type log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()}
   @type storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}
 
-  @type t :: %{
+  defstruct [
+    :state,
+    :attempt,
+    :cluster,
+    :epoch,
+    :coordinators,
+    :parameters,
+    :started_at,
+    :last_transaction_system_layout,
+    :available_services,
+    :required_services,
+    :locked_service_ids,
+    :log_recovery_info_by_id,
+    :storage_recovery_info_by_id,
+    :old_log_ids_to_copy,
+    :version_vector,
+    :durable_version,
+    :degraded_teams,
+    :logs,
+    :storage_teams,
+    :resolvers,
+    :proxies,
+    :sequencer
+  ]
+
+  @type t :: %__MODULE__{
           state: state(),
           attempt: pos_integer(),
           cluster: module(),
           epoch: non_neg_integer(),
+          coordinators: [node()],
           parameters: %{
             desired_logs: log_replication_factor(),
             desired_replication_factor: storage_replication_factor(),
@@ -74,4 +100,55 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           proxies: [pid()],
           sequencer: pid() | nil
         }
+
+  @doc """
+  Creates a new recovery attempt with the required parameters.
+  """
+  @spec new(
+          cluster :: module(),
+          epoch :: non_neg_integer(),
+          started_at :: DateTime.t(),
+          coordinators :: [node()],
+          parameters :: %{
+            desired_logs: log_replication_factor(),
+            desired_replication_factor: storage_replication_factor(),
+            desired_commit_proxies: pos_integer()
+          },
+          last_transaction_system_layout :: TransactionSystemLayout.t(),
+          available_services :: %{Worker.id() => ServiceDescriptor.t()}
+        ) :: t()
+  def new(
+        cluster,
+        epoch,
+        started_at,
+        coordinators,
+        parameters,
+        last_transaction_system_layout,
+        available_services
+      ) do
+    %__MODULE__{
+      state: :start,
+      attempt: 1,
+      cluster: cluster,
+      epoch: epoch,
+      coordinators: coordinators,
+      parameters: parameters,
+      started_at: started_at,
+      last_transaction_system_layout: last_transaction_system_layout,
+      available_services: available_services,
+      required_services: %{},
+      locked_service_ids: MapSet.new(),
+      log_recovery_info_by_id: %{},
+      storage_recovery_info_by_id: %{},
+      old_log_ids_to_copy: [],
+      version_vector: {0, 0},
+      durable_version: 0,
+      degraded_teams: [],
+      logs: %{},
+      storage_teams: [],
+      resolvers: [],
+      proxies: [],
+      sequencer: nil
+    }
+  end
 end

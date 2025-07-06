@@ -1,9 +1,58 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DefiningResolvers do
+defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
+  @moduledoc """
+  Handles the :define_resolvers phase of recovery.
+
+  This phase is responsible for starting resolver components
+  which implement MVCC conflict detection.
+  """
+
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Director.Recovery.Shared
+
+  @doc """
+  Execute the resolver definition phase of recovery.
+
+  Starts resolver components for conflict detection across
+  the key space.
+  """
+  @spec execute(RecoveryAttempt.t()) :: RecoveryAttempt.t()
+  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt) do
+    sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
+    starter_fn = Shared.starter_for(sup_otp_name)
+
+    running_logs_by_id =
+      recovery_attempt.available_services
+      |> Map.take(recovery_attempt.logs |> Map.keys())
+      |> Enum.map(fn
+        {id, %{status: {:up, pid}}} -> {id, pid}
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Map.new()
+
+    define_resolvers(
+      recovery_attempt.resolvers,
+      recovery_attempt.storage_teams,
+      recovery_attempt.logs,
+      running_logs_by_id,
+      recovery_attempt.epoch,
+      Node.list(),
+      recovery_attempt.version_vector,
+      starter_fn
+    )
+    |> case do
+      {:error, reason} ->
+        %{recovery_attempt | state: {:stalled, reason}}
+
+      {:ok, resolvers} ->
+        %{recovery_attempt | resolvers: resolvers, state: :define_required_services}
+    end
+  end
 
   @spec define_resolvers(
           resolvers :: [ResolverDescriptor.t()],
@@ -143,7 +192,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DefiningResolvers do
         {:halt, {:error, {:failed_to_start, :resolver, node, reason}}}
 
       {:exit, {node, reason}}, _ ->
-        {:halt, {:error, {:failed_to_stary, :resolver, node, reason}}}
+        {:halt, {:error, {:failed_to_start, :resolver, node, reason}}}
     end)
     |> case do
       {:error, reason} -> {:error, reason}

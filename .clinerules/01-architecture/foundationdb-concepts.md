@@ -5,6 +5,7 @@ This document explains how FoundationDB concepts are implemented in Bedrock, bas
 ## See Also
 - **Transaction Details**: [Transaction Lifecycle](transaction-lifecycle.md) - Detailed transaction flow implementation
 - **Persistent State**: [Persistent Configuration](persistent-configuration.md) - Self-bootstrapping cluster state design
+- **Recovery System**: [Recovery Internals](recovery-internals.md) - "Let it crash" recovery philosophy and implementation
 - **Implementation Guides**: [Control Plane Components](../03-implementation/control-plane-components.md) and [Data Plane Components](../03-implementation/data-plane-components.md)
 - **Development Support**: [Best Practices](../02-development/best-practices.md) and [Debugging Strategies](../02-development/debugging-strategies.md)
 - **Complete Reference**: [Bedrock Architecture Livebook](../../docs/bedrock-architecture.livemd) - Comprehensive architectural overview

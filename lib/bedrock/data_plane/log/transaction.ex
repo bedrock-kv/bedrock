@@ -1,4 +1,11 @@
 defmodule Bedrock.DataPlane.Log.Transaction do
+  @moduledoc """
+  Represents a committed transaction as stored in the log.
+
+  This is different from `Bedrock.transaction()` which represents
+  a client transaction with reads and writes before commit.
+  """
+
   @type t :: {Bedrock.version(), %{Bedrock.key() => Bedrock.value()}}
 
   @doc """

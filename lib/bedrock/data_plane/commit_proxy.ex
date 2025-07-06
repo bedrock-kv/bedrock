@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.name()
+  @type ref :: GenServer.server()
 
   @spec commit(commit_proxy :: ref(), Bedrock.transaction()) ::
           {:ok, Bedrock.version()} | {:error, :timeout | :unavailable}

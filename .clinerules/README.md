@@ -6,6 +6,18 @@ This knowledgebase contains documentation, guides, and best practices for develo
 
 This knowledge base is organized for both **human developers** and **AI assistants** working on Bedrock. Choose your entry point based on your current needs:
 
+### 🤖 For AI Assistants (Optimized Context Loading)
+
+**Start with minimal context, then load specific sections as needed:**
+
+1. **Essential Context**: [AI Quick Context](00-start-here/ai-context-quick.md) - Core concepts in ~500 tokens
+2. **Task-Specific Quick References**:
+   - Recovery work: [Recovery Quick](01-architecture/recovery-quick.md)
+   - Development patterns: [Development Patterns Quick](02-development/patterns-quick.md)
+3. **Load detailed docs only when needed** for specific implementation work
+
+**Cost Optimization**: Use quick references first, then load comprehensive documents only for deep implementation work.
+
 ### 🚀 Common Workflows
 
 #### Getting Started / Returning to Development
@@ -31,6 +43,7 @@ This knowledge base is organized for both **human developers** and **AI assistan
 ### 📚 By Topic
 
 #### Recovery and System Startup
+- **[Recovery Internals](01-architecture/recovery-internals.md)** - "Let it crash" recovery philosophy and implementation
 - **[Recovery Architecture](01-architecture/foundationdb-concepts.md#system-recovery)** - High-level recovery concepts
 - **[Director Recovery Implementation](03-implementation/control-plane-components.md#recovery-process-implementation)** - Detailed recovery phases
 - **[Persistent Configuration](01-architecture/persistent-configuration.md)** - Self-bootstrapping cluster state

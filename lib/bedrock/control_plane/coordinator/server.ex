@@ -21,7 +21,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
       start_director_if_necessary: 1,
-      stop_any_director_on_this_node!: 1
+      stop_any_director_on_this_node!: 1,
+      handle_director_failure: 3,
+      handle_director_restart_timeout: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -76,7 +78,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       last_durable_txn_id =
         case bootstrap_version do
           0 -> Log.initial_transaction_id(raft_log)
-          version -> version
+          variable_version when variable_version > 0 -> variable_version
         end
 
       {:ok,
@@ -157,6 +159,18 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> durable_write_to_config_completed(log, durable_txn_id)
+    |> noreply()
+  end
+
+  def handle_info({:DOWN, monitor_ref, :process, _pid, reason}, t) do
+    t
+    |> handle_director_failure(monitor_ref, reason)
+    |> noreply()
+  end
+
+  def handle_info(:restart_director, t) do
+    t
+    |> handle_director_restart_timeout()
     |> noreply()
   end
 

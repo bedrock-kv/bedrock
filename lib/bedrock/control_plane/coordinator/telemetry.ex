@@ -29,4 +29,29 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
       transaction_id: transaction_id
     })
   end
+
+  @spec trace_director_failure_detected(director :: pid() | :unavailable, reason :: term()) :: :ok
+  def trace_director_failure_detected(director, reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :director_failure_detected],
+      %{},
+      %{
+        director: director,
+        reason: reason
+      }
+    )
+  end
+
+  @spec trace_director_restart_attempt(
+          attempt :: non_neg_integer(),
+          backoff_delay :: non_neg_integer(),
+          reason :: term()
+        ) :: :ok
+  def trace_director_restart_attempt(attempt, backoff_delay, reason) do
+    Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_restart_attempt], %{}, %{
+      attempt: attempt,
+      backoff_delay: backoff_delay,
+      reason: reason
+    })
+  end
 end

@@ -15,7 +15,7 @@ defmodule Bedrock.Service.Worker do
   @type otp_name :: atom()
 
   @spec info(worker :: ref(), [fact_name() | atom()], opts :: [timeout_in_ms: timeout_in_ms()]) ::
-          {:ok, map()} | {:error, :unavailable}
+          {:ok, %{fact_name() => any()}} | {:error, :unavailable}
   def info(worker, fact_names, opts \\ []),
     do: call(worker, {:info, fact_names}, opts[:timeout_in_ms] || :infinity)
 

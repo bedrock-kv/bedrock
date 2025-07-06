@@ -7,17 +7,25 @@ This guide helps AI assistants (like Claude/Cline) work more effectively with th
 - **Development Setup**: [Development Setup](development-setup.md) - Environment setup and multi-node testing
 - **Quick Commands**: [Quick Reference](quick-reference.md) - Common commands and troubleshooting
 - **Architecture Overview**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **Recovery Philosophy**: [Recovery Internals](../01-architecture/recovery-internals.md) - "Let it crash" recovery principles
 - **Development Principles**: [Best Practices](../02-development/best-practices.md) - Development guidelines and lessons learned
 - **Testing Approaches**: [Testing Strategies](../02-development/testing-strategies.md) and [Testing Patterns](../02-development/testing-patterns.md)
 
 ## Quick Context Loading
 
-When an AI assistant joins a Bedrock development session, they should:
+**For cost-efficient development, use selective context loading:**
 
-1. **Read this guide first** for immediate context
-2. **Check the Project Reentry Guide** for current project status
-3. **Review the Quick Reference** for common commands and issues
-4. **Understand the architecture** via FoundationDB Concepts
+1. **Start minimal**: [AI Quick Context](ai-context-quick.md) - Essential concepts in ~500 tokens
+2. **Task-specific quick refs**:
+   - Recovery work: [Recovery Quick](../01-architecture/recovery-quick.md)
+   - Development patterns: [Development Patterns Quick](../02-development/patterns-quick.md)
+3. **Load detailed docs only when needed** for specific implementation work
+
+**Traditional approach** (use only for comprehensive work):
+1. Read this full guide for complete context
+2. Check the Project Reentry Guide for current project status
+3. Review the Quick Reference for common commands and issues
+4. Understand the architecture via FoundationDB Concepts
 
 ## Project Status Summary
 
@@ -156,12 +164,15 @@ When providing assistance:
 ## Quick Architecture Reminders
 
 - **Raft Consensus**: 3-node quorum required for progress
-- **Recovery Process**: Multi-phase Director-managed recovery
+- **Recovery Philosophy**: "Let it crash" + fast recovery over complex error handling
+- **Component Monitoring**: Director monitors ALL transaction components via `Process.monitor/1`
+- **Failure Handling**: ANY component failure → Director immediate exit → Coordinator retry
 - **MVCC**: Conflict detection via sliding window in Resolvers
 - **Version Management**: Global ordering via Sequencer
 - **Transaction Batching**: Commit Proxies batch for efficiency
 - **Durability**: Logs provide durability before client notification
 - **Persistent Configuration**: Coordinators bootstrap from storage, Director persists via system transaction
-- **Self-Healing**: Failed system transactions trigger director restart and coordinator retry
+- **Self-Healing**: Fast recovery cycles with simple exponential backoff
+- **Epoch Management**: Each recovery increments epoch counter for generation management
 
 This guide should be updated as the project evolves to maintain accuracy and usefulness.

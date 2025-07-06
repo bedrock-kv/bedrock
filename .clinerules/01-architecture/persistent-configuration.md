@@ -5,6 +5,7 @@ This document describes Bedrock's approach to persistent cluster configuration, 
 ## See Also
 - **Architecture Overview**: [FoundationDB Concepts](foundationdb-concepts.md) - Core architectural principles and component relationships
 - **Transaction Flow**: [Transaction Lifecycle](transaction-lifecycle.md) - How system transactions work within the broader transaction model
+- **Recovery Philosophy**: [Recovery Internals](recovery-internals.md) - "Let it crash" recovery principles and implementation
 - **Implementation Details**: [Control Plane Components](../03-implementation/control-plane-components.md) - Coordinator and Director implementation specifics
 - **Development Support**: [Best Practices](../02-development/best-practices.md) and [Debugging Strategies](../02-development/debugging-strategies.md)
 - **Implementation Plan**: [Persistent Configuration Plan](../../docs/plans/persistent-configuration-implementation-plan.md) - Current implementation progress
@@ -48,9 +49,10 @@ Bedrock uses a self-bootstrapping persistence strategy where:
 
 ### 3. Self-Healing Architecture
 
-**Automatic Recovery**: Failed system transactions trigger director restart
-**Convergence**: System eventually reaches stable, persistent state
-**No Partial States**: Either fully operational or clearly failed
+**Fast Recovery Cycles**: Failed system transactions trigger immediate director exit and coordinator retry
+**Simple Exponential Backoff**: Coordinator uses simple backoff (1s, 2s, 4s, 8s, max 30s) rather than complex retry logic
+**No Partial States**: Either fully operational or clearly failed - no complex circuit breaker logic
+**Epoch-Based Recovery**: Each recovery attempt increments epoch counter for generation management
 
 ## Bootstrap Flow
 

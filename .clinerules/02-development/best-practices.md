@@ -6,6 +6,7 @@ This guide captures lessons learned and best practices for developing Bedrock, b
 - **Testing Approaches**: [Testing Strategies](testing-strategies.md) and [Testing Patterns](testing-patterns.md) - Comprehensive testing guidance
 - **Debugging Support**: [Debugging Strategies](debugging-strategies.md) - Systematic debugging approaches
 - **Architecture Context**: [FoundationDB Concepts](../01-architecture/foundationdb-concepts.md) - Understanding the system design
+- **Recovery Philosophy**: [Recovery Internals](../01-architecture/recovery-internals.md) - "Let it crash" recovery principles
 - **Implementation Guides**: [Control Plane Components](../03-implementation/control-plane-components.md) and [Data Plane Components](../03-implementation/data-plane-components.md)
 - **AI Collaboration**: [AI Assistant Guide](../00-start-here/ai-assistant-guide.md) - Effective AI-assisted development patterns
 

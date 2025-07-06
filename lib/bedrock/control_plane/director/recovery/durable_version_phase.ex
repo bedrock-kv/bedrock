@@ -1,6 +1,43 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
+defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
+  @moduledoc """
+  Handles the :determine_durable_version phase of recovery.
+
+  This phase is responsible for determining the highest durable version
+  across all storage teams and identifying which teams are healthy vs degraded.
+  """
+
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
+
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  @doc """
+  Execute the durable version determination phase of recovery.
+
+  Analyzes storage team health and determines the highest version that
+  can be considered durably committed across the cluster.
+  """
+  @spec execute(map()) :: map()
+  def execute(%{state: :determine_durable_version} = recovery_attempt) do
+    determine_durable_version(
+      recovery_attempt.last_transaction_system_layout.storage_teams,
+      recovery_attempt.storage_recovery_info_by_id,
+      recovery_attempt.parameters.desired_replication_factor |> determine_quorum()
+    )
+    |> case do
+      {:error, {:insufficient_replication, _failed_tags} = reason} ->
+        recovery_attempt |> Map.put(:state, {:stalled, reason})
+
+      {:ok, durable_version, healthy_teams, degraded_teams} ->
+        trace_recovery_durable_version_chosen(durable_version)
+        trace_recovery_team_health(healthy_teams, degraded_teams)
+
+        recovery_attempt
+        |> Map.put(:durable_version, durable_version)
+        |> Map.put(:degraded_teams, degraded_teams)
+        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
+    end
+  end
 
   @doc """
   Determines the latest durable version for a given set of storage teams.
@@ -103,6 +140,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DeterminingDurableVersion do
         {:ok, version, durability_status_for_storage_team(length(durable_versions), quorum)}
     end
   end
+
+  defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 
   defp durability_status_for_storage_team(durable_versions, quorum)
        when durable_versions == quorum,

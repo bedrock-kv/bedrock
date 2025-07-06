@@ -11,6 +11,7 @@ defmodule Bedrock.MixProject do
       test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
         coveralls: :test,
+        "coveralls.json": :test,
         dialyzer: :dev
       ],
       elixirc_paths: elixirc_paths(Mix.env()),

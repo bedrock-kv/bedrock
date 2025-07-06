@@ -117,4 +117,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
       reason: reason
     })
   end
+
+  def trace_recovery_monitoring_components do
+    Telemetry.execute([:bedrock, :recovery, :monitoring_components], %{}, %{})
+  end
+
+  def trace_recovery_old_logs_replayed do
+    Telemetry.execute([:bedrock, :recovery, :old_logs_replayed], %{}, %{})
+  end
 end

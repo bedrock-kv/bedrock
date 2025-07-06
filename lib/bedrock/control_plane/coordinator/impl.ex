@@ -23,17 +23,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   def bootstrap_from_storage(cluster, coordinator_nodes) do
     foreman = cluster.otp_name(:foreman)
 
-    case Foreman.wait_for_healthy(foreman, timeout: 500) do
-      :ok ->
-        case Foreman.storage_workers(foreman, timeout: 200) do
-          {:ok, storage_workers} when is_list(storage_workers) ->
-            find_highest_version_storage_and_read_config(storage_workers, coordinator_nodes)
-
-          _ ->
-            {0, config(coordinator_nodes)}
-        end
-
-      {:error, :unavailable} ->
+    with :ok <- Foreman.wait_for_healthy(foreman, timeout: 500),
+         {:ok, storage_workers} <- Foreman.storage_workers(foreman, timeout: 200) do
+      find_highest_version_storage_and_read_config(storage_workers, coordinator_nodes)
+    else
+      _ ->
         {0, config(coordinator_nodes)}
     end
   end
@@ -73,9 +67,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   @spec get_storage_durable_version(term()) ::
           {:ok, {term(), non_neg_integer()}} | {:error, term()}
   def get_storage_durable_version(storage_worker) do
-    case Storage.info(storage_worker, [:durable_version], timeout: 200) do
+    case Storage.info(storage_worker, [:durable_version], timeout_in_ms: 200) do
       {:ok, info} ->
-        durable_version = Keyword.get(info, :durable_version, 0)
+        durable_version = Map.get(info, :durable_version, 0)
         {:ok, {storage_worker, durable_version}}
 
       {:error, reason} ->
@@ -95,7 +89,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   def try_read_config_in_sequence([], coordinator_nodes), do: {0, config(coordinator_nodes)}
 
   def try_read_config_in_sequence([{storage_worker, durable_version} | rest], coordinator_nodes) do
-    case Storage.fetch(storage_worker, "\xff/system/config", :latest, timeout: 200) do
+    case Storage.fetch(storage_worker, "\xff/system/config", durable_version, timeout: 200) do
       {:ok, bert_data} ->
         try do
           {_stored_version, config} = :erlang.binary_to_term(bert_data)

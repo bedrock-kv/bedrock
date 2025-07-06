@@ -1,8 +1,44 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.CreatingVacancies do
+defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
+  @moduledoc """
+  Handles the :create_vacancies phase of recovery.
+
+  This phase is responsible for creating vacancies for logs and storage teams
+  to ensure the desired replication levels are met.
+  """
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
+
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  @doc """
+  Execute the vacancy creation phase of recovery.
+
+  Creates vacancies for both logs and storage teams based on the desired
+  configuration parameters.
+  """
+  @spec execute(map()) :: map()
+  def execute(%{state: :create_vacancies} = recovery_attempt) do
+    with {:ok, logs, n_log_vacancies} <-
+           create_vacancies_for_logs(
+             recovery_attempt.last_transaction_system_layout.logs,
+             recovery_attempt.parameters.desired_logs
+           ),
+         {:ok, storage_teams, n_storage_team_vacancies} <-
+           create_vacancies_for_storage_teams(
+             recovery_attempt.last_transaction_system_layout.storage_teams,
+             recovery_attempt.parameters.desired_replication_factor
+           ) do
+      trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
+
+      recovery_attempt
+      |> Map.put(:logs, logs)
+      |> Map.put(:storage_teams, storage_teams)
+      |> Map.put(:state, :determine_durable_version)
+    end
+  end
 
   @doc """
   Creates vacancies for the specified logs to ensure the desired number of log instances.

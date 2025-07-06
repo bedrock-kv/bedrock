@@ -10,15 +10,13 @@ defmodule Bedrock.Internal.GenServer.Calls do
 
   @spec call(GenServer.server(), message :: any(), timeout()) :: term()
   def call(server, message, timeout) do
-    try do
-      GenServer.call(server, message, normalize_timeout(timeout))
-    rescue
-      _ -> {:error, :unknown}
-    catch
-      :exit, {:noproc, _} -> {:error, :unavailable}
-      :exit, {{:nodedown, _}, _} -> {:error, :unavailable}
-      :exit, {:timeout, _} -> {:error, :timeout}
-    end
+    GenServer.call(server, message, normalize_timeout(timeout))
+  rescue
+    _ -> {:error, :unknown}
+  catch
+    :exit, {:noproc, _} -> {:error, :unavailable}
+    :exit, {{:nodedown, _}, _} -> {:error, :unavailable}
+    :exit, {:timeout, _} -> {:error, :timeout}
   end
 
   @spec normalize_timeout(timeout()) :: timeout()

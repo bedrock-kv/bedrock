@@ -1,8 +1,53 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.LockingAvailableServices do
+defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
+  @moduledoc """
+  Handles the :lock_available_services phase of recovery.
+
+  This phase is responsible for locking all available services for the current epoch
+  and determining whether this is a first-time initialization or a recovery from
+  an existing cluster state.
+  """
+
+  require Logger
+
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
+
+  @doc """
+  Execute the service locking phase of recovery.
+
+  Attempts to lock all available services for the current epoch. If successful,
+  determines the next phase based on whether this is a first-time initialization
+  or recovery from existing state.
+  """
+  @spec execute(map()) :: map()
+  def execute(%{state: :lock_available_services} = recovery_attempt) do
+    lock_available_services(recovery_attempt.available_services, recovery_attempt.epoch, 200)
+    |> case do
+      {:error, :newer_epoch_exists = reason} ->
+        recovery_attempt |> Map.put(:state, {:stalled, reason})
+
+      {:ok, locked_service_ids, updated_services, log_recovery_info_by_id,
+       storage_recovery_info_by_id} ->
+        recovery_attempt
+        |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
+        |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
+        |> Map.update!(:available_services, &Map.merge(&1, updated_services))
+        |> Map.put(:locked_service_ids, locked_service_ids)
+        |> determine_next_phase()
+    end
+  end
+
+  defp determine_next_phase(
+         %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = recovery_attempt
+       ) do
+    recovery_attempt |> Map.put(:state, :first_time_initialization)
+  end
+
+  defp determine_next_phase(recovery_attempt) do
+    recovery_attempt |> Map.put(:state, :determine_old_logs_to_copy)
+  end
 
   @spec lock_available_services_timeout() :: Bedrock.timeout_in_ms()
   def lock_available_services_timeout, do: 200

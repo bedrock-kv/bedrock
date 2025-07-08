@@ -1,33 +1,32 @@
-# Recovery Internals
+# Recovery Guide
 
-This document explains Bedrock's recovery system, which combines FoundationDB's proven recovery approach with Erlang/OTP's "let it crash" philosophy to create a robust, fast-recovering distributed system.
+**Comprehensive recovery patterns and troubleshooting for Bedrock's distributed system.**
 
 ## See Also
-- **Architecture Overview**: [FoundationDB Concepts](foundationdb-concepts.md) - Core architectural principles and component relationships
-- **Persistent State**: [Persistent Configuration](persistent-configuration.md) - Self-bootstrapping cluster state design
-- **Implementation Details**: [Control Plane Components](../03-implementation/control-plane-components.md) - Director and Coordinator implementation
-- **Development Support**: [Best Practices](../02-development/best-practices.md) and [Debugging Strategies](../02-development/debugging-strategies.md)
-- **Testing Approaches**: [Testing Strategies](../02-development/testing-strategies.md) - Recovery testing patterns
+- **[Recovery Internals](../01-architecture/recovery-internals.md)** - Complete recovery philosophy and implementation details
+- **[Control Plane Components](../03-implementation/control-plane-components.md)** - Director and Coordinator implementation
+- **[Debugging Strategies](../02-development/debugging-strategies.md)** - General debugging approaches
+- **[Best Practices](../02-development/best-practices.md)** - Error handling patterns
 
 ## Recovery Philosophy
 
-Bedrock's recovery system is built on two foundational principles:
+Bedrock combines two proven approaches to create a robust, fast-recovering system:
 
-### 1. "Let It Crash" (Erlang/OTP)
-- **Fast Failure Detection**: Use process monitoring rather than complex health checking
+### "Let It Crash" (Erlang/OTP)
+- **Fast Failure Detection**: Use `Process.monitor/1` rather than complex health checking
 - **Immediate Failure Response**: Any critical component failure triggers immediate director shutdown
 - **Supervision Tree Restart**: Let Erlang's supervision trees handle automatic restart
 - **Fail-Fast Error Handling**: Prefer immediate failure over complex error recovery
 
-### 2. Fast Recovery Over Complex Error Handling (FoundationDB)
+### Fast Recovery Over Complex Error Handling (FoundationDB)
 - **Component Failure Triggers Full Recovery**: Any transaction system component failure causes complete recovery
 - **Process Suicide**: Processes terminate themselves when they detect newer generations
 - **Recovery Count Mechanism**: Each recovery increments an epoch counter for generation management
 - **Simple Failure Detection**: Use heartbeats and process monitoring, not complex availability checking
 
-## When Recovery Is Triggered
+## When Recovery Triggers
 
-### Critical Component Failures
+### Critical Components (Recovery Triggers)
 Recovery is triggered when any of these components fail:
 - **Coordinator**: Raft consensus failure or network partition
 - **Director**: Recovery coordinator failure
@@ -36,28 +35,16 @@ Recovery is triggered when any of these components fail:
 - **Resolvers**: Conflict detection failure
 - **Transaction Logs**: Durability system failure
 
-### Non-Critical Component Failures
+### Non-Critical Components (No Recovery)
 These failures do NOT trigger recovery:
 - **Storage Servers**: Data distributor handles storage failures
 - **Gateways**: Client interface failures are handled locally
 - **Rate Keeper**: Independent component with separate lifecycle
 
 ### Detection Mechanisms
-
-#### Coordinator Failure Detection
-- Coordinators send heartbeats to each other via Raft
-- Coordinator kills itself if it cannot reach majority of coordinators
-- Remaining coordinators elect new leader when current coordinator fails
-
-#### Director Failure Detection
-- Coordinator monitors director process via `Process.monitor/1`
-- Director exits immediately on any transaction system component failure
-- Coordinator detects director exit and starts new director with incremented epoch
-
-#### Component Failure Detection
-- Director monitors ALL transaction system components via `Process.monitor/1`
-- ANY component death message triggers immediate director exit
-- No complex health checking or partial recovery attempts
+- **Coordinator Failure**: Raft heartbeat timeout → Leader election
+- **Director Failure**: `Process.monitor/1` → Coordinator restart with incremented epoch
+- **Component Failure**: Director monitors ALL transaction components → ANY failure → Director immediate exit
 
 ## Recovery Process
 
@@ -100,29 +87,13 @@ When director fails or new coordinator elected:
 3. **Epoch Management**: Increment epoch on each recovery attempt
 4. **Self-Healing**: Coordinator automatically restarts failed director
 
-## Erlang/OTP Integration
+## Error Handling Patterns
 
-### Supervision Tree Structure
-```
-Cluster Supervisor
-├── Coordinator (permanent restart)
-├── Director (temporary restart, managed by coordinator)
-│   ├── Sequencer (temporary restart)
-│   ├── Commit Proxies (temporary restart)
-│   ├── Resolvers (temporary restart)
-│   └── Transaction Logs (temporary restart)
-├── Foreman (permanent restart)
-└── Storage Workers (permanent restart)
-```
-
-### Process Monitoring Pattern
+### Fail-Fast Implementation
 ```elixir
-# Director monitors all transaction components
-def monitor_component(component_pid) do
-  monitor_ref = Process.monitor(component_pid)
-  # Store monitor_ref for cleanup
-  # Exit immediately on :DOWN message
-end
+# GOOD: Fail immediately on error
+def get_available_commit_proxy([]), do: exit(:no_commit_proxies)
+def get_available_commit_proxy([proxy | _]), do: {:ok, proxy}
 
 # Handle component failure
 def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
@@ -130,21 +101,6 @@ def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
   # Exit immediately - let coordinator restart us
   exit({:component_failure, reason})
 end
-```
-
-### Restart Strategies
-- **Coordinator**: `:permanent` - Always restart on failure
-- **Director**: `:temporary` - Only restart when coordinator decides
-- **Transaction Components**: `:temporary` - Only exist during director lifetime
-- **Storage/Foreman**: `:permanent` - Independent lifecycle
-
-## Error Handling Principles
-
-### Fail-Fast Philosophy
-```elixir
-# GOOD: Fail immediately on error
-def get_available_commit_proxy([]), do: exit(:no_commit_proxies)
-def get_available_commit_proxy([proxy | _]), do: {:ok, proxy}
 
 # BAD: Complex error handling
 def get_available_commit_proxy(proxies) do
@@ -152,15 +108,7 @@ def get_available_commit_proxy(proxies) do
 end
 ```
 
-### Simple vs Complex Error Handling
-| Situation | Simple Approach | Complex Approach |
-|-----------|----------------|------------------|
-| Remote process check | Use first available, fail if none | Check if each process is alive |
-| Component failure | Exit immediately | Try to recover or work around |
-| Network partition | Fail fast, let recovery handle | Complex partition detection |
-| Resource exhaustion | Exit with clear reason | Try to free resources |
-
-### Recovery Count Mechanism
+### Epoch-Based Generation Management
 ```elixir
 # Each recovery increments epoch
 new_epoch = current_epoch + 1
@@ -172,6 +120,13 @@ def handle_info({:epoch_changed, new_epoch}, %{epoch: current_epoch} = state)
   exit(:newer_epoch_exists)
 end
 ```
+
+### Key Implementation Points
+- **Director monitors ALL transaction components**
+- **ANY component failure → Director immediate exit**
+- **Coordinator uses simple exponential backoff**
+- **No circuit breaker complexity**
+- **Epoch-based generation management**
 
 ## Debugging Recovery Issues
 
@@ -210,6 +165,58 @@ GenServer.call(:bedrock_director, :get_state)
 
 # Check system configuration
 Storage.fetch(storage_worker, "\xff/system/config", :latest)
+
+# Monitor recovery phases
+:telemetry.attach_many(
+  "recovery-monitor",
+  [
+    [:bedrock, :director, :recovery, :started],
+    [:bedrock, :director, :recovery, :phase_completed],
+    [:bedrock, :director, :recovery, :completed]
+  ],
+  fn event, measurements, metadata, config ->
+    IO.inspect({event, measurements, metadata}, label: "RECOVERY")
+  end,
+  nil
+)
+```
+
+### Recovery Scenario Debugging
+
+#### Scenario: Recovery Process Hangs
+**Symptoms**: System starts but never becomes operational
+
+**Debug Steps**:
+1. Check Director logs for which recovery step is failing
+2. Verify service discovery is working
+3. Check if required services are available
+4. Look for deadlocks or infinite loops
+
+```elixir
+# Check what recovery phase is active
+GenServer.call(:bedrock_director, :get_state)
+
+# Check foreman health
+GenServer.call(:bedrock_foreman, :get_workers)
+
+# Check available services
+GenServer.call(:bedrock_director, :get_available_services)
+```
+
+#### Scenario: System Transaction Fails
+**Symptoms**: Recovery completes but system transaction fails
+
+**Debug Steps**:
+1. Check sequencer health
+2. Verify commit proxy availability
+3. Check resolver status
+4. Verify log server connectivity
+
+```elixir
+# Check transaction components
+Process.registered() |> Enum.filter(&String.contains?(to_string(&1), "sequencer"))
+Process.registered() |> Enum.filter(&String.contains?(to_string(&1), "commit_proxy"))
+Process.registered() |> Enum.filter(&String.contains?(to_string(&1), "resolver"))
 ```
 
 ### Telemetry Events
@@ -230,6 +237,28 @@ Storage.fetch(storage_worker, "\xff/system/config", :latest)
 [:bedrock, :coordinator, :director, :restarted]
 ```
 
+## Persistent Configuration and Recovery
+
+### Bootstrap from Storage
+The Coordinator supports bootstrapping from persistent storage:
+- Reads system configuration from local storage workers on startup
+- Uses foreman to discover available storage workers
+- Falls back to default configuration if no storage available
+- Initializes Raft with storage-derived version (not 0)
+
+### System State Persistence
+The Director persists cluster state after successful recovery:
+- System transaction tests entire data plane pipeline
+- Direct submission to commit proxy (bypassing gateway)
+- Fail-fast behavior: transaction failure triggers director restart
+- Uses system keyspace (`\xff/system/*`) for cluster state
+
+### Error Recovery Patterns
+- **Graceful fallback when storage unavailable**
+- **BERT deserialization error recovery**
+- **Timeout handling for foreman queries**
+- **Corrupted data detection and recovery**
+
 ## Performance Characteristics
 
 ### Recovery Time
@@ -237,43 +266,53 @@ Storage.fetch(storage_worker, "\xff/system/config", :latest)
 - **Warm Restart**: 1-5 seconds (with persistent configuration)
 - **Component Failure**: Sub-second detection, 1-3 second restart
 
-### Resource Usage
-- **Memory**: Minimal overhead for monitoring
-- **CPU**: Burst during recovery, minimal during operation
-- **Network**: Recovery coordination traffic, then normal operation
-
 ### Scalability
 - **Node Count**: Recovery time increases logarithmically with cluster size
 - **Data Size**: Storage recovery time depends on transaction log size
 - **Component Count**: Linear increase in monitoring overhead
 
-## Comparison to FoundationDB
+## Testing Recovery
 
-| Aspect | FoundationDB | Bedrock |
-|--------|--------------|---------|
-| Recovery Trigger | Component failure | Component failure |
-| Failure Detection | Heartbeats + process monitoring | Process monitoring (Erlang) |
-| Recovery Coordinator | Cluster Controller | Director |
-| Process Management | Custom supervision | Erlang supervision trees |
-| Error Handling | Fail-fast | "Let it crash" + fail-fast |
-| Generation Management | Recovery count | Epoch counter |
-| State Persistence | Coordinators | Self-bootstrapping storage |
+### Unit Testing Recovery Phases
+```elixir
+# Test recovery phase
+test "determining durable version finds highest committed version" do
+  # Setup mock log servers with different versions
+  # Call the recovery phase
+  # Assert correct version is selected
+end
+```
 
-## Future Enhancements
+### Integration Testing
+- Test full recovery process with multiple nodes
+- Simulate node failures during recovery
+- Test configuration changes across the cluster
 
-### Deterministic Simulation
-- Implement FoundationDB-style deterministic testing
-- Simulate various failure scenarios
-- Test recovery under extreme conditions
+### Property-Based Testing
+- Test recovery under various failure scenarios
+- Verify epoch management correctness
+- Test configuration consistency
 
-### Advanced Monitoring
-- Component health metrics
-- Recovery time tracking
-- Failure pattern analysis
+## Best Practices
 
-### Optimization
-- Parallel recovery phases
-- Incremental state recovery
-- Faster service discovery
+### Implementation Guidelines
+1. **Always use `Process.monitor/1` for component monitoring**
+2. **Exit immediately on component failure - don't attempt recovery**
+3. **Use epoch counters for generation management**
+4. **Implement fail-fast error handling**
+5. **Test recovery paths extensively**
 
-This recovery system provides the reliability of FoundationDB with the simplicity and robustness of Erlang/OTP, creating a system that is both fast-recovering and easy to debug.
+### Common Pitfalls to Avoid
+1. **Complex error recovery logic**
+2. **Partial recovery attempts**
+3. **Missing component monitoring**
+4. **Inconsistent epoch management**
+5. **Inadequate testing of failure scenarios**
+
+### Monitoring and Observability
+1. **Use telemetry for recovery progress tracking**
+2. **Monitor epoch numbers across components**
+3. **Track recovery time and success rates**
+4. **Alert on recovery failures or infinite loops**
+
+This recovery guide provides the essential patterns and troubleshooting steps for Bedrock's recovery system, combining the robustness of Erlang/OTP with the proven recovery approach of FoundationDB.

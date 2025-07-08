@@ -152,8 +152,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
         case Bedrock.Service.Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000) do
           {:ok, worker_ref} ->
-            # Get detailed info about the created worker
-            case Bedrock.Service.Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
+            case Bedrock.Service.Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
               {:ok, worker_info} ->
                 service_info = %{
                   kind: :log,

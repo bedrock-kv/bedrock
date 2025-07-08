@@ -46,6 +46,37 @@ These failures do NOT trigger recovery:
 - **Director Failure**: `Process.monitor/1` → Coordinator restart with incremented epoch
 - **Component Failure**: Director monitors ALL transaction components → ANY failure → Director immediate exit
 
+### Node Rejoin Triggers Recovery
+Recovery can  also be triggered when nodes attempt to rejoin the cluster:
+- **Node Rejoin**: When a node restarts and advertises services → Director restarts recovery
+- **Reason**: Director needs up-to-date view of all available services for optimal layout
+- **Correct Behavior**: Recovery restart on rejoin follows "simple flowchart" philosophy
+- **Not a Bug**: Preventing recovery restart would add complex edge case handling
+
+## Durable Services and Epoch Management
+
+### Durable Service Nature
+Logs and storage servers are **durable by design**:
+- **Purpose**: Persist data across cold starts and node restarts
+- **Lifecycle**: Survive node restarts, director failures, and epoch changes
+- **Local Startup**: When node boots, it starts locally available durable services
+- **Cluster Integration**: Services advertise to cluster via `request_to_rejoin`
+
+### Epoch-Based Split-Brain Prevention
+Durable services use epoch management to prevent split-brain scenarios:
+- **Service Locking**: Director locks services with new epoch during recovery
+- **Old Epoch Services**: Services with older epochs stop participating
+- **New Epoch Services**: Only services locked with current epoch participate
+- **Fail-Safe**: Services refuse commands from directors with older epochs
+
+### Node Rejoin Flow
+1. **Node Boots**: Starts locally available durable services (logs/storage)
+2. **Service Advertisement**: Node reports existing services via `request_to_rejoin`
+3. **Recovery Restart**: Director restarts recovery to incorporate new services
+4. **Service Locking**: Director locks advertised services with new epoch
+5. **Recovery Proceeds**: Director incorporates locked services into new layout
+6. **Epoch Validation**: Old services terminate, new services participate
+
 ## Recovery Process
 
 ### Phase 1: Coordinator Election
@@ -150,6 +181,13 @@ end
 - **Common Causes**: Network partition, coordinator failure
 - **Solution**: Ensure Raft quorum, check network connectivity
 
+#### Node Rejoin Recovery Issues
+- **Symptom**: Recovery doesn't complete after node rejoin
+- **Correct Behavior**: Recovery restart on rejoin is expected and correct
+- **Common Causes**: Service locking failures, epoch management issues
+- **Diagnosis**: Check service locking phase, epoch validation
+- **Solution**: Verify durable services can be locked with new epoch
+
 ### Debugging Commands
 ```elixir
 # Check coordinator state
@@ -165,6 +203,22 @@ GenServer.call(:bedrock_director, :get_state)
 
 # Check system configuration
 Storage.fetch(storage_worker, "\xff/system/config", :latest)
+
+# Debug node rejoin issues
+# Check available services before locking
+GenServer.call(:bedrock_director, :get_available_services)
+
+# Check service locking results
+GenServer.call(:bedrock_director, :get_locked_services)
+
+# Check epoch management
+GenServer.call(:bedrock_director, :get_current_epoch)
+
+# Check durable service states
+GenServer.call(:bedrock_foreman, :get_workers)
+
+# Verify service epoch compliance
+Worker.info(service_ref, [:epoch, :status])
 
 # Monitor recovery phases
 :telemetry.attach_many(
@@ -287,6 +341,8 @@ end
 - Test full recovery process with multiple nodes
 - Simulate node failures during recovery
 - Test configuration changes across the cluster
+- **Test node rejoin scenarios**: Verify recovery completes when nodes restart and rejoin
+- **Test epoch management**: Ensure old services terminate and new services participate
 
 ### Property-Based Testing
 - Test recovery under various failure scenarios
@@ -301,6 +357,8 @@ end
 3. **Use epoch counters for generation management**
 4. **Implement fail-fast error handling**
 5. **Test recovery paths extensively**
+6. **Accept recovery restart on node rejoin - don't prevent it**
+7. **Ensure durable services properly handle epoch transitions**
 
 ### Common Pitfalls to Avoid
 1. **Complex error recovery logic**

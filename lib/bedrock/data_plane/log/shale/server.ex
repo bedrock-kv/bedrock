@@ -211,6 +211,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  def handle_call(:ping, _from, t), do: t |> reply(:pong)
+
   def check_running(_t), do: {:error, :unavailable}
 
   @spec ack_fn(GenServer.from()) :: (:ok | {:error, term()} -> :ok)

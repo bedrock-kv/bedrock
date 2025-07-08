@@ -7,6 +7,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   """
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -147,25 +149,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     # Create workers on their assigned nodes by calling Foreman directly
     results =
       Enum.map(node_assignments, fn {worker_id, node} ->
-        # Contact the foreman on the target node directly
         foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-        case Bedrock.Service.Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000) do
-          {:ok, worker_ref} ->
-            case Bedrock.Service.Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
-              {:ok, worker_info} ->
-                service_info = %{
-                  kind: :log,
-                  last_seen: {worker_info[:otp_name], node},
-                  status: {:up, worker_info[:pid]}
-                }
+        with {:ok, worker_ref} <- Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
+             {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
+          service_info = %{
+            kind: :log,
+            last_seen: {worker_info[:otp_name], node},
+            status: {:up, worker_info[:pid]}
+          }
 
-                {worker_id, service_info}
-
-              {:error, reason} ->
-                {:error, {worker_id, node, {:worker_info_failed, reason}}}
-            end
-
+          {worker_id, service_info}
+        else
           {:error, reason} ->
             {:error, {worker_id, node, {:worker_creation_failed, reason}}}
         end

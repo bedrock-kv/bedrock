@@ -55,7 +55,7 @@ defmodule Bedrock.Internal.Repo do
   @spec nested_transaction(transaction()) :: transaction()
   def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
-  @spec fetch(transaction(), key()) :: {:ok, value()} | :error
+  @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
   def fetch(t, key),
     do: call(t, {:fetch, key}, :infinity)
 
@@ -71,6 +71,7 @@ defmodule Bedrock.Internal.Repo do
   def get(t, key) do
     case fetch(t, key) do
       :error -> nil
+      {:error, _} -> nil
       {:ok, value} -> value
     end
   end

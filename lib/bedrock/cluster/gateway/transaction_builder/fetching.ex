@@ -18,6 +18,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     else
       {:ok, _value} = ok -> {t, ok}
       :error -> {%{t | reads: Map.put(t.reads, encoded_key, :error)}, :error}
+      {:error, :not_found} -> {%{t | reads: Map.put(t.reads, encoded_key, :error)}, :error}
       error -> {t, error}
     end
   end
@@ -33,7 +34,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | :error
+  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | {:error, atom()} | :error
   def fetch_from_storage(%{read_version: nil} = t, key) do
     with {:ok, read_version, read_version_lease_expiration_in_ms} <- next_read_version(t) do
       read_version_lease_expiration =
@@ -46,7 +47,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | :error
+  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | {:error, atom()} | :error
   def fetch_from_storage(t, key) do
     fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do
@@ -74,7 +75,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
           storage_servers :: [{Bedrock.key_range(), pid()}],
           key :: binary()
         ) ::
-          {:ok, State.t(), binary()} | :error
+          {:ok, State.t(), binary()} | {:error, atom()} | :error
   def fetch_from_fastest_storage_server(t, storage_servers, key) do
     storage_servers
     |> horse_race_storage_servers_for_key(t.read_version, key, t.fetch_timeout_in_ms)
@@ -129,7 +130,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
           read_version :: non_neg_integer(),
           key :: binary(),
           fetch_timeout_in_ms :: pos_integer()
-        ) :: {:ok, Bedrock.key_range(), pid(), binary()} | :error
+        ) :: {:ok, Bedrock.key_range(), pid(), binary()} | {:error, atom()} | :error
   def horse_race_storage_servers_for_key([], _, _, _), do: :error
 
   def horse_race_storage_servers_for_key(

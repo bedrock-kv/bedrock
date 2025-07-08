@@ -46,7 +46,40 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   end
 
   defp determine_next_phase(recovery_attempt) do
-    recovery_attempt |> Map.put(:state, :determine_old_logs_to_copy)
+    if has_stale_components?(recovery_attempt.last_transaction_system_layout) do
+      Logger.warning(
+        "Detected stale components in transaction system layout, forcing fresh initialization"
+      )
+
+      recovery_attempt |> Map.put(:state, :first_time_initialization)
+    else
+      recovery_attempt |> Map.put(:state, :determine_old_logs_to_copy)
+    end
+  end
+
+  defp has_stale_components?(%{resolvers: resolvers, proxies: proxies, sequencer: sequencer}) do
+    stale_resolvers = resolvers |> Enum.any?(&resolver_is_stale?/1)
+    stale_proxies = proxies |> Enum.any?(&process_is_stale?/1)
+    stale_sequencer = process_is_stale?(sequencer)
+
+    stale_resolvers or stale_proxies or stale_sequencer
+  end
+
+  defp has_stale_components?(_), do: false
+
+  defp resolver_is_stale?({_start_key, pid}) when is_pid(pid), do: pid_is_stale?(pid)
+  defp resolver_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
+  defp resolver_is_stale?(_), do: false
+
+  defp process_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
+  defp process_is_stale?(_), do: false
+
+  defp pid_is_stale?(pid) do
+    not Process.alive?(pid)
+  rescue
+    ArgumentError ->
+      # Remote PID that we can't check directly - assume it's stale
+      true
   end
 
   @spec lock_available_services_timeout() :: Bedrock.timeout_in_ms()

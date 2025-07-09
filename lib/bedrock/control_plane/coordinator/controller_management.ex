@@ -5,6 +5,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [put_director: 2, put_epoch: 2, put_director_monitor: 2, put_director_retry_state: 2]
 
+  import Bedrock.ControlPlane.Coordinator.Durability,
+    only: [durably_write_config: 3]
+
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
       trace_director_changed: 1,
@@ -34,6 +37,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
         |> put_epoch(new_epoch)
         |> put_director(new_director)
         |> put_director_monitor(monitor_ref)
+        |> write_updated_config_with_new_director(new_director, new_epoch)
 
       {:error, reason} ->
         Logger.error("Bedrock: failed to start director: #{inspect(reason)}")
@@ -151,6 +155,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
           |> put_director(new_director)
           |> put_director_monitor(monitor_ref)
           |> reset_director_retry_state()
+          |> write_updated_config_with_new_director(new_director, new_epoch)
 
         {:error, reason} ->
           Logger.warning("Director restart failed: #{inspect(reason)}")
@@ -178,5 +183,31 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     # Exponential backoff: base_delay * 2^failure_count, capped at max_delay
     delay = base_delay * :math.pow(2, failure_count)
     min(trunc(delay), max_delay)
+  end
+
+  @spec write_updated_config_with_new_director(State.t(), pid(), non_neg_integer()) :: State.t()
+  defp write_updated_config_with_new_director(t, new_director, new_epoch) do
+    # Create updated config with new director and epoch
+    updated_transaction_system_layout = %{
+      t.config.transaction_system_layout | 
+      director: new_director
+    }
+    
+    updated_config = %{
+      t.config | 
+      epoch: new_epoch,
+      transaction_system_layout: updated_transaction_system_layout
+    }
+    
+    # Write the updated config to the distributed store
+    # Use an empty ack function since we don't need to wait for acknowledgment
+    case durably_write_config(t, updated_config, fn -> :ok end) do
+      {:ok, new_state} -> 
+        Logger.info("Successfully wrote updated config with new director #{inspect(new_director)} at epoch #{new_epoch}")
+        new_state
+      {:error, reason} ->
+        Logger.warning("Failed to write updated config with new director: #{inspect(reason)}")
+        t
+    end
   end
 end

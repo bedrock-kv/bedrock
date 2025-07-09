@@ -151,7 +151,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
       Enum.map(node_assignments, fn {worker_id, node} ->
         foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-        with {:ok, worker_ref} <- Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
+        with {:ok, worker_ref} <-
+               Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
              {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
           service_info = %{
             kind: :log,

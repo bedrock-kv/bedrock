@@ -34,7 +34,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | {:error, atom()} | :error
+  @spec fetch_from_storage(State.t(), key :: binary()) ::
+          {:ok, State.t(), binary()} | {:error, atom()} | :error
   def fetch_from_storage(%{read_version: nil} = t, key) do
     with {:ok, read_version, read_version_lease_expiration_in_ms} <- next_read_version(t) do
       read_version_lease_expiration =
@@ -47,7 +48,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) :: {:ok, State.t(), binary()} | {:error, atom()} | :error
+  @spec fetch_from_storage(State.t(), key :: binary()) ::
+          {:ok, State.t(), binary()} | {:error, atom()} | :error
   def fetch_from_storage(t, key) do
     fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do

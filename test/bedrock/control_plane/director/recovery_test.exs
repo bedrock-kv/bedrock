@@ -4,7 +4,42 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+
+  # Helper to create test state with node tracking
+  defp create_test_state(overrides \\ %{}) do
+    node_tracking = NodeTracking.new([Node.self()])
+
+    base_state = %State{
+      state: :starting,
+      cluster: __MODULE__.TestCluster,
+      epoch: 1,
+      node_tracking: node_tracking,
+      config: %{
+        coordinators: [],
+        parameters: %{
+          desired_logs: 2,
+          desired_replication_factor: 3,
+          desired_commit_proxies: 1
+        },
+        transaction_system_layout: %{
+          logs: %{},
+          storage_teams: [],
+          services: %{}
+        }
+      },
+      services: %{}
+    }
+
+    Map.merge(base_state, overrides)
+  end
+
+  # Helper to create mock context for recovery tests
+  defp create_test_context() do
+    node_tracking = NodeTracking.new([Node.self()])
+    %{node_tracking: node_tracking}
+  end
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -32,30 +67,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   describe "try_to_recover/1" do
     test "handles starting state by setting up initial recovery" do
-      state = %State{
-        state: :starting,
-        cluster: TestCluster,
-        epoch: 1,
-        config: %{
-          coordinators: [],
-          parameters: %{
-            desired_logs: 2,
-            desired_replication_factor: 3,
-            desired_commit_proxies: 1
-          },
-          transaction_system_layout: %{
-            logs: %{},
-            storage_teams: [],
-            services: %{}
-          }
-        },
-        services: %{}
-      }
+      state = create_test_state()
 
       result = Recovery.try_to_recover(state)
 
       assert result.state == :recovery
-      assert result.config.recovery_attempt.cluster == TestCluster
+      assert result.config.recovery_attempt.cluster == __MODULE__.TestCluster
       assert result.config.recovery_attempt.epoch == 1
       assert result.config.recovery_attempt.attempt == 1
       assert result.config.transaction_system_layout.director == self()
@@ -256,7 +273,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   describe "run_recovery_attempt/1" do
     test "detects invalid state and handles it" do
       recovery_attempt = %RecoveryAttempt{
-        state: :completed,
+        state: :truly_invalid_state,
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
@@ -280,9 +297,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         sequencer: nil
       }
 
-      # :completed is not a valid recovery state - should raise
-      assert_raise RuntimeError, ~r/Invalid state/, fn ->
-        Recovery.run_recovery_attempt(recovery_attempt)
+      # :truly_invalid_state is not a valid recovery state - should raise
+      assert_raise FunctionClauseError, fn ->
+        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
       end
     end
 
@@ -300,7 +317,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       capture_log([level: :warning], fn ->
-        result = Recovery.run_recovery_attempt(recovery_attempt)
+        result = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
         assert {{:stalled, :test_reason}, ^recovery_attempt} = result
       end)
     end
@@ -320,8 +337,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         available_services: %{}
       }
 
-      assert_raise RuntimeError, fn ->
-        Recovery.run_recovery_attempt(recovery_attempt)
+      assert_raise FunctionClauseError, fn ->
+        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
       end
     end
   end
@@ -341,7 +358,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       capture_log(fn ->
-        result = Recovery.recovery(recovery_attempt)
+        # For a start state, we can only test the first phase transition since the subsequent 
+        # phases will need complete data. Let's test just that the start phase works.
+        start_phase = Bedrock.ControlPlane.Director.Recovery.StartPhase
+        result = start_phase.execute(recovery_attempt, create_test_context())
         assert result.state == :lock_available_services
         assert %DateTime{} = result.started_at
       end)
@@ -362,8 +382,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       log_output =
         capture_log([level: :warning], fn ->
-          result = Recovery.recovery(recovery_attempt)
-          assert result == recovery_attempt
+          {{:stalled, :test_reason}, result} = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
           assert result.state == {:stalled, :test_reason}
         end)
 
@@ -383,8 +402,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         available_services: %{}
       }
 
-      assert_raise RuntimeError, ~r/Invalid state:/, fn ->
-        Recovery.recovery(recovery_attempt)
+      assert_raise FunctionClauseError, fn ->
+        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
       end
     end
   end
@@ -406,21 +425,37 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
 
     test "validates phase dispatch mechanism works", %{recovery_attempt: _base_attempt} do
-      # Just verify that the function clauses exist for key states
-      states_with_clauses = [
-        :lock_available_services,
-        :determine_durable_version,
-        :persist_system_state,
-        {:stalled, :reason}
-      ]
-
-      # Verify each state clause exists by checking function info
+      # Verify that run_recovery_attempt/2 exists and next_phase/1 works for key states
       {:module, Recovery} = Code.ensure_loaded(Recovery)
       function_clauses = Recovery.__info__(:functions)
 
-      assert {:recovery, 1} in function_clauses
-      # Just verify we have test cases
-      assert length(states_with_clauses) > 0
+      assert {:run_recovery_attempt, 2} in function_clauses
+
+      # Test that next_phase works for common states
+      key_states = [
+        :start,
+        :lock_available_services, 
+        :determine_durable_version,
+        :persist_system_state,
+        :monitor_components
+      ]
+
+      # Verify that run_recovery_attempt works with these states by testing
+      # that it doesn't immediately crash with a FunctionClauseError
+      for state <- key_states do
+        test_attempt = %RecoveryAttempt{state: state, cluster: TestCluster, epoch: 1}
+        
+        # This should not raise FunctionClauseError for valid states
+        # (though it may fail for other reasons like missing data)
+        try do
+          Recovery.run_recovery_attempt(test_attempt, %{node_tracking: nil})
+        rescue
+          FunctionClauseError -> flunk("State #{state} is not handled by recovery system")
+        catch
+          # Other errors are fine, we're just testing dispatch works
+          _, _ -> :ok
+        end
+      end
     end
   end
 end

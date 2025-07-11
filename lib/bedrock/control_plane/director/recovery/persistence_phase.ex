@@ -13,6 +13,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxySelection
   alias Bedrock.SystemKeys
 
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+
+  @behaviour RecoveryPhase
+
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
   import Bedrock.ControlPlane.Config, only: [config: 1]
 
@@ -22,8 +27,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   Validates recovery state, builds cluster configuration, creates system
   transaction, and submits it to test the entire transaction pipeline.
   """
-  @spec execute(RecoveryAttempt.t()) :: RecoveryAttempt.t()
-  def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt) do
+  @impl true
+  def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, _context) do
     trace_recovery_persisting_system_state()
 
     # Safety check: ensure we have the required components before attempting system transaction

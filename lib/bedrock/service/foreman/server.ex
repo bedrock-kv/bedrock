@@ -40,6 +40,12 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_call({:new_worker, id, kind}, _from, t),
     do: t |> do_new_worker(id, kind) |> then(fn {t, health} -> t |> reply({:ok, health}) end)
 
+  def handle_call({:remove_worker, worker_id}, _from, t),
+    do: t |> do_remove_worker(worker_id) |> then(fn {t, result} -> t |> reply(result) end)
+
+  def handle_call({:remove_workers, worker_ids}, _from, t),
+    do: t |> do_remove_workers(worker_ids) |> then(fn {t, results} -> t |> reply(results) end)
+
   def handle_call(:wait_for_healthy, from, t) do
     t
     |> do_wait_for_healthy(from)

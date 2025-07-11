@@ -6,6 +6,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   log workers or creating new ones as needed.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -18,8 +21,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   Fills log vacancies with available workers or creates new workers
   on available nodes.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt) do
+
+  @impl true
+  def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
     assigned_log_ids =
       recovery_attempt.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new()
 
@@ -30,7 +34,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
       |> MapSet.new()
 
     # Get nodes with log capability from node tracking
-    available_log_nodes = get_nodes_with_capability(recovery_attempt, :log)
+    alias Bedrock.ControlPlane.Director.NodeTracking
+    available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
 
     fill_log_vacancies(recovery_attempt.logs, assigned_log_ids, all_log_ids, available_log_nodes)
     |> case do
@@ -39,7 +44,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
       {:ok, logs, new_worker_ids} ->
         # Create the new workers if any are needed
-        case create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt) do
+        case create_new_log_workers(
+               new_worker_ids,
+               available_log_nodes,
+               recovery_attempt,
+               context
+             ) do
           {:ok, updated_services} ->
             trace_recovery_all_log_vacancies_filled()
 
@@ -124,57 +134,77 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     |> Map.new()
   end
 
-  @spec get_nodes_with_capability(map(), atom()) :: [node()]
-  defp get_nodes_with_capability(_recovery_attempt, _capability) do
-    # This function needs access to the Director state's node_tracking
-    # For now, we'll use Node.list() as a fallback
-    # In a real implementation, this should query the node tracking table
-    Node.list() ++ [Node.self()]
+  @spec create_new_log_workers([String.t()], [node()], map(), RecoveryPhase.context()) ::
+          {:ok, %{String.t() => map()}} | {:error, term()}
+  defp create_new_log_workers([], _available_nodes, _recovery_attempt, _context), do: {:ok, %{}}
+
+  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt, _context) do
+    new_worker_ids
+    |> assign_workers_to_nodes(available_nodes)
+    |> Enum.map(&create_worker_on_node(&1, recovery_attempt))
+    |> separate_successes_from_failures()
+    |> handle_worker_creation_outcome()
   end
 
-  @spec create_new_log_workers([String.t()], [node()], map()) ::
-          {:ok, %{String.t() => map()}} | {:error, term()}
-  defp create_new_log_workers([], _available_nodes, _recovery_attempt), do: {:ok, %{}}
+  @spec assign_workers_to_nodes([String.t()], [node()]) :: [{String.t(), node()}]
+  defp assign_workers_to_nodes(worker_ids, available_nodes) do
+    worker_ids
+    |> Enum.with_index()
+    |> Enum.map(fn {worker_id, index} ->
+      node = Enum.at(available_nodes, rem(index, length(available_nodes)))
+      {worker_id, node}
+    end)
+  end
 
-  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt) do
-    # Distribute workers across available nodes
-    node_assignments =
-      new_worker_ids
-      |> Enum.with_index()
-      |> Enum.map(fn {worker_id, index} ->
-        node = Enum.at(available_nodes, rem(index, length(available_nodes)))
-        {worker_id, node}
-      end)
+  @spec create_worker_on_node({String.t(), node()}, map()) ::
+          {String.t(), map()} | {:error, {String.t(), node(), term()}}
+  defp create_worker_on_node({worker_id, node}, recovery_attempt) do
+    foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-    # Create workers on their assigned nodes by calling Foreman directly
-    results =
-      Enum.map(node_assignments, fn {worker_id, node} ->
-        foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
-
-        with {:ok, worker_ref} <-
-               Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
-             {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
-          service_info = %{
-            kind: :log,
-            last_seen: {worker_info[:otp_name], node},
-            status: {:up, worker_info[:pid]}
-          }
-
-          {worker_id, service_info}
-        else
-          {:error, reason} ->
-            {:error, {worker_id, node, {:worker_creation_failed, reason}}}
-        end
-      end)
-
-    # Check if all workers were created successfully
-    case Enum.find(results, &match?({:error, _}, &1)) do
-      nil ->
-        # All successful
-        {:ok, Map.new(results)}
-
-      {:error, {worker_id, node, reason}} ->
-        {:error, {:worker_creation_failed, worker_id, node, reason}}
+    with {:ok, worker_ref} <- Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
+         {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
+      {worker_id,
+       %{
+         kind: :log,
+         last_seen: {worker_info[:otp_name], node},
+         status: {:up, worker_info[:pid]}
+       }}
+    else
+      {:error, reason} -> {:error, {worker_id, node, {:worker_creation_failed, reason}}}
     end
+  end
+
+  @spec separate_successes_from_failures([{String.t(), map()} | {:error, term()}]) ::
+          {[{String.t(), map()}], [term()]}
+  defp separate_successes_from_failures(results) do
+    Enum.reduce(results, {[], []}, fn
+      {:error, error}, {successes, failures} -> {successes, [error | failures]}
+      success, {successes, failures} -> {[success | successes], failures}
+    end)
+  end
+
+  @spec handle_worker_creation_outcome({[{String.t(), map()}], [term()]}) ::
+          {:ok, %{String.t() => map()}} | {:error, term()}
+  defp handle_worker_creation_outcome({successful_workers, failed_workers}) do
+    cond do
+      successful_workers != [] and failed_workers != [] ->
+        log_partial_failures(failed_workers)
+        {:ok, Map.new(successful_workers)}
+
+      successful_workers != [] ->
+        {:ok, Map.new(successful_workers)}
+
+      true ->
+        {:error, {:all_workers_failed, failed_workers}}
+    end
+  end
+
+  @spec log_partial_failures([term()]) :: :ok
+  defp log_partial_failures(failed_workers) do
+    require Logger
+
+    Logger.warning(
+      "Some workers failed to be tracked during creation: #{inspect(failed_workers)}"
+    )
   end
 end

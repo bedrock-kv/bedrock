@@ -125,4 +125,49 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   def trace_recovery_old_logs_replayed do
     Telemetry.execute([:bedrock, :recovery, :old_logs_replayed], %{}, %{})
   end
+
+  def trace_recovery_worker_cleanup(worker_id, node) do
+    Telemetry.execute([:bedrock, :recovery, :worker_cleanup], %{}, %{
+      worker_id: worker_id,
+      node: node
+    })
+  end
+
+  def trace_recovery_cleanup_started(total_obsolete_workers, nodes) do
+    Telemetry.execute([:bedrock, :recovery, :cleanup_started], %{}, %{
+      total_obsolete_workers: total_obsolete_workers,
+      affected_nodes: nodes
+    })
+  end
+
+  def trace_recovery_cleanup_completed(
+        total_obsolete_workers,
+        successful_cleanups,
+        failed_cleanups
+      ) do
+    Telemetry.execute([:bedrock, :recovery, :cleanup_completed], %{}, %{
+      total_obsolete_workers: total_obsolete_workers,
+      successful_cleanups: successful_cleanups,
+      failed_cleanups: failed_cleanups
+    })
+  end
+
+  def trace_recovery_node_cleanup_started(node, worker_count) do
+    Telemetry.execute([:bedrock, :recovery, :node_cleanup_started], %{}, %{
+      node: node,
+      worker_count: worker_count
+    })
+  end
+
+  def trace_recovery_node_cleanup_completed(node, results) do
+    successful = Enum.count(results, fn {_, result} -> result == :ok end)
+    failed = Enum.count(results, fn {_, result} -> match?({:error, _}, result) end)
+
+    Telemetry.execute([:bedrock, :recovery, :node_cleanup_completed], %{}, %{
+      node: node,
+      successful_cleanups: successful,
+      failed_cleanups: failed,
+      results: results
+    })
+  end
 end

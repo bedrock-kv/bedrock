@@ -13,6 +13,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  @behaviour RecoveryPhase
 
   @doc """
   Execute the service locking phase of recovery.
@@ -21,8 +23,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   determines the next phase based on whether this is a first-time initialization
   or recovery from existing state.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :lock_available_services} = recovery_attempt) do
+  @impl true
+  def execute(%{state: :lock_available_services} = recovery_attempt, _context) do
     lock_available_services(recovery_attempt.available_services, recovery_attempt.epoch, 200)
     |> case do
       {:error, :newer_epoch_exists = reason} ->

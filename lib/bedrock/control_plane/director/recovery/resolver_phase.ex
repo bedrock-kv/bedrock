@@ -13,6 +13,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.Shared
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  @behaviour RecoveryPhase
 
   @doc """
   Execute the resolver definition phase of recovery.
@@ -20,8 +22,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   Starts resolver components for conflict detection across
   the key space.
   """
-  @spec execute(RecoveryAttempt.t()) :: RecoveryAttempt.t()
-  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt) do
+  @impl true
+  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, _context) do
     sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
     starter_fn = Shared.starter_for(sup_otp_name)
 

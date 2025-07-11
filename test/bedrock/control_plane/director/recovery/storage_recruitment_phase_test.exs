@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt)
+      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :replay_old_logs
       assert is_list(result.storage_teams)
@@ -48,7 +48,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt)
+      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == {:stalled, {:need_storage_workers, 1}}
     end
@@ -68,7 +68,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt)
+      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == recovery_attempt.storage_teams
@@ -84,7 +84,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt)
+      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == []

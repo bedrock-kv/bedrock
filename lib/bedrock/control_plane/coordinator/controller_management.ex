@@ -189,22 +189,26 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   defp write_updated_config_with_new_director(t, new_director, new_epoch) do
     # Create updated config with new director and epoch
     updated_transaction_system_layout = %{
-      t.config.transaction_system_layout | 
-      director: new_director
+      t.config.transaction_system_layout
+      | director: new_director
     }
-    
+
     updated_config = %{
-      t.config | 
-      epoch: new_epoch,
-      transaction_system_layout: updated_transaction_system_layout
+      t.config
+      | epoch: new_epoch,
+        transaction_system_layout: updated_transaction_system_layout
     }
-    
+
     # Write the updated config to the distributed store
     # Use an empty ack function since we don't need to wait for acknowledgment
     case durably_write_config(t, updated_config, fn -> :ok end) do
-      {:ok, new_state} -> 
-        Logger.info("Successfully wrote updated config with new director #{inspect(new_director)} at epoch #{new_epoch}")
+      {:ok, new_state} ->
+        Logger.info(
+          "Successfully wrote updated config with new director #{inspect(new_director)} at epoch #{new_epoch}"
+        )
+
         new_state
+
       {:error, reason} ->
         Logger.warning("Failed to write updated config with new director: #{inspect(reason)}")
         t

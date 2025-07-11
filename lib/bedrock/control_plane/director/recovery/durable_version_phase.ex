@@ -6,6 +6,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   across all storage teams and identifying which teams are healthy vs degraded.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
 
@@ -17,8 +19,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   Analyzes storage team health and determines the highest version that
   can be considered durably committed across the cluster.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :determine_durable_version} = recovery_attempt) do
+  @impl true
+  def execute(%{state: :determine_durable_version} = recovery_attempt, _context) do
     determine_durable_version(
       recovery_attempt.last_transaction_system_layout.storage_teams,
       recovery_attempt.storage_recovery_info_by_id,

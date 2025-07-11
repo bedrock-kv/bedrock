@@ -6,6 +6,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   transaction system components and marking recovery as complete.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   require Logger
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
@@ -16,8 +18,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   Sets up process monitoring for all transaction system components
   and marks the recovery as completed.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :monitor_components} = recovery_attempt) do
+
+  @impl true
+  def execute(%{state: :monitor_components} = recovery_attempt, _context) do
     trace_recovery_monitoring_components()
 
     # Monitor sequencer

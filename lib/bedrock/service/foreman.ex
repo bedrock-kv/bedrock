@@ -49,6 +49,34 @@ defmodule Bedrock.Service.Foreman do
     do: call(foreman, :wait_for_healthy, to_timeout(opts[:timeout] || :infinity))
 
   @doc """
+  Remove a worker and clean up its resources.
+
+  This will:
+  1. Terminate the worker process
+  2. Remove it from the supervisor
+  3. Clean up its working directory
+  4. Remove it from foreman state
+  """
+  @spec remove_worker(foreman :: ref(), Worker.id(), opts :: [timeout: timeout()]) ::
+          :ok | {:error, term()}
+  def remove_worker(foreman, worker_id, opts \\ []),
+    do: call(foreman, {:remove_worker, worker_id}, to_timeout(opts[:timeout] || 5_000))
+
+  @doc """
+  Remove multiple workers in a single batch operation.
+
+  This is more efficient than calling remove_worker/3 multiple times
+  as it processes all workers in one foreman call.
+
+  Returns a map of results where successful removals are `:ok` and
+  failures include the error reason.
+  """
+  @spec remove_workers(foreman :: ref(), [Worker.id()], opts :: [timeout: timeout()]) ::
+          %{Worker.id() => :ok | {:error, term()}}
+  def remove_workers(foreman, worker_ids, opts \\ []),
+    do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
+
+  @doc """
   Called by a worker to report it's health to the foreman.
   """
   @spec report_health(foreman :: ref(), Worker.id(), any()) :: :ok

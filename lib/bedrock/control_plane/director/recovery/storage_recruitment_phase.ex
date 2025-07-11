@@ -6,6 +6,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   available storage workers.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.DataPlane.Storage
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
@@ -16,8 +18,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   Fills storage team vacancies with available storage workers.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt) do
+
+  @impl true
+  def execute(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt, _context) do
     fill_storage_team_vacancies(
       recovery_attempt.storage_teams,
       recovery_attempt.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()

@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
       log_output =
         capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt)
+          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
           assert result.state == :completed
         end)
 
@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
       log_output =
         capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt)
+          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
           assert result.state == :completed
         end)
 
@@ -77,7 +77,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
       log_output =
         capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt)
+          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
           assert result.state == :completed
         end)
 
@@ -101,7 +101,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
       log_output =
         capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt)
+          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
           assert result.state == :completed
         end)
 

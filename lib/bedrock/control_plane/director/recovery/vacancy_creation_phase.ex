@@ -6,6 +6,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   to ensure the desired replication levels are met.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
@@ -19,8 +21,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   Creates vacancies for both logs and storage teams based on the desired
   configuration parameters.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :create_vacancies} = recovery_attempt) do
+
+  @impl true
+  def execute(%{state: :create_vacancies} = recovery_attempt, _context) do
     with {:ok, logs, n_log_vacancies} <-
            create_vacancies_for_logs(
              recovery_attempt.last_transaction_system_layout.logs,
@@ -51,16 +54,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   @spec create_vacancies_for_logs(%{Log.id() => LogDescriptor.t()}, desired_logs :: pos_integer()) ::
           {:ok, %{Log.id() => LogDescriptor.t()}, n_log_vacancies :: non_neg_integer()}
   def create_vacancies_for_logs(logs, desired_logs) do
-    updated_logs =
+    {updated_logs, _} =
       logs
       |> Enum.group_by(&Enum.sort(elem(&1, 1)), &elem(&1, 0))
-      |> Enum.flat_map(fn {tags, _ids} ->
-        1..desired_logs
-        |> Enum.map(&{{:vacancy, &1}, tags})
-      end)
-      |> Map.new()
+      |> Enum.reduce({%{}, 1}, fn {tags, _ids}, {acc_map, vacancy_counter} ->
+        new_vacancies =
+          vacancy_counter..(vacancy_counter + desired_logs - 1)
+          |> Enum.map(&{{:vacancy, &1}, tags})
+          |> Map.new()
 
-    {:ok, updated_logs, map_size(updated_logs) * desired_logs}
+        {Map.merge(acc_map, new_vacancies), vacancy_counter + desired_logs}
+      end)
+
+    {:ok, updated_logs, map_size(updated_logs)}
   end
 
   @type tag_set_roster ::

@@ -6,14 +6,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ServiceCollectionPhase do
   required services that will be part of the transaction system.
   """
 
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  @behaviour RecoveryPhase
+
   @doc """
   Execute the service collection phase of recovery.
 
   Collects all required service references from logs and storage teams
   for the transaction system layout.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :define_required_services} = recovery_attempt) do
+  @impl true
+  def execute(%{state: :define_required_services} = recovery_attempt, _context) do
     required_service_ids =
       Enum.concat(
         recovery_attempt.logs |> Map.keys(),

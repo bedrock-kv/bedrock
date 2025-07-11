@@ -6,6 +6,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   before proceeding to system state persistence.
   """
 
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  @behaviour RecoveryPhase
+
   @doc """
   Execute the validation phase of recovery.
 
@@ -13,8 +16,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   for state persistence. Currently just transitions to
   the next phase.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :final_checks} = recovery_attempt) do
+  @impl true
+  def execute(%{state: :final_checks} = recovery_attempt, _context) do
     recovery_attempt |> Map.put(:state, :persist_system_state)
   end
 end

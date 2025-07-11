@@ -9,14 +9,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  @behaviour RecoveryPhase
 
   @doc """
   Execute the sequencer definition phase of recovery.
 
   Starts the sequencer component with the current epoch and version vector.
   """
-  @spec execute(RecoveryAttempt.t()) :: RecoveryAttempt.t()
-  def execute(%RecoveryAttempt{state: :define_sequencer} = recovery_attempt) do
+  @impl true
+  def execute(%RecoveryAttempt{state: :define_sequencer} = recovery_attempt, _context) do
     starter_fn = get_starter_function(recovery_attempt)
 
     recovery_attempt

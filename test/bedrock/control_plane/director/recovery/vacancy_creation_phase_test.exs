@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         }
       }
 
-      result = VacancyCreationPhase.execute(recovery_attempt)
+      result = VacancyCreationPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :determine_durable_version
       assert is_map(result.logs)
@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         }
       }
 
-      result = VacancyCreationPhase.execute(recovery_attempt)
+      result = VacancyCreationPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :determine_durable_version
       assert result.logs == %{}
@@ -61,12 +61,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       {:ok, updated_logs, n_vacancies} = VacancyCreationPhase.create_vacancies_for_logs(logs, 3)
 
-      # Actually creates 1 group from the unique tag combinations
-      # Each group gets desired_logs vacancies = 3, and n_vacancies = map_size * desired_logs
-      # 3 vacancies created  
-      assert map_size(updated_logs) == 3
-      # 3 * 3 = 9
-      assert n_vacancies == 9
+      # Creates 2 unique tag groups (tag_a, tag_b)
+      # Each group gets desired_logs vacancies = 3
+      # Total: 2 * 3 = 6 vacancies created  
+      assert map_size(updated_logs) == 6
+      # n_vacancies = map_size(updated_logs) = 6
+      assert n_vacancies == 6
 
       # Check that vacancies are properly structured
       vacancy_keys = Map.keys(updated_logs)
@@ -82,12 +82,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       {:ok, updated_logs, n_vacancies} = VacancyCreationPhase.create_vacancies_for_logs(logs, 2)
 
-      # Since both logs have the same tags, they create the same group
-      # The calculation is still map_size(updated_logs) * desired_logs
-      # 2 vacancies
+      # Since both logs have the same tags, they create 1 unique group
+      # The group gets desired_logs vacancies = 2
+      # Total: 1 * 2 = 2 vacancies
       assert map_size(updated_logs) == 2
-      # 2 * 2 = 4
-      assert n_vacancies == 4
+      # n_vacancies = map_size(updated_logs) = 2
+      assert n_vacancies == 2
     end
 
     test "handles empty logs" do

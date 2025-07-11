@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         available_services: %{}
       }
 
-      result = LogReplayPhase.execute(recovery_attempt)
+      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
       assert result.state == :repair_data_distribution
@@ -39,7 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         }
       }
 
-      result = LogReplayPhase.execute(recovery_attempt)
+      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should stall due to unavailable log services
       assert match?({:stalled, _}, result.state)
@@ -204,7 +204,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
 
       # We can't easily test the private pid_for_log_id function directly,
       # but we can verify it's used correctly in execute/1
-      result = LogReplayPhase.execute(recovery_attempt)
+      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should fail because Log.recover_from isn't available, but structure is correct
       assert match?({:stalled, _}, result.state)
@@ -272,7 +272,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         available_services: %{}
       }
 
-      result = LogReplayPhase.execute(recovery_attempt)
+      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should succeed
       assert result.state == :repair_data_distribution
@@ -289,7 +289,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         another_field: 42
       }
 
-      result = LogReplayPhase.execute(recovery_attempt)
+      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.extra_field == "preserved"
       assert result.another_field == 42

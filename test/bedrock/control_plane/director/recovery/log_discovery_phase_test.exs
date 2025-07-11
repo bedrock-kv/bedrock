@@ -2,10 +2,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
-      recovery_attempt = %{
+      recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
         last_transaction_system_layout: %{
           logs: %{
@@ -21,7 +22,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
         parameters: %{desired_logs: 3}
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt)
+      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :create_vacancies
       assert is_list(result.old_log_ids_to_copy)
@@ -30,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
     end
 
     test "stalls recovery when unable to meet log quorum" do
-      recovery_attempt = %{
+      recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
         last_transaction_system_layout: %{
           # No logs available
@@ -41,13 +42,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
         parameters: %{desired_logs: 3}
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt)
+      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == {:stalled, :unable_to_meet_log_quorum}
     end
 
     test "handles single log with quorum of 1" do
-      recovery_attempt = %{
+      recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
         last_transaction_system_layout: %{
           logs: %{
@@ -61,7 +62,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
         parameters: %{desired_logs: 1}
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt)
+      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :create_vacancies
       assert result.old_log_ids_to_copy == [{:log, 1}]

@@ -38,6 +38,52 @@ defmodule Bedrock.Service.Foreman.Impl do
     {t, worker_info.otp_name}
   end
 
+  @spec do_remove_worker(State.t(), Worker.id()) :: {State.t(), :ok | {:error, term()}}
+  def do_remove_worker(t, worker_id) do
+    case Map.get(t.workers, worker_id) do
+      nil ->
+        {t, {:error, :worker_not_found}}
+
+      worker_info ->
+        result = remove_worker_completely(worker_info, t.cluster, t.path)
+
+        t =
+          t
+          |> update_workers(&Map.delete(&1, worker_id))
+          |> recompute_health()
+
+        {t, result}
+    end
+  end
+
+  @spec do_remove_workers(State.t(), [Worker.id()]) ::
+          {State.t(), %{Worker.id() => :ok | {:error, term()}}}
+  def do_remove_workers(t, worker_ids) do
+    {updated_state, results} = process_worker_removals(t, worker_ids)
+    final_state = recompute_health(updated_state)
+    {final_state, results}
+  end
+
+  defp process_worker_removals(initial_state, worker_ids) do
+    Enum.reduce(worker_ids, {initial_state, %{}}, &remove_single_worker/2)
+  end
+
+  defp remove_single_worker(worker_id, {state, acc_results}) do
+    case Map.get(state.workers, worker_id) do
+      nil ->
+        {state, Map.put(acc_results, worker_id, {:error, :worker_not_found})}
+
+      worker_info ->
+        result = remove_worker_completely(worker_info, state.cluster, state.path)
+        updated_state = remove_worker_from_state(state, worker_id)
+        {updated_state, Map.put(acc_results, worker_id, result)}
+    end
+  end
+
+  defp remove_worker_from_state(state, worker_id) do
+    update_workers(state, &Map.delete(&1, worker_id))
+  end
+
   def advertise_running_workers(worker_infos, cluster) do
     Enum.each(worker_infos, &advertise_running_worker(&1, cluster))
     worker_infos
@@ -49,6 +95,43 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   def advertise_running_worker(t, _), do: t
+
+  @spec remove_worker_completely(WorkerInfo.t(), module(), String.t()) :: :ok | {:error, term()}
+  defp remove_worker_completely(worker_info, cluster, base_path) do
+    with :ok <- terminate_worker_process(worker_info, cluster),
+         :ok <- unadvertise_worker(worker_info, cluster),
+         :ok <- cleanup_worker_directory(worker_info, base_path) do
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @spec terminate_worker_process(WorkerInfo.t(), module()) :: :ok | {:error, term()}
+  defp terminate_worker_process(%{health: {:ok, pid}, otp_name: _otp_name}, cluster) do
+    worker_supervisor = cluster.otp_name(:worker_supervisor)
+
+    case DynamicSupervisor.terminate_child(worker_supervisor, pid) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp terminate_worker_process(%{health: :stopped}, _cluster), do: :ok
+  defp terminate_worker_process(%{health: {:failed_to_start, _}}, _cluster), do: :ok
+
+  @spec unadvertise_worker(WorkerInfo.t(), module()) :: :ok | {:error, term()}
+  defp unadvertise_worker(_worker_info, _cluster), do: :ok
+
+  @spec cleanup_worker_directory(WorkerInfo.t(), String.t()) :: :ok | {:error, term()}
+  defp cleanup_worker_directory(%{id: worker_id}, base_path) do
+    worker_path = Path.join(base_path, worker_id)
+
+    case File.rm_rf(worker_path) do
+      {:ok, _files_and_directories} -> :ok
+      {:error, reason, file} -> {:error, {:failed_to_remove_directory, reason, file}}
+    end
+  end
 
   @spec do_wait_for_healthy(State.t(), GenServer.from()) :: :ok | State.t()
   def do_wait_for_healthy(%{health: :ok}, _), do: :ok

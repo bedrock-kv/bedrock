@@ -11,24 +11,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   import Bedrock.Internal.Time, only: [now: 0]
 
-  alias __MODULE__.StartPhase
-  alias __MODULE__.LockServicesPhase
-  alias __MODULE__.InitializationPhase
-  alias __MODULE__.LogDiscoveryPhase
-  alias __MODULE__.VacancyCreationPhase
-  alias __MODULE__.DurableVersionPhase
-  alias __MODULE__.LogRecruitmentPhase
-  alias __MODULE__.StorageRecruitmentPhase
-  alias __MODULE__.LogReplayPhase
-  alias __MODULE__.DataDistributionPhase
-  alias __MODULE__.SequencerPhase
-  alias __MODULE__.CommitProxyPhase
-  alias __MODULE__.ResolverPhase
-  alias __MODULE__.ServiceCollectionPhase
-  alias __MODULE__.ValidationPhase
-  alias __MODULE__.PersistencePhase
-  alias __MODULE__.MonitoringPhase
-
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @spec try_to_recover(State.t()) :: State.t()
@@ -102,8 +84,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       t.config.recovery_attempt.started_at
     )
 
+    context = %{node_tracking: t.node_tracking}
+
     t.config.recovery_attempt
-    |> run_recovery_attempt()
+    |> run_recovery_attempt(context)
     |> case do
       {:ok, completed} ->
         trace_recovery_completed(Interval.between(completed.started_at, now()))
@@ -154,89 +138,58 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t
   end
 
-  @spec run_recovery_attempt(RecoveryAttempt.t()) ::
+  @spec run_recovery_attempt(RecoveryAttempt.t(), map()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
           | {:error, term()}
-  def run_recovery_attempt(t) do
-    case recovery(t) do
-      %{state: :completed} = t ->
+  def run_recovery_attempt(t, context) do
+    case t.state do
+      {:stalled, reason} ->
+        Logger.warning("Recovery is stalled: #{inspect(reason)}")
+        {{:stalled, reason}, t}
+      
+      :completed ->
         {:ok, t}
+        
+      state ->
+        phase = next_phase(state)
 
-      %{state: {:stalled, _reason} = stalled} = t ->
-        {stalled, t}
+        case phase.execute(t, context) do
+          %{state: :completed} = t ->
+            {:ok, t}
 
-      %{state: new_state} = new_t when t.state != new_state ->
-        new_t |> run_recovery_attempt()
+          %{state: {:stalled, _reason} = stalled} = t ->
+            {stalled, t}
 
-      # Catch any unexpected states
-      %{state: unexpected_state} = recovery_state ->
-        Logger.error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
-        Logger.debug("Full recovery state: #{inspect(recovery_state)}")
-        {:error, {:unexpected_recovery_state, unexpected_state}}
+          %{state: new_state} = new_t when t.state != new_state ->
+            new_t |> run_recovery_attempt(context)
+
+          # Catch any unexpected states
+          %{state: unexpected_state} = recovery_state ->
+            Logger.error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
+            Logger.debug("Full recovery state: #{inspect(recovery_state)}")
+            {:error, {:unexpected_recovery_state, unexpected_state}}
+        end
     end
   end
 
-  @spec recovery(RecoveryAttempt.t()) :: RecoveryAttempt.t()
-  def recovery(recovery_attempt)
-
-  def recovery(%{state: :start} = recovery_attempt) do
-    StartPhase.execute(recovery_attempt)
-  end
-
-  def recovery(%{state: :lock_available_services} = recovery_attempt),
-    do: LockServicesPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :first_time_initialization} = recovery_attempt),
-    do: InitializationPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :determine_old_logs_to_copy} = recovery_attempt),
-    do: LogDiscoveryPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :create_vacancies} = recovery_attempt),
-    do: VacancyCreationPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :determine_durable_version} = recovery_attempt),
-    do: DurableVersionPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt),
-    do: LogRecruitmentPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt),
-    do: StorageRecruitmentPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :replay_old_logs} = recovery_attempt),
-    do: LogReplayPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :repair_data_distribution} = recovery_attempt),
-    do: DataDistributionPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :define_sequencer} = recovery_attempt),
-    do: SequencerPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :define_commit_proxies} = recovery_attempt),
-    do: CommitProxyPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :define_resolvers} = recovery_attempt),
-    do: ResolverPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :define_required_services} = recovery_attempt),
-    do: ServiceCollectionPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :final_checks} = recovery_attempt),
-    do: ValidationPhase.execute(recovery_attempt)
-
-  def recovery(%{state: :persist_system_state} = recovery_attempt),
-    do: PersistencePhase.execute(recovery_attempt)
-
-  def recovery(%{state: :monitor_components} = recovery_attempt),
-    do: MonitoringPhase.execute(recovery_attempt)
-
-  def recovery(%{state: {:stalled, reason}} = recovery_attempt) do
-    Logger.warning("Recovery is stalled: #{inspect(reason)}")
-    # Stay stalled - don't automatically retry
-    recovery_attempt
-  end
-
-  def recovery(t), do: raise("Invalid state: #{inspect(t)}")
+  @spec next_phase(RecoveryAttempt.state()) :: module()
+  defp next_phase(:start), do: __MODULE__.StartPhase
+  defp next_phase(:lock_available_services), do: __MODULE__.LockServicesPhase
+  defp next_phase(:first_time_initialization), do: __MODULE__.InitializationPhase
+  defp next_phase(:determine_old_logs_to_copy), do: __MODULE__.LogDiscoveryPhase
+  defp next_phase(:create_vacancies), do: __MODULE__.VacancyCreationPhase
+  defp next_phase(:determine_durable_version), do: __MODULE__.DurableVersionPhase
+  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.LogRecruitmentPhase
+  defp next_phase(:recruit_storage_to_fill_vacancies), do: __MODULE__.StorageRecruitmentPhase
+  defp next_phase(:replay_old_logs), do: __MODULE__.LogReplayPhase
+  defp next_phase(:repair_data_distribution), do: __MODULE__.DataDistributionPhase
+  defp next_phase(:define_sequencer), do: __MODULE__.SequencerPhase
+  defp next_phase(:define_commit_proxies), do: __MODULE__.CommitProxyPhase
+  defp next_phase(:define_resolvers), do: __MODULE__.ResolverPhase
+  defp next_phase(:define_required_services), do: __MODULE__.ServiceCollectionPhase
+  defp next_phase(:final_checks), do: __MODULE__.ValidationPhase
+  defp next_phase(:persist_system_state), do: __MODULE__.PersistencePhase
+  defp next_phase(:monitor_components), do: __MODULE__.MonitoringPhase
+  defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.WorkerCleanupPhase
 end

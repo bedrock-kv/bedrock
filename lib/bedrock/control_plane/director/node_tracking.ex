@@ -166,6 +166,30 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   end
 
   @doc """
+  Get a list of nodes that are alive, authorized, and have the specified capability.
+  """
+  @spec nodes_with_capability(t(), capability :: atom()) :: [node()]
+  def nodes_with_capability(t, capability) do
+    # Get all alive and authorized nodes first
+    alive_authorized_nodes =
+      :ets.select(t, [
+        {{:"$1", :_, :_, :up, true, :_}, [], [:"$1"]}
+      ])
+
+    # Filter by capability (ETS can't easily match list membership, so we do it in Elixir)
+    alive_authorized_nodes
+    |> Enum.filter(fn node ->
+      case capabilities(t, node) do
+        :unknown ->
+          false
+
+        node_capabilities when is_list(node_capabilities) ->
+          capability in node_capabilities
+      end
+    end)
+  end
+
+  @doc """
   Mark a node as being down.
   """
   @spec down(t(), node()) :: t()

@@ -8,6 +8,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   alias Bedrock.DataPlane.Log
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @doc """
@@ -16,8 +18,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   Replays transactions from old logs into new logs based on the
   determined version vector and log configuration.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :replay_old_logs} = recovery_attempt) do
+  @impl true
+  def execute(%{state: :replay_old_logs} = recovery_attempt, _context) do
     replay_old_logs_into_new_logs(
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),

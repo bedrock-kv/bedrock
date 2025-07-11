@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       capture_log(fn ->
-        result = DurableVersionPhase.execute(recovery_attempt)
+        result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
 
         assert result.state == :recruit_logs_to_fill_vacancies
         assert result.durable_version == 98
@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         parameters: %{desired_replication_factor: 3}
       }
 
-      result = DurableVersionPhase.execute(recovery_attempt)
+      result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert {:stalled, {:insufficient_replication, ["team_1"]}} = result.state
     end
@@ -83,7 +83,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         parameters: %{desired_replication_factor: 3}
       }
 
-      result = DurableVersionPhase.execute(recovery_attempt)
+      result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.state == :recruit_logs_to_fill_vacancies
       # min(100, 98) from team quorums

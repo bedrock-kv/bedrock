@@ -10,6 +10,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
 
+  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+
+  @behaviour RecoveryPhase
+
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @doc """
@@ -18,8 +23,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   Determines which old logs need to be copied based on the previous layout
   and available log recovery information.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :determine_old_logs_to_copy} = recovery_attempt) do
+  @impl true
+  def execute(%RecoveryAttempt{} = recovery_attempt, _context) do
     determine_old_logs_to_copy(
       recovery_attempt.last_transaction_system_layout.logs,
       recovery_attempt.log_recovery_info_by_id,

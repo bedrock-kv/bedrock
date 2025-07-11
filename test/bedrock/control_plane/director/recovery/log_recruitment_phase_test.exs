@@ -4,6 +4,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
 
+  # Helper to create mock context for tests
+  defp create_test_context() do
+    node_tracking = :ets.new(:test_node_tracking, [:ordered_set])
+    :ets.insert(node_tracking, [{Node.self(), :unknown, [:log, :storage], :up, true, nil}])
+    %{node_tracking: node_tracking}
+  end
+
   # Mock cluster module for testing
   defmodule TestCluster do
     def otp_name(:foreman), do: :test_foreman
@@ -24,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       }
 
       capture_log(fn ->
-        result = LogRecruitmentPhase.execute(recovery_attempt)
+        result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
         assert {:stalled, {:insufficient_nodes, 3, _}} = result.state
       end)
     end
@@ -44,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         }
       }
 
-      result = LogRecruitmentPhase.execute(recovery_attempt)
+      result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
 
       assert result.state == :recruit_storage_to_fill_vacancies
       assert Map.has_key?(result.logs, {:log, 2})
@@ -205,7 +212,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         }
       }
 
-      result = LogRecruitmentPhase.execute(recovery_attempt)
+      result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
 
       # Should transition to stalled state when insufficient nodes available
       assert {:stalled, {:insufficient_nodes, 2, _}} = result.state

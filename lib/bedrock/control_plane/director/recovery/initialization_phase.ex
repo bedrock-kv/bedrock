@@ -6,8 +6,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   and storage teams by creating placeholders based on desired configuration.
   """
 
+  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+
   import Bedrock, only: [key_range: 2]
-  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
@@ -18,8 +21,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   Creates initial log and storage team configurations for a new cluster
   and transitions to log vacancy recruitment.
   """
-  @spec execute(map()) :: map()
-  def execute(%{state: :first_time_initialization} = recovery_attempt) do
+  @impl true
+  def execute(%RecoveryAttempt{state: :first_time_initialization} = recovery_attempt, _context) do
     trace_recovery_first_time_initialization()
 
     log_vacancies =
@@ -32,10 +35,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
     |> Map.put(:durable_version, 0)
     |> Map.put(:old_log_ids_to_copy, [])
     |> Map.put(:version_vector, {0, 0})
-    |> Map.put(:resolvers, [
-      resolver_descriptor(<<>>, nil),
-      resolver_descriptor(<<0xFF>>, nil)
-    ])
     |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
     |> Map.put(:storage_teams, [
       storage_team_descriptor(

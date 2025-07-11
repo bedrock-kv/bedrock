@@ -56,7 +56,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         capture_log(fn ->
           assert_exit_with_reason(
             {:recovery_system_test_failed, {:invalid_recovery_state, :no_sequencer}},
-            fn -> PersistencePhase.execute(recovery_attempt) end
+            fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
           )
         end)
     end
@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -90,7 +90,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
+        available_services: %{
+          "log_1" => %{kind: :log, status: {:up, self()}},
+          "storage_1" => %{kind: :storage, status: {:up, self()}}
+        },
         coordinators: [],
         epoch: 1,
         parameters: %{},
@@ -101,7 +104,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_resolvers}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -124,7 +127,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert_exit_with_reason(
         {:recovery_system_test_failed,
          {:invalid_recovery_state, {:missing_log_services, ["log_2"]}}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -148,7 +151,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_sequencer}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -170,7 +173,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -192,7 +195,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_resolvers}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -223,7 +226,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # This will fail due to no commit proxies available
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -263,7 +266,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # structure is built correctly based on the error handling
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -290,7 +293,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # This tests the encoding logic through the validation and build path
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -306,7 +309,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # This should fail at validation stage for invalid resolvers
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_resolvers}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -335,7 +338,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           # where it will fail due to the mock proxy not implementing the correct protocol
           result =
             try do
-              PersistencePhase.execute(recovery_attempt)
+              PersistencePhase.execute(recovery_attempt, %{node_tracking: nil})
             catch
               :exit, reason -> reason
             end
@@ -367,7 +370,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # We expect this to fail at commit proxy stage, confirming config was built
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -381,7 +384,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -404,7 +407,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_resolvers}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -424,7 +427,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert_exit_with_reason(
         {:recovery_system_test_failed,
          {:invalid_recovery_state, {:missing_log_services, ["log_2"]}}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -444,7 +447,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert_exit_with_reason(
         {:recovery_system_test_failed,
          {:invalid_recovery_state, {:missing_log_services, ["service_1"]}}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -487,7 +490,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Even though it fails at commit proxy stage, it exercises the full build pipeline
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -502,7 +505,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # This tests the transaction building with minimal components
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -524,7 +527,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # This tests transaction building with various log ID types and descriptors
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -540,7 +543,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Should fail at the commit proxy selection stage
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -552,7 +555,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :invalid_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -575,7 +578,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Test complex resolver encoding through the build process
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -592,7 +595,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Test service encoding through the build process
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -610,7 +613,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Test storage team encoding through the build process
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end
@@ -629,7 +632,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Should still build successfully even with minimal parameters
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
 
@@ -654,7 +657,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Should handle all parameters correctly
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
-        fn -> PersistencePhase.execute(recovery_attempt) end
+        fn -> PersistencePhase.execute(recovery_attempt, %{node_tracking: nil}) end
       )
     end
   end

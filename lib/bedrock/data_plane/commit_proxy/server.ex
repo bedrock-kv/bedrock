@@ -135,6 +135,31 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
         t |> noreply()
 
+      {n_usec, {:error, {:log_failures, errors}}} ->
+        trace_commit_proxy_batch_failed(batch, {:log_failures, errors}, n_usec)
+        # Exit to trigger recovery since logs are failing
+        exit({:log_failures, errors})
+
+      {n_usec, {:error, {:insufficient_acknowledgments, count, required, errors}}} ->
+        trace_commit_proxy_batch_failed(
+          batch,
+          {:insufficient_acknowledgments, count, required, errors},
+          n_usec
+        )
+
+        # Exit to trigger recovery since not all logs are available
+        exit({:insufficient_acknowledgments, count, required, errors})
+
+      {n_usec, {:error, {:resolver_unavailable, reason}}} ->
+        trace_commit_proxy_batch_failed(batch, {:resolver_unavailable, reason}, n_usec)
+        # Exit to trigger recovery since resolver is unavailable
+        exit({:resolver_unavailable, reason})
+
+      {n_usec, {:error, {:storage_team_coverage_error, key}}} ->
+        trace_commit_proxy_batch_failed(batch, {:storage_team_coverage_error, key}, n_usec)
+        # Exit to trigger recovery since storage team configuration is invalid
+        exit({:storage_team_coverage_error, key})
+
       {n_usec, {:error, reason}} ->
         trace_commit_proxy_batch_failed(batch, reason, n_usec)
         t |> noreply()

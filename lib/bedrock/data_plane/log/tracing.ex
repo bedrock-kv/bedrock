@@ -30,7 +30,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
       otp_name: otp_name
     )
 
-    info("Started with OTP name #{otp_name}")
+    info("Started log service: #{otp_name}")
   end
 
   def log_event(:lock_for_recovery, _, %{epoch: epoch}),

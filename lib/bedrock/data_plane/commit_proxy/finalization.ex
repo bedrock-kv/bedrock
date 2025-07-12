@@ -93,6 +93,81 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_summaries,
         opts \\ []
       ) do
+    resolve_transactions_with_retry(
+      resolvers,
+      last_version,
+      commit_version,
+      transaction_summaries,
+      opts,
+      0,
+      &default_timeout_fn/1,
+      &default_exit_fn/1
+    )
+  end
+
+  @doc """
+  Test-friendly version of resolve_transactions that accepts custom timeout and exit functions.
+  This allows tests to inject mock functions for controllable behavior.
+  """
+  @spec resolve_transactions_with_functions(
+          resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
+          last_version :: Bedrock.version(),
+          commit_version :: Bedrock.version(),
+          [Resolver.transaction()],
+          opts :: [timeout: :infinity | non_neg_integer()],
+          timeout_fn :: (non_neg_integer() -> non_neg_integer()),
+          exit_fn :: (term() -> no_return())
+        ) ::
+          {:ok, aborted :: [index :: integer()]}
+          | {:error, :timeout}
+          | {:error, :unavailable}
+  def resolve_transactions_with_functions(
+        resolvers,
+        last_version,
+        commit_version,
+        transaction_summaries,
+        opts \\ [],
+        timeout_fn,
+        exit_fn
+      ) do
+    resolve_transactions_with_retry(
+      resolvers,
+      last_version,
+      commit_version,
+      transaction_summaries,
+      opts,
+      0,
+      timeout_fn,
+      exit_fn
+    )
+  end
+
+  @spec resolve_transactions_with_retry(
+          resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
+          last_version :: Bedrock.version(),
+          commit_version :: Bedrock.version(),
+          [Resolver.transaction()],
+          opts :: [timeout: :infinity | non_neg_integer()],
+          attempt :: non_neg_integer(),
+          timeout_fn :: (non_neg_integer() -> non_neg_integer()),
+          exit_fn :: (term() -> no_return())
+        ) ::
+          {:ok, aborted :: [index :: integer()]}
+          | {:error, :timeout}
+          | {:error, :unavailable}
+  defp resolve_transactions_with_retry(
+         resolvers,
+         last_version,
+         commit_version,
+         transaction_summaries,
+         opts,
+         attempt,
+         timeout_fn,
+         exit_fn
+       ) do
+    # Calculate timeout for this attempt using injected function
+    timeout = Keyword.get(opts, :timeout, timeout_fn.(attempt))
+    
     ranges =
       resolvers
       |> Enum.map(&elem(&1, 0))
@@ -113,23 +188,69 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       end)
       |> Enum.into(%{})
 
-    resolvers
-    |> Enum.map(fn {start_key, ref} ->
-      Resolver.resolve_transactions(
-        ref,
-        last_version,
-        commit_version,
-        Map.get(transaction_summaries_by_start_key, start_key, opts)
-      )
-    end)
-    |> Enum.reduce({:ok, []}, fn
-      {:ok, aborted}, {:ok, acc} ->
-        {:ok, Enum.uniq(acc ++ aborted)}
+    result =
+      resolvers
+      |> Enum.map(fn {start_key, ref} ->
+        Resolver.resolve_transactions(
+          ref,
+          last_version,
+          commit_version,
+          Map.get(transaction_summaries_by_start_key, start_key, []),
+          timeout: timeout
+        )
+      end)
+      |> Enum.reduce({:ok, []}, fn
+        {:ok, aborted}, {:ok, acc} ->
+          {:ok, Enum.uniq(acc ++ aborted)}
 
-      {:error, reason}, _ ->
-        {:error, reason}
-    end)
+        {:error, reason}, _ ->
+          {:error, reason}
+      end)
+
+    case result do
+      {:ok, _} = success ->
+        success
+
+      {:error, reason} when attempt < 2 ->
+        # Emit telemetry for retry attempt
+        :telemetry.execute(
+          [:bedrock, :commit_proxy, :resolver, :retry],
+          %{attempt: attempt + 1},
+          %{reason: reason}
+        )
+        
+        # Retry up to 2 times (3 total attempts)
+        resolve_transactions_with_retry(
+          resolvers,
+          last_version,
+          commit_version,
+          transaction_summaries,
+          opts,
+          attempt + 1,
+          timeout_fn,
+          exit_fn
+        )
+
+      {:error, reason} ->
+        # Emit telemetry for final failure
+        :telemetry.execute(
+          [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded],
+          %{total_attempts: attempt + 1},
+          %{reason: reason}
+        )
+        
+        # Max retries exceeded, exit commit proxy to trigger recovery
+        exit_fn.(reason)
+    end
   end
+
+  # Default timeout function: 500ms * 2^attempt (exponential backoff)
+  @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
+  def default_timeout_fn(attempt), do: 500 * :math.pow(2, attempt) |> round()
+
+  # Default exit function: exit with resolver unavailable
+  @spec default_exit_fn(term()) :: no_return()
+  defp default_exit_fn(reason), do: exit({:resolver_unavailable, reason})
 
   defp filter_fn(start_key, :end), do: &(&1 >= start_key)
   defp filter_fn(start_key, end_key), do: &(&1 >= start_key and &1 < end_key)

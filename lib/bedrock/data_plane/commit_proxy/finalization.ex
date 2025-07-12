@@ -37,45 +37,72 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `:ok` when the batch has been processed, and all clients have been
       notified about the status of their transactions.
   """
-  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t()) ::
+  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t(), keyword()) ::
           {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
-  def finalize_batch(batch, transaction_system_layout) do
-    transactions_in_order = transactions_in_order(batch)
+  def finalize_batch(batch, transaction_system_layout, opts \\ []) do
+    # Extract configurable functions for testability
+    resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
+    log_push_fn = Keyword.get(opts, :log_push_fn, &push_transaction_to_logs_with_opts/6)
 
+    abort_reply_fn =
+      Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
+
+    success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
+
+    # Extract options that should be passed to sub-functions
+    log_push_opts = Keyword.get(opts, :log_push_opts, [])
+
+    transactions_in_order = transactions_in_order(batch)
     commit_version = batch.commit_version
 
-    with {:ok, aborted} <-
-           resolve_transactions(
+    with {:ok, aborted_indices} <-
+           resolver_fn.(
              transaction_system_layout.resolvers,
              batch.last_commit_version,
              commit_version,
              transform_transactions_for_resolution(transactions_in_order),
              timeout: 1_000
            ),
-         {oks, aborts, transactions_by_tag} <-
-           prepare_transaction_to_log(
+         # Immediately notify aborted transactions and extract successful ones
+         {oks, n_aborts} <-
+           notify_aborts_and_extract_oks(
              transactions_in_order,
-             aborted,
+             aborted_indices,
+             abort_reply_fn
+           ),
+         # Prepare successful transactions for logging
+         transactions_by_tag <-
+           prepare_successful_transactions_for_log(
+             oks,
              commit_version,
              transaction_system_layout.storage_teams
            ),
-         :ok <- reply_to_all_clients_with_aborted_transactions(aborts),
+         # Extract reply functions for success notification
+         ok_reply_fns <- Enum.map(oks, fn {reply_fn, _transaction} -> reply_fn end),
          :ok <-
-           push_transaction_to_logs(
+           log_push_fn.(
              transaction_system_layout,
              batch.last_commit_version,
              transactions_by_tag,
              commit_version,
-             &send_reply_with_commit_version(oks, &1)
+             fn version -> success_reply_fn.(ok_reply_fns, version) end,
+             log_push_opts
            ) do
-      {:ok, length(aborts), length(oks)}
+      {:ok, n_aborts, length(oks)}
     else
       {:error, _reason} = error ->
         batch
         |> Batch.all_callers()
-        |> reply_to_all_clients_with_aborted_transactions()
+        |> abort_reply_fn.()
 
         error
+
+      :error ->
+        batch
+        |> Batch.all_callers()
+        |> abort_reply_fn.()
+
+        {:error, :log_push_failed}
     end
   end
 
@@ -84,7 +111,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
           [Resolver.transaction()],
-          opts :: [timeout: :infinity | non_neg_integer()]
+          opts :: [
+            timeout: :infinity | non_neg_integer(),
+            timeout_fn: (non_neg_integer() -> non_neg_integer()),
+            exit_fn: (term() -> no_return()),
+            attempt: non_neg_integer()
+          ]
         ) ::
           {:ok, aborted :: [index :: integer()]}
           | {:error, :timeout}
@@ -96,21 +128,27 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_summaries,
         opts \\ []
       ) do
+    # Set default functions and attempt number in opts
+    opts_with_defaults = opts
+      |> Keyword.put_new(:timeout_fn, &default_timeout_fn/1)
+      |> Keyword.put_new(:exit_fn, &default_exit_fn/1)  
+      |> Keyword.put_new(:attempt, 0)
+
     resolve_transactions_with_retry(
       resolvers,
       last_version,
       commit_version,
       transaction_summaries,
-      opts,
-      0,
-      &default_timeout_fn/1,
-      &default_exit_fn/1
+      opts_with_defaults
     )
   end
 
   @doc """
   Test-friendly version of resolve_transactions that accepts custom timeout and exit functions.
   This allows tests to inject mock functions for controllable behavior.
+  
+  Note: This function is kept for backward compatibility. New code should use
+  resolve_transactions/5 with :timeout_fn and :exit_fn in opts.
   """
   @spec resolve_transactions_with_functions(
           resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
@@ -133,15 +171,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         timeout_fn,
         exit_fn
       ) do
+    # Convert to new opts-based approach
+    opts_with_functions = opts
+      |> Keyword.put(:timeout_fn, timeout_fn)
+      |> Keyword.put(:exit_fn, exit_fn)
+      |> Keyword.put_new(:attempt, 0)
+
     resolve_transactions_with_retry(
       resolvers,
       last_version,
       commit_version,
       transaction_summaries,
-      opts,
-      0,
-      timeout_fn,
-      exit_fn
+      opts_with_functions
     )
   end
 
@@ -150,10 +191,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
           [Resolver.transaction()],
-          opts :: [timeout: :infinity | non_neg_integer()],
-          attempt :: non_neg_integer(),
-          timeout_fn :: (non_neg_integer() -> non_neg_integer()),
-          exit_fn :: (term() -> no_return())
+          opts :: keyword()
         ) ::
           {:ok, aborted :: [index :: integer()]}
           | {:error, :timeout}
@@ -163,11 +201,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          last_version,
          commit_version,
          transaction_summaries,
-         opts,
-         attempt,
-         timeout_fn,
-         exit_fn
+         opts
        ) do
+    # Extract functions and attempt number from opts
+    timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
+    exit_fn = Keyword.get(opts, :exit_fn, &default_exit_fn/1)
+    attempt = Keyword.get(opts, :attempt, 0)
     # Calculate timeout for this attempt using injected function
     timeout = Keyword.get(opts, :timeout, timeout_fn.(attempt))
 
@@ -223,15 +262,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         )
 
         # Retry up to 2 times (3 total attempts)
+        updated_opts = Keyword.put(opts, :attempt, attempt + 1)
         resolve_transactions_with_retry(
           resolvers,
           last_version,
           commit_version,
           transaction_summaries,
-          opts,
-          attempt + 1,
-          timeout_fn,
-          exit_fn
+          updated_opts
         )
 
       {:error, reason} ->
@@ -313,12 +350,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - Map of tag -> %{key => value} for writes belonging to each tag
 
   ## Failure Behavior
-    - Exits with `{:storage_team_coverage_error, key}` if any key doesn't 
+    - Exits with `{:storage_team_coverage_error, key}` if any key doesn't
       match any storage team. This indicates a critical configuration error
       where storage teams don't cover the full keyspace, triggering recovery.
   """
   @spec group_writes_by_tag(%{Bedrock.key() => term()}, [StorageTeamDescriptor.t()]) ::
-          %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}} | no_return()
   def group_writes_by_tag(writes, storage_teams) do
     writes
     |> Enum.reduce(%{}, fn {key, value}, acc ->
@@ -365,7 +402,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   to maintain version consistency.
 
   ## Parameters
-    - `log_descriptors`: Map of log_id -> list of tags covered by that log
+    - `logs_by_id`: Map of log_id -> list of tags covered by that log
     - `transactions_by_tag`: Map of tag -> transaction shard for that tag
     - `commit_version`: The commit version for empty transactions
 
@@ -373,12 +410,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - Map of log_id -> transaction that log should receive
   """
   @spec build_log_transactions(
-          %{Log.id() => LogDescriptor.t()},
+          %{Log.id() => [Bedrock.range_tag()]},
           %{Bedrock.range_tag() => Transaction.t()},
           Bedrock.version()
         ) :: %{Log.id() => Transaction.t()}
-  def build_log_transactions(log_descriptors, transactions_by_tag, commit_version) do
-    log_descriptors
+  def build_log_transactions(logs_by_id, transactions_by_tag, commit_version) do
+    logs_by_id
     |> Enum.map(fn {log_id, tags_covered} ->
       # Collect writes for all tags this log covers
       combined_writes =
@@ -400,7 +437,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp determine_majority(n), do: 1 + div(n, 2)
 
   @doc """
-  Pushes transaction shards to logs based on tag coverage and waits for 
+  Pushes transaction shards to logs based on tag coverage and waits for
   acknowledgement from a majority of log servers.
 
   This function takes transaction shards grouped by storage team tags and
@@ -438,33 +475,73 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         commit_version,
         majority_reached
       ) do
+    push_transaction_to_logs_with_opts(
+      transaction_system_layout,
+      last_commit_version,
+      transactions_by_tag,
+      commit_version,
+      majority_reached,
+      []
+    )
+  end
+
+  @doc """
+  Testable version of push_transaction_to_logs with configurable options.
+
+  This version accepts an opts parameter that allows injecting custom behavior
+  for testing scenarios, including custom async stream implementations and
+  log push functions.
+  """
+  @spec push_transaction_to_logs_with_opts(
+          TransactionSystemLayout.t(),
+          last_commit_version :: Bedrock.version(),
+          %{Bedrock.range_tag() => Transaction.t()},
+          commit_version :: Bedrock.version(),
+          majority_reached :: (Bedrock.version() -> :ok),
+          keyword()
+        ) :: :ok
+  def push_transaction_to_logs_with_opts(
+        transaction_system_layout,
+        last_commit_version,
+        transactions_by_tag,
+        commit_version,
+        majority_reached,
+        opts \\ []
+      ) do
+    # Extract configurable functions for testability
+    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
+    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log/3)
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
     # When transactions_by_tag is empty (all transactions aborted),
     # we still need to push empty transactions to all logs for version consistency
     # Use the provided commit_version in this case
 
-    log_descriptors = transaction_system_layout.logs
-    n = map_size(log_descriptors)
+    logs_by_id = transaction_system_layout.logs
+    n = map_size(logs_by_id)
     m = determine_majority(n)
 
     # Build the transaction each log should receive
     log_transactions =
-      build_log_transactions(log_descriptors, transactions_by_tag, commit_version)
+      build_log_transactions(logs_by_id, transactions_by_tag, commit_version)
 
-    log_descriptors
-    |> resolve_log_descriptors(transaction_system_layout.services)
-    |> Task.async_stream(
-      fn {log_id, service_descriptor} ->
-        transaction_for_log = Map.get(log_transactions, log_id)
-        encoded_transaction = EncodedTransaction.encode(transaction_for_log)
+    resolved_logs = resolve_log_descriptors(logs_by_id, transaction_system_layout.services)
 
-        result =
-          service_descriptor
-          |> try_to_push_transaction_to_log(encoded_transaction, last_commit_version)
+    # Use configurable async stream function
+    stream_result =
+      async_stream_fn.(
+        resolved_logs,
+        fn {log_id, service_descriptor} ->
+          transaction_for_log = Map.get(log_transactions, log_id)
+          encoded_transaction = EncodedTransaction.encode(transaction_for_log)
 
-        {log_id, result}
-      end,
-      timeout: 5_000
-    )
+          result = log_push_fn.(service_descriptor, encoded_transaction, last_commit_version)
+          {log_id, result}
+        end,
+        timeout: timeout
+      )
+
+    stream_result
     |> Enum.reduce_while(0, fn
       {:ok, {_log_id, {:error, _reason}}}, count ->
         {:cont, count}
@@ -526,6 +603,75 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     do: Enum.each(oks, & &1.({:ok, commit_version}))
 
   @doc """
+  Immediately notify aborted transactions and extract successful ones.
+
+  This function takes the list of transactions and aborted indices,
+  immediately sends abort notifications to the aborted transactions,
+  and returns only the successful transactions for further processing.
+
+  Returns a tuple of {successful_transactions, number_of_aborts}.
+  """
+  @spec notify_aborts_and_extract_oks(
+          transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
+          aborted_indices :: [integer()],
+          abort_reply_fn :: ([Batch.reply_fn()] -> :ok)
+        ) ::
+          {successful_transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
+           n_aborts :: non_neg_integer()}
+  def notify_aborts_and_extract_oks(transactions, aborted_indices, abort_reply_fn) do
+    aborted_set = MapSet.new(aborted_indices)
+
+    {oks, aborts} =
+      transactions
+      |> Enum.with_index()
+      |> Enum.reduce({[], []}, fn {{reply_fn, transaction}, idx}, {oks_acc, aborts_acc} ->
+        if MapSet.member?(aborted_set, idx) do
+          {oks_acc, [reply_fn | aborts_acc]}
+        else
+          {[{reply_fn, transaction} | oks_acc], aborts_acc}
+        end
+      end)
+
+    # Immediately notify aborted clients
+    abort_reply_fn.(aborts)
+
+    # Return successful transactions (reversed to maintain order) and abort count
+    {Enum.reverse(oks), length(aborts)}
+  end
+
+  @doc """
+  Prepare successful transactions for logging by grouping writes by storage team tags.
+
+  This function takes only successful transactions (aborts have already been handled)
+  and groups their writes by storage team tags for efficient log routing.
+
+  Returns a map of tag -> Transaction.t() containing writes grouped by storage team.
+  """
+  @spec prepare_successful_transactions_for_log(
+          successful_transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
+          commit_version :: Bedrock.version(),
+          storage_teams :: [StorageTeamDescriptor.t()]
+        ) :: %{Bedrock.range_tag() => Transaction.t()} | no_return()
+  def prepare_successful_transactions_for_log(
+        successful_transactions,
+        commit_version,
+        storage_teams
+      ) do
+    # Process only successful transactions
+    combined_writes_by_tag =
+      successful_transactions
+      |> Enum.reduce(%{}, fn {_reply_fn, {_reads, writes}}, acc ->
+        tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+        merge_writes_by_tag(acc, tag_grouped_writes)
+      end)
+
+    # Convert writes to transactions by tag
+    combined_writes_by_tag
+    |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
+    |> Map.new()
+  end
+
+  @doc """
   Prepare transactions for logging by separating successful transactions
   from aborted ones and grouping writes by storage team tags.
 
@@ -552,13 +698,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - A tuple: `{oks, aborts, transactions_by_tag}`
   """
   @spec prepare_transaction_to_log(
-          transactions :: [Bedrock.transaction()],
+          transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
           aborts :: [integer()],
           commit_version :: Bedrock.version(),
           storage_teams :: [StorageTeamDescriptor.t()]
         ) ::
           {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
            %{Bedrock.range_tag() => Transaction.t()}}
+          | no_return()
   # If there are no aborted transactions, we can make take some shortcuts.
   def prepare_transaction_to_log(transactions, [], commit_version, storage_teams) do
     transactions
@@ -611,7 +758,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   the reads, and the keys of the writes, discarding the values of the writes
   as they are not needed for resolution.
   """
-  @spec transform_transactions_for_resolution([Bedrock.transaction()]) :: [Resolver.transaction()]
+  @spec transform_transactions_for_resolution([{Batch.reply_fn(), Bedrock.transaction()}]) :: [
+          Resolver.transaction()
+        ]
   def transform_transactions_for_resolution(transactions) do
     transactions
     |> Enum.map(fn

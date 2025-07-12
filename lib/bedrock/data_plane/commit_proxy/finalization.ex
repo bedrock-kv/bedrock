@@ -130,37 +130,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            ) do
       {:ok, n_aborts, length(oks)}
     else
-      {:error, {:log_failures, _errors}} = error ->
-        # Log failures detected - abort all transactions and return error for recovery
-        batch
-        |> Batch.all_callers()
-        |> abort_reply_fn.()
-
-        # Return error to allow commit proxy server to trigger recovery
-        error
-
-      {:error, {:insufficient_acknowledgments, _count, _required}} = error ->
-        # Not all logs acknowledged - abort all transactions and return error for recovery
-        batch
-        |> Batch.all_callers()
-        |> abort_reply_fn.()
-
-        # Return error to allow commit proxy server to trigger recovery
-        error
-
       {:error, _reason} = error ->
+        # Any error (log failures, insufficient acknowledgments, etc.) - abort all transactions and return error for recovery
         batch
         |> Batch.all_callers()
         |> abort_reply_fn.()
 
         error
-
-      :error ->
-        batch
-        |> Batch.all_callers()
-        |> abort_reply_fn.()
-
-        {:error, :log_push_failed}
     end
   end
 
@@ -570,8 +546,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> case do
       {:ok, ^n} -> :ok
       {:error, errors} -> {:error, {:log_failures, errors}}
-      # If we haven't received all responses, we need to abort
       {count, _errors} when count < n -> {:error, {:insufficient_acknowledgments, count, n}}
+      _other -> {:error, :log_push_failed}
     end
   end
 
@@ -715,7 +691,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   ## Returns
     - `{:ok, {oks, aborts, transactions_by_tag}}` on success where:
       - `oks`: List of reply functions for successful transactions
-      - `aborts`: List of reply functions for aborted transactions  
+      - `aborts`: List of reply functions for aborted transactions
       - `transactions_by_tag`: Map of tag -> Transaction.t() grouped by storage team
     - `{:error, {:storage_team_coverage_error, key}}` if storage teams don't cover all keys
 

@@ -16,7 +16,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key">> => <<"value">>})
       }
 
-
       # Mock that tracks timeout usage
       test_pid = self()
 
@@ -109,7 +108,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
       }
 
-
       # Mock that returns first log failure, others would succeed
       mock_async_stream_fn =
         Support.mock_async_stream_with_responses(%{
@@ -184,7 +182,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         1 => Transaction.new(100, %{<<"key2">> => <<"value2">>})
       }
 
-
       # Mock async stream that simulates 2/3 success (but we need ALL now)
       mock_async_stream_fn =
         Support.mock_async_stream_with_responses(%{
@@ -219,13 +216,19 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       # Use NON-SEQUENTIAL version numbers to verify proper version chain handling
       commit_version = 175
-      last_commit_version = 168  # Intentional gap to verify sequencer values are used
+      # Intentional gap to verify sequencer values are used
+      last_commit_version = 168
 
       test_pid = self()
 
       # Custom log_push_fn that captures the exact last_version parameter
       custom_log_push_fn = fn service_descriptor, encoded_transaction, received_last_version ->
-        send(test_pid, {:log_push_version_check, received_last_version, service_descriptor, encoded_transaction})
+        send(
+          test_pid,
+          {:log_push_version_check, received_last_version, service_descriptor,
+           encoded_transaction}
+        )
+
         :ok
       end
 
@@ -241,7 +244,49 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert result == :ok
 
       # Verify the log_push_fn received the exact last_commit_version from sequencer
-      assert_receive {:log_push_version_check, ^last_commit_version, _service_descriptor, _encoded_transaction}
+      assert_receive {:log_push_version_check, ^last_commit_version, _service_descriptor,
+                      _encoded_transaction}
+    end
+
+    test "returns insufficient_acknowledgments when async stream doesn't yield all required responses" do
+      transaction_system_layout = %{
+        logs: %{
+          "log_1" => [0],
+          "log_2" => [1],
+          "log_3" => [2]
+        },
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, self()}},
+          "log_2" => %{kind: :log, status: {:up, self()}},
+          "log_3" => %{kind: :log, status: {:up, self()}}
+        }
+      }
+
+      transactions_by_tag = %{
+        0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
+      }
+
+      # Mock async stream that only yields 2 out of 3 required responses
+      # This simulates a timeout scenario where some logs don't respond
+      mock_async_stream_fn = fn _logs, _fun, _opts ->
+        [
+          {:ok, {"log_1", :ok}},
+          {:ok, {"log_2", :ok}}
+          # log_3 doesn't respond (simulating timeout/hang)
+        ]
+      end
+
+      result =
+        Finalization.push_transaction_to_logs(
+          transaction_system_layout,
+          99,
+          transactions_by_tag,
+          100,
+          async_stream_fn: mock_async_stream_fn
+        )
+
+      # Should return insufficient_acknowledgments with 4-element tuple
+      assert {:error, {:insufficient_acknowledgments, 2, 3, []}} = result
     end
   end
 end

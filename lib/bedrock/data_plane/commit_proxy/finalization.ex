@@ -70,7 +70,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type log_push_error() ::
           {:log_failures, [{Log.id(), term()}]}
-          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer(), [{Log.id(), term()}]}
+          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer(),
+             [{Log.id(), term()}]}
           | :log_push_failed
 
   @type finalization_error() ::
@@ -603,7 +604,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %{plan | error: reason, stage: :failed}
     end
   end
-
 
   @doc """
   Builds the transaction that each log should receive based on tag coverage.

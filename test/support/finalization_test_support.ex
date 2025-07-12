@@ -15,15 +15,16 @@ defmodule FinalizationTestSupport do
   Automatically registers cleanup via on_exit to ensure the process is killed.
   """
   def create_mock_log_server() do
-    pid = spawn(fn ->
-      receive do
-        {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-          GenServer.reply(from, :ok)
-      after
-        5000 -> :timeout
-      end
-    end)
-    
+    pid =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            GenServer.reply(from, :ok)
+        after
+          5000 -> :timeout
+        end
+      end)
+
     ensure_process_killed(pid)
     pid
   end

@@ -47,11 +47,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock log push function that succeeds
-      mock_log_push_fn = fn _layout,
-                            _last_version,
-                            _tx_by_tag,
-                            _commit_version,
-                            _opts ->
+      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
         :ok
       end
 
@@ -83,11 +79,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock log push function that succeeds (for empty transactions)
-      mock_log_push_fn = fn _layout,
-                            _last_version,
-                            _tx_by_tag,
-                            _commit_version,
-                            _opts ->
+      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
         :ok
       end
 
@@ -125,11 +117,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock log push function for empty transactions (all aborted)
-      mock_log_push_fn = fn _layout,
-                            _last_version,
-                            _tx_by_tag,
-                            _commit_version,
-                            _opts ->
+      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
         :ok
       end
 
@@ -160,11 +148,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock log push function that fails
-      mock_log_push_fn = fn _layout,
-                            _last_version,
-                            _tx_by_tag,
-                            _commit_version,
-                            _opts ->
+      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
         {:error, {:log_failures, [{"log_1", :timeout}]}}
       end
 
@@ -183,30 +167,61 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert_receive {:reply, {:error, :aborted}}
     end
 
+    test "returns insufficient_acknowledgments error when not all logs respond", %{
+      transaction_system_layout: transaction_system_layout
+    } do
+      batch = Support.create_test_batch(100, 99)
+
+      # Mock resolver that succeeds
+      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+        {:ok, []}
+      end
+
+      # Mock log push function that returns insufficient_acknowledgments
+      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
+        {:error, {:insufficient_acknowledgments, 2, 3, [{"log_3", :timeout}]}}
+      end
+
+      result =
+        Finalization.finalize_batch(
+          batch,
+          transaction_system_layout,
+          resolver_fn: mock_resolver_fn,
+          batch_log_push_fn: mock_log_push_fn
+        )
+
+      # Should return the 4-element insufficient_acknowledgments tuple
+      assert {:error, {:insufficient_acknowledgments, 2, 3, [{"log_3", :timeout}]}} = result
+
+      # Transaction should be aborted due to insufficient acknowledgments
+      assert_receive {:reply, {:error, :aborted}}
+    end
+
     test "passes correct last_commit_version from batch to resolvers and logs", %{
       transaction_system_layout: transaction_system_layout
     } do
       # Create batch with NON-SEQUENTIAL version numbers to test version chain integrity
       # This verifies we use the exact values provided by the sequencer
       commit_version = 150
-      last_commit_version = 142  # Intentional gap to test proper version chain
-      
+      # Intentional gap to test proper version chain
+      last_commit_version = 142
+
       batch = Support.create_test_batch(commit_version, last_commit_version)
       test_pid = self()
 
       # Mock resolver that captures the exact last_version passed to it
-      mock_resolver_fn = fn _resolvers, last_version, received_commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _resolvers,
+                            last_version,
+                            received_commit_version,
+                            _summaries,
+                            _opts ->
         send(test_pid, {:resolver_called, last_version, received_commit_version})
         # No aborts
         {:ok, []}
       end
 
       # Mock log push function that captures the exact last_version passed to it
-      mock_log_push_fn = fn _layout,
-                            last_version,
-                            _tx_by_tag,
-                            received_commit_version,
-                            _opts ->
+      mock_log_push_fn = fn _layout, last_version, _tx_by_tag, received_commit_version, _opts ->
         send(test_pid, {:log_push_called, last_version, received_commit_version})
         :ok
       end
@@ -223,7 +238,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       # Verify resolver received the exact last_commit_version from batch
       assert_receive {:resolver_called, ^last_commit_version, ^commit_version}
-      
+
       # Verify log push received the exact last_commit_version from batch
       assert_receive {:log_push_called, ^last_commit_version, ^commit_version}
 

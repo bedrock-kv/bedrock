@@ -109,7 +109,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
     end
   end
 
-
   describe "try_to_push_transaction_to_log/3" do
     test "succeeds when log server responds with :ok" do
       log_server = Support.create_mock_log_server()

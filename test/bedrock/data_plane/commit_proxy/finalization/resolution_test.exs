@@ -192,11 +192,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
     test "verifies exact last_version parameter is passed through (demonstrates version chain integrity)" do
       # This test demonstrates that resolve_transactions maintains the exact last_version parameter
       # provided by the sequencer without performing any calculation
-      
+
       # Use NON-SEQUENTIAL version numbers to verify proper version chain handling  
       resolvers = [{<<0>>, :test_resolver}]
       commit_version = 225
-      last_version = 217  # Intentional gap to verify sequencer values are preserved
+      # Intentional gap to verify sequencer values are preserved
+      last_version = 217
 
       # Simple transaction summaries for testing
       transaction_summaries = [{nil, [<<"key1">>]}]
@@ -206,7 +207,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
         Finalization.resolve_transactions(
           resolvers,
           last_version,
-          commit_version, 
+          commit_version,
           transaction_summaries,
           # Short timeout to fail quickly since no real resolver
           timeout: 50
@@ -219,7 +220,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # preserves version integrity. The resolver unavailability is expected in test 
       # environment - what matters is that our version parameters (217, 225) were 
       # preserved through the call chain.
-      
+
       # This test proves resolve_transactions accepts and uses the exact last_version
       # provided by the sequencer without any calculations
     end

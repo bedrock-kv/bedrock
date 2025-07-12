@@ -140,15 +140,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         # Exit to trigger recovery since logs are failing
         exit({:log_failures, errors})
 
-      {n_usec, {:error, {:insufficient_acknowledgments, count, required}}} ->
+      {n_usec, {:error, {:insufficient_acknowledgments, count, required, errors}}} ->
         trace_commit_proxy_batch_failed(
           batch,
-          {:insufficient_acknowledgments, count, required},
+          {:insufficient_acknowledgments, count, required, errors},
           n_usec
         )
 
         # Exit to trigger recovery since not all logs are available
-        exit({:insufficient_acknowledgments, count, required})
+        exit({:insufficient_acknowledgments, count, required, errors})
 
       {n_usec, {:error, {:resolver_unavailable, reason}}} ->
         trace_commit_proxy_batch_failed(batch, {:resolver_unavailable, reason}, n_usec)

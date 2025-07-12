@@ -65,6 +65,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
              transaction_system_layout,
              batch.last_commit_version,
              transactions_by_tag,
+             commit_version,
              &send_reply_with_commit_version(oks, &1)
            ) do
       {:ok, length(aborts), length(oks)}
@@ -310,6 +311,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
     - Map of tag -> %{key => value} for writes belonging to each tag
+
+  ## Failure Behavior
+    - Exits with `{:storage_team_coverage_error, key}` if any key doesn't 
+      match any storage team. This indicates a critical configuration error
+      where storage teams don't cover the full keyspace, triggering recovery.
   """
   @spec group_writes_by_tag(%{Bedrock.key() => term()}, [StorageTeamDescriptor.t()]) ::
           %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
@@ -321,8 +327,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           Map.update(acc, tag, %{key => value}, &Map.put(&1, key, value))
 
         {:error, :no_matching_team} ->
-          # Log warning but continue - this shouldn't happen in normal operation
-          acc
+          # This indicates a critical configuration error - storage teams don't cover full keyspace
+          # Exit to trigger recovery which will rebuild the storage team layout
+          exit({:storage_team_coverage_error, key})
       end
     end)
   end
@@ -408,6 +415,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `last_commit_version`: The last known committed version; used to
       ensure consistency in log ordering.
     - `transactions_by_tag`: Map of storage team tag to transaction shard.
+      May be empty if all transactions were aborted.
+    - `commit_version`: The version assigned by the sequencer for this batch.
     - `majority_reached`: Callback function to notify when majority is reached.
 
   ## Returns
@@ -419,22 +428,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           TransactionSystemLayout.t(),
           last_commit_version :: Bedrock.version(),
           %{Bedrock.range_tag() => Transaction.t()},
+          commit_version :: Bedrock.version(),
           majority_reached :: (Bedrock.version() -> :ok)
         ) :: :ok
   def push_transaction_to_logs(
         transaction_system_layout,
         last_commit_version,
         transactions_by_tag,
+        commit_version,
         majority_reached
       ) do
-    # Get commit version from any transaction (they all have the same version)
-    # Handle case where transactions_by_tag might be empty
-    commit_version =
-      case transactions_by_tag |> Map.values() |> List.first() do
-        # fallback if no transactions
-        nil -> last_commit_version + 1
-        transaction -> Transaction.version(transaction)
-      end
+    # When transactions_by_tag is empty (all transactions aborted),
+    # we still need to push empty transactions to all logs for version consistency
+    # Use the provided commit_version in this case
 
     log_descriptors = transaction_system_layout.logs
     n = map_size(log_descriptors)

@@ -601,28 +601,24 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
       assert {:ok, 2} = Finalization.key_to_tag(<<"zz">>, storage_teams)
     end
 
-    test "group_writes_by_tag handles keys that don't match any team" do
+    test "group_writes_by_tag exits on keys that don't match any team" do
       storage_teams = [
         %{tag: 0, key_range: {<<"b">>, <<"y">>}, storage_ids: ["storage_1"]}
       ]
 
       writes = %{
-        # before any range
+        # before any range - should cause exit
         <<"a">> => <<"before_range">>,
         # in range
         <<"m">> => <<"in_range">>,
-        # after range
+        # after range - would also cause exit
         <<"z">> => <<"after_range">>
       }
 
-      result = Finalization.group_writes_by_tag(writes, storage_teams)
-
-      # Only the key in range should be included
-      expected = %{
-        0 => %{<<"m">> => <<"in_range">>}
-      }
-
-      assert result == expected
+      # Should exit on first unmatched key to trigger recovery
+      assert catch_exit(
+        Finalization.group_writes_by_tag(writes, storage_teams)
+      ) == {:storage_team_coverage_error, <<"a">>}
     end
 
     test "prepare_transaction_to_log handles empty transactions" do

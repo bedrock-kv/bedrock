@@ -269,8 +269,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     %{plan | resolver_data: resolver_data, stage: :ready_for_resolution}
   end
 
-  defp prepare_for_resolution(%FinalizationPlan{} = plan), do: %{plan | error: :invalid_stage}
-
   @spec resolve_conflicts(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
           FinalizationPlan.t()
   defp resolve_conflicts(%FinalizationPlan{stage: :ready_for_resolution} = plan, layout, opts) do
@@ -292,10 +290,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  defp resolve_conflicts(%FinalizationPlan{} = plan, _layout, _opts),
-    do: %{plan | error: :invalid_stage}
 
   @spec split_and_notify_aborts(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
+  defp split_and_notify_aborts(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
   defp split_and_notify_aborts(%FinalizationPlan{stage: :conflicts_resolved} = plan, opts) do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
@@ -327,12 +324,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     }
   end
 
-  defp split_and_notify_aborts(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
-
-  defp split_and_notify_aborts(%FinalizationPlan{} = plan, _opts),
-    do: %{plan | error: :invalid_stage}
 
   @spec prepare_for_logging(FinalizationPlan.t()) :: FinalizationPlan.t()
+  defp prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
   defp prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
     case group_successful_transactions_by_tag(plan) do
       {:ok, transactions_by_tag} ->
@@ -343,11 +337,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  defp prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
-  defp prepare_for_logging(%FinalizationPlan{} = plan), do: %{plan | error: :invalid_stage}
 
   @spec push_to_logs(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
           FinalizationPlan.t()
+  defp push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
   defp push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, layout, opts) do
     batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
 
@@ -369,12 +362,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  defp push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
-
-  defp push_to_logs(%FinalizationPlan{} = plan, _layout, _opts),
-    do: %{plan | error: :invalid_stage}
 
   @spec notify_successes(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
+  defp notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
   defp notify_successes(%FinalizationPlan{stage: :logged} = plan, opts) do
     success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
 
@@ -393,8 +383,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     %{plan | replied_indices: updated_replied_indices, stage: :completed}
   end
 
-  defp notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
-  defp notify_successes(%FinalizationPlan{} = plan, _opts), do: %{plan | error: :invalid_stage}
 
   @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
           {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
@@ -408,10 +396,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     handle_error(plan, opts)
   end
 
-  defp extract_result_or_handle_error(%FinalizationPlan{} = plan, opts) do
-    # Unexpected stage - treat as error
-    handle_error(%{plan | error: {:unexpected_stage, plan.stage}}, opts)
-  end
 
   # Error recovery: safely abort all unreplied transactions
   @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, term()}

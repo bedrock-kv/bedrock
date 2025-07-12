@@ -76,7 +76,7 @@ defmodule FinalizationTestSupport do
     default_transactions = [
       {fn result -> send(self(), {:reply, result}) end, {nil, %{<<"key1">> => <<"value1">>}}}
     ]
-    
+
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
 
     %Bedrock.DataPlane.CommitProxy.Batch{
@@ -92,6 +92,7 @@ defmodule FinalizationTestSupport do
   """
   def create_all_logs_reached_callback(test_pid \\ nil) do
     target_pid = test_pid || self()
+
     fn version ->
       send(target_pid, {:all_logs_reached, version})
       :ok
@@ -117,7 +118,8 @@ defmodule FinalizationTestSupport do
         case Map.get(responses, log_id) do
           :ok -> {:ok, {log_id, :ok}}
           {:error, reason} -> {:ok, {log_id, {:error, reason}}}
-          nil -> {:ok, {log_id, :ok}}  # Default to success
+          # Default to success
+          nil -> {:ok, {log_id, :ok}}
         end
       end)
     end

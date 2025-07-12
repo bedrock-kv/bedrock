@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
   alias Bedrock.DataPlane.CommitProxy.Finalization
 
   describe "resolve_transactions with injectable functions" do
-    test "calls timeout function with correct attempt numbers" do
+    test "calls timeout function with correct attempt numbers and returns error" do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
@@ -20,32 +20,26 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
         1000
       end
 
-      # Mock exit function that doesn't actually exit
-      exit_fn = fn reason ->
-        send(test_pid, {:exit_called, reason})
-        throw({:test_exit, reason})
-      end
-
       # Test that function goes through all retry attempts
-      opts_with_functions = opts
+      opts_with_functions =
+        opts
         |> Keyword.put(:timeout_fn, timeout_fn)
-        |> Keyword.put(:exit_fn, exit_fn)
 
-      assert catch_throw(
-               Finalization.resolve_transactions(
-                 resolvers,
-                 last_version,
-                 commit_version,
-                 transaction_summaries,
-                 opts_with_functions
-               )
-             ) == {:test_exit, :unavailable}
+      result =
+        Finalization.resolve_transactions(
+          resolvers,
+          last_version,
+          commit_version,
+          transaction_summaries,
+          opts_with_functions
+        )
+
+      assert result == {:error, {:resolver_unavailable, :unavailable}}
 
       # Verify timeout function was called for each attempt (0, 1, 2)
       assert_receive {:timeout_called, 0}
       assert_receive {:timeout_called, 1}
       assert_receive {:timeout_called, 2}
-      assert_receive {:exit_called, :unavailable}
     end
 
     test "default timeout function provides exponential backoff" do
@@ -85,13 +79,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
 
       # Short timeout for faster test
       timeout_fn = fn _attempt -> 100 end
-      exit_fn = fn reason -> throw({:test_exit, reason}) end
 
-      opts_with_functions = opts
+      opts_with_functions =
+        opts
         |> Keyword.put(:timeout_fn, timeout_fn)
-        |> Keyword.put(:exit_fn, exit_fn)
 
-      catch_throw(
+      result =
         Finalization.resolve_transactions(
           resolvers,
           last_version,
@@ -99,11 +92,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
           transaction_summaries,
           opts_with_functions
         )
-      )
+
+      assert result == {:error, {:resolver_unavailable, :unavailable}}
 
       # Should receive telemetry for retry attempts and final failure
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1}, %{reason: :unavailable}}
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2}, %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1},
+                      %{reason: :unavailable}}
+
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2},
+                      %{reason: :unavailable}}
+
       assert_receive {:telemetry, :max_retries, %{total_attempts: 3}, %{reason: :unavailable}}
 
       :telemetry.detach("test-retry-telemetry")
@@ -124,33 +122,27 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
         1000
       end
 
-      # Mock exit function that doesn't actually exit
-      exit_fn = fn reason ->
-        send(test_pid, {:exit_called_opts, reason})
-        throw({:test_exit_opts, reason})
-      end
-
       # Test with specific attempts configuration
       opts_with_functions = [
         timeout_fn: timeout_fn,
-        exit_fn: exit_fn,
-        attempts_remaining: 1,  # Only 1 attempt
+        # Only 1 attempt
+        attempts_remaining: 1,
         attempts_used: 0
       ]
 
-      assert catch_throw(
-               Finalization.resolve_transactions(
-                 resolvers,
-                 last_version,
-                 commit_version,
-                 transaction_summaries,
-                 opts_with_functions
-               )
-             ) == {:test_exit_opts, :unavailable}
+      result =
+        Finalization.resolve_transactions(
+          resolvers,
+          last_version,
+          commit_version,
+          transaction_summaries,
+          opts_with_functions
+        )
+
+      assert result == {:error, {:resolver_unavailable, :unavailable}}
 
       # Should get timeout calls for the attempts we allowed
       assert_receive {:timeout_called_opts, 0}
-      assert_receive {:exit_called_opts, :unavailable}
       # May receive additional calls depending on implementation
     end
 
@@ -160,16 +152,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       commit_version = 101
       transaction_summaries = [{nil, [<<1>>]}]
 
-      # With no injection, should use defaults and eventually exit
-      assert catch_exit(
-               Finalization.resolve_transactions(
-                 resolvers,
-                 last_version,
-                 commit_version,
-                 transaction_summaries,
-                 timeout: 100  # Short timeout for faster test
-               )
-             ) == {:resolver_unavailable, :unavailable}
+      # With no injection, should use defaults and eventually return error
+      result =
+        Finalization.resolve_transactions(
+          resolvers,
+          last_version,
+          commit_version,
+          transaction_summaries,
+          # Short timeout for faster test
+          timeout: 100
+        )
+
+      assert result == {:error, {:resolver_unavailable, :unavailable}}
     end
 
     test "handles successful resolution" do
@@ -178,16 +172,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
-      transaction_summaries = []  # Empty summaries should succeed quickly
+      # Empty summaries should succeed quickly
+      transaction_summaries = []
 
       # Mock that immediately succeeds
       mock_resolver_call = fn _resolvers, _last, _commit, _summaries, _opts ->
-        {:ok, []}  # No aborts
+        # No aborts
+        {:ok, []}
       end
 
       # This test verifies the function can handle success cases
       # In practice, this would need real resolver infrastructure
-      result = mock_resolver_call.(resolvers, last_version, commit_version, transaction_summaries, [])
+      result =
+        mock_resolver_call.(resolvers, last_version, commit_version, transaction_summaries, [])
+
       assert {:ok, []} = result
     end
   end

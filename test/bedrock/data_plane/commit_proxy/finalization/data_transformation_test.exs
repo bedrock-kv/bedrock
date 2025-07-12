@@ -58,23 +58,25 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
       result = Finalization.group_writes_by_tag(writes, storage_teams)
 
-      expected = %{
-        0 => %{
-          <<"apple">> => <<"fruit">>,
-          <<"banana">> => <<"yellow">>
-        },
-        1 => %{
-          <<"orange">> => <<"citrus">>,
-          <<"zebra">> => <<"animal">>
-        }
-      }
+      expected =
+        {:ok,
+         %{
+           0 => %{
+             <<"apple">> => <<"fruit">>,
+             <<"banana">> => <<"yellow">>
+           },
+           1 => %{
+             <<"orange">> => <<"citrus">>,
+             <<"zebra">> => <<"animal">>
+           }
+         }}
 
       assert result == expected
     end
 
     test "handles empty writes map", %{storage_teams: storage_teams} do
       result = Finalization.group_writes_by_tag(%{}, storage_teams)
-      assert result == %{}
+      assert result == {:ok, %{}}
     end
 
     test "handles writes that all belong to same tag", %{storage_teams: storage_teams} do
@@ -85,12 +87,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
       result = Finalization.group_writes_by_tag(writes, storage_teams)
 
-      expected = %{
-        0 => %{
-          <<"apple">> => <<"fruit">>,
-          <<"banana">> => <<"yellow">>
-        }
-      }
+      expected =
+        {:ok,
+         %{
+           0 => %{
+             <<"apple">> => <<"fruit">>,
+             <<"banana">> => <<"yellow">>
+           }
+         }}
 
       assert result == expected
     end
@@ -121,7 +125,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
     test "handles empty maps" do
       assert Finalization.merge_writes_by_tag(%{}, %{}) == %{}
-      
+
       acc = %{0 => %{<<"key">> => <<"value">>}}
       assert Finalization.merge_writes_by_tag(acc, %{}) == acc
       assert Finalization.merge_writes_by_tag(%{}, acc) == acc
@@ -194,7 +198,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       result = Finalization.transform_transactions_for_resolution(transactions)
 
       [{nil, write_keys}] = result
-      
+
       # Keys should be sorted for consistency
       expected_keys = [<<"a_key">>, <<"m_key">>, <<"z_key">>]
       assert Enum.sort(write_keys) == expected_keys
@@ -214,7 +218,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       assert {:ok, 1} = Finalization.key_to_tag(<<"y">>, storage_teams)
     end
 
-    test "group_writes_by_tag handles unknown keys by exiting" do
+    test "group_writes_by_tag handles unknown keys by returning error" do
       storage_teams = [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]}
       ]
@@ -222,9 +226,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       # This key doesn't match any range
       writes = %{<<"z_unknown">> => <<"value">>}
 
-      # Should exit with storage team coverage error
-      assert catch_exit(Finalization.group_writes_by_tag(writes, storage_teams)) == 
-        {:storage_team_coverage_error, "z_unknown"}
+      # Should return error with storage team coverage error
+      assert Finalization.group_writes_by_tag(writes, storage_teams) ==
+               {:error, {:storage_team_coverage_error, "z_unknown"}}
     end
   end
 end

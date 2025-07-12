@@ -11,9 +11,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
       reply_fn3 = fn result -> send(self(), {:reply3, result}) end
 
       transactions = [
-        {reply_fn1, {nil, %{<<"key1">> => <<"value1">>}}},  # index 0 - will be aborted
-        {reply_fn2, {nil, %{<<"key2">> => <<"value2">>}}},  # index 1 - success
-        {reply_fn3, {nil, %{<<"key3">> => <<"value3">>}}}   # index 2 - will be aborted
+        # index 0 - will be aborted
+        {reply_fn1, {nil, %{<<"key1">> => <<"value1">>}}},
+        # index 1 - success
+        {reply_fn2, {nil, %{<<"key2">> => <<"value2">>}}},
+        # index 2 - will be aborted
+        {reply_fn3, {nil, %{<<"key3">> => <<"value3">>}}}
       ]
 
       # Abort transactions at indices 0 and 2
@@ -21,13 +24,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
 
       # Mock abort reply function that tracks calls
       test_pid = self()
+
       abort_reply_fn = fn aborts ->
         send(test_pid, {:abort_calls, aborts})
         Enum.each(aborts, fn reply_fn -> reply_fn.({:error, :aborted}) end)
         :ok
       end
 
-      {successful_transactions, n_aborts} = 
+      {successful_transactions, n_aborts} =
         Finalization.notify_aborts_and_extract_oks(transactions, aborted_indices, abort_reply_fn)
 
       # Should have 1 successful transaction and 2 aborts
@@ -64,7 +68,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         :ok
       end
 
-      {successful_transactions, n_aborts} = 
+      {successful_transactions, n_aborts} =
         Finalization.notify_aborts_and_extract_oks(transactions, [], abort_reply_fn)
 
       assert n_aborts == 0
@@ -89,7 +93,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         :ok
       end
 
-      {successful_transactions, n_aborts} = 
+      {successful_transactions, n_aborts} =
         Finalization.notify_aborts_and_extract_oks(transactions, [0, 1], abort_reply_fn)
 
       assert n_aborts == 2
@@ -106,7 +110,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         :ok
       end
 
-      {successful_transactions, n_aborts} = 
+      {successful_transactions, n_aborts} =
         Finalization.notify_aborts_and_extract_oks([], [], abort_reply_fn)
 
       assert n_aborts == 0
@@ -130,11 +134,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         {make_ref(), {nil, %{<<"banana">> => <<"yellow">>, <<"zebra">> => <<"animal">>}}}
       ]
 
-      result = Finalization.prepare_successful_transactions_for_log(
-        successful_transactions,
-        100,
-        storage_teams
-      )
+      {:ok, result} =
+        Finalization.prepare_successful_transactions_for_log(
+          successful_transactions,
+          100,
+          storage_teams
+        )
 
       # Should have transactions for both tags
       assert Map.has_key?(result, 0)
@@ -154,7 +159,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
     end
 
     test "handles empty successful transactions", %{storage_teams: storage_teams} do
-      result = Finalization.prepare_successful_transactions_for_log([], 100, storage_teams)
+      {:ok, result} = Finalization.prepare_successful_transactions_for_log([], 100, storage_teams)
       assert result == %{}
     end
 
@@ -164,15 +169,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         {make_ref(), {nil, %{<<"banana">> => <<"yellow">>}}}
       ]
 
-      result = Finalization.prepare_successful_transactions_for_log(
-        successful_transactions,
-        100,
-        storage_teams
-      )
+      {:ok, result} =
+        Finalization.prepare_successful_transactions_for_log(
+          successful_transactions,
+          100,
+          storage_teams
+        )
 
       # Should only have tag 0
       assert Map.keys(result) == [0]
-      
+
       tag_0_writes = Transaction.key_values(result[0])
       expected = %{<<"apple">> => <<"red">>, <<"banana">> => <<"yellow">>}
       assert tag_0_writes == expected
@@ -183,14 +189,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
       # Transaction with write to same key - later write should win
       successful_transactions = [
         {make_ref(), {nil, %{<<"apple">> => <<"red">>}}},
-        {make_ref(), {nil, %{<<"apple">> => <<"green">>}}}  # Overwrites previous
+        # Overwrites previous
+        {make_ref(), {nil, %{<<"apple">> => <<"green">>}}}
       ]
 
-      result = Finalization.prepare_successful_transactions_for_log(
-        successful_transactions,
-        100,
-        storage_teams
-      )
+      {:ok, result} =
+        Finalization.prepare_successful_transactions_for_log(
+          successful_transactions,
+          100,
+          storage_teams
+        )
 
       tag_0_writes = Transaction.key_values(result[0])
       # Later write should win
@@ -205,11 +213,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         {make_ref(), {nil, %{<<"key">> => <<"value3">>}}}
       ]
 
-      result = Finalization.prepare_successful_transactions_for_log(
-        successful_transactions,
-        100,
-        storage_teams
-      )
+      {:ok, result} =
+        Finalization.prepare_successful_transactions_for_log(
+          successful_transactions,
+          100,
+          storage_teams
+        )
 
       tag_0_writes = Transaction.key_values(result[0])
       # Last write should win (transaction ordering preserved)
@@ -223,17 +232,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationHelpersTest do
         {make_ref(), {nil, %{<<"banana">> => <<"yellow">>}}}
       ]
 
-      result = Finalization.prepare_successful_transactions_for_log(
-        successful_transactions,
-        100,
-        storage_teams
-      )
+      {:ok, result} =
+        Finalization.prepare_successful_transactions_for_log(
+          successful_transactions,
+          100,
+          storage_teams
+        )
 
       # Only writes should be included in the log transaction
       tag_0_writes = Transaction.key_values(result[0])
       expected = %{<<"apple">> => <<"red">>, <<"banana">> => <<"yellow">>}
       assert tag_0_writes == expected
-      
+
       # Read information should not be in the transaction
       refute Map.has_key?(tag_0_writes, <<"read_key">>)
     end

@@ -46,8 +46,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
-  @type exit_fn() :: (term() -> no_return())
-
   @doc """
   Finalizes a batch of transactions by resolving conflicts, separating
   successful transactions from aborts, and pushing them to the log servers.
@@ -85,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) ::
-          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()} | no_return()
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
     resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
 
@@ -114,7 +112,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
              aborted_indices,
              abort_reply_fn
            ),
-         transactions_by_tag <-
+         {:ok, transactions_by_tag} <-
            prepare_successful_transactions_for_log(
              oks,
              commit_version,
@@ -132,23 +130,23 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            ) do
       {:ok, n_aborts, length(oks)}
     else
-      {:error, {:log_failures, errors}} ->
-        # Log failures detected - abort all transactions and trigger recovery
+      {:error, {:log_failures, _errors}} = error ->
+        # Log failures detected - abort all transactions and return error for recovery
         batch
         |> Batch.all_callers()
         |> abort_reply_fn.()
 
-        # Exit to trigger recovery since logs are failing
-        exit({:log_failures, errors})
+        # Return error to allow commit proxy server to trigger recovery
+        error
 
-      {:error, {:insufficient_acknowledgments, count, required}} ->
-        # Not all logs acknowledged - abort all transactions and trigger recovery
+      {:error, {:insufficient_acknowledgments, _count, _required}} = error ->
+        # Not all logs acknowledged - abort all transactions and return error for recovery
         batch
         |> Batch.all_callers()
         |> abort_reply_fn.()
 
-        # Exit to trigger recovery since not all logs are available
-        exit({:insufficient_acknowledgments, count, required})
+        # Return error to allow commit proxy server to trigger recovery
+        error
 
       {:error, _reason} = error ->
         batch
@@ -174,7 +172,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           opts :: [
             timeout: :infinity | non_neg_integer(),
             timeout_fn: timeout_fn(),
-            exit_fn: exit_fn(),
             attempts_remaining: non_neg_integer(),
             attempts_used: non_neg_integer()
           ]
@@ -182,6 +179,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:ok, aborted :: [index :: integer()]}
           | {:error, :timeout}
           | {:error, :unavailable}
+          | {:error, {:resolver_unavailable, term()}}
   def resolve_transactions(
         resolvers,
         last_version,
@@ -190,7 +188,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         opts
       ) do
     timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
-    exit_fn = Keyword.get(opts, :exit_fn, &default_exit_fn/1)
     attempts_remaining = Keyword.get(opts, :attempts_remaining, 2)
     attempts_used = Keyword.get(opts, :attempts_used, 0)
     timeout = Keyword.get(opts, :timeout, timeout_fn.(attempts_used))
@@ -247,7 +244,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         )
 
         # Retry with updated attempt counters
-        updated_opts = opts
+        updated_opts =
+          opts
           |> Keyword.put(:attempts_remaining, attempts_remaining - 1)
           |> Keyword.put(:attempts_used, attempts_used + 1)
 
@@ -267,8 +265,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{reason: reason}
         )
 
-        # Max retries exceeded, exit commit proxy to trigger recovery
-        exit_fn.(reason)
+        # Max retries exceeded, return error to allow commit proxy to trigger recovery
+        {:error, {:resolver_unavailable, reason}}
     end
   end
 
@@ -277,8 +275,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def default_timeout_fn(attempts_used), do: (500 * :math.pow(2, attempts_used)) |> round()
 
   # Default exit function: exit with resolver unavailable
-  @spec default_exit_fn(term()) :: no_return()
-  defp default_exit_fn(reason), do: exit({:resolver_unavailable, reason})
 
   defp filter_fn(start_key, :end), do: &(&1 >= start_key)
   defp filter_fn(start_key, end_key), do: &(&1 >= start_key and &1 < end_key)
@@ -338,25 +334,29 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - Map of tag -> %{key => value} for writes belonging to each tag
 
   ## Failure Behavior
-    - Exits with `{:storage_team_coverage_error, key}` if any key doesn't
+    - Returns `{:error, {:storage_team_coverage_error, key}}` if any key doesn't
       match any storage team. This indicates a critical configuration error
-      where storage teams don't cover the full keyspace, triggering recovery.
+      where storage teams don't cover the full keyspace, requiring recovery.
   """
   @spec group_writes_by_tag(%{Bedrock.key() => term()}, [StorageTeamDescriptor.t()]) ::
-          %{Bedrock.range_tag() => %{Bedrock.key() => term()}} | no_return()
+          {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}
+          | {:error, {:storage_team_coverage_error, binary()}}
   def group_writes_by_tag(writes, storage_teams) do
-    writes
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      case key_to_tag(key, storage_teams) do
-        {:ok, tag} ->
-          Map.update(acc, tag, %{key => value}, &Map.put(&1, key, value))
+    result =
+      writes
+      |> Enum.reduce_while({:ok, %{}}, fn {key, value}, {:ok, acc} ->
+        case key_to_tag(key, storage_teams) do
+          {:ok, tag} ->
+            {:cont, {:ok, Map.update(acc, tag, %{key => value}, &Map.put(&1, key, value))}}
 
-        {:error, :no_matching_team} ->
-          # This indicates a critical configuration error - storage teams don't cover full keyspace
-          # Exit to trigger recovery which will rebuild the storage team layout
-          exit({:storage_team_coverage_error, key})
-      end
-    end)
+          {:error, :no_matching_team} ->
+            # This indicates a critical configuration error - storage teams don't cover full keyspace
+            # Return error to allow commit proxy server to trigger recovery
+            {:halt, {:error, {:storage_team_coverage_error, key}}}
+        end
+      end)
+
+    result
   end
 
   @doc """
@@ -420,7 +420,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end)
     |> Map.new()
   end
-
 
   @doc """
   Pushes transaction shards to logs based on tag coverage and waits for
@@ -649,24 +648,34 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           successful_transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
           commit_version :: Bedrock.version(),
           storage_teams :: [StorageTeamDescriptor.t()]
-        ) :: %{Bedrock.range_tag() => Transaction.t()} | no_return()
+        ) ::
+          {:ok, %{Bedrock.range_tag() => Transaction.t()}}
+          | {:error, {:storage_team_coverage_error, binary()}}
   def prepare_successful_transactions_for_log(
         successful_transactions,
         commit_version,
         storage_teams
       ) do
     # Process only successful transactions
-    combined_writes_by_tag =
-      successful_transactions
-      |> Enum.reduce(%{}, fn {_reply_fn, {_reads, writes}}, acc ->
-        tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
-        merge_writes_by_tag(acc, tag_grouped_writes)
-      end)
+    with {:ok, combined_writes_by_tag} <-
+           successful_transactions
+           |> Enum.reduce_while({:ok, %{}}, fn {_reply_fn, {_reads, writes}}, {:ok, acc} ->
+             case group_writes_by_tag(writes, storage_teams) do
+               {:ok, tag_grouped_writes} ->
+                 {:cont, {:ok, merge_writes_by_tag(acc, tag_grouped_writes)}}
 
-    # Convert writes to transactions by tag
-    combined_writes_by_tag
-    |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
-    |> Map.new()
+               {:error, _reason} = error ->
+                 {:halt, error}
+             end
+           end) do
+      # Convert writes to transactions by tag
+      result =
+        combined_writes_by_tag
+        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
+        |> Map.new()
+
+      {:ok, result}
+    end
   end
 
   @doc """
@@ -701,17 +710,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           commit_version :: Bedrock.version(),
           storage_teams :: [StorageTeamDescriptor.t()]
         ) ::
-          {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
-           %{Bedrock.range_tag() => Transaction.t()}}
-          | no_return()
+          {:ok,
+           {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
+            %{Bedrock.range_tag() => Transaction.t()}}}
+          | {:error, {:storage_team_coverage_error, binary()}}
   def prepare_transaction_to_log(transactions, aborts, commit_version, storage_teams) do
-    {oks, aborted_fns, combined_writes_by_tag} =
-      separate_transactions_and_group_writes(transactions, aborts, storage_teams)
+    with {:ok, {oks, aborted_fns, combined_writes_by_tag}} <-
+           separate_transactions_and_group_writes(transactions, aborts, storage_teams) do
+      transactions_by_tag =
+        convert_writes_to_transactions_by_tag(combined_writes_by_tag, commit_version)
 
-    transactions_by_tag =
-      convert_writes_to_transactions_by_tag(combined_writes_by_tag, commit_version)
-
-    {oks, aborted_fns, transactions_by_tag}
+      {:ok, {oks, aborted_fns, transactions_by_tag}}
+    end
   end
 
   # Extract common logic for separating transactions and grouping writes
@@ -720,38 +730,55 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           [integer()],
           [StorageTeamDescriptor.t()]
         ) ::
-          {[Batch.reply_fn()], [Batch.reply_fn()],
-           %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}
+          {:ok,
+           {[Batch.reply_fn()], [Batch.reply_fn()],
+            %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
+          | {:error, {:storage_team_coverage_error, binary()}}
   defp separate_transactions_and_group_writes(transactions, [], storage_teams) do
     # Fast path: no aborted transactions
-    {oks, writes_by_tag} =
-      transactions
-      |> Enum.reduce({[], %{}}, fn {from, {_reads, writes}}, {oks, writes_by_tag} ->
-        tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
-        {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
-      end)
+    with {:ok, {oks, writes_by_tag}} <-
+           transactions
+           |> Enum.reduce_while({:ok, {[], %{}}}, fn {from, {_reads, writes}},
+                                                     {:ok, {oks, writes_by_tag}} ->
+             case group_writes_by_tag(writes, storage_teams) do
+               {:ok, tag_grouped_writes} ->
+                 {:cont,
+                  {:ok, {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}}}
 
-    {Enum.reverse(oks), [], writes_by_tag}
+               {:error, _reason} = error ->
+                 {:halt, error}
+             end
+           end) do
+      {:ok, {Enum.reverse(oks), [], writes_by_tag}}
+    end
   end
 
   defp separate_transactions_and_group_writes(transactions, aborts, storage_teams) do
     # Slow path: need to filter out aborted transactions
     aborted_set = MapSet.new(aborts)
 
-    {oks, aborted_fns, writes_by_tag} =
-      transactions
-      |> Enum.with_index()
-      |> Enum.reduce({[], [], %{}}, fn
-        {{from, {_reads, writes}}, idx}, {oks, aborts_acc, writes_by_tag} ->
-          if MapSet.member?(aborted_set, idx) do
-            {oks, [from | aborts_acc], writes_by_tag}
-          else
-            tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
-            {[from | oks], aborts_acc, merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
-          end
-      end)
+    with {:ok, {oks, aborted_fns, writes_by_tag}} <-
+           transactions
+           |> Enum.with_index()
+           |> Enum.reduce_while({:ok, {[], [], %{}}}, fn
+             {{from, {_reads, writes}}, idx}, {:ok, {oks, aborts_acc, writes_by_tag}} ->
+               if MapSet.member?(aborted_set, idx) do
+                 {:cont, {:ok, {oks, [from | aborts_acc], writes_by_tag}}}
+               else
+                 case group_writes_by_tag(writes, storage_teams) do
+                   {:ok, tag_grouped_writes} ->
+                     {:cont,
+                      {:ok,
+                       {[from | oks], aborts_acc,
+                        merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}}}
 
-    {Enum.reverse(oks), Enum.reverse(aborted_fns), writes_by_tag}
+                   {:error, _reason} = error ->
+                     {:halt, error}
+                 end
+               end
+           end) do
+      {:ok, {Enum.reverse(oks), Enum.reverse(aborted_fns), writes_by_tag}}
+    end
   end
 
   # Extract common logic for converting writes to transactions by tag

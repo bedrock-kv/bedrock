@@ -79,7 +79,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       log_descriptors = %{
         "log_1" => [0, 1],
         "log_2" => [1, 2],
-        "log_3" => [0, 2]  # Overlaps with both log_1 and log_2
+        # Overlaps with both log_1 and log_2
+        "log_3" => [0, 2]
       }
 
       transactions_by_tag = %{
@@ -91,9 +92,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       result = Finalization.build_log_transactions(log_descriptors, transactions_by_tag, 100)
 
       # Verify each log gets correct writes
-      assert Transaction.key_values(result["log_1"]) == %{<<"key_0">> => <<"value_0">>, <<"key_1">> => <<"value_1">>}
-      assert Transaction.key_values(result["log_2"]) == %{<<"key_1">> => <<"value_1">>, <<"key_2">> => <<"value_2">>}
-      assert Transaction.key_values(result["log_3"]) == %{<<"key_0">> => <<"value_0">>, <<"key_2">> => <<"value_2">>}
+      assert Transaction.key_values(result["log_1"]) == %{
+               <<"key_0">> => <<"value_0">>,
+               <<"key_1">> => <<"value_1">>
+             }
+
+      assert Transaction.key_values(result["log_2"]) == %{
+               <<"key_1">> => <<"value_1">>,
+               <<"key_2">> => <<"value_2">>
+             }
+
+      assert Transaction.key_values(result["log_3"]) == %{
+               <<"key_0">> => <<"value_0">>,
+               <<"key_2">> => <<"value_2">>
+             }
     end
   end
 
@@ -113,7 +125,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         {make_ref(), {nil, %{<<"banana">> => <<"yellow">>, <<"zebra">> => <<"animal">>}}}
       ]
 
-      {oks, aborts, transactions_by_tag} =
+      {:ok, {oks, aborts, transactions_by_tag}} =
         Finalization.prepare_transaction_to_log(transactions, [], 100, storage_teams)
 
       # Should have all transactions as successful
@@ -132,14 +144,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
 
     test "handles some aborted transactions", %{storage_teams: storage_teams} do
       transactions = [
-        {make_ref(), {nil, %{<<"apple">> => <<"red">>}}},      # index 0
-        {make_ref(), {nil, %{<<"orange">> => <<"citrus">>}}},  # index 1 - will be aborted
-        {make_ref(), {nil, %{<<"banana">> => <<"yellow">>}}}   # index 2
+        # index 0
+        {make_ref(), {nil, %{<<"apple">> => <<"red">>}}},
+        # index 1 - will be aborted
+        {make_ref(), {nil, %{<<"orange">> => <<"citrus">>}}},
+        # index 2
+        {make_ref(), {nil, %{<<"banana">> => <<"yellow">>}}}
       ]
 
-      aborted_indices = [1]  # Abort the second transaction
+      # Abort the second transaction
+      aborted_indices = [1]
 
-      {oks, aborts, transactions_by_tag} =
+      {:ok, {oks, aborts, transactions_by_tag}} =
         Finalization.prepare_transaction_to_log(transactions, aborted_indices, 100, storage_teams)
 
       # Should have 2 successful, 1 aborted
@@ -150,7 +166,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       expected_tag_0_writes = %{<<"apple">> => <<"red">>, <<"banana">> => <<"yellow">>}
 
       assert Transaction.key_values(transactions_by_tag[0]) == expected_tag_0_writes
-      assert Map.has_key?(transactions_by_tag, 1) == false  # No tag 1 writes since orange was aborted
+      # No tag 1 writes since orange was aborted
+      assert Map.has_key?(transactions_by_tag, 1) == false
     end
 
     test "handles all transactions aborted", %{storage_teams: storage_teams} do
@@ -159,9 +176,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         {make_ref(), {nil, %{<<"orange">> => <<"citrus">>}}}
       ]
 
-      aborted_indices = [0, 1]  # Abort all transactions
+      # Abort all transactions
+      aborted_indices = [0, 1]
 
-      {oks, aborts, transactions_by_tag} =
+      {:ok, {oks, aborts, transactions_by_tag}} =
         Finalization.prepare_transaction_to_log(transactions, aborted_indices, 100, storage_teams)
 
       assert length(oks) == 0
@@ -170,7 +188,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
     end
 
     test "handles empty transactions list", %{storage_teams: storage_teams} do
-      {oks, aborts, transactions_by_tag} =
+      {:ok, {oks, aborts, transactions_by_tag}} =
         Finalization.prepare_transaction_to_log([], [], 100, storage_teams)
 
       assert length(oks) == 0
@@ -181,22 +199,24 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
 
   describe "try_to_push_transaction_to_log/3" do
     test "succeeds when log server responds with :ok" do
-      log_server = spawn(fn ->
-        receive do
-          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-            GenServer.reply(from, :ok)
-        end
-      end)
+      log_server =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, :ok)
+          end
+        end)
 
       service_descriptor = %{kind: :log, status: {:up, log_server}}
       encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
 
-      result = Finalization.try_to_push_transaction_to_log(
-        service_descriptor,
-        encoded_transaction,
-        last_commit_version
-      )
+      result =
+        Finalization.try_to_push_transaction_to_log(
+          service_descriptor,
+          encoded_transaction,
+          last_commit_version
+        )
 
       assert result == :ok
       Support.ensure_process_killed(log_server)
@@ -207,32 +227,35 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
 
-      result = Finalization.try_to_push_transaction_to_log(
-        service_descriptor,
-        encoded_transaction,
-        last_commit_version
-      )
+      result =
+        Finalization.try_to_push_transaction_to_log(
+          service_descriptor,
+          encoded_transaction,
+          last_commit_version
+        )
 
       assert result == {:error, :unavailable}
     end
 
     test "returns error when log server responds with error" do
-      log_server = spawn(fn ->
-        receive do
-          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-            GenServer.reply(from, {:error, :disk_full})
-        end
-      end)
+      log_server =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :disk_full})
+          end
+        end)
 
       service_descriptor = %{kind: :log, status: {:up, log_server}}
       encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
 
-      result = Finalization.try_to_push_transaction_to_log(
-        service_descriptor,
-        encoded_transaction,
-        last_commit_version
-      )
+      result =
+        Finalization.try_to_push_transaction_to_log(
+          service_descriptor,
+          encoded_transaction,
+          last_commit_version
+        )
 
       assert result == {:error, :disk_full}
       Support.ensure_process_killed(log_server)
@@ -245,15 +268,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       Process.sleep(100)
 
       service_descriptor = %{kind: :log, status: {:up, log_server}}
-      encoded_transaction = "mock_encoded_transaction"  
+      encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
 
       # Should handle process exit gracefully
-      result = Finalization.try_to_push_transaction_to_log(
-        service_descriptor,
-        encoded_transaction,
-        last_commit_version
-      )
+      result =
+        Finalization.try_to_push_transaction_to_log(
+          service_descriptor,
+          encoded_transaction,
+          last_commit_version
+        )
 
       # Should get an error when the process is dead
       assert {:error, _reason} = result

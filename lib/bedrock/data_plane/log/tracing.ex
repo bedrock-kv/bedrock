@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         [:bedrock, :log, :lock_for_recovery],
         [:bedrock, :log, :recover_from],
         [:bedrock, :log, :push],
+        [:bedrock, :log, :push_out_of_order],
         [:bedrock, :log, :pull]
       ],
       &__MODULE__.handler/4,
@@ -49,6 +50,10 @@ defmodule Bedrock.DataPlane.Log.Tracing do
 
   def log_event(:push, %{n_keys: n_keys}, %{expected_version: expected_version}) do
     info("Push transaction (#{n_keys} keys) with expected version #{inspect(expected_version)}")
+  end
+
+  def log_event(:push_out_of_order, _, %{expected_version: expected_version, current_version: current_version}) do
+    info("Rejected out-of-order transaction: expected #{inspect(expected_version)}, current #{inspect(current_version)}")
   end
 
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),

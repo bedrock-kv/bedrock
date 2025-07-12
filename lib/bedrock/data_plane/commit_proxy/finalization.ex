@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.Log
@@ -51,18 +52,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
              transform_transactions_for_resolution(transactions_in_order),
              timeout: 1_000
            ),
-         {oks, aborts, compacted_transaction} <-
+         {oks, aborts, transactions_by_tag} <-
            prepare_transaction_to_log(
              transactions_in_order,
              aborted,
-             commit_version
+             commit_version,
+             transaction_system_layout.storage_teams
            ),
          :ok <- reply_to_all_clients_with_aborted_transactions(aborts),
          :ok <-
            push_transaction_to_logs(
              transaction_system_layout,
              batch.last_commit_version,
-             compacted_transaction,
+             transactions_by_tag,
              &send_reply_with_commit_version(oks, &1)
            ) do
       {:ok, length(aborts), length(oks)}
@@ -167,7 +169,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
        ) do
     # Calculate timeout for this attempt using injected function
     timeout = Keyword.get(opts, :timeout, timeout_fn.(attempt))
-    
+
     ranges =
       resolvers
       |> Enum.map(&elem(&1, 0))
@@ -218,7 +220,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{attempt: attempt + 1},
           %{reason: reason}
         )
-        
+
         # Retry up to 2 times (3 total attempts)
         resolve_transactions_with_retry(
           resolvers,
@@ -238,7 +240,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{total_attempts: attempt + 1},
           %{reason: reason}
         )
-        
+
         # Max retries exceeded, exit commit proxy to trigger recovery
         exit_fn.(reason)
     end
@@ -246,7 +248,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   # Default timeout function: 500ms * 2^attempt (exponential backoff)
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
-  def default_timeout_fn(attempt), do: 500 * :math.pow(2, attempt) |> round()
+  def default_timeout_fn(attempt), do: (500 * :math.pow(2, attempt)) |> round()
 
   # Default exit function: exit with resolver unavailable
   @spec default_exit_fn(term()) :: no_return()
@@ -264,32 +266,149 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp filter_transaction_summary({{read_version, reads}, writes}, filter_fn),
     do: {{read_version, Enum.filter(reads, filter_fn)}, Enum.filter(writes, filter_fn)}
 
+  @doc """
+  Maps a key to its corresponding storage team tag.
+
+  Searches through storage teams to find which team's key range contains
+  the given key. Uses lexicographic ordering where a key belongs to a team
+  if it falls within [start_key, end_key) or [start_key, :end).
+
+  ## Parameters
+    - `key`: The key to map to a storage team
+    - `storage_teams`: List of storage team descriptors
+
+  ## Returns
+    - `{:ok, tag}` if a matching storage team is found
+    - `{:error, :no_matching_team}` if no team covers the key
+  """
+  @spec key_to_tag(Bedrock.key(), [StorageTeamDescriptor.t()]) ::
+          {:ok, Bedrock.range_tag()} | {:error, :no_matching_team}
+  def key_to_tag(key, storage_teams) do
+    Enum.find_value(storage_teams, {:error, :no_matching_team}, fn
+      %{tag: tag, key_range: {start_key, end_key}} ->
+        if key_in_range?(key, start_key, end_key) do
+          {:ok, tag}
+        else
+          nil
+        end
+    end)
+  end
+
+  @spec key_in_range?(Bedrock.key(), Bedrock.key(), Bedrock.key() | :end) :: boolean()
+  defp key_in_range?(key, start_key, :end), do: key >= start_key
+  defp key_in_range?(key, start_key, end_key), do: key >= start_key and key < end_key
+
+  @doc """
+  Groups a map of writes by their target storage team tags.
+
+  For each key-value pair in the writes map, determines which storage team
+  tag the key belongs to and groups the writes accordingly.
+
+  ## Parameters
+    - `writes`: Map of key -> value pairs to be written
+    - `storage_teams`: List of storage team descriptors for tag mapping
+
+  ## Returns
+    - Map of tag -> %{key => value} for writes belonging to each tag
+  """
+  @spec group_writes_by_tag(%{Bedrock.key() => term()}, [StorageTeamDescriptor.t()]) ::
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+  def group_writes_by_tag(writes, storage_teams) do
+    writes
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      case key_to_tag(key, storage_teams) do
+        {:ok, tag} ->
+          Map.update(acc, tag, %{key => value}, &Map.put(&1, key, value))
+
+        {:error, :no_matching_team} ->
+          # Log warning but continue - this shouldn't happen in normal operation
+          acc
+      end
+    end)
+  end
+
+  @doc """
+  Merges two maps of writes grouped by tag.
+
+  Takes two maps where keys are tags and values are write maps,
+  and merges the write maps for each tag.
+
+  ## Parameters
+    - `acc`: Accumulator map of tag -> writes
+    - `new_writes`: New writes map to merge
+
+  ## Returns
+    - Merged map of tag -> combined writes
+  """
+  @spec merge_writes_by_tag(
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}},
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+        ) :: %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+  def merge_writes_by_tag(acc, new_writes) do
+    Map.merge(acc, new_writes, fn _tag, existing_writes, new_writes ->
+      Map.merge(existing_writes, new_writes)
+    end)
+  end
+
+  @doc """
+  Builds the transaction that each log should receive based on tag coverage.
+
+  Each log receives a transaction containing writes for all tags it covers.
+  Logs that don't cover any tags in the transaction get an empty transaction
+  to maintain version consistency.
+
+  ## Parameters
+    - `log_descriptors`: Map of log_id -> list of tags covered by that log
+    - `transactions_by_tag`: Map of tag -> transaction shard for that tag
+    - `commit_version`: The commit version for empty transactions
+
+  ## Returns
+    - Map of log_id -> transaction that log should receive
+  """
+  @spec build_log_transactions(
+          %{Log.id() => LogDescriptor.t()},
+          %{Bedrock.range_tag() => Transaction.t()},
+          Bedrock.version()
+        ) :: %{Log.id() => Transaction.t()}
+  def build_log_transactions(log_descriptors, transactions_by_tag, commit_version) do
+    log_descriptors
+    |> Enum.map(fn {log_id, tags_covered} ->
+      # Collect writes for all tags this log covers
+      combined_writes =
+        tags_covered
+        |> Enum.filter(&Map.has_key?(transactions_by_tag, &1))
+        |> Enum.reduce(%{}, fn tag, acc ->
+          transaction = Map.get(transactions_by_tag, tag)
+          writes = Transaction.key_values(transaction)
+          Map.merge(acc, writes)
+        end)
+
+      transaction = Transaction.new(commit_version, combined_writes)
+      {log_id, transaction}
+    end)
+    |> Map.new()
+  end
+
   @spec determine_majority(n :: non_neg_integer()) :: pos_integer()
   defp determine_majority(n), do: 1 + div(n, 2)
 
   @doc """
-  Pushes a transaction to the logs and waits for acknowledgement from a
-  majority of log servers.
+  Pushes transaction shards to logs based on tag coverage and waits for 
+  acknowledgement from a majority of log servers.
 
-  This function takes a transaction and tries to send it to all available
-  log servers. It uses asynchronous tasks to push the transaction to each
-  log server, and will consider the push successful once a majority of the
-  servers confirm successful acceptance of the transaction.
-
-  Once a majority of logs have acknowledged the push, the function will
-  send an acknowledgement of success to the clients that initiated the
-  transactions.
+  This function takes transaction shards grouped by storage team tags and
+  routes them efficiently to logs. Each log receives only the transaction
+  shards for tags it covers, plus empty transactions for version consistency.
+  All logs must acknowledge to maintain durability guarantees.
 
   ## Parameters
 
     - `transaction_system_layout`: Contains configuration information about the
-      transaction system, including available log servers.
+      transaction system, including available log servers and their tag coverage.
     - `last_commit_version`: The last known committed version; used to
       ensure consistency in log ordering.
-    - `transaction`: The transaction to be committed to logs; this should
-      include both data and a new commit version.
-    - `oks`: A list of reply functions to which successful acknowledgements
-      should be sent once enough logs have acknowledged.
+    - `transactions_by_tag`: Map of storage team tag to transaction shard.
+    - `majority_reached`: Callback function to notify when majority is reached.
 
   ## Returns
     - `:ok` if enough acknowledgements have been received from the log servers.
@@ -299,31 +418,44 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec push_transaction_to_logs(
           TransactionSystemLayout.t(),
           last_commit_version :: Bedrock.version(),
-          Transaction.t(),
+          %{Bedrock.range_tag() => Transaction.t()},
           majority_reached :: (Bedrock.version() -> :ok)
         ) :: :ok
   def push_transaction_to_logs(
         transaction_system_layout,
         last_commit_version,
-        transaction,
+        transactions_by_tag,
         majority_reached
       ) do
-    commit_version = Transaction.version(transaction)
-    encoded_transacton = EncodedTransaction.encode(transaction)
+    # Get commit version from any transaction (they all have the same version)
+    # Handle case where transactions_by_tag might be empty
+    commit_version =
+      case transactions_by_tag |> Map.values() |> List.first() do
+        # fallback if no transactions
+        nil -> last_commit_version + 1
+        transaction -> Transaction.version(transaction)
+      end
 
     log_descriptors = transaction_system_layout.logs
     n = map_size(log_descriptors)
     m = determine_majority(n)
 
+    # Build the transaction each log should receive
+    log_transactions =
+      build_log_transactions(log_descriptors, transactions_by_tag, commit_version)
+
     log_descriptors
     |> resolve_log_descriptors(transaction_system_layout.services)
     |> Task.async_stream(
       fn {log_id, service_descriptor} ->
-        service_descriptor
-        |> try_to_push_transaction_to_log(encoded_transacton, last_commit_version)
+        transaction_for_log = Map.get(log_transactions, log_id)
+        encoded_transaction = EncodedTransaction.encode(transaction_for_log)
 
-        :ok
-        |> then(&{log_id, &1})
+        result =
+          service_descriptor
+          |> try_to_push_transaction_to_log(encoded_transaction, last_commit_version)
+
+        {log_id, result}
       end,
       timeout: 5_000
     )
@@ -388,22 +520,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     do: Enum.each(oks, & &1.({:ok, commit_version}))
 
   @doc """
-  Prepare a transaction for logging by separating successful transactions
-  from aborted ones and consolidating writes. Since we've completed conflict
-  resolution, we can drop the read data and only keep the writes.
+  Prepare transactions for logging by separating successful transactions
+  from aborted ones and grouping writes by storage team tags.
 
-  For transactions without any aborts, it efficiently aggregates all writes and
-  acknowledges all clients with successful executions.
-
-  In the presence of aborted transactions, it identifies and separates them,
-  ensuring only the successful transactions' writes are aggregated, and replies
-  to the relevant clients about the aborts.
+  This function groups writes by their target storage team tags, enabling
+  efficient routing to logs that cover specific tags. Each storage team
+  gets its own transaction shard containing only the writes for keys
+  in that team's range.
 
   Returns a tuple with:
     - A list of reply functions for successful transactions.
     - A list of reply functions for aborted transactions.
-    - A Transaction.t() containing the commit version along with the aggregated
-      writes from the successful transactions.
+    - A map of tag -> Transaction.t() containing writes grouped by storage team.
 
   ## Parameters
 
@@ -412,44 +540,60 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `aborts`: A list of integer indices indicating which transactions were
       aborted.
     - `commit_version`: The current commit version.
+    - `storage_teams`: List of storage team descriptors for key-to-tag mapping.
 
   ## Returns
-    - A tuple: `{oks, aborts, transaction_to_log}`
+    - A tuple: `{oks, aborts, transactions_by_tag}`
   """
   @spec prepare_transaction_to_log(
           transactions :: [Bedrock.transaction()],
           aborts :: [integer()],
-          commit_version :: Bedrock.version()
+          commit_version :: Bedrock.version(),
+          storage_teams :: [StorageTeamDescriptor.t()]
         ) ::
-          {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()], Transaction.t()}
+          {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
+           %{Bedrock.range_tag() => Transaction.t()}}
   # If there are no aborted transactions, we can make take some shortcuts.
-  def prepare_transaction_to_log(transactions, [], commit_version) do
+  def prepare_transaction_to_log(transactions, [], commit_version, storage_teams) do
     transactions
-    |> Enum.reduce({[], %{}}, fn {from, {_, writes}}, {oks, all_writes} ->
-      {[from | oks], Map.merge(all_writes, writes)}
+    |> Enum.reduce({[], %{}}, fn {from, {_reads, writes}}, {oks, writes_by_tag} ->
+      tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+
+      {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
     end)
-    |> then(fn {oks, combined_writes} ->
-      {oks, [], Transaction.new(commit_version, combined_writes)}
+    |> then(fn {oks, combined_writes_by_tag} ->
+      transactions_by_tag =
+        combined_writes_by_tag
+        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
+        |> Map.new()
+
+      {oks, [], transactions_by_tag}
     end)
   end
 
   # If there are aborted transactions, we need to pluck them out so that they
   # can be informed of the failure.
-  def prepare_transaction_to_log(transactions, aborts, commit_version) do
+  def prepare_transaction_to_log(transactions, aborts, commit_version, storage_teams) do
     aborted_set = MapSet.new(aborts)
 
     transactions
     |> Enum.with_index()
     |> Enum.reduce({[], [], %{}}, fn
-      {{from, {_, _, writes}}, idx}, {oks, aborts, all_writes} ->
+      {{from, {_reads, writes}}, idx}, {oks, aborts, writes_by_tag} ->
         if MapSet.member?(aborted_set, idx) do
-          {oks, [from | aborts], all_writes}
+          {oks, [from | aborts], writes_by_tag}
         else
-          {[from | oks], aborts, Map.merge(all_writes, writes)}
+          tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+          {[from | oks], aborts, merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
         end
     end)
-    |> then(fn {oks, aborts, combined_writes} ->
-      {oks, aborts, Transaction.new(commit_version, combined_writes)}
+    |> then(fn {oks, aborts, combined_writes_by_tag} ->
+      transactions_by_tag =
+        combined_writes_by_tag
+        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
+        |> Map.new()
+
+      {oks, aborts, transactions_by_tag}
     end)
   end
 

@@ -38,8 +38,11 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def log_event(:log_marked_as_failed, _, %{timestamp: timestamp, log_id: log_id}),
     do: warn("Log #{log_id} marked as failed at #{timestamp}")
 
-  def log_event(:log_pull_circuit_breaker_tripped, _, %{timestamp: timestamp, ms_to_wait: ms_to_wait}),
-    do: warn("Log pull circuit breaker tripped at #{timestamp}, waiting #{ms_to_wait}ms")
+  def log_event(:log_pull_circuit_breaker_tripped, _, %{
+        timestamp: timestamp,
+        ms_to_wait: ms_to_wait
+      }),
+      do: warn("Log pull circuit breaker tripped at #{timestamp}, waiting #{ms_to_wait}ms")
 
   def log_event(:log_pull_circuit_breaker_reset, _, %{timestamp: timestamp}),
     do: info("Log pull circuit breaker reset at #{timestamp}")

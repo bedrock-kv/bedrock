@@ -1,4 +1,20 @@
 defmodule Bedrock.DataPlane.CommitProxy.Finalization do
+  @moduledoc """
+  Transaction finalization pipeline that handles conflict resolution and log persistence.
+
+  ## Version Chain Integrity
+
+  CRITICAL: This module maintains the Lamport clock version chain established by the sequencer.
+  The sequencer provides both `last_commit_version` and `commit_version` as a proper chain link:
+
+  - `last_commit_version`: The actual last committed version from the sequencer
+  - `commit_version`: The new version assigned to this batch
+
+  Always use the exact version values provided by the sequencer through the batch to maintain
+  proper MVCC conflict detection and transaction ordering. Version gaps can exist due to failed
+  transactions, recovery scenarios, or system restarts.
+  """
+
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
@@ -42,7 +58,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
-  # Specific error types for better type safety
   @type resolution_error() ::
           :timeout
           | :unavailable
@@ -67,10 +82,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     and tracks reply status to prevent double-replies.
     """
 
-    @enforce_keys [:transactions, :commit_version, :storage_teams]
+    @enforce_keys [:transactions, :commit_version, :last_commit_version, :storage_teams]
     defstruct [
       :transactions,
       :commit_version,
+      :last_commit_version,
       :storage_teams,
 
       # Accumulated pipeline state
@@ -91,6 +107,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     @type t :: %__MODULE__{
             transactions: [{Batch.reply_fn(), Bedrock.transaction()}],
             commit_version: Bedrock.version(),
+            last_commit_version: Bedrock.version(),
             storage_teams: [StorageTeamDescriptor.t()],
             resolver_data: [Resolver.transaction()],
             aborted_indices: [integer()],
@@ -167,6 +184,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     %FinalizationPlan{
       transactions: transactions_in_order(batch),
       commit_version: batch.commit_version,
+      last_commit_version: batch.last_commit_version,
       storage_teams: transaction_system_layout.storage_teams,
       stage: :created
     }
@@ -216,8 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     case resolver_fn.(
            layout.resolvers,
-           # last_commit_version
-           plan.commit_version - 1,
+           plan.last_commit_version,
            plan.commit_version,
            plan.resolver_data,
            Keyword.put(opts, :timeout, 1_000)
@@ -365,10 +382,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     {aborted_replies, successful_replies, aborted_indices_set} =
       split_transactions_by_abort_status(plan)
 
-    # Safely notify aborts (only those not already replied to)
     new_aborted_indices = MapSet.difference(aborted_indices_set, plan.replied_indices)
 
-    # Filter aborted replies to only include those not already replied to
     new_aborted_replies =
       plan.transactions
       |> Enum.with_index()
@@ -377,7 +392,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     abort_reply_fn.(new_aborted_replies)
 
-    # Update reply tracking
     updated_replied_indices = MapSet.union(plan.replied_indices, aborted_indices_set)
 
     %{
@@ -445,7 +459,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            |> Enum.with_index()
            |> Enum.reduce_while({:ok, %{}}, fn {{_reply_fn, {_reads, writes}}, idx}, {:ok, acc} ->
              if MapSet.member?(aborted_set, idx) do
-               # Skip aborted transactions
                {:cont, {:ok, acc}}
              else
                case group_writes_by_tag(writes, plan.storage_teams) do
@@ -496,8 +509,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             {:cont, {:ok, Map.update(acc, tag, %{key => value}, &Map.put(&1, key, value))}}
 
           {:error, :no_matching_team} ->
-            # This indicates a critical configuration error - storage teams don't cover full keyspace
-            # Return error to allow commit proxy server to trigger recovery
             {:halt, {:error, {:storage_team_coverage_error, key}}}
         end
       end)
@@ -578,8 +589,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     case batch_log_push_fn.(
            layout,
-           # last_commit_version
-           plan.commit_version - 1,
+           plan.last_commit_version,
            plan.transactions_by_tag,
            plan.commit_version,
            opts
@@ -739,7 +749,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     stream_result
     |> Enum.reduce_while({0, []}, fn
       {:ok, {log_id, {:error, reason}}}, {_count, errors} ->
-        # Abort immediately on any log failure
         {:halt, {:error, [{log_id, reason} | errors]}}
 
       {:ok, {_log_id, :ok}}, {count, errors} ->
@@ -752,7 +761,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         end
 
       {:exit, {log_id, reason}}, {_count, errors} ->
-        # Handle timeouts or crashes as failures
         {:halt, {:error, [{log_id, reason} | errors]}}
     end)
     |> case do
@@ -780,7 +788,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp notify_successes(%FinalizationPlan{stage: :logged} = plan, opts) do
     success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
 
-    # Safely notify successes (only those not already replied to)
     successful_indices = get_successful_indices(plan)
     unreplied_success_indices = MapSet.difference(successful_indices, plan.replied_indices)
 
@@ -789,7 +796,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     success_reply_fn.(unreplied_successes, plan.commit_version)
 
-    # Update reply tracking
     updated_replied_indices = MapSet.union(plan.replied_indices, successful_indices)
 
     %{plan | replied_indices: updated_replied_indices, stage: :completed}
@@ -845,18 +851,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
-    # Find all transaction indices that haven't been replied to yet
     all_indices = MapSet.new(0..(length(plan.transactions) - 1))
     unreplied_indices = MapSet.difference(all_indices, plan.replied_indices)
 
-    # Extract reply functions for unreplied transactions
     unreplied_replies =
       plan.transactions
       |> Enum.with_index()
       |> Enum.filter(fn {_transaction, idx} -> MapSet.member?(unreplied_indices, idx) end)
       |> Enum.map(fn {{reply_fn, _transaction}, _idx} -> reply_fn end)
 
-    # Safely abort only unreplied transactions
     abort_reply_fn.(unreplied_replies)
 
     {:error, plan.error}

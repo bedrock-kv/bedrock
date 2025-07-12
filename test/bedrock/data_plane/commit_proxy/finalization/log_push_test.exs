@@ -220,5 +220,42 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       # Should fail because we need ALL logs now, not just majority
       assert {:error, {:log_failures, [{"log_3", :unavailable}]}} = result
     end
+
+    test "verifies exact last_commit_version is passed to log_push_fn" do
+      transaction_system_layout = %{
+        logs: %{"log_1" => [0]},
+        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
+      }
+
+      transactions_by_tag = %{
+        0 => Transaction.new(175, %{<<"key">> => <<"value">>})
+      }
+
+      # Use NON-SEQUENTIAL version numbers to verify proper version chain handling
+      commit_version = 175
+      last_commit_version = 168  # Intentional gap to verify sequencer values are used
+
+      test_pid = self()
+
+      # Custom log_push_fn that captures the exact last_version parameter
+      custom_log_push_fn = fn service_descriptor, encoded_transaction, received_last_version ->
+        send(test_pid, {:log_push_version_check, received_last_version, service_descriptor, encoded_transaction})
+        :ok
+      end
+
+      result =
+        Finalization.push_transaction_to_logs(
+          transaction_system_layout,
+          last_commit_version,
+          transactions_by_tag,
+          commit_version,
+          log_push_fn: custom_log_push_fn
+        )
+
+      assert result == :ok
+
+      # Verify the log_push_fn received the exact last_commit_version from sequencer
+      assert_receive {:log_push_version_check, ^last_commit_version, _service_descriptor, _encoded_transaction}
+    end
   end
 end

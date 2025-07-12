@@ -13,7 +13,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
 
-  # Type declarations for function parameters
   @type resolver_fn() :: (resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
                           last_version :: Bedrock.version(),
                           commit_version :: Bedrock.version(),
@@ -109,21 +108,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
              transform_transactions_for_resolution(transactions_in_order),
              timeout: 1_000
            ),
-         # Immediately notify aborted transactions and extract successful ones
          {oks, n_aborts} <-
            notify_aborts_and_extract_oks(
              transactions_in_order,
              aborted_indices,
              abort_reply_fn
            ),
-         # Prepare successful transactions for logging
          transactions_by_tag <-
            prepare_successful_transactions_for_log(
              oks,
              commit_version,
              transaction_system_layout.storage_teams
            ),
-         # Extract reply functions for success notification
          ok_reply_fns <- Enum.map(oks, fn {reply_fn, _transaction} -> reply_fn end),
          :ok <-
            batch_log_push_fn.(
@@ -161,7 +157,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: :infinity | non_neg_integer(),
             timeout_fn: timeout_fn(),
             exit_fn: exit_fn(),
-            attempts_remaining: non_neg_integer()
+            attempts_remaining: non_neg_integer(),
+            attempts_used: non_neg_integer()
           ]
         ) ::
           {:ok, aborted :: [index :: integer()]}
@@ -174,12 +171,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         transaction_summaries,
         opts
       ) do
-    # Set defaults for all options in one place
     timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
     exit_fn = Keyword.get(opts, :exit_fn, &default_exit_fn/1)
     attempts_remaining = Keyword.get(opts, :attempts_remaining, 2)
-    # Calculate timeout for this attempt using injected function (pass attempts used)
-    attempts_used = 2 - attempts_remaining
+    attempts_used = Keyword.get(opts, :attempts_used, 0)
     timeout = Keyword.get(opts, :timeout, timeout_fn.(attempts_used))
 
     ranges =
@@ -233,8 +228,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{reason: reason}
         )
 
-        # Retry with decremented attempts
-        updated_opts = Keyword.put(opts, :attempts_remaining, attempts_remaining - 1)
+        # Retry with updated attempt counters
+        updated_opts = opts
+          |> Keyword.put(:attempts_remaining, attempts_remaining - 1)
+          |> Keyword.put(:attempts_used, attempts_used + 1)
 
         resolve_transactions(
           resolvers,

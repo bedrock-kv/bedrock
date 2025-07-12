@@ -8,7 +8,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      Support.ensure_process_killed(log_server)
 
       %{transaction_system_layout: transaction_system_layout, log_server: log_server}
     end

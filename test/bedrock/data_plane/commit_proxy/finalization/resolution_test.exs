@@ -43,12 +43,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
     end
 
     test "default timeout function provides exponential backoff" do
-      # Test the default timeout function directly
-      # 500 * 2^0 = 500
+      # Test the default timeout function directly using integer arithmetic
+      # 500 * (1 <<< 0) = 500 * 1 = 500
       assert Finalization.default_timeout_fn(0) == 500
-      # 500 * 2^1 = 1000
+      # 500 * (1 <<< 1) = 500 * 2 = 1000
       assert Finalization.default_timeout_fn(1) == 1000
-      # 500 * 2^2 = 2000
+      # 500 * (1 <<< 2) = 500 * 4 = 2000
       assert Finalization.default_timeout_fn(2) == 2000
     end
 

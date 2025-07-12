@@ -132,13 +132,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
     end
 
     test "pushes transactions to single log successfully" do
-      log_server =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-              GenServer.reply(from, :ok)
-          end
-        end)
+      log_server = Support.create_mock_log_server()
 
       transaction_system_layout = %{
         logs: %{"log_1" => [0]},
@@ -158,17 +152,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         )
 
       assert result == :ok
-      Support.ensure_process_killed(log_server)
     end
 
     test "handles empty transactions_by_tag (all aborted)" do
-      log_server =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-              GenServer.reply(from, :ok)
-          end
-        end)
+      log_server = Support.create_mock_log_server()
 
       transaction_system_layout = %{
         logs: %{"log_1" => [0, 1]},
@@ -187,7 +174,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         )
 
       assert result == :ok
-      Support.ensure_process_killed(log_server)
     end
 
     test "handles multiple logs requiring ALL to succeed and failures" do

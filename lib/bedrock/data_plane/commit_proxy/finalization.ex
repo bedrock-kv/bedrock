@@ -27,6 +27,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
 
+  import Bitwise, only: [<<<: 2]
+
   @type resolver_fn() :: (resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
                           last_version :: Bedrock.version(),
                           commit_version :: Bedrock.version(),
@@ -352,7 +354,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
-  def default_timeout_fn(attempts_used), do: (500 * :math.pow(2, attempts_used)) |> round()
+  def default_timeout_fn(attempts_used), do: 500 * (1 <<< attempts_used)
 
   # Helper functions for resolve_conflicts step
 

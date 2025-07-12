@@ -112,13 +112,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
 
   describe "try_to_push_transaction_to_log/3" do
     test "succeeds when log server responds with :ok" do
-      log_server =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-              GenServer.reply(from, :ok)
-          end
-        end)
+      log_server = Support.create_mock_log_server()
 
       service_descriptor = %{kind: :log, status: {:up, log_server}}
       encoded_transaction = "mock_encoded_transaction"
@@ -132,7 +126,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         )
 
       assert result == :ok
-      Support.ensure_process_killed(log_server)
     end
 
     test "returns error when log server is down" do
@@ -159,6 +152,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
           end
         end)
 
+      Support.ensure_process_killed(log_server)
+
       service_descriptor = %{kind: :log, status: {:up, log_server}}
       encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
@@ -171,7 +166,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         )
 
       assert result == {:error, :disk_full}
-      Support.ensure_process_killed(log_server)
     end
 
     test "handles log server process exit" do

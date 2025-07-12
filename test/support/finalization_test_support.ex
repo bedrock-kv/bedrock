@@ -12,9 +12,10 @@ defmodule FinalizationTestSupport do
 
   @doc """
   Creates a mock log server that responds to GenServer calls.
+  Automatically registers cleanup via on_exit to ensure the process is killed.
   """
   def create_mock_log_server() do
-    spawn(fn ->
+    pid = spawn(fn ->
       receive do
         {:"$gen_call", from, {:push, _transaction, _last_version}} ->
           GenServer.reply(from, :ok)
@@ -22,6 +23,9 @@ defmodule FinalizationTestSupport do
         5000 -> :timeout
       end
     end)
+    
+    ensure_process_killed(pid)
+    pid
   end
 
   @doc """

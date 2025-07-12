@@ -5,7 +5,139 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   alias Bedrock.DataPlane.Log.Transaction
   alias FinalizationTestSupport, as: Support
 
-  describe "push_transaction_to_logs/5" do
+  describe "push_transaction_to_logs" do
+    test "uses custom timeout option" do
+      transaction_system_layout = %{
+        logs: %{"log_1" => [0]},
+        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
+      }
+
+      transactions_by_tag = %{
+        0 => Transaction.new(100, %{<<"key">> => <<"value">>})
+      }
+
+      all_logs_reached = fn _version -> :ok end
+
+      # Mock that tracks timeout usage
+      test_pid = self()
+
+      mock_async_stream_fn = fn _logs, _fun, opts ->
+        timeout = Keyword.get(opts, :timeout, :default)
+        send(test_pid, {:timeout_used, timeout})
+        # Return successful result
+        [ok: {"log_1", :ok}]
+      end
+
+      Finalization.push_transaction_to_logs(
+        transaction_system_layout,
+        99,
+        transactions_by_tag,
+        100,
+        all_logs_reached,
+        async_stream_fn: mock_async_stream_fn,
+        # Custom timeout
+        timeout: 2500
+      )
+
+      assert_receive {:timeout_used, 2500}
+    end
+
+    test "uses custom log_push_fn with success and failure scenarios" do
+      transaction_system_layout = %{
+        logs: %{"log_1" => [0]},
+        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
+      }
+
+      transactions_by_tag = %{
+        0 => Transaction.new(100, %{<<"key">> => <<"value">>})
+      }
+
+      all_logs_reached = fn _version -> :ok end
+      test_pid = self()
+
+      # Test success case
+      custom_log_push_fn_success = fn service_descriptor, encoded_transaction, last_version ->
+        send(
+          test_pid,
+          {:custom_push_called, service_descriptor, encoded_transaction, last_version}
+        )
+
+        :ok
+      end
+
+      result_success =
+        Finalization.push_transaction_to_logs(
+          transaction_system_layout,
+          99,
+          transactions_by_tag,
+          100,
+          all_logs_reached,
+          log_push_fn: custom_log_push_fn_success
+        )
+
+      assert result_success == :ok
+      assert_receive {:custom_push_called, _service_descriptor, _encoded_transaction, 99}
+
+      # Test failure case
+      custom_log_push_fn_failure = fn _service_descriptor, _encoded_transaction, _last_version ->
+        {:error, :custom_failure}
+      end
+
+      result_failure =
+        Finalization.push_transaction_to_logs(
+          transaction_system_layout,
+          99,
+          transactions_by_tag,
+          100,
+          all_logs_reached,
+          log_push_fn: custom_log_push_fn_failure
+        )
+
+      assert {:error, {:log_failures, [{"log_1", :custom_failure}]}} = result_failure
+    end
+
+    test "aborts immediately on first log failure" do
+      transaction_system_layout = %{
+        logs: %{
+          "log_1" => [0],
+          "log_2" => [1],
+          "log_3" => [2]
+        },
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, self()}},
+          "log_2" => %{kind: :log, status: {:up, self()}},
+          "log_3" => %{kind: :log, status: {:up, self()}}
+        }
+      }
+
+      transactions_by_tag = %{
+        0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
+      }
+
+      all_logs_reached = fn _version -> :ok end
+
+      # Mock that returns first log failure, others would succeed
+      mock_async_stream_fn =
+        Support.mock_async_stream_with_responses(%{
+          "log_1" => {:error, :first_failure},
+          "log_2" => :ok,
+          "log_3" => :ok
+        })
+
+      result =
+        Finalization.push_transaction_to_logs(
+          transaction_system_layout,
+          99,
+          transactions_by_tag,
+          100,
+          all_logs_reached,
+          async_stream_fn: mock_async_stream_fn
+        )
+
+      # Should fail immediately on first error
+      assert {:error, {:log_failures, [{"log_1", :first_failure}]}} = result
+    end
+
     test "pushes transactions to single log and calls callback" do
       log_server =
         spawn(fn ->
@@ -39,42 +171,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert result == :ok
       assert_receive {:all_logs_reached, 100}
       Support.ensure_process_killed(log_server)
-    end
-
-    test "handles multiple logs requiring ALL to succeed" do
-      transaction_system_layout = Support.multi_log_transaction_system_layout()
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key1">> => <<"value1">>}),
-        1 => Transaction.new(100, %{<<"key2">> => <<"value2">>})
-      }
-
-      test_pid = self()
-      all_logs_reached = Support.create_all_logs_reached_callback(test_pid)
-
-      # Mock async stream that simulates 2/3 success (but we need ALL now)
-      mock_async_stream_fn =
-        Support.mock_async_stream_with_responses(%{
-          "log_1" => :ok,
-          "log_2" => :ok,
-          # One failure
-          "log_3" => {:error, :unavailable}
-        })
-
-      result =
-        Finalization.push_transaction_to_logs_with_opts(
-          transaction_system_layout,
-          99,
-          transactions_by_tag,
-          100,
-          all_logs_reached,
-          async_stream_fn: mock_async_stream_fn
-        )
-
-      # Should fail because we need ALL logs now, not just majority
-      assert {:error, {:log_failures, [{"log_3", :unavailable}]}} = result
-      # All logs must succeed
-      refute_receive {:all_logs_reached, 100}
     end
 
     test "handles empty transactions_by_tag (all aborted)" do
@@ -111,58 +207,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       Support.ensure_process_killed(log_server)
     end
 
-    test "returns error when not enough logs respond" do
-      transaction_system_layout = %{
-        logs: %{
-          "log_1" => [0],
-          "log_2" => [1]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, self()}},
-          "log_2" => %{kind: :log, status: {:up, self()}}
-        }
-      }
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
-      }
-
-      all_logs_reached = fn _version -> :ok end
-
-      # Mock async stream that simulates timeouts/failures
-      mock_async_stream_fn =
-        Support.mock_async_stream_with_responses(%{
-          # Simulate timeout
-          "log_1" => {:error, :timeout},
-          # Simulate failure
-          "log_2" => {:error, :unavailable}
-        })
-
-      result =
-        Finalization.push_transaction_to_logs_with_opts(
-          transaction_system_layout,
-          99,
-          transactions_by_tag,
-          100,
-          all_logs_reached,
-          async_stream_fn: mock_async_stream_fn
-        )
-
-      # Should fail due to not enough successful responses (0/2, need 2/2)
-      assert {:error, {:log_failures, [{"log_1", :timeout}]}} = result
-    end
-
-    test "succeeds when all logs respond successfully" do
-      transaction_system_layout = %{
-        logs: %{
-          "log_1" => [0],
-          "log_2" => [1]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, self()}},
-          "log_2" => %{kind: :log, status: {:up, self()}}
-        }
-      }
+    test "handles multiple logs requiring ALL to succeed and failures" do
+      transaction_system_layout = Support.multi_log_transaction_system_layout()
 
       transactions_by_tag = %{
         0 => Transaction.new(100, %{<<"key1">> => <<"value1">>}),
@@ -172,163 +218,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       test_pid = self()
       all_logs_reached = Support.create_all_logs_reached_callback(test_pid)
 
-      # Mock async stream that simulates all success
+      # Mock async stream that simulates 2/3 success (but we need ALL now)
       mock_async_stream_fn =
         Support.mock_async_stream_with_responses(%{
           "log_1" => :ok,
-          "log_2" => :ok
-        })
-
-      result =
-        Finalization.push_transaction_to_logs_with_opts(
-          transaction_system_layout,
-          99,
-          transactions_by_tag,
-          100,
-          all_logs_reached,
-          async_stream_fn: mock_async_stream_fn
-        )
-
-      assert result == :ok
-      assert_receive {:all_logs_reached, 100}
-    end
-  end
-
-  describe "push_transaction_to_logs_with_opts/6" do
-    test "uses custom timeout option" do
-      transaction_system_layout = %{
-        logs: %{"log_1" => [0]},
-        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
-      }
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key">> => <<"value">>})
-      }
-
-      all_logs_reached = fn _version -> :ok end
-
-      # Mock that tracks timeout usage
-      test_pid = self()
-
-      mock_async_stream_fn = fn _logs, _fun, opts ->
-        timeout = Keyword.get(opts, :timeout, :default)
-        send(test_pid, {:timeout_used, timeout})
-        # Return successful result
-        [ok: {"log_1", :ok}]
-      end
-
-      Finalization.push_transaction_to_logs_with_opts(
-        transaction_system_layout,
-        99,
-        transactions_by_tag,
-        100,
-        all_logs_reached,
-        async_stream_fn: mock_async_stream_fn,
-        # Custom timeout
-        timeout: 2500
-      )
-
-      assert_receive {:timeout_used, 2500}
-    end
-
-    test "uses custom log_push_fn" do
-      transaction_system_layout = %{
-        logs: %{"log_1" => [0]},
-        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
-      }
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key">> => <<"value">>})
-      }
-
-      all_logs_reached = fn _version -> :ok end
-
-      # Custom log push function that always succeeds
-      test_pid = self()
-
-      custom_log_push_fn = fn service_descriptor, encoded_transaction, last_version ->
-        send(
-          test_pid,
-          {:custom_push_called, service_descriptor, encoded_transaction, last_version}
-        )
-
-        :ok
-      end
-
-      result =
-        Finalization.push_transaction_to_logs_with_opts(
-          transaction_system_layout,
-          99,
-          transactions_by_tag,
-          100,
-          all_logs_reached,
-          log_push_fn: custom_log_push_fn
-        )
-
-      assert result == :ok
-      assert_receive {:custom_push_called, _service_descriptor, _encoded_transaction, 99}
-    end
-
-    test "handles failures from custom log_push_fn" do
-      transaction_system_layout = %{
-        logs: %{"log_1" => [0]},
-        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
-      }
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key">> => <<"value">>})
-      }
-
-      all_logs_reached = fn _version -> :ok end
-
-      # Custom log push function that always fails
-      custom_log_push_fn = fn _service_descriptor, _encoded_transaction, _last_version ->
-        {:error, :custom_failure}
-      end
-
-      result =
-        Finalization.push_transaction_to_logs_with_opts(
-          transaction_system_layout,
-          99,
-          transactions_by_tag,
-          100,
-          all_logs_reached,
-          log_push_fn: custom_log_push_fn
-        )
-
-      assert {:error, {:log_failures, [{"log_1", :custom_failure}]}} = result
-    end
-
-    test "aborts immediately on first log failure" do
-      transaction_system_layout = %{
-        logs: %{
-          "log_1" => [0],
-          "log_2" => [1],
-          "log_3" => [2]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, self()}},
-          "log_2" => %{kind: :log, status: {:up, self()}},
-          "log_3" => %{kind: :log, status: {:up, self()}}
-        }
-      }
-
-      transactions_by_tag = %{
-        0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
-      }
-
-      all_logs_reached = fn _version -> :ok end
-
-      # Mock that returns first log failure, others would succeed
-      mock_async_stream_fn =
-        Support.mock_async_stream_with_responses(%{
-          "log_1" => {:error, :first_failure},
           "log_2" => :ok,
-          "log_3" => :ok
+          # One failure
+          "log_3" => {:error, :unavailable}
         })
 
       result =
-        Finalization.push_transaction_to_logs_with_opts(
+        Finalization.push_transaction_to_logs(
           transaction_system_layout,
           99,
           transactions_by_tag,
@@ -337,8 +237,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           async_stream_fn: mock_async_stream_fn
         )
 
-      # Should fail immediately on first error
-      assert {:error, {:log_failures, [{"log_1", :first_failure}]}} = result
+      # Should fail because we need ALL logs now, not just majority
+      assert {:error, {:log_failures, [{"log_3", :unavailable}]}} = result
+      # All logs must succeed
+      refute_receive {:all_logs_reached, 100}
     end
   end
 end

@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
 
     batch_log_push_fn =
-      Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_with_opts/6)
+      Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
 
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
@@ -427,6 +427,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       May be empty if all transactions were aborted.
     - `commit_version`: The version assigned by the sequencer for this batch.
     - `all_logs_reached`: Callback function to notify when all logs are reached.
+    - `opts`: Optional configuration for testing and customization.
+
+  ## Options
+    - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
+    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
+    - `:timeout` - Timeout for log push operations (default: 5_000ms)
 
   ## Returns
     - `:ok` if acknowledgements have been received from ALL log servers.
@@ -438,42 +444,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           last_commit_version :: Bedrock.version(),
           %{Bedrock.range_tag() => Transaction.t()},
           commit_version :: Bedrock.version(),
-          all_logs_reached :: (Bedrock.version() -> :ok)
-        ) :: :ok | {:error, term()}
-  def push_transaction_to_logs(
-        transaction_system_layout,
-        last_commit_version,
-        transactions_by_tag,
-        commit_version,
-        all_logs_reached
-      ) do
-    push_transaction_to_logs_with_opts(
-      transaction_system_layout,
-      last_commit_version,
-      transactions_by_tag,
-      commit_version,
-      all_logs_reached,
-      []
-    )
-  end
-
-  @doc """
-  Testable version of push_transaction_to_logs with configurable options.
-
-  This version accepts an opts parameter that allows injecting custom behavior
-  for testing scenarios, including custom async stream implementations and
-  log push functions. Waits for ALL logs to succeed, aborting on any failure.
-
-  ## Options
-    - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
-    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
-    - `:timeout` - Timeout for log push operations (default: 5_000ms)
-  """
-  @spec push_transaction_to_logs_with_opts(
-          TransactionSystemLayout.t(),
-          last_commit_version :: Bedrock.version(),
-          %{Bedrock.range_tag() => Transaction.t()},
-          commit_version :: Bedrock.version(),
           all_logs_reached :: (Bedrock.version() -> :ok),
           opts :: [
             async_stream_fn: async_stream_fn(),
@@ -481,7 +451,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) :: :ok | {:error, term()}
-  def push_transaction_to_logs_with_opts(
+  def push_transaction_to_logs(
         transaction_system_layout,
         last_commit_version,
         transactions_by_tag,
@@ -499,14 +469,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # Use the provided commit_version in this case
 
     logs_by_id = transaction_system_layout.logs
-    n = map_size(logs_by_id)
-    # Require ALL logs to acknowledge for durability guarantees
-    required_acknowledgments = n
+    required_acknowledgments = map_size(logs_by_id)
 
     # Build the transaction each log should receive
-    log_transactions =
-      build_log_transactions(logs_by_id, transactions_by_tag, commit_version)
-
+    log_transactions = build_log_transactions(logs_by_id, transactions_by_tag, commit_version)
     resolved_logs = resolve_log_descriptors(logs_by_id, transaction_system_layout.services)
 
     # Use configurable async stream function
@@ -544,10 +510,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         {:halt, {:error, [{log_id, reason} | errors]}}
     end)
     |> case do
-      {:ok, ^n} -> :ok
-      {:error, errors} -> {:error, {:log_failures, errors}}
-      {count, _errors} when count < n -> {:error, {:insufficient_acknowledgments, count, n}}
-      _other -> {:error, :log_push_failed}
+      {:ok, ^required_acknowledgments} ->
+        :ok
+
+      {:error, errors} ->
+        {:error, {:log_failures, errors}}
+
+      {count, _errors} when count < required_acknowledgments ->
+        {:error, {:insufficient_acknowledgments, count, required_acknowledgments}}
+
+      _other ->
+        {:error, :log_push_failed}
     end
   end
 
@@ -648,7 +621,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         commit_version,
         storage_teams
       ) do
-    # Process only successful transactions
     with {:ok, combined_writes_by_tag} <-
            successful_transactions
            |> Enum.reduce_while({:ok, %{}}, fn {_reply_fn, {_reads, writes}}, {:ok, acc} ->
@@ -660,7 +632,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                  {:halt, error}
              end
            end) do
-      # Convert writes to transactions by tag
       result =
         combined_writes_by_tag
         |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)

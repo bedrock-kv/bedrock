@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
 
   This phase is responsible for starting the sequencer component
   which assigns global version numbers to transactions.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.DataPlane.Sequencer

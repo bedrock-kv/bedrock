@@ -147,10 +147,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {:stalled, reason} ->
         Logger.warning("Recovery is stalled: #{inspect(reason)}")
         {{:stalled, reason}, t}
-      
+
       :completed ->
         {:ok, t}
-        
+
       state ->
         phase = next_phase(state)
 

@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   This phase is responsible for replaying transactions from old logs
   into the new log configuration to ensure data consistency.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.DataPlane.Log

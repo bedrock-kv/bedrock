@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
 
   This phase is responsible for cleaning up workers that are no longer
   part of the running transaction system after a successful recovery.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.Service.Foreman

@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
 
   This phase is responsible for performing final validation
   before proceeding to system state persistence.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

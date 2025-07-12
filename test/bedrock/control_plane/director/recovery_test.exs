@@ -382,7 +382,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       log_output =
         capture_log([level: :warning], fn ->
-          {{:stalled, :test_reason}, result} = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
+          {{:stalled, :test_reason}, result} =
+            Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
+
           assert result.state == {:stalled, :test_reason}
         end)
 
@@ -434,7 +436,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Test that next_phase works for common states
       key_states = [
         :start,
-        :lock_available_services, 
+        :lock_available_services,
         :determine_durable_version,
         :persist_system_state,
         :monitor_components
@@ -444,7 +446,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # that it doesn't immediately crash with a FunctionClauseError
       for state <- key_states do
         test_attempt = %RecoveryAttempt{state: state, cluster: TestCluster, epoch: 1}
-        
+
         # This should not raise FunctionClauseError for valid states
         # (though it may fail for other reasons like missing data)
         try do

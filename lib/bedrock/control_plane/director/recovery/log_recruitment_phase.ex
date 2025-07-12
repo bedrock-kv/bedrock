@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   This phase is responsible for filling log vacancies by assigning existing
   log workers or creating new ones as needed.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

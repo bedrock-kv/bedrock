@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ServiceCollectionPhase do
 
   This phase is responsible for collecting references to all
   required services that will be part of the transaction system.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

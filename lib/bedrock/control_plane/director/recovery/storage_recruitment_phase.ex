@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   This phase is responsible for filling storage team vacancies with
   available storage workers.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

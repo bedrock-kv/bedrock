@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartPhase do
 
   This phase is responsible for initializing the recovery attempt with a timestamp
   and transitioning to the service locking phase.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

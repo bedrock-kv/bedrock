@@ -4,13 +4,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   This phase is responsible for persisting cluster state via a system
   transaction that serves as both persistence and comprehensive system test.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.DataPlane.CommitProxy
-  alias Bedrock.ControlPlane.Director.Recovery.CommitProxySelection
   alias Bedrock.SystemKeys
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -31,7 +32,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, _context) do
     trace_recovery_persisting_system_state()
 
-    # Safety check: ensure we have the required components before attempting system transaction
     with :ok <- validate_recovery_state(recovery_attempt),
          cluster_config <- build_cluster_config(recovery_attempt),
          system_transaction <-
@@ -81,20 +81,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           cluster :: module()
         ) :: Bedrock.transaction()
   defp build_system_transaction(epoch, cluster_config, cluster) do
-    # Encode config for storage (PIDs -> {otp_name, node} tuples)
     encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
-
-    # Extract and encode the transaction system layout separately
     transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
 
     encoded_layout =
       Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
 
-    # Build hybrid key storage: both monolithic and decomposed keys
     monolithic_keys = build_monolithic_keys(epoch, encoded_config, encoded_layout)
     decomposed_keys = build_decomposed_keys(epoch, cluster_config, cluster)
 
-    # Combine both key formats in single atomic transaction
     all_keys = Map.merge(monolithic_keys, decomposed_keys)
 
     {nil, all_keys}
@@ -115,7 +110,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_decomposed_keys(epoch, cluster_config, cluster) do
     transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
 
-    # Encode individual components for storage
     encoded_sequencer = encode_component_for_storage(transaction_system_layout.sequencer, cluster)
     encoded_proxies = encode_components_for_storage(transaction_system_layout.proxies, cluster)
 
@@ -158,7 +152,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       SystemKeys.layout_id() => :erlang.term_to_binary(transaction_system_layout.id)
     }
 
-    # Add individual log keys
     log_keys =
       transaction_system_layout.logs
       |> Enum.into(%{}, fn {log_id, log_descriptor} ->
@@ -166,7 +159,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         {SystemKeys.layout_log(log_id), :erlang.term_to_binary(encoded_log)}
       end)
 
-    # Add individual storage team keys
     storage_keys =
       transaction_system_layout.storage_teams
       |> Enum.with_index()
@@ -188,14 +180,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Map.merge(recovery_keys)
   end
 
-  # Helper functions for encoding components
   defp encode_component_for_storage(nil, _cluster), do: nil
-
-  defp encode_component_for_storage(pid, _cluster) when is_pid(pid) do
-    # For decomposed keys, we'll store PIDs directly for now
-    # The monolithic keys already handle proper PID encoding
-    pid
-  end
+  defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
 
   defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid) do
     # Handle resolver tuples {start_key, pid}
@@ -305,13 +291,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp submit_system_transaction(system_transaction, proxies) do
-    case CommitProxySelection.get_available_commit_proxy(proxies) do
-      {:ok, commit_proxy} ->
-        CommitProxy.commit(commit_proxy, system_transaction)
+  defp submit_system_transaction(_system_transaction, []), do: {:error, :no_commit_proxies}
 
-      {:error, reason} ->
-        {:error, {:no_available_commit_proxy, reason}}
-    end
+  defp submit_system_transaction(system_transaction, proxies) when is_list(proxies) do
+    proxies
+    |> Enum.random()
+    |> CommitProxy.commit(system_transaction)
   end
 end

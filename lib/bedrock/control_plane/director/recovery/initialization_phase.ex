@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   This phase is responsible for setting up a brand new cluster with empty logs
   and storage teams by creating placeholders based on desired configuration.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

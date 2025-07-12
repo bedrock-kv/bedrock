@@ -5,6 +5,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   This phase is responsible for locking all available services for the current epoch
   and determining whether this is a first-time initialization or a recovery from
   an existing cluster state.
+
+  See: [Recovery Guide - Service Discovery and Locking](docs/knowledge_base/01-guides/recovery-guide.md#phase-3-service-discovery-and-locking)
   """
 
   require Logger

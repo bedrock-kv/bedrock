@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
 
   This phase is responsible for starting commit proxy components
   which batch transactions and coordinate commits.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.DataPlane.CommitProxy

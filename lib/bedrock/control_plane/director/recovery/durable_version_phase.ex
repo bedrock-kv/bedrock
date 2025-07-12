@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
 
   This phase is responsible for determining the highest durable version
   across all storage teams and identifying which teams are healthy vs degraded.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

@@ -5,6 +5,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   This phase is responsible for determining which logs from the previous
   transaction system layout should be copied and what version vector
   should be used for recovery.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.DataPlane.Log

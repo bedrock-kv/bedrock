@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase do
 
   This phase is responsible for repairing data distribution across
   the cluster and creating resolver descriptors from storage teams.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
@@ -20,7 +22,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase do
   """
   @impl true
   def execute(%{state: :repair_data_distribution} = recovery_attempt, _context) do
-    resolver_descriptors = create_resolver_descriptors_from_storage_teams(recovery_attempt.storage_teams)
+    resolver_descriptors =
+      create_resolver_descriptors_from_storage_teams(recovery_attempt.storage_teams)
 
     recovery_attempt
     |> Map.put(:resolvers, resolver_descriptors)

@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
 
   This phase is responsible for starting resolver components
   which implement MVCC conflict detection.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   alias Bedrock.DataPlane.Resolver

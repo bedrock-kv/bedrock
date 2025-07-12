@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
   This phase is responsible for setting up monitoring of all
   transaction system components and marking recovery as complete.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

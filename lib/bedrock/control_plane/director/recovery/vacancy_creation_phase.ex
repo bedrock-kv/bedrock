@@ -4,6 +4,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
 
   This phase is responsible for creating vacancies for logs and storage teams
   to ensure the desired replication levels are met.
+
+  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

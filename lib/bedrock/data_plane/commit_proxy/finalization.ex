@@ -46,6 +46,48 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
+  defmodule FinalizationPlan do
+    @moduledoc """
+    Pipeline state for transaction finalization that accumulates information
+    and tracks reply status to prevent double-replies.
+    """
+
+    @enforce_keys [:transactions, :commit_version, :storage_teams]
+    defstruct [
+      :transactions,
+      :commit_version,
+      :storage_teams,
+
+      # Accumulated pipeline state
+      resolver_data: [],
+      aborted_indices: [],
+      aborted_replies: [],
+      successful_replies: [],
+      transactions_by_tag: %{},
+
+      # Reply tracking for safety
+      replied_indices: MapSet.new(),
+
+      # Pipeline stage status
+      stage: :initialized,
+      error: nil
+    ]
+
+    @type t :: %__MODULE__{
+            transactions: [{Batch.reply_fn(), Bedrock.transaction()}],
+            commit_version: Bedrock.version(),
+            storage_teams: [StorageTeamDescriptor.t()],
+            resolver_data: [Resolver.transaction()],
+            aborted_indices: [integer()],
+            aborted_replies: [Batch.reply_fn()],
+            successful_replies: [Batch.reply_fn()],
+            transactions_by_tag: %{Bedrock.range_tag() => Transaction.t()},
+            replied_indices: MapSet.t(),
+            stage: atom(),
+            error: term() | nil
+          }
+  end
+
   @doc """
   Finalizes a batch of transactions by resolving conflicts, separating
   successful transactions from aborts, and pushing them to the log servers.
@@ -85,59 +127,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         ) ::
           {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
-    resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
-
-    batch_log_push_fn =
-      Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
-
-    abort_reply_fn =
-      Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
-
-    success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
-
-    transactions_in_order = transactions_in_order(batch)
-    commit_version = batch.commit_version
-
-    with {:ok, aborted_indices} <-
-           resolver_fn.(
-             transaction_system_layout.resolvers,
-             batch.last_commit_version,
-             commit_version,
-             transform_transactions_for_resolution(transactions_in_order),
-             timeout: 1_000
-           ),
-         {oks, n_aborts} <-
-           notify_aborts_and_extract_oks(
-             transactions_in_order,
-             aborted_indices,
-             abort_reply_fn
-           ),
-         {:ok, transactions_by_tag} <-
-           prepare_successful_transactions_for_log(
-             oks,
-             commit_version,
-             transaction_system_layout.storage_teams
-           ),
-         ok_reply_fns <- Enum.map(oks, fn {reply_fn, _transaction} -> reply_fn end),
-         :ok <-
-           batch_log_push_fn.(
-             transaction_system_layout,
-             batch.last_commit_version,
-             transactions_by_tag,
-             commit_version,
-             fn version -> success_reply_fn.(ok_reply_fns, version) end,
-             opts
-           ) do
-      {:ok, n_aborts, length(oks)}
-    else
-      {:error, _reason} = error ->
-        # Any error (log failures, insufficient acknowledgments, etc.) - abort all transactions and return error for recovery
-        batch
-        |> Batch.all_callers()
-        |> abort_reply_fn.()
-
-        error
-    end
+    batch
+    |> create_finalization_plan(transaction_system_layout)
+    |> prepare_for_resolution()
+    |> resolve_conflicts(transaction_system_layout, opts)
+    |> split_and_notify_aborts(opts)
+    |> prepare_for_logging()
+    |> push_to_logs(transaction_system_layout, opts)
+    |> notify_successes(opts)
+    |> extract_result_or_handle_error(opts)
   end
 
   @spec resolve_transactions(
@@ -251,6 +249,265 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def default_timeout_fn(attempts_used), do: (500 * :math.pow(2, attempts_used)) |> round()
 
   # Default timeout function for resolver retries with exponential backoff
+
+  # Pipeline stage functions
+
+  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t()) :: FinalizationPlan.t()
+  defp create_finalization_plan(batch, transaction_system_layout) do
+    %FinalizationPlan{
+      transactions: transactions_in_order(batch),
+      commit_version: batch.commit_version,
+      storage_teams: transaction_system_layout.storage_teams,
+      stage: :created
+    }
+  end
+
+  @spec prepare_for_resolution(FinalizationPlan.t()) :: FinalizationPlan.t()
+  defp prepare_for_resolution(%FinalizationPlan{stage: :created} = plan) do
+    resolver_data = transform_transactions_for_resolution(plan.transactions)
+
+    %{plan | resolver_data: resolver_data, stage: :ready_for_resolution}
+  end
+
+  defp prepare_for_resolution(%FinalizationPlan{} = plan), do: %{plan | error: :invalid_stage}
+
+  @spec resolve_conflicts(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
+          FinalizationPlan.t()
+  defp resolve_conflicts(%FinalizationPlan{stage: :ready_for_resolution} = plan, layout, opts) do
+    resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
+
+    case resolver_fn.(
+           layout.resolvers,
+           # last_commit_version
+           plan.commit_version - 1,
+           plan.commit_version,
+           plan.resolver_data,
+           Keyword.put(opts, :timeout, 1_000)
+         ) do
+      {:ok, aborted_indices} ->
+        %{plan | aborted_indices: aborted_indices, stage: :conflicts_resolved}
+
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
+  end
+
+  defp resolve_conflicts(%FinalizationPlan{} = plan, _layout, _opts),
+    do: %{plan | error: :invalid_stage}
+
+  @spec split_and_notify_aborts(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
+  defp split_and_notify_aborts(%FinalizationPlan{stage: :conflicts_resolved} = plan, opts) do
+    abort_reply_fn =
+      Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
+
+    {aborted_replies, successful_replies, aborted_indices_set} =
+      split_transactions_by_abort_status(plan)
+
+    # Safely notify aborts (only those not already replied to)
+    new_aborted_indices = MapSet.difference(aborted_indices_set, plan.replied_indices)
+
+    # Filter aborted replies to only include those not already replied to
+    new_aborted_replies =
+      plan.transactions
+      |> Enum.with_index()
+      |> Enum.filter(fn {_transaction, idx} -> MapSet.member?(new_aborted_indices, idx) end)
+      |> Enum.map(fn {{reply_fn, _transaction}, _idx} -> reply_fn end)
+
+    abort_reply_fn.(new_aborted_replies)
+
+    # Update reply tracking
+    updated_replied_indices = MapSet.union(plan.replied_indices, aborted_indices_set)
+
+    %{
+      plan
+      | aborted_replies: aborted_replies,
+        successful_replies: successful_replies,
+        replied_indices: updated_replied_indices,
+        stage: :aborts_notified
+    }
+  end
+
+  defp split_and_notify_aborts(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
+
+  defp split_and_notify_aborts(%FinalizationPlan{} = plan, _opts),
+    do: %{plan | error: :invalid_stage}
+
+  @spec prepare_for_logging(FinalizationPlan.t()) :: FinalizationPlan.t()
+  defp prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
+    case group_successful_transactions_by_tag(plan) do
+      {:ok, transactions_by_tag} ->
+        %{plan | transactions_by_tag: transactions_by_tag, stage: :ready_for_logging}
+
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
+  end
+
+  defp prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
+  defp prepare_for_logging(%FinalizationPlan{} = plan), do: %{plan | error: :invalid_stage}
+
+  @spec push_to_logs(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
+          FinalizationPlan.t()
+  defp push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, layout, opts) do
+    batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
+
+    case batch_log_push_fn.(
+           layout,
+           # last_commit_version
+           plan.commit_version - 1,
+           plan.transactions_by_tag,
+           plan.commit_version,
+           # We'll handle success replies in next stage
+           fn _version -> :ok end,
+           opts
+         ) do
+      :ok ->
+        %{plan | stage: :logged}
+
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
+  end
+
+  defp push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
+
+  defp push_to_logs(%FinalizationPlan{} = plan, _layout, _opts),
+    do: %{plan | error: :invalid_stage}
+
+  @spec notify_successes(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
+  defp notify_successes(%FinalizationPlan{stage: :logged} = plan, opts) do
+    success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
+
+    # Safely notify successes (only those not already replied to)
+    successful_indices = get_successful_indices(plan)
+    unreplied_success_indices = MapSet.difference(successful_indices, plan.replied_indices)
+
+    unreplied_successes =
+      filter_replies_by_indices(plan.successful_replies, unreplied_success_indices)
+
+    success_reply_fn.(unreplied_successes, plan.commit_version)
+
+    # Update reply tracking
+    updated_replied_indices = MapSet.union(plan.replied_indices, successful_indices)
+
+    %{plan | replied_indices: updated_replied_indices, stage: :completed}
+  end
+
+  defp notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
+  defp notify_successes(%FinalizationPlan{} = plan, _opts), do: %{plan | error: :invalid_stage}
+
+  @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
+  defp extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _opts) do
+    n_aborts = length(plan.aborted_replies)
+    n_successes = length(plan.successful_replies)
+    {:ok, n_aborts, n_successes}
+  end
+
+  defp extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, opts) do
+    handle_error(plan, opts)
+  end
+
+  defp extract_result_or_handle_error(%FinalizationPlan{} = plan, opts) do
+    # Unexpected stage - treat as error
+    handle_error(%{plan | error: {:unexpected_stage, plan.stage}}, opts)
+  end
+
+  # Error recovery: safely abort all unreplied transactions
+  @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, term()}
+  defp handle_error(%FinalizationPlan{} = plan, opts) do
+    abort_reply_fn =
+      Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
+
+    # Find all transaction indices that haven't been replied to yet
+    all_indices = MapSet.new(0..(length(plan.transactions) - 1))
+    unreplied_indices = MapSet.difference(all_indices, plan.replied_indices)
+
+    # Extract reply functions for unreplied transactions
+    unreplied_replies =
+      plan.transactions
+      |> Enum.with_index()
+      |> Enum.filter(fn {_transaction, idx} -> MapSet.member?(unreplied_indices, idx) end)
+      |> Enum.map(fn {{reply_fn, _transaction}, _idx} -> reply_fn end)
+
+    # Safely abort only unreplied transactions
+    abort_reply_fn.(unreplied_replies)
+
+    {:error, plan.error || :unknown_error}
+  end
+
+  # Helper functions for pipeline
+
+  @spec split_transactions_by_abort_status(FinalizationPlan.t()) ::
+          {[Batch.reply_fn()], [Batch.reply_fn()], MapSet.t()}
+  defp split_transactions_by_abort_status(plan) do
+    aborted_set = MapSet.new(plan.aborted_indices)
+
+    {aborted_replies, successful_replies} =
+      plan.transactions
+      |> Enum.with_index()
+      |> Enum.reduce({[], []}, fn {{reply_fn, _transaction}, idx}, {aborts_acc, success_acc} ->
+        if MapSet.member?(aborted_set, idx) do
+          {[reply_fn | aborts_acc], success_acc}
+        else
+          {aborts_acc, [reply_fn | success_acc]}
+        end
+      end)
+
+    {Enum.reverse(aborted_replies), Enum.reverse(successful_replies), aborted_set}
+  end
+
+  @spec group_successful_transactions_by_tag(FinalizationPlan.t()) ::
+          {:ok, %{Bedrock.range_tag() => Transaction.t()}} | {:error, term()}
+  defp group_successful_transactions_by_tag(plan) do
+    aborted_set = MapSet.new(plan.aborted_indices)
+
+    with {:ok, combined_writes_by_tag} <-
+           plan.transactions
+           |> Enum.with_index()
+           |> Enum.reduce_while({:ok, %{}}, fn {{_reply_fn, {_reads, writes}}, idx}, {:ok, acc} ->
+             if MapSet.member?(aborted_set, idx) do
+               # Skip aborted transactions
+               {:cont, {:ok, acc}}
+             else
+               case group_writes_by_tag(writes, plan.storage_teams) do
+                 {:ok, tag_grouped_writes} ->
+                   {:cont, {:ok, merge_writes_by_tag(acc, tag_grouped_writes)}}
+
+                 {:error, _reason} = error ->
+                   {:halt, error}
+               end
+             end
+           end) do
+      result =
+        combined_writes_by_tag
+        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(plan.commit_version, writes)} end)
+        |> Map.new()
+
+      {:ok, result}
+    end
+  end
+
+  @spec get_successful_indices(FinalizationPlan.t()) :: MapSet.t()
+  defp get_successful_indices(plan) do
+    aborted_set = MapSet.new(plan.aborted_indices)
+    transaction_count = length(plan.transactions)
+
+    if transaction_count > 0 do
+      all_indices = MapSet.new(0..(transaction_count - 1))
+      MapSet.difference(all_indices, aborted_set)
+    else
+      MapSet.new()
+    end
+  end
+
+  @spec filter_replies_by_indices([Batch.reply_fn()], MapSet.t()) :: [Batch.reply_fn()]
+  defp filter_replies_by_indices(replies, indices_set) do
+    replies
+    |> Enum.with_index()
+    |> Enum.filter(fn {_reply_fn, idx} -> MapSet.member?(indices_set, idx) end)
+    |> Enum.map(fn {reply_fn, _idx} -> reply_fn end)
+  end
 
   defp filter_fn(start_key, :end), do: &(&1 >= start_key)
   defp filter_fn(start_key, end_key), do: &(&1 >= start_key and &1 < end_key)
@@ -564,197 +821,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def send_reply_with_commit_version(oks, commit_version),
     do: Enum.each(oks, & &1.({:ok, commit_version}))
 
-  @doc """
-  Immediately notify aborted transactions and extract successful ones.
-
-  This function takes the list of transactions and aborted indices,
-  immediately sends abort notifications to the aborted transactions,
-  and returns only the successful transactions for further processing.
-
-  Returns a tuple of {successful_transactions, number_of_aborts}.
-  """
-  @spec notify_aborts_and_extract_oks(
-          transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
-          aborted_indices :: [integer()],
-          abort_reply_fn :: ([Batch.reply_fn()] -> :ok)
-        ) ::
-          {successful_transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
-           n_aborts :: non_neg_integer()}
-  def notify_aborts_and_extract_oks(transactions, aborted_indices, abort_reply_fn) do
-    aborted_set = MapSet.new(aborted_indices)
-
-    {oks, aborts} =
-      transactions
-      |> Enum.with_index()
-      |> Enum.reduce({[], []}, fn {{reply_fn, transaction}, idx}, {oks_acc, aborts_acc} ->
-        if MapSet.member?(aborted_set, idx) do
-          {oks_acc, [reply_fn | aborts_acc]}
-        else
-          {[{reply_fn, transaction} | oks_acc], aborts_acc}
-        end
-      end)
-
-    # Immediately notify aborted clients
-    abort_reply_fn.(aborts)
-
-    # Return successful transactions (reversed to maintain order) and abort count
-    {Enum.reverse(oks), length(aborts)}
-  end
-
-  @doc """
-  Prepare successful transactions for logging by grouping writes by storage team tags.
-
-  This function takes only successful transactions (aborts have already been handled)
-  and groups their writes by storage team tags for efficient log routing.
-
-  Returns a map of tag -> Transaction.t() containing writes grouped by storage team.
-  """
-  @spec prepare_successful_transactions_for_log(
-          successful_transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
-          commit_version :: Bedrock.version(),
-          storage_teams :: [StorageTeamDescriptor.t()]
-        ) ::
-          {:ok, %{Bedrock.range_tag() => Transaction.t()}}
-          | {:error, {:storage_team_coverage_error, binary()}}
-  def prepare_successful_transactions_for_log(
-        successful_transactions,
-        commit_version,
-        storage_teams
-      ) do
-    with {:ok, combined_writes_by_tag} <-
-           successful_transactions
-           |> Enum.reduce_while({:ok, %{}}, fn {_reply_fn, {_reads, writes}}, {:ok, acc} ->
-             case group_writes_by_tag(writes, storage_teams) do
-               {:ok, tag_grouped_writes} ->
-                 {:cont, {:ok, merge_writes_by_tag(acc, tag_grouped_writes)}}
-
-               {:error, _reason} = error ->
-                 {:halt, error}
-             end
-           end) do
-      result =
-        combined_writes_by_tag
-        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
-        |> Map.new()
-
-      {:ok, result}
-    end
-  end
-
-  @doc """
-  Prepare transactions for logging by separating successful transactions
-  from aborted ones and grouping writes by storage team tags.
-
-  This function groups writes by their target storage team tags, enabling
-  efficient routing to logs that cover specific tags. Each storage team
-  gets its own transaction shard containing only the writes for keys
-  in that team's range.
-
-  ## Parameters
-
-    - `transactions`: A list of transactions, each containing the reply
-      function, read/write data, and other necessary details.
-    - `aborts`: A list of integer indices indicating which transactions were
-      aborted.
-    - `commit_version`: The current commit version.
-    - `storage_teams`: List of storage team descriptors for key-to-tag mapping.
-
-  ## Returns
-    - `{:ok, {oks, aborts, transactions_by_tag}}` on success where:
-      - `oks`: List of reply functions for successful transactions
-      - `aborts`: List of reply functions for aborted transactions
-      - `transactions_by_tag`: Map of tag -> Transaction.t() grouped by storage team
-    - `{:error, {:storage_team_coverage_error, key}}` if storage teams don't cover all keys
-
-  @deprecated "Use notify_aborts_and_extract_oks/3 and prepare_successful_transactions_for_log/3 instead"
-  """
-  @spec prepare_transaction_to_log(
-          transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],
-          aborts :: [integer()],
-          commit_version :: Bedrock.version(),
-          storage_teams :: [StorageTeamDescriptor.t()]
-        ) ::
-          {:ok,
-           {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
-            %{Bedrock.range_tag() => Transaction.t()}}}
-          | {:error, {:storage_team_coverage_error, binary()}}
-  def prepare_transaction_to_log(transactions, aborts, commit_version, storage_teams) do
-    with {:ok, {oks, aborted_fns, combined_writes_by_tag}} <-
-           separate_transactions_and_group_writes(transactions, aborts, storage_teams) do
-      transactions_by_tag =
-        convert_writes_to_transactions_by_tag(combined_writes_by_tag, commit_version)
-
-      {:ok, {oks, aborted_fns, transactions_by_tag}}
-    end
-  end
-
-  # Extract common logic for separating transactions and grouping writes
-  @spec separate_transactions_and_group_writes(
-          [{Batch.reply_fn(), Bedrock.transaction()}],
-          [integer()],
-          [StorageTeamDescriptor.t()]
-        ) ::
-          {:ok,
-           {[Batch.reply_fn()], [Batch.reply_fn()],
-            %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
-          | {:error, {:storage_team_coverage_error, binary()}}
-  defp separate_transactions_and_group_writes(transactions, [], storage_teams) do
-    # Fast path: no aborted transactions
-    with {:ok, {oks, writes_by_tag}} <-
-           transactions
-           |> Enum.reduce_while({:ok, {[], %{}}}, fn {from, {_reads, writes}},
-                                                     {:ok, {oks, writes_by_tag}} ->
-             case group_writes_by_tag(writes, storage_teams) do
-               {:ok, tag_grouped_writes} ->
-                 {:cont,
-                  {:ok, {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}}}
-
-               {:error, _reason} = error ->
-                 {:halt, error}
-             end
-           end) do
-      {:ok, {Enum.reverse(oks), [], writes_by_tag}}
-    end
-  end
-
-  defp separate_transactions_and_group_writes(transactions, aborts, storage_teams) do
-    # Slow path: need to filter out aborted transactions
-    aborted_set = MapSet.new(aborts)
-
-    with {:ok, {oks, aborted_fns, writes_by_tag}} <-
-           transactions
-           |> Enum.with_index()
-           |> Enum.reduce_while({:ok, {[], [], %{}}}, fn
-             {{from, {_reads, writes}}, idx}, {:ok, {oks, aborts_acc, writes_by_tag}} ->
-               if MapSet.member?(aborted_set, idx) do
-                 {:cont, {:ok, {oks, [from | aborts_acc], writes_by_tag}}}
-               else
-                 case group_writes_by_tag(writes, storage_teams) do
-                   {:ok, tag_grouped_writes} ->
-                     {:cont,
-                      {:ok,
-                       {[from | oks], aborts_acc,
-                        merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}}}
-
-                   {:error, _reason} = error ->
-                     {:halt, error}
-                 end
-               end
-           end) do
-      {:ok, {Enum.reverse(oks), Enum.reverse(aborted_fns), writes_by_tag}}
-    end
-  end
-
-  # Extract common logic for converting writes to transactions by tag
-  @spec convert_writes_to_transactions_by_tag(
-          %{Bedrock.range_tag() => %{Bedrock.key() => term()}},
-          Bedrock.version()
-        ) :: %{Bedrock.range_tag() => Transaction.t()}
-  defp convert_writes_to_transactions_by_tag(writes_by_tag, commit_version) do
-    writes_by_tag
-    |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
-    |> Map.new()
-  end
 
   @doc """
   Transforms the list of transactions for resolution.

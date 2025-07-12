@@ -45,7 +45,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       # Mock resolver that aborts first transaction
       mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
-        # Abort transaction at index 1 (which corresponds to reply1)
+        # Abort transaction at index 1 (which corresponds to reply1 after transactions_in_order reversal)
         {:ok, [1]}
       end
 

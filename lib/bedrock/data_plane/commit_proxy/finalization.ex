@@ -195,7 +195,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           ref,
           last_version,
           commit_version,
-          Map.get(transaction_summaries_by_start_key, start_key),
+          Map.get(transaction_summaries_by_start_key, start_key, []),
           timeout: timeout
         )
       end)

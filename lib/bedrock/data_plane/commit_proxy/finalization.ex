@@ -63,9 +63,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
              transaction_system_layout,
              batch.last_commit_version,
              compacted_transaction,
-             fn version ->
-               send_reply_with_commit_version(oks, version)
-             end
+             &send_reply_with_commit_version(oks, &1)
            ) do
       {:ok, length(aborts), length(oks)}
     else

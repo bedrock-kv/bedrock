@@ -74,9 +74,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_call(
         {:commit, {nil, writes} = transaction},
-        from,
-        %{transaction_system_layout: nil} = t
-      ) do
+        {from_pid, _from_ref} = from,
+        %{transaction_system_layout: nil, director: director} = t
+      )
+      when from_pid == director do
     with {:ok, transaction_system_layout} <- extract_transaction_system_layout(writes),
          t <- %{t | transaction_system_layout: transaction_system_layout},
          {:ok, batch} <- single_transaction_batch(t, transaction, reply_fn(from)) do

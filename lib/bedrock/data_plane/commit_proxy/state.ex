@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   @type t :: %__MODULE__{
           cluster: module(),
           director: pid(),
-          transaction_system_layout: TransactionSystemLayout.t(),
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
           epoch: Bedrock.epoch(),
           batch: Batch.t() | nil,
           max_latency_in_ms: non_neg_integer(),

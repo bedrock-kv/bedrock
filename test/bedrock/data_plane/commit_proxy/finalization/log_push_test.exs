@@ -16,7 +16,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key">> => <<"value">>})
       }
 
-      all_logs_reached = fn _version -> :ok end
 
       # Mock that tracks timeout usage
       test_pid = self()
@@ -33,7 +32,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         99,
         transactions_by_tag,
         100,
-        all_logs_reached,
         async_stream_fn: mock_async_stream_fn,
         # Custom timeout
         timeout: 2500
@@ -52,7 +50,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key">> => <<"value">>})
       }
 
-      all_logs_reached = fn _version -> :ok end
       test_pid = self()
 
       # Test success case
@@ -71,7 +68,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           99,
           transactions_by_tag,
           100,
-          all_logs_reached,
           log_push_fn: custom_log_push_fn_success
         )
 
@@ -89,7 +85,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           99,
           transactions_by_tag,
           100,
-          all_logs_reached,
           log_push_fn: custom_log_push_fn_failure
         )
 
@@ -114,7 +109,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key1">> => <<"value1">>})
       }
 
-      all_logs_reached = fn _version -> :ok end
 
       # Mock that returns first log failure, others would succeed
       mock_async_stream_fn =
@@ -130,7 +124,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           99,
           transactions_by_tag,
           100,
-          all_logs_reached,
           async_stream_fn: mock_async_stream_fn
         )
 
@@ -138,7 +131,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:error, {:log_failures, [{"log_1", :first_failure}]}} = result
     end
 
-    test "pushes transactions to single log and calls callback" do
+    test "pushes transactions to single log successfully" do
       log_server =
         spawn(fn ->
           receive do
@@ -156,20 +149,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         0 => Transaction.new(100, %{<<"key">> => <<"value">>})
       }
 
-      test_pid = self()
-      all_logs_reached = Support.create_all_logs_reached_callback(test_pid)
-
       result =
         Finalization.push_transaction_to_logs(
           transaction_system_layout,
           99,
           transactions_by_tag,
-          100,
-          all_logs_reached
+          100
         )
 
       assert result == :ok
-      assert_receive {:all_logs_reached, 100}
       Support.ensure_process_killed(log_server)
     end
 
@@ -190,20 +178,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       # Empty transactions_by_tag - all transactions were aborted
       transactions_by_tag = %{}
 
-      test_pid = self()
-      all_logs_reached = Support.create_all_logs_reached_callback(test_pid)
-
       result =
         Finalization.push_transaction_to_logs(
           transaction_system_layout,
           99,
           transactions_by_tag,
-          100,
-          all_logs_reached
+          100
         )
 
       assert result == :ok
-      assert_receive {:all_logs_reached, 100}
       Support.ensure_process_killed(log_server)
     end
 
@@ -215,8 +198,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         1 => Transaction.new(100, %{<<"key2">> => <<"value2">>})
       }
 
-      test_pid = self()
-      all_logs_reached = Support.create_all_logs_reached_callback(test_pid)
 
       # Mock async stream that simulates 2/3 success (but we need ALL now)
       mock_async_stream_fn =
@@ -233,14 +214,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           99,
           transactions_by_tag,
           100,
-          all_logs_reached,
           async_stream_fn: mock_async_stream_fn
         )
 
       # Should fail because we need ALL logs now, not just majority
       assert {:error, {:log_failures, [{"log_3", :unavailable}]}} = result
-      # All logs must succeed
-      refute_receive {:all_logs_reached, 100}
     end
   end
 end

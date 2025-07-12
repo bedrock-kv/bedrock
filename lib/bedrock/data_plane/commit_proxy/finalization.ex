@@ -23,7 +23,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                                 last_commit_version :: Bedrock.version(),
                                 transactions_by_tag :: %{Bedrock.range_tag() => Transaction.t()},
                                 commit_version :: Bedrock.version(),
-                                all_logs_reached :: (Bedrock.version() -> :ok),
                                 opts :: keyword() ->
                                   :ok | {:error, log_push_error()})
 
@@ -54,7 +53,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type log_push_error() ::
           {:log_failures, [{Log.id(), term()}]}
-          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer()}
+          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer(), [{Log.id(), term()}]}
           | :log_push_failed
 
   @type finalization_error() ::
@@ -575,7 +574,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
 
   defp push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, layout, opts) do
-    batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
+    batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/5)
 
     case batch_log_push_fn.(
            layout,
@@ -583,8 +582,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            plan.commit_version - 1,
            plan.transactions_by_tag,
            plan.commit_version,
-           # We'll handle success replies in next stage
-           fn _version -> :ok end,
            opts
          ) do
       :ok ->
@@ -595,121 +592,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @doc """
-  Pushes transaction shards to logs based on tag coverage and waits for
-  acknowledgement from ALL log servers.
-
-  This function takes transaction shards grouped by storage team tags and
-  routes them efficiently to logs. Each log receives only the transaction
-  shards for tags it covers, plus empty transactions for version consistency.
-  All logs must acknowledge to maintain durability guarantees.
-
-  ## Parameters
-
-    - `transaction_system_layout`: Contains configuration information about the
-      transaction system, including available log servers and their tag coverage.
-    - `last_commit_version`: The last known committed version; used to
-      ensure consistency in log ordering.
-    - `transactions_by_tag`: Map of storage team tag to transaction shard.
-      May be empty if all transactions were aborted.
-    - `commit_version`: The version assigned by the sequencer for this batch.
-    - `all_logs_reached`: Callback function to notify when all logs are reached.
-    - `opts`: Optional configuration for testing and customization.
-
-  ## Options
-    - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
-    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
-    - `:timeout` - Timeout for log push operations (default: 5_000ms)
-
-  ## Returns
-    - `:ok` if acknowledgements have been received from ALL log servers.
-    - `{:error, log_push_error()}` if any log has not successfully acknowledged the
-       push within the timeout period or other errors occur.
-  """
-  @spec push_transaction_to_logs(
-          TransactionSystemLayout.t(),
-          last_commit_version :: Bedrock.version(),
-          %{Bedrock.range_tag() => Transaction.t()},
-          commit_version :: Bedrock.version(),
-          all_logs_reached :: (Bedrock.version() -> :ok),
-          opts :: [
-            async_stream_fn: async_stream_fn(),
-            log_push_fn: log_push_single_fn(),
-            timeout: non_neg_integer()
-          ]
-        ) :: :ok | {:error, log_push_error()}
-  def push_transaction_to_logs(
-        transaction_system_layout,
-        last_commit_version,
-        transactions_by_tag,
-        commit_version,
-        all_logs_reached,
-        opts \\ []
-      ) do
-    # Extract configurable functions for testability
-    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
-    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log/3)
-    timeout = Keyword.get(opts, :timeout, 5_000)
-
-    # When transactions_by_tag is empty (all transactions aborted),
-    # we still need to push empty transactions to all logs for version consistency
-    # Use the provided commit_version in this case
-
-    logs_by_id = transaction_system_layout.logs
-    required_acknowledgments = map_size(logs_by_id)
-
-    # Build the transaction each log should receive
-    log_transactions = build_log_transactions(logs_by_id, transactions_by_tag, commit_version)
-    resolved_logs = resolve_log_descriptors(logs_by_id, transaction_system_layout.services)
-
-    # Use configurable async stream function
-    stream_result =
-      async_stream_fn.(
-        resolved_logs,
-        fn {log_id, service_descriptor} ->
-          transaction_for_log = Map.get(log_transactions, log_id)
-          encoded_transaction = EncodedTransaction.encode(transaction_for_log)
-
-          result = log_push_fn.(service_descriptor, encoded_transaction, last_commit_version)
-          {log_id, result}
-        end,
-        timeout: timeout
-      )
-
-    stream_result
-    |> Enum.reduce_while({0, []}, fn
-      {:ok, {log_id, {:error, reason}}}, {_count, errors} ->
-        # Abort immediately on any log failure
-        {:halt, {:error, [{log_id, reason} | errors]}}
-
-      {:ok, {_log_id, :ok}}, {count, errors} ->
-        count = 1 + count
-
-        if count == required_acknowledgments do
-          :ok = all_logs_reached.(commit_version)
-          {:halt, {:ok, count}}
-        else
-          {:cont, {count, errors}}
-        end
-
-      {:exit, {log_id, reason}}, {_count, errors} ->
-        # Handle timeouts or crashes as failures
-        {:halt, {:error, [{log_id, reason} | errors]}}
-    end)
-    |> case do
-      {:ok, ^required_acknowledgments} ->
-        :ok
-
-      {:error, errors} ->
-        {:error, {:log_failures, errors}}
-
-      {count, _errors} when count < required_acknowledgments ->
-        {:error, {:insufficient_acknowledgments, count, required_acknowledgments}}
-
-      _other ->
-        {:error, :log_push_failed}
-    end
-  end
 
   @doc """
   Builds the transaction that each log should receive based on tag coverage.
@@ -779,6 +661,114 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
+
+  @doc """
+  Pushes transaction shards to logs based on tag coverage and waits for
+  acknowledgement from ALL log servers.
+
+  This function takes transaction shards grouped by storage team tags and
+  routes them efficiently to logs. Each log receives only the transaction
+  shards for tags it covers, plus empty transactions for version consistency.
+  All logs must acknowledge to maintain durability guarantees.
+
+  ## Parameters
+
+    - `transaction_system_layout`: Contains configuration information about the
+      transaction system, including available log servers and their tag coverage.
+    - `last_commit_version`: The last known committed version; used to
+      ensure consistency in log ordering.
+    - `transactions_by_tag`: Map of storage team tag to transaction shard.
+      May be empty if all transactions were aborted.
+    - `commit_version`: The version assigned by the sequencer for this batch.
+    - `opts`: Optional configuration for testing and customization.
+
+  ## Options
+    - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
+    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
+    - `:timeout` - Timeout for log push operations (default: 5_000ms)
+
+  ## Returns
+    - `:ok` if acknowledgements have been received from ALL log servers.
+    - `{:error, log_push_error()}` if any log has not successfully acknowledged the
+       push within the timeout period or other errors occur.
+  """
+  @spec push_transaction_to_logs(
+          TransactionSystemLayout.t(),
+          last_commit_version :: Bedrock.version(),
+          %{Bedrock.range_tag() => Transaction.t()},
+          commit_version :: Bedrock.version(),
+          opts :: [
+            async_stream_fn: async_stream_fn(),
+            log_push_fn: log_push_single_fn(),
+            timeout: non_neg_integer()
+          ]
+        ) :: :ok | {:error, log_push_error()}
+  def push_transaction_to_logs(
+        transaction_system_layout,
+        last_commit_version,
+        transactions_by_tag,
+        commit_version,
+        opts \\ []
+      ) do
+    # Extract configurable functions for testability
+    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
+    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log/3)
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    logs_by_id = transaction_system_layout.logs
+    required_acknowledgments = map_size(logs_by_id)
+
+    # Build the transaction each log should receive
+    log_transactions = build_log_transactions(logs_by_id, transactions_by_tag, commit_version)
+    resolved_logs = resolve_log_descriptors(logs_by_id, transaction_system_layout.services)
+
+    # Use configurable async stream function
+    stream_result =
+      async_stream_fn.(
+        resolved_logs,
+        fn {log_id, service_descriptor} ->
+          transaction_for_log = Map.get(log_transactions, log_id)
+          encoded_transaction = EncodedTransaction.encode(transaction_for_log)
+
+          result = log_push_fn.(service_descriptor, encoded_transaction, last_commit_version)
+          {log_id, result}
+        end,
+        timeout: timeout
+      )
+
+    stream_result
+    |> Enum.reduce_while({0, []}, fn
+      {:ok, {log_id, {:error, reason}}}, {_count, errors} ->
+        # Abort immediately on any log failure
+        {:halt, {:error, [{log_id, reason} | errors]}}
+
+      {:ok, {_log_id, :ok}}, {count, errors} ->
+        count = 1 + count
+
+        if count == required_acknowledgments do
+          {:halt, {:ok, count}}
+        else
+          {:cont, {count, errors}}
+        end
+
+      {:exit, {log_id, reason}}, {_count, errors} ->
+        # Handle timeouts or crashes as failures
+        {:halt, {:error, [{log_id, reason} | errors]}}
+    end)
+    |> case do
+      {:ok, ^required_acknowledgments} ->
+        :ok
+
+      {:error, errors} ->
+        {:error, {:log_failures, errors}}
+
+      {count, errors} when count < required_acknowledgments ->
+        {:error, {:insufficient_acknowledgments, count, required_acknowledgments, errors}}
+
+      _other ->
+        {:error, :log_push_failed}
+    end
+  end
 
   # ============================================================================
   # STEP 7: NOTIFY SUCCESSES

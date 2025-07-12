@@ -54,9 +54,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _last_version,
                             _tx_by_tag,
                             _commit_version,
-                            all_logs_fn,
                             _opts ->
-        all_logs_fn.(100)
         :ok
       end
 
@@ -95,9 +93,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _last_version,
                             _tx_by_tag,
                             _commit_version,
-                            all_logs_fn,
                             _opts ->
-        all_logs_fn.(100)
         :ok
       end
 
@@ -139,9 +135,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _last_version,
                             _tx_by_tag,
                             _commit_version,
-                            all_logs_fn,
                             _opts ->
-        all_logs_fn.(100)
         :ok
       end
 
@@ -176,7 +170,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _last_version,
                             _tx_by_tag,
                             _commit_version,
-                            _all_logs_fn,
                             _opts ->
         {:error, {:log_failures, [{"log_1", :timeout}]}}
       end

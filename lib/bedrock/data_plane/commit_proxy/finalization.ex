@@ -274,7 +274,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
   def default_timeout_fn(attempts_used), do: (500 * :math.pow(2, attempts_used)) |> round()
 
-  # Default exit function: exit with resolver unavailable
+  # Default timeout function for resolver retries with exponential backoff
 
   defp filter_fn(start_key, :end), do: &(&1 >= start_key)
   defp filter_fn(start_key, end_key), do: &(&1 >= start_key and &1 < end_key)
@@ -302,6 +302,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   ## Returns
     - `{:ok, tag}` if a matching storage team is found
     - `{:error, :no_matching_team}` if no team covers the key
+
+  ## Examples
+      iex> teams = [%{tag: :team1, key_range: {"a", "m"}}, %{tag: :team2, key_range: {"m", :end}}]
+      iex> key_to_tag("hello", teams)
+      {:ok, :team1}
   """
   @spec key_to_tag(Bedrock.key(), [StorageTeamDescriptor.t()]) ::
           {:ok, Bedrock.range_tag()} | {:error, :no_matching_team}
@@ -396,6 +401,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
     - Map of log_id -> transaction that log should receive
+
+  ## Examples
+      iex> logs_by_id = %{log1: [:tag1, :tag2], log2: [:tag3]}
+      iex> transactions_by_tag = %{tag1: transaction1, tag3: transaction3}
+      iex> build_log_transactions(logs_by_id, transactions_by_tag, 42)
+      %{log1: combined_transaction, log2: transaction_for_tag3}
   """
   @spec build_log_transactions(
           %{Log.id() => [Bedrock.range_tag()]},
@@ -443,8 +454,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
     - `:ok` if acknowledgements have been received from ALL log servers.
-    - `:error` if any log has not successfully acknowledged the
-       push within the timeout period.
+    - `{:error, term()}` if any log has not successfully acknowledged the
+       push within the timeout period or other errors occur.
   """
   @spec push_transaction_to_logs(
           TransactionSystemLayout.t(),
@@ -476,6 +487,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   This version accepts an opts parameter that allows injecting custom behavior
   for testing scenarios, including custom async stream implementations and
   log push functions. Waits for ALL logs to succeed, aborting on any failure.
+
+  ## Options
+    - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
+    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
+    - `:timeout` - Timeout for log push operations (default: 5_000ms)
   """
   @spec push_transaction_to_logs_with_opts(
           TransactionSystemLayout.t(),
@@ -508,7 +524,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     logs_by_id = transaction_system_layout.logs
     n = map_size(logs_by_id)
-    # Wait for ALL logs instead of majority
+    # Require ALL logs to acknowledge for durability guarantees
     required_acknowledgments = n
 
     # Build the transaction each log should receive
@@ -563,7 +579,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{Log.id() => LogDescriptor.t()},
           %{Worker.id() => ServiceDescriptor.t()}
         ) ::
-          %{Worker.id() => ServiceDescriptor.t()}
+          %{Log.id() => ServiceDescriptor.t()}
   def resolve_log_descriptors(log_descriptors, services) do
     log_descriptors
     |> Map.keys()
@@ -687,11 +703,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   gets its own transaction shard containing only the writes for keys
   in that team's range.
 
-  Returns a tuple with:
-    - A list of reply functions for successful transactions.
-    - A list of reply functions for aborted transactions.
-    - A map of tag -> Transaction.t() containing writes grouped by storage team.
-
   ## Parameters
 
     - `transactions`: A list of transactions, each containing the reply
@@ -702,7 +713,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `storage_teams`: List of storage team descriptors for key-to-tag mapping.
 
   ## Returns
-    - A tuple: `{oks, aborts, transactions_by_tag}`
+    - `{:ok, {oks, aborts, transactions_by_tag}}` on success where:
+      - `oks`: List of reply functions for successful transactions
+      - `aborts`: List of reply functions for aborted transactions  
+      - `transactions_by_tag`: Map of tag -> Transaction.t() grouped by storage team
+    - `{:error, {:storage_team_coverage_error, key}}` if storage teams don't cover all keys
+
+  @deprecated "Use notify_aborts_and_extract_oks/3 and prepare_successful_transactions_for_log/3 instead"
   """
   @spec prepare_transaction_to_log(
           transactions :: [{Batch.reply_fn(), Bedrock.transaction()}],

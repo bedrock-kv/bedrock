@@ -17,8 +17,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                           transaction_summaries :: [Resolver.transaction()],
                           resolver_opts :: keyword() ->
                             {:ok, aborted :: [index :: integer()]}
-                            | {:error, :timeout}
-                            | {:error, :unavailable})
+                            | {:error, resolution_error()})
 
   @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
                                 last_commit_version :: Bedrock.version(),
@@ -26,7 +25,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                                 commit_version :: Bedrock.version(),
                                 all_logs_reached :: (Bedrock.version() -> :ok),
                                 opts :: keyword() ->
-                                  :ok | {:error, term()})
+                                  :ok | {:error, log_push_error()})
 
   @type log_push_single_fn() :: (ServiceDescriptor.t(),
                                  EncodedTransaction.t(),
@@ -43,6 +42,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @type success_reply_fn() :: ([Batch.reply_fn()], Bedrock.version() -> :ok)
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
+
+  # Specific error types for better type safety
+  @type resolution_error() ::
+          :timeout
+          | :unavailable
+          | {:resolver_unavailable, term()}
+
+  @type storage_coverage_error() ::
+          {:storage_team_coverage_error, binary()}
+
+  @type log_push_error() ::
+          {:log_failures, [{Log.id(), term()}]}
+          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer()}
+          | :log_push_failed
+
+  @type finalization_error() ::
+          resolution_error()
+          | storage_coverage_error()
+          | log_push_error()
 
   defmodule FinalizationPlan do
     @moduledoc """
@@ -127,7 +145,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) ::
-          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()}
+          | {:error, finalization_error()}
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
     batch
     |> create_finalization_plan(transaction_system_layout)
@@ -225,9 +244,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           ]
         ) ::
           {:ok, aborted :: [index :: integer()]}
-          | {:error, :timeout}
-          | {:error, :unavailable}
-          | {:error, {:resolver_unavailable, term()}}
+          | {:error, resolution_error()}
   def resolve_transactions(
         resolvers,
         last_version,
@@ -341,6 +358,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec split_and_notify_aborts(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
   defp split_and_notify_aborts(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
+
   defp split_and_notify_aborts(%FinalizationPlan{stage: :conflicts_resolved} = plan, opts) do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
@@ -405,6 +423,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec prepare_for_logging(FinalizationPlan.t()) :: FinalizationPlan.t()
   defp prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
+
   defp prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
     case group_successful_transactions_by_tag(plan) do
       {:ok, transactions_by_tag} ->
@@ -468,7 +487,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   """
   @spec group_writes_by_tag(%{Bedrock.key() => term()}, [StorageTeamDescriptor.t()]) ::
           {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}
-          | {:error, {:storage_team_coverage_error, binary()}}
+          | {:error, storage_coverage_error()}
   def group_writes_by_tag(writes, storage_teams) do
     result =
       writes
@@ -554,6 +573,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec push_to_logs(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
           FinalizationPlan.t()
   defp push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
+
   defp push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, layout, opts) do
     batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs/6)
 
@@ -603,7 +623,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
     - `:ok` if acknowledgements have been received from ALL log servers.
-    - `{:error, term()}` if any log has not successfully acknowledged the
+    - `{:error, log_push_error()}` if any log has not successfully acknowledged the
        push within the timeout period or other errors occur.
   """
   @spec push_transaction_to_logs(
@@ -617,7 +637,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             log_push_fn: log_push_single_fn(),
             timeout: non_neg_integer()
           ]
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:error, log_push_error()}
   def push_transaction_to_logs(
         transaction_system_layout,
         last_commit_version,
@@ -766,6 +786,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec notify_successes(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
   defp notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
+
   defp notify_successes(%FinalizationPlan{stage: :logged} = plan, opts) do
     success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
 
@@ -817,7 +838,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # ============================================================================
 
   @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
-          {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, finalization_error()}
   defp extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _opts) do
     n_aborts = length(plan.aborted_replies)
     n_successes = length(plan.successful_replies)
@@ -829,8 +850,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # Error recovery: safely abort all unreplied transactions
-  @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, term()}
-  defp handle_error(%FinalizationPlan{} = plan, opts) do
+  @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, finalization_error()}
+  defp handle_error(%FinalizationPlan{error: error} = plan, opts) when not is_nil(error) do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
@@ -848,6 +869,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # Safely abort only unreplied transactions
     abort_reply_fn.(unreplied_replies)
 
-    {:error, plan.error || :unknown_error}
+    {:error, plan.error}
   end
 end

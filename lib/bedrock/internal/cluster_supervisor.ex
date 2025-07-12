@@ -9,6 +9,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
+  alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
   alias Bedrock.Internal.Tracing.RaftTelemetry
 
   require Logger
@@ -91,6 +92,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       :coordinator -> :ok = CoordinatorTracing.start()
       :commit_proxy -> :ok = CommitProxyTracing.start()
       :log -> :ok = LogTracing.start()
+      :storage -> :ok = StorageTracing.start()
       :gateway -> :ok = GatewayTracing.start()
       :raft -> :ok = RaftTelemetry.start()
       :recovery -> :ok = RecoveryTracing.start()

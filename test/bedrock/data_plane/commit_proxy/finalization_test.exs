@@ -86,7 +86,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch, 
         transaction_system_layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
 
       # Should get 1 abort, 1 success
@@ -121,7 +121,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch, 
         transaction_system_layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
       
       assert {:ok, 0, 0} = result
@@ -156,7 +156,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch, 
         transaction_system_layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
       
       assert {:ok, 2, 0} = result
@@ -191,15 +191,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
       end
 
       # Test that function goes through all retry attempts
+      opts_with_functions = opts
+        |> Keyword.put(:timeout_fn, timeout_fn)
+        |> Keyword.put(:exit_fn, exit_fn)
+
       assert catch_throw(
-               Finalization.resolve_transactions_with_functions(
+               Finalization.resolve_transactions(
                  resolvers,
                  last_version,
                  commit_version,
                  transaction_summaries,
-                 opts,
-                 timeout_fn,
-                 exit_fn
+                 opts_with_functions
                )
              ) == {:test_exit, :unavailable}
 
@@ -249,21 +251,23 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
       timeout_fn = fn _attempt -> 100 end
       exit_fn = fn reason -> throw({:test_exit, reason}) end
 
+      opts_with_functions = opts
+        |> Keyword.put(:timeout_fn, timeout_fn)
+        |> Keyword.put(:exit_fn, exit_fn)
+
       catch_throw(
-        Finalization.resolve_transactions_with_functions(
+        Finalization.resolve_transactions(
           resolvers,
           last_version,
           commit_version,
           transaction_summaries,
-          opts,
-          timeout_fn,
-          exit_fn
+          opts_with_functions
         )
       )
 
       # Should receive telemetry for retry attempts and final failure
-      assert_receive {:telemetry, :retry, %{attempt: 1}, %{reason: :unavailable}}
-      assert_receive {:telemetry, :retry, %{attempt: 2}, %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1}, %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2}, %{reason: :unavailable}}
       assert_receive {:telemetry, :max_retries, %{total_attempts: 3}, %{reason: :unavailable}}
 
       :telemetry.detach("test-retry-telemetry")
@@ -1058,7 +1062,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch,
         layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
 
       # Should get 1 abort, 1 success
@@ -1091,7 +1095,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch,
         layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
 
       # Should get error and abort all transactions
@@ -1132,8 +1136,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch,
         layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn,
-        log_push_opts: [async_stream_fn: mock_async_stream_fn]
+        batch_log_push_fn: mock_log_push_fn,
+        async_stream_fn: mock_async_stream_fn
       )
 
       assert {:ok, 0, 1} = result
@@ -1182,7 +1186,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         batch,
         layout,
         resolver_fn: mock_resolver_fn,
-        log_push_fn: mock_log_push_fn,
+        batch_log_push_fn: mock_log_push_fn,
         abort_reply_fn: custom_abort_reply_fn,
         success_reply_fn: custom_success_reply_fn
       )
@@ -1525,7 +1529,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationTest do
         layout,
         resolver_fn: mock_resolver_fn,
         abort_reply_fn: custom_abort_reply_fn,
-        log_push_fn: mock_log_push_fn
+        batch_log_push_fn: mock_log_push_fn
       )
 
       # Verify the flow order

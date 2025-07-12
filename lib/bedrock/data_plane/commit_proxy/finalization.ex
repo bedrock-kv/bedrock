@@ -13,6 +13,42 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
 
+  # Type declarations for function parameters
+  @type resolver_fn() :: (resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
+                          last_version :: Bedrock.version(),
+                          commit_version :: Bedrock.version(),
+                          transaction_summaries :: [Resolver.transaction()],
+                          resolver_opts :: keyword() ->
+                            {:ok, aborted :: [index :: integer()]}
+                            | {:error, :timeout}
+                            | {:error, :unavailable})
+
+  @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
+                                last_commit_version :: Bedrock.version(),
+                                transactions_by_tag :: %{Bedrock.range_tag() => Transaction.t()},
+                                commit_version :: Bedrock.version(),
+                                majority_reached :: (Bedrock.version() -> :ok),
+                                opts :: keyword() ->
+                                  :ok)
+
+  @type log_push_single_fn() :: (ServiceDescriptor.t(),
+                                 EncodedTransaction.t(),
+                                 Bedrock.version() ->
+                                   :ok | {:error, :unavailable})
+
+  @type async_stream_fn() :: (enumerable :: Enumerable.t(),
+                              fun :: (term() -> term()),
+                              opts :: keyword() ->
+                                Enumerable.t())
+
+  @type abort_reply_fn() :: ([Batch.reply_fn()] -> :ok)
+
+  @type success_reply_fn() :: ([Batch.reply_fn()], Bedrock.version() -> :ok)
+
+  @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
+
+  @type exit_fn() :: (term() -> no_return())
+
   @doc """
   Finalizes a batch of transactions by resolving conflicts, separating
   successful transactions from aborts, and pushing them to the log servers.
@@ -37,20 +73,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `:ok` when the batch has been processed, and all clients have been
       notified about the status of their transactions.
   """
-  @spec finalize_batch(Batch.t(), TransactionSystemLayout.t(), keyword()) ::
+  @spec finalize_batch(
+          Batch.t(),
+          TransactionSystemLayout.t(),
+          opts :: [
+            resolver_fn: resolver_fn(),
+            batch_log_push_fn: log_push_batch_fn(),
+            abort_reply_fn: abort_reply_fn(),
+            success_reply_fn: success_reply_fn(),
+            async_stream_fn: async_stream_fn(),
+            log_push_fn: log_push_single_fn(),
+            timeout: non_neg_integer()
+          ]
+        ) ::
           {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()} | {:error, term()}
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
-    # Extract configurable functions for testability
     resolver_fn = Keyword.get(opts, :resolver_fn, &resolve_transactions/5)
-    log_push_fn = Keyword.get(opts, :log_push_fn, &push_transaction_to_logs_with_opts/6)
+
+    batch_log_push_fn =
+      Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_with_opts/6)
 
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
     success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
-
-    # Extract options that should be passed to sub-functions
-    log_push_opts = Keyword.get(opts, :log_push_opts, [])
 
     transactions_in_order = transactions_in_order(batch)
     commit_version = batch.commit_version
@@ -80,13 +126,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          # Extract reply functions for success notification
          ok_reply_fns <- Enum.map(oks, fn {reply_fn, _transaction} -> reply_fn end),
          :ok <-
-           log_push_fn.(
+           batch_log_push_fn.(
              transaction_system_layout,
              batch.last_commit_version,
              transactions_by_tag,
              commit_version,
              fn version -> success_reply_fn.(ok_reply_fns, version) end,
-             log_push_opts
+             opts
            ) do
       {:ok, n_aborts, length(oks)}
     else
@@ -113,9 +159,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           [Resolver.transaction()],
           opts :: [
             timeout: :infinity | non_neg_integer(),
-            timeout_fn: (non_neg_integer() -> non_neg_integer()),
-            exit_fn: (term() -> no_return()),
-            attempt: non_neg_integer()
+            timeout_fn: timeout_fn(),
+            exit_fn: exit_fn(),
+            attempts_remaining: non_neg_integer()
           ]
         ) ::
           {:ok, aborted :: [index :: integer()]}
@@ -126,89 +172,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         last_version,
         commit_version,
         transaction_summaries,
-        opts \\ []
+        opts
       ) do
-    # Set default functions and attempt number in opts
-    opts_with_defaults = opts
-      |> Keyword.put_new(:timeout_fn, &default_timeout_fn/1)
-      |> Keyword.put_new(:exit_fn, &default_exit_fn/1)  
-      |> Keyword.put_new(:attempt, 0)
-
-    resolve_transactions_with_retry(
-      resolvers,
-      last_version,
-      commit_version,
-      transaction_summaries,
-      opts_with_defaults
-    )
-  end
-
-  @doc """
-  Test-friendly version of resolve_transactions that accepts custom timeout and exit functions.
-  This allows tests to inject mock functions for controllable behavior.
-  
-  Note: This function is kept for backward compatibility. New code should use
-  resolve_transactions/5 with :timeout_fn and :exit_fn in opts.
-  """
-  @spec resolve_transactions_with_functions(
-          resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
-          last_version :: Bedrock.version(),
-          commit_version :: Bedrock.version(),
-          [Resolver.transaction()],
-          opts :: [timeout: :infinity | non_neg_integer()],
-          timeout_fn :: (non_neg_integer() -> non_neg_integer()),
-          exit_fn :: (term() -> no_return())
-        ) ::
-          {:ok, aborted :: [index :: integer()]}
-          | {:error, :timeout}
-          | {:error, :unavailable}
-  def resolve_transactions_with_functions(
-        resolvers,
-        last_version,
-        commit_version,
-        transaction_summaries,
-        opts \\ [],
-        timeout_fn,
-        exit_fn
-      ) do
-    # Convert to new opts-based approach
-    opts_with_functions = opts
-      |> Keyword.put(:timeout_fn, timeout_fn)
-      |> Keyword.put(:exit_fn, exit_fn)
-      |> Keyword.put_new(:attempt, 0)
-
-    resolve_transactions_with_retry(
-      resolvers,
-      last_version,
-      commit_version,
-      transaction_summaries,
-      opts_with_functions
-    )
-  end
-
-  @spec resolve_transactions_with_retry(
-          resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
-          last_version :: Bedrock.version(),
-          commit_version :: Bedrock.version(),
-          [Resolver.transaction()],
-          opts :: keyword()
-        ) ::
-          {:ok, aborted :: [index :: integer()]}
-          | {:error, :timeout}
-          | {:error, :unavailable}
-  defp resolve_transactions_with_retry(
-         resolvers,
-         last_version,
-         commit_version,
-         transaction_summaries,
-         opts
-       ) do
-    # Extract functions and attempt number from opts
+    # Set defaults for all options in one place
     timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
     exit_fn = Keyword.get(opts, :exit_fn, &default_exit_fn/1)
-    attempt = Keyword.get(opts, :attempt, 0)
-    # Calculate timeout for this attempt using injected function
-    timeout = Keyword.get(opts, :timeout, timeout_fn.(attempt))
+    attempts_remaining = Keyword.get(opts, :attempts_remaining, 2)
+    # Calculate timeout for this attempt using injected function (pass attempts used)
+    attempts_used = 2 - attempts_remaining
+    timeout = Keyword.get(opts, :timeout, timeout_fn.(attempts_used))
 
     ranges =
       resolvers
@@ -253,17 +225,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:ok, _} = success ->
         success
 
-      {:error, reason} when attempt < 2 ->
-        # Emit telemetry for retry attempt
+      {:error, reason} when attempts_remaining > 0 ->
+        # Emit telemetry for retry attempt (after this failure, before next retry)
         :telemetry.execute(
           [:bedrock, :commit_proxy, :resolver, :retry],
-          %{attempt: attempt + 1},
+          %{attempts_remaining: attempts_remaining - 1, attempts_used: attempts_used + 1},
           %{reason: reason}
         )
 
-        # Retry up to 2 times (3 total attempts)
-        updated_opts = Keyword.put(opts, :attempt, attempt + 1)
-        resolve_transactions_with_retry(
+        # Retry with decremented attempts
+        updated_opts = Keyword.put(opts, :attempts_remaining, attempts_remaining - 1)
+
+        resolve_transactions(
           resolvers,
           last_version,
           commit_version,
@@ -275,7 +248,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         # Emit telemetry for final failure
         :telemetry.execute(
           [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded],
-          %{total_attempts: attempt + 1},
+          %{total_attempts: attempts_used + 1},
           %{reason: reason}
         )
 
@@ -284,9 +257,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  # Default timeout function: 500ms * 2^attempt (exponential backoff)
+  # Default timeout function: 500ms * 2^attempts_used (exponential backoff)
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
-  def default_timeout_fn(attempt), do: (500 * :math.pow(2, attempt)) |> round()
+  def default_timeout_fn(attempts_used), do: (500 * :math.pow(2, attempts_used)) |> round()
 
   # Default exit function: exit with resolver unavailable
   @spec default_exit_fn(term()) :: no_return()
@@ -498,7 +471,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           %{Bedrock.range_tag() => Transaction.t()},
           commit_version :: Bedrock.version(),
           majority_reached :: (Bedrock.version() -> :ok),
-          keyword()
+          opts :: [
+            async_stream_fn: async_stream_fn(),
+            log_push_fn: log_push_single_fn(),
+            timeout: non_neg_integer()
+          ]
         ) :: :ok
   def push_transaction_to_logs_with_opts(
         transaction_system_layout,
@@ -706,48 +683,65 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {oks :: [Batch.reply_fn()], aborts :: [Batch.reply_fn()],
            %{Bedrock.range_tag() => Transaction.t()}}
           | no_return()
-  # If there are no aborted transactions, we can make take some shortcuts.
-  def prepare_transaction_to_log(transactions, [], commit_version, storage_teams) do
-    transactions
-    |> Enum.reduce({[], %{}}, fn {from, {_reads, writes}}, {oks, writes_by_tag} ->
-      tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+  def prepare_transaction_to_log(transactions, aborts, commit_version, storage_teams) do
+    {oks, aborted_fns, combined_writes_by_tag} =
+      separate_transactions_and_group_writes(transactions, aborts, storage_teams)
 
-      {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
-    end)
-    |> then(fn {oks, combined_writes_by_tag} ->
-      transactions_by_tag =
-        combined_writes_by_tag
-        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
-        |> Map.new()
+    transactions_by_tag =
+      convert_writes_to_transactions_by_tag(combined_writes_by_tag, commit_version)
 
-      {oks, [], transactions_by_tag}
-    end)
+    {oks, aborted_fns, transactions_by_tag}
   end
 
-  # If there are aborted transactions, we need to pluck them out so that they
-  # can be informed of the failure.
-  def prepare_transaction_to_log(transactions, aborts, commit_version, storage_teams) do
+  # Extract common logic for separating transactions and grouping writes
+  @spec separate_transactions_and_group_writes(
+          [{Batch.reply_fn(), Bedrock.transaction()}],
+          [integer()],
+          [StorageTeamDescriptor.t()]
+        ) ::
+          {[Batch.reply_fn()], [Batch.reply_fn()],
+           %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}
+  defp separate_transactions_and_group_writes(transactions, [], storage_teams) do
+    # Fast path: no aborted transactions
+    {oks, writes_by_tag} =
+      transactions
+      |> Enum.reduce({[], %{}}, fn {from, {_reads, writes}}, {oks, writes_by_tag} ->
+        tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+        {[from | oks], merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
+      end)
+
+    {Enum.reverse(oks), [], writes_by_tag}
+  end
+
+  defp separate_transactions_and_group_writes(transactions, aborts, storage_teams) do
+    # Slow path: need to filter out aborted transactions
     aborted_set = MapSet.new(aborts)
 
-    transactions
-    |> Enum.with_index()
-    |> Enum.reduce({[], [], %{}}, fn
-      {{from, {_reads, writes}}, idx}, {oks, aborts, writes_by_tag} ->
-        if MapSet.member?(aborted_set, idx) do
-          {oks, [from | aborts], writes_by_tag}
-        else
-          tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
-          {[from | oks], aborts, merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
-        end
-    end)
-    |> then(fn {oks, aborts, combined_writes_by_tag} ->
-      transactions_by_tag =
-        combined_writes_by_tag
-        |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
-        |> Map.new()
+    {oks, aborted_fns, writes_by_tag} =
+      transactions
+      |> Enum.with_index()
+      |> Enum.reduce({[], [], %{}}, fn
+        {{from, {_reads, writes}}, idx}, {oks, aborts_acc, writes_by_tag} ->
+          if MapSet.member?(aborted_set, idx) do
+            {oks, [from | aborts_acc], writes_by_tag}
+          else
+            tag_grouped_writes = group_writes_by_tag(writes, storage_teams)
+            {[from | oks], aborts_acc, merge_writes_by_tag(writes_by_tag, tag_grouped_writes)}
+          end
+      end)
 
-      {oks, aborts, transactions_by_tag}
-    end)
+    {Enum.reverse(oks), Enum.reverse(aborted_fns), writes_by_tag}
+  end
+
+  # Extract common logic for converting writes to transactions by tag
+  @spec convert_writes_to_transactions_by_tag(
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}},
+          Bedrock.version()
+        ) :: %{Bedrock.range_tag() => Transaction.t()}
+  defp convert_writes_to_transactions_by_tag(writes_by_tag, commit_version) do
+    writes_by_tag
+    |> Enum.map(fn {tag, writes} -> {tag, Transaction.new(commit_version, writes)} end)
+    |> Map.new()
   end
 
   @doc """

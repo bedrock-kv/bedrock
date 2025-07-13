@@ -130,9 +130,17 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   @spec decode!(t()) :: Transaction.t()
   def decode!(encoded_transaction) do
     case decode(encoded_transaction) do
-      {:ok, transaction} -> transaction
-      {:error, :crc32_mismatch} -> raise("CRC32 mismatch")
+      {:ok, transaction} ->
+        transaction
+
+      {:error, :crc32_mismatch} ->
+        raise("Transaction decode failed: CRC32 checksum mismatch indicates corruption")
     end
+  rescue
+    FunctionClauseError ->
+      raise(
+        "Transaction decode failed: invalid binary format, expected encoded transaction structure"
+      )
   end
 
   defp decode_key_value_frames(<<>>), do: %{}

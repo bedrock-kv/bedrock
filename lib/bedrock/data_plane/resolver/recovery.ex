@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Log.EncodedTransaction
 
   @spec recover_from(
           State.t(),
@@ -66,17 +67,34 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
     end
   end
 
+  @doc """
+  Applies a batch of encoded transactions to the tree. All transactions are expected
+  to be in binary encoded format as returned by Log.pull.
+
+  Returns a tuple of {updated_tree, last_version} where last_version is the
+  version of the last transaction applied, or nil if no transactions were applied.
+  """
+  @spec apply_batch_of_transactions(Tree.t() | nil, [EncodedTransaction.t()]) ::
+          {Tree.t(), Bedrock.version() | nil}
   def apply_batch_of_transactions(tree, transactions) do
     transactions
     |> Enum.reduce(
       {tree, nil},
-      fn transaction, {tree, _last_version} ->
-        apply_transaction(tree, transaction)
+      fn encoded_transaction, {tree, _last_version} ->
+        decoded_transaction = EncodedTransaction.decode!(encoded_transaction)
+        apply_transaction(tree, decoded_transaction)
       end
     )
   end
 
-  @spec apply_transaction(Tree.t(), Transaction.t()) :: {Tree.t(), Bedrock.version()}
+  @doc """
+  Applies a decoded transaction to the tree. The transaction must be in the
+  format {version, writes} where writes is a map of key-value pairs.
+
+  Note: This function expects decoded transactions only. For encoded binary
+  transactions, use apply_batch_of_transactions/2 which handles decoding.
+  """
+  @spec apply_transaction(Tree.t() | nil, Transaction.t()) :: {Tree.t(), Bedrock.version()}
   def apply_transaction(tree, {write_version, writes}) do
     {writes |> Enum.reduce(tree, &Tree.insert(&2, &1, write_version)), write_version}
   end

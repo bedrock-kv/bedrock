@@ -82,7 +82,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
         ) ::
           {:ok, [StorageTeamDescriptor.t()], [Storage.id()]}
           | {:error, term()}
-  def fill_storage_team_vacancies(storage_teams, assigned_storage_ids, all_storage_ids, available_nodes) do
+  def fill_storage_team_vacancies(
+        storage_teams,
+        assigned_storage_ids,
+        all_storage_ids,
+        available_nodes
+      ) do
     vacancies = assigned_storage_ids |> MapSet.filter(&vacancy?/1)
     n_vacancies = MapSet.size(vacancies)
 
@@ -141,7 +146,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   @spec create_new_storage_workers([String.t()], [node()], map(), RecoveryPhase.context()) ::
           {:ok, %{String.t() => map()}} | {:error, term()}
-  defp create_new_storage_workers([], _available_nodes, _recovery_attempt, _context), do: {:ok, %{}}
+  defp create_new_storage_workers([], _available_nodes, _recovery_attempt, _context),
+    do: {:ok, %{}}
 
   defp create_new_storage_workers(new_worker_ids, available_nodes, recovery_attempt, _context) do
     new_worker_ids
@@ -166,7 +172,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   defp create_worker_on_node({worker_id, node}, recovery_attempt) do
     foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-    with {:ok, worker_ref} <- Foreman.new_worker(foreman_ref, worker_id, :storage, timeout: 10_000),
+    with {:ok, worker_ref} <-
+           Foreman.new_worker(foreman_ref, worker_id, :storage, timeout: 10_000),
          {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
       {worker_id,
        %{

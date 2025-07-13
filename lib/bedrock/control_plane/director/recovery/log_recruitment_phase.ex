@@ -98,7 +98,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         # Create new worker IDs
         new_worker_ids =
           1..needed_workers
-          |> Enum.map(&"log_#{System.unique_integer([:positive])}_#{&1}")
+          |> Enum.map(fn _ -> Worker.random_id() end)
 
         # Use existing candidates plus new worker IDs
         all_worker_ids = Enum.concat(candidates_ids, new_worker_ids)

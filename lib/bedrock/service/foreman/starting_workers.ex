@@ -135,7 +135,4 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       {:error, reason} -> worker_info |> put_health({:failed_to_start, reason})
     end
   end
-
-  @spec random_worker_id() :: binary()
-  def random_worker_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
 end

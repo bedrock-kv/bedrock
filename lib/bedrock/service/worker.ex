@@ -14,6 +14,9 @@ defmodule Bedrock.Service.Worker do
   @type health :: {:ok, pid()} | :stopped | {:error, term()}
   @type otp_name :: atom()
 
+  @spec random_id() :: binary()
+  def random_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
+
   @spec info(worker :: ref(), [fact_name() | atom()], opts :: [timeout_in_ms: timeout_in_ms()]) ::
           {:ok, %{fact_name() => any()}} | {:error, :unavailable}
   def info(worker, fact_names, opts \\ []),

@@ -32,7 +32,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @type resolver_fn() :: (resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
                           last_version :: Bedrock.version(),
                           commit_version :: Bedrock.version(),
-                          transaction_summaries :: [Resolver.transaction()],
+                          transaction_summaries :: [Resolver.transaction_summary()],
                           resolver_opts :: keyword() ->
                             {:ok, aborted :: [index :: integer()]}
                             | {:error, resolution_error()})
@@ -112,7 +112,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
             storage_teams: [StorageTeamDescriptor.t()],
-            resolver_data: [Resolver.transaction()],
+            resolver_data: [Resolver.transaction_summary()],
             aborted_indices: [integer()],
             aborted_replies: [Batch.reply_fn()],
             successful_replies: [Batch.reply_fn()],
@@ -213,7 +213,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   as they are not needed for resolution.
   """
   @spec transform_transactions_for_resolution([{Batch.reply_fn(), Bedrock.transaction()}]) :: [
-          Resolver.transaction()
+          Resolver.transaction_summary()
         ]
   def transform_transactions_for_resolution(transactions) do
     transactions
@@ -254,7 +254,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           resolvers :: [{start_key :: Bedrock.key(), Resolver.ref()}],
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
-          [Resolver.transaction()],
+          [Resolver.transaction_summary()],
           opts :: [
             timeout: :infinity | non_neg_integer(),
             timeout_fn: timeout_fn(),

@@ -2,11 +2,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.Internal.Time
-  alias Bedrock.SystemKeys
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
-      single_transaction_batch: 3,
       start_batch_if_needed: 1,
       add_transaction_to_batch: 3,
       apply_finalization_policy: 1
@@ -40,6 +38,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
+    lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     max_latency_in_ms = opts[:max_latency_in_ms] || 1
     max_per_batch = opts[:max_per_batch] || 10
 
@@ -49,13 +48,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, director, epoch, max_latency_in_ms, max_per_batch}
+           {cluster, director, epoch, max_latency_in_ms, max_per_batch, lock_token}
          ]},
       restart: :temporary
     }
   end
 
-  def init({cluster, director, epoch, max_latency_in_ms, max_per_batch}) do
+  def init({cluster, director, epoch, max_latency_in_ms, max_per_batch, lock_token}) do
     trace_metadata(cluster: cluster, pid: self())
 
     %State{
@@ -63,7 +62,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       director: director,
       epoch: epoch,
       max_latency_in_ms: max_latency_in_ms,
-      max_per_batch: max_per_batch
+      max_per_batch: max_per_batch,
+      lock_token: lock_token
     }
     |> then(&{:ok, &1})
   end
@@ -73,23 +73,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   end
 
   def handle_call(
-        {:commit, {nil, writes} = transaction},
-        {from_pid, _from_ref} = from,
-        %{transaction_system_layout: nil, director: director} = t
-      )
-      when from_pid == director do
-    with {:ok, transaction_system_layout} <- extract_transaction_system_layout(writes),
-         t <- %{t | transaction_system_layout: transaction_system_layout},
-         {:ok, batch} <- single_transaction_batch(t, transaction, reply_fn(from)) do
-      t |> noreply(continue: {:finalize, batch})
+        {:recover_from, lock_token, transaction_system_layout},
+        _from,
+        %{mode: :locked} = t
+      ) do
+    if lock_token == t.lock_token do
+      %{t | transaction_system_layout: transaction_system_layout, mode: :running}
+      |> reply(:ok)
     else
-      {:error, :no_transaction_system_layout} = error ->
-        IO.puts("DEBUG: No transaction system layout found in writes")
-        t |> reply(error)
-
-      {:error, :sequencer_unavailable} = error ->
-        IO.puts("DEBUG: Sequencer unavailable error")
-        t |> reply(error)
+      t |> reply({:error, :unauthorized})
     end
   end
 
@@ -99,14 +91,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # see if the batch meets the finalization policy. If it does, we finalize the
   # batch. If it doesn't, we wait for a short timeout to see if anything else
   # is submitted before re-considering finalizing the batch.
-  def handle_call({:commit, transaction}, from, t) do
-    t
-    |> maybe_update_layout_from_transaction(transaction)
-    |> case do
-      %{transaction_system_layout: nil} ->
+  def handle_call({:commit, transaction}, from, %{mode: :running} = t) do
+    case t.transaction_system_layout do
+      nil ->
         t |> reply({:error, :no_transaction_system_layout})
 
-      t ->
+      _layout ->
         t
         |> start_batch_if_needed()
         |> add_transaction_to_batch(transaction, reply_fn(from))
@@ -116,6 +106,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           {t, batch} -> t |> noreply(continue: {:finalize, batch})
         end
     end
+  end
+
+  # Reject commit calls when locked (except from director with system layout)
+  def handle_call({:commit, _transaction}, _from, %{mode: :locked} = t) do
+    t |> reply({:error, :locked})
   end
 
   # If we haven't seen any new commit requests come in for a few milliseconds,
@@ -166,27 +161,40 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  defp extract_transaction_system_layout(writes) do
-    case Map.get(writes, SystemKeys.layout_monolithic()) do
-      nil -> {:error, :no_transaction_system_layout}
-      encoded_layout -> {:ok, :erlang.binary_to_term(encoded_layout)}
-    end
-  end
+  @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
+  def reply_fn(from), do: &GenServer.reply(from, &1)
 
-  # Extract transaction system layout from transaction if present
+  @doc """
+  Updates the transaction system layout if the transaction contains system layout information.
+
+  This function extracts transaction system layout from system transactions that contain
+  the layout key and updates the commit proxy's state accordingly.
+  """
+  @spec maybe_update_layout_from_transaction(State.t(), Bedrock.transaction()) :: State.t()
   def maybe_update_layout_from_transaction(state, {_reads, writes}) when is_map(writes) do
-    case Map.get(writes, SystemKeys.layout_monolithic()) do
+    layout_key = "\xff/system/transaction_system_layout"
+
+    case Map.get(writes, layout_key) do
       nil ->
         state
 
-      encoded_layout ->
-        layout = :erlang.binary_to_term(encoded_layout)
-        %{state | transaction_system_layout: layout}
+      encoded_layout when is_binary(encoded_layout) ->
+        try do
+          layout = :erlang.binary_to_term(encoded_layout)
+          %{state | transaction_system_layout: layout}
+        rescue
+          _ ->
+            # If decoding fails, return state unchanged
+            state
+        end
+
+      _ ->
+        state
     end
   end
 
-  def maybe_update_layout_from_transaction(state, _transaction), do: state
-
-  @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
-  def reply_fn(from), do: &GenServer.reply(from, &1)
+  def maybe_update_layout_from_transaction(state, _transaction) do
+    # For non-standard transaction formats, return state unchanged
+    state
+  end
 end

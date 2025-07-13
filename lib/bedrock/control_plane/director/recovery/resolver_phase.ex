@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   the key space.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, _context) do
+  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, context) do
     sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
     starter_fn = Shared.starter_for(sup_otp_name)
 
@@ -47,7 +47,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
       recovery_attempt.epoch,
       Node.list(),
       recovery_attempt.version_vector,
-      starter_fn
+      starter_fn,
+      context.lock_token
     )
     |> case do
       {:error, reason} ->
@@ -66,7 +67,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
           epoch :: Bedrock.epoch(),
           available_nodes :: [node()],
           version_vector :: Bedrock.version_vector(),
-          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
+          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
+          lock_token :: binary()
         ) ::
           {:ok, [{start_key :: Bedrock.version(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
@@ -78,7 +80,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
         epoch,
         available_nodes,
         version_vector,
-        start_supervised
+        start_supervised,
+        lock_token
       ) do
     resolver_boot_info =
       resolvers
@@ -86,7 +89,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
       |> prepare_resolver_range_tags(storage_teams)
       |> assign_logs_to_resolvers(logs, running_logs)
       |> Enum.map(fn {{start_key, _end_key} = key_range, logs_to_copy} ->
-        {child_spec_for_resolver(epoch, key_range), start_key, logs_to_copy}
+        {child_spec_for_resolver(epoch, key_range, lock_token), start_key, logs_to_copy,
+         lock_token}
       end)
 
     start_resolvers(resolver_boot_info, available_nodes, version_vector, start_supervised)
@@ -154,7 +158,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
 
   @spec start_resolvers(
           resolver_boot_info :: [
-            {Supervisor.child_spec(), start_key :: Bedrock.version(), %{Log.id() => pid()}}
+            {Supervisor.child_spec(), start_key :: Bedrock.version(), %{Log.id() => pid()},
+             binary()}
           ],
           available_nodes :: [node()],
           Bedrock.version_vector(),
@@ -172,11 +177,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     |> Stream.cycle()
     |> Enum.zip(resolver_boot_info)
     |> Task.async_stream(
-      fn {node, {child_spec, start_key, logs_to_copy}} ->
+      fn {node, {child_spec, start_key, logs_to_copy, lock_token}} ->
         with {:ok, resolver} <- start_supervised.(child_spec, node),
              :ok <-
                Resolver.recover_from(
                  resolver,
+                 lock_token,
                  logs_to_copy,
                  first_version,
                  last_version
@@ -204,9 +210,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     end
   end
 
-  @spec child_spec_for_resolver(epoch :: Bedrock.epoch(), Bedrock.key_range()) ::
+  @spec child_spec_for_resolver(epoch :: Bedrock.epoch(), Bedrock.key_range(), binary()) ::
           Supervisor.child_spec()
-  def child_spec_for_resolver(epoch, key_range) do
-    Resolver.child_spec(epoch: epoch, key_range: key_range)
+  def child_spec_for_resolver(epoch, key_range, lock_token) do
+    Resolver.child_spec(lock_token: lock_token, epoch: epoch, key_range: key_range)
   end
 end

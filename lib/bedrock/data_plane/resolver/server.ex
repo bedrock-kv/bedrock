@@ -9,30 +9,36 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @type reply_fn :: (aborted :: [integer()] -> :ok)
 
-  def child_spec(_opts) do
+  def child_spec(opts) do
+    lock_token = opts[:lock_token] || raise "Missing :lock_token option"
+
     %{
       id: __MODULE__,
       start:
         {GenServer, :start_link,
          [
            __MODULE__,
-           {}
+           {lock_token}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({}) do
-    %State{}
+  def init({lock_token}) do
+    %State{lock_token: lock_token}
     |> then(&{:ok, &1})
   end
 
   @impl true
-  def handle_call({:recover_from, source_log, first_version, last_version}, _from, t) do
-    case recover_from(t, source_log, first_version, last_version) do
-      {:ok, t} -> t |> reply(:ok)
-      {:error, reason} -> t |> reply({:error, reason})
+  def handle_call({:recover_from, lock_token, source_log, first_version, last_version}, _from, t) do
+    if lock_token == t.lock_token do
+      case recover_from(t, source_log, first_version, last_version) do
+        {:ok, t} -> t |> reply(:ok)
+        {:error, reason} -> t |> reply({:error, reason})
+      end
+    else
+      t |> reply({:error, :unauthorized})
     end
   end
 
@@ -41,7 +47,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # resolved, and if so, we resolve them as well. We reply to this caller before
   # we do to avoid blocking them.
   def handle_call({:resolve_transactions, {last_version, next_version}, transactions}, _from, t)
-      when last_version == t.last_version do
+      when t.mode == :running and last_version == t.last_version do
     {tree, aborted} = resolve(t.tree, transactions, next_version)
     t = %{t | tree: tree, last_version: next_version}
 
@@ -54,9 +60,15 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   # When transactions come in a little out of order, we need to wait for the
   # previous transaction to be resolved before we can resolve the next one.
-  def handle_call({:resolve_transactions, {last_version, next_version}, transactions}, from, t) do
+  def handle_call({:resolve_transactions, {last_version, next_version}, transactions}, from, t)
+      when t.mode == :running do
     %{t | waiting: Map.put(t.waiting, last_version, {next_version, transactions, reply_fn(from)})}
     |> noreply()
+  end
+
+  # Reject resolve_transactions calls when locked
+  def handle_call({:resolve_transactions, _versions, _transactions}, _from, %{mode: :locked} = t) do
+    t |> reply({:error, :locked})
   end
 
   @impl true

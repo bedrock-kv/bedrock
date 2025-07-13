@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   available nodes.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt, _context) do
+  def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt, context) do
     sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
     starter_fn = Shared.starter_for(sup_otp_name)
 
@@ -31,7 +31,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
       recovery_attempt.epoch,
       self(),
       Node.list(),
-      starter_fn
+      starter_fn,
+      context.lock_token
     )
     |> case do
       {:error, reason} ->
@@ -48,7 +49,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
           Bedrock.epoch(),
           director :: pid(),
           available_nodes :: [node()],
-          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
+          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
+          lock_token :: binary()
         ) ::
           {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), reason :: term()}}
   def define_commit_proxies(
@@ -57,9 +59,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
         epoch,
         director,
         available_nodes,
-        start_supervised
+        start_supervised,
+        lock_token
       ) do
-    child_spec = child_spec_for_commit_proxy(cluster, epoch, director)
+    child_spec = child_spec_for_commit_proxy(cluster, epoch, director, lock_token)
 
     available_nodes
     |> Enum.take(n_proxies)
@@ -92,14 +95,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   @spec child_spec_for_commit_proxy(
           cluster :: module(),
           epoch :: Bedrock.epoch(),
-          director :: pid()
+          director :: pid(),
+          lock_token :: binary()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_commit_proxy(cluster, epoch, director) do
+  def child_spec_for_commit_proxy(cluster, epoch, director, lock_token) do
     CommitProxy.child_spec(
       cluster: cluster,
       epoch: epoch,
-      director: director
+      director: director,
+      lock_token: lock_token
     )
   end
 end

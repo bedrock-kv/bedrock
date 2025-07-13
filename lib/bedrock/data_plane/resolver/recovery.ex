@@ -25,8 +25,11 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
       end
     end)
     |> case do
-      {:error, _reason} = error -> error
-      %{} = t -> {:ok, %{t | last_version: last_version, oldest_version: first_version}}
+      {:error, _reason} = error ->
+        error
+
+      %{} = t ->
+        {:ok, %{t | last_version: last_version, oldest_version: first_version, mode: :running}}
     end
   end
 

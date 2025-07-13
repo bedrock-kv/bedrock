@@ -56,7 +56,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
       cluster: cluster,
       config: config,
       coordinator: coordinator,
-      node_tracking: config |> Config.coordinators() |> NodeTracking.new()
+      node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
+      lock_token: :crypto.strong_rand_bytes(32)
     }
     |> then(&{:ok, &1, {:continue, {:start_recovery, relieving}}})
   end

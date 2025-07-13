@@ -84,7 +84,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       t.config.recovery_attempt.started_at
     )
 
-    context = %{node_tracking: t.node_tracking}
+    context = %{node_tracking: t.node_tracking, lock_token: t.lock_token}
 
     t.config.recovery_attempt
     |> run_recovery_attempt(context)

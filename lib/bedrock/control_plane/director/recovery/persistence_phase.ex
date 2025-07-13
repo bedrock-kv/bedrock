@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   transaction, and submits it to test the entire transaction pipeline.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, _context) do
+  def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
     with :ok <- validate_recovery_state(recovery_attempt),
@@ -39,6 +39,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
              recovery_attempt.epoch,
              cluster_config,
              recovery_attempt.cluster
+           ),
+         :ok <-
+           unlock_services(
+             recovery_attempt,
+             cluster_config.transaction_system_layout,
+             context.lock_token
            ),
          {:ok, _version} <-
            submit_system_transaction(system_transaction, recovery_attempt.proxies) do
@@ -297,5 +303,36 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     proxies
     |> Enum.random()
     |> CommitProxy.commit(system_transaction)
+  end
+
+  # Unlock commit proxies before exercising the transaction system
+  defp unlock_services(
+         recovery_attempt,
+         transaction_system_layout,
+         lock_token
+       )
+       when is_binary(lock_token) do
+    with :ok <-
+           unlock_commit_proxies(recovery_attempt.proxies, transaction_system_layout, lock_token) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:unlock_failed, reason}}
+    end
+  end
+
+  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token)
+       when is_list(proxies) do
+    proxies
+    |> Task.async_stream(
+      fn proxy ->
+        CommitProxy.recover_from(proxy, lock_token, transaction_system_layout)
+      end,
+      ordered: false
+    )
+    |> Enum.reduce_while(:ok, fn
+      {:ok, :ok}, :ok -> {:cont, :ok}
+      {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
+      {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
+    end)
   end
 end

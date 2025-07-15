@@ -58,8 +58,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   @spec info(String.t()) :: :ok
   defp info(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
 
-    Logger.info("Bedrock [#{metadata[:cluster].name()}}]: #{message}",
+    Logger.info("Bedrock [#{cluster.name()}]: #{message}",
       ansi_color: :magenta
     )
   end
@@ -67,8 +68,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   @spec error(String.t()) :: :ok
   defp error(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
 
-    Logger.error("Bedrock [#{metadata[:cluster].name()}]: #{message}",
+    Logger.error("Bedrock [#{cluster.name()}]: #{message}",
       ansi_color: :red
     )
   end

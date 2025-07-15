@@ -55,8 +55,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
   @spec info(message :: String.t()) :: :ok
   def info(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
 
-    Logger.info("Bedrock [#{metadata[:cluster].name()}]: #{message}",
+    Logger.info("Bedrock [#{cluster.name()}]: #{message}",
       ansi_color: :green
     )
   end

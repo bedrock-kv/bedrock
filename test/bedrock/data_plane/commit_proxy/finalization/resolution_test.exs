@@ -61,14 +61,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
         "test-retry-telemetry",
         [:bedrock, :commit_proxy, :resolver, :retry],
         &__MODULE__.handle_retry_telemetry/4,
-        nil
+        test_pid
       )
 
       :telemetry.attach(
         "test-max-retries-telemetry",
         [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded],
         &__MODULE__.handle_max_retries_telemetry/4,
-        nil
+        test_pid
       )
 
       resolvers = [{<<0>>, :test_resolver}]
@@ -227,13 +227,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
   end
 
   # Telemetry handler functions
-  def handle_retry_telemetry(_event, measurements, metadata, _config) do
-    test_pid = Process.get(:test_pid)
+  def handle_retry_telemetry(_event, measurements, metadata, config) do
+    test_pid = config || Process.get(:test_pid)
     send(test_pid, {:telemetry, :retry, measurements, metadata})
   end
 
-  def handle_max_retries_telemetry(_event, measurements, metadata, _config) do
-    test_pid = Process.get(:test_pid)
+  def handle_max_retries_telemetry(_event, measurements, metadata, config) do
+    test_pid = config || Process.get(:test_pid)
     send(test_pid, {:telemetry, :max_retries, measurements, metadata})
   end
 end

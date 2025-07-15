@@ -73,8 +73,7 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
 
   @spec info(message :: String.t()) :: :ok
   def info(message) do
-    metadata = Logger.metadata()
-
-    Logger.info("Bedrock [#{metadata[:cluster].name()}]: #{message}")
+    cluster = Logger.metadata() |> Keyword.fetch!(:cluster)
+    Logger.info("Bedrock [#{cluster.name()}]: #{message}")
   end
 end

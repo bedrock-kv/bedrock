@@ -76,7 +76,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   end
 
   @spec trace_recovery_suitable_logs_chosen(
-          suitable_logs :: [Bedrock.service_id()],
+          suitable_logs :: [term()],
           log_version_vector :: Bedrock.version_vector()
         ) :: :ok
   def trace_recovery_suitable_logs_chosen(suitable_logs, log_version_vector) do

@@ -1,9 +1,21 @@
 ExUnit.start()
 Faker.start()
 
-# Start recovery telemetry tracing for all tests
-unless Process.whereis(:bedrock_trace_director_recovery) do
-  Bedrock.ControlPlane.Director.Recovery.Tracing.start()
+# Removed global telemetry handler - tests should set up their own handlers as needed
+
+# Default test cluster for telemetry
+defmodule DefaultTestCluster do
+  def name(), do: "test_cluster"
+  def otp_name(component), do: :"test_#{component}"
+
+  @doc """
+  Sets up logger metadata for telemetry handlers.
+  Call this in test setup to ensure proper cluster identification.
+  """
+  def setup_telemetry_metadata(epoch \\ 1) do
+    Logger.metadata(cluster: __MODULE__, epoch: epoch)
+    :ok
+  end
 end
 
 Mox.defmock(Bedrock.Raft.MockInterface, for: Bedrock.Raft.Interface)

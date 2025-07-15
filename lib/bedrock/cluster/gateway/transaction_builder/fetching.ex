@@ -23,7 +23,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_stack(Bedrock.key(), [{reads :: map(), writes :: map()}]) ::
+  @spec fetch_from_stack(Bedrock.key(), [
+          {reads :: %{Bedrock.key() => Bedrock.value()},
+           writes :: %{Bedrock.key() => Bedrock.value()}}
+        ]) ::
           :error | {State.t(), binary()}
   def fetch_from_stack(_, []), do: :error
 

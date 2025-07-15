@@ -8,10 +8,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.Persistence
-  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.ControlPlane.Config
+
+  alias Bedrock.ControlPlane.Config.{
+    RecoveryAttempt,
+    TransactionSystemLayout,
+    Persistence,
+    LogDescriptor,
+    ServiceDescriptor
+  }
+
+  alias Bedrock.DataPlane.{CommitProxy, Log}
+  alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -59,7 +67,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec build_cluster_config(map()) :: map()
+  @spec build_cluster_config(RecoveryAttempt.t()) :: Config.t()
   defp build_cluster_config(recovery_attempt) do
     base_config =
       recovery_attempt.coordinators
@@ -85,7 +93,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   @spec build_system_transaction(
           epoch :: non_neg_integer(),
-          cluster_config :: map(),
+          cluster_config :: Config.t(),
           cluster :: module()
         ) :: Bedrock.transaction()
   defp build_system_transaction(epoch, cluster_config, cluster) do
@@ -242,7 +250,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Validate that recovery state is ready for system transaction
-  @spec validate_recovery_state(map()) ::
+  @spec validate_recovery_state(RecoveryAttempt.t()) ::
           :ok | {:error, {:invalid_recovery_state, atom() | {atom(), [binary()]}}}
   defp validate_recovery_state(recovery_attempt) do
     with :ok <- validate_sequencer(recovery_attempt.sequencer),
@@ -295,7 +303,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec validate_logs(map(), map()) :: :ok | {:error, {:missing_log_services, [binary()]}}
+  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => ServiceDescriptor.t()}) ::
+          :ok | {:error, {:missing_log_services, [binary()]}}
   defp validate_logs(logs, available_services) when is_map(logs) do
     log_ids = Map.keys(logs)
 
@@ -326,7 +335,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Unlock commit proxies before exercising the transaction system
-  @spec unlock_services(map(), map(), binary()) ::
+  @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), lock_token :: binary()) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(
          recovery_attempt,
@@ -342,7 +351,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec unlock_commit_proxies([pid()], map(), binary()) :: :ok | {:error, :timeout | :unavailable}
+  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), lock_token :: binary()) ::
+          :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token)
        when is_list(proxies) do
     proxies

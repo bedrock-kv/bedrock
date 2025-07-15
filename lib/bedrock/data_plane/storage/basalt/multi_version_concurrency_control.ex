@@ -179,7 +179,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
             :latest
             | Bedrock.version()
         ) :: Transaction.t() | nil
-  @spec transaction_at_version(t(), :latest | Bedrock.version()) :: map() | nil
+  @spec transaction_at_version(t(), :latest | Bedrock.version()) :: Transaction.t() | nil
   def transaction_at_version(mvcc, :latest) do
     newest_version(mvcc)
     |> case do
@@ -188,7 +188,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     end
   end
 
-  @spec transaction_at_version(t(), :latest | Bedrock.version()) :: map() | nil
   def transaction_at_version(mvcc, version) do
     {_, snapshot} =
       :ets.foldr(

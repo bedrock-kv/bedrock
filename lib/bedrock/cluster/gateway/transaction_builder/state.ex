@@ -9,9 +9,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
           #
-          reads: %{},
-          writes: %{},
-          stack: [%{reads: map(), writes: map()}],
+          reads: %{Bedrock.key() => Bedrock.value()},
+          writes: %{Bedrock.key() => Bedrock.value()},
+          stack: [
+            %{
+              reads: %{Bedrock.key() => Bedrock.value()},
+              writes: %{Bedrock.key() => Bedrock.value()}
+            }
+          ],
           fastest_storage_servers: %{Bedrock.key_range() => pid()},
           fetch_timeout_in_ms: pos_integer(),
           lease_renewal_threshold: pos_integer()

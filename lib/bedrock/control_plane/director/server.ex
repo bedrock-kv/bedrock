@@ -29,7 +29,15 @@ defmodule Bedrock.ControlPlane.Director.Server do
   require Logger
 
   @doc false
-  @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
+  @spec child_spec(
+          opts :: [
+            cluster: module(),
+            config: Config.t(),
+            epoch: Bedrock.epoch(),
+            coordinator: Coordinator.ref(),
+            relieving: Director.ref() | nil
+          ]
+        ) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster param"
     config = opts[:config] || raise "Missing :config param"

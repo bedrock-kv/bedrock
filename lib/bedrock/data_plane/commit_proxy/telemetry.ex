@@ -2,10 +2,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   alias Bedrock.Telemetry
   alias Bedrock.DataPlane.CommitProxy.Batch
 
-  @spec trace_metadata() :: map()
+  @type telemetry_metadata :: %{optional(atom()) => term()}
+
+  @spec trace_metadata() :: telemetry_metadata()
   def trace_metadata, do: Process.get(:trace_metadata, %{})
 
-  @spec trace_metadata(metadata :: map()) :: map()
+  @spec trace_metadata(metadata :: telemetry_metadata()) :: telemetry_metadata()
   def trace_metadata(metadata),
     do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 

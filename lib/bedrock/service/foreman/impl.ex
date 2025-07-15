@@ -61,7 +61,14 @@ defmodule Bedrock.Service.Foreman.Impl do
     end
   end
 
-  @spec do_remove_workers(State.t(), [Worker.id()]) :: {State.t(), map()}
+  @spec do_remove_workers(State.t(), [Worker.id()]) ::
+          {State.t(),
+           %{
+             Worker.id() =>
+               :ok
+               | {:error,
+                  :worker_not_found | {:failed_to_remove_directory, File.posix(), Path.t()}}
+           }}
   def do_remove_workers(t, worker_ids) do
     {updated_state, results} = process_worker_removals(t, worker_ids)
     final_state = recompute_health(updated_state)
@@ -94,13 +101,13 @@ defmodule Bedrock.Service.Foreman.Impl do
     worker_infos
   end
 
-  @spec advertise_running_worker(map(), module()) :: map()
+  @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
   def advertise_running_worker(%{health: {:ok, pid}} = t, cluster) do
     Gateway.advertise_worker(cluster.otp_name(:gateway), pid)
     t
   end
 
-  @spec advertise_running_worker(map(), module()) :: map()
+  @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
   def advertise_running_worker(t, _), do: t
 
   @spec remove_worker_completely(WorkerInfo.t(), module(), String.t()) ::
@@ -244,10 +251,8 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   @spec storage_worker?(WorkerInfo.t()) :: boolean()
-  @spec storage_worker?(map()) :: boolean()
   def storage_worker?(%{manifest: %{worker: worker}}) when not is_nil(worker),
     do: worker.kind() == :storage
 
-  @spec storage_worker?(map()) :: boolean()
   def storage_worker?(_), do: false
 end

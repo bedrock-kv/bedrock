@@ -94,7 +94,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   def info(%State{} = t, fact_name) when is_atom(fact_name),
     do: {:ok, gather_info(fact_name, t)}
 
-  @spec info(State.t(), [atom()]) :: map()
+  @spec info(State.t(), [Storage.fact_name()]) :: {:ok, %{Storage.fact_name() => term()}}
   def info(%State{} = t, fact_names) when is_list(fact_names) do
     {:ok,
      fact_names

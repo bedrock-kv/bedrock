@@ -114,7 +114,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   end
 
   @spec running_services(State.t()) ::
-          {:ok, Director.running_service_info_by_id()} | {:error, any()}
+          {:ok, Director.running_service_info_by_id()} | {:error, :unavailable}
   def running_services(t) do
     case Foreman.all(t.cluster.otp_name(:foreman)) do
       {:ok, worker_pids} -> {:ok, worker_pids |> gather_info_from_workers()}

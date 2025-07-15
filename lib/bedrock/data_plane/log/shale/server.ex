@@ -27,7 +27,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @doc false
   @spec child_spec(
-          opts :: [cluster: term(), otp_name: term(), id: term(), foreman: term(), path: term()]
+          opts :: [
+            cluster: module(),
+            otp_name: atom(),
+            id: Log.id(),
+            foreman: pid(),
+            path: Path.t()
+          ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"

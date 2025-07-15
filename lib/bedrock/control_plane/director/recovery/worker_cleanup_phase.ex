@@ -8,7 +8,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
-  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.{Foreman, Worker}
+  alias Bedrock.ControlPlane.Config.{RecoveryAttempt, ServiceDescriptor}
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   @behaviour RecoveryPhase
 
@@ -27,12 +28,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     end
   end
 
-  @spec find_obsolete_services(map()) :: map()
+  @spec find_obsolete_services(RecoveryAttempt.t()) :: %{Worker.id() => ServiceDescriptor.t()}
   defp find_obsolete_services(recovery_attempt),
     do:
       Map.drop(recovery_attempt.available_services, Map.keys(recovery_attempt.required_services))
 
-  @spec find_untracked_workers(map(), RecoveryPhase.context()) :: map()
+  @spec find_untracked_workers(RecoveryAttempt.t(), RecoveryPhase.context()) :: %{
+          Worker.id() => ServiceDescriptor.t()
+        }
   defp find_untracked_workers(recovery_attempt, context) do
     required_worker_ids = MapSet.new(Map.keys(recovery_attempt.required_services))
     tracked_worker_ids = MapSet.new(Map.keys(recovery_attempt.available_services))

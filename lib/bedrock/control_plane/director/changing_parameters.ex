@@ -2,6 +2,9 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config.Parameters
 
+  @type parameter_change :: {atom(), term()}
+  @type parameter_changes :: [parameter_change()]
+
   import Bedrock.ControlPlane.Director.State.Changes,
     only: [update_config: 2]
 
@@ -82,7 +85,7 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     end
   end
 
-  @spec try_to_set_parameters(Parameters.t(), list :: keyword()) ::
+  @spec try_to_set_parameters(Parameters.t(), parameter_changes()) ::
           {:ok, Parameters.t()} | {:error, :invalid_value}
   def try_to_set_parameters(parameters, list) do
     Enum.reduce(list, parameters, fn

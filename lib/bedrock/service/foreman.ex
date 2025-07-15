@@ -80,7 +80,11 @@ defmodule Bedrock.Service.Foreman do
   Returns a map of results where successful removals are `:ok` and
   failures include the error reason.
   """
-  @spec remove_workers(ref(), [Worker.id()], opts :: [timeout: timeout()]) :: map()
+  @spec remove_workers(
+          foreman_ref :: ref(),
+          worker_ids :: [Worker.id()],
+          opts :: [timeout: timeout()]
+        ) :: %{Worker.id() => :ok | {:error, term()}}
   def remove_workers(foreman, worker_ids, opts \\ []),
     do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
 

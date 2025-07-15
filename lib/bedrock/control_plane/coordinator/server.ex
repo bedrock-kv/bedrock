@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   use GenServer
   import Bedrock.Internal.GenServer.Replies
 
-  @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
+  @spec child_spec(opts :: [cluster: module()]) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     otp_name = cluster.otp_name(:coordinator)

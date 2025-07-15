@@ -19,6 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   require Logger
 
   @type ack_fn :: (-> :ok)
+  @type waiting_list :: %{Raft.transaction_id() => ack_fn()}
 
   @spec durably_write_config(State.t(), Config.t(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader}
@@ -61,7 +62,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   def maybe_put_director_from_config(t), do: t
 
-  @spec reply_to_waiter(map(), Raft.transaction_id()) :: map()
+  @spec reply_to_waiter(waiting_list(), Raft.transaction_id()) :: waiting_list()
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list
     |> Map.pop(txn_id)

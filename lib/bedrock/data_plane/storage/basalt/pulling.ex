@@ -8,14 +8,20 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
 
   import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
+  @type puller_state :: %{
+          start_after: Bedrock.version(),
+          apply_transactions_fn: ([Transaction.t()] -> Bedrock.version()),
+          logs: %{Log.id() => LogDescriptor.t()},
+          services: %{Worker.id() => ServiceDescriptor.t()},
+          failed_logs: %{Log.id() => any()}
+        }
+
   @spec start_pulling(
-          Bedrock.version(),
-          %{Log.id() => LogDescriptor.t()},
-          %{Worker.id() => ServiceDescriptor.t()},
+          start_after :: Bedrock.version(),
+          logs :: %{Log.id() => LogDescriptor.t()},
+          services :: %{Worker.id() => ServiceDescriptor.t()},
           apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
-        ) ::
-          Task.t()
-  @spec start_pulling(Bedrock.version(), map(), map(), function()) :: Task.t()
+        ) :: Task.t()
   def start_pulling(start_after, logs, services, apply_transactions_fn) do
     state = %{
       start_after: start_after,
@@ -41,7 +47,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @spec call_timeout() :: pos_integer()
   def call_timeout, do: 5_000
 
-  @spec long_pull_loop(map()) :: no_return()
+  @spec long_pull_loop(puller_state()) :: no_return()
   def long_pull_loop(%{apply_transactions_fn: apply_transactions_fn} = state) do
     timestamp = System.system_time(:millisecond)
 

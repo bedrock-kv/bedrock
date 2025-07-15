@@ -12,7 +12,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
     with {:ok, lease_will_expire_in_ms} <-
            Gateway.renew_read_version_lease(t.gateway, t.read_version) do
       now = :erlang.monotonic_time(:millisecond)
-      %{t | read_version_lease_expiration: now + lease_will_expire_in_ms}
+      {:ok, %{t | read_version_lease_expiration: now + lease_will_expire_in_ms}}
     end
   end
 end

@@ -17,7 +17,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
             keyspace: nil,
             pkv: nil
 
-  @spec open(otp_name :: atom(), file_path :: String.t()) :: {:ok, t()} | {:error, term()}
+  @spec open(otp_name :: atom(), file_path :: String.t()) ::
+          {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
   def open(otp_name, file_path) when is_atom(otp_name) do
     with {:ok, pkv} <- PersistentKeyValues.open(:"#{otp_name}_pkv", file_path),
          last_durable_version <- PersistentKeyValues.last_version(pkv),

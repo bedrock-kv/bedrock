@@ -44,7 +44,10 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   end
 
   @spec fetch_transaction_system_layout(State.t()) ::
-          {:ok, State.t()} | {:error, any()} | :unavailable
+          {:ok, State.t()}
+          | {:error, {:relieved_by, {Bedrock.epoch(), pid()}}}
+          | {:error, :unavailable}
+          | :unavailable
   def fetch_transaction_system_layout(t) do
     with {director_pid, _epoch} <- t.director,
          {:ok, transaction_system_layout} <-

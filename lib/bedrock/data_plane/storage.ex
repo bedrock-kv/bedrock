@@ -69,7 +69,7 @@ defmodule Bedrock.DataPlane.Storage do
           durable_version :: Bedrock.version(),
           TransactionSystemLayout.t(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:error, :timeout | :unavailable}
   def unlock_after_recovery(storage, durable_version, transaction_system_layout, opts \\ []) do
     call(
       storage,

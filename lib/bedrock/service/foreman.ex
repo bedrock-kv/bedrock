@@ -14,7 +14,7 @@ defmodule Bedrock.Service.Foreman do
   Return a list of running workers.
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok, [Worker.ref()]} | {:error, term()}
+          {:ok, [Worker.ref()]} | {:error, :timeout}
   @spec all(ref(), opts :: [timeout: timeout()]) :: [term()]
   def all(foreman, opts \\ []),
     do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
@@ -28,7 +28,7 @@ defmodule Bedrock.Service.Foreman do
           kind :: :log | :storage,
           opts :: [timeout: timeout()]
         ) ::
-          {:ok, Worker.ref()} | {:error, term()}
+          {:ok, Worker.ref()} | {:error, :timeout}
   @spec new_worker(ref(), term(), atom(), opts :: [timeout: timeout()]) ::
           {:ok, pid()} | {:error, term()}
   def new_worker(foreman, id, kind, opts \\ []),
@@ -38,7 +38,7 @@ defmodule Bedrock.Service.Foreman do
   Return a list of running storage workers only.
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok, [Worker.ref()]} | {:error, term()}
+          {:ok, [Worker.ref()]} | {:error, :timeout}
   @spec storage_workers(ref(), opts :: [timeout: timeout()]) :: [term()]
   def storage_workers(foreman, opts \\ []),
     do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
@@ -64,7 +64,9 @@ defmodule Bedrock.Service.Foreman do
   4. Remove it from foreman state
   """
   @spec remove_worker(foreman :: ref(), Worker.id(), opts :: [timeout: timeout()]) ::
-          :ok | {:error, term()}
+          :ok
+          | {:error, :worker_not_found}
+          | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
   @spec remove_worker(ref(), term(), opts :: [timeout: timeout()]) :: :ok
   def remove_worker(foreman, worker_id, opts \\ []),
     do: call(foreman, {:remove_worker, worker_id}, to_timeout(opts[:timeout] || 5_000))

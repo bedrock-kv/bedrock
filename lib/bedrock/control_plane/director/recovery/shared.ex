@@ -4,7 +4,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Shared do
   """
 
   @type starter_fn :: (Supervisor.child_spec(), node() ->
-                         {:ok, pid()} | {:error, term()})
+                         {:ok, pid()}
+                         | {:error, {:supervisor_exit, term()}}
+                         | {:error, {:supervisor_error, term()}}
+                         | {:error, {:unexpected_failure, term()}}
+                         | {:error, :already_started}
+                         | {:error, :max_children}
+                         | {:error, term()})
 
   @doc """
   Creates a starter function for supervised processes.

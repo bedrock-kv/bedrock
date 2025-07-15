@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @doc """
   Opens a persistent key-value store.
   """
-  @spec open(atom(), String.t()) :: {:ok, t()} | {:error, term()}
+  @spec open(atom(), String.t()) :: {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
   def open(name, file_path) when is_atom(name) do
     :dets.open_file(name,
       access: :read_write,

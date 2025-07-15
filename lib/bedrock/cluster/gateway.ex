@@ -18,7 +18,7 @@ defmodule Bedrock.Cluster.Gateway do
             retry_count: pos_integer(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, pid()} | call_errors()
+        ) :: {:ok, pid()} | {:error, :timeout}
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
@@ -29,7 +29,7 @@ defmodule Bedrock.Cluster.Gateway do
           ]
         ) ::
           {:ok, Bedrock.version(), new_lease_deadline_in_ms :: Bedrock.interval_in_ms()}
-          | {:error, term()}
+          | {:error, :unavailable}
   def next_read_version(gateway, opts \\ []),
     do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
 
@@ -42,7 +42,8 @@ defmodule Bedrock.Cluster.Gateway do
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, new_lease_deadline_in_ms :: Bedrock.interval_in_ms()} | {:error, term()}
+        ) ::
+          {:ok, new_lease_deadline_in_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
   def renew_read_version_lease(t, read_version, opts \\ []),
     do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
 

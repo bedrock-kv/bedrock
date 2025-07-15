@@ -28,7 +28,9 @@ defmodule Bedrock.Service.Worker do
           epoch :: Bedrock.epoch(),
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
-          {:ok, pid(), recovery_info :: map()} | {:error, :newer_epoch_exists}
+          {:ok, pid(), recovery_info :: map()}
+          | {:error, :newer_epoch_exists}
+          | {:error, :timeout}
   @spec lock_for_recovery(GenServer.server(), integer(), opts :: [timeout_in_ms: timeout_in_ms()]) ::
           {:ok, term()} | {:error, term()}
   def lock_for_recovery(worker, epoch, opts \\ []),

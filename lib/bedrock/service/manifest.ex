@@ -20,7 +20,8 @@ defmodule Bedrock.Service.Manifest do
     }
   end
 
-  @spec write_to_file(manifest :: t(), path_to_manifest :: String.t()) :: :ok | {:error, term()}
+  @spec write_to_file(manifest :: t(), path_to_manifest :: String.t()) ::
+          :ok | {:error, File.posix()}
   def write_to_file(manifest, path_to_manifest) do
     {:ok, json} =
       %{
@@ -38,7 +39,20 @@ defmodule Bedrock.Service.Manifest do
   defp write_file_contents(path_to_manifest, json),
     do: File.write(path_to_manifest, json)
 
-  @spec load_from_file(path_to_manifest :: String.t()) :: {:ok, t()} | {:error, term()}
+  @spec load_from_file(path_to_manifest :: String.t()) ::
+          {:ok, t()}
+          | {:error,
+             :manifest_does_not_exist
+             | :manifest_is_invalid
+             | :manifest_is_not_a_dictionary
+             | :worker_module_is_invalid
+             | :worker_module_does_not_exist
+             | :worker_module_failed_to_load
+             | :invalid_cluster_id
+             | :invalid_cluster_name
+             | :invalid_worker_name
+             | :worker_module_does_not_implement_behaviour
+             | :invalid_params}
   def load_from_file(path_to_manifest) do
     with {:ok, file_contents} <- path_to_manifest |> load_file_contents(),
          {:ok, json} <- file_contents |> Jason.decode(),

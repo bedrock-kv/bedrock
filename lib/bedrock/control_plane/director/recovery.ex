@@ -146,7 +146,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @spec run_recovery_attempt(RecoveryAttempt.t(), map()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-          | {:error, term()}
+          | {:error, {:unexpected_recovery_state, atom()}}
   def run_recovery_attempt(t, context) do
     case t.state do
       {:stalled, reason} ->

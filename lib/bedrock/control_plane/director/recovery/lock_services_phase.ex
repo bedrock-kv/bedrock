@@ -73,12 +73,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
 
   defp has_stale_components?(_), do: false
 
-  @spec resolver_is_stale?(any()) :: boolean()
+  @spec resolver_is_stale?(pid() | {Bedrock.key(), pid()}) :: boolean()
   defp resolver_is_stale?({_start_key, pid}) when is_pid(pid), do: pid_is_stale?(pid)
   defp resolver_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
   defp resolver_is_stale?(_), do: false
 
-  @spec process_is_stale?(any()) :: boolean()
+  @spec process_is_stale?(pid()) :: boolean()
   defp process_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
   defp process_is_stale?(_), do: false
 

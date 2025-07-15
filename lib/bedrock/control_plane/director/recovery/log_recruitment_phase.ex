@@ -114,7 +114,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end
   end
 
-  @spec all_vacancies(%{Log.id() => any()}) :: MapSet.t()
+  @spec all_vacancies(%{Log.id() => [term()]}) :: MapSet.t()
   def all_vacancies(logs) do
     Enum.reduce(logs, [], fn
       {{:vacancy, _} = vacancy, _}, list -> [vacancy | list]

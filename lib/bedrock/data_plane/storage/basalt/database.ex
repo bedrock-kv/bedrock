@@ -63,7 +63,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
 
   @spec apply_transactions(database :: t(), transactions :: [Transaction.t()]) ::
           Bedrock.version()
-  @spec apply_transactions(t(), [any()]) :: t()
+  @spec apply_transactions(t(), [Transaction.t()]) :: Bedrock.version()
   def apply_transactions(database, transactions),
     do: MVCC.apply_transactions!(database.mvcc, transactions)
 

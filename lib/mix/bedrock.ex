@@ -57,10 +57,14 @@ defmodule Mix.Bedrock do
     |> check_implements_behaviour!()
   end
 
-  @spec check_compiled_correctly!({:module, module} | {:error, term()}, module()) :: module()
+  @spec check_compiled_correctly!(
+          {:module, module} | {:error, :badfile | :nofile | :on_load_failure},
+          module()
+        ) :: module()
   defp check_compiled_correctly!({:module, module}, _module), do: module
 
-  @spec check_compiled_correctly!({:module, module} | {:error, term()}, module()) :: module()
+  @spec check_compiled_correctly!({:error, :badfile | :nofile | :on_load_failure}, module()) ::
+          no_return()
   defp check_compiled_correctly!({:error, error}, module) do
     Mix.raise(
       "Could not load #{inspect(module)}, error: #{inspect(error)}. " <>

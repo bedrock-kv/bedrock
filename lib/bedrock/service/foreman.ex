@@ -15,7 +15,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :timeout}
-  @spec all(ref(), opts :: [timeout: timeout()]) :: [term()]
+  @spec all(ref(), opts :: [timeout: timeout()]) :: [Worker.ref()]
   def all(foreman, opts \\ []),
     do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -29,8 +29,8 @@ defmodule Bedrock.Service.Foreman do
           opts :: [timeout: timeout()]
         ) ::
           {:ok, Worker.ref()} | {:error, :timeout}
-  @spec new_worker(ref(), term(), atom(), opts :: [timeout: timeout()]) ::
-          {:ok, pid()} | {:error, term()}
+  @spec new_worker(ref(), Worker.id(), atom(), opts :: [timeout: timeout()]) ::
+          {:ok, Worker.ref()} | {:error, :timeout}
   def new_worker(foreman, id, kind, opts \\ []),
     do: call(foreman, {:new_worker, id, kind}, to_timeout(opts[:timeout] || :infinity))
 
@@ -39,7 +39,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :timeout}
-  @spec storage_workers(ref(), opts :: [timeout: timeout()]) :: [term()]
+  @spec storage_workers(ref(), opts :: [timeout: timeout()]) :: [Worker.ref()]
   def storage_workers(foreman, opts \\ []),
     do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -67,7 +67,7 @@ defmodule Bedrock.Service.Foreman do
           :ok
           | {:error, :worker_not_found}
           | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
-  @spec remove_worker(ref(), term(), opts :: [timeout: timeout()]) :: :ok
+  @spec remove_worker(ref(), Worker.id(), opts :: [timeout: timeout()]) :: :ok
   def remove_worker(foreman, worker_id, opts \\ []),
     do: call(foreman, {:remove_worker, worker_id}, to_timeout(opts[:timeout] || 5_000))
 
@@ -80,14 +80,14 @@ defmodule Bedrock.Service.Foreman do
   Returns a map of results where successful removals are `:ok` and
   failures include the error reason.
   """
-  @spec remove_workers(ref(), [term()], opts :: [timeout: timeout()]) :: map()
+  @spec remove_workers(ref(), [Worker.id()], opts :: [timeout: timeout()]) :: map()
   def remove_workers(foreman, worker_ids, opts \\ []),
     do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
 
   @doc """
   Called by a worker to report it's health to the foreman.
   """
-  @spec report_health(foreman :: ref(), Worker.id(), any()) :: :ok
+  @spec report_health(foreman :: ref(), Worker.id(), Worker.health()) :: :ok
   def report_health(foreman, worker_id, health),
     do: cast(foreman, {:worker_health, worker_id, health})
 end

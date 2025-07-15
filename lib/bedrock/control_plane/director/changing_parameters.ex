@@ -100,7 +100,7 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     end
   end
 
-  @spec try_to_set_parameter(Parameters.t(), atom(), any()) ::
+  @spec try_to_set_parameter(Parameters.t(), atom(), pos_integer()) ::
           {:ok, Parameters.t()} | {:error, :invalid_value}
   def try_to_set_parameter(parameters, :replication_factor, n),
     do: {:ok, put_desired_replication_factor(parameters, n)}

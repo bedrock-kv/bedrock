@@ -124,7 +124,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   def tuple_from_storage_team(storage_team),
     do: {storage_team.key_range, storage_team.tag, storage_team.storage_ids}
 
-  @spec storage_team_tags_covering_range(list(), Bedrock.key(), Bedrock.key() | :end) :: [
+  @spec storage_team_tags_covering_range(
+          [{Bedrock.key_range(), Bedrock.range_tag(), [term()]}],
+          Bedrock.key(),
+          Bedrock.key() | :end
+        ) :: [
           Bedrock.range_tag()
         ]
   def storage_team_tags_covering_range(storage_teams, min_key, max_key_exclusive) do

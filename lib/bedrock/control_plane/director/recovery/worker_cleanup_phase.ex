@@ -150,7 +150,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   defp execute_node_cleanups(workers_by_node, cluster),
     do: workers_by_node |> Enum.map(&cleanup_workers_on_node(&1, cluster)) |> Map.new()
 
-  @spec cleanup_workers_on_node({node(), list()}, module()) :: {node(), map()}
+  @spec cleanup_workers_on_node({node(), [{String.t(), map()}]}, module()) :: {node(), map()}
   defp cleanup_workers_on_node({node, workers}, cluster) do
     worker_ids = extract_worker_ids(workers)
     foreman_ref = build_foreman_ref(cluster, node)
@@ -162,7 +162,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     {node, results}
   end
 
-  @spec extract_worker_ids(list()) :: [term()]
+  @spec extract_worker_ids([{String.t(), map()}]) :: [String.t()]
   defp extract_worker_ids(workers), do: Enum.map(workers, fn {worker_id, _} -> worker_id end)
 
   @spec build_foreman_ref(module(), node()) :: {atom(), node()}
@@ -182,13 +182,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     {:ok, cleanup_stats}
   end
 
-  @spec extract_all_cleanup_results(map()) :: list()
+  @spec extract_all_cleanup_results(map()) :: [:ok | {:error, term()}]
   defp extract_all_cleanup_results(cleanup_results),
     do: cleanup_results |> Enum.flat_map(fn {_node, results} -> Map.values(results) end)
 
-  @spec count_successful_cleanups(list()) :: non_neg_integer()
+  @spec count_successful_cleanups([:ok | {:error, term()}]) :: non_neg_integer()
   defp count_successful_cleanups(all_results), do: Enum.count(all_results, &(&1 == :ok))
 
-  @spec count_failed_cleanups(list()) :: non_neg_integer()
+  @spec count_failed_cleanups([:ok | {:error, term()}]) :: non_neg_integer()
   defp count_failed_cleanups(all_results), do: Enum.count(all_results, &match?({:error, _}, &1))
 end

@@ -54,7 +54,11 @@ defmodule Bedrock.DataPlane.Log do
   This call will not return until the transaction has been made durable on the
   log, ensuring that the transactions that precede it are also durable.
   """
-  @spec push(log :: ref(), EncodedTransaction.t(), last_commit_version :: Bedrock.version()) ::
+  @spec push(
+          log_ref :: ref(),
+          transaction :: EncodedTransaction.t(),
+          last_commit_version :: Bedrock.version()
+        ) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable}
   def push(log, transaction, last_commit_version),
     do: call(log, {:push, transaction, last_commit_version}, :infinity)
@@ -93,17 +97,17 @@ defmodule Bedrock.DataPlane.Log do
     - `{:error, :unavailable}`: Log is unavailable for operation.
   """
   @spec pull(
-          log :: ref(),
-          start_after :: Bedrock.version(),
+          log_ref :: ref(),
+          start_after_version :: Bedrock.version(),
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
             recovery: boolean(),
-            subscriber: {id :: String.t(), last_durable_version :: Bedrock.version()},
+            subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
             timeout_in_ms: pos_integer()
           ]
         ) ::
-          {:ok, [EncodedTransaction.t()]} | pull_errors()
+          {:ok, transactions :: [EncodedTransaction.t()]} | pull_errors()
   @type pull_errors ::
           {:error, :not_ready}
           | {:error, :not_locked}

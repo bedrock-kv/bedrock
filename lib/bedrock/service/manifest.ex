@@ -122,7 +122,7 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
-  @spec params_from_json(term()) :: {:ok, map()} | {:error, :invalid_params}
+  @spec params_from_json(map() | nil | term()) :: {:ok, map()} | {:error, :invalid_params}
   def params_from_json(nil), do: {:ok, %{}}
   def params_from_json(params) when is_map(params), do: {:ok, params}
   def params_from_json(_), do: {:error, :invalid_params}

@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   def timer(:heartbeat), do: set_timer(:heartbeat, heartbeat_ms(), 0)
   def timer(:election), do: set_timer(:election, 150, 50)
 
-  @spec set_timer(atom(), pos_integer(), non_neg_integer()) :: (-> :ok | {:error, term()})
+  @spec set_timer(atom(), pos_integer(), non_neg_integer()) :: (-> :ok | {:error, :badarg})
   defp set_timer(name, min_ms, jitter) do
     determine_timeout(min_ms, min_ms + jitter)
     |> :timer.send_after({:raft, :timer, name})

@@ -29,12 +29,12 @@ defmodule Bedrock.DataPlane.Storage do
   Returns the value for the given key/version.
   """
   @spec fetch(
-          storage :: ref(),
-          Bedrock.key(),
-          Bedrock.version(),
+          storage_ref :: ref(),
+          key :: Bedrock.key(),
+          version :: Bedrock.version(),
           opts :: [timeout: timeout()]
         ) ::
-          {:ok, Bedrock.value()}
+          {:ok, value :: Bedrock.value()}
           | {:error,
              :timeout
              | :not_found
@@ -53,8 +53,8 @@ defmodule Bedrock.DataPlane.Storage do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock_for_recovery(storage :: ref(), Bedrock.epoch()) ::
-          {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+  @spec lock_for_recovery(storage_ref :: ref(), recovery_epoch :: Bedrock.epoch()) ::
+          {:ok, storage_pid :: pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """

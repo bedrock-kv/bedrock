@@ -99,7 +99,7 @@ defmodule Bedrock.SystemKeys do
   def layout_resolvers, do: "#{@system_prefix}/layout/resolvers"
 
   @doc "Configuration for a specific log by ID"
-  @spec layout_log(term()) :: String.t()
+  @spec layout_log(binary()) :: String.t()
   def layout_log(log_id), do: "#{@system_prefix}/layout/logs/#{log_id}"
 
   @doc "All log configurations (for range queries)"
@@ -107,7 +107,7 @@ defmodule Bedrock.SystemKeys do
   def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
 
   @doc "Configuration for a specific storage team by ID"
-  @spec layout_storage_team(term()) :: String.t()
+  @spec layout_storage_team(binary()) :: String.t()
   def layout_storage_team(team_id), do: "#{@system_prefix}/layout/storage/#{team_id}"
 
   @doc "All storage team configurations (for range queries)"
@@ -221,7 +221,7 @@ defmodule Bedrock.SystemKeys do
   @doc """
   Checks if a key is a system key (starts with the system prefix).
   """
-  @spec system_key?(term()) :: boolean()
+  @spec system_key?(binary()) :: boolean()
   def system_key?(key) when is_binary(key) do
     String.starts_with?(key, @system_prefix)
   end

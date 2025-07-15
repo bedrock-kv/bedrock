@@ -125,7 +125,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
-  @spec unlock_storage_after_recovery(State.t(), term()) :: State.t()
+  @spec unlock_storage_after_recovery(State.t(), Bedrock.version()) :: State.t()
   def unlock_storage_after_recovery(t, durable_version) do
     t.config.transaction_system_layout.services
     |> Enum.each(fn

@@ -36,7 +36,7 @@ defmodule Mix.Tasks.Bedrock.Status do
       c: :cluster
     ]
 
-  @spec run([String.t()]) :: [term()]
+  @spec run([String.t()]) :: [any()]
   def run(argv) do
     {opts, _args} = OptionParser.parse!(argv, switches: switches(), aliases: aliases())
 

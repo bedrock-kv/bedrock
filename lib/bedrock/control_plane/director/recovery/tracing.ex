@@ -48,7 +48,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   def handler([:bedrock, :recovery, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
-  @spec trace(atom(), map(), map()) :: any()
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do
     Logger.metadata(cluster: cluster, epoch: epoch, attempt: attempt)
 

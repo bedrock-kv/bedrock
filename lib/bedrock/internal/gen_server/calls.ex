@@ -1,14 +1,14 @@
 defmodule Bedrock.Internal.GenServer.Calls do
-  @spec broadcast([GenServer.name()], otp_name :: GenServer.name(), message :: any()) :: :ok
+  @spec broadcast([GenServer.name()], otp_name :: GenServer.name(), message :: term()) :: :ok
   def broadcast(nodes, otp_name, message) do
     GenServer.abcast(nodes, otp_name, message)
     :ok
   end
 
-  @spec cast(GenServer.server(), message :: any()) :: :ok
+  @spec cast(GenServer.server(), message :: term()) :: :ok
   def cast(server, message), do: GenServer.cast(server, message)
 
-  @spec call(GenServer.server(), message :: any(), timeout()) :: term()
+  @spec call(GenServer.server(), message :: term(), timeout()) :: term()
   def call(server, message, timeout) do
     GenServer.call(server, message, normalize_timeout(timeout))
   rescue

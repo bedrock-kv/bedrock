@@ -100,7 +100,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     |> Map.new()
   end
 
-  @spec combinations([any()], non_neg_integer()) :: [[any()]]
+  @spec combinations([term()], non_neg_integer()) :: [[term()]]
   def combinations(_list, 0), do: [[]]
   def combinations([], _num), do: []
 

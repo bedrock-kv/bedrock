@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.Director do
   """
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
@@ -21,8 +22,8 @@ defmodule Bedrock.ControlPlane.Director do
 
   @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
-  @spec fetch_transaction_system_layout(director :: ref(), timeout_in_ms()) ::
-          {:ok, term()} | {:error, term()}
+  @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_ms :: timeout_in_ms()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout}
   def fetch_transaction_system_layout(director, timeout_in_ms),
     do: director |> call(:fetch_transaction_system_layout, timeout_in_ms)
 

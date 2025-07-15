@@ -13,22 +13,22 @@ defmodule Bedrock.Cluster.Gateway do
   @type ref :: GenServer.server()
 
   @spec begin_transaction(
-          ref(),
+          gateway_ref :: ref(),
           opts :: [
             retry_count: pos_integer(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, pid()} | {:error, :timeout}
+        ) :: {:ok, transaction_pid :: pid()} | {:error, :timeout}
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
   @spec next_read_version(
-          ref(),
+          gateway_ref :: ref(),
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
-          {:ok, Bedrock.version(), new_lease_deadline_in_ms :: Bedrock.interval_in_ms()}
+          {:ok, read_version :: Bedrock.version(), lease_deadline_ms :: Bedrock.interval_in_ms()}
           | {:error, :unavailable}
   def next_read_version(gateway, opts \\ []),
     do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
@@ -37,13 +37,13 @@ defmodule Bedrock.Cluster.Gateway do
   Renew the lease for a transaction based on the read version.
   """
   @spec renew_read_version_lease(
-          ref(),
+          gateway_ref :: ref(),
           read_version :: Bedrock.version(),
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
-          {:ok, new_lease_deadline_in_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
+          {:ok, lease_deadline_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
   def renew_read_version_lease(t, read_version, opts \\ []),
     do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
 
@@ -51,8 +51,8 @@ defmodule Bedrock.Cluster.Gateway do
   Get a coordinator for the cluster. We ask the running instance of the cluster
   gateway to find one for us.
   """
-  @spec fetch_coordinator(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Coordinator.ref()} | {:error, :unavailable}
+  @spec fetch_coordinator(gateway_ref :: ref(), timeout_ms :: Bedrock.timeout_in_ms()) ::
+          {:ok, coordinator_ref :: Coordinator.ref()} | {:error, :unavailable}
   def fetch_coordinator(gateway, timeout_in_ms \\ 5_000),
     do: gateway |> call(:fetch_coordinator, timeout_in_ms)
 

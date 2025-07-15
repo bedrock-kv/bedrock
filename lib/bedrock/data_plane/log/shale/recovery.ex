@@ -117,10 +117,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     }
   end
 
-  @spec discard_segments(term(), list()) :: list()
+  @spec discard_segments(term(), [Segment.t()]) :: []
   def discard_segments(_segment_recycler, []), do: []
 
-  @spec discard_segments(term(), list()) :: list()
+  @spec discard_segments(term(), [Segment.t()]) :: []
   def discard_segments(segment_recycler, [segment | remaining_segments]) do
     :ok = SegmentRecycler.check_in(segment_recycler, segment.path)
     discard_segments(segment_recycler, remaining_segments)

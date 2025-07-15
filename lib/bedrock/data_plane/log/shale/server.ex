@@ -219,7 +219,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @spec ack_fn(GenServer.from()) :: (:ok | {:error, term()} -> :ok)
   def ack_fn(from), do: fn result -> GenServer.reply(from, result) end
 
-  @spec reply_to_fn(GenServer.from()) :: (any() -> :ok)
+  @spec reply_to_fn(GenServer.from()) :: (term() -> :ok)
   def reply_to_fn(from), do: &GenServer.reply(from, &1)
 
   @spec monotonic_now() :: integer()

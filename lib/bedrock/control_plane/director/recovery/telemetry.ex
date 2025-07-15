@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_stalled(elapsed :: Interval.t(), reason :: any()) :: :ok
+  @spec trace_recovery_stalled(elapsed :: Interval.t(), reason :: term()) :: :ok
   def trace_recovery_stalled(elapsed, reason) do
     Telemetry.execute([:bedrock, :recovery, :stalled], %{}, %{elapsed: elapsed, reason: reason})
   end
@@ -94,7 +94,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   def trace_recovery_all_storage_team_vacancies_filled,
     do: Telemetry.execute([:bedrock, :recovery, :all_storage_team_vacancies_filled], %{}, %{})
 
-  @spec trace_recovery_replaying_old_logs(list(), list(), Bedrock.version_vector()) :: :ok
+  @spec trace_recovery_replaying_old_logs([String.t()], [String.t()], Bedrock.version_vector()) ::
+          :ok
   def trace_recovery_replaying_old_logs(old_log_ids, new_log_ids, version_vector) do
     Telemetry.execute([:bedrock, :recovery, :replaying_old_logs], %{}, %{
       old_log_ids: old_log_ids,
@@ -175,7 +176,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_node_cleanup_completed(node(), list()) :: :ok
+  @spec trace_recovery_node_cleanup_completed(node(), [{String.t(), :ok | {:error, term()}}]) ::
+          :ok
   def trace_recovery_node_cleanup_completed(node, results) do
     successful = Enum.count(results, fn {_, result} -> result == :ok end)
     failed = Enum.count(results, fn {_, result} -> match?({:error, _}, result) end)

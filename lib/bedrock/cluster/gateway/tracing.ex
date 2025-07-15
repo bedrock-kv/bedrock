@@ -34,7 +34,7 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
   def handler([:bedrock, :cluster, :gateway, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
-  @spec trace(atom(), map(), map()) :: any()
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster}) do
     Logger.metadata(cluster: cluster)
 

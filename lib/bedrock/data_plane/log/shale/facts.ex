@@ -33,7 +33,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
       :supported_info
     ]
 
-  @spec gather_info(Log.fact_name(), any()) :: term() | {:error, :unsupported}
+  @spec gather_info(Log.fact_name(), map()) :: term() | {:error, :unsupported}
   # Worker facts
   defp gather_info(:id, %{id: id}), do: id
   defp gather_info(:kind, _t), do: :log

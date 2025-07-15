@@ -4,6 +4,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Writer
 
+  import Bedrock.DataPlane.Log.Telemetry
+
   @spec push(
           t :: State.t(),
           expected_version :: Bedrock.version(),
@@ -19,6 +21,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       when expected_version == t.last_version do
     case write_encoded_transaction(t, encoded_transaction) do
       {:ok, t} ->
+        n_keys = EncodedTransaction.key_count(encoded_transaction)
+        trace_push_transaction(expected_version, n_keys)
         :ok = ack_fn.(:ok)
         t |> do_pending_pushes()
     end
@@ -34,8 +38,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
      )}
   end
 
-  def push(_, _, _, _),
-    do: {:error, :tx_out_of_order}
+  def push(t, expected_version, _, _) do
+    trace_push_out_of_order(expected_version, t.last_version)
+    {:error, :tx_out_of_order}
+  end
 
   def do_pending_pushes(t) do
     case Map.pop(t.pending_pushes, t.last_version) do

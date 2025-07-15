@@ -7,6 +7,7 @@ defmodule Bedrock.Service.Foreman do
 
   @type health :: :ok | {:failed_to_start, :at_least_one_failed_to_start} | :unknown | :starting
 
+  @spec config_key() :: atom()
   def config_key, do: :worker
 
   @doc """
@@ -14,6 +15,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, term()}
+  @spec all(ref(), keyword()) :: [term()]
   def all(foreman, opts \\ []),
     do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -27,6 +29,7 @@ defmodule Bedrock.Service.Foreman do
           opts :: [timeout: timeout()]
         ) ::
           {:ok, Worker.ref()} | {:error, term()}
+  @spec new_worker(ref(), term(), atom(), keyword()) :: {:ok, pid()} | {:error, term()}
   def new_worker(foreman, id, kind, opts \\ []),
     do: call(foreman, {:new_worker, id, kind}, to_timeout(opts[:timeout] || :infinity))
 
@@ -35,6 +38,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, term()}
+  @spec storage_workers(ref(), keyword()) :: [term()]
   def storage_workers(foreman, opts \\ []),
     do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -45,6 +49,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec wait_for_healthy(foreman :: ref(), opts :: [timeout: timeout()]) ::
           :ok | {:error, :unavailable}
+  @spec wait_for_healthy(ref(), keyword()) :: :ok
   def wait_for_healthy(foreman, opts \\ []),
     do: call(foreman, :wait_for_healthy, to_timeout(opts[:timeout] || :infinity))
 
@@ -59,6 +64,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec remove_worker(foreman :: ref(), Worker.id(), opts :: [timeout: timeout()]) ::
           :ok | {:error, term()}
+  @spec remove_worker(ref(), term(), keyword()) :: :ok
   def remove_worker(foreman, worker_id, opts \\ []),
     do: call(foreman, {:remove_worker, worker_id}, to_timeout(opts[:timeout] || 5_000))
 
@@ -71,8 +77,7 @@ defmodule Bedrock.Service.Foreman do
   Returns a map of results where successful removals are `:ok` and
   failures include the error reason.
   """
-  @spec remove_workers(foreman :: ref(), [Worker.id()], opts :: [timeout: timeout()]) ::
-          %{Worker.id() => :ok | {:error, term()}}
+  @spec remove_workers(ref(), [term()], keyword()) :: map()
   def remove_workers(foreman, worker_ids, opts \\ []),
     do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
 

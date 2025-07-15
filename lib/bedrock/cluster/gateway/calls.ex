@@ -53,12 +53,15 @@ defmodule Bedrock.Cluster.Gateway.Calls do
     end)
   end
 
+  @spec fetch_coordinator(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
   def fetch_coordinator(%{coordinator: :unavailable}), do: {:error, :unavailable}
   def fetch_coordinator(t), do: {:ok, t.coordinator}
 
+  @spec fetch_director(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
   def fetch_director(%{director: :unavailable}), do: {:error, :unavailable}
   def fetch_director(t), do: {:ok, t.director}
 
+  @spec fetch_commit_proxy(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
   def fetch_commit_proxy(%{director: :unavailable}), do: {:error, :unavailable}
 
   def fetch_commit_proxy(%{transaction_system_layout: nil}), do: {:error, :unavailable}
@@ -67,5 +70,6 @@ defmodule Bedrock.Cluster.Gateway.Calls do
 
   def fetch_commit_proxy(t), do: {:ok, t.transaction_system_layout.proxies |> Enum.random()}
 
+  @spec fetch_coordinator_nodes(State.t()) :: {:ok, [node()]}
   def fetch_coordinator_nodes(t), do: {:ok, t.descriptor.coordinator_nodes}
 end

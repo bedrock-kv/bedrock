@@ -97,6 +97,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
 
+  @spec do_rollback(State.t()) :: :stop | State.t()
   def do_rollback(%{stack: []}), do: :stop
   def do_rollback(%{stack: [_ | stack]} = t), do: %{t | stack: stack}
 end

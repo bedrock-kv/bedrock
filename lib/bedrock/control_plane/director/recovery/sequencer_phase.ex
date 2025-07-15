@@ -31,6 +31,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
 
   # Private helper functions
 
+  @spec get_starter_function(RecoveryAttempt.t()) :: (Supervisor.child_spec(), node() ->
+                                                        {:ok, pid()} | {:error, term()})
   defp get_starter_function(recovery_attempt) do
     :sup
     |> recovery_attempt.cluster.otp_name()
@@ -49,6 +51,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
     )
   end
 
+  @spec handle_sequencer_result({:ok, pid()} | {:error, term()}, RecoveryAttempt.t()) ::
+          RecoveryAttempt.t()
   defp handle_sequencer_result({:ok, sequencer}, recovery_attempt),
     do: %{recovery_attempt | sequencer: sequencer, state: :define_commit_proxies}
 

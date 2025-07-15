@@ -20,14 +20,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :recovery} = t) do
     t
     |> setup_for_subsequent_recovery()
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(t), do: t
 
+  @spec setup_for_initial_recovery(State.t()) :: State.t()
   def setup_for_initial_recovery(t) do
     t
     |> Map.put(:state, :recovery)
@@ -60,6 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end)
   end
 
+  @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     t
     |> Map.update!(:config, fn config ->
@@ -121,6 +125,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
+  @spec unlock_storage_after_recovery(State.t(), term()) :: State.t()
   def unlock_storage_after_recovery(t, durable_version) do
     t.config.transaction_system_layout.services
     |> Enum.each(fn

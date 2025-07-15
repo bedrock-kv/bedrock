@@ -5,8 +5,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_director_recovery"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -34,11 +36,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(
+          :telemetry.event_name(),
+          :telemetry.event_measurements(),
+          :telemetry.event_metadata(),
+          any()
+        ) :: any()
   def handler([:bedrock, :recovery, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
+  @spec trace(atom(), map(), map()) :: any()
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do
     Logger.metadata(cluster: cluster, epoch: epoch, attempt: attempt)
 
@@ -190,6 +200,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     end
   end
 
+  @spec info(String.t()) :: :ok
   defp info(message) do
     metadata = Logger.metadata()
 
@@ -198,6 +209,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     )
   end
 
+  @spec error(String.t()) :: :ok
   defp error(message) do
     metadata = Logger.metadata()
 

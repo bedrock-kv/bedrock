@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   @moduledoc false
   @behaviour Bedrock.Raft.Interface
 
+  @spec determine_timeout(pos_integer(), pos_integer()) :: pos_integer()
   defp determine_timeout(min_ms, max_ms) when min_ms == max_ms, do: min_ms
   defp determine_timeout(min_ms, max_ms) when min_ms > max_ms, do: raise("invalid_timeout")
   defp determine_timeout(min_ms, max_ms), do: min_ms + :rand.uniform(max_ms - min_ms)
@@ -29,6 +30,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   def timer(:heartbeat), do: set_timer(:heartbeat, heartbeat_ms(), 0)
   def timer(:election), do: set_timer(:election, 150, 50)
 
+  @spec set_timer(atom(), pos_integer(), non_neg_integer()) :: (-> :ok | {:error, term()})
   defp set_timer(name, min_ms, jitter) do
     determine_timeout(min_ms, min_ms + jitter)
     |> :timer.send_after({:raft, :timer, name})

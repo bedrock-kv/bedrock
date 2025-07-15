@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   def check_in(segment_recycler, segment),
     do: GenServer.call(segment_recycler, {:check_in, segment})
 
+  @spec child_spec(term()) :: Supervisor.child_spec()
   def child_spec(args) do
     %{
       id: __MODULE__,
@@ -64,7 +65,9 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   end
 
   defmodule Logic do
+    @spec unused_file_prefix() :: String.t()
     def unused_file_prefix, do: "preallocated"
+    @spec generate_unused_file_name(non_neg_integer()) :: String.t()
     def generate_unused_file_name(id), do: "#{unused_file_prefix()}.#{id}"
 
     @spec new(
@@ -134,8 +137,10 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     def ensure_min_available(t, n), do: create_new_segments(t, max(0, n - length(t.segments)))
 
+    @spec create_new_segments(State.t(), non_neg_integer()) :: {:ok, State.t()} | {:error, atom()}
     def create_new_segments(t, 0), do: {:ok, t}
 
+    @spec create_new_segments(State.t(), non_neg_integer()) :: {:ok, State.t()} | {:error, atom()}
     def create_new_segments(t, n) do
       with {:ok, segment} <-
              allocate_file(
@@ -157,6 +162,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       |> Enum.max()
     end
 
+    @spec allocate_file(String.t(), non_neg_integer()) :: {:ok, String.t()} | {:error, atom()}
     def allocate_file(path, size_in_bytes) do
       with {:ok, fd} <- File.open(path, [:write, :binary, :raw, :exclusive]),
            :ok <- :file.allocate(fd, 0, size_in_bytes),
@@ -193,6 +199,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       end
     end
 
+    @impl GenServer
     def handle_call({:check_in, segment}, _from, state) do
       Logic.check_in(state, segment)
       |> case do

@@ -34,6 +34,7 @@ defmodule Bedrock.Service.Manifest do
     path_to_manifest |> write_file_contents(json)
   end
 
+  @spec write_file_contents(String.t(), String.t()) :: :ok | {:error, File.posix()}
   defp write_file_contents(path_to_manifest, json),
     do: File.write(path_to_manifest, json)
 
@@ -56,6 +57,7 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
+  @spec load_file_contents(String.t()) :: {:ok, String.t()} | {:error, :manifest_does_not_exist}
   defp load_file_contents(path) do
     File.read(path)
     |> case do
@@ -94,6 +96,8 @@ defmodule Bedrock.Service.Manifest do
   defp parse_worker_name(worker_name),
     do: {:ok, worker_name |> String.split(".") |> Module.concat()}
 
+  @spec check_module_is_storage_worker(module()) ::
+          :ok | {:error, :worker_module_does_not_implement_behaviour}
   defp check_module_is_storage_worker(worker) do
     if :attributes
        |> worker.module_info()
@@ -104,6 +108,7 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
+  @spec params_from_json(term()) :: {:ok, map()} | {:error, :invalid_params}
   def params_from_json(nil), do: {:ok, %{}}
   def params_from_json(params) when is_map(params), do: {:ok, params}
   def params_from_json(_), do: {:error, :invalid_params}

@@ -1,4 +1,5 @@
 defmodule Bedrock.Repo do
+  @spec builtin_key_codecs() :: %{atom() => module()}
   def builtin_key_codecs,
     do: %{
       default: Bedrock.KeyCodec.BinaryKeyCodec,
@@ -6,6 +7,7 @@ defmodule Bedrock.Repo do
       tuple: Bedrock.KeyCodec.TupleKeyCodec
     }
 
+  @spec builtin_value_codecs() :: %{atom() => module()}
   def builtin_value_codecs,
     do: %{
       default: Bedrock.ValueCodec.BinaryValueCodec,

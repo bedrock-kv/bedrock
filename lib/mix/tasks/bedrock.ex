@@ -10,6 +10,7 @@ defmodule Mix.Tasks.Bedrock do
 
   """
 
+  @spec run([String.t()]) :: :ok
   def run(argv) do
     {_opts, args} = OptionParser.parse!(argv, strict: [])
 

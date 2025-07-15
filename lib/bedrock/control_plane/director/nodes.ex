@@ -34,6 +34,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     end
   end
 
+  @spec node_added_worker(State.t(), node(), Director.running_service_info(), DateTime.t()) ::
+          State.t()
   def node_added_worker(t, node, info, at) do
     t
     |> update_last_seen_at(node, at)

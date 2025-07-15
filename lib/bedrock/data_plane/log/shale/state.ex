@@ -6,7 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
 
-  @type mode :: :locked | :running
+  @type mode :: :locked | :running | :recovering
 
   @type t :: %__MODULE__{
           cluster: module(),

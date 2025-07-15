@@ -35,6 +35,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
   def transactions_in_order(t),
     do: t.buffer |> Enum.reverse()
 
+  @spec all_callers(t()) :: [reply_fn()]
   def all_callers(t),
     do: t.buffer |> Enum.map(&elem(&1, 0))
 

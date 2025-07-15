@@ -10,6 +10,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @type ref :: GenServer.name()
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
+  @spec config_key() :: atom()
   def config_key, do: :coordinator
 
   @spec fetch_director_and_epoch(

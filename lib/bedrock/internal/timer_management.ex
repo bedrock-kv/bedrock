@@ -8,6 +8,7 @@ defmodule Bedrock.Internal.TimerManagement do
 
   # Timer Management
 
+  @spec cancel_all_timers(map()) :: map()
   def cancel_all_timers(%{timers: nil} = t), do: t
 
   def cancel_all_timers(%{} = t) do
@@ -17,6 +18,7 @@ defmodule Bedrock.Internal.TimerManagement do
     end)
   end
 
+  @spec cancel_timer(map(), atom()) :: map()
   def cancel_timer(%{timers: nil} = t, _name), do: t
 
   def cancel_timer(%{} = t, name) do
@@ -32,6 +34,7 @@ defmodule Bedrock.Internal.TimerManagement do
     end
   end
 
+  @spec set_timer(map(), atom(), pos_integer()) :: map()
   def set_timer(%{} = t, name, timeout_in_ms) do
     update_in(
       t.timers,

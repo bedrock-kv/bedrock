@@ -58,6 +58,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
           :ok
           | {:error, :version_too_new}
           | {:error, :version_too_old}
+  @spec apply_transaction(t(), term()) :: :ok
   def apply_transaction(pkv, transaction) do
     version = Transaction.version(transaction)
     last_version = last_version(pkv)
@@ -97,6 +98,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   """
   @spec info(pkv :: t(), :n_keys | :size_in_bytes | :utilization | :key_ranges) ::
           any() | :undefined
+  @spec info(t(), atom()) :: term()
   def info(pkv, :n_keys) do
     # We don't count the :last_version key
     pkv
@@ -107,6 +109,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
     end
   end
 
+  @spec info(t(), atom()) :: term()
   def info(pkv, :key_ranges) do
     pkv
     |> :dets.lookup(:key_ranges)
@@ -116,6 +119,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
     end
   end
 
+  @spec info(t(), atom()) :: term()
   def info(pkv, :utilization) do
     pkv
     |> :dets.info(:no_slots)
@@ -125,14 +129,17 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
     end
   end
 
+  @spec info(t(), atom()) :: term()
   def info(pkv, :size_in_bytes), do: pkv |> :dets.info(:file_size)
 
+  @spec info(t(), atom()) :: term()
   def info(_pkv, _query), do: :undefined
 
   @doc """
   Prune the key-value store of any keys that have a `nil` value.
   """
   @spec prune(pkv :: t()) :: {:ok, n_pruned :: non_neg_integer()}
+  @spec prune(t()) :: :ok
   def prune(pkv) do
     n_pruned = :dets.select_delete(pkv, [{{:_, :"$1"}, [{:is_nil}], [true]}])
     {:ok, n_pruned}
@@ -143,6 +150,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   guaranteed to be in any particular order.
   """
   @spec stream_keys(pkv :: t()) :: Enumerable.t()
+  @spec stream_keys(t()) :: Enumerable.t()
   def stream_keys(pkv) do
     Stream.resource(
       fn -> :dets.first(pkv) end,

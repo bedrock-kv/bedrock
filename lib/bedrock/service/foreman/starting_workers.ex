@@ -11,6 +11,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   @spec worker_info_from_path(Path.t(), otp_namer :: (Worker.id() -> Worker.otp_name())) ::
           [WorkerInfo.t()]
+  @spec worker_info_from_path(String.t(), function()) :: WorkerInfo.t() | nil
   def worker_info_from_path(path, otp_namer) do
     path
     |> worker_paths_from_disk()
@@ -24,6 +25,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> Path.wildcard()
   end
 
+  @spec worker_info_for_id(String.t(), String.t(), function()) :: WorkerInfo.t() | nil
   def worker_info_for_id(id, path, otp_namer),
     do: %WorkerInfo{
       id: id,
@@ -125,6 +127,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
           Path.t(),
           cluster :: module()
         ) :: WorkerInfo.t()
+  @spec initialize_new_worker(String.t(), module(), map(), String.t(), module()) :: WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
     working_directory = Path.join(path, id)
     worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)

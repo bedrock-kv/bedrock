@@ -72,6 +72,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Remove state that shouldn't be persisted
+  @spec remove_ephemeral_state(Config.t()) :: Config.t()
   defp remove_ephemeral_state(config) do
     config
     # Recovery state is ephemeral
@@ -79,6 +80,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Encode transaction system layout PIDs to {otp_name, node} tuples
+  @spec encode_transaction_system_layout(Config.t(), module()) :: Config.t()
   defp encode_transaction_system_layout(config, cluster) do
     Map.update!(config, :transaction_system_layout, fn layout ->
       layout
@@ -91,6 +93,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Decode transaction system layout {otp_name, node} tuples to PIDs
+  @spec decode_transaction_system_layout(Config.t(), module()) :: Config.t()
   defp decode_transaction_system_layout(config, _cluster) do
     Map.update!(config, :transaction_system_layout, fn layout ->
       layout
@@ -103,6 +106,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Generic single reference encoding (director, sequencer, rate_keeper)
+  @spec encode_single_reference(map(), atom(), module()) :: map()
   defp encode_single_reference(layout, field, cluster) do
     case layout[field] do
       pid when is_pid(pid) ->
@@ -114,6 +118,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Generic single reference decoding
+  @spec decode_single_reference(map(), atom()) :: map()
   defp decode_single_reference(layout, field) do
     case layout[field] do
       {otp_name, node} when is_atom(otp_name) and is_atom(node) ->
@@ -125,6 +130,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Proxy list encoding
+  @spec encode_proxy_list(map(), module()) :: map()
   defp encode_proxy_list(layout, cluster) do
     proxies = layout[:proxies] || []
 
@@ -139,6 +145,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Proxy list decoding
+  @spec decode_proxy_list(map()) :: map()
   defp decode_proxy_list(layout) do
     proxies = layout[:proxies] || []
 
@@ -157,6 +164,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Service map encoding
+  @spec encode_service_map(map(), module()) :: map()
   defp encode_service_map(layout, cluster) do
     services = layout[:services] || %{}
 
@@ -172,6 +180,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Service map decoding
+  @spec decode_service_map(map()) :: map()
   defp decode_service_map(layout) do
     services = layout[:services] || %{}
 
@@ -187,6 +196,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Service descriptor status encoding
+  @spec encode_service_status(map(), module(), String.t()) :: map()
   defp encode_service_status(descriptor, cluster, service_id) do
     case descriptor[:status] do
       {:up, pid} when is_pid(pid) ->
@@ -199,6 +209,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Service descriptor status decoding
+  @spec decode_service_status(map()) :: map()
   defp decode_service_status(descriptor) do
     case descriptor[:status] do
       {:up, {otp_name, node}} when is_atom(otp_name) and is_atom(node) ->
@@ -211,6 +222,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Helper to convert PID to {otp_name, node} tuple
+  @spec pid_to_otp_reference(pid(), module(), String.t() | atom()) :: {atom(), node()}
   defp pid_to_otp_reference(pid, cluster, component) when is_pid(pid) do
     node = node(pid)
     otp_name = cluster.otp_name(component)
@@ -218,6 +230,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Helper to convert {otp_name, node} tuple to PID
+  @spec otp_reference_to_pid({atom(), node()}) :: pid() | nil
   defp otp_reference_to_pid({otp_name, node}) when is_atom(otp_name) and is_atom(node) do
     if node == node() do
       # Local process - use Process.whereis directly

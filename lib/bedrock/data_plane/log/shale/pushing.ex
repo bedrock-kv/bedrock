@@ -37,6 +37,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   def push(_, _, _, _),
     do: {:error, :tx_out_of_order}
 
+  @spec do_pending_pushes(State.t()) ::
+          {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
   def do_pending_pushes(t) do
     case Map.pop(t.pending_pushes, t.last_version) do
       {nil, _} ->

@@ -3,10 +3,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
 
+  import NodeTrackingHelper
+
+  # Mock cluster for testing
+  defmodule TestCluster do
+    def otp_name(_component), do: :test_otp_name
+  end
+
   describe "execute/1" do
     test "successfully fills storage team vacancies and advances state" do
       recovery_attempt = %{
         state: :recruit_storage_to_fill_vacancies,
+        cluster: TestCluster,
         storage_teams: [
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
           %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
@@ -21,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
 
       assert result.state == :replay_old_logs
       assert is_list(result.storage_teams)
@@ -36,6 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
     test "stalls recovery when insufficient storage workers available" do
       recovery_attempt = %{
         state: :recruit_storage_to_fill_vacancies,
+        cluster: TestCluster,
         storage_teams: [
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
           %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
@@ -48,14 +57,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
 
-      assert result.state == {:stalled, {:need_storage_workers, 1}}
+      assert {:stalled, {:all_workers_failed, _failed_workers}} = result.state
     end
 
     test "handles storage teams with no vacancies" do
       recovery_attempt = %{
         state: :recruit_storage_to_fill_vacancies,
+        cluster: TestCluster,
         storage_teams: [
           %{tag: "team_1", storage_ids: ["storage_1", "storage_2"]},
           %{tag: "team_2", storage_ids: ["storage_3", "storage_4"]}
@@ -68,7 +78,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == recovery_attempt.storage_teams
@@ -77,6 +87,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
     test "handles empty storage teams" do
       recovery_attempt = %{
         state: :recruit_storage_to_fill_vacancies,
+        cluster: TestCluster,
         storage_teams: [],
         storage_recovery_info_by_id: %{
           "storage_1" => %{},
@@ -84,24 +95,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         }
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == []
     end
   end
 
-  describe "fill_storage_team_vacancies/2" do
+  describe "fill_storage_team_vacancies/4" do
     test "successfully fills vacancies when enough storage available" do
       storage_teams = [
         %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
         %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
       ]
 
+      assigned_storage_ids = MapSet.new(["storage_1", "storage_2", {:vacancy, 0}, {:vacancy, 1}])
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3", "storage_4"])
+      available_nodes = []
 
-      {:ok, updated_teams} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      {:ok, updated_teams, []} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
 
       assert length(updated_teams) == 2
 
@@ -125,11 +143,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
       ]
 
+      assigned_storage_ids = MapSet.new(["storage_1", "storage_2", {:vacancy, 0}, {:vacancy, 1}])
       # Only 1 available
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3"])
+      available_nodes = []
 
-      {:error, {:need_storage_workers, 1}} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      {:error, {:insufficient_nodes, 1, 0}} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
     end
 
     test "handles teams with multiple vacancies" do
@@ -137,10 +162,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         %{tag: "team_1", storage_ids: [{:vacancy, 0}, {:vacancy, 1}, {:vacancy, 2}]}
       ]
 
+      assigned_storage_ids = MapSet.new([{:vacancy, 0}, {:vacancy, 1}, {:vacancy, 2}])
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3", "storage_4"])
+      available_nodes = []
 
-      {:ok, updated_teams} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      {:ok, updated_teams, []} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
 
       team = List.first(updated_teams)
       assert length(team.storage_ids) == 3
@@ -153,21 +185,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         %{tag: "team_2", storage_ids: ["storage_3", "storage_4"]}
       ]
 
+      assigned_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3", "storage_4"])
+
       all_storage_ids =
         MapSet.new(["storage_1", "storage_2", "storage_3", "storage_4", "storage_5"])
 
-      {:ok, updated_teams} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      available_nodes = []
+
+      {:ok, updated_teams, []} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
 
       # No changes needed
       assert updated_teams == storage_teams
     end
 
     test "handles empty storage teams" do
+      assigned_storage_ids = MapSet.new([])
       all_storage_ids = MapSet.new(["storage_1", "storage_2"])
+      available_nodes = []
 
-      {:ok, updated_teams} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies([], all_storage_ids)
+      {:ok, updated_teams, []} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          [],
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
 
       assert updated_teams == []
     end
@@ -178,11 +226,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         %{tag: "team_2", storage_ids: [{:vacancy, 2}, "storage_2"]}
       ]
 
+      assigned_storage_ids =
+        MapSet.new(["storage_1", "storage_2", {:vacancy, 0}, {:vacancy, 1}, {:vacancy, 2}])
+
       # 3 vacancies total, but only 1 candidate available  
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3"])
+      available_nodes = []
 
-      {:error, {:need_storage_workers, 2}} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      {:error, {:insufficient_nodes, 2, 0}} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
     end
 
     test "avoids reassigning already assigned storage" do
@@ -191,11 +248,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
       ]
 
+      assigned_storage_ids = MapSet.new(["storage_1", "storage_2", {:vacancy, 0}, {:vacancy, 1}])
       # storage_1 and storage_2 are already assigned, so only storage_3 and storage_4 available
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3", "storage_4"])
+      available_nodes = []
 
-      {:ok, updated_teams} =
-        StorageRecruitmentPhase.fill_storage_team_vacancies(storage_teams, all_storage_ids)
+      {:ok, updated_teams, []} =
+        StorageRecruitmentPhase.fill_storage_team_vacancies(
+          storage_teams,
+          assigned_storage_ids,
+          all_storage_ids,
+          available_nodes
+        )
 
       # Find the newly assigned storage IDs
       new_assignments =

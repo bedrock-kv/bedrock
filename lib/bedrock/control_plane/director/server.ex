@@ -165,11 +165,14 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> noreply()
   end
 
+  @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
 
+  @spec get_services_from_config(map()) :: map()
   def get_services_from_config(%{transaction_system_layout: %{services: services}}),
     do: services || %{}
 
+  @spec store_changes_to_config(State.t()) :: State.t()
   def store_changes_to_config(%{config: nil} = t), do: t
 
   def store_changes_to_config(%State{coordinator: coordinator, config: config} = t) do

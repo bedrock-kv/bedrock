@@ -10,8 +10,10 @@ defmodule Bedrock.DataPlane.Proxy do
 
   defstruct ~w[director layout]a
 
+  @spec next_read_version(GenServer.server()) :: Bedrock.version()
   def next_read_version(proxy), do: GenServer.call(proxy, :get_read_version)
 
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     id = Keyword.get(opts, :id) || raise "Missing :id option"
     director = Keyword.get(opts, :director) || raise "Missing :director option"
@@ -39,6 +41,7 @@ defmodule Bedrock.DataPlane.Proxy do
     {:noreply, state}
   end
 
-  defp forward_call(gen_server, message, from),
+  @spec forward_call(GenServer.server(), GenServer.from(), term()) :: term()
+  defp forward_call(gen_server, from, message),
     do: send(gen_server, {:"$gen_call", from, message})
 end

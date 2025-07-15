@@ -41,9 +41,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_first_time_initialization() :: :ok
   def trace_recovery_first_time_initialization,
     do: Telemetry.execute([:bedrock, :recovery, :first_time_initialization], %{}, %{})
 
+  @spec trace_recovery_creating_vacancies(non_neg_integer(), non_neg_integer()) :: :ok
   def trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies) do
     Telemetry.execute(
       [:bedrock, :recovery, :creating_vacancies],
@@ -84,12 +86,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_all_log_vacancies_filled() :: :ok
   def trace_recovery_all_log_vacancies_filled,
     do: Telemetry.execute([:bedrock, :recovery, :all_log_vacancies_filled], %{}, %{})
 
+  @spec trace_recovery_all_storage_team_vacancies_filled() :: :ok
   def trace_recovery_all_storage_team_vacancies_filled,
     do: Telemetry.execute([:bedrock, :recovery, :all_storage_team_vacancies_filled], %{}, %{})
 
+  @spec trace_recovery_replaying_old_logs(list(), list(), Bedrock.version_vector()) :: :ok
   def trace_recovery_replaying_old_logs(old_log_ids, new_log_ids, version_vector) do
     Telemetry.execute([:bedrock, :recovery, :replaying_old_logs], %{}, %{
       old_log_ids: old_log_ids,
@@ -98,34 +103,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_storage_unlocking(term()) :: :ok
   def trace_recovery_storage_unlocking(storage_worker_id) do
     Telemetry.execute([:bedrock, :recovery, :storage_unlocking], %{}, %{
       storage_worker_id: storage_worker_id
     })
   end
 
+  @spec trace_recovery_persisting_system_state() :: :ok
   def trace_recovery_persisting_system_state do
     Telemetry.execute([:bedrock, :recovery, :persisting_system_state], %{}, %{})
   end
 
+  @spec trace_recovery_system_state_persisted() :: :ok
   def trace_recovery_system_state_persisted do
     Telemetry.execute([:bedrock, :recovery, :system_state_persisted], %{}, %{})
   end
 
+  @spec trace_recovery_system_transaction_failed(term()) :: :ok
   def trace_recovery_system_transaction_failed(reason) do
     Telemetry.execute([:bedrock, :recovery, :system_transaction_failed], %{}, %{
       reason: reason
     })
   end
 
+  @spec trace_recovery_monitoring_components() :: :ok
   def trace_recovery_monitoring_components do
     Telemetry.execute([:bedrock, :recovery, :monitoring_components], %{}, %{})
   end
 
+  @spec trace_recovery_old_logs_replayed() :: :ok
   def trace_recovery_old_logs_replayed do
     Telemetry.execute([:bedrock, :recovery, :old_logs_replayed], %{}, %{})
   end
 
+  @spec trace_recovery_worker_cleanup(term(), node()) :: :ok
   def trace_recovery_worker_cleanup(worker_id, node) do
     Telemetry.execute([:bedrock, :recovery, :worker_cleanup], %{}, %{
       worker_id: worker_id,
@@ -133,6 +145,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_cleanup_started(non_neg_integer(), [node()]) :: :ok
   def trace_recovery_cleanup_started(total_obsolete_workers, nodes) do
     Telemetry.execute([:bedrock, :recovery, :cleanup_started], %{}, %{
       total_obsolete_workers: total_obsolete_workers,
@@ -140,6 +153,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_cleanup_completed(non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
+          :ok
   def trace_recovery_cleanup_completed(
         total_obsolete_workers,
         successful_cleanups,
@@ -152,6 +167,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_node_cleanup_started(node(), non_neg_integer()) :: :ok
   def trace_recovery_node_cleanup_started(node, worker_count) do
     Telemetry.execute([:bedrock, :recovery, :node_cleanup_started], %{}, %{
       node: node,
@@ -159,6 +175,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_node_cleanup_completed(node(), list()) :: :ok
   def trace_recovery_node_cleanup_completed(node, results) do
     successful = Enum.count(results, fn {_, result} -> result == :ok end)
     failed = Enum.count(results, fn {_, result} -> match?({:error, _}, result) end)

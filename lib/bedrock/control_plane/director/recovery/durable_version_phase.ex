@@ -103,6 +103,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
     end
   end
 
+  @spec smallest_version(Bedrock.version() | nil, Bedrock.version() | nil) ::
+          Bedrock.version() | nil
   def smallest_version(nil, b), do: b
   def smallest_version(a, b), do: min(a, b)
 
@@ -145,8 +147,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
     end
   end
 
+  @spec determine_quorum(non_neg_integer()) :: pos_integer()
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 
+  @spec durability_status_for_storage_team(non_neg_integer(), non_neg_integer()) ::
+          :healthy | :degraded
   defp durability_status_for_storage_team(durable_versions, quorum)
        when durable_versions == quorum,
        do: :healthy

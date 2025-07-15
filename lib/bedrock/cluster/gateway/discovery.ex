@@ -42,6 +42,8 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     end
   end
 
+  @spec first_coordinator_that_responds(module(), [node()]) ::
+          {:ok, pid()} | {:error, :unavailable}
   defp first_coordinator_that_responds(cluster, coordinator_nodes) do
     GenServer.multi_call(
       coordinator_nodes,

@@ -60,5 +60,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
       services: %{}
     }
 
+  @spec random_id() :: id()
   def random_id, do: :rand.uniform(1_000_000)
 end

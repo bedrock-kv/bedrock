@@ -5,8 +5,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
 
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_commit_proxy"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -20,11 +22,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(list(atom()), map(), map(), term()) :: :ok
   def handler([:bedrock, :data_plane, :commit_proxy, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:start, %{n_transactions: n_transactions}, %{
         cluster: cluster,
         commit_version: commit_version
@@ -50,6 +55,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
     )
   end
 
+  @spec info(String.t()) :: :ok
   defp info(message) do
     metadata = Logger.metadata()
 
@@ -58,6 +64,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
     )
   end
 
+  @spec error(String.t()) :: :ok
   defp error(message) do
     metadata = Logger.metadata()
 

@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Tracing do
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_data_plane_log"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -18,11 +20,14 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(list(atom()), map(), map(), term()) :: :ok
   def handler([:bedrock, :log, event], measurements, metadata, _),
     do: log_event(event, measurements, metadata)
 
+  @spec log_event(atom(), map(), map()) :: :ok
   def log_event(:started, _, %{cluster: cluster, id: id, otp_name: otp_name}) do
     Logger.metadata(
       id: id,

@@ -11,6 +11,7 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
   import Bedrock.ControlPlane.Config.Parameters,
     only: [put_desired_replication_factor: 2]
 
+  @spec settable_parameters_for_state(atom()) :: [atom()]
   def settable_parameters_for_state(:uninitialized),
     do: [
       :ping_rate_in_hz,
@@ -44,6 +45,8 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     end
   end
 
+  @spec validate_settable_parameters_for_state(keyword(), atom()) ::
+          :ok | {:error, :invalid_parameters_for_state, keyword()}
   def validate_settable_parameters_for_state(parameters, state) do
     parameters
     |> Keyword.drop(settable_parameters_for_state(state))
@@ -71,6 +74,8 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     end
   end
 
+  @spec try_to_set_parameter(Parameters.t(), atom(), any()) ::
+          {:ok, Parameters.t()} | {:error, :invalid_value}
   def try_to_set_parameter(parameters, :replication_factor, n),
     do: {:ok, put_desired_replication_factor(parameters, n)}
 

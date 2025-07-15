@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [new_batch: 3, add_transaction: 3, set_finalized_at: 2]
 
+  @spec timestamp() :: Bedrock.timestamp_in_ms()
   defp timestamp, do: :erlang.monotonic_time(:millisecond)
 
   @spec single_transaction_batch(

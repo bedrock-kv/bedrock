@@ -69,12 +69,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @impl true
   def handle_continue(:initialization, t) do
-    trace_metadata(
-      cluster: t.cluster,
-      id: t.id,
-      otp_name: t.otp_name
-    )
-
+    trace_metadata(%{cluster: t.cluster, id: t.id, otp_name: t.otp_name})
     trace_started()
 
     {:ok, pid} =
@@ -86,24 +81,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       )
 
     {oldest_version, last_version, active_segment, segments} =
-      reload_segments_at_path(t.path)
+      t.path
+      |> reload_segments_at_path
       |> case do
-        [] ->
+        {:error, :unable_to_list_segments} ->
           {0, 0, nil, []}
 
-        [active_segment | segments] ->
+        {:ok, []} ->
+          {0, 0, nil, []}
+
+        {:ok, [active_segment | segments]} ->
           active_segment = Segment.load_transactions(active_segment)
           last_version = Segment.last_version(active_segment)
-
-          oldest_version =
-            segments
-            |> Enum.reduce(
-              active_segment.min_version,
-              fn segment, last_version ->
-                min(segment.min_version, last_version)
-              end
-            )
-
+          oldest_version = segments |> Enum.min_by(& &1.min_version) || active_segment.min_version
           {oldest_version, last_version, active_segment, segments}
       end
 
@@ -116,6 +106,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     |> noreply()
   end
 
+  @impl true
   def handle_continue({:notify_waiting_pullers, version, transaction}, t) do
     t
     |> Map.update!(
@@ -125,6 +116,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     |> noreply(continue: :check_for_expired_pullers)
   end
 
+  @impl true
   def handle_continue(:check_for_expired_pullers, t) do
     t
     |> Map.update!(
@@ -134,6 +126,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     |> noreply(continue: :wait_for_next_puller_deadline)
   end
 
+  @impl true
   def handle_continue(:wait_for_next_puller_deadline, t) do
     t
     |> Map.get(:waiting_pullers)
@@ -151,6 +144,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:info, fact_names}, _, t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 
+  @impl true
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     trace_lock_for_recovery(epoch)
 
@@ -162,6 +156,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  @impl true
   def handle_call({:recover_from, source_log, first_version, last_version}, {_director, _}, t) do
     trace_recover_from(source_log, first_version, last_version)
 
@@ -171,6 +166,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  @impl true
   def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
     with {:ok, transaction} <- EncodedTransaction.validate(transaction_bytes),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
@@ -181,6 +177,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  @impl true
   def handle_call({:pull, from_version, opts}, from, t) do
     trace_pull_transactions(from_version, opts)
 
@@ -211,8 +208,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  @impl true
   def handle_call(:ping, _from, t), do: t |> reply(:pong)
 
+  @spec check_running(term()) :: {:error, :unavailable}
   def check_running(_t), do: {:error, :unavailable}
 
   @spec ack_fn(GenServer.from()) :: (:ok | {:error, term()} -> :ok)
@@ -221,5 +220,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @spec reply_to_fn(GenServer.from()) :: (any() -> :ok)
   def reply_to_fn(from), do: &GenServer.reply(from, &1)
 
+  @spec monotonic_now() :: integer()
   def monotonic_now, do: :erlang.monotonic_time(:millisecond)
 end

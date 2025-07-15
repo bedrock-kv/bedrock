@@ -37,6 +37,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
   @type t :: binary()
 
+  @spec version(t()) :: Bedrock.version()
   def version(<<version::unsigned-big-64, _::binary>>), do: version
 
   @spec validate(binary()) :: {:ok, t()} | {:error, :crc32_mismatch} | {:error, :invalid}
@@ -51,6 +52,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     end
   end
 
+  @spec validate(binary()) :: {:ok, t()} | {:error, :crc32_mismatch} | {:error, :invalid}
   def validate(_), do: {:error, :invalid}
 
   @doc """
@@ -143,6 +145,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
       )
   end
 
+  @spec decode_key_value_frames(binary()) :: %{binary() => binary()}
   defp decode_key_value_frames(<<>>), do: %{}
 
   defp decode_key_value_frames(
@@ -200,6 +203,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     end
   end
 
+  @spec filter_gte_min_key(binary(), binary(), non_neg_integer()) :: non_neg_integer()
   defp filter_gte_min_key(<<>>, _min_key, start),
     do: start
 
@@ -216,6 +220,12 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     end
   end
 
+  @spec filter_gte_min_key_lt_max_key(
+          binary(),
+          binary(),
+          binary(),
+          {non_neg_integer(), non_neg_integer()}
+        ) :: {non_neg_integer(), non_neg_integer()}
   defp filter_gte_min_key_lt_max_key(<<>>, _, _, range),
     do: range
 
@@ -275,6 +285,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     |> wrap_with_version_and_crc32(version)
   end
 
+  @spec exclude_values_from_payload(binary()) :: iodata()
   defp exclude_values_from_payload(<<>>), do: []
 
   defp exclude_values_from_payload(
@@ -287,6 +298,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     ]
   end
 
+  @spec wrap_with_version_and_crc32(iodata(), Bedrock.version()) :: iodata()
   defp wrap_with_version_and_crc32(kv_frames, version),
     do: [
       <<version::unsigned-big-64, IO.iodata_length(kv_frames)::unsigned-big-32>>,

@@ -19,6 +19,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
      end)}
   end
 
+  @spec supported_info() :: [Log.fact_name()]
   def supported_info,
     do: [
       :id,

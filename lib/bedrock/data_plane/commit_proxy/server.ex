@@ -56,7 +56,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   end
 
   def init({cluster, director, epoch, max_latency_in_ms, max_per_batch, lock_token}) do
-    trace_metadata(cluster: cluster, pid: self())
+    trace_metadata(%{cluster: cluster, pid: self()})
 
     %State{
       cluster: cluster,

@@ -3,6 +3,7 @@ defmodule Bedrock.Cluster.Gateway.MinimumReadVersions do
 
   alias Bedrock.Internal.Time
 
+  @spec recalculate_minimum_read_version(map()) :: map()
   def recalculate_minimum_read_version(t) do
     {minimum_read_version, deadline_by_version} =
       find_minimum_active_version(

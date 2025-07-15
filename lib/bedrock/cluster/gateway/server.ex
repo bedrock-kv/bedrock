@@ -26,6 +26,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   require Logger
 
+  @spec child_spec(Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     descriptor = opts[:descriptor] || raise "Missing :descriptor option"

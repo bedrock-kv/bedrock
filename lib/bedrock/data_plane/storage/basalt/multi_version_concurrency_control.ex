@@ -46,6 +46,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
           transactions :: [Transaction.t()]
         ) ::
           Bedrock.version()
+  @spec apply_transactions!(t(), [Transaction.t()]) :: :ok
   def apply_transactions!(mvcc, transactions) do
     latest_version = mvcc |> newest_version()
 
@@ -92,6 +93,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec insert_read(mvcc :: t(), Bedrock.key(), Bedrock.version(), Bedrock.value() | nil) ::
           :ok
+  @spec insert_read(t(), Bedrock.key(), Bedrock.version(), Bedrock.value() | nil) :: :ok
   def insert_read(mvcc, key, version, value) when is_binary(value) or is_nil(value) do
     :ets.insert_new(mvcc, {versioned_key(key, version), {value}})
     :ok
@@ -108,6 +110,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec fetch(mvcc :: t(), Bedrock.key(), Bedrock.version()) ::
           {:ok, Bedrock.value()} | {:error, :not_found}
+  @spec fetch(t(), Bedrock.key(), Bedrock.version()) :: Bedrock.value() | :not_found
   def fetch(mvcc, key, version) do
     mvcc
     |> :ets.select_reverse(match_value_for_key_with_version_lte(key, version), 1)
@@ -176,6 +179,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
             :latest
             | Bedrock.version()
         ) :: Transaction.t() | nil
+  @spec transaction_at_version(t(), :latest | Bedrock.version()) :: map() | nil
   def transaction_at_version(mvcc, :latest) do
     newest_version(mvcc)
     |> case do
@@ -184,6 +188,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     end
   end
 
+  @spec transaction_at_version(t(), :latest | Bedrock.version()) :: map() | nil
   def transaction_at_version(mvcc, version) do
     {_, snapshot} =
       :ets.foldr(
@@ -203,6 +208,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   end
 
   @spec purge_keys_newer_than_version(mvcc :: t(), Bedrock.version()) :: :ok
+  @spec purge_keys_newer_than_version(t(), Bedrock.version()) :: :ok
   def purge_keys_newer_than_version(mvcc, version) do
     :ets.select_delete(mvcc, match_rows_with_with_version_gt(version))
     :ets.insert(mvcc, [{:newest_version, version}])
@@ -214,6 +220,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec purge_keys_older_than_version(mvcc :: t(), Bedrock.version()) ::
           {:ok, n_purged :: pos_integer()}
+  @spec purge_keys_older_than_version(t(), Bedrock.version()) :: :ok
   def purge_keys_older_than_version(mvcc, version) do
     :ets.insert(mvcc, [{:oldest_version, version}])
     n_purged = :ets.select_delete(mvcc, match_version_lt(version))

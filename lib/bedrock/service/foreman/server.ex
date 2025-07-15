@@ -7,6 +7,7 @@ defmodule Bedrock.Service.Foreman.Server do
   use GenServer
   import Bedrock.Internal.GenServer.Replies
 
+  @spec required_opt_keys() :: [atom()]
   def required_opt_keys,
     do: [:cluster, :path, :capabilities, :otp_name]
 
@@ -31,21 +32,27 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_call(:ping, _from, t),
     do: t |> reply(:pong)
 
+  @impl true
   def handle_call(:workers, _from, t),
     do: t |> do_fetch_workers() |> then(&(t |> reply({:ok, &1})))
 
+  @impl true
   def handle_call(:storage_workers, _from, t),
     do: t |> do_fetch_storage_workers() |> then(&(t |> reply({:ok, &1})))
 
+  @impl true
   def handle_call({:new_worker, id, kind}, _from, t),
     do: t |> do_new_worker(id, kind) |> then(fn {t, health} -> t |> reply({:ok, health}) end)
 
+  @impl true
   def handle_call({:remove_worker, worker_id}, _from, t),
     do: t |> do_remove_worker(worker_id) |> then(fn {t, result} -> t |> reply(result) end)
 
+  @impl true
   def handle_call({:remove_workers, worker_ids}, _from, t),
     do: t |> do_remove_workers(worker_ids) |> then(fn {t, results} -> t |> reply(results) end)
 
+  @impl true
   def handle_call(:wait_for_healthy, from, t) do
     t
     |> do_wait_for_healthy(from)
@@ -55,6 +62,7 @@ defmodule Bedrock.Service.Foreman.Server do
     end
   end
 
+  @impl true
   def handle_call(_, _from, t),
     do: t |> reply({:error, :unknown_command})
 
@@ -62,6 +70,7 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_cast({:worker_health, worker_id, health}, t),
     do: t |> do_worker_health(worker_id, health) |> noreply()
 
+  @impl true
   def handle_cast(_, t), do: t |> noreply()
 
   @impl true

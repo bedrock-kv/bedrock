@@ -48,6 +48,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     |> maybe_put_director_from_config()
   end
 
+  @spec maybe_put_director_from_config(State.t()) :: State.t()
   def maybe_put_director_from_config(t)
       when t.director != t.config.transaction_system_layout.director do
     %{epoch: epoch, transaction_system_layout: %{director: director}} = t.config
@@ -60,6 +61,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   def maybe_put_director_from_config(t), do: t
 
+  @spec reply_to_waiter(map(), Raft.transaction_id()) :: map()
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list
     |> Map.pop(txn_id)

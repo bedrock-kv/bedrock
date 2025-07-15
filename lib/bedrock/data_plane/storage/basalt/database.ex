@@ -62,9 +62,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
 
   @spec apply_transactions(database :: t(), transactions :: [Transaction.t()]) ::
           Bedrock.version()
+  @spec apply_transactions(t(), [any()]) :: t()
   def apply_transactions(database, transactions),
     do: MVCC.apply_transactions!(database.mvcc, transactions)
 
+  @spec last_committed_version(t()) :: Bedrock.version()
   def last_committed_version(database),
     do: MVCC.newest_version(database.mvcc)
 
@@ -73,10 +75,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
           | {:error,
              :not_found
              | :key_out_of_range}
+  @spec fetch(t(), Bedrock.key(), Bedrock.version()) :: Bedrock.value() | :not_found
   def fetch(%{key_range: {min_key, max_key}}, key, _version)
       when key < min_key or key >= max_key,
       do: {:error, :key_out_of_range}
 
+  @spec fetch(t(), Bedrock.key(), Bedrock.version()) :: Bedrock.value() | :not_found
   def fetch(database, key, version) do
     MVCC.fetch(database.mvcc, key, version)
     |> case do
@@ -127,6 +131,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   """
   @spec info(database :: t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) ::
           any() | :undefined
+  @spec info(t(), atom()) :: term()
   def info(database, stat),
     do: database.pkv |> PersistentKeyValues.info(stat)
 

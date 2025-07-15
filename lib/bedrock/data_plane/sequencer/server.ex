@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   import Bedrock.Internal.GenServer.Replies
 
   @doc false
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
@@ -41,6 +42,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   def handle_call(:next_read_version, _from, t),
     do: t |> reply({:ok, t.last_committed_version})
 
+  @impl true
   def handle_call(:next_commit_version, _from, t) do
     next_version = 1 + t.last_committed_version
 

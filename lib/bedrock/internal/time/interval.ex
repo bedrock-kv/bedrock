@@ -10,8 +10,9 @@ defmodule Bedrock.Internal.Time.Interval do
           | :microsecond
           | :nanosecond
 
-  @type t :: {unit(), n :: non_neg_integer()}
+  @type t :: {unit(), n :: non_neg_integer() | float()}
 
+  @spec from(unit(), non_neg_integer()) :: t()
   def from(unit, n) when is_integer(n) and n >= 0 and unit in @units, do: {unit, n}
 
   @spec between(DateTime.t(), DateTime.t(), unit()) :: t()
@@ -22,6 +23,7 @@ defmodule Bedrock.Internal.Time.Interval do
   def humanize({_unit, n} = i) when n >= 0, do: i |> normalize() |> do_humanize()
 
   # Scale down
+  @spec normalize({unit(), number()}) :: t()
   def normalize({:week, w}) when w < 1.0, do: normalize({:day, w * 7})
   def normalize({:day, d}) when d < 1.0, do: normalize({:hour, d * 24})
   def normalize({:hour, h}) when h < 1.0, do: normalize({:minute, h * 60})
@@ -52,12 +54,14 @@ defmodule Bedrock.Internal.Time.Interval do
 
   def normalize(perfect = {_unit, n}) when is_integer(n), do: perfect
 
+  @spec do_humanize({unit(), number()}) :: String.t()
   defp do_humanize({unit, n}) when is_integer(n),
     do: "#{n}#{unit_abbreviation(unit)}"
 
   defp do_humanize({unit, n}) when is_float(n),
     do: "#{:io_lib.format("~.2f", [n]) |> List.to_string()}#{unit_abbreviation(unit)}"
 
+  @spec unit_abbreviation(unit()) :: String.t()
   def unit_abbreviation(:nanosecond), do: "ns"
   def unit_abbreviation(:microsecond), do: "μs"
   def unit_abbreviation(:millisecond), do: "ms"

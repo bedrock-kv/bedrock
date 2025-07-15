@@ -237,12 +237,14 @@ defmodule Bedrock.Cluster do
       def coordinator_nodes!, do: ClusterSupervisor.coordinator_nodes!(__MODULE__)
 
       @doc false
+      @spec child_spec(Keyword.t()) :: Supervisor.child_spec()
       def child_spec(opts),
         do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
     end
   end
 
   @doc false
+  @spec default_descriptor_file_name() :: String.t()
   def default_descriptor_file_name, do: "bedrock.cluster"
 
   @doc """

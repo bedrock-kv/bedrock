@@ -19,6 +19,7 @@ defmodule Bedrock.Service.Worker do
 
   @spec info(worker :: ref(), [fact_name() | atom()], opts :: [timeout_in_ms: timeout_in_ms()]) ::
           {:ok, %{fact_name() => any()}} | {:error, :unavailable}
+  @spec info(GenServer.server(), term(), keyword()) :: term()
   def info(worker, fact_names, opts \\ []),
     do: call(worker, {:info, fact_names}, opts[:timeout_in_ms] || :infinity)
 
@@ -28,6 +29,8 @@ defmodule Bedrock.Service.Worker do
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
           {:ok, pid(), recovery_info :: map()} | {:error, :newer_epoch_exists}
+  @spec lock_for_recovery(GenServer.server(), integer(), keyword()) ::
+          {:ok, term()} | {:error, term()}
   def lock_for_recovery(worker, epoch, opts \\ []),
     do: call(worker, {:lock_for_recovery, epoch}, opts[:timeout_in_ms] || :infinity)
 end

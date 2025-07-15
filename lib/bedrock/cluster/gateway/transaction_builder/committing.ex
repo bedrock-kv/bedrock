@@ -2,6 +2,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
   alias Bedrock.Cluster.Gateway
   alias Bedrock.DataPlane.CommitProxy
 
+  @spec do_commit(map()) :: {:ok, map()} | {:error, term()}
   def do_commit(%{stack: []} = t) do
     with transaction <- prepare_transaction_for_commit(t.read_version, t.reads, t.writes),
          {:ok, commit_proxy} <- Gateway.fetch_commit_proxy(t.gateway),
@@ -20,6 +21,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
      }}
   end
 
+  @spec prepare_transaction_for_commit(Bedrock.version() | nil, map(), map()) ::
+          {nil | {Bedrock.version(), [Bedrock.key()]}, map()}
   defp prepare_transaction_for_commit(nil, _, %{} = writes),
     do: {nil, writes}
 

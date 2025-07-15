@@ -36,6 +36,7 @@ defmodule Mix.Tasks.Bedrock.Config do
       c: :cluster
     ]
 
+  @spec run([String.t()]) :: :ok
   def run(argv) do
     {opts, _args} = OptionParser.parse!(argv, switches: switches(), aliases: aliases())
 
@@ -49,6 +50,7 @@ defmodule Mix.Tasks.Bedrock.Config do
     end)
   end
 
+  @spec pretty_name(module()) :: String.t()
   def pretty_name(cluster) do
     cluster
     |> Module.split()

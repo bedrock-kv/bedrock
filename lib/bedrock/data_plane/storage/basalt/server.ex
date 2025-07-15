@@ -44,9 +44,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   def handle_call({:fetch, key, version, _opts}, _from, %State{} = t),
     do: t |> Logic.fetch(key, version) |> then(&reply(t, &1))
 
+  @impl true
   def handle_call({:info, fact_names}, _from, %State{} = t),
     do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
+  @impl true
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     with {:ok, t} <- t |> Logic.lock_for_recovery(director, epoch),
          {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
@@ -56,6 +58,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_call(
         {:unlock_after_recovery, durable_version, transaction_system_layout},
         {_director, _},
@@ -68,6 +71,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_call(_, _from, t),
     do: t |> reply({:error, :not_ready})
 
@@ -80,6 +84,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
     t |> noreply()

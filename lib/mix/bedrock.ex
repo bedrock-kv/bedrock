@@ -38,6 +38,7 @@ defmodule Mix.Bedrock do
     end
   end
 
+  @spec parse_clusters([module_name :: String.t()]) :: [Bedrock.Cluster.t()]
   def parse_clusters(module_names) do
     Mix.Task.run("app.config")
 
@@ -59,6 +60,7 @@ defmodule Mix.Bedrock do
   @spec check_compiled_correctly!({:module, module} | {:error, term()}, module()) :: module()
   defp check_compiled_correctly!({:module, module}, _module), do: module
 
+  @spec check_compiled_correctly!({:module, module} | {:error, term()}, module()) :: module()
   defp check_compiled_correctly!({:error, error}, module) do
     Mix.raise(
       "Could not load #{inspect(module)}, error: #{inspect(error)}. " <>

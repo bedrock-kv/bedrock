@@ -51,6 +51,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
     end
   end
 
+  @spec ensure_necessary_segments_are_loaded(Bedrock.version() | nil, [Segment.t()]) ::
+          {:ok, [Segment.t()]} | {:error, :version_too_old}
   def ensure_necessary_segments_are_loaded(_, []), do: {:error, :version_too_old}
 
   def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments])
@@ -88,6 +90,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def check_last_version(_, _), do: {:error, :invalid_last_version}
 
+  @spec determine_pull_limit(pos_integer() | nil, State.t()) :: pos_integer()
   def determine_pull_limit(nil, t), do: t.params.default_pull_limit
   def determine_pull_limit(limit, t), do: min(limit, t.params.max_pull_limit)
 end

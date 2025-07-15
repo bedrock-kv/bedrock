@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
     File.write!(Path.join(@segment_dir, Segment.encode_file_name(2)), "")
     File.write!(Path.join(@segment_dir, Segment.encode_file_name(10)), "")
 
-    segments = ColdStarting.reload_segments_at_path(@segment_dir)
+    {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
 
     assert [%Segment{min_version: 10}, %Segment{min_version: 2}, %Segment{min_version: 1}] =
              segments
@@ -26,7 +26,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
     File.write!(Path.join(@segment_dir, Segment.encode_file_name(1)), "")
     File.write!(Path.join(@segment_dir, "other_file.log"), "")
 
-    segments = ColdStarting.reload_segments_at_path(@segment_dir)
+    {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
 
     assert [%Segment{min_version: 1}] = segments
   end

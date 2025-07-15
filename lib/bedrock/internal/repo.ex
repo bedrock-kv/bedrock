@@ -91,5 +91,6 @@ defmodule Bedrock.Internal.Repo do
   def rollback(t),
     do: cast(t, :rollback)
 
+  @spec default_timeout_in_ms() :: pos_integer()
   def default_timeout_in_ms(), do: 1_000
 end

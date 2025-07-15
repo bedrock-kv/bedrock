@@ -11,7 +11,9 @@ defmodule Bedrock.Service.Foreman.Server do
   def required_opt_keys,
     do: [:cluster, :path, :capabilities, :otp_name]
 
-  @spec child_spec(opts :: keyword()) :: Supervisor.child_spec()
+  @spec child_spec(
+          opts :: [cluster: term(), path: term(), capabilities: term(), otp_name: term()]
+        ) :: Supervisor.child_spec()
   def child_spec(opts) do
     args = opts |> Keyword.take(required_opt_keys()) |> Map.new()
     %{id: __MODULE__, start: {GenServer, :start_link, [__MODULE__, args, [name: args.otp_name]]}}

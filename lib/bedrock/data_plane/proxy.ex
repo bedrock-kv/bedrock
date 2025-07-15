@@ -13,7 +13,8 @@ defmodule Bedrock.DataPlane.Proxy do
   @spec next_read_version(GenServer.server()) :: Bedrock.version()
   def next_read_version(proxy), do: GenServer.call(proxy, :get_read_version)
 
-  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  @spec child_spec(opts :: [id: term(), director: term(), layout: term()]) ::
+          Supervisor.child_spec()
   def child_spec(opts) do
     id = Keyword.get(opts, :id) || raise "Missing :id option"
     director = Keyword.get(opts, :director) || raise "Missing :director option"

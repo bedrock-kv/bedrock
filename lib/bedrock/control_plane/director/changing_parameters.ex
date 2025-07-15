@@ -27,7 +27,20 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
 
   def settable_parameters_for_state(_), do: []
 
-  @spec try_to_set_parameters_in_config(t :: State.t(), list :: keyword()) ::
+  @spec try_to_set_parameters_in_config(
+          t :: State.t(),
+          list :: [
+            ping_rate_in_hz: integer(),
+            retransmission_rate_in_hz: integer(),
+            replication_factor: integer(),
+            desired_coordinators: integer(),
+            desired_logs: integer(),
+            desired_read_version_proxies: integer(),
+            desired_commit_proxies: integer(),
+            desired_transaction_resolvers: integer(),
+            transaction_window_in_ms: integer()
+          ]
+        ) ::
           {:ok, State.t()}
           | {:error, :invalid_parameters_for_state, [{atom(), any()}]}
           | {:error, :invalid_value}
@@ -45,7 +58,20 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     end
   end
 
-  @spec validate_settable_parameters_for_state(keyword(), atom()) ::
+  @spec validate_settable_parameters_for_state(
+          [
+            ping_rate_in_hz: integer(),
+            retransmission_rate_in_hz: integer(),
+            replication_factor: integer(),
+            desired_coordinators: integer(),
+            desired_logs: integer(),
+            desired_read_version_proxies: integer(),
+            desired_commit_proxies: integer(),
+            desired_transaction_resolvers: integer(),
+            transaction_window_in_ms: integer()
+          ],
+          atom()
+        ) ::
           :ok | {:error, :invalid_parameters_for_state, keyword()}
   def validate_settable_parameters_for_state(parameters, state) do
     parameters

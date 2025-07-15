@@ -10,7 +10,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
   alias Bedrock.ControlPlane.Director.NodeTracking
 
   @type context :: %{
-          node_tracking: NodeTracking.t()
+          node_tracking: NodeTracking.t(),
+          lock_token: binary()
           # Future: Add more context fields as needed
           # cluster: module(),
           # config: Config.t(),

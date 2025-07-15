@@ -26,6 +26,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Shared do
         end
       catch
         :exit, reason -> {:error, {:supervisor_exit, reason}}
+        :error, reason -> {:error, {:supervisor_error, reason}}
+        reason -> {:error, {:unexpected_failure, reason}}
       end
     end
   end

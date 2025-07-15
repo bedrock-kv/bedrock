@@ -342,55 +342,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # When it fails, we want to provide clear context about what component or issue caused the failure.
   defp enhance_error_context(reason, recovery_attempt) do
     case reason do
-      :aborted ->
-        {:system_transaction_aborted, %{
-          message: "System transaction was aborted during conflict resolution - this indicates the transaction system is not functioning properly",
-          context: %{
-            epoch: recovery_attempt.epoch,
-            sequencer: recovery_attempt.sequencer,
-            proxies: length(recovery_attempt.proxies),
-            resolvers: length(recovery_attempt.resolvers),
-            logs: map_size(recovery_attempt.logs),
-            storage_teams: length(recovery_attempt.storage_teams)
-          },
-          troubleshooting: "Check resolver health, log availability, and storage team coverage"
-        }}
-      
-      {:resolver_unavailable, resolver_reason} ->
-        {:system_transaction_resolver_failure, %{
-          message: "System transaction failed due to resolver unavailability",
-          resolver_error: resolver_reason,
-          context: %{
-            epoch: recovery_attempt.epoch,
-            resolvers: length(recovery_attempt.resolvers)
-          },
-          troubleshooting: "Check resolver process health and recovery state"
-        }}
-      
-      {:log_failures, log_errors} ->
-        {:system_transaction_log_failure, %{
-          message: "System transaction failed due to log server failures",
-          log_errors: log_errors,
-          context: %{
-            epoch: recovery_attempt.epoch,
-            logs: map_size(recovery_attempt.logs)
-          },
-          troubleshooting: "Check log server health and network connectivity"
-        }}
-      
-      {:insufficient_acknowledgments, received, required, errors} ->
-        {:system_transaction_insufficient_acks, %{
-          message: "System transaction failed due to insufficient log acknowledgments",
-          received_acks: received,
-          required_acks: required,
-          errors: errors,
-          context: %{
-            epoch: recovery_attempt.epoch,
-            logs: map_size(recovery_attempt.logs)
-          },
-          troubleshooting: "Check log server health and replication factor configuration"
-        }}
-      
       {:unlock_failed, unlock_reason} ->
         {:system_transaction_unlock_failure, %{
           message: "System transaction failed during service unlock phase",

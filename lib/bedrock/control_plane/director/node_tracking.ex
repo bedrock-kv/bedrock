@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   """
   @spec new(nodes :: [node()]) :: t()
   def new(nodes) do
-    t = :ets.new(:node_tracking, [:ordered_set])
+    t = :ets.new(nil, [:ordered_set])
     :ets.insert(t, nodes |> Enum.map(&row(&1, :unknown, :unknown, :down, true, nil)))
     t
   end

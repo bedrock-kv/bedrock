@@ -30,6 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
             cluster: module(),
             director: pid(),
             epoch: Bedrock.epoch(),
+            lock_token: binary(),
             max_latency_in_ms: non_neg_integer(),
             max_per_batch: pos_integer()
           ]

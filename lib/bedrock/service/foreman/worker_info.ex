@@ -1,5 +1,6 @@
 defmodule Bedrock.Service.Foreman.WorkerInfo do
-  alias Bedrock.Service.{Manifest, Worker}
+  alias Bedrock.Service.Manifest
+  alias Bedrock.Service.Worker
 
   @type health ::
           {:ok, Worker.ref()}

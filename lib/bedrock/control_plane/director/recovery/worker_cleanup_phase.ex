@@ -8,8 +8,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
-  alias Bedrock.Service.{Foreman, Worker}
-  alias Bedrock.ControlPlane.Config.{RecoveryAttempt, ServiceDescriptor}
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   @behaviour RecoveryPhase
 

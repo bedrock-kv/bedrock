@@ -29,6 +29,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
+  @spec init({pid(), Bedrock.epoch(), Bedrock.version()}) :: {:ok, State.t()}
   def init({director, epoch, last_committed_version}) do
     %State{
       director: director,
@@ -39,6 +40,9 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
+  @spec handle_call(:next_read_version | :next_commit_version, GenServer.from(), State.t()) ::
+          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
+           State.t()}
   def handle_call(:next_read_version, _from, t),
     do: t |> reply({:ok, t.last_committed_version})
 

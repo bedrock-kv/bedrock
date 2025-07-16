@@ -2,8 +2,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log
 
-  @spec info(State.t(), Log.fact_name() | [Log.fact_name()]) ::
-          {:ok, term() | %{Log.fact_name() => term()}} | {:error, :unsupported}
+  @spec info(State.t(), Log.fact_name()) :: {:ok, term()} | {:error, :unsupported}
+  @spec info(State.t(), [Log.fact_name()]) :: {:ok, %{Log.fact_name() => term()}}
   def info(%State{} = t, fact) when is_atom(fact) do
     case gather_info(fact, t) do
       {:error, _reason} = error -> error
@@ -33,7 +33,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
       :supported_info
     ]
 
-  @spec gather_info(Log.fact_name(), map()) :: term() | {:error, :unsupported}
+  @spec gather_info(Log.fact_name(), State.t()) ::
+          String.t()
+          | :log
+          | atom()
+          | pid()
+          | [Log.fact_name()]
+          | :unavailable
+          | Bedrock.version()
+          | {:error, :unsupported}
   # Worker facts
   defp gather_info(:id, %{id: id}), do: id
   defp gather_info(:kind, _t), do: :log

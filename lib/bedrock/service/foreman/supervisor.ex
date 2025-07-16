@@ -1,6 +1,12 @@
 defmodule Bedrock.Service.Foreman.Supervisor do
   @doc false
-  @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
+  @type foreman_opts :: [
+          cluster: module(),
+          capabilities: [Bedrock.Cluster.capability()],
+          path: Path.t()
+        ]
+
+  @spec child_spec(foreman_opts()) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = Keyword.get(opts, :cluster) || raise "Missing :cluster option"
     capabilities = Keyword.get(opts, :capabilities) || raise "Missing :capabilities option"

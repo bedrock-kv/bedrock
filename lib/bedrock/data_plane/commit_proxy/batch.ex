@@ -31,7 +31,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
     }
   end
 
-  @spec transactions_in_order(t()) :: [{GenServer.from(), Bedrock.transaction()}]
+  @spec transactions_in_order(t()) :: [{reply_fn(), Bedrock.transaction()}]
   def transactions_in_order(t),
     do: t.buffer |> Enum.reverse()
 

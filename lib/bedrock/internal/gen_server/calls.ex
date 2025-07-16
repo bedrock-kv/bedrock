@@ -1,5 +1,5 @@
 defmodule Bedrock.Internal.GenServer.Calls do
-  @spec broadcast([GenServer.name()], otp_name :: GenServer.name(), message :: term()) :: :ok
+  @spec broadcast([node()], otp_name :: atom(), message :: term()) :: :ok
   def broadcast(nodes, otp_name, message) do
     GenServer.abcast(nodes, otp_name, message)
     :ok
@@ -8,7 +8,11 @@ defmodule Bedrock.Internal.GenServer.Calls do
   @spec cast(GenServer.server(), message :: term()) :: :ok
   def cast(server, message), do: GenServer.cast(server, message)
 
-  @spec call(GenServer.server(), message :: term(), timeout()) :: term()
+  @spec call(GenServer.server(), message :: term(), timeout()) ::
+          term()
+          | {:error, :unavailable}
+          | {:error, :timeout}
+          | {:error, :unknown}
   def call(server, message, timeout) do
     GenServer.call(server, message, normalize_timeout(timeout))
   rescue

@@ -104,7 +104,7 @@ defmodule Bedrock.DataPlane.Log do
             last_version: Bedrock.version(),
             recovery: boolean(),
             subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
-            timeout_in_ms: pos_integer()
+            timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
           {:ok, transactions :: [EncodedTransaction.t()]} | pull_errors()
@@ -117,6 +117,7 @@ defmodule Bedrock.DataPlane.Log do
           | {:error, :version_too_old}
           | {:error, :version_not_found}
           | {:error, :unavailable}
+  @type pull_error :: pull_errors()
   def pull(log, start_after, opts),
     do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
 
@@ -138,7 +139,14 @@ defmodule Bedrock.DataPlane.Log do
   the current epoch.
   """
   @spec lock_for_recovery(log :: ref(), Bedrock.epoch()) ::
-          {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+          {:ok, pid(),
+           recovery_info :: [
+             kind: :log,
+             last_version: Bedrock.version(),
+             oldest_version: Bedrock.version(),
+             minimum_durable_version: Bedrock.version() | :unavailable
+           ]}
+          | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
@@ -181,6 +189,7 @@ defmodule Bedrock.DataPlane.Log do
   Ask the transaction log worker for various facts about itself.
   """
   @spec info(storage :: ref(), [fact_name()], opts :: keyword()) ::
-          {:ok, keyword()} | {:error, term()}
+          {:ok, %{fact_name() => :log | Bedrock.version() | atom() | pid()}}
+          | {:error, :unavailable | :timeout}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

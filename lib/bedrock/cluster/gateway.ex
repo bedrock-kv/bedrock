@@ -7,10 +7,11 @@ defmodule Bedrock.Cluster.Gateway do
 
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.DataPlane.CommitProxy
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
 
   @spec begin_transaction(
           gateway_ref :: ref(),
@@ -29,7 +30,7 @@ defmodule Bedrock.Cluster.Gateway do
           ]
         ) ::
           {:ok, read_version :: Bedrock.version(), lease_deadline_ms :: Bedrock.interval_in_ms()}
-          | {:error, :unavailable}
+          | {:error, :unavailable | :timeout | :unknown}
   def next_read_version(gateway, opts \\ []),
     do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
 
@@ -68,7 +69,7 @@ defmodule Bedrock.Cluster.Gateway do
   Get one of the current commit proxies
   """
   @spec fetch_commit_proxy(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Director.ref()} | {:error, :unavailable}
+          {:ok, CommitProxy.ref()} | {:error, :unavailable}
   def fetch_commit_proxy(gateway, timeout_in_ms \\ 5_000),
     do: gateway |> call(:fetch_commit_proxy, timeout_in_ms)
 

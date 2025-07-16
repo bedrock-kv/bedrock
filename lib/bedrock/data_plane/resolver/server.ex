@@ -7,13 +7,19 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   use GenServer
   import Bedrock.Internal.GenServer.Replies
 
-  @type reply_fn :: (aborted :: [integer()] -> :ok)
+  @type reply_fn :: (aborted :: [non_neg_integer()] -> :ok)
 
   @spec child_spec(
-          opts :: [lock_token: binary(), epoch: Bedrock.epoch(), key_range: Bedrock.key_range()]
+          opts :: [
+            lock_token: Bedrock.lock_token(),
+            key_range: Bedrock.key_range(),
+            epoch: Bedrock.epoch()
+          ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
+    _key_range = opts[:key_range] || raise "Missing :key_range option"
+    _epoch = opts[:epoch] || raise "Missing :epoch option"
 
     %{
       id: __MODULE__,

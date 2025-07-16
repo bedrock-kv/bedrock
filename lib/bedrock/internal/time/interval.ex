@@ -12,7 +12,7 @@ defmodule Bedrock.Internal.Time.Interval do
 
   @type t :: {unit(), n :: non_neg_integer() | float()}
 
-  @spec from(unit(), non_neg_integer()) :: t()
+  @spec from(unit(), non_neg_integer() | float()) :: t()
   def from(unit, n) when is_integer(n) and n >= 0 and unit in @units, do: {unit, n}
 
   @spec between(DateTime.t(), DateTime.t(), unit()) :: t()

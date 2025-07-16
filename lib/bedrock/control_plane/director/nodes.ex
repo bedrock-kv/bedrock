@@ -10,6 +10,11 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
   use Bedrock.Internal.TimerManagement
 
+  @type worker_creation_error ::
+          {:node_lacks_capability, node(), :log | :storage}
+          | {:worker_creation_failed, any()}
+          | {:worker_info_failed, any()}
+
   @spec request_to_rejoin(
           State.t(),
           node(),
@@ -158,7 +163,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   end
 
   @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :storage) ::
-          {:ok, Director.running_service_info()} | {:error, term()}
+          {:ok, Director.running_service_info()} | {:error, worker_creation_error()}
   def request_worker_creation(t, node, worker_id, kind) do
     # Check if the node has the required capability
     capabilities = NodeTracking.capabilities(t.node_tracking, node)

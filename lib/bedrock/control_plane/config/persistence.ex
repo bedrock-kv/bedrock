@@ -10,6 +10,11 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
 
   alias Bedrock.ControlPlane.Config
 
+  @type otp_reference :: {atom(), node()}
+  @type encoded_config :: map()
+  @type service_status :: :down | {:up, pid()} | {:up, otp_reference()}
+  @type encoded_service_status :: :down | {:up, otp_reference()}
+
   @doc """
   Encodes a cluster configuration for persistent storage.
 
@@ -23,7 +28,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   ## Returns
   - Sanitized configuration suitable for BERT encoding
   """
-  @spec encode_for_storage(Config.t(), module()) :: map()
+  @spec encode_for_storage(Config.t(), module()) :: encoded_config()
   def encode_for_storage(config, cluster) do
     config
     |> remove_ephemeral_state()
@@ -42,7 +47,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   ## Returns
   - Runtime configuration with PIDs restored
   """
-  @spec decode_from_storage(map(), module()) :: Config.t()
+  @spec decode_from_storage(encoded_config(), module()) :: Config.t()
   def decode_from_storage(encoded_config, cluster) do
     encoded_config
     |> decode_transaction_system_layout(cluster)
@@ -222,7 +227,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Helper to convert PID to {otp_name, node} tuple
-  @spec pid_to_otp_reference(pid(), module(), String.t() | atom()) :: {atom(), node()}
+  @spec pid_to_otp_reference(pid(), module(), String.t() | atom()) :: otp_reference()
   defp pid_to_otp_reference(pid, cluster, component) when is_pid(pid) do
     node = node(pid)
     otp_name = cluster.otp_name(component)
@@ -230,7 +235,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Helper to convert {otp_name, node} tuple to PID
-  @spec otp_reference_to_pid({atom(), node()}) :: pid() | nil
+  @spec otp_reference_to_pid(otp_reference()) :: pid() | nil
   defp otp_reference_to_pid({otp_name, node}) when is_atom(otp_name) and is_atom(node) do
     if node == node() do
       # Local process - use Process.whereis directly

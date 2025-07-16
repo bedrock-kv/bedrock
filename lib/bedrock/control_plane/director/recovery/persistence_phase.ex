@@ -62,8 +62,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
         # Fail fast - exit director and let coordinator retry
-        enhanced_reason = enhance_error_context(reason, recovery_attempt)
-        exit({:recovery_system_test_failed, enhanced_reason})
+        exit({:recovery_system_test_failed, reason})
     end
   end
 
@@ -112,7 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Build monolithic keys for backward compatibility and coordinator handoff
-  @spec build_monolithic_keys(non_neg_integer(), map(), map()) :: %{binary() => binary()}
+  @spec build_monolithic_keys(Bedrock.epoch(), map(), map()) :: %{Bedrock.key() => binary()}
   defp build_monolithic_keys(epoch, encoded_config, encoded_layout) do
     %{
       SystemKeys.config_monolithic() => :erlang.term_to_binary({epoch, encoded_config}),
@@ -124,7 +123,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Build decomposed keys for targeted component consumption
-  @spec build_decomposed_keys(non_neg_integer(), map(), module()) :: %{binary() => binary()}
+  @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), module()) :: %{
+          Bedrock.key() => binary()
+        }
   defp build_decomposed_keys(epoch, cluster_config, cluster) do
     transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
 
@@ -230,7 +231,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     Enum.map(components, &encode_component_for_storage(&1, cluster))
   end
 
-  @spec encode_services_for_storage(map(), module()) :: map()
+  @spec encode_services_for_storage(%{Worker.id() => ServiceDescriptor.t()}, module()) :: %{
+          Worker.id() => ServiceDescriptor.t()
+        }
   defp encode_services_for_storage(services, _cluster) when is_map(services) do
     # For decomposed keys, store services as-is for now
     # The monolithic keys already handle proper encoding
@@ -335,7 +338,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Unlock commit proxies before exercising the transaction system
-  @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), lock_token :: binary()) ::
+  @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token()) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(
          recovery_attempt,
@@ -351,7 +354,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), lock_token :: binary()) ::
+  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token)
        when is_list(proxies) do
@@ -367,77 +370,5 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
       {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
     end)
-  end
-
-  # Enhances error context to provide more descriptive error messages for recovery failures.
-  # The system transaction serves as both persistence and a comprehensive system test.
-  # When it fails, we want to provide clear context about what component or issue caused the failure.
-  @spec enhance_error_context(
-          :no_commit_proxies
-          | :timeout
-          | :unavailable
-          | {:invalid_recovery_state, atom() | {atom(), [binary()]}}
-          | {:unlock_failed, :timeout | :unavailable},
-          map()
-        ) :: {atom(), map()}
-  defp enhance_error_context(reason, recovery_attempt) do
-    case reason do
-      :no_commit_proxies ->
-        {:system_transaction_no_proxies,
-         %{
-           message: "System transaction failed - no commit proxies available",
-           context: %{
-             epoch: recovery_attempt.epoch,
-             proxies: length(recovery_attempt.proxies)
-           },
-           troubleshooting: "Ensure commit proxies are running and accessible"
-         }}
-
-      :timeout ->
-        {:system_transaction_timeout,
-         %{
-           message: "System transaction failed due to timeout",
-           context: %{
-             epoch: recovery_attempt.epoch,
-             proxies: length(recovery_attempt.proxies)
-           },
-           troubleshooting: "Check commit proxy responsiveness and network connectivity"
-         }}
-
-      :unavailable ->
-        {:system_transaction_unavailable,
-         %{
-           message: "System transaction failed - commit proxies unavailable",
-           context: %{
-             epoch: recovery_attempt.epoch,
-             proxies: length(recovery_attempt.proxies)
-           },
-           troubleshooting: "Check commit proxy health and network connectivity"
-         }}
-
-      {:invalid_recovery_state, validation_error} ->
-        {:invalid_recovery_state,
-         %{
-           message: "Recovery state validation failed",
-           validation_error: validation_error,
-           context: %{
-             epoch: recovery_attempt.epoch,
-             state: recovery_attempt.state
-           },
-           troubleshooting: "Check component availability and configuration"
-         }}
-
-      {:unlock_failed, unlock_reason} ->
-        {:system_transaction_unlock_failure,
-         %{
-           message: "System transaction failed during service unlock phase",
-           unlock_error: unlock_reason,
-           context: %{
-             epoch: recovery_attempt.epoch,
-             proxies: length(recovery_attempt.proxies)
-           },
-           troubleshooting: "Check commit proxy health and lock token validity"
-         }}
-    end
   end
 end

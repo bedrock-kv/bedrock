@@ -2,8 +2,12 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
 
-  @spec begin_transaction(State.t(), opts :: [key_codec: module()]) :: {:ok, pid()}
+  @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
+          {:ok, pid()}
   def begin_transaction(t, opts \\ []) do
     TransactionBuilder.start_link(
       gateway: self(),
@@ -14,14 +18,14 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   end
 
   @spec next_read_version(State.t()) ::
-          {:ok, {Bedrock.version(), Bedrock.interval_in_ms()}}
-          | {:error, :unavailable}
+          {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
+          | {:error, :unavailable | :timeout | :unknown}
   def next_read_version(t) when is_nil(t.transaction_system_layout), do: {:error, :unavailable}
 
   def next_read_version(t) do
     case Sequencer.next_read_version(t.transaction_system_layout.sequencer) do
       {:ok, version} -> {:ok, version, t.lease_renewal_interval_in_ms}
-      {:error, _} -> {:error, :unavailable}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -53,15 +57,18 @@ defmodule Bedrock.Cluster.Gateway.Calls do
     end)
   end
 
-  @spec fetch_coordinator(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
+  @spec fetch_coordinator(State.t()) ::
+          {:ok, Coordinator.ref()} | {:error, :unavailable}
   def fetch_coordinator(%{coordinator: :unavailable}), do: {:error, :unavailable}
   def fetch_coordinator(t), do: {:ok, t.coordinator}
 
-  @spec fetch_director(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
+  @spec fetch_director(State.t()) ::
+          {:ok, Director.ref()} | {:error, :unavailable}
   def fetch_director(%{director: :unavailable}), do: {:error, :unavailable}
   def fetch_director(t), do: {:ok, t.director}
 
-  @spec fetch_commit_proxy(State.t()) :: {:ok, GenServer.server()} | {:error, :unavailable}
+  @spec fetch_commit_proxy(State.t()) ::
+          {:ok, CommitProxy.ref()} | {:error, :unavailable}
   def fetch_commit_proxy(%{director: :unavailable}), do: {:error, :unavailable}
 
   def fetch_commit_proxy(%{transaction_system_layout: nil}), do: {:error, :unavailable}

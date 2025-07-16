@@ -3,7 +3,9 @@ defmodule Mix.Bedrock do
   Convenience functions for writing Bedrock related Mix tasks.
   """
 
-  @spec parse_clusters([module_name :: String.t()]) :: [Bedrock.Cluster.t()]
+  alias Bedrock.Cluster
+
+  @spec parse_clusters([module_name :: String.t()]) :: [Cluster.t()]
   def parse_clusters([]) do
     Mix.Task.run("app.config")
 
@@ -38,7 +40,7 @@ defmodule Mix.Bedrock do
     end
   end
 
-  @spec parse_clusters([module_name :: String.t()]) :: [Bedrock.Cluster.t()]
+  @spec parse_clusters([module_name :: String.t()]) :: [Cluster.t()]
   def parse_clusters(module_names) do
     Mix.Task.run("app.config")
 
@@ -49,7 +51,7 @@ defmodule Mix.Bedrock do
     end
   end
 
-  @spec ensure_module_is_a_cluster!(module()) :: Bedrock.Cluster.t()
+  @spec ensure_module_is_a_cluster!(Cluster.t()) :: Cluster.t()
   defp ensure_module_is_a_cluster!(module) do
     module
     |> Code.ensure_compiled()
@@ -59,7 +61,7 @@ defmodule Mix.Bedrock do
 
   @spec check_compiled_correctly!(
           {:module, module} | {:error, :badfile | :nofile | :on_load_failure},
-          module()
+          Cluster.t()
         ) :: module()
   defp check_compiled_correctly!({:module, module}, _module), do: module
 
@@ -72,11 +74,11 @@ defmodule Mix.Bedrock do
     )
   end
 
-  @spec check_implements_behaviour!(module()) :: Bedrock.Cluster.t()
+  @spec check_implements_behaviour!(Cluster.t()) :: Cluster.t()
   defp check_implements_behaviour!(module) do
-    unless implements?(module, Bedrock.Cluster) do
+    unless implements?(module, Cluster) do
       Mix.raise(
-        "Module #{inspect(module)} is not a Bedrock.Cluster. " <>
+        "Module #{inspect(module)} is not a Cluster. " <>
           "Please configure your app accordingly or pass a cluster with the -c option."
       )
     end
@@ -84,7 +86,7 @@ defmodule Mix.Bedrock do
     module
   end
 
-  @spec implements?(module(), behaviour :: atom()) :: boolean()
+  @spec implements?(Cluster.t(), behaviour :: module()) :: boolean()
   defp implements?(module, behaviour) do
     module.__info__(:attributes)
     |> Keyword.get(:behaviour, [])

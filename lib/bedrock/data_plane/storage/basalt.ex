@@ -5,8 +5,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt do
   @spec child_spec(
           opts :: [
             otp_name: atom(),
-            foreman: pid(),
-            id: String.t(),
+            foreman: Bedrock.Service.Foreman.ref(),
+            id: Bedrock.service_id(),
             path: Path.t()
           ]
         ) :: Supervisor.child_spec()

@@ -32,7 +32,7 @@ defmodule Bedrock.Internal.Repo do
 
       if :ok == result || (is_tuple(result) and :ok == elem(result, 0)) do
         case commit(txn) do
-          :ok ->
+          {:ok, _} ->
             result
 
           {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
@@ -52,7 +52,8 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
-  @spec nested_transaction(transaction()) :: transaction()
+  @spec nested_transaction(transaction()) ::
+          {:ok, transaction()} | {:error, :unavailable | :timeout | :unknown}
   def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
@@ -62,7 +63,7 @@ defmodule Bedrock.Internal.Repo do
   @spec fetch!(transaction(), key()) :: value()
   def fetch!(t, key) do
     case fetch(t, key) do
-      :error -> raise "Key not found: #{inspect(key)}"
+      {:error, _} -> raise "Key not found: #{inspect(key)}"
       {:ok, value} -> value
     end
   end
@@ -70,7 +71,6 @@ defmodule Bedrock.Internal.Repo do
   @spec get(transaction(), key()) :: nil | value()
   def get(t, key) do
     case fetch(t, key) do
-      :error -> nil
       {:error, _} -> nil
       {:ok, value} -> value
     end
@@ -83,7 +83,7 @@ defmodule Bedrock.Internal.Repo do
   end
 
   @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
-          :ok | {:error, :aborted}
+          {:ok, term()} | {:error, :unavailable | :timeout | :unknown}
   def commit(t, opts \\ []),
     do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
 

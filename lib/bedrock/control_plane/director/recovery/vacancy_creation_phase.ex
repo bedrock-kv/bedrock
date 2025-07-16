@@ -53,8 +53,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   set of log tags. Each vacancy is represented as a `LogDescriptor` with the
   placeholder data.
   """
-  @spec create_vacancies_for_logs(%{Log.id() => LogDescriptor.t()}, desired_logs :: pos_integer()) ::
-          {:ok, %{Log.id() => LogDescriptor.t()}, n_log_vacancies :: non_neg_integer()}
+  @spec create_vacancies_for_logs(%{Log.id() => LogDescriptor.t()}, pos_integer()) ::
+          {:ok, %{Log.id() => LogDescriptor.t()}, non_neg_integer()}
   def create_vacancies_for_logs(logs, desired_logs) do
     {updated_logs, _} =
       logs
@@ -86,8 +86,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   """
   @spec create_vacancies_for_storage_teams(
           [StorageTeamDescriptor.t()],
-          desired_replication :: pos_integer()
-        ) :: {:ok, [StorageTeamDescriptor.t()], n_storage_team_vacancies :: non_neg_integer()}
+          pos_integer()
+        ) :: {:ok, [StorageTeamDescriptor.t()], non_neg_integer()}
   def create_vacancies_for_storage_teams(storage_teams, desired_replication) do
     rosters_by_tag_set = tag_set_rosters_from_storage_teams(storage_teams)
 
@@ -112,8 +112,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
     |> Enum.group_by(&Enum.sort(elem(&1, 1)), &elem(&1, 0))
   end
 
-  @spec expand_rosters_and_add_vacancies(tag_set_roster(), desired_replication :: pos_integer()) ::
-          {expanded_tag_set_roster(), vacancies_added :: non_neg_integer()}
+  @spec expand_rosters_and_add_vacancies(tag_set_roster(), pos_integer()) ::
+          {expanded_tag_set_roster(), non_neg_integer()}
   def expand_rosters_and_add_vacancies(rosters_by_tag_set, desired_replication) do
     rosters_by_tag_set
     |> Enum.reduce(

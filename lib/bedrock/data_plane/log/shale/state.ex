@@ -10,12 +10,12 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
 
   @type t :: %__MODULE__{
           cluster: module(),
-          director: Director.ref(),
-          epoch: Bedrock.epoch(),
+          director: Director.ref() | nil,
+          epoch: Bedrock.epoch() | nil,
           id: Worker.id(),
           foreman: Foreman.ref(),
           path: String.t(),
-          segment_recycler: SegmentRecycler.server(),
+          segment_recycler: SegmentRecycler.server() | nil,
           #
           last_version: Bedrock.version(),
           writer: Writer.t() | nil,

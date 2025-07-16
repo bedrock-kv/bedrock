@@ -2,6 +2,7 @@ defmodule Bedrock.Cluster.Gateway.Telemetry do
   alias Bedrock.Telemetry
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Coordinator
 
   @spec trace_started(cluster :: module()) :: :ok
   def trace_started(cluster) do
@@ -48,7 +49,10 @@ defmodule Bedrock.Cluster.Gateway.Telemetry do
     })
   end
 
-  @spec trace_found_coordinator(cluster :: module(), coordinator :: GenServer.server()) :: :ok
+  @spec trace_found_coordinator(
+          cluster :: module(),
+          coordinator :: Coordinator.ref()
+        ) :: :ok
   def trace_found_coordinator(cluster, coordinator) do
     Telemetry.execute([:bedrock, :cluster, :gateway, :found_coordinator], %{}, %{
       cluster: cluster,

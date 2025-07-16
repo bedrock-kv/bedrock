@@ -25,7 +25,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Telemetry do
     })
   end
 
-  @spec trace_log_marked_as_failed(DateTime.t(), term()) :: :ok
+  @spec trace_log_marked_as_failed(integer(), term()) :: :ok
   def trace_log_marked_as_failed(timestamp, log_id) do
     Telemetry.execute([:bedrock, :storage, :log_marked_as_failed], %{}, %{
       timestamp: timestamp,

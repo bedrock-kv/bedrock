@@ -17,12 +17,12 @@ defmodule Bedrock.Cluster.Descriptor do
   """
   @type t :: %__MODULE__{
           cluster_name: String.t(),
-          coordinator_nodes: [atom()]
+          coordinator_nodes: [node()]
         }
   defstruct cluster_name: nil,
             coordinator_nodes: []
 
-  @spec new(String.t(), [atom()]) :: t()
+  @spec new(String.t(), [node()]) :: t()
   def new(cluster_name, coordinator_nodes),
     do: %__MODULE__{cluster_name: cluster_name, coordinator_nodes: coordinator_nodes}
 

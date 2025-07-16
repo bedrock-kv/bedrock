@@ -72,14 +72,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          raft_log <- InMemoryLog.new() do
       # Bootstrap from storage or use defaults
-      {bootstrap_version, config} = bootstrap_from_storage(cluster, coordinator_nodes)
+      {_bootstrap_version, config} = bootstrap_from_storage(cluster, coordinator_nodes)
 
-      # Use bootstrap version instead of hardcoded logic
-      last_durable_txn_id =
-        case bootstrap_version do
-          0 -> Log.initial_transaction_id(raft_log)
-          variable_version when variable_version > 0 -> variable_version
-        end
+      # Use bootstrap version instead of hardcoded logic  
+      # Currently bootstrap_version is always 0 due to unavailable storage
+      last_durable_txn_id = Log.initial_transaction_id(raft_log)
 
       {:ok,
        %State{

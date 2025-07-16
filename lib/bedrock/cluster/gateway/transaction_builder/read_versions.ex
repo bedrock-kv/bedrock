@@ -3,7 +3,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
   alias Bedrock.Cluster.Gateway
 
   @spec next_read_version(State.t()) ::
-          {:ok, Bedrock.version(), Bedrock.interval_in_ms()} | {:error, :unavailable}
+          {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
+          | {:error, :unavailable | :timeout | :unknown}
   def next_read_version(t), do: Gateway.next_read_version(t.gateway)
 
   @spec renew_read_version_lease(State.t()) ::

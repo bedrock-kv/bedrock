@@ -54,7 +54,13 @@ defmodule Bedrock.DataPlane.Storage do
   the current epoch.
   """
   @spec lock_for_recovery(storage_ref :: ref(), recovery_epoch :: Bedrock.epoch()) ::
-          {:ok, storage_pid :: pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+          {:ok, storage_pid :: pid(),
+           recovery_info :: [
+             {:kind, :storage}
+             | {:durable_version, Bedrock.version()}
+             | {:oldest_durable_version, Bedrock.version()}
+           ]}
+          | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
@@ -82,6 +88,11 @@ defmodule Bedrock.DataPlane.Storage do
   Ask the storage storage for various facts about itself.
   """
   @spec info(storage :: ref(), [fact_name()], opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
-          {:ok, %{fact_name() => any()}} | {:error, :unavailable}
+          {:ok,
+           %{
+             fact_name() =>
+               Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
+           }}
+          | {:error, :unavailable}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

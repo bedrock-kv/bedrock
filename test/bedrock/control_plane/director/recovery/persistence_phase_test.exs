@@ -401,10 +401,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
         flunk("Expected process to exit")
       catch
-        :exit, {:recovery_system_test_failed, {:system_transaction_unknown_failure, error_map}} ->
-          # Verify that the original error is preserved in the enhanced context
-          assert error_map.original_error == :mock_commit_failure
-          assert error_map.message == "System transaction failed with unknown error"
+        :exit, {:recovery_system_test_failed, :mock_commit_failure} ->
+          # Mock commit failure is properly propagated as a simple error
+          :ok
       end
     end
   end

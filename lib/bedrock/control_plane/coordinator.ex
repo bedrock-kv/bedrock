@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.name()
+  @type ref :: atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec config_key() :: atom()
@@ -29,7 +29,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def fetch_config(coordinator, timeout \\ 5_000),
     do: coordinator |> call(:fetch_config, timeout)
 
-  @spec write_config(coordinator_ref :: ref(), config :: Config.t(), timeout_ms :: timeout()) ::
+  @spec write_config(
+          coordinator_ref :: ref(),
+          config :: Config.t(),
+          timeout_ms :: timeout_in_ms()
+        ) ::
           :ok | {:error, :unavailable}
   def write_config(coordinator, config, timeout \\ 5_000),
     do: coordinator |> call({:write_config, config}, timeout)

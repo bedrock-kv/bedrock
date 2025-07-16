@@ -36,7 +36,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   @type t :: %Tree{
           start: Bedrock.key(),
           end: Bedrock.key(),
-          value: any(),
+          value: Bedrock.version(),
           left: t() | nil,
           right: t() | nil,
           height: non_neg_integer()
@@ -108,7 +108,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
     - The updated interval tree containing the new interval.
   """
-  @spec insert(nil | t(), Bedrock.key() | Bedrock.key_range(), pid()) :: t()
+  @spec insert(nil | t(), Bedrock.key() | Bedrock.key_range(), Bedrock.version()) :: t()
   def insert(nil, {start, end_}, value),
     do: %Tree{
       start: start,
@@ -204,7 +204,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     - A new tree containing only the nodes for which the predicate returned true.
   """
 
-  @spec filter_by_value(t() | nil, (pid() -> boolean())) :: t() | nil
+  @spec filter_by_value(t() | nil, (Bedrock.version() -> boolean())) :: t() | nil
   def filter_by_value(
         %Tree{} = tree,
         predicate
@@ -243,7 +243,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     - A list of tuples in the form `{start, end, value}`, representing
       the range and their associated values in the tree.
   """
-  @spec to_list(t() | nil) :: [{Bedrock.key(), Bedrock.key(), pid()}]
+  @spec to_list(t() | nil) :: [{Bedrock.key(), Bedrock.key(), Bedrock.version()}]
   def to_list(nil), do: []
   def to_list(tree), do: to_list([], tree)
 

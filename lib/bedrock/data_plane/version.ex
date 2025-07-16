@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Version do
-  @type t :: binary() | non_neg_integer()
+  @type t :: Bedrock.version()
 
   @spec newer?(t(), t()) :: boolean()
   def newer?(0, 0), do: false

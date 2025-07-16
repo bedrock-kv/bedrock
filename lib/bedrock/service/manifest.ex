@@ -6,11 +6,17 @@ defmodule Bedrock.Service.Manifest do
           cluster: Cluster.name(),
           id: String.t(),
           worker: module(),
-          params: map()
+          params: %{atom() => term()}
         }
   defstruct [:cluster, :id, :worker, :params]
 
-  @spec new(Cluster.name(), id :: String.t(), worker :: module(), params :: map()) :: t()
+  @spec new(
+          Cluster.name(),
+          id :: Bedrock.service_id(),
+          worker :: module(),
+          params :: %{atom() => term()}
+        ) ::
+          t()
   def new(cluster, id, worker, params \\ %{}) do
     %__MODULE__{
       cluster: cluster,
@@ -20,7 +26,7 @@ defmodule Bedrock.Service.Manifest do
     }
   end
 
-  @spec write_to_file(manifest :: t(), path_to_manifest :: String.t()) ::
+  @spec write_to_file(manifest :: t(), path_to_manifest :: Path.t()) ::
           :ok | {:error, File.posix()}
   def write_to_file(manifest, path_to_manifest) do
     {:ok, json} =
@@ -35,11 +41,11 @@ defmodule Bedrock.Service.Manifest do
     path_to_manifest |> write_file_contents(json)
   end
 
-  @spec write_file_contents(String.t(), String.t()) :: :ok | {:error, File.posix()}
+  @spec write_file_contents(Path.t(), String.t()) :: :ok | {:error, File.posix()}
   defp write_file_contents(path_to_manifest, json),
     do: File.write(path_to_manifest, json)
 
-  @spec load_from_file(path_to_manifest :: String.t()) ::
+  @spec load_from_file(path_to_manifest :: Path.t()) ::
           {:ok, t()}
           | {:error,
              :manifest_does_not_exist

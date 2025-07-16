@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Director do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @type running_service_info :: %{
@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Director do
   @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
   @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_ms :: timeout_in_ms()) ::
-          {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout}
+          {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout | :unknown}
   def fetch_transaction_system_layout(director, timeout_in_ms),
     do: director |> call(:fetch_transaction_system_layout, timeout_in_ms)
 
@@ -87,12 +87,12 @@ defmodule Bedrock.ControlPlane.Director do
   @spec request_to_rejoin(
           director :: ref(),
           node(),
-          capabilities :: [atom()],
+          capabilities :: [Bedrock.Cluster.capability()],
           Director.running_service_info_by_id(),
           timeout_in_ms()
         ) ::
           :ok
-          | {:error, :unavailable}
+          | {:error, :unavailable | :timeout | :unknown}
           | {:error, :nodes_must_be_added_by_an_administrator}
           | {:error, {:relieved_by, {Bedrock.epoch(), director :: pid()}}}
   def request_to_rejoin(
@@ -130,7 +130,8 @@ defmodule Bedrock.ControlPlane.Director do
           :log | :storage,
           timeout_in_ms()
         ) ::
-          {:ok, running_service_info()} | {:error, term()}
+          {:ok, running_service_info()}
+          | {:error, :worker_creation_failed | :node_unavailable | :timeout}
   def request_worker_creation(director, node, worker_id, kind, timeout_in_ms \\ 10_000) do
     director
     |> call({:request_worker_creation, node, worker_id, kind}, timeout_in_ms)

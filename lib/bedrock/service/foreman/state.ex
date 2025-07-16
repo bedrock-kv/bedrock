@@ -5,7 +5,7 @@ defmodule Bedrock.Service.Foreman.State do
   alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
-          cluster: module(),
+          cluster: Cluster.t(),
           capabilities: [Cluster.capability()],
           health: :starting | :ok | :error,
           otp_name: atom(),

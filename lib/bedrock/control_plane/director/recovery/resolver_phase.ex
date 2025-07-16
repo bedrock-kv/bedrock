@@ -68,9 +68,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
           available_nodes :: [node()],
           version_vector :: Bedrock.version_vector(),
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
-          lock_token :: binary()
+          lock_token :: Bedrock.lock_token()
         ) ::
-          {:ok, [{start_key :: Bedrock.version(), resolver :: pid()}]}
+          {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def define_resolvers(
         resolvers,
@@ -178,7 +178,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
           Bedrock.version_vector(),
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) ::
-          {:ok, [{start_key :: Bedrock.version(), resolver :: pid()}]}
+          {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def start_resolvers(
         resolver_boot_info,
@@ -223,7 +223,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     end
   end
 
-  @spec child_spec_for_resolver(epoch :: Bedrock.epoch(), Bedrock.key_range(), binary()) ::
+  @spec child_spec_for_resolver(
+          epoch :: Bedrock.epoch(),
+          key_range :: Bedrock.key_range(),
+          lock_token :: Bedrock.lock_token()
+        ) ::
           Supervisor.child_spec()
   def child_spec_for_resolver(epoch, key_range, lock_token) do
     Resolver.child_spec(lock_token: lock_token, epoch: epoch, key_range: key_range)

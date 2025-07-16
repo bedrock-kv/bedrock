@@ -3,7 +3,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Service.Worker
 
   import Bedrock.ControlPlane.Director.State.Changes,
     only: [put_my_relief: 2, put_state: 2]
@@ -76,8 +78,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
       old_director |> Director.stand_relieved({t.epoch, self()})
     end
 
-    t
-    |> Map.put(:services, get_services_from_config(t.config))
+    %{t | services: get_services_from_config(t.config)}
     |> ping_all_coordinators()
     |> try_to_recover()
     |> store_changes_to_config()
@@ -176,7 +177,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
 
-  @spec get_services_from_config(map()) :: map()
+  @spec get_services_from_config(Config.t()) :: %{Worker.id() => ServiceDescriptor.t()}
   def get_services_from_config(%{transaction_system_layout: %{services: services}}),
     do: services || %{}
 
@@ -185,11 +186,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   def store_changes_to_config(%State{coordinator: coordinator, config: config} = t) do
     case Coordinator.write_config(coordinator, config) do
-      :ok ->
-        t
-
-      unexpected ->
-        Logger.warning("Unexpected response from write_config: #{inspect(unexpected)}")
+      {:error, reason} ->
+        Logger.warning("Failed to write config: #{inspect(reason)}")
         t
     end
   end

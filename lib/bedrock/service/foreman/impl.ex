@@ -17,11 +17,11 @@ defmodule Bedrock.Service.Foreman.Impl do
   import Bedrock.Service.Foreman.Health,
     only: [compute_health_from_worker_info: 1]
 
-  @spec do_fetch_workers(State.t()) :: [atom()]
+  @spec do_fetch_workers(State.t()) :: [Worker.ref()]
   def do_fetch_workers(t),
     do: otp_names_for_running_workers(t)
 
-  @spec do_fetch_storage_workers(State.t()) :: [atom()]
+  @spec do_fetch_storage_workers(State.t()) :: [Worker.ref()]
   def do_fetch_storage_workers(t),
     do: otp_names_for_running_storage_workers(t)
 
@@ -95,7 +95,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     update_workers(state, &Map.delete(&1, worker_id))
   end
 
-  @spec advertise_running_workers([WorkerInfo.t()], module()) :: [WorkerInfo.t()]
+  @spec advertise_running_workers([WorkerInfo.t()], Bedrock.Cluster.t()) :: [WorkerInfo.t()]
   def advertise_running_workers(worker_infos, cluster) do
     Enum.each(worker_infos, &advertise_running_worker(&1, cluster))
     worker_infos

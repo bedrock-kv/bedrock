@@ -40,8 +40,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     required_worker_ids = MapSet.new(Map.keys(recovery_attempt.required_services))
     tracked_worker_ids = MapSet.new(Map.keys(recovery_attempt.available_services))
 
-    # Get all nodes with foreman capability
-    available_nodes = get_nodes_with_capability(context, :foreman)
+    # Get all nodes with storage capability (foreman runs on storage nodes)
+    available_nodes = get_nodes_with_capability(context, :storage)
 
     # Query each foreman for all workers and find untracked ones
     available_nodes
@@ -85,7 +85,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     |> Map.new()
   end
 
-  @spec get_nodes_with_capability(RecoveryPhase.context(), atom()) :: [node()]
+  @spec get_nodes_with_capability(RecoveryPhase.context(), Bedrock.Cluster.capability()) :: [
+          node()
+        ]
   defp get_nodes_with_capability(context, capability) do
     alias Bedrock.ControlPlane.Director.NodeTracking
     NodeTracking.nodes_with_capability(context.node_tracking, capability)

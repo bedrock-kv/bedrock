@@ -1,5 +1,8 @@
 defmodule Bedrock.Service.Foreman.WorkerInfo do
-  @type health :: {:ok, pid()} | {:failed_to_start, term()} | :stopped
+  @type health ::
+          {:ok, Bedrock.Service.Worker.ref()}
+          | {:failed_to_start, File.posix() | :timeout | :already_started}
+          | :stopped
   @type t :: %__MODULE__{}
   @enforce_keys [:id, :path, :health]
   defstruct [

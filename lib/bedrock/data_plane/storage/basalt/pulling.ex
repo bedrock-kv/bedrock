@@ -89,7 +89,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   end
 
   # Select a log, excluding those with active circuit breakers
-  @spec select_log(map()) :: {:ok, {term(), term()}} | :no_available_logs
+  @spec select_log(puller_state()) ::
+          {:ok, {Log.id(), ServiceDescriptor.t()}} | :no_available_logs
   def select_log(%{logs: logs, services: services, failed_logs: failed_logs}) do
     now = System.monotonic_time(:millisecond)
 
@@ -114,19 +115,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   end
 
   # Mark a server as failed and set a retry timestamp
-  @spec mark_log_as_failed(map(), term()) :: map()
+  @spec mark_log_as_failed(puller_state(), Log.id()) :: puller_state()
   def mark_log_as_failed(state, log_id) do
     now = System.monotonic_time(:millisecond)
     retry_timestamp = now + circuit_breaker_timeout()
     failed_logs = Map.put(state.failed_logs, log_id, retry_timestamp)
 
-    trace_log_marked_as_failed(log_id, now)
+    trace_log_marked_as_failed(now, log_id)
 
     %{state | failed_logs: failed_logs}
   end
 
   # Reset all failed logs, clearing the circuit breakers
-  @spec reset_failed_logs(map()) :: map()
+  @spec reset_failed_logs(puller_state()) :: puller_state()
   def reset_failed_logs(state) do
     now = System.monotonic_time(:millisecond)
     trace_log_pull_circuit_breaker_reset(now)

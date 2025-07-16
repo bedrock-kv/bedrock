@@ -1,6 +1,6 @@
 defmodule Bedrock.Service.Foreman.Server do
+  alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.State
-
   import Bedrock.Service.Foreman.State, only: [new_state: 1]
   import Bedrock.Service.Foreman.Impl
 
@@ -12,7 +12,12 @@ defmodule Bedrock.Service.Foreman.Server do
     do: [:cluster, :path, :capabilities, :otp_name]
 
   @spec child_spec(
-          opts :: [cluster: term(), path: term(), capabilities: term(), otp_name: term()]
+          opts :: [
+            cluster: Cluster.t(),
+            path: Path.t(),
+            capabilities: [Cluster.capability()],
+            otp_name: atom()
+          ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     args = opts |> Keyword.take(required_opt_keys()) |> Map.new()
@@ -20,7 +25,12 @@ defmodule Bedrock.Service.Foreman.Server do
   end
 
   @impl true
-  @spec init(map()) :: {:ok, State.t(), {:continue, :spin_up}} | {:stop, :missing_required_params}
+  @spec init(%{
+          cluster: Cluster.t(),
+          path: Path.t(),
+          capabilities: [Cluster.capability()],
+          otp_name: atom()
+        }) :: {:ok, State.t(), {:continue, :spin_up}} | {:stop, :missing_required_params}
   def init(args) do
     args
     |> new_state()

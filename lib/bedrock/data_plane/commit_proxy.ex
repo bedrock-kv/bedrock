@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
 
   @spec recover_from(
           commit_proxy_ref :: ref(),

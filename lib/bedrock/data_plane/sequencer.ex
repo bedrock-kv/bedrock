@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Sequencer do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
 
   @spec invite_to_rejoin(
           t :: ref(),

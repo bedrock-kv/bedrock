@@ -11,7 +11,6 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   @spec worker_info_from_path(Path.t(), otp_namer :: (Worker.id() -> Worker.otp_name())) ::
           [WorkerInfo.t()]
-  @spec worker_info_from_path(String.t(), function()) :: WorkerInfo.t() | nil
   def worker_info_from_path(path, otp_namer) do
     path
     |> worker_paths_from_disk()
@@ -25,7 +24,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> Path.wildcard()
   end
 
-  @spec worker_info_for_id(String.t(), String.t(), function()) :: WorkerInfo.t() | nil
+  @spec worker_info_for_id(Worker.id(), Path.t(), (Worker.id() -> Worker.otp_name())) ::
+          WorkerInfo.t()
   def worker_info_for_id(id, path, otp_namer),
     do: %WorkerInfo{
       id: id,
@@ -34,7 +34,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       health: :stopped
     }
 
-  @spec try_to_start_workers([WorkerInfo.t()], cluster :: module()) :: [WorkerInfo.t()]
+  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Bedrock.Cluster.t()) :: [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster) do
     worker_info
     |> Task.async_stream(&try_to_start_worker(&1, cluster))
@@ -50,7 +50,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error]
   end
 
-  @spec try_to_start_worker(WorkerInfo.t(), cluster :: module()) :: WorkerInfo.t()
+  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Bedrock.Cluster.t()) :: WorkerInfo.t()
   def try_to_start_worker(worker_info, cluster) do
     %StartWorkerOp{
       id: worker_info.id,
@@ -125,9 +125,10 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
           worker :: module(),
           params :: map(),
           Path.t(),
-          cluster :: module()
+          cluster :: Bedrock.Cluster.t()
         ) :: WorkerInfo.t()
-  @spec initialize_new_worker(String.t(), module(), map(), String.t(), module()) :: WorkerInfo.t()
+  @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Bedrock.Cluster.t()) ::
+          WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
     working_directory = Path.join(path, id)
     worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)

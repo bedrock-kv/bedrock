@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Storage
@@ -12,6 +13,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import Bedrock.Internal.Time, only: [now: 0]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  @type recovery_context :: %{
+          node_tracking: NodeTracking.t(),
+          lock_token: binary()
+        }
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
@@ -143,7 +149,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t
   end
 
-  @spec run_recovery_attempt(RecoveryAttempt.t(), map()) ::
+  @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
           | {:error, {:unexpected_recovery_state, atom()}}

@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Shale.Server do
+  alias Bedrock.Cluster
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.State
@@ -28,7 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @doc false
   @spec child_spec(
           opts :: [
-            cluster: module(),
+            cluster: Cluster.t(),
             otp_name: atom(),
             id: Log.id(),
             foreman: pid(),
@@ -61,6 +62,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
+  @spec init({module(), atom(), Bedrock.DataPlane.Log.id(), pid(), Path.t()}) ::
+          {:ok, Bedrock.DataPlane.Log.Shale.State.t(), {:continue, :initialization}}
   def init({cluster, otp_name, id, foreman, path}) do
     {:ok,
      %State{
@@ -76,6 +79,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
+  @spec handle_continue(
+          :initialization
+          | {:notify_waiting_pullers, Bedrock.version(), EncodedTransaction.t()}
+          | :check_for_expired_pullers
+          | :wait_for_next_puller_deadline,
+          State.t()
+        ) ::
+          {:noreply, State.t()} | {:noreply, State.t(), timeout()}
   def handle_continue(:initialization, t) do
     trace_metadata(%{cluster: t.cluster, id: t.id, otp_name: t.otp_name})
     trace_started()
@@ -146,9 +157,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
+  @spec handle_info(:timeout, State.t()) ::
+          {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: t |> noreply(continue: :check_for_expired_pullers)
 
   @impl true
+  @spec handle_call(
+          {:info, [atom()]}
+          | {:lock_for_recovery, Bedrock.epoch()}
+          | {:recover_from, pid(), Bedrock.version(), Bedrock.version()}
+          | {:push, binary(), Bedrock.version()}
+          | {:pull, Bedrock.version(), keyword()}
+          | :ping,
+          GenServer.from(),
+          State.t()
+        ) ::
+          {:reply, term(), State.t()} | {:noreply, State.t(), {:continue, atom()}}
   def handle_call({:info, fact_names}, _, t),
     do: info(t, fact_names) |> then(&(t |> reply(&1)))
 

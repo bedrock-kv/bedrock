@@ -16,7 +16,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
             value_codec: module()
           ]
         ) ::
-          {:ok, pid()} | {:error, {:already_started, pid()} | :timeout}
+          {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     storage_table = Keyword.fetch!(opts, :storage_table)

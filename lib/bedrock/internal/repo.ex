@@ -31,7 +31,9 @@ defmodule Bedrock.Internal.Repo do
         end
 
       if :ok == result || (is_tuple(result) and :ok == elem(result, 0)) do
-        case commit(txn) do
+        txn
+        |> commit()
+        |> case do
           {:ok, _} ->
             result
 
@@ -83,7 +85,8 @@ defmodule Bedrock.Internal.Repo do
   end
 
   @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
-          {:ok, term()} | {:error, :unavailable | :timeout | :unknown}
+          {:ok, Bedrock.version()}
+          | {:error, :unavailable | :timeout | :unknown}
   def commit(t, opts \\ []),
     do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
 

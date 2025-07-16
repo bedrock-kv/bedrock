@@ -58,14 +58,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           t.services
         )
       )
-      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
-        transaction_system_layout
-        |> Map.put(:director, self())
-        |> Map.put(:sequencer, nil)
-        |> Map.put(:rate_keeper, nil)
-        |> Map.put(:proxies, [])
-        |> Map.put(:resolvers, [])
-      end)
     end)
   end
 

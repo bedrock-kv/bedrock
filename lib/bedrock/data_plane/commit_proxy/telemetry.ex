@@ -46,7 +46,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   def trace_commit_proxy_batch_failed(batch, reason, duration_us) do
     Telemetry.execute(
       [:bedrock, :data_plane, :commit_proxy, :failed],
-      %{n_transactions: length(batch.buffer), duration_us: duration_us},
+      %{
+        n_transactions: length(batch.buffer),
+        duration_us: duration_us,
+        commit_version: batch.commit_version
+      },
       Map.merge(trace_metadata(), %{reason: reason})
     )
   end

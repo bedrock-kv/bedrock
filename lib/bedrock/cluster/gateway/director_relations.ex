@@ -4,8 +4,9 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.Internal.TimerManagement
 
-  use Bedrock.Internal.TimerManagement
+  use TimerManagement
 
   import Bedrock.Cluster.Gateway.Telemetry,
     only: [trace_advertising_capabilities: 3, trace_missed_pong: 2, trace_lost_director: 1]

@@ -161,17 +161,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           n_usec
         )
 
-        # Exit to trigger recovery since not all logs are available
         exit({:insufficient_acknowledgments, count, required, errors})
 
       {n_usec, {:error, {:resolver_unavailable, reason}}} ->
         trace_commit_proxy_batch_failed(batch, {:resolver_unavailable, reason}, n_usec)
-        # Exit to trigger recovery since resolver is unavailable
         exit({:resolver_unavailable, reason})
 
       {n_usec, {:error, {:storage_team_coverage_error, key}}} ->
         trace_commit_proxy_batch_failed(batch, {:storage_team_coverage_error, key}, n_usec)
-        # Exit to trigger recovery since storage team configuration is invalid
         exit({:storage_team_coverage_error, key})
 
       {n_usec, {:error, reason}} ->

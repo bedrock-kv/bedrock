@@ -6,12 +6,12 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   considered to be alive.
   """
 
-  alias Cluster
+  alias Bedrock.Cluster
 
   @type t :: :ets.table()
 
   @typep last_seen_at :: integer() | :unknown
-  @typep capabilities :: [Bedrock.Cluster.capability()] | :unknown
+  @typep capabilities :: [Cluster.capability()] | :unknown
   @typep up_down :: :up | :down
   @typep authorized :: boolean()
 
@@ -118,7 +118,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @doc """
   Get a list of the capabilities that a node is advertising.
   """
-  @spec capabilities(t(), node()) :: [Bedrock.Cluster.capability()] | :unknown
+  @spec capabilities(t(), node()) :: [Cluster.capability()] | :unknown
   def capabilities(t, node) do
     :ets.lookup(t, node)
     |> case do
@@ -161,7 +161,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @doc """
   Update the list of capabilities that a node is advertising.
   """
-  @spec update_capabilities(t(), node(), capabilities :: [Bedrock.Cluster.capability()]) :: t()
+  @spec update_capabilities(t(), node(), capabilities :: [Cluster.capability()]) :: t()
   def update_capabilities(t, node, capabilities) do
     :ets.update_element(t, node, {3, capabilities})
     t
@@ -170,7 +170,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   @doc """
   Get a list of nodes that are alive, authorized, and have the specified capability.
   """
-  @spec nodes_with_capability(t(), capability :: Bedrock.Cluster.capability()) :: [node()]
+  @spec nodes_with_capability(t(), capability :: Cluster.capability()) :: [node()]
   def nodes_with_capability(t, capability) do
     # Get all alive and authorized nodes first
     alive_authorized_nodes =

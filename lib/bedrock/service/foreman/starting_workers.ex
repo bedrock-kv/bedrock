@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.StartingWorkers do
+  alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
@@ -34,7 +35,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       health: :stopped
     }
 
-  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Bedrock.Cluster.t()) :: [WorkerInfo.t()]
+  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t()) :: [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster) do
     worker_info
     |> Task.async_stream(&try_to_start_worker(&1, cluster))
@@ -50,7 +51,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error]
   end
 
-  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Bedrock.Cluster.t()) :: WorkerInfo.t()
+  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t()) :: WorkerInfo.t()
   def try_to_start_worker(worker_info, cluster) do
     %StartWorkerOp{
       id: worker_info.id,
@@ -125,9 +126,9 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
           worker :: module(),
           params :: map(),
           Path.t(),
-          cluster :: Bedrock.Cluster.t()
+          cluster :: Cluster.t()
         ) :: WorkerInfo.t()
-  @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Bedrock.Cluster.t()) ::
+  @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Cluster.t()) ::
           WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
     working_directory = Path.join(path, id)

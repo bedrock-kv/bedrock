@@ -1,6 +1,8 @@
 defmodule Bedrock.Service.Foreman do
   use Bedrock.Internal.GenServerApi, for: Bedrock.Service.Foreman.Supervisor
 
+  alias Bedrock.Service.Worker
+
   @type ref :: pid() | atom() | {atom(), node()}
 
   @type health :: :ok | {:failed_to_start, :at_least_one_failed_to_start} | :unknown | :starting
@@ -12,7 +14,7 @@ defmodule Bedrock.Service.Foreman do
   Return a list of running workers.
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok, [Bedrock.Service.Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
+          {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
   def all(foreman, opts \\ []),
     do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -25,7 +27,7 @@ defmodule Bedrock.Service.Foreman do
           kind :: :log | :storage,
           opts :: [timeout: timeout()]
         ) ::
-          {:ok, Bedrock.Service.Worker.ref()} | {:error, :timeout}
+          {:ok, Worker.ref()} | {:error, :timeout}
   def new_worker(foreman, id, kind, opts \\ []),
     do: call(foreman, {:new_worker, id, kind}, to_timeout(opts[:timeout] || :infinity))
 
@@ -33,7 +35,7 @@ defmodule Bedrock.Service.Foreman do
   Return a list of running storage workers only.
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok, [Bedrock.Service.Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
+          {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
   def storage_workers(foreman, opts \\ []),
     do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
 
@@ -58,7 +60,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec remove_worker(
           foreman :: ref(),
-          Bedrock.Service.Worker.id(),
+          Worker.id(),
           opts :: [{:timeout, timeout()}]
         ) ::
           :ok
@@ -79,10 +81,10 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec remove_workers(
           foreman_ref :: ref(),
-          worker_ids :: [Bedrock.Service.Worker.id()],
+          worker_ids :: [Worker.id()],
           opts :: [{:timeout, timeout()}]
         ) ::
-          %{Bedrock.Service.Worker.id() => :ok | {:error, term()}}
+          %{Worker.id() => :ok | {:error, term()}}
           | {:error, :unavailable | :timeout | :unknown}
   def remove_workers(foreman, worker_ids, opts \\ []),
     do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
@@ -92,7 +94,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec report_health(
           foreman :: ref(),
-          Bedrock.Service.Worker.id(),
+          Worker.id(),
           Bedrock.Service.Worker.health()
         ) :: :ok
   def report_health(foreman, worker_id, health),

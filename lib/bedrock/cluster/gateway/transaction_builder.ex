@@ -68,7 +68,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   def handle_call(:commit, _from, t) do
     case do_commit(t) do
-      {:ok, t} -> t |> reply(:ok, continue: :stop)
+      {:ok, t} -> t |> reply({:ok, t.commit_version}, continue: :stop)
       {:error, _reason} = error -> t |> reply(error)
     end
   end

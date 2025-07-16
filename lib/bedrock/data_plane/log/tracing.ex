@@ -57,8 +57,13 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     info("Push transaction (#{n_keys} keys) with expected version #{inspect(expected_version)}")
   end
 
-  def log_event(:push_out_of_order, _, %{expected_version: expected_version, current_version: current_version}) do
-    info("Rejected out-of-order transaction: expected #{inspect(expected_version)}, current #{inspect(current_version)}")
+  def log_event(:push_out_of_order, _, %{
+        expected_version: expected_version,
+        current_version: current_version
+      }) do
+    info(
+      "Rejected out-of-order transaction: expected #{inspect(expected_version)}, current #{inspect(current_version)}"
+    )
   end
 
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),

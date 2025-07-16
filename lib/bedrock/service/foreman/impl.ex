@@ -1,8 +1,9 @@
 defmodule Bedrock.Service.Foreman.Impl do
+  alias Bedrock.Cluster
+  alias Bedrock.Cluster.Gateway
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Worker
-  alias Bedrock.Cluster.Gateway
 
   import Bedrock.Service.Foreman.State
 
@@ -95,7 +96,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     update_workers(state, &Map.delete(&1, worker_id))
   end
 
-  @spec advertise_running_workers([WorkerInfo.t()], Bedrock.Cluster.t()) :: [WorkerInfo.t()]
+  @spec advertise_running_workers([WorkerInfo.t()], Cluster.t()) :: [WorkerInfo.t()]
   def advertise_running_workers(worker_infos, cluster) do
     Enum.each(worker_infos, &advertise_running_worker(&1, cluster))
     worker_infos

@@ -6,7 +6,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
   setup do
     # Capture telemetry events
     test_pid = self()
-    
+
     :telemetry.attach_many(
       "test-log-telemetry",
       [
@@ -34,9 +34,13 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
       Telemetry.trace_push_transaction(expected_version, n_keys)
 
-      assert_receive {:telemetry, [:bedrock, :log, :push], 
-                      %{n_keys: ^n_keys}, 
-                      %{expected_version: ^expected_version, cluster: :test_cluster, id: "test_log", otp_name: :test_otp}}
+      assert_receive {:telemetry, [:bedrock, :log, :push], %{n_keys: ^n_keys},
+                      %{
+                        expected_version: ^expected_version,
+                        cluster: :test_cluster,
+                        id: "test_log",
+                        otp_name: :test_otp
+                      }}
     end
   end
 
@@ -47,10 +51,14 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
       Telemetry.trace_push_out_of_order(expected_version, current_version)
 
-      assert_receive {:telemetry, [:bedrock, :log, :push_out_of_order], 
-                      %{}, 
-                      %{expected_version: ^expected_version, current_version: ^current_version, 
-                        cluster: :test_cluster, id: "test_log", otp_name: :test_otp}}
+      assert_receive {:telemetry, [:bedrock, :log, :push_out_of_order], %{},
+                      %{
+                        expected_version: ^expected_version,
+                        current_version: ^current_version,
+                        cluster: :test_cluster,
+                        id: "test_log",
+                        otp_name: :test_otp
+                      }}
     end
   end
 

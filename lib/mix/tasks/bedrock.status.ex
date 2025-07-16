@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Bedrock.Status do
     for cluster <- clusters do
       cluster.config()
       |> case do
-        {:ok, config} -> config |> IO.inspect()
+        {:ok, config} -> config
         {:error, reason} -> IO.puts("Error: #{reason}")
       end
     end

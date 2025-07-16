@@ -7,8 +7,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
   def do_commit(%{stack: []} = t) do
     with transaction <- prepare_transaction_for_commit(t.read_version, t.reads, t.writes),
          {:ok, commit_proxy} <- Gateway.fetch_commit_proxy(t.gateway),
-         {:ok, _version} <- CommitProxy.commit(commit_proxy, transaction) do
-      {:ok, %{t | state: :committed}}
+         {:ok, version} <- CommitProxy.commit(commit_proxy, transaction) do
+      {:ok, %{t | state: :committed, commit_version: version}}
     end
   end
 

@@ -45,8 +45,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
 
   @spec determine_next_phase(map()) :: map()
   defp determine_next_phase(
-         %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = recovery_attempt
-       ) do
+         %{last_transaction_system_layout: %{logs: logs, storage_teams: []}} = recovery_attempt
+       )
+       when map_size(logs) == 0 do
     recovery_attempt |> Map.put(:state, :first_time_initialization)
   end
 

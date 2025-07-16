@@ -41,7 +41,8 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
-  @spec trace_push_transaction(expected_version :: Bedrock.version(), n_keys :: non_neg_integer()) :: :ok
+  @spec trace_push_transaction(expected_version :: Bedrock.version(), n_keys :: non_neg_integer()) ::
+          :ok
   def trace_push_transaction(expected_version, n_keys) do
     Telemetry.execute(
       [:bedrock, :log, :push],
@@ -52,7 +53,10 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
-  @spec trace_push_out_of_order(expected_version :: Bedrock.version(), current_version :: Bedrock.version()) :: :ok
+  @spec trace_push_out_of_order(
+          expected_version :: Bedrock.version(),
+          current_version :: Bedrock.version()
+        ) :: :ok
   def trace_push_out_of_order(expected_version, current_version) do
     Telemetry.execute(
       [:bedrock, :log, :push_out_of_order],

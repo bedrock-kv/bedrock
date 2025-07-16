@@ -41,7 +41,10 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   def version(<<version::unsigned-big-64, _::binary>>), do: version
 
   @spec key_count(t()) :: non_neg_integer()
-  def key_count(<<_version::unsigned-big-64, size_in_bytes::unsigned-big-32, payload::binary-size(size_in_bytes), _::unsigned-big-32>>) do
+  def key_count(
+        <<_version::unsigned-big-64, size_in_bytes::unsigned-big-32,
+          payload::binary-size(size_in_bytes), _::unsigned-big-32>>
+      ) do
     count_keys_in_payload(payload, 0)
   end
 

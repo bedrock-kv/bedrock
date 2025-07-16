@@ -4,7 +4,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.DataPlane.Foreman
+  alias Bedrock.Service.Foreman
 
   alias Cluster.Gateway.Tracing, as: GatewayTracing
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing

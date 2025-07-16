@@ -186,6 +186,10 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   def store_changes_to_config(%State{coordinator: coordinator, config: config} = t) do
     case Coordinator.write_config(coordinator, config) do
+      :ok ->
+        Logger.info("Configuration successfully written to coordinator")
+        t
+
       {:error, reason} ->
         Logger.warning("Failed to write config: #{inspect(reason)}")
         t

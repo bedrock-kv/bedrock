@@ -1,4 +1,6 @@
 defmodule Bedrock do
+  alias Bedrock.Internal.Time.Interval
+
   @type key :: binary()
   @type key_range :: {min_inclusive :: key(), max_exclusive :: key() | :end}
   @type value :: binary()
@@ -22,7 +24,7 @@ defmodule Bedrock do
   @type interval_in_ms :: :infinity | non_neg_integer()
   @type interval_in_us :: :infinity | non_neg_integer()
 
-  @type time_unit :: Bedrock.Internal.Time.Interval.unit()
+  @type time_unit :: Interval.unit()
   @type interval :: {Bedrock.time_unit(), non_neg_integer()}
 
   @type range_tag :: non_neg_integer()

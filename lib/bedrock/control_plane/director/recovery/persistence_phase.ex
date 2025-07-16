@@ -9,21 +9,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   """
 
   alias Bedrock.ControlPlane.Config
-
-  alias Bedrock.ControlPlane.Config.{
-    RecoveryAttempt,
-    TransactionSystemLayout,
-    Persistence,
-    LogDescriptor,
-    ServiceDescriptor
-  }
-
-  alias Bedrock.DataPlane.{CommitProxy, Log}
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.Persistence
+  alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   @behaviour RecoveryPhase
 

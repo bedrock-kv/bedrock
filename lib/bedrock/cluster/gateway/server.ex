@@ -1,9 +1,11 @@
 defmodule Bedrock.Cluster.Gateway.Server do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Internal.TimerManagement
 
   use GenServer
-  use Bedrock.Internal.TimerManagement
+  use TimerManagement
 
   import Bedrock.Internal.GenServer.Replies
 

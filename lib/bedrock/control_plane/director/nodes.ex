@@ -1,14 +1,16 @@
 defmodule Bedrock.ControlPlane.Director.Nodes do
   @moduledoc false
 
+  alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.Internal.TimerManagement
 
-  use Bedrock.Internal.TimerManagement
+  use TimerManagement
 
   @type worker_creation_error ::
           {:node_lacks_capability, node(), :log | :storage}
@@ -18,7 +20,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   @spec request_to_rejoin(
           State.t(),
           node(),
-          capabilities :: [Bedrock.Cluster.capability()],
+          capabilities :: [Cluster.capability()],
           running_services :: [Director.running_service_info()],
           at :: DateTime.t()
         ) ::
@@ -102,7 +104,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     t
   end
 
-  @spec update_capabilities(State.t(), node(), [Bedrock.Cluster.capability()]) :: State.t()
+  @spec update_capabilities(State.t(), node(), [Cluster.capability()]) :: State.t()
   def update_capabilities(t, node, capabilities) do
     NodeTracking.update_capabilities(t.node_tracking, node, capabilities)
     t

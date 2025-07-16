@@ -2,11 +2,12 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Gateway.Telemetry
   import Bedrock.Cluster.Gateway.DirectorRelations
 
-  use Bedrock.Internal.TimerManagement
+  use TimerManagement
 
   @doc """
   Find a live coordinator. We make a ping call to all of the nodes that we know

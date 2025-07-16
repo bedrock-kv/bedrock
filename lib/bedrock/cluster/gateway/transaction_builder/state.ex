@@ -8,6 +8,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
           #
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
+          commit_version: Bedrock.version() | nil,
           #
           reads: %{Bedrock.key() => Bedrock.value()},
           writes: %{Bedrock.key() => Bedrock.value()},
@@ -29,6 +30,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
             #
             read_version: nil,
             read_version_lease_expiration: nil,
+            commit_version: nil,
             #
             reads: %{},
             writes: %{},

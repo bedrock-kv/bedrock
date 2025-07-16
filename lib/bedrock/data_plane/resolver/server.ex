@@ -9,7 +9,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @type reply_fn :: (aborted :: [integer()] -> :ok)
 
-  @spec child_spec(opts :: [lock_token: binary()]) :: Supervisor.child_spec()
+  @spec child_spec(
+          opts :: [lock_token: binary(), epoch: Bedrock.epoch(), key_range: Bedrock.key_range()]
+        ) :: Supervisor.child_spec()
   def child_spec(opts) do
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
 

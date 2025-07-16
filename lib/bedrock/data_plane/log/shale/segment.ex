@@ -8,23 +8,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @type t :: %__MODULE__{
           path: String.t(),
           min_version: Bedrock.version(),
-          transactions: [EncodedTransaction.t()]
+          transactions: nil | [EncodedTransaction.t()]
         }
   defstruct path: nil,
             min_version: nil,
             transactions: nil
 
   @wal_prefix "wal_"
+  @spec file_prefix() :: String.t()
   def file_prefix, do: @wal_prefix
 
+  @spec encode_file_name(pos_integer()) :: String.t()
   def encode_file_name(n) do
     log_number = n |> Integer.to_string(32) |> String.downcase() |> String.pad_leading(13, "0")
     @wal_prefix <> log_number
   end
 
+  @spec decode_file_name(String.t()) :: pos_integer()
   def decode_file_name(@wal_prefix <> log_number),
     do: log_number |> String.to_integer(32)
 
+  @spec allocate_from_recycler(SegmentRecycler.server(), String.t(), Bedrock.version()) ::
+          {:ok, t()} | {:error, :allocation_failed}
   def allocate_from_recycler(segment_recycler, path, version) do
     with path_to_file <- Path.join(path, encode_file_name(version)),
          :ok <- SegmentRecycler.check_out(segment_recycler, path_to_file) do
@@ -33,9 +38,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
          min_version: version,
          path: path_to_file
        }}
+    else
+      _ -> {:error, :allocation_failed}
     end
   end
 
+  @spec return_to_recycler(t(), SegmentRecycler.server()) :: :ok
   def return_to_recycler(segment, segment_recycler),
     do: SegmentRecycler.check_in(segment_recycler, segment.path)
 
@@ -56,7 +64,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
 
   @spec load_transactions(t()) :: t()
   def load_transactions(%{transactions: nil} = segment) do
-    TransactionStreams.from_file!(segment.path)
+    segment.path
+    |> TransactionStreams.from_file!()
     |> Enum.reverse()
     |> case do
       [{:corrupted, offset} | transactions] ->
@@ -76,6 +85,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
 
   def load_transactions(segment), do: segment
 
+  @spec last_version(t()) :: Bedrock.version()
   def last_version(%{transactions: [<<version::unsigned-big-64, _::binary>> | _]}), do: version
   def last_version(%{min_version: min_version}), do: min_version
 end

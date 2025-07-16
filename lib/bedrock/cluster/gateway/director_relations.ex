@@ -19,19 +19,25 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   def change_director(t, director) when t.director == director, do: t
 
   def change_director(t, {_pid, _epoch} = director) do
-    t = t |> Map.put(:director, director)
+    t = t |> Map.put(:director, director) |> reset_ping_timer() |> ping_director()
 
-    with {:ok, t} <- t |> reset_ping_timer() |> ping_director() |> advertise_capabilities(),
-         {:ok, t} <- t |> fetch_transaction_system_layout() do
-      t |> publish_director_replaced_to_pubsub()
-    else
+    case t |> advertise_capabilities() do
+      {:ok, t} ->
+        case t |> fetch_transaction_system_layout() do
+          {:ok, t} ->
+            t |> publish_director_replaced_to_pubsub()
+
+          {:error, {:relieved_by, {new_epoch, new_director_pid}}} ->
+            t |> change_director({new_director_pid, new_epoch})
+
+          {:error, _reason} ->
+            t |> change_director(:unavailable)
+        end
+
       {:error, {:relieved_by, {new_epoch, new_director_pid}}} ->
         t |> change_director({new_director_pid, new_epoch})
 
-      {:error, :unavailable} ->
-        t |> change_director(:unavailable)
-
-      :unavailable ->
+      {:error, _reason} ->
         t |> change_director(:unavailable)
     end
   end
@@ -43,6 +49,10 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     |> publish_director_replaced_to_pubsub()
   end
 
+  @spec fetch_transaction_system_layout(State.t()) ::
+          {:ok, State.t()}
+          | {:error, {:relieved_by, {Bedrock.epoch(), pid()}}}
+          | {:error, :unavailable | :timeout | :unknown}
   def fetch_transaction_system_layout(t) do
     with {director_pid, _epoch} <- t.director,
          {:ok, transaction_system_layout} <-
@@ -74,14 +84,17 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
       t
       |> Map.put(:transaction_system_layout, transaction_system_layout)
       |> then(&{:ok, &1})
+    else
+      :unavailable -> {:error, :unavailable}
+      error -> error
     end
   end
 
   @spec advertise_capabilities(State.t()) ::
           {:ok, State.t()}
-          | {:error, :unavailable}
+          | {:error, :unavailable | :timeout | :unknown}
           | {:error, :nodes_must_be_added_by_an_administrator}
-          | {:error, {:relieved_by, {Bedrock.epoch(), pid()}}}
+          | {:error, {:relieved_by, {Bedrock.epoch(), director :: pid()}}}
   def advertise_capabilities(t) do
     with {:ok, running_services} <- running_services(t),
          :ok <- trace_advertising_capabilities(t.cluster, t.capabilities, running_services),
@@ -94,6 +107,8 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
              running_services
            ) do
       {:ok, t}
+    else
+      error -> error
     end
   end
 
@@ -109,7 +124,8 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   end
 
   @spec running_services(State.t()) ::
-          {:ok, Director.running_service_info_by_id()} | {:error, any()}
+          {:ok, Director.running_service_info_by_id()}
+          | {:error, :unavailable | :timeout | :unknown}
   def running_services(t) do
     case Foreman.all(t.cluster.otp_name(:foreman)) do
       {:ok, worker_pids} -> {:ok, worker_pids |> gather_info_from_workers()}
@@ -145,6 +161,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     t
   end
 
+  @spec ping_director(State.t()) :: State.t()
   def ping_director(t) when t.director == :unavailable, do: t
 
   def ping_director(t) do
@@ -153,6 +170,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     t
   end
 
+  @spec pong_was_not_received(State.t()) :: State.t()
   def pong_was_not_received(t) when t.missed_pongs > 3 do
     trace_lost_director(t.cluster)
 
@@ -171,6 +189,8 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     |> ping_director()
   end
 
+  @spec pong_received_from_director(State.t(), {pid(), Bedrock.epoch()} | :unavailable) ::
+          State.t()
   def pong_received_from_director(t, {_pid, _epoch} = director)
       when director == t.director do
     t
@@ -184,16 +204,20 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     |> change_director(director)
   end
 
+  @spec pong_missed(State.t()) :: State.t()
   def pong_missed(t), do: t |> Map.update!(:missed_pongs, &(&1 + 1))
 
+  @spec reset_missed_pongs(State.t()) :: State.t()
   def reset_missed_pongs(t), do: t |> Map.put(:missed_pongs, 0)
 
+  @spec reset_ping_timer(State.t()) :: State.t()
   def reset_ping_timer(t) do
     t
     |> cancel_timer(:ping)
     |> maybe_set_ping_timer()
   end
 
+  @spec maybe_set_ping_timer(State.t()) :: State.t()
   def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
   def maybe_set_ping_timer(t),

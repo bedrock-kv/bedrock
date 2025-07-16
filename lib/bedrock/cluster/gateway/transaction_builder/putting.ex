@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Putting do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
-  @spec do_put(State.t(), any(), any()) :: {:ok, State.t()} | :key_error
+  @spec do_put(State.t(), Bedrock.key(), Bedrock.value()) :: {:ok, State.t()} | :key_error
   def do_put(t, key, value) do
     with {:ok, encoded_key} <- t.key_codec.encode_key(key),
          {:ok, encoded_value} <- t.value_codec.encode_value(value) do

@@ -100,7 +100,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     |> Map.new()
   end
 
-  @spec combinations([any()], non_neg_integer()) :: [[any()]]
+  @spec combinations([term()], non_neg_integer()) :: [[term()]]
   def combinations(_list, 0), do: [[]]
   def combinations([], _num), do: []
 
@@ -117,6 +117,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     end)
   end
 
+  @spec build_log_groups_and_vectors_from_combinations([[{Log.id(), Bedrock.version_vector()}]]) ::
+          [{[Log.id()], Bedrock.version_vector()}]
   def build_log_groups_and_vectors_from_combinations(combinations) do
     combinations
     |> Enum.map(fn group ->
@@ -127,10 +129,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     |> Enum.filter(&valid_range?(&1))
   end
 
+  @spec valid_range?({[Log.id()], Bedrock.version_vector()}) :: boolean()
   def valid_range?({_, {0, _newest}}), do: true
   def valid_range?({_, {_oldest, 0}}), do: false
   def valid_range?({_, {oldest, newest}}), do: newest >= oldest
 
+  @spec rank_log_groups([{[Log.id()], Bedrock.version_vector()}]) :: [
+          {[Log.id()], Bedrock.version_vector()}
+        ]
   def rank_log_groups(groups) do
     groups
     |> Enum.sort_by(
@@ -139,5 +145,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     )
   end
 
+  @spec determine_quorum(non_neg_integer()) :: pos_integer()
   defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
 end

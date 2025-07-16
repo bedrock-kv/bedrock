@@ -68,9 +68,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
           available_nodes :: [node()],
           version_vector :: Bedrock.version_vector(),
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
-          lock_token :: binary()
+          lock_token :: Bedrock.lock_token()
         ) ::
-          {:ok, [{start_key :: Bedrock.version(), resolver :: pid()}]}
+          {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def define_resolvers(
         resolvers,
@@ -96,6 +96,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     start_resolvers(resolver_boot_info, available_nodes, version_vector, start_supervised)
   end
 
+  @spec generate_resolver_ranges([ResolverDescriptor.t()]) :: [[Bedrock.key() | :end]]
   defp generate_resolver_ranges(resolvers) do
     resolvers
     |> Enum.map(& &1.start_key)
@@ -104,6 +105,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     |> Enum.chunk_every(2, 1, :discard)
   end
 
+  @spec prepare_resolver_range_tags([[Bedrock.key() | :end]], [StorageTeamDescriptor.t()]) :: [
+          {Bedrock.key_range(), [Bedrock.range_tag()]}
+        ]
   defp prepare_resolver_range_tags(resolver_ranges, storage_teams) do
     storage_team_info =
       storage_teams
@@ -115,9 +119,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     end)
   end
 
+  @spec tuple_from_storage_team(StorageTeamDescriptor.t()) ::
+          {Bedrock.key_range(), Bedrock.range_tag(), [term()]}
   def tuple_from_storage_team(storage_team),
     do: {storage_team.key_range, storage_team.tag, storage_team.storage_ids}
 
+  @spec storage_team_tags_covering_range(
+          [{Bedrock.key_range(), Bedrock.range_tag(), [term()]}],
+          Bedrock.key(),
+          Bedrock.key() | :end
+        ) :: [
+          Bedrock.range_tag()
+        ]
   def storage_team_tags_covering_range(storage_teams, min_key, max_key_exclusive) do
     :ets.match_spec_run(
       storage_teams,
@@ -165,7 +178,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
           Bedrock.version_vector(),
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) ::
-          {:ok, [{start_key :: Bedrock.version(), resolver :: pid()}]}
+          {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def start_resolvers(
         resolver_boot_info,
@@ -210,7 +223,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     end
   end
 
-  @spec child_spec_for_resolver(epoch :: Bedrock.epoch(), Bedrock.key_range(), binary()) ::
+  @spec child_spec_for_resolver(
+          epoch :: Bedrock.epoch(),
+          key_range :: Bedrock.key_range(),
+          lock_token :: Bedrock.lock_token()
+        ) ::
           Supervisor.child_spec()
   def child_spec_for_resolver(epoch, key_range, lock_token) do
     Resolver.child_spec(lock_token: lock_token, epoch: epoch, key_range: key_range)

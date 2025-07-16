@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Director.Recovery.SequencerPhase
+
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   # Mock cluster module for testing

@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.Internal.Time
+  alias Bedrock.Cluster
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
@@ -27,10 +28,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @spec child_spec(
           opts :: [
-            cluster: module(),
+            cluster: Cluster.t(),
             director: pid(),
             epoch: Bedrock.epoch(),
-            lock_token: binary(),
+            lock_token: Bedrock.lock_token(),
             max_latency_in_ms: non_neg_integer(),
             max_per_batch: pos_integer()
           ]
@@ -55,8 +56,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     }
   end
 
+  @impl true
+  @spec init({module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), binary()}) ::
+          {:ok, State.t()}
   def init({cluster, director, epoch, max_latency_in_ms, max_per_batch, lock_token}) do
-    trace_metadata(cluster: cluster, pid: self())
+    trace_metadata(%{cluster: cluster, pid: self()})
 
     %State{
       cluster: cluster,
@@ -69,10 +73,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     |> then(&{:ok, &1})
   end
 
+  @impl true
+  @spec terminate(term(), State.t()) :: :ok
   def terminate(_reason, _t) do
     :ok
   end
 
+  @impl true
+  @spec handle_call(
+          {:recover_from, binary(), map()} | {:commit, Bedrock.transaction()},
+          GenServer.from(),
+          State.t()
+        ) ::
+          {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
   def handle_call(
         {:recover_from, lock_token, transaction_system_layout},
         _from,
@@ -117,12 +130,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # If we haven't seen any new commit requests come in for a few milliseconds,
   # we go ahead and finalize the batch -- No need to make everyone wait longer
   # than they absolutely need to!
+  @impl true
+  @spec handle_info(:timeout, State.t()) ::
+          {:noreply, State.t()} | {:noreply, State.t(), {:continue, term()}}
   def handle_info(:timeout, %{batch: nil} = t),
     do: t |> noreply()
 
   def handle_info(:timeout, %{batch: batch} = t),
     do: %{t | batch: nil} |> noreply(continue: {:finalize, batch})
 
+  @impl true
+  @spec handle_continue({:finalize, Batch.t()}, State.t()) :: {:noreply, State.t()}
   def handle_continue({:finalize, batch}, t) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 

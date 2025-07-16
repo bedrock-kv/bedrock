@@ -6,11 +6,17 @@ defmodule Bedrock.Service.Manifest do
           cluster: Cluster.name(),
           id: String.t(),
           worker: module(),
-          params: map()
+          params: %{atom() => term()}
         }
   defstruct [:cluster, :id, :worker, :params]
 
-  @spec new(Cluster.name(), id :: String.t(), worker :: module(), params :: map()) :: t()
+  @spec new(
+          Cluster.name(),
+          id :: Bedrock.service_id(),
+          worker :: module(),
+          params :: %{atom() => term()}
+        ) ::
+          t()
   def new(cluster, id, worker, params \\ %{}) do
     %__MODULE__{
       cluster: cluster,
@@ -20,7 +26,8 @@ defmodule Bedrock.Service.Manifest do
     }
   end
 
-  @spec write_to_file(manifest :: t(), path_to_manifest :: String.t()) :: :ok | {:error, term()}
+  @spec write_to_file(manifest :: t(), path_to_manifest :: Path.t()) ::
+          :ok | {:error, File.posix()}
   def write_to_file(manifest, path_to_manifest) do
     {:ok, json} =
       %{
@@ -34,10 +41,24 @@ defmodule Bedrock.Service.Manifest do
     path_to_manifest |> write_file_contents(json)
   end
 
+  @spec write_file_contents(Path.t(), String.t()) :: :ok | {:error, File.posix()}
   defp write_file_contents(path_to_manifest, json),
     do: File.write(path_to_manifest, json)
 
-  @spec load_from_file(path_to_manifest :: String.t()) :: {:ok, t()} | {:error, term()}
+  @spec load_from_file(path_to_manifest :: Path.t()) ::
+          {:ok, t()}
+          | {:error,
+             :manifest_does_not_exist
+             | :manifest_is_invalid
+             | :manifest_is_not_a_dictionary
+             | :worker_module_is_invalid
+             | :worker_module_does_not_exist
+             | :worker_module_failed_to_load
+             | :invalid_cluster_id
+             | :invalid_cluster_name
+             | :invalid_worker_name
+             | :worker_module_does_not_implement_behaviour
+             | :invalid_params}
   def load_from_file(path_to_manifest) do
     with {:ok, file_contents} <- path_to_manifest |> load_file_contents(),
          {:ok, json} <- file_contents |> Jason.decode(),
@@ -56,6 +77,7 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
+  @spec load_file_contents(String.t()) :: {:ok, String.t()} | {:error, :manifest_does_not_exist}
   defp load_file_contents(path) do
     File.read(path)
     |> case do
@@ -94,6 +116,8 @@ defmodule Bedrock.Service.Manifest do
   defp parse_worker_name(worker_name),
     do: {:ok, worker_name |> String.split(".") |> Module.concat()}
 
+  @spec check_module_is_storage_worker(module()) ::
+          :ok | {:error, :worker_module_does_not_implement_behaviour}
   defp check_module_is_storage_worker(worker) do
     if :attributes
        |> worker.module_info()
@@ -104,6 +128,7 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
+  @spec params_from_json(map() | nil | term()) :: {:ok, map()} | {:error, :invalid_params}
   def params_from_json(nil), do: {:ok, %{}}
   def params_from_json(params) when is_map(params), do: {:ok, params}
   def params_from_json(_), do: {:error, :invalid_params}

@@ -33,15 +33,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                           last_version :: Bedrock.version(),
                           commit_version :: Bedrock.version(),
                           transaction_summaries :: [Resolver.transaction_summary()],
-                          resolver_opts :: keyword() ->
-                            {:ok, aborted :: [index :: integer()]}
+                          resolver_opts :: [timeout: Bedrock.timeout_in_ms()] ->
+                            {:ok, aborted :: [transaction_index :: non_neg_integer()]}
                             | {:error, resolution_error()})
 
   @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
                                 last_commit_version :: Bedrock.version(),
                                 transactions_by_tag :: %{Bedrock.range_tag() => Transaction.t()},
                                 commit_version :: Bedrock.version(),
-                                opts :: keyword() ->
+                                opts :: [
+                                  timeout: Bedrock.timeout_in_ms(),
+                                  async_stream_fn: async_stream_fn()
+                                ] ->
                                   :ok | {:error, log_push_error()})
 
   @type log_push_single_fn() :: (ServiceDescriptor.t(),

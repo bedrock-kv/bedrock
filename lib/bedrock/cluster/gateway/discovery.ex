@@ -42,6 +42,8 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     end
   end
 
+  @spec first_coordinator_that_responds(module(), [node()]) ::
+          {:ok, pid()} | {:error, :unavailable}
   defp first_coordinator_that_responds(cluster, coordinator_nodes) do
     GenServer.multi_call(
       coordinator_nodes,
@@ -67,6 +69,7 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   def change_coordinator(t, coordinator) when t.coordinator == coordinator, do: t
   def change_coordinator(t, :unavailable), do: t |> Map.put(:coordinator, :unavailable)
 
+  @spec change_coordinator(State.t(), Coordinator.ref()) :: State.t()
   def change_coordinator(t, coordinator) do
     PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator})
     Process.monitor(t.coordinator)

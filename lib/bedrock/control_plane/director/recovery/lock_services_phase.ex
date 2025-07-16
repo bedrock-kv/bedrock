@@ -43,6 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
     end
   end
 
+  @spec determine_next_phase(map()) :: map()
   defp determine_next_phase(
          %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = recovery_attempt
        ) do
@@ -61,6 +62,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
     end
   end
 
+  @spec has_stale_components?(map()) :: boolean()
   defp has_stale_components?(%{resolvers: resolvers, proxies: proxies, sequencer: sequencer}) do
     stale_resolvers = resolvers |> Enum.any?(&resolver_is_stale?/1)
     stale_proxies = proxies |> Enum.any?(&process_is_stale?/1)
@@ -71,13 +73,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
 
   defp has_stale_components?(_), do: false
 
+  @spec resolver_is_stale?(pid() | {Bedrock.key(), pid()}) :: boolean()
   defp resolver_is_stale?({_start_key, pid}) when is_pid(pid), do: pid_is_stale?(pid)
   defp resolver_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
   defp resolver_is_stale?(_), do: false
 
+  @spec process_is_stale?(pid()) :: boolean()
   defp process_is_stale?(pid) when is_pid(pid), do: pid_is_stale?(pid)
   defp process_is_stale?(_), do: false
 
+  @spec pid_is_stale?(pid()) :: boolean()
   defp pid_is_stale?(pid) do
     not Process.alive?(pid)
   rescue
@@ -153,6 +158,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
     end
   end
 
+  @spec lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch()) ::
+          {:ok, pid(), map()} | {:error, term()}
   def lock_service_for_recovery(%{kind: :log, last_seen: name}, epoch),
     do: Log.lock_for_recovery(name, epoch)
 
@@ -161,7 +168,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
 
   def lock_service_for_recovery(_, _), do: {:error, :unavailable}
 
+  @spec up(ServiceDescriptor.t(), pid()) :: ServiceDescriptor.t()
   defp up(service, pid), do: %{service | status: {:up, pid}}
 
+  @spec down(ServiceDescriptor.t()) :: ServiceDescriptor.t()
   def down(service), do: %{service | status: :down}
 end

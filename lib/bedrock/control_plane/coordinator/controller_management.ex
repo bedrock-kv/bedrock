@@ -17,6 +17,11 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   require Logger
 
+  @spec timeout_in_ms(
+          :old_director_stop
+          | :director_restart_delay
+          | :director_restart_backoff_max
+        ) :: pos_integer()
   def timeout_in_ms(:old_director_stop), do: 100
   def timeout_in_ms(:director_restart_delay), do: 1_000
   def timeout_in_ms(:director_restart_backoff_max), do: 30_000

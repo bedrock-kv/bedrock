@@ -8,10 +8,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.Persistence
-  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.ControlPlane.Config
+
+  alias Bedrock.ControlPlane.Config.{
+    RecoveryAttempt,
+    TransactionSystemLayout,
+    Persistence,
+    LogDescriptor,
+    ServiceDescriptor
+  }
+
+  alias Bedrock.DataPlane.{CommitProxy, Log}
+  alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -54,11 +62,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
         # Fail fast - exit director and let coordinator retry
-        enhanced_reason = enhance_error_context(reason, recovery_attempt)
-        exit({:recovery_system_test_failed, enhanced_reason})
+        exit({:recovery_system_test_failed, reason})
     end
   end
 
+  @spec build_cluster_config(RecoveryAttempt.t()) :: Config.t()
   defp build_cluster_config(recovery_attempt) do
     base_config =
       recovery_attempt.coordinators
@@ -84,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   @spec build_system_transaction(
           epoch :: non_neg_integer(),
-          cluster_config :: map(),
+          cluster_config :: Config.t(),
           cluster :: module()
         ) :: Bedrock.transaction()
   defp build_system_transaction(epoch, cluster_config, cluster) do
@@ -103,6 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Build monolithic keys for backward compatibility and coordinator handoff
+  @spec build_monolithic_keys(Bedrock.epoch(), map(), map()) :: %{Bedrock.key() => binary()}
   defp build_monolithic_keys(epoch, encoded_config, encoded_layout) do
     %{
       SystemKeys.config_monolithic() => :erlang.term_to_binary({epoch, encoded_config}),
@@ -114,6 +123,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Build decomposed keys for targeted component consumption
+  @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), module()) :: %{
+          Bedrock.key() => binary()
+        }
   defp build_decomposed_keys(epoch, cluster_config, cluster) do
     transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
 
@@ -187,6 +199,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Map.merge(recovery_keys)
   end
 
+  @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()} | map(), module()) ::
+          nil | pid() | {Bedrock.key(), pid()} | map()
   defp encode_component_for_storage(nil, _cluster), do: nil
   defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
 
@@ -210,27 +224,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     other
   end
 
+  @spec encode_components_for_storage([pid() | {Bedrock.key(), pid()} | map()], module()) :: [
+          pid() | {Bedrock.key(), pid()} | map()
+        ]
   defp encode_components_for_storage(components, cluster) when is_list(components) do
     Enum.map(components, &encode_component_for_storage(&1, cluster))
   end
 
+  @spec encode_services_for_storage(%{Worker.id() => ServiceDescriptor.t()}, module()) :: %{
+          Worker.id() => ServiceDescriptor.t()
+        }
   defp encode_services_for_storage(services, _cluster) when is_map(services) do
     # For decomposed keys, store services as-is for now
     # The monolithic keys already handle proper encoding
     services
   end
 
+  @spec encode_log_descriptor_for_storage([term()], module()) :: [term()]
   defp encode_log_descriptor_for_storage(log_descriptor, _cluster) do
     # Log descriptors typically don't contain PIDs directly
     log_descriptor
   end
 
+  @spec encode_storage_team_for_storage(map(), module()) :: map()
   defp encode_storage_team_for_storage(storage_team, _cluster) do
     # Storage team descriptors typically don't contain PIDs directly
     storage_team
   end
 
   # Validate that recovery state is ready for system transaction
+  @spec validate_recovery_state(RecoveryAttempt.t()) ::
+          :ok | {:error, {:invalid_recovery_state, atom() | {atom(), [binary()]}}}
   defp validate_recovery_state(recovery_attempt) do
     with :ok <- validate_sequencer(recovery_attempt.sequencer),
          :ok <- validate_commit_proxies(recovery_attempt.proxies),
@@ -242,10 +266,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
+  @spec validate_sequencer(nil | pid()) :: :ok | {:error, atom()}
   defp validate_sequencer(nil), do: {:error, :no_sequencer}
   defp validate_sequencer(sequencer) when is_pid(sequencer), do: :ok
   defp validate_sequencer(_), do: {:error, :invalid_sequencer}
 
+  @spec validate_commit_proxies([pid()]) :: :ok | {:error, atom()}
   defp validate_commit_proxies([]), do: {:error, :no_commit_proxies}
 
   defp validate_commit_proxies(proxies) when is_list(proxies) do
@@ -258,6 +284,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   defp validate_commit_proxies(_), do: {:error, :invalid_commit_proxies}
 
+  @spec validate_resolvers([pid() | {Bedrock.key(), pid()} | map()]) :: :ok | {:error, atom()}
   defp validate_resolvers([]), do: {:error, :no_resolvers}
 
   defp validate_resolvers(resolvers) when is_list(resolvers) do
@@ -279,6 +306,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
+  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => ServiceDescriptor.t()}) ::
+          :ok | {:error, {:missing_log_services, [binary()]}}
   defp validate_logs(logs, available_services) when is_map(logs) do
     log_ids = Map.keys(logs)
 
@@ -298,6 +327,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
+  @spec submit_system_transaction(Bedrock.transaction(), [pid()]) ::
+          {:ok, Bedrock.version()} | {:error, :no_commit_proxies | :timeout | :unavailable}
   defp submit_system_transaction(_system_transaction, []), do: {:error, :no_commit_proxies}
 
   defp submit_system_transaction(system_transaction, proxies) when is_list(proxies) do
@@ -307,6 +338,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Unlock commit proxies before exercising the transaction system
+  @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token()) ::
+          :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(
          recovery_attempt,
          transaction_system_layout,
@@ -321,6 +354,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
+  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token()) ::
+          :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token)
        when is_list(proxies) do
     proxies
@@ -335,43 +370,5 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
       {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
     end)
-  end
-
-  # Enhances error context to provide more descriptive error messages for recovery failures.
-  # The system transaction serves as both persistence and a comprehensive system test.
-  # When it fails, we want to provide clear context about what component or issue caused the failure.
-  defp enhance_error_context(reason, recovery_attempt) do
-    case reason do
-      {:unlock_failed, unlock_reason} ->
-        {:system_transaction_unlock_failure, %{
-          message: "System transaction failed during service unlock phase",
-          unlock_error: unlock_reason,
-          context: %{
-            epoch: recovery_attempt.epoch,
-            proxies: length(recovery_attempt.proxies)
-          },
-          troubleshooting: "Check commit proxy health and lock token validity"
-        }}
-      
-      {:invalid_recovery_state, validation_error} ->
-        {:system_transaction_invalid_state, %{
-          message: "System transaction failed due to invalid recovery state",
-          validation_error: validation_error,
-          context: %{
-            epoch: recovery_attempt.epoch
-          },
-          troubleshooting: "Check component allocation and service health"
-        }}
-      
-      other ->
-        {:system_transaction_unknown_failure, %{
-          message: "System transaction failed with unknown error",
-          original_error: other,
-          context: %{
-            epoch: recovery_attempt.epoch
-          },
-          troubleshooting: "Check system logs for detailed error information"
-        }}
-    end
   end
 end

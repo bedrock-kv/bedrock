@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [new_batch: 3, add_transaction: 3, set_finalized_at: 2]
 
+  @spec timestamp() :: Bedrock.timestamp_in_ms()
   defp timestamp, do: :erlang.monotonic_time(:millisecond)
 
   @spec single_transaction_batch(
@@ -24,18 +25,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
       do: {:error, :sequencer_unavailable}
 
   def single_transaction_batch(state, transaction, reply_fn) do
-    with {:ok, last_commit_version, commit_version} <-
-           next_commit_version(state.transaction_system_layout.sequencer) do
-      {:ok,
-       new_batch(timestamp(), last_commit_version, commit_version)
-       |> add_transaction(transaction, reply_fn)
-       |> set_finalized_at(timestamp())}
-    else
-      {:error, :unavailable} -> {:error, :sequencer_unavailable}
+    case next_commit_version(state.transaction_system_layout.sequencer) do
+      {:ok, last_commit_version, commit_version} ->
+        {:ok,
+         new_batch(timestamp(), last_commit_version, commit_version)
+         |> add_transaction(transaction, reply_fn)
+         |> set_finalized_at(timestamp())}
+
+      {:error, :unavailable} ->
+        {:error, :sequencer_unavailable}
     end
   end
 
-  @spec start_batch_if_needed(State.t()) :: State.t()
+  @spec start_batch_if_needed(State.t()) :: State.t() | no_return()
   def start_batch_if_needed(%{batch: nil} = t) do
     case next_commit_version(t.transaction_system_layout.sequencer) do
       {:ok, last_commit_version, commit_version} ->

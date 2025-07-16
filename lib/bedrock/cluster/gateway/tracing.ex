@@ -1,8 +1,10 @@
 defmodule Bedrock.Cluster.Gateway.Tracing do
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_gateway"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -20,11 +22,19 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(
+          :telemetry.event_name(),
+          :telemetry.event_measurements(),
+          :telemetry.event_metadata(),
+          any()
+        ) :: any()
   def handler([:bedrock, :cluster, :gateway, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster}) do
     Logger.metadata(cluster: cluster)
 
@@ -61,9 +71,9 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
   def trace(:missed_pong, %{missed_pongs: missed_pongs}, _),
     do: info("Missed #{inspect(missed_pongs)} pong from director")
 
+  @spec info(message :: String.t()) :: :ok
   def info(message) do
-    metadata = Logger.metadata()
-
-    Logger.info("Bedrock [#{metadata[:cluster].name()}]: #{message}")
+    cluster = Logger.metadata() |> Keyword.fetch!(:cluster)
+    Logger.info("Bedrock [#{cluster.name()}]: #{message}")
   end
 end

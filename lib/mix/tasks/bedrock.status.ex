@@ -36,6 +36,7 @@ defmodule Mix.Tasks.Bedrock.Status do
       c: :cluster
     ]
 
+  @spec run([String.t()]) :: :ok
   def run(argv) do
     {opts, _args} = OptionParser.parse!(argv, switches: switches(), aliases: aliases())
 
@@ -60,5 +61,7 @@ defmodule Mix.Tasks.Bedrock.Status do
         {:error, reason} -> IO.puts("Error: #{reason}")
       end
     end
+
+    :ok
   end
 end

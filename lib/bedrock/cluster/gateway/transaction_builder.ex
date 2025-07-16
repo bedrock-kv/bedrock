@@ -16,7 +16,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
             value_codec: module()
           ]
         ) ::
-          {:ok, pid()} | {:error, term()}
+          {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     storage_table = Keyword.fetch!(opts, :storage_table)
@@ -97,6 +97,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
 
+  @spec do_rollback(State.t()) :: :stop | State.t()
   def do_rollback(%{stack: []}), do: :stop
   def do_rollback(%{stack: [_ | stack]} = t), do: %{t | stack: stack}
 end

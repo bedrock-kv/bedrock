@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     })
   end
 
-  @spec trace_consensus_reached(transaction_id :: term()) :: :ok
+  @spec trace_consensus_reached(transaction_id :: binary()) :: :ok
   def trace_consensus_reached(transaction_id) do
     Telemetry.execute([:bedrock, :control_plane, :coordinator, :consensus_reached], %{}, %{
       transaction_id: transaction_id

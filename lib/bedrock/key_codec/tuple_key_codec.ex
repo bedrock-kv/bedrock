@@ -1,11 +1,15 @@
 defmodule Bedrock.KeyCodec.TupleKeyCodec do
   # Public API
 
+  @spec encode_key(tuple() | number() | Bedrock.key()) ::
+          {:ok, Bedrock.key()} | {:error, :invalid_key}
   def encode_key(key) when is_tuple(key), do: {:ok, encode_value(key)}
   def encode_key(key) when is_number(key), do: {:ok, encode_value(key)}
   def encode_key(key) when is_binary(key), do: {:ok, encode_value(key)}
   def encode_key(_), do: {:error, :invalid_key}
 
+  @spec decode_key(Bedrock.key()) ::
+          {:ok, tuple() | number() | Bedrock.key()} | {:error, :invalid_key}
   def decode_key(encoded_key) do
     {key, <<>>} = decode_value(encoded_key)
     {:ok, key}

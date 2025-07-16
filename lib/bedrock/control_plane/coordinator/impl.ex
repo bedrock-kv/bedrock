@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   the system configuration from it. If any step fails, it gracefully falls
   back to the default configuration.
   """
-  @spec bootstrap_from_storage(module(), [node()]) :: {non_neg_integer(), term()}
+  @spec bootstrap_from_storage(module(), [node()]) :: {non_neg_integer(), map()}
   def bootstrap_from_storage(cluster, coordinator_nodes) do
     foreman = cluster.otp_name(:foreman)
 
@@ -39,8 +39,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   workers in order of highest durable version first, falling back to the next
   highest if config reading fails.
   """
-  @spec find_highest_version_storage_and_read_config([term()], [node()]) ::
-          {non_neg_integer(), term()}
+  @spec find_highest_version_storage_and_read_config([pid()], [node()]) ::
+          {non_neg_integer(), map()}
   def find_highest_version_storage_and_read_config(storage_workers, coordinator_nodes) do
     # Get durable versions from all storage workers
     storage_versions =
@@ -64,8 +64,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   @doc """
   Get durable version from a single storage worker using the info API.
   """
-  @spec get_storage_durable_version(term()) ::
-          {:ok, {term(), non_neg_integer()}} | {:error, term()}
+  @spec get_storage_durable_version(pid()) ::
+          {:ok, {pid(), non_neg_integer()}} | {:error, :timeout | :unavailable}
   def get_storage_durable_version(storage_worker) do
     case Storage.info(storage_worker, [:durable_version], timeout_in_ms: 200) do
       {:ok, info} ->
@@ -84,8 +84,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   worker in order until one successfully provides a config, or falling back to
   defaults if all fail.
   """
-  @spec try_read_config_in_sequence([{term(), non_neg_integer()}], [node()]) ::
-          {non_neg_integer(), term()}
+  @spec try_read_config_in_sequence([{pid(), non_neg_integer()}], [node()]) ::
+          {non_neg_integer(), map()}
   def try_read_config_in_sequence([], coordinator_nodes), do: {0, config(coordinator_nodes)}
 
   def try_read_config_in_sequence([{storage_worker, durable_version} | rest], coordinator_nodes) do

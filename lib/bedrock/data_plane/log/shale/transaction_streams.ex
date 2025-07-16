@@ -37,6 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     end
   end
 
+  @spec from_list_of_transactions((-> [EncodedTransaction.t()] | nil)) :: Enumerable.t()
   def from_list_of_transactions(transactions_fn) do
     Stream.resource(
       transactions_fn,

@@ -7,6 +7,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
+  import RecoveryTestSupport
+
   # Helper to create test state with node tracking
   defp create_test_state(overrides \\ %{}) do
     node_tracking = NodeTracking.new([Node.self()])
@@ -35,14 +37,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     Map.merge(base_state, overrides)
   end
 
-  # Helper to create mock context for recovery tests
-  defp create_test_context() do
-    node_tracking = NodeTracking.new([Node.self()])
-    %{node_tracking: node_tracking}
-  end
-
   # Mock cluster module for testing
   defmodule TestCluster do
+    def name(), do: "test_cluster"
+
     def otp_name(component) do
       case component do
         :sequencer -> :test_sequencer
@@ -411,22 +409,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "recovery phase states" do
-    setup do
-      recovery_attempt = %RecoveryAttempt{
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
-      }
-
-      %{recovery_attempt: recovery_attempt}
-    end
-
-    test "validates phase dispatch mechanism works", %{recovery_attempt: _base_attempt} do
+    test "validates phase dispatch mechanism works" do
       # Verify that run_recovery_attempt/2 exists and next_phase/1 works for key states
       {:module, Recovery} = Code.ensure_loaded(Recovery)
       function_clauses = Recovery.__info__(:functions)

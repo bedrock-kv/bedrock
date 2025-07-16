@@ -371,13 +371,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   describe "commit proxy submission behavior" do
     test "reaches commit proxy submission stage with valid data" do
-      # Create a mock commit proxy process that will inevitably fail,
-      # but confirms we reach the submission stage
+      # Create a mock commit proxy process that properly handles GenServer calls
+      # but will fail at the commit stage
       mock_proxy =
         spawn(fn ->
           receive do
-            # Just consume any message
-            _ -> :ok
+            {:"$gen_call", from, {:recover_from, _lock_token, _layout}} ->
+              GenServer.reply(from, :ok)
+
+              receive do
+                {:"$gen_call", commit_from, {:commit, _transaction}} ->
+                  GenServer.reply(commit_from, {:error, :mock_commit_failure})
+              end
           end
         end)
 
@@ -386,26 +391,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           proxies: [mock_proxy]
         })
 
-      # Capture logs during the full execution flow
-      _log_output =
-        capture_log(fn ->
-          # This should pass all validations and reach the commit stage
-          # where it will fail due to the mock proxy not implementing the correct protocol
-          result =
-            try do
-              PersistencePhase.execute(recovery_attempt, %{
-                node_tracking: nil,
-                lock_token: :crypto.strong_rand_bytes(32)
-              })
-            catch
-              :exit, reason -> reason
-            end
+      # This should pass all validations and reach the commit stage
+      # where it will fail due to our mock returning an error
+      try do
+        PersistencePhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          lock_token: :crypto.strong_rand_bytes(32)
+        })
 
-          # Should fail at commit stage, not at validation stage
-          # The error shows it's reaching CommitProxy.commit, which means validation passed!
-          assert match?({:recovery_system_test_failed, _}, result) or
-                   match?({:normal, {GenServer, :call, _}}, result)
-        end)
+        flunk("Expected process to exit")
+      catch
+        :exit, {:recovery_system_test_failed, :mock_commit_failure} ->
+          # Mock commit failure is properly propagated as a simple error
+          :ok
+      end
     end
   end
 

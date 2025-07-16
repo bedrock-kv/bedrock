@@ -4,7 +4,7 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
   import Bedrock.Service.Manifest, only: [load_from_file: 1]
 
   @spec initialize_working_directory(Path.t(), Bedrock.Service.Manifest.t()) ::
-          :ok | {:error, term()}
+          :ok | {:error, File.posix()}
   def initialize_working_directory(working_directory, manifest) do
     path_to_manifest = Path.join(working_directory, "manifest.json")
 

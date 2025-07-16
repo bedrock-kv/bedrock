@@ -4,15 +4,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
 
-  # Helper to create mock context for tests
-  defp create_test_context() do
-    node_tracking = :ets.new(:test_node_tracking, [:ordered_set])
-    :ets.insert(node_tracking, [{Node.self(), :unknown, [:log, :storage], :up, true, nil}])
-    %{node_tracking: node_tracking}
-  end
+  import RecoveryTestSupport
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    def name(), do: "test_cluster"
     def otp_name(:foreman), do: :test_foreman
   end
 

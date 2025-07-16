@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Storage
@@ -13,6 +14,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  @type recovery_context :: %{
+          node_tracking: NodeTracking.t(),
+          lock_token: binary()
+        }
+
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
     t
@@ -20,14 +26,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :recovery} = t) do
     t
     |> setup_for_subsequent_recovery()
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(t), do: t
 
+  @spec setup_for_initial_recovery(State.t()) :: State.t()
   def setup_for_initial_recovery(t) do
     t
     |> Map.put(:state, :recovery)
@@ -60,6 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end)
   end
 
+  @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     t
     |> Map.update!(:config, fn config ->
@@ -121,6 +131,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
+  @spec unlock_storage_after_recovery(State.t(), Bedrock.version()) :: State.t()
   def unlock_storage_after_recovery(t, durable_version) do
     t.config.transaction_system_layout.services
     |> Enum.each(fn
@@ -138,10 +149,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t
   end
 
-  @spec run_recovery_attempt(RecoveryAttempt.t(), map()) ::
+  @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-          | {:error, term()}
+          | {:error, {:unexpected_recovery_state, atom()}}
   def run_recovery_attempt(t, context) do
     case t.state do
       {:stalled, reason} ->

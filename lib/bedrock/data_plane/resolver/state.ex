@@ -10,10 +10,11 @@ defmodule Bedrock.DataPlane.Resolver.State do
           last_version: Bedrock.version(),
           waiting: %{
             Bedrock.version() =>
-              {Bedrock.version(), [Resolver.transaction_summary()], GenServer.from()}
+              {Bedrock.version(), [Resolver.transaction_summary()],
+               (aborted :: [non_neg_integer()] -> :ok)}
           },
           mode: mode(),
-          lock_token: binary()
+          lock_token: Bedrock.lock_token()
         }
   defstruct tree: nil,
             oldest_version: nil,

@@ -11,11 +11,12 @@ defmodule Bedrock.DataPlane.Log.Transaction do
   @doc """
   Create a new transaction.
   """
-  @spec new(Bedrock.version(), keyword()) :: t()
+  @spec new(
+          Bedrock.version(),
+          [{Bedrock.key(), Bedrock.value()}] | %{Bedrock.key() => Bedrock.value()}
+        ) :: t()
   def new(version, [{_key, _value} | _] = key_values), do: {version, Map.new(key_values)}
   def new(version, []), do: {version, %{}}
-
-  @spec new(Bedrock.version(), map()) :: t()
   def new(version, key_values) when is_map(key_values), do: {version, key_values}
 
   @doc """

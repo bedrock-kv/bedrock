@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Director.State do
   alias Bedrock.Service.Worker
 
   @type state :: :starting | :recovery | :running | :stopped
+  @type timer_registry :: %{atom() => reference()}
 
   @type t :: %__MODULE__{
           state: state(),
@@ -17,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.State do
           config: Config.t() | nil,
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
-          timers: map() | nil,
+          timers: timer_registry() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           services: %{Worker.id() => ServiceDescriptor.t()},
           lock_token: binary()

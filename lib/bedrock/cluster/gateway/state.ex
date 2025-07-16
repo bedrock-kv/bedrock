@@ -10,7 +10,7 @@ defmodule Bedrock.Cluster.Gateway.State do
           descriptor: Descriptor.t(),
           coordinator: Coordinator.ref() | :unavailable,
           director: {director :: pid(), Bedrock.epoch()} | :unavailable,
-          timers: map() | nil,
+          timers: %{atom() => reference()} | nil,
           missed_pongs: non_neg_integer(),
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()],

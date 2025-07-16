@@ -5,8 +5,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_director_recovery"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -34,11 +36,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(
+          :telemetry.event_name(),
+          :telemetry.event_measurements(),
+          :telemetry.event_metadata(),
+          any()
+        ) :: any()
   def handler([:bedrock, :recovery, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do
     Logger.metadata(cluster: cluster, epoch: epoch, attempt: attempt)
 
@@ -123,7 +133,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         suitable_logs: suitable_logs,
         log_version_vector: log_version_vector
       }) do
-    info("Suitable logs chosen for copying: #{suitable_logs |> Enum.join(", ")}")
+    info(
+      "Suitable logs chosen for copying: #{suitable_logs |> Enum.map(&inspect/1) |> Enum.join(", ")}"
+    )
+
     info("Version vector: #{inspect(log_version_vector)}")
   end
 
@@ -190,18 +203,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     end
   end
 
+  @spec info(String.t()) :: :ok
   defp info(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
+    epoch = Keyword.fetch!(metadata, :epoch)
 
-    Logger.info("Bedrock [#{metadata[:cluster].name()}/#{metadata[:epoch]}]: #{message}",
+    Logger.info("Bedrock [#{cluster.name()}/#{epoch}]: #{message}",
       ansi_color: :magenta
     )
   end
 
+  @spec error(String.t()) :: :ok
   defp error(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
+    epoch = Keyword.fetch!(metadata, :epoch)
 
-    Logger.error("Bedrock [#{metadata[:cluster].name()}/#{metadata[:epoch]}]: #{message}",
+    Logger.error("Bedrock [#{cluster.name()}/#{epoch}]: #{message}",
       ansi_color: :red
     )
   end

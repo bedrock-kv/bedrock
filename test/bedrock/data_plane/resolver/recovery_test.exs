@@ -61,7 +61,7 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
       # Invalid binary format
       invalid_binary = <<1, 2, 3, 4>>
 
-      assert_raise RuntimeError, ~r/Transaction recovery failed: invalid binary format/, fn ->
+      assert_raise RuntimeError, ~r/Transaction decode failed: invalid binary format/, fn ->
         Recovery.apply_batch_of_transactions(tree, [invalid_binary])
       end
     end
@@ -76,7 +76,7 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
       # Corrupt the last 4 bytes (CRC32)
       corrupted = binary_part(encoded, 0, byte_size(encoded) - 4) <> <<0, 0, 0, 0>>
 
-      assert_raise RuntimeError, ~r/Transaction recovery failed: CRC32 checksum mismatch/, fn ->
+      assert_raise RuntimeError, ~r/Transaction decode failed: CRC32 checksum mismatch/, fn ->
         Recovery.apply_batch_of_transactions(tree, [corrupted])
       end
     end

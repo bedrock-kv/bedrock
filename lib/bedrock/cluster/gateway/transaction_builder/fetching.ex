@@ -5,7 +5,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 
   @doc false
-  @spec do_fetch(State.t(), key :: binary()) :: {State.t(), term()}
+  @spec do_fetch(State.t(), key :: binary()) ::
+          {State.t(),
+           {:ok, Bedrock.value()}
+           | :error
+           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}}
   def do_fetch(t, key) do
     {:ok, encoded_key} = t.key_codec.encode_key(key)
 
@@ -23,8 +27,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_stack(Bedrock.key(), [{reads :: map(), writes :: map()}]) ::
-          :error | {State.t(), binary()}
+  @spec fetch_from_stack(Bedrock.key(), [
+          {reads :: %{Bedrock.key() => Bedrock.value()},
+           writes :: %{Bedrock.key() => Bedrock.value()}}
+        ]) ::
+          :error | {:ok, Bedrock.value()}
   def fetch_from_stack(_, []), do: :error
 
   def fetch_from_stack(key, [{reads, writes} | stack]) do
@@ -35,21 +42,29 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   end
 
   @spec fetch_from_storage(State.t(), key :: binary()) ::
-          {:ok, State.t(), binary()} | {:error, atom()} | :error
+          {:ok, State.t(), binary()}
+          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}
+          | :error
   def fetch_from_storage(%{read_version: nil} = t, key) do
-    with {:ok, read_version, read_version_lease_expiration_in_ms} <- next_read_version(t) do
-      read_version_lease_expiration =
-        :erlang.monotonic_time(:millisecond) + read_version_lease_expiration_in_ms
+    case next_read_version(t) do
+      {:ok, read_version, read_version_lease_expiration_in_ms} ->
+        read_version_lease_expiration =
+          :erlang.monotonic_time(:millisecond) + read_version_lease_expiration_in_ms
 
-      t
-      |> Map.put(:read_version, read_version)
-      |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
-      |> fetch_from_storage(key)
+        t
+        |> Map.put(:read_version, read_version)
+        |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
+        |> fetch_from_storage(key)
+
+      {:error, :unavailable} ->
+        {:error, :unavailable}
     end
   end
 
   @spec fetch_from_storage(State.t(), key :: binary()) ::
-          {:ok, State.t(), binary()} | {:error, atom()} | :error
+          {:ok, State.t(), binary()}
+          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}
+          | :error
   def fetch_from_storage(t, key) do
     fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do

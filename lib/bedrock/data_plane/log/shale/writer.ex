@@ -21,7 +21,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
           bytes_remaining: pos_integer()
         }
 
-  @spec open(path_to_file :: String.t()) :: {:ok, t()} | {:error, atom()}
+  @spec open(path_to_file :: String.t()) :: {:ok, t()} | {:error, File.posix()}
   def open(path_to_file) do
     with {:ok, stat} <- File.stat(path_to_file),
          {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]),
@@ -35,7 +35,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
     end
   end
 
-  @spec close(writer :: t() | nil) :: :ok | {:error, atom()}
+  @spec close(writer :: t() | nil) :: :ok | {:error, File.posix()}
   def close(nil), do: :ok
   def close(%__MODULE__{} = writer), do: :file.close(writer.fd)
 

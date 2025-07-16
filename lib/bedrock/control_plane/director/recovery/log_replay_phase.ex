@@ -96,12 +96,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     end
   end
 
+  @spec pair_with_old_log_ids([Log.id()], [Log.id()]) ::
+          Enumerable.t({Log.id(), Log.id() | :none})
   def pair_with_old_log_ids(new_log_ids, []),
     do: new_log_ids |> Stream.zip([:none] |> Stream.cycle())
 
   def pair_with_old_log_ids(new_log_ids, old_log_ids),
     do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())
 
+  @spec pid_for_log_id(Log.id(), map()) :: pid() | :none
   defp pid_for_log_id(log_id, available_services) do
     case Map.get(available_services, log_id) do
       %{status: {:up, pid}} -> pid

@@ -9,9 +9,9 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
           State.t(),
           Log.ref(),
           first_version :: Bedrock.version(),
-          last_version :: Bedrock.version_vector()
+          last_version :: Bedrock.version()
         ) ::
-          {:ok, State.t()} | {:error, {:failed_to_pull_log, Log.id(), reason :: term()}}
+          {:ok, State.t()} | {:error, {:failed_to_pull_log, Log.id(), Log.pull_error()}}
   def recover_from(t, _, _, _) when t.mode != :locked,
     do: {:error, :lock_required}
 
@@ -42,7 +42,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
         ) ::
           {:ok, Tree.t()}
           | Log.pull_errors()
-          | {:error, {:log_unavailable, log_to_pull :: Log.ref()}}
+          | {:error, {:log_unavailable, Log.ref()}}
   def pull_transactions(tree, nil, 0, 0),
     do: {:ok, tree}
 
@@ -61,9 +61,6 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
 
       {:error, :unavailable} ->
         {:error, {:log_unavailable, log_to_pull}}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 

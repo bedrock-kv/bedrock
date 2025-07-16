@@ -1,5 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
-  def normalize_timeout_to_ms(n), do: n |> to_timeout() |> max(10) |> min(10_000)
+  @spec normalize_timeout_to_ms(term()) :: pos_integer()
+  def normalize_timeout_to_ms(n), do: n |> normalize_timeout() |> max(10) |> min(10_000)
+
+  @spec normalize_timeout(term()) :: integer()
+  defp normalize_timeout(n) when is_integer(n), do: n
+  defp normalize_timeout(_), do: 5000
 
   @spec notify_waiting_pullers(map(), Bedrock.version(), Bedrock.transaction()) :: map()
   def notify_waiting_pullers(waiting_pullers, version, transaction) do

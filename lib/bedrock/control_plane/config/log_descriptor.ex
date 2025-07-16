@@ -4,6 +4,6 @@ defmodule Bedrock.ControlPlane.Config.LogDescriptor do
   system.
   """
 
-  @type vacancy :: {:vacancy, tag :: term()}
+  @type vacancy :: {:vacancy, tag :: Bedrock.range_tag()}
   @type t :: [Bedrock.range_tag()]
 end

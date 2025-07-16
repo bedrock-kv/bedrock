@@ -3,8 +3,10 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
 
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_data_plane_storage"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -21,11 +23,14 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(list(atom()), map(), map(), term()) :: :ok
   def handler([:bedrock, :storage, event], measurements, metadata, _),
     do: log_event(event, measurements, metadata)
 
+  @spec log_event(atom(), map(), map()) :: :ok
   def log_event(:pull_start, _, %{timestamp: timestamp, next_version: next_version}),
     do: debug("Log pull started at #{timestamp} for version #{next_version}")
 
@@ -47,14 +52,17 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def log_event(:log_pull_circuit_breaker_reset, _, %{timestamp: timestamp}),
     do: info("Log pull circuit breaker reset at #{timestamp}")
 
+  @spec debug(String.t()) :: :ok
   defp debug(message) do
     Logger.debug("Bedrock Storage: #{message}", ansi_color: :cyan)
   end
 
+  @spec info(String.t()) :: :ok
   defp info(message) do
     Logger.info("Bedrock Storage: #{message}", ansi_color: :cyan)
   end
 
+  @spec warn(String.t()) :: :ok
   defp warn(message) do
     Logger.warning("Bedrock Storage: #{message}", ansi_color: :yellow)
   end

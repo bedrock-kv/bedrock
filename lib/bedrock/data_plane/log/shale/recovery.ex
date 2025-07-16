@@ -14,7 +14,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
-          {:ok, State.t()} | {:error, reason :: term()}
+          {:ok, State.t()}
+          | {:error, :lock_required}
+          | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
   def recover_from(t, _, _, _) when t.mode != :locked,
     do: {:error, :lock_required}
 
@@ -75,30 +77,35 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       {:error, :unavailable} ->
         {:error, {:source_log_unavailable, log_ref}}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
+  @spec abort_all_waiting_pullers(State.t()) :: State.t()
   def abort_all_waiting_pullers(%{waiting_pullers: waiting_pullers} = t) do
     waiting_pullers
-    |> Enum.reduce(%{t | waiting_pullers: %{}}, fn {_version, reply_to_fn, _}, t ->
-      reply_to_fn.({:ok, []})
+    |> Enum.reduce(%{t | waiting_pullers: %{}}, fn {_version, puller_list}, t ->
+      Enum.each(puller_list, fn {_timestamp, reply_to_fn, _opts} ->
+        reply_to_fn.({:ok, []})
+      end)
+
       t
     end)
   end
 
+  @spec close_writer(State.t()) :: State.t()
   def close_writer(%{writer: nil} = t), do: t
 
+  @spec close_writer(State.t()) :: State.t()
   def close_writer(%{writer: writer} = t) do
     :ok = Writer.close(writer)
     %{t | writer: nil}
   end
 
+  @spec discard_all_segments(State.t()) :: State.t()
   def discard_all_segments(%{active_segment: nil, segments: segments} = t),
     do: %{t | segments: discard_segments(t.segment_recycler, segments)}
 
+  @spec discard_all_segments(State.t()) :: State.t()
   def discard_all_segments(%{active_segment: active_segment, segments: segments} = t) do
     %{
       t
@@ -107,23 +114,27 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     }
   end
 
+  @spec discard_segments(term(), [Segment.t()]) :: []
   def discard_segments(_segment_recycler, []), do: []
 
+  @spec discard_segments(term(), [Segment.t()]) :: []
   def discard_segments(segment_recycler, [segment | remaining_segments]) do
     :ok = SegmentRecycler.check_in(segment_recycler, segment.path)
     discard_segments(segment_recycler, remaining_segments)
   end
 
+  @spec ensure_active_segment(State.t(), Bedrock.version()) :: State.t()
   def ensure_active_segment(%{active_segment: nil} = t, version) do
-    with {:ok, new_segment} <- Segment.allocate_from_recycler(t.segment_recycler, t.path, version) do
-      %{t | active_segment: new_segment, last_version: version}
-    else
-      {:error, _} -> raise "Failed to allocate new segment"
+    case Segment.allocate_from_recycler(t.segment_recycler, t.path, version) do
+      {:ok, new_segment} -> %{t | active_segment: new_segment, last_version: version}
+      {:error, :allocation_failed} -> raise "Failed to allocate new segment"
     end
   end
 
+  @spec ensure_active_segment(State.t()) :: State.t()
   def ensure_active_segment(t), do: t
 
+  @spec open_writer(State.t()) :: State.t()
   def open_writer(t) do
     with {:ok, new_writer} <- Writer.open(t.active_segment.path) do
       %{t | writer: new_writer}
@@ -132,6 +143,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     end
   end
 
+  @spec push_sentinel(State.t(), Bedrock.version()) :: State.t()
   def push_sentinel(t, version) do
     with sentinel <- EncodedTransaction.encode({version, %{}}),
          {:ok, t} <- push(t, version, sentinel, fn _ -> :ok end) do

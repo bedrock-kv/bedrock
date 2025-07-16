@@ -73,7 +73,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
           available_nodes :: [node()]
         ) ::
           {:ok, %{Log.id() => any()}, [Log.id()]}
-          | {:error, term()}
+          | {:error,
+             {:insufficient_nodes, needed_workers :: pos_integer(),
+              available_nodes :: non_neg_integer()}}
   def fill_log_vacancies(logs, assigned_log_ids, all_log_ids, available_nodes) do
     vacancies = all_vacancies(logs)
     n_vacancies = MapSet.size(vacancies)
@@ -112,7 +114,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end
   end
 
-  @spec all_vacancies(%{Log.id() => any()}) :: MapSet.t()
+  @spec all_vacancies(%{Log.id() => [term()]}) :: MapSet.t()
   def all_vacancies(logs) do
     Enum.reduce(logs, [], fn
       {{:vacancy, _} = vacancy, _}, list -> [vacancy | list]

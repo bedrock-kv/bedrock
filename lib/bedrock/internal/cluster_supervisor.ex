@@ -1,10 +1,12 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
+  alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.DataPlane.Foreman
 
-  alias Bedrock.Cluster.Gateway.Tracing, as: GatewayTracing
+  alias Cluster.Gateway.Tracing, as: GatewayTracing
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
@@ -17,7 +19,13 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   use Supervisor
 
   @doc false
-  @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
+  @spec child_spec(
+          opts :: [
+            cluster: Cluster.t(),
+            node: node(),
+            path_to_descriptor: Path.t()
+          ]
+        ) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     node = opts[:node] || Node.self()
@@ -102,8 +110,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     children =
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
-        {Bedrock.Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
-        {Bedrock.Cluster.Gateway,
+        {Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
+        {Cluster.Gateway,
          [
            cluster: cluster,
            descriptor: descriptor,
@@ -136,21 +144,21 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end)
   end
 
-  defp module_for_capability(:coordination), do: Bedrock.ControlPlane.Coordinator
-  defp module_for_capability(:storage), do: Bedrock.Service.Foreman
-  defp module_for_capability(:log), do: Bedrock.Service.Foreman
+  defp module_for_capability(:coordination), do: Coordinator
+  defp module_for_capability(:storage), do: Foreman
+  defp module_for_capability(:log), do: Foreman
 
   defp module_for_capability(capability),
     do: raise("Unknown capability: #{inspect(capability)}")
 
-  @spec fetch_config(module()) :: {:ok, Config.t()} | {:error, :unavailable}
+  @spec fetch_config(Cluster.t()) :: {:ok, Config.t()} | {:error, :unavailable}
   def fetch_config(module) do
     with {:ok, coordinator} <- module.fetch_coordinator() do
       Coordinator.fetch_config(coordinator)
     end
   end
 
-  @spec config!(module()) :: Config.t()
+  @spec config!(Cluster.t()) :: Config.t()
   def config!(module) do
     fetch_config(module)
     |> case do
@@ -159,7 +167,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec director!(module()) :: Director.ref()
+  @spec director!(Cluster.t()) :: Director.ref()
   def director!(module) do
     module.fetch_director()
     |> case do
@@ -168,7 +176,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec coordinator!(module()) :: Coordinator.ref()
+  @spec coordinator!(Cluster.t()) :: Coordinator.ref()
   def coordinator!(module) do
     module.fetch_coordinator()
     |> case do
@@ -177,7 +185,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec coordinator_nodes!(module()) :: [node()]
+  @spec coordinator_nodes!(Cluster.t()) :: [node()]
   def coordinator_nodes!(module) do
     module.fetch_coordinator_nodes()
     |> case do
@@ -186,14 +194,14 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec path_to_descriptor(module(), otp_app :: atom()) :: Path.t()
+  @spec path_to_descriptor(Cluster.t(), otp_app :: atom()) :: Path.t()
   def path_to_descriptor(module, otp_app) do
     module.node_config()
     |> Keyword.get(
       :path_to_descriptor,
       Path.join(
         Application.app_dir(otp_app, "priv"),
-        Bedrock.Cluster.default_descriptor_file_name()
+        Cluster.default_descriptor_file_name()
       )
     )
   end

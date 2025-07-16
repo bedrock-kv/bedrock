@@ -34,6 +34,8 @@ defmodule Bedrock.ControlPlane.Config do
 
   @type state :: :uninitialized | :recovery | :running | :stopping
 
+  @spec key_range(min_key :: Bedrock.key(), max_key_exclusive :: Bedrock.key()) ::
+          Bedrock.key_range()
   def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive,
     do: {min_key, max_key_exclusive}
 

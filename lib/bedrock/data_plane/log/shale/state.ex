@@ -6,16 +6,16 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
 
-  @type mode :: :locked | :running
+  @type mode :: :locked | :running | :recovering
 
   @type t :: %__MODULE__{
           cluster: module(),
-          director: Director.ref(),
-          epoch: Bedrock.epoch(),
+          director: Director.ref() | nil,
+          epoch: Bedrock.epoch() | nil,
           id: Worker.id(),
           foreman: Foreman.ref(),
           path: String.t(),
-          segment_recycler: SegmentRecycler.server(),
+          segment_recycler: SegmentRecycler.server() | nil,
           #
           last_version: Bedrock.version(),
           writer: Writer.t() | nil,
@@ -35,7 +35,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           },
           waiting_pullers: %{
             Bedrock.version() => [
-              {Bedrock.timestamp_in_ms(), reply_to_fn :: (any() -> :ok), opts :: keyword()}
+              {Bedrock.timestamp_in_ms(), reply_to_fn :: (any() -> :ok),
+               opts :: [limit: integer(), timeout: timeout()]}
             ]
           }
         }

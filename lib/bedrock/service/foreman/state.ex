@@ -5,7 +5,7 @@ defmodule Bedrock.Service.Foreman.State do
   alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
-          cluster: module(),
+          cluster: Cluster.t(),
           capabilities: [Cluster.capability()],
           health: :starting | :ok | :error,
           otp_name: atom(),
@@ -51,7 +51,8 @@ defmodule Bedrock.Service.Foreman.State do
 
   def put_health(t, health), do: %{t | health: health}
 
-  @spec update_waiting_for_healthy(State.t(), (any() -> any())) :: State.t()
+  @spec update_waiting_for_healthy(State.t(), ([GenServer.from()] -> [GenServer.from()])) ::
+          State.t()
   def update_waiting_for_healthy(t, updater),
     do: %{t | waiting_for_healthy: updater.(t.waiting_for_healthy)}
 

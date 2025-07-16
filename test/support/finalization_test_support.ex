@@ -5,6 +5,8 @@ defmodule FinalizationTestSupport do
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    def name(), do: "test_cluster"
+
     def otp_name(component) when is_atom(component) do
       :"test_cluster_#{component}"
     end

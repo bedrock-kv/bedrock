@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.Resolver do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
 
   @type read_info :: {version :: Bedrock.version(), keys :: [Bedrock.key() | Bedrock.key_range()]}
 
@@ -20,8 +20,7 @@ defmodule Bedrock.DataPlane.Resolver do
           last_version :: Bedrock.version()
         ) ::
           :ok
-          | {:error, :timeout}
-          | {:error, :unavailable}
+          | {:error, :timeout | :unavailable | :unknown}
   def recover_from(ref, lock_token, logs_to_copy, first_version, last_version),
     do:
       call(ref, {:recover_from, lock_token, logs_to_copy, first_version, last_version}, :infinity)
@@ -31,11 +30,10 @@ defmodule Bedrock.DataPlane.Resolver do
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
           [transaction_summary()],
-          opts :: [timeout: :infinity | non_neg_integer()]
+          opts :: [timeout: Bedrock.timeout_in_ms()]
         ) ::
-          {:ok, aborted :: [index :: integer()]}
-          | {:error, :timeout}
-          | {:error, :unavailable}
+          {:ok, aborted :: [transaction_index :: non_neg_integer()]}
+          | {:error, :timeout | :unavailable | :unknown}
   def resolve_transactions(ref, last_version, commit_version, transaction_summaries, opts \\ []) do
     call(
       ref,

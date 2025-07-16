@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
   """
 
+  alias Bedrock.Cluster
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
@@ -93,10 +94,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   end
 
   @spec child_spec_for_commit_proxy(
-          cluster :: module(),
+          cluster :: Cluster.t(),
           epoch :: Bedrock.epoch(),
           director :: pid(),
-          lock_token :: binary()
+          lock_token :: Bedrock.lock_token()
         ) ::
           Supervisor.child_spec()
   def child_spec_for_commit_proxy(cluster, epoch, director, lock_token) do

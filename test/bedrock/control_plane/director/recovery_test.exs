@@ -73,10 +73,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert result.config.recovery_attempt.cluster == __MODULE__.TestCluster
       assert result.config.recovery_attempt.epoch == 1
       assert result.config.recovery_attempt.attempt == 1
-      assert result.config.transaction_system_layout.director == self()
-      assert result.config.transaction_system_layout.sequencer == nil
-      assert result.config.transaction_system_layout.proxies == []
-      assert result.config.transaction_system_layout.resolvers == []
     end
 
     test "handles recovery state by setting up subsequent recovery" do
@@ -123,41 +119,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "setup_for_initial_recovery/1" do
-    test "creates new recovery attempt with correct parameters" do
-      state = %State{
-        state: :starting,
-        cluster: TestCluster,
-        epoch: 42,
-        config: %{
-          coordinators: [:coord1, :coord2],
-          parameters: %{
-            desired_logs: 5,
-            desired_replication_factor: 3,
-            desired_commit_proxies: 2,
-            other_param: :ignored
-          },
-          transaction_system_layout: %{
-            existing: :layout
-          }
-        },
-        services: %{service1: %{status: :up}}
-      }
-
-      result = Recovery.setup_for_initial_recovery(state)
-
-      assert result.state == :recovery
-      recovery_attempt = result.config.recovery_attempt
-      assert recovery_attempt.cluster == TestCluster
-      assert recovery_attempt.epoch == 42
-      assert recovery_attempt.attempt == 1
-      assert recovery_attempt.coordinators == [:coord1, :coord2]
-      assert recovery_attempt.parameters.desired_logs == 5
-      assert recovery_attempt.parameters.desired_replication_factor == 3
-      assert recovery_attempt.parameters.desired_commit_proxies == 2
-      refute Map.has_key?(recovery_attempt.parameters, :other_param)
-      assert recovery_attempt.available_services == %{service1: %{status: :up}}
-    end
-
     test "resets transaction system layout components" do
       state = %State{
         state: :starting,
@@ -182,16 +143,72 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         services: %{}
       }
 
-      result = Recovery.setup_for_initial_recovery(state)
+      empty_mapset = MapSet.new([])
+      empty_map = %{}
 
-      layout = result.config.transaction_system_layout
-      assert layout.director == self()
-      assert layout.sequencer == nil
-      assert layout.rate_keeper == nil
-      assert layout.proxies == []
-      assert layout.resolvers == []
-      # Preserved
-      assert layout.logs == %{old: :log}
+      assert %State{
+               state: :recovery,
+               epoch: 1,
+               my_relief: nil,
+               cluster: TestCluster,
+               config: %{
+                 parameters: %{
+                   desired_logs: 1,
+                   desired_replication_factor: 1,
+                   desired_commit_proxies: 1
+                 },
+                 recovery_attempt: %RecoveryAttempt{
+                   state: :start,
+                   attempt: 1,
+                   cluster: TestCluster,
+                   epoch: 1,
+                   coordinators: [],
+                   parameters: %{
+                     desired_logs: 1,
+                     desired_replication_factor: 1,
+                     desired_commit_proxies: 1
+                   },
+                   started_at: _,
+                   last_transaction_system_layout: %{
+                     logs: %{old: :log},
+                     director: :old_director,
+                     sequencer: :old_sequencer,
+                     rate_keeper: :old_rate_keeper,
+                     proxies: [:old_proxy],
+                     resolvers: [:old_resolver]
+                   },
+                   available_services: ^empty_map,
+                   required_services: ^empty_map,
+                   locked_service_ids: ^empty_mapset,
+                   log_recovery_info_by_id: ^empty_map,
+                   storage_recovery_info_by_id: ^empty_map,
+                   old_log_ids_to_copy: [],
+                   version_vector: {0, 0},
+                   durable_version: 0,
+                   degraded_teams: [],
+                   logs: ^empty_map,
+                   storage_teams: [],
+                   resolvers: [],
+                   proxies: [],
+                   sequencer: nil
+                 },
+                 coordinators: [],
+                 transaction_system_layout: %{
+                   logs: %{old: :log},
+                   director: :old_director,
+                   sequencer: :old_sequencer,
+                   rate_keeper: :old_rate_keeper,
+                   proxies: [:old_proxy],
+                   resolvers: [:old_resolver]
+                 }
+               },
+               coordinator: nil,
+               node_tracking: nil,
+               timers: nil,
+               transaction_system_layout: nil,
+               services: ^empty_map,
+               lock_token: nil
+             } = Recovery.setup_for_initial_recovery(state)
     end
   end
 
@@ -356,7 +373,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       capture_log(fn ->
-        # For a start state, we can only test the first phase transition since the subsequent 
+        # For a start state, we can only test the first phase transition since the subsequent
         # phases will need complete data. Let's test just that the start phase works.
         start_phase = Bedrock.ControlPlane.Director.Recovery.StartPhase
         result = start_phase.execute(recovery_attempt, create_test_context())

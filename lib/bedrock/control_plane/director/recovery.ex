@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
             :desired_replication_factor,
             :desired_commit_proxies
           ]),
-          config.transaction_system_layout,
+          t.config.transaction_system_layout,
           t.services
         )
       )

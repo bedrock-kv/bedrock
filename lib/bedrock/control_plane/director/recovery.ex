@@ -4,8 +4,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.Internal.Time.Interval
 
   require Logger
@@ -42,6 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.put(:state, :recovery)
     |> Map.update!(:config, fn config ->
       config
+      |> Map.put(:transaction_system_layout, nil)
       |> Map.put(
         :recovery_attempt,
         RecoveryAttempt.new(
@@ -99,18 +98,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.update!(:config, fn config ->
           config
           |> Map.delete(:recovery_attempt)
-          |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
-            transaction_system_layout
-            |> Map.put(:id, TransactionSystemLayout.random_id())
-            |> Map.put(:sequencer, completed.sequencer)
-            |> Map.put(:resolvers, completed.resolvers)
-            |> Map.put(:proxies, completed.proxies)
-            |> Map.put(:logs, completed.logs)
-            |> Map.put(:storage_teams, completed.storage_teams)
-            |> Map.put(:services, completed.required_services)
-          end)
         end)
-        |> unlock_storage_after_recovery(completed.durable_version)
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -121,24 +109,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           |> Map.put(:recovery_attempt, stalled)
         end)
     end
-  end
-
-  @spec unlock_storage_after_recovery(State.t(), Bedrock.version()) :: State.t()
-  def unlock_storage_after_recovery(t, durable_version) do
-    t.config.transaction_system_layout.services
-    |> Enum.each(fn
-      {id, %{kind: :storage, status: {:up, worker}}} ->
-        trace_recovery_storage_unlocking(id)
-
-        Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
-          timeout_in_ms: 1_000
-        )
-
-      _ ->
-        :ok
-    end)
-
-    t
   end
 
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context()) ::

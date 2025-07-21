@@ -193,14 +193,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                    sequencer: nil
                  },
                  coordinators: [],
-                 transaction_system_layout: %{
-                   logs: %{old: :log},
-                   director: :old_director,
-                   sequencer: :old_sequencer,
-                   rate_keeper: :old_rate_keeper,
-                   proxies: [:old_proxy],
-                   resolvers: [:old_resolver]
-                 }
+                 transaction_system_layout: nil
                },
                coordinator: nil,
                node_tracking: nil,
@@ -244,44 +237,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert updated_attempt.cluster == TestCluster
       assert updated_attempt.epoch == 1
       assert updated_attempt.started_at == 12345
-    end
-  end
-
-  describe "unlock_storage_after_recovery/1" do
-    test "unlocks storage services after successful recovery" do
-      # Test with no storage services to avoid GenServer call issues
-      state = %State{
-        config: %{
-          transaction_system_layout: %{
-            services: %{
-              log1: %{kind: :log, status: {:up, spawn(fn -> :ok end)}}
-            }
-          }
-        }
-      }
-
-      durable_version = 42
-
-      # With no storage services, this should succeed and return the same state
-      result = Recovery.unlock_storage_after_recovery(state, durable_version)
-      assert result == state
-    end
-
-    test "handles non-storage services gracefully" do
-      state = %State{
-        config: %{
-          transaction_system_layout: %{
-            services: %{
-              log1: %{kind: :log, status: {:up, spawn(fn -> :ok end)}},
-              storage_down: %{kind: :storage, status: :down}
-            }
-          }
-        }
-      }
-
-      result = Recovery.unlock_storage_after_recovery(state, 42)
-
-      assert result == state
     end
   end
 

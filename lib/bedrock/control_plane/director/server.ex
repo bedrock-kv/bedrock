@@ -81,7 +81,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     %{t | services: get_services_from_config(t.config)}
     |> ping_all_coordinators()
     |> try_to_recover()
-    |> store_changes_to_config()
+    # |> store_changes_to_config()
     |> noreply()
   end
 
@@ -113,8 +113,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_call(_, _from, t) when not is_nil(t.my_relief),
     do: t |> reply({:error, {:relieved_by, t.my_relief}})
 
-  def handle_call(:fetch_transaction_system_layout, _from, t),
-    do: t |> reply({:ok, t.config.transaction_system_layout})
+  def handle_call(:fetch_transaction_system_layout, _from, t) do
+    case t.config.transaction_system_layout do
+      nil -> t |> reply({:error, :unavailable})
+      transaction_system_layout -> t |> reply({:ok, transaction_system_layout})
+    end
+  end
 
   def handle_call({:request_worker_creation, node, worker_id, kind}, _from, t) do
     t
@@ -129,7 +133,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
       {:ok, t} ->
         t
         |> try_to_recover()
-        |> store_changes_to_config()
+        # |> store_changes_to_config()
         |> reply(:ok)
 
       {:error, _reason} = error ->
@@ -170,7 +174,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     t
     |> node_added_worker(node, worker_info, now())
     |> try_to_recover()
-    |> store_changes_to_config()
+    # |> store_changes_to_config()
     |> noreply()
   end
 

@@ -61,7 +61,8 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
       :ets.delete_all_objects(t.storage_table)
 
       pid_for_storage_id = fn storage_id ->
-        transaction_system_layout.services
+        transaction_system_layout
+        |> Map.get(:services, %{})
         |> Map.get(storage_id)
         |> case do
           %{kind: :storage, status: {:up, pid}} ->
@@ -72,7 +73,9 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
         end
       end
 
-      Enum.map(transaction_system_layout.storage_teams, fn
+      transaction_system_layout
+      |> Map.get(:storage_teams, [])
+      |> Enum.map(fn
         %{tag: tag, key_range: key_range, storage_ids: storage_ids} ->
           Enum.each(storage_ids, fn storage_id ->
             :ets.insert(

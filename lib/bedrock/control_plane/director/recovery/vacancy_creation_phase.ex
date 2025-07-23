@@ -25,15 +25,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   """
 
   @impl true
-  def execute(%{state: :create_vacancies} = recovery_attempt, _context) do
+  def execute(%{state: :create_vacancies} = recovery_attempt, context) do
     with {:ok, logs, n_log_vacancies} <-
            create_vacancies_for_logs(
-             recovery_attempt.last_transaction_system_layout.logs,
+             context.cluster_config.transaction_system_layout.logs,
              recovery_attempt.parameters.desired_logs
            ),
          {:ok, storage_teams, n_storage_team_vacancies} <-
            create_vacancies_for_storage_teams(
-             recovery_attempt.last_transaction_system_layout.storage_teams,
+             context.cluster_config.transaction_system_layout.storage_teams,
              recovery_attempt.parameters.desired_replication_factor
            ) do
       trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)

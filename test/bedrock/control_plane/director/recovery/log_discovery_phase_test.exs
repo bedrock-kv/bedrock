@@ -8,21 +8,27 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
     test "successfully determines logs to copy and advances state" do
       recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
-        last_transaction_system_layout: %{
-          logs: %{
-            {:log, 1} => ["tag_a"],
-            {:log, 2} => ["tag_b"]
-          }
-        },
         log_recovery_info_by_id: %{
           {:log, 1} => %{oldest_version: 10, last_version: 50},
           {:log, 2} => %{oldest_version: 5, last_version: 45}
-        },
-        # Quorum = 2
-        parameters: %{desired_logs: 3}
+        }
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
+      # Quorum = 2
+      result =
+        LogDiscoveryPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          cluster_config: %{
+            # Quorum = 2, with two logs
+            parameters: %{desired_logs: 3},
+            transaction_system_layout: %{
+              logs: %{
+                {:log, 1} => ["tag_a"],
+                {:log, 2} => ["tag_b"]
+              }
+            }
+          }
+        })
 
       assert result.state == :create_vacancies
       assert is_list(result.old_log_ids_to_copy)
@@ -33,16 +39,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
     test "stalls recovery when unable to meet log quorum" do
       recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
-        last_transaction_system_layout: %{
-          # No logs available
-          logs: %{}
-        },
-        log_recovery_info_by_id: %{},
-        # Quorum = 2, but no logs
-        parameters: %{desired_logs: 3}
+        log_recovery_info_by_id: %{}
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result =
+        LogDiscoveryPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          cluster_config: %{
+            # Quorum = 2, but no logs
+            parameters: %{desired_logs: 3},
+            transaction_system_layout: %{
+              # No logs available
+              logs: %{}
+            }
+          }
+        })
 
       assert result.state == {:stalled, :unable_to_meet_log_quorum}
     end
@@ -50,19 +61,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
     test "handles single log with quorum of 1" do
       recovery_attempt = %RecoveryAttempt{
         state: :determine_old_logs_to_copy,
-        last_transaction_system_layout: %{
-          logs: %{
-            {:log, 1} => ["tag_a"]
-          }
-        },
         log_recovery_info_by_id: %{
           {:log, 1} => %{oldest_version: 10, last_version: 50}
-        },
-        # Quorum = 1
-        parameters: %{desired_logs: 1}
+        }
       }
 
-      result = LogDiscoveryPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result =
+        LogDiscoveryPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          cluster_config: %{
+            # Quorum = 1
+            parameters: %{desired_logs: 1},
+            transaction_system_layout: %{
+              logs: %{
+                {:log, 1} => ["tag_a"]
+              }
+            }
+          }
+        })
 
       assert result.state == :create_vacancies
       assert result.old_log_ids_to_copy == [{:log, 1}]
@@ -263,7 +279,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
       assert oldest_1 == 10
       assert newest_1 == 45
 
-      # Check second group: max(10, 15) = 15, min(50, 55) = 50  
+      # Check second group: max(10, 15) = 15, min(50, 55) = 50
       {log_ids_2, {oldest_2, newest_2}} = Enum.at(result, 1)
       assert Enum.sort(log_ids_2) == Enum.sort([{:log, 1}, {:log, 3}])
       assert oldest_2 == 15
@@ -314,7 +330,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
       groups = [
         # difference: 20
         {[{:log, 1}], {10, 30}},
-        # difference: 10  
+        # difference: 10
         {[{:log, 2}], {5, 15}},
         # difference: 25
         {[{:log, 3}], {20, 45}}

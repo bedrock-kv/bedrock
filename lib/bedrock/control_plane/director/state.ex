@@ -3,7 +3,6 @@ defmodule Bedrock.ControlPlane.Director.State do
 
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.Service.Worker
 
@@ -19,9 +18,9 @@ defmodule Bedrock.ControlPlane.Director.State do
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
           timers: timer_registry() | nil,
-          transaction_system_layout: TransactionSystemLayout.t() | nil,
           services: %{Worker.id() => ServiceDescriptor.t()},
-          lock_token: binary()
+          lock_token: binary(),
+          recovery_attempt: Config.RecoveryAttempt.t() | nil
         }
   defstruct state: :starting,
             epoch: nil,
@@ -31,9 +30,9 @@ defmodule Bedrock.ControlPlane.Director.State do
             coordinator: nil,
             node_tracking: nil,
             timers: nil,
-            transaction_system_layout: nil,
             services: %{},
-            lock_token: nil
+            lock_token: nil,
+            recovery_attempt: nil
 
   defmodule Changes do
     alias Bedrock.ControlPlane.Director.State

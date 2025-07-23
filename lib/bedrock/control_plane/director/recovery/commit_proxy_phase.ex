@@ -27,7 +27,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
     starter_fn = Shared.starter_for(sup_otp_name)
 
     define_commit_proxies(
-      recovery_attempt.parameters.desired_commit_proxies,
+      context.cluster_config.parameters.desired_commit_proxies,
       recovery_attempt.cluster,
       recovery_attempt.epoch,
       self(),

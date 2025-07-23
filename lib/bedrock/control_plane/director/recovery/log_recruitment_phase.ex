@@ -10,6 +10,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
@@ -27,42 +28,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   @impl true
   def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
     assigned_log_ids =
-      recovery_attempt.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new()
+      context.cluster_config.transaction_system_layout.logs |> Map.keys() |> MapSet.new()
 
     all_log_ids =
-      recovery_attempt.available_services
+      context.available_services
       |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
 
     # Get nodes with log capability from node tracking
-    alias Bedrock.ControlPlane.Director.NodeTracking
     available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
 
-    fill_log_vacancies(recovery_attempt.logs, assigned_log_ids, all_log_ids, available_log_nodes)
-    |> case do
+    with {:ok, logs, new_worker_ids} <-
+           fill_log_vacancies(
+             recovery_attempt.logs,
+             assigned_log_ids,
+             all_log_ids,
+             available_log_nodes
+           ),
+         {:ok, updated_services} <-
+           create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context) do
+      trace_recovery_all_log_vacancies_filled()
+
+      # Collect PIDs for all recruited logs (existing + new)
+      all_log_pids =
+        Map.merge(
+          extract_existing_log_pids(logs, context.available_services),
+          extract_service_pids(updated_services)
+        )
+
+      recovery_attempt
+      |> Map.put(:logs, logs)
+      |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
+      |> Map.put(:state, :recruit_storage_to_fill_vacancies)
+    else
       {:error, reason} ->
         recovery_attempt |> Map.put(:state, {:stalled, reason})
-
-      {:ok, logs, new_worker_ids} ->
-        # Create the new workers if any are needed
-        case create_new_log_workers(
-               new_worker_ids,
-               available_log_nodes,
-               recovery_attempt,
-               context
-             ) do
-          {:ok, updated_services} ->
-            trace_recovery_all_log_vacancies_filled()
-
-            recovery_attempt
-            |> Map.put(:logs, logs)
-            |> Map.update!(:available_services, &Map.merge(&1, updated_services))
-            |> Map.put(:state, :recruit_storage_to_fill_vacancies)
-
-          {:error, reason} ->
-            recovery_attempt |> Map.put(:state, {:stalled, reason})
-        end
     end
   end
 
@@ -210,5 +211,30 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     Logger.warning(
       "Some workers failed to be tracked during creation: #{inspect(failed_workers)}"
     )
+  end
+
+  @spec extract_service_pids(%{String.t() => %{status: {:up, pid()}}}) :: %{String.t() => pid()}
+  defp extract_service_pids(services) do
+    services
+    |> Enum.filter(fn {_id, %{status: status}} -> match?({:up, _}, status) end)
+    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
+    |> Map.new()
+  end
+
+  @spec extract_existing_log_pids(%{Log.id() => any()}, %{String.t() => map()}) :: %{
+          String.t() => pid()
+        }
+  defp extract_existing_log_pids(logs, available_services) do
+    logs
+    |> Map.keys()
+    |> Enum.reject(&match?({:vacancy, _}, &1))
+    |> Enum.map(fn log_id ->
+      case Map.get(available_services, log_id) do
+        %{status: {:up, pid}} -> {log_id, pid}
+        _ -> nil
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Map.new()
   end
 end

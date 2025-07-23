@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     starter_fn = Shared.starter_for(sup_otp_name)
 
     running_logs_by_id =
-      recovery_attempt.available_services
+      context.available_services
       |> Map.take(recovery_attempt.logs |> Map.keys())
       |> Enum.map(fn
         {id, %{status: {:up, pid}}} -> {id, pid}
@@ -55,7 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
         %{recovery_attempt | state: {:stalled, reason}}
 
       {:ok, resolvers} ->
-        %{recovery_attempt | resolvers: resolvers, state: :define_required_services}
+        %{recovery_attempt | resolvers: resolvers, state: :final_checks}
     end
   end
 

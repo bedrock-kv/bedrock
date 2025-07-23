@@ -22,11 +22,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   can be considered durably committed across the cluster.
   """
   @impl true
-  def execute(%{state: :determine_durable_version} = recovery_attempt, _context) do
+  def execute(%{state: :determine_durable_version} = recovery_attempt, context) do
     determine_durable_version(
-      recovery_attempt.last_transaction_system_layout.storage_teams,
+      context.cluster_config.transaction_system_layout.storage_teams,
       recovery_attempt.storage_recovery_info_by_id,
-      recovery_attempt.parameters.desired_replication_factor |> determine_quorum()
+      context.cluster_config.parameters.desired_replication_factor |> determine_quorum()
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->

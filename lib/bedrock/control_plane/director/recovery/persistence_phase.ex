@@ -24,7 +24,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   @behaviour RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
-  import Bedrock.ControlPlane.Config, only: [config: 1]
 
   @doc """
   Execute the persistence phase of recovery.
@@ -36,24 +35,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
-    with :ok <- validate_recovery_state(recovery_attempt),
-         cluster_config <- build_cluster_config(recovery_attempt),
+    with :ok <- validate_recovery_state(recovery_attempt, context.available_services),
+         {:ok, transaction_system_layout} <- build_transaction_system_layout(recovery_attempt),
          system_transaction <-
            build_system_transaction(
              recovery_attempt.epoch,
-             cluster_config,
+             context.cluster_config,
              recovery_attempt.cluster
            ),
          :ok <-
            unlock_services(
              recovery_attempt,
-             cluster_config.transaction_system_layout,
+             transaction_system_layout,
              context.lock_token
            ),
          {:ok, _version} <-
            submit_system_transaction(system_transaction, recovery_attempt.proxies) do
       trace_recovery_system_state_persisted()
-      %{recovery_attempt | state: :monitor_components}
+      %{recovery_attempt | state: :persist_coordinator_config}
     else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
@@ -62,28 +61,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec build_cluster_config(RecoveryAttempt.t()) :: Config.t()
-  defp build_cluster_config(recovery_attempt) do
-    base_config =
-      recovery_attempt.coordinators
-      |> config()
+  defp build_transaction_system_layout(recovery_attempt) do
+    # Build service descriptors from the actual service PIDs collected during recruitment
+    services = build_service_descriptors(recovery_attempt.service_pids)
 
-    %{
-      base_config
-      | epoch: recovery_attempt.epoch,
-        parameters: Map.merge(base_config.parameters, recovery_attempt.parameters),
-        transaction_system_layout: %{
-          id: TransactionSystemLayout.random_id(),
-          director: self(),
-          sequencer: recovery_attempt.sequencer,
-          rate_keeper: nil,
-          proxies: recovery_attempt.proxies,
-          resolvers: recovery_attempt.resolvers,
-          logs: recovery_attempt.logs,
-          storage_teams: recovery_attempt.storage_teams,
-          services: recovery_attempt.required_services
+    {:ok,
+     %{
+       id: TransactionSystemLayout.random_id(),
+       director: self(),
+       sequencer: recovery_attempt.sequencer,
+       rate_keeper: nil,
+       proxies: recovery_attempt.proxies,
+       resolvers: recovery_attempt.resolvers,
+       logs: recovery_attempt.logs,
+       storage_teams: recovery_attempt.storage_teams,
+       services: services
+     }}
+  end
+
+  @spec build_service_descriptors(%{Worker.id() => pid()}) :: %{
+          Worker.id() => ServiceDescriptor.t()
         }
-    }
+  defp build_service_descriptors(service_pids) do
+    service_pids
+    |> Enum.map(fn {service_id, pid} ->
+      # Build service descriptor from PID
+      service_descriptor = %{
+        # All services in service_pids are logs from recruitment
+        kind: :log,
+        # Could be enhanced later with actual tracking
+        last_seen: nil,
+        status: {:up, pid}
+      }
+
+      {service_id, service_descriptor}
+    end)
+    |> Map.new()
   end
 
   @spec build_system_transaction(
@@ -249,13 +262,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Validate that recovery state is ready for system transaction
-  @spec validate_recovery_state(RecoveryAttempt.t()) ::
+  @spec validate_recovery_state(
+          RecoveryAttempt.t(),
+          available_services :: %{Worker.id() => ServiceDescriptor.t()}
+        ) ::
           :ok | {:error, {:invalid_recovery_state, atom() | {atom(), [binary()]}}}
-  defp validate_recovery_state(recovery_attempt) do
+  defp validate_recovery_state(recovery_attempt, available_services) do
     with :ok <- validate_sequencer(recovery_attempt.sequencer),
          :ok <- validate_commit_proxies(recovery_attempt.proxies),
          :ok <- validate_resolvers(recovery_attempt.resolvers),
-         :ok <- validate_logs(recovery_attempt.logs, recovery_attempt.available_services) do
+         :ok <- validate_logs(recovery_attempt.logs, available_services) do
       :ok
     else
       {:error, reason} -> {:error, {:invalid_recovery_state, reason}}

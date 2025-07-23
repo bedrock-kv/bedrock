@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
 
   @impl true
   def execute(%{state: :cleanup_obsolete_workers} = recovery_attempt, context) do
-    obsolete_services = find_obsolete_services(recovery_attempt)
+    obsolete_services = find_obsolete_services(recovery_attempt, context)
     untracked_workers = find_untracked_workers(recovery_attempt, context)
     all_obsolete_services = Map.merge(obsolete_services, untracked_workers)
 
@@ -30,17 +30,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     end
   end
 
-  @spec find_obsolete_services(RecoveryAttempt.t()) :: %{Worker.id() => ServiceDescriptor.t()}
-  defp find_obsolete_services(recovery_attempt),
-    do:
-      Map.drop(recovery_attempt.available_services, Map.keys(recovery_attempt.required_services))
+  @spec find_obsolete_services(RecoveryAttempt.t(), RecoveryPhase.context()) :: %{
+          Worker.id() => ServiceDescriptor.t()
+        }
+  defp find_obsolete_services(recovery_attempt, context),
+    do: Map.drop(context.available_services, Map.keys(recovery_attempt.service_pids))
 
   @spec find_untracked_workers(RecoveryAttempt.t(), RecoveryPhase.context()) :: %{
           Worker.id() => ServiceDescriptor.t()
         }
   defp find_untracked_workers(recovery_attempt, context) do
-    required_worker_ids = MapSet.new(Map.keys(recovery_attempt.required_services))
-    tracked_worker_ids = MapSet.new(Map.keys(recovery_attempt.available_services))
+    required_worker_ids = MapSet.new(Map.keys(recovery_attempt.service_pids))
+    tracked_worker_ids = MapSet.new(Map.keys(context.available_services))
 
     # Get all nodes with storage capability (foreman runs on storage nodes)
     available_nodes = get_nodes_with_capability(context, :storage)

@@ -1,10 +1,13 @@
 defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc false
 
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.Internal.Time.Interval
+  alias Bedrock.Service.Worker
 
   require Logger
 
@@ -13,8 +16,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @type recovery_context :: %{
+          cluster_config: Config.t(),
           node_tracking: NodeTracking.t(),
-          lock_token: binary()
+          lock_token: binary(),
+          available_services: %{Worker.id() => ServiceDescriptor.t()},
+          coordinator: pid()
         }
 
   @spec try_to_recover(State.t()) :: State.t()
@@ -38,41 +44,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def setup_for_initial_recovery(t) do
     t
     |> Map.put(:state, :recovery)
-    |> Map.update!(:config, fn config ->
-      config
-      |> Map.put(:transaction_system_layout, nil)
-      |> Map.put(
-        :recovery_attempt,
-        RecoveryAttempt.new(
-          t.cluster,
-          t.epoch,
-          now(),
-          config.coordinators,
-          Map.take(config.parameters, [
-            :desired_logs,
-            :desired_replication_factor,
-            :desired_commit_proxies
-          ]),
-          t.config.transaction_system_layout,
-          t.services
-        )
+    |> Map.put(
+      :recovery_attempt,
+      RecoveryAttempt.new(
+        t.cluster,
+        t.epoch,
+        now()
       )
-    end)
+    )
   end
 
   @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     t
-    |> Map.update!(:config, fn config ->
-      config
-      |> Map.update!(:recovery_attempt, fn recovery_attempt ->
-        %{
-          recovery_attempt
-          | attempt: recovery_attempt.attempt + 1,
-            state: :start,
-            available_services: t.services
-        }
-      end)
+    |> Map.update!(:recovery_attempt, fn recovery_attempt ->
+      %{
+        recovery_attempt
+        | attempt: recovery_attempt.attempt + 1,
+          state: :start
+      }
     end)
   end
 
@@ -81,13 +71,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     trace_recovery_attempt_started(
       t.cluster,
       t.epoch,
-      t.config.recovery_attempt.attempt,
-      t.config.recovery_attempt.started_at
+      t.recovery_attempt.attempt,
+      t.recovery_attempt.started_at
     )
 
-    context = %{node_tracking: t.node_tracking, lock_token: t.lock_token}
+    context = %{
+      cluster_config: t.config,
+      node_tracking: t.node_tracking,
+      lock_token: t.lock_token,
+      available_services: t.services,
+      coordinator: t.coordinator
+    }
 
-    t.config.recovery_attempt
+    t.recovery_attempt
     |> run_recovery_attempt(context)
     |> case do
       {:ok, completed} ->
@@ -160,9 +156,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   defp next_phase(:define_sequencer), do: __MODULE__.SequencerPhase
   defp next_phase(:define_commit_proxies), do: __MODULE__.CommitProxyPhase
   defp next_phase(:define_resolvers), do: __MODULE__.ResolverPhase
-  defp next_phase(:define_required_services), do: __MODULE__.ServiceCollectionPhase
   defp next_phase(:final_checks), do: __MODULE__.ValidationPhase
   defp next_phase(:persist_system_state), do: __MODULE__.PersistencePhase
+  defp next_phase(:persist_coordinator_config), do: __MODULE__.CoordinatorConfigPhase
   defp next_phase(:monitor_components), do: __MODULE__.MonitoringPhase
   defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.WorkerCleanupPhase
 end

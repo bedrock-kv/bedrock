@@ -24,14 +24,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   and transitions to log vacancy recruitment.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :first_time_initialization} = recovery_attempt, _context) do
+  def execute(%RecoveryAttempt{state: :first_time_initialization} = recovery_attempt, context) do
     trace_recovery_first_time_initialization()
 
     log_vacancies =
-      1..recovery_attempt.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
+      1..context.cluster_config.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
 
     storage_team_vacancies =
-      1..recovery_attempt.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
+      1..context.cluster_config.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
     recovery_attempt
     |> Map.put(:durable_version, 0)

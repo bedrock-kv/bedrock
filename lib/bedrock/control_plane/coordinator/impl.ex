@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Foreman
+  alias Bedrock.SystemKeys
 
   import Bedrock.ControlPlane.Config,
     only: [
@@ -89,12 +90,29 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   def try_read_config_in_sequence([], coordinator_nodes), do: {0, config(coordinator_nodes)}
 
   def try_read_config_in_sequence([{storage_worker, durable_version} | rest], coordinator_nodes) do
-    case Storage.fetch(storage_worker, "\xff/system/config", durable_version, timeout: 200) do
-      {:ok, bert_data} ->
+    case Storage.fetch(storage_worker, SystemKeys.config_monolithic(), durable_version,
+           timeout: 200
+         ) do
+      {:ok, config_data} ->
         try do
-          {_stored_version, config} = :erlang.binary_to_term(bert_data)
+          {_stored_version, config} = :erlang.binary_to_term(config_data)
+
+          # Try to fetch transaction system layout (if it exists)
+          complete_config =
+            case Storage.fetch(storage_worker, SystemKeys.layout_monolithic(), durable_version,
+                   timeout: 200
+                 ) do
+              {:ok, layout_data} ->
+                transaction_system_layout = :erlang.binary_to_term(layout_data)
+                Map.put(config, :transaction_system_layout, transaction_system_layout)
+
+              {:error, _} ->
+                # Layout key doesn't exist (backward compatibility) - use config as is
+                config
+            end
+
           # Use durable_version from info API, not stored version
-          {durable_version, config}
+          {durable_version, complete_config}
         rescue
           _ ->
             # Config corrupted, try next storage worker

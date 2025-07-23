@@ -7,21 +7,27 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
     test "successfully creates vacancies for logs and storage teams" do
       recovery_attempt = %{
         state: :create_vacancies,
-        last_transaction_system_layout: %{
-          logs: %{
-            {:log, 1} => ["tag_a"]
-          },
-          storage_teams: [
-            %{tag: "storage_tag_1", storage_ids: ["storage_1"]}
-          ]
-        },
         parameters: %{
           desired_logs: 3,
           desired_replication_factor: 2
         }
       }
 
-      result = VacancyCreationPhase.execute(recovery_attempt, %{node_tracking: nil})
+      context = %{
+        node_tracking: nil,
+        cluster_config: %{
+          transaction_system_layout: %{
+            logs: %{
+              {:log, 1} => ["tag_a"]
+            },
+            storage_teams: [
+              %{tag: "storage_tag_1", storage_ids: ["storage_1"]}
+            ]
+          }
+        }
+      }
+
+      result = VacancyCreationPhase.execute(recovery_attempt, context)
 
       assert result.state == :determine_durable_version
       assert is_map(result.logs)
@@ -34,17 +40,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
     test "handles empty logs and storage teams" do
       recovery_attempt = %{
         state: :create_vacancies,
-        last_transaction_system_layout: %{
-          logs: %{},
-          storage_teams: []
-        },
         parameters: %{
           desired_logs: 2,
           desired_replication_factor: 3
         }
       }
 
-      result = VacancyCreationPhase.execute(recovery_attempt, %{node_tracking: nil})
+      context = %{
+        node_tracking: nil,
+        cluster_config: %{
+          transaction_system_layout: %{
+            logs: %{},
+            storage_teams: []
+          }
+        }
+      }
+
+      result = VacancyCreationPhase.execute(recovery_attempt, context)
 
       assert result.state == :determine_durable_version
       assert result.logs == %{}

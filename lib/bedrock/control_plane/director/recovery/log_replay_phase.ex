@@ -26,7 +26,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),
       recovery_attempt.version_vector,
-      &pid_for_log_id(&1, recovery_attempt.available_services)
+      &Map.get(recovery_attempt.service_pids, &1, :none)
     )
     |> case do
       :ok ->
@@ -103,12 +103,4 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   def pair_with_old_log_ids(new_log_ids, old_log_ids),
     do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())
-
-  @spec pid_for_log_id(Log.id(), map()) :: pid() | :none
-  defp pid_for_log_id(log_id, available_services) do
-    case Map.get(available_services, log_id) do
-      %{status: {:up, pid}} -> pid
-      _ -> :none
-    end
-  end
 end

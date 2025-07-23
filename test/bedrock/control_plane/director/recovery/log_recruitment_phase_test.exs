@@ -17,8 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       recovery_attempt = %{
         state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
-        last_transaction_system_layout: %{logs: %{{:log, 1} => %{}, {:log, 2} => %{}}},
-        available_services: %{},
         logs: %{
           {:vacancy, 1} => %{},
           {:vacancy, 2} => %{},
@@ -26,8 +24,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         }
       }
 
+      context =
+        create_test_context()
+        |> Map.merge(%{
+          cluster_config: %{
+            transaction_system_layout: %{logs: %{{:log, 1} => %{}, {:log, 2} => %{}}}
+          },
+          available_services: %{}
+        })
+
       capture_log(fn ->
-        result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
+        result =
+          LogRecruitmentPhase.execute(
+            recovery_attempt,
+            context
+          )
+
         assert {:stalled, {:insufficient_nodes, 3, _}} = result.state
       end)
     end
@@ -36,18 +48,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       recovery_attempt = %{
         state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
-        last_transaction_system_layout: %{logs: %{{:log, 1} => %{}}},
-        available_services: %{
-          {:log, 2} => %{kind: :log},
-          {:log, 3} => %{kind: :log}
-        },
         logs: %{
           {:vacancy, 1} => %{},
           {:vacancy, 2} => %{}
         }
       }
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
+      context =
+        create_test_context()
+        |> Map.merge(%{
+          cluster_config: %{
+            transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
+          },
+          available_services: %{
+            {:log, 2} => %{kind: :log},
+            {:log, 3} => %{kind: :log}
+          }
+        })
+
+      result = LogRecruitmentPhase.execute(recovery_attempt, context)
 
       assert result.state == :recruit_storage_to_fill_vacancies
       assert Map.has_key?(result.logs, {:log, 2})
@@ -200,15 +219,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       recovery_attempt = %{
         state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
-        last_transaction_system_layout: %{logs: %{{:log, 1} => %{}}},
-        available_services: %{},
         logs: %{
           {:vacancy, 1} => %{},
           {:vacancy, 2} => %{}
         }
       }
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, create_test_context())
+      context =
+        create_test_context()
+        |> Map.merge(%{
+          available_services: %{},
+          cluster_config: %{
+            transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
+          }
+        })
+
+      result = LogRecruitmentPhase.execute(recovery_attempt, context)
 
       # Should transition to stalled state when insufficient nodes available
       assert {:stalled, {:insufficient_nodes, 2, _}} = result.state

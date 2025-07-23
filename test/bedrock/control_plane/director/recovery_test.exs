@@ -70,9 +70,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       result = Recovery.try_to_recover(state)
 
       assert result.state == :recovery
-      assert result.config.recovery_attempt.cluster == __MODULE__.TestCluster
-      assert result.config.recovery_attempt.epoch == 1
-      assert result.config.recovery_attempt.attempt == 1
+      assert result.recovery_attempt.cluster == __MODULE__.TestCluster
+      assert result.recovery_attempt.epoch == 1
+      assert result.recovery_attempt.attempt == 1
     end
 
     test "handles recovery state by setting up subsequent recovery" do
@@ -81,19 +81,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         epoch: 1,
         attempt: 1,
         state: :completed,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       state = %State{
         state: :recovery,
         cluster: TestCluster,
         epoch: 1,
+        recovery_attempt: existing_recovery_attempt,
         config: %{
-          recovery_attempt: existing_recovery_attempt,
           coordinators: [],
           parameters: %{},
           transaction_system_layout: %{}
@@ -104,9 +100,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Test just the setup function without full recovery
       result = Recovery.setup_for_subsequent_recovery(state)
 
-      assert result.config.recovery_attempt.attempt == 2
-      assert result.config.recovery_attempt.state == :start
-      assert result.config.recovery_attempt.available_services == %{service1: %{status: :up}}
+      assert result.recovery_attempt.attempt == 2
+      assert result.recovery_attempt.state == :start
     end
 
     test "returns unchanged state for other states" do
@@ -152,55 +147,41 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                my_relief: nil,
                cluster: TestCluster,
                config: %{
+                 coordinators: [],
                  parameters: %{
                    desired_logs: 1,
                    desired_replication_factor: 1,
                    desired_commit_proxies: 1
                  },
-                 recovery_attempt: %RecoveryAttempt{
-                   state: :start,
-                   attempt: 1,
-                   cluster: TestCluster,
-                   epoch: 1,
-                   coordinators: [],
-                   parameters: %{
-                     desired_logs: 1,
-                     desired_replication_factor: 1,
-                     desired_commit_proxies: 1
-                   },
-                   started_at: _,
-                   last_transaction_system_layout: %{
-                     logs: %{old: :log},
-                     director: :old_director,
-                     sequencer: :old_sequencer,
-                     rate_keeper: :old_rate_keeper,
-                     proxies: [:old_proxy],
-                     resolvers: [:old_resolver]
-                   },
-                   available_services: ^empty_map,
-                   required_services: ^empty_map,
-                   locked_service_ids: ^empty_mapset,
-                   log_recovery_info_by_id: ^empty_map,
-                   storage_recovery_info_by_id: ^empty_map,
-                   old_log_ids_to_copy: [],
-                   version_vector: {0, 0},
-                   durable_version: 0,
-                   degraded_teams: [],
-                   logs: ^empty_map,
-                   storage_teams: [],
-                   resolvers: [],
-                   proxies: [],
-                   sequencer: nil
-                 },
-                 coordinators: [],
-                 transaction_system_layout: nil
+                 transaction_system_layout: %{
+                   logs: %{old: :log},
+                   director: :old_director,
+                   sequencer: :old_sequencer,
+                   rate_keeper: :old_rate_keeper,
+                   proxies: [:old_proxy],
+                   resolvers: [:old_resolver]
+                 }
                },
-               coordinator: nil,
-               node_tracking: nil,
-               timers: nil,
-               transaction_system_layout: nil,
-               services: ^empty_map,
-               lock_token: nil
+               recovery_attempt: %RecoveryAttempt{
+                 state: :start,
+                 attempt: 1,
+                 cluster: TestCluster,
+                 epoch: 1,
+                 started_at: _,
+                 required_services: ^empty_map,
+                 locked_service_ids: ^empty_mapset,
+                 log_recovery_info_by_id: ^empty_map,
+                 storage_recovery_info_by_id: ^empty_map,
+                 old_log_ids_to_copy: [],
+                 version_vector: {0, 0},
+                 durable_version: 0,
+                 degraded_teams: [],
+                 logs: ^empty_map,
+                 storage_teams: [],
+                 resolvers: [],
+                 proxies: [],
+                 sequencer: nil
+               }
              } = Recovery.setup_for_initial_recovery(state)
     end
   end
@@ -212,27 +193,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         epoch: 1,
         attempt: 3,
         state: {:stalled, :some_reason},
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{old: :service}
+        started_at: 12345
       }
 
       state = %State{
         state: :recovery,
-        config: %{
-          recovery_attempt: recovery_attempt
-        },
+        recovery_attempt: recovery_attempt,
+        config: %{},
         services: %{new: :service, updated: :service}
       }
 
       result = Recovery.setup_for_subsequent_recovery(state)
 
-      updated_attempt = result.config.recovery_attempt
+      updated_attempt = result.recovery_attempt
       assert updated_attempt.attempt == 4
       assert updated_attempt.state == :start
-      assert updated_attempt.available_services == %{new: :service, updated: :service}
       # Other fields should be preserved
       assert updated_attempt.cluster == TestCluster
       assert updated_attempt.epoch == 1
@@ -248,10 +223,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         epoch: 1,
         attempt: 1,
         started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{},
         required_services: %{},
         locked_service_ids: MapSet.new(),
         log_recovery_info_by_id: %{},
@@ -279,11 +250,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       capture_log([level: :warning], fn ->
@@ -300,11 +267,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       assert_raise FunctionClauseError, fn ->
@@ -320,11 +283,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       capture_log(fn ->
@@ -343,11 +302,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       log_output =
@@ -367,11 +322,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345,
-        coordinators: [],
-        parameters: %{},
-        last_transaction_system_layout: %{},
-        available_services: %{}
+        started_at: 12345
       }
 
       assert_raise FunctionClauseError, fn ->

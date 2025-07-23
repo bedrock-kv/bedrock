@@ -22,13 +22,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
       recovery_attempt = %{
         state: :determine_durable_version,
-        last_transaction_system_layout: %{storage_teams: storage_teams},
-        storage_recovery_info_by_id: storage_recovery_info,
-        parameters: %{desired_replication_factor: 3}
+        storage_recovery_info_by_id: storage_recovery_info
       }
 
       capture_log(fn ->
-        result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
+        result =
+          DurableVersionPhase.execute(recovery_attempt, %{
+            node_tracking: nil,
+            cluster_config: %{
+              transaction_system_layout: %{storage_teams: storage_teams},
+              parameters: %{desired_replication_factor: 3}
+            }
+          })
 
         assert result.state == :recruit_logs_to_fill_vacancies
         assert result.durable_version == 98
@@ -48,13 +53,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
       recovery_attempt = %{
         state: :determine_durable_version,
-        last_transaction_system_layout: %{storage_teams: storage_teams},
-        storage_recovery_info_by_id: storage_recovery_info,
-        # Quorum = 2, but only 1 storage
-        parameters: %{desired_replication_factor: 3}
+        storage_recovery_info_by_id: storage_recovery_info
       }
 
-      result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result =
+        DurableVersionPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          cluster_config: %{
+            transaction_system_layout: %{storage_teams: storage_teams},
+            # Quorum = 2, but only 1 storage
+            parameters: %{desired_replication_factor: 3}
+          }
+        })
 
       assert {:stalled, {:insufficient_replication, ["team_1"]}} = result.state
     end
@@ -77,13 +87,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
       recovery_attempt = %{
         state: :determine_durable_version,
-        last_transaction_system_layout: %{storage_teams: storage_teams},
-        storage_recovery_info_by_id: storage_recovery_info,
-        # Quorum = 2
-        parameters: %{desired_replication_factor: 3}
+        storage_recovery_info_by_id: storage_recovery_info
       }
 
-      result = DurableVersionPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result =
+        DurableVersionPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          cluster_config: %{
+            transaction_system_layout: %{storage_teams: storage_teams},
+            # Quorum = 2
+            parameters: %{desired_replication_factor: 3}
+          }
+        })
 
       assert result.state == :recruit_logs_to_fill_vacancies
       # min(100, 98) from team quorums

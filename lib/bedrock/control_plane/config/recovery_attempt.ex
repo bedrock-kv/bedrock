@@ -1,5 +1,4 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
@@ -57,11 +56,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :attempt,
     :cluster,
     :epoch,
-    :coordinators,
-    :parameters,
     :started_at,
-    :last_transaction_system_layout,
-    :available_services,
     :required_services,
     :locked_service_ids,
     :log_recovery_info_by_id,
@@ -74,23 +69,16 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :storage_teams,
     :resolvers,
     :proxies,
-    :sequencer
+    :sequencer,
+    service_pids: %{}
   ]
 
   @type t :: %__MODULE__{
           state: state(),
-          attempt: pos_integer(),
+          attempt: non_neg_integer(),
           cluster: module(),
           epoch: non_neg_integer(),
-          coordinators: [node()],
-          parameters: %{
-            desired_logs: log_replication_factor(),
-            desired_replication_factor: storage_replication_factor(),
-            desired_commit_proxies: pos_integer()
-          },
           started_at: DateTime.t(),
-          last_transaction_system_layout: TransactionSystemLayout.t(),
-          available_services: %{Worker.id() => ServiceDescriptor.t()},
           required_services: %{Worker.id() => ServiceDescriptor.t()},
           locked_service_ids: MapSet.t(Worker.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
@@ -103,44 +91,21 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           storage_teams: [StorageTeamDescriptor.t()],
           resolvers: [pid()],
           proxies: [pid()],
-          sequencer: pid() | nil
+          sequencer: pid() | nil,
+          service_pids: %{Worker.id() => pid()}
         }
 
   @doc """
   Creates a new recovery attempt with the required parameters.
   """
-  @spec new(
-          cluster :: module(),
-          epoch :: non_neg_integer(),
-          started_at :: DateTime.t(),
-          coordinators :: [node()],
-          parameters :: %{
-            desired_logs: log_replication_factor(),
-            desired_replication_factor: storage_replication_factor(),
-            desired_commit_proxies: pos_integer()
-          },
-          last_transaction_system_layout :: TransactionSystemLayout.t(),
-          available_services :: %{Worker.id() => ServiceDescriptor.t()}
-        ) :: t()
-  def new(
-        cluster,
-        epoch,
-        started_at,
-        coordinators,
-        parameters,
-        last_transaction_system_layout,
-        available_services
-      ) do
+  @spec new(cluster :: module(), epoch :: non_neg_integer(), started_at :: DateTime.t()) :: t()
+  def new(cluster, epoch, started_at) do
     %__MODULE__{
       state: :start,
       attempt: 1,
       cluster: cluster,
       epoch: epoch,
-      coordinators: coordinators,
-      parameters: parameters,
       started_at: started_at,
-      last_transaction_system_layout: last_transaction_system_layout,
-      available_services: available_services,
       required_services: %{},
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},

@@ -26,11 +26,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   and available log recovery information.
   """
   @impl true
-  def execute(%RecoveryAttempt{} = recovery_attempt, _context) do
+  def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     determine_old_logs_to_copy(
-      recovery_attempt.last_transaction_system_layout.logs,
+      context.cluster_config.transaction_system_layout.logs,
       recovery_attempt.log_recovery_info_by_id,
-      recovery_attempt.parameters.desired_logs |> determine_quorum()
+      context.cluster_config.parameters.desired_logs |> determine_quorum()
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->

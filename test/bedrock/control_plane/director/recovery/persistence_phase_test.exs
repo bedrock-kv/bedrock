@@ -42,10 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [self()],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -59,7 +56,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
             fn ->
               PersistencePhase.execute(recovery_attempt, %{
                 node_tracking: nil,
-                lock_token: :crypto.strong_rand_bytes(32)
+                lock_token: :crypto.strong_rand_bytes(32),
+                available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
               })
             end
           )
@@ -73,10 +71,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [],
         resolvers: [self()],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -87,7 +82,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
           })
         end
       )
@@ -100,13 +96,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [],
         logs: %{"log_1" => %{}},
-        available_services: %{
-          "log_1" => %{kind: :log, status: {:up, self()}},
-          "storage_1" => %{kind: :storage, status: {:up, self()}}
-        },
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -117,7 +107,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{
+              "log_1" => %{kind: :log, status: {:up, self()}},
+              "storage_1" => %{kind: :storage, status: {:up, self()}}
+            }
           })
         end
       )
@@ -130,10 +124,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [self()],
         logs: %{"log_1" => %{}, "log_2" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -145,7 +136,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
           })
         end
       )
@@ -160,10 +152,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [self()],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -174,7 +163,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
           })
         end
       )
@@ -187,10 +177,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [:invalid_proxy],
         resolvers: [self()],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -201,7 +188,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
           })
         end
       )
@@ -214,10 +202,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [self()],
         resolvers: [%{resolver: nil}],
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -228,7 +213,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
           })
         end
       )
@@ -249,10 +235,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [],
         resolvers: valid_resolvers,
         logs: %{"log_1" => %{}},
-        available_services: %{"log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}},
-        coordinators: [],
         epoch: 1,
-        parameters: %{},
         storage_teams: [],
         required_services: %{},
         cluster: TestCluster
@@ -264,7 +247,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{"log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}}
           })
         end
       )
@@ -281,22 +265,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         proxies: [],
         resolvers: [spawn(fn -> :ok end)],
         logs: %{"log_1" => %{}, "log_2" => %{}},
-        available_services: %{
-          "log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}},
-          "log_2" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}
-        },
-        coordinators: [],
         epoch: 42,
-        parameters: %{
-          desired_logs: 2,
-          desired_replication_factor: 3,
-          desired_commit_proxies: 1,
-          desired_coordinators: 1,
-          desired_read_version_proxies: 1,
-          ping_rate_in_hz: 10,
-          retransmission_rate_in_hz: 5,
-          transaction_window_in_ms: 1000
-        },
         storage_teams: [%{id: "team_1"}],
         required_services: %{service_1: %{kind: :test}},
         cluster: TestCluster
@@ -309,7 +278,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            config: %{
+              parameters: %{
+                desired_logs: 2,
+                desired_replication_factor: 3,
+                desired_commit_proxies: 1,
+                desired_coordinators: 1,
+                desired_read_version_proxies: 1,
+                ping_rate_in_hz: 10,
+                retransmission_rate_in_hz: 5,
+                transaction_window_in_ms: 1000
+              }
+            },
+            available_services: %{
+              "log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}},
+              "log_2" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}
+            }
           })
         end
       )
@@ -341,7 +326,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -362,7 +348,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -396,7 +383,40 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       try do
         PersistencePhase.execute(recovery_attempt, %{
           node_tracking: nil,
-          lock_token: :crypto.strong_rand_bytes(32)
+          lock_token: :crypto.strong_rand_bytes(32),
+          cluster_config: %{
+            parameters: %{
+              desired_commit_proxies: 1,
+              desired_coordinators: 1,
+              desired_logs: 1,
+              desired_read_version_proxies: 1,
+              desired_replication_factor: 1,
+              desired_resolvers: 1,
+              ping_rate_in_hz: 10,
+              retransmission_rate_in_hz: 5,
+              transaction_window_in_ms: 1000
+            },
+            policies: %{
+              allow_volunteer_nodes_to_join: true
+            },
+            coordinators: [:coord1, :coord2],
+            transaction_system_layout: %{
+              id: 42,
+              sequencer: self(),
+              proxies: [mock_proxy],
+              resolvers: [self()],
+              logs: %{"log_1" => ["tag_a"]},
+              storage_teams: [],
+              services: %{
+                "log_1" => %{kind: :log, status: {:up, self()}},
+                "storage_1" => %{kind: :storage, status: {:up, self()}}
+              }
+            }
+          },
+          available_services: %{
+            "log_1" => %{kind: :log, status: {:up, self()}},
+            "storage_1" => %{kind: :storage, status: {:up, self()}}
+          }
         })
 
         flunk("Expected process to exit")
@@ -413,12 +433,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         create_valid_recovery_attempt(%{
           epoch: 42,
-          parameters: %{
-            desired_logs: 5,
-            desired_replication_factor: 3,
-            custom_param: "test"
-          },
-          coordinators: [:coord1, :coord2],
           storage_teams: [%{tag: "team_1", storage_ids: ["s1", "s2"]}],
           required_services: %{service1: %{kind: :test}}
         })
@@ -430,7 +444,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            config: %{
+              parameters: %{
+                desired_logs: 5,
+                desired_replication_factor: 3,
+                custom_param: "test"
+              },
+              coordinators: [:coord1, :coord2]
+            },
+            available_services: %{}
           })
         end
       )
@@ -449,7 +472,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -477,7 +501,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -487,11 +512,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         create_valid_recovery_attempt(%{
           logs: %{"log_1" => %{}, "log_2" => %{}},
-          available_services: %{
-            "log_1" => %{kind: :log, status: {:up, self()}},
-            # Down service
-            "log_2" => %{kind: :log, status: {:down, nil}}
-          },
           # Add proxy to get past commit proxy validation
           proxies: [self()]
         })
@@ -502,7 +522,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{
+              "log_1" => %{kind: :log, status: {:up, self()}},
+              # Down service
+              "log_2" => %{kind: :log, status: {:down, nil}}
+            }
           })
         end
       )
@@ -512,11 +537,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         create_valid_recovery_attempt(%{
           logs: %{"log_1" => %{}, "service_1" => %{}},
-          available_services: %{
-            "log_1" => %{kind: :log, status: {:up, self()}},
-            # Wrong kind
-            "service_1" => %{kind: :storage, status: {:up, self()}}
-          },
           # Add proxy to get past commit proxy validation
           proxies: [self()]
         })
@@ -527,7 +547,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{
+              "log_1" => %{kind: :log, status: {:up, self()}},
+              # Wrong kind
+              "service_1" => %{kind: :storage, status: {:up, self()}}
+            }
           })
         end
       )
@@ -539,17 +564,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         create_valid_recovery_attempt(%{
           epoch: 123,
-          parameters: %{
-            desired_logs: 3,
-            desired_replication_factor: 2,
-            desired_commit_proxies: 2,
-            desired_coordinators: 3,
-            desired_read_version_proxies: 1,
-            ping_rate_in_hz: 20,
-            retransmission_rate_in_hz: 10,
-            transaction_window_in_ms: 2000
-          },
-          coordinators: [:coord1, :coord2],
           logs: %{
             {:log, 1} => ["tag_a"],
             {:log, 2} => ["tag_b", "tag_c"]
@@ -561,10 +575,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           required_services: %{
             log_service: %{kind: :log, status: {:up, self()}},
             storage_service: %{kind: :storage, status: {:up, self()}}
-          },
-          available_services: %{
-            {:log, 1} => %{kind: :log, status: {:up, self()}},
-            {:log, 2} => %{kind: :log, status: {:up, self()}}
           }
         })
 
@@ -575,7 +585,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{
+              {:log, 1} => %{kind: :log, status: {:up, self()}},
+              {:log, 2} => %{kind: :log, status: {:up, self()}}
+            },
+            config: %{
+              parameters: %{
+                desired_logs: 3,
+                desired_replication_factor: 2,
+                desired_commit_proxies: 2,
+                desired_coordinators: 3,
+                desired_read_version_proxies: 1,
+                ping_rate_in_hz: 20,
+                retransmission_rate_in_hz: 10,
+                transaction_window_in_ms: 2000
+              },
+              coordinators: [:coord1, :coord2]
+            }
           })
         end
       )
@@ -595,7 +622,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -608,11 +636,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
             {:log, "complex_1"} => ["tag_a", "tag_b"],
             {:log, "complex_2"} => [],
             {:log, 42} => ["numeric_tag"]
-          },
-          available_services: %{
-            {:log, "complex_1"} => %{kind: :log, status: {:up, self()}},
-            {:log, "complex_2"} => %{kind: :log, status: {:up, self()}},
-            {:log, 42} => %{kind: :log, status: {:up, self()}}
           }
         })
 
@@ -622,7 +645,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{
+              {:log, "complex_1"} => %{kind: :log, status: {:up, self()}},
+              {:log, "complex_2"} => %{kind: :log, status: {:up, self()}},
+              {:log, 42} => %{kind: :log, status: {:up, self()}}
+            }
           })
         end
       )
@@ -643,7 +671,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -660,7 +689,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -688,7 +718,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -710,7 +741,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -733,7 +765,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -757,7 +790,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
@@ -787,35 +821,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         fn ->
           PersistencePhase.execute(recovery_attempt, %{
             node_tracking: nil,
-            lock_token: :crypto.strong_rand_bytes(32)
+            lock_token: :crypto.strong_rand_bytes(32),
+            available_services: %{}
           })
         end
       )
     end
-  end
-
-  # Helper function to create a valid recovery attempt with overrides
-  defp create_valid_recovery_attempt(overrides) when is_map(overrides) do
-    base = %RecoveryAttempt{
-      state: :persist_system_state,
-      sequencer: self(),
-      proxies: [],
-      resolvers: [self()],
-      logs: %{"log_1" => %{}},
-      available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-      coordinators: [],
-      epoch: 1,
-      parameters: %{
-        desired_logs: 2,
-        desired_replication_factor: 3
-      },
-      storage_teams: [],
-      required_services: %{},
-      cluster: TestCluster,
-      version_vector: {1, 100}
-    }
-
-    Map.merge(base, overrides)
   end
 
   # Helper function to assert exit with specific reason
@@ -830,5 +841,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       :exit, other_reason ->
         flunk("Expected exit with #{inspect(expected_reason)}, got #{inspect(other_reason)}")
     end
+  end
+
+  # Helper function to create a valid recovery attempt with overrides
+  defp create_valid_recovery_attempt(overrides) when is_map(overrides) do
+    base = %RecoveryAttempt{
+      state: :persist_system_state,
+      sequencer: self(),
+      proxies: [],
+      resolvers: [self()],
+      logs: %{"log_1" => %{}},
+      epoch: 1,
+      storage_teams: [],
+      required_services: %{},
+      cluster: TestCluster,
+      version_vector: {1, 100}
+    }
+
+    Map.merge(base, overrides)
   end
 end

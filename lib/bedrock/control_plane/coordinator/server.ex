@@ -2,8 +2,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @moduledoc false
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
+  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.Raft.Log.InMemoryLog
-
+  alias Bedrock.Raft.Log.TupleInMemoryLog
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
 
@@ -70,11 +71,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     with my_node <- Node.self(),
          {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
-         raft_log <- InMemoryLog.new() do
+         {:ok, raft_log} <- init_raft_log(cluster) do
       # Bootstrap from storage or use defaults
       {_bootstrap_version, config} = bootstrap_from_storage(cluster, coordinator_nodes)
 
-      # Use bootstrap version instead of hardcoded logic  
+      # Use bootstrap version instead of hardcoded logic
       # Currently bootstrap_version is always 0 due to unavailable storage
       last_durable_txn_id = Log.initial_transaction_id(raft_log)
 
@@ -187,6 +188,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
+  def handle_cast({:write_config_async, config}, t) do
+    # Handle async config write - attempt to persist but don't block if not ready
+    case durably_write_config(t, config, fn -> :ok end) do
+      {:ok, updated_t} -> updated_t |> noreply()
+      # Fail silently for async writes
+      {:error, _reason} -> t |> noreply()
+    end
+  end
+
   def handle_cast({:raft, :rpc, event, source}, t) do
     t
     |> update_raft(&Raft.handle_event(&1, event, source))
@@ -195,4 +205,25 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @spec ack_fn(GenServer.from()) :: (-> :ok)
   defp ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
+
+  @spec init_raft_log(module()) ::
+          {:ok, DiskRaftLog.t() | TupleInMemoryLog.t()} | {:error, term()}
+  def init_raft_log(cluster) do
+    # Use same pattern as logs/storage: get base path from coordinator config
+    coordinator_config = cluster.node_config() |> Keyword.get(:coordinator, [])
+
+    case Keyword.get(coordinator_config, :path) do
+      nil ->
+        # No path supplied - use in-memory log (non-persistent)
+        {:ok, InMemoryLog.new(:tuple)}
+
+      base_path ->
+        # Path supplied - use persistent disk-based log
+        working_directory = Path.join(base_path, "raft")
+        File.mkdir_p!(working_directory)
+
+        raft_log = DiskRaftLog.new(log_dir: working_directory)
+        DiskRaftLog.open(raft_log)
+    end
+  end
 end

@@ -60,8 +60,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :started_at,
     :required_services,
     :locked_service_ids,
-    :log_recovery_info_by_id,
-    :storage_recovery_info_by_id,
     :old_log_ids_to_copy,
     :version_vector,
     :durable_version,
@@ -71,6 +69,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :resolvers,
     :proxies,
     :sequencer,
+    log_recovery_info_by_id: %{},
+    storage_recovery_info_by_id: %{},
     service_pids: %{},
     transaction_system_layout: nil
   ]

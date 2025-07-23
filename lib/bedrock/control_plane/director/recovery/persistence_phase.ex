@@ -89,25 +89,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           Worker.id() => ServiceDescriptor.t()
         }
   defp build_all_service_descriptors(recovery_attempt, context) do
-    # Extract existing storage PIDs from available services (like logs do)
-    existing_storage_pids =
-      extract_existing_storage_pids(recovery_attempt, context.available_services)
-
-    # Combine log PIDs (from recruitment) with storage PIDs (from existing services)
-    all_service_pids = Map.merge(recovery_attempt.service_pids, existing_storage_pids)
-
-    # Build service descriptors with correct types
-    build_service_descriptors_with_types(all_service_pids, context.available_services)
+    recovery_attempt.service_pids
+    |> Map.merge(extract_existing_storage_pids(recovery_attempt, context.available_services))
+    |> build_service_descriptors_with_types(context.available_services)
   end
 
   @spec extract_existing_storage_pids(RecoveryAttempt.t(), %{Worker.id() => ServiceDescriptor.t()}) ::
           %{Worker.id() => pid()}
   defp extract_existing_storage_pids(recovery_attempt, available_services) do
-    # Get storage IDs that were locked during recovery
-    storage_recovery_info = recovery_attempt.storage_recovery_info_by_id || %{}
-    locked_storage_ids = storage_recovery_info |> Map.keys() |> MapSet.new()
+    locked_storage_ids =
+      recovery_attempt.storage_recovery_info_by_id
+      |> Map.keys()
+      |> MapSet.new()
 
-    # Extract PIDs for locked storage services from available services
     available_services
     |> Enum.filter(fn {id, %{kind: kind}} ->
       kind == :storage and MapSet.member?(locked_storage_ids, id)

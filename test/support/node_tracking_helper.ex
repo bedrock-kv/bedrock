@@ -21,9 +21,12 @@ defmodule NodeTrackingHelper do
   @doc """
   Create a mock context with node tracking for recovery phases.
   """
-  @spec create_mock_context() :: %{node_tracking: NodeTracking.t()}
+  @spec create_mock_context() :: %{node_tracking: NodeTracking.t(), available_services: map()}
   def create_mock_context() do
-    %{node_tracking: create_mock_node_tracking()}
+    %{
+      node_tracking: create_mock_node_tracking(),
+      available_services: %{}
+    }
   end
 
   @doc """

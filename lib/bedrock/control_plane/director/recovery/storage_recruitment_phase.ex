@@ -15,6 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.ControlPlane.Director.NodeTracking
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -34,7 +35,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       recovery_attempt.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
 
     # Get nodes with storage capability from node tracking
-    alias Bedrock.ControlPlane.Director.NodeTracking
     available_storage_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :storage)
 
     fill_storage_team_vacancies(
@@ -58,9 +58,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
           {:ok, updated_services} ->
             trace_recovery_all_storage_team_vacancies_filled()
 
+            # Collect PIDs for all recruited storage servers (existing + new)
+            all_storage_pids =
+              Map.merge(
+                extract_existing_storage_pids(storage_teams, context.available_services),
+                extract_service_pids(updated_services)
+              )
+
             recovery_attempt
             |> Map.put(:storage_teams, storage_teams)
             |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
+            |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
             |> Map.put(:state, :replay_old_logs)
 
           {:error, reason} ->
@@ -218,5 +226,30 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     Logger.warning(
       "Some storage workers failed to be tracked during creation: #{inspect(failed_workers)}"
     )
+  end
+
+  @spec extract_service_pids(%{String.t() => %{status: {:up, pid()}}}) :: %{String.t() => pid()}
+  defp extract_service_pids(services) do
+    services
+    |> Enum.filter(fn {_id, %{status: status}} -> match?({:up, _}, status) end)
+    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
+    |> Map.new()
+  end
+
+  @spec extract_existing_storage_pids([StorageTeamDescriptor.t()], %{String.t() => map()}) :: %{
+          String.t() => pid()
+        }
+  defp extract_existing_storage_pids(storage_teams, available_services) do
+    storage_teams
+    |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
+    |> Enum.reject(&match?({:vacancy, _}, &1))
+    |> Enum.map(fn storage_id ->
+      case Map.get(available_services, storage_id) do
+        %{status: {:up, pid}} -> {storage_id, pid}
+        _ -> nil
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Map.new()
   end
 end

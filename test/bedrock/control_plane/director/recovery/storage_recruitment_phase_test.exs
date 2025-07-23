@@ -100,6 +100,60 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
       assert result.state == :replay_old_logs
       assert result.storage_teams == []
     end
+
+    test "collects storage server PIDs in service_pids" do
+      mock_pid_1 = spawn(fn -> :timer.sleep(1000) end)
+      mock_pid_2 = spawn(fn -> :timer.sleep(1000) end)
+
+      recovery_attempt = %{
+        state: :recruit_storage_to_fill_vacancies,
+        cluster: TestCluster,
+        storage_teams: [
+          %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
+          %{tag: "team_2", storage_ids: ["storage_2"]}
+        ],
+        storage_recovery_info_by_id: %{
+          "storage_1" => %{},
+          "storage_2" => %{},
+          # Available for vacancy
+          "storage_3" => %{}
+        },
+        service_pids: %{}
+      }
+
+      context = %{
+        node_tracking: create_mock_node_tracking(),
+        available_services: %{
+          "storage_1" => %{status: {:up, mock_pid_1}},
+          "storage_2" => %{status: {:up, mock_pid_2}},
+          "storage_3" => %{status: {:up, spawn(fn -> :timer.sleep(1000) end)}}
+        }
+      }
+
+      result = StorageRecruitmentPhase.execute(recovery_attempt, context)
+
+      assert result.state == :replay_old_logs
+
+      # Verify that storage PIDs have been collected
+      assert Map.has_key?(result, :service_pids)
+      assert Map.get(result.service_pids, "storage_1") == mock_pid_1
+      assert Map.get(result.service_pids, "storage_2") == mock_pid_2
+      # The one assigned to fill vacancy
+      assert Map.has_key?(result.service_pids, "storage_3")
+
+      # Verify all assigned storage servers have PIDs
+      all_storage_ids =
+        result.storage_teams
+        |> Enum.flat_map(& &1.storage_ids)
+        |> Enum.reject(&match?({:vacancy, _}, &1))
+
+      for storage_id <- all_storage_ids do
+        assert Map.has_key?(result.service_pids, storage_id),
+               "Missing PID for storage ID: #{storage_id}"
+
+        assert is_pid(result.service_pids[storage_id])
+      end
+    end
   end
 
   describe "fill_storage_team_vacancies/4" do

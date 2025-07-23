@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CoordinatorConfigPhase do
         %{recovery_attempt | state: :monitor_components}
 
       {:error, _reason} ->
-        %{recovery_attempt | state: {:stalled, :persist_coordinator_config}}
+        %{recovery_attempt | state: :monitor_components}
     end
   end
 end

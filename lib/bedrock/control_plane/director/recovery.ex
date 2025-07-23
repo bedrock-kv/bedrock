@@ -94,6 +94,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.update!(:config, fn config ->
           config
           |> Map.delete(:recovery_attempt)
+          |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         end)
 
       {{:stalled, reason}, stalled} ->

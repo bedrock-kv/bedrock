@@ -189,10 +189,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   def handle_cast({:write_config_async, config}, t) do
-    # Handle async config write - attempt to persist but don't block if not ready
     case durably_write_config(t, config, fn -> :ok end) do
       {:ok, updated_t} -> updated_t |> noreply()
-      # Fail silently for async writes
       {:error, _reason} -> t |> noreply()
     end
   end

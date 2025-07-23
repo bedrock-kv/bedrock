@@ -36,7 +36,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     trace_recovery_persisting_system_state()
 
     with :ok <- validate_recovery_state(recovery_attempt, context.available_services),
-         {:ok, transaction_system_layout} <- build_transaction_system_layout(recovery_attempt),
+         {:ok, transaction_system_layout} <-
+           build_transaction_system_layout(recovery_attempt, context),
          system_transaction <-
            build_system_transaction(
              recovery_attempt.epoch,
@@ -52,7 +53,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
          {:ok, _version} <-
            submit_system_transaction(system_transaction, recovery_attempt.proxies) do
       trace_recovery_system_state_persisted()
-      %{recovery_attempt | state: :persist_coordinator_config}
+
+      %{
+        recovery_attempt
+        | state: :persist_coordinator_config,
+          transaction_system_layout: transaction_system_layout
+      }
     else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
@@ -61,9 +67,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp build_transaction_system_layout(recovery_attempt) do
-    # Build service descriptors from the actual service PIDs collected during recruitment
-    services = build_service_descriptors(recovery_attempt.service_pids)
+  defp build_transaction_system_layout(recovery_attempt, context) do
+    # Build service descriptors from both logs and storage services
+    services = build_all_service_descriptors(recovery_attempt, context)
 
     {:ok,
      %{
@@ -79,17 +85,55 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
      }}
   end
 
-  @spec build_service_descriptors(%{Worker.id() => pid()}) :: %{
+  @spec build_all_service_descriptors(RecoveryAttempt.t(), map()) :: %{
           Worker.id() => ServiceDescriptor.t()
         }
-  defp build_service_descriptors(service_pids) do
+  defp build_all_service_descriptors(recovery_attempt, context) do
+    # Extract existing storage PIDs from available services (like logs do)
+    existing_storage_pids =
+      extract_existing_storage_pids(recovery_attempt, context.available_services)
+
+    # Combine log PIDs (from recruitment) with storage PIDs (from existing services)
+    all_service_pids = Map.merge(recovery_attempt.service_pids, existing_storage_pids)
+
+    # Build service descriptors with correct types
+    build_service_descriptors_with_types(all_service_pids, context.available_services)
+  end
+
+  @spec extract_existing_storage_pids(RecoveryAttempt.t(), %{Worker.id() => ServiceDescriptor.t()}) ::
+          %{Worker.id() => pid()}
+  defp extract_existing_storage_pids(recovery_attempt, available_services) do
+    # Get storage IDs that were locked during recovery
+    storage_recovery_info = recovery_attempt.storage_recovery_info_by_id || %{}
+    locked_storage_ids = storage_recovery_info |> Map.keys() |> MapSet.new()
+
+    # Extract PIDs for locked storage services from available services
+    available_services
+    |> Enum.filter(fn {id, %{kind: kind}} ->
+      kind == :storage and MapSet.member?(locked_storage_ids, id)
+    end)
+    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
+    |> Map.new()
+  end
+
+  @spec build_service_descriptors_with_types(%{Worker.id() => pid()}, %{
+          Worker.id() => ServiceDescriptor.t()
+        }) :: %{
+          Worker.id() => ServiceDescriptor.t()
+        }
+  defp build_service_descriptors_with_types(service_pids, available_services) do
     service_pids
     |> Enum.map(fn {service_id, pid} ->
-      # Build service descriptor from PID
+      # Get the correct service type from available services, defaulting to :log for new services
+      kind =
+        case Map.get(available_services, service_id) do
+          %{kind: service_kind} -> service_kind
+          # New services created during recruitment are logs
+          _ -> :log
+        end
+
       service_descriptor = %{
-        # All services in service_pids are logs from recruitment
-        kind: :log,
-        # Could be enhanced later with actual tracking
+        kind: kind,
         last_seen: nil,
         status: {:up, pid}
       }

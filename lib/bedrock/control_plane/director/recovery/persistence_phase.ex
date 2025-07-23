@@ -16,6 +16,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
@@ -387,7 +388,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> CommitProxy.commit(system_transaction)
   end
 
-  # Unlock commit proxies before exercising the transaction system
+  # Unlock commit proxies and storage servers before exercising the transaction system
   @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token()) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(
@@ -397,7 +398,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
        )
        when is_binary(lock_token) do
     with :ok <-
-           unlock_commit_proxies(recovery_attempt.proxies, transaction_system_layout, lock_token) do
+           unlock_commit_proxies(recovery_attempt.proxies, transaction_system_layout, lock_token),
+         :ok <-
+           unlock_storage_servers(recovery_attempt, transaction_system_layout) do
       :ok
     else
       {:error, reason} -> {:error, {:unlock_failed, reason}}
@@ -419,6 +422,43 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, :ok}, :ok -> {:cont, :ok}
       {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
       {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
+    end)
+  end
+
+  @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t()) ::
+          :ok | {:error, :timeout | :unavailable}
+  defp unlock_storage_servers(recovery_attempt, transaction_system_layout) do
+    durable_version = recovery_attempt.durable_version
+
+    transaction_system_layout.storage_teams
+    |> Enum.flat_map(fn %{storage_ids: storage_ids} ->
+      storage_ids
+      |> Enum.map(fn storage_id ->
+        {storage_id, Map.fetch!(recovery_attempt.service_pids, storage_id)}
+      end)
+    end)
+    |> Task.async_stream(
+      fn {storage_id, storage_pid} ->
+        {storage_id,
+         Storage.unlock_after_recovery(
+           storage_pid,
+           durable_version,
+           transaction_system_layout
+         )}
+      end,
+      ordered: false,
+      timeout: 5000
+    )
+    |> Enum.reduce_while(:ok, fn
+      {:ok, {storage_id, :ok}}, :ok ->
+        trace_recovery_storage_unlocking(storage_id)
+        {:cont, :ok}
+
+      {:ok, {_storage_id, {:error, reason}}}, _ ->
+        {:halt, {:error, {:storage_unlock_failed, reason}}}
+
+      {:exit, reason}, _ ->
+        {:halt, {:error, {:storage_unlock_crashed, reason}}}
     end)
   end
 end

@@ -24,17 +24,25 @@ defmodule Bedrock.ControlPlane.Coordinator.ImplTest do
     end
   end
 
-  describe "bootstrap_from_storage/2" do
-    test "gracefully handles unavailable foreman" do
-      defmodule UnavailableCluster do
-        def otp_name(:foreman), do: :nonexistent_foreman
-      end
+  describe "read_latest_config_from_raft_log/1" do
+    test "returns error when raft log is empty" do
+      # Create a fake empty raft log
+      fake_raft_log = :empty_log
 
-      coordinator_nodes = [:node1, :node2, :node3]
-      result = Impl.bootstrap_from_storage(UnavailableCluster, coordinator_nodes)
+      result = Impl.read_latest_config_from_raft_log(fake_raft_log)
 
-      # Should return version 0 with default config when foreman unavailable
-      assert {0, _config} = result
+      # Should return error when log is empty
+      assert {:error, :empty_log} = result
+    end
+
+    test "returns error when no config transactions found" do
+      # Create a fake raft log with non-config transactions
+      fake_raft_log = :non_config_log
+
+      result = Impl.read_latest_config_from_raft_log(fake_raft_log)
+
+      # Should return error when no config found
+      assert {:error, _reason} = result
     end
   end
 

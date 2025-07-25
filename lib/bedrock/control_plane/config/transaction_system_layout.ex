@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type t :: %{
           id: id(),
-          director: process_ref(),
+          director: process_ref() | :unavailable,
           sequencer: process_ref(),
           rate_keeper: process_ref(),
           proxies: proxy_list(),

@@ -8,9 +8,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
 
+  alias Bedrock.ControlPlane.Config.Parameters
+  alias Bedrock.ControlPlane.Config.Policies
+
   import Bedrock.ControlPlane.Coordinator.Impl,
     only: [
-      bootstrap_from_storage: 2
+      read_latest_config_from_raft_log: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.Durability,
@@ -22,9 +25,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
       start_director_if_necessary: 1,
-      stop_any_director_on_this_node!: 1,
-      handle_director_failure: 3,
-      handle_director_restart_timeout: 1
+      handle_director_failure: 3
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -37,8 +38,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       trace_started: 2,
       trace_election_completed: 1,
-      trace_consensus_reached: 1,
-      trace_director_changed: 1
+      trace_consensus_reached: 1
     ]
 
   require Logger
@@ -72,12 +72,36 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
-      # Bootstrap from storage or use defaults
-      {_bootstrap_version, config} = bootstrap_from_storage(cluster, coordinator_nodes)
+      # Read latest config from raft log, use minimal config for first startup
+      config =
+        case read_latest_config_from_raft_log(raft_log) do
+          {:ok, {_version, persisted_config}} ->
+            persisted_config
 
-      # Use bootstrap version instead of hardcoded logic
-      # Currently bootstrap_version is always 0 due to unavailable storage
-      last_durable_txn_id = Log.initial_transaction_id(raft_log)
+          {:error, _reason} ->
+            # For first startup, use minimal config without director
+            # Director will be set when elected and will trigger proper config write
+            %{
+              coordinators: coordinator_nodes,
+              epoch: 0,
+              parameters: Parameters.parameters(coordinator_nodes),
+              policies: Policies.default_policies(),
+              transaction_system_layout: %{
+                id: 0,
+                # Changed from nil to :unset to distinguish first startup
+                director: :unset,
+                sequencer: nil,
+                rate_keeper: nil,
+                proxies: [],
+                resolvers: [],
+                logs: %{},
+                storage_teams: [],
+                services: %{}
+              }
+            }
+        end
+
+      last_durable_txn_id = Log.newest_transaction_id(raft_log)
 
       {:ok,
        %State{
@@ -120,11 +144,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_info({:raft, :leadership_changed, {:undecided, _raft_epoch}}, t)
-      when :undecided == t.leader_node do
+  def handle_info({:raft, :leadership_changed, {:undecided, _raft_epoch}}, t) do
+    Logger.info("Bedrock: Received :undecided leadership change")
+
     t
     |> put_leader_node(:undecided)
-    |> stop_any_director_on_this_node!()
     |> noreply()
   end
 
@@ -133,7 +157,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> put_leader_node(new_leader)
-    |> stop_any_director_on_this_node!()
     |> start_director_if_necessary()
     |> noreply()
   end
@@ -166,33 +189,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
-  def handle_info(:restart_director, t) do
-    t
-    |> handle_director_restart_timeout()
-    |> noreply()
-  end
-
   @impl true
-  def handle_cast({:ping, {epoch, director}}, t) do
+  def handle_cast({:ping, {epoch, director}}, t) when t.epoch == epoch do
     GenServer.cast(director, {:pong, self()})
-
-    if is_nil(t.epoch) or t.epoch < epoch do
-      trace_director_changed(director)
-
-      t
-      |> State.Changes.put_epoch(epoch)
-      |> State.Changes.put_director(director)
-    else
-      t
-    end
-    |> noreply()
+    t |> noreply()
   end
 
-  def handle_cast({:write_config_async, config}, t) do
-    case durably_write_config(t, config, fn -> :ok end) do
-      {:ok, updated_t} -> updated_t |> noreply()
-      {:error, _reason} -> t |> noreply()
-    end
+  def handle_cast({:ping, _}, t) do
+    t |> noreply()
   end
 
   def handle_cast({:raft, :rpc, event, source}, t) do
@@ -201,8 +205,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
-  @spec ack_fn(GenServer.from()) :: (-> :ok)
-  defp ack_fn(from), do: fn -> GenServer.reply(from, :ok) end
+  @spec ack_fn(GenServer.from()) :: (term() -> :ok)
+  defp ack_fn(from), do: fn result -> GenServer.reply(from, result) end
 
   @spec init_raft_log(module()) ::
           {:ok, DiskRaftLog.t() | TupleInMemoryLog.t()} | {:error, term()}
@@ -213,11 +217,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     case Keyword.get(coordinator_config, :path) do
       nil ->
         # No path supplied - use in-memory log (non-persistent)
+        Logger.info("Bedrock: Using in-memory raft log (no path configured)")
         {:ok, InMemoryLog.new(:tuple)}
 
       base_path ->
         # Path supplied - use persistent disk-based log
         working_directory = Path.join(base_path, "raft")
+        Logger.info("Bedrock: Using persistent raft log at #{working_directory}")
         File.mkdir_p!(working_directory)
 
         raft_log = DiskRaftLog.new(log_dir: working_directory)

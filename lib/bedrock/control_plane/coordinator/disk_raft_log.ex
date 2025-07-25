@@ -304,11 +304,19 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   def transactions_to(t, to), do: transactions_from(t, @initial_transaction_id, to)
 
   @impl true
+  def transactions_from(t, from, :newest),
+    do: transactions_from(t, from, newest_transaction_id(t))
+
+  @impl true
+  def transactions_from(t, from, :newest_safe),
+    do: transactions_from(t, from, newest_safe_transaction_id(t))
+
+  @impl true
   def transactions_from(t, @initial_transaction_id, to) do
     # Return all transactions up to 'to'
     t.entries
     |> Enum.take_while(fn {transaction_id, _term, _data} -> transaction_id <= to end)
-    |> Enum.map(fn {_transaction_id, term, data} -> {term, data} end)
+    |> Enum.map(fn {transaction_id, _term, data} -> {transaction_id, data} end)
   end
 
   @impl true
@@ -317,7 +325,7 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     t.entries
     |> Enum.drop_while(fn {transaction_id, _term, _data} -> transaction_id <= from end)
     |> Enum.take_while(fn {transaction_id, _term, _data} -> transaction_id <= to end)
-    |> Enum.map(fn {_transaction_id, term, data} -> {term, data} end)
+    |> Enum.map(fn {transaction_id, _term, data} -> {transaction_id, data} end)
   end
 
   # Private helper functions
@@ -353,9 +361,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
     transactions
     |> Enum.with_index(next_sequence)
-    |> Enum.map(fn {{term, data}, sequence} ->
-      transaction_id = {term, sequence}
-      {transaction_id, term, data}
+    |> Enum.map(fn {{transaction_id, data}, _sequence} ->
+      # transaction_id is already in {term, index} format from the Raft library
+      # We should use it directly, not create a new one
+      {transaction_id, elem(transaction_id, 0), data}
     end)
   end
 

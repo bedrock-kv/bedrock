@@ -3,8 +3,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
   Implementation logic for the Coordinator, separated from GenServer concerns.
   """
 
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.Service.Foreman
+  alias Bedrock.Raft.Log
   alias Bedrock.SystemKeys
 
   import Bedrock.ControlPlane.Config,
@@ -13,23 +14,96 @@ defmodule Bedrock.ControlPlane.Coordinator.Impl do
     ]
 
   @doc """
-  Bootstrap coordinator configuration from storage or fall back to defaults.
+  Read the latest configuration from committed raft log transactions.
 
-  This function queries local storage workers for their durable versions,
-  finds the storage worker with the highest version, and attempts to read
-  the system configuration from it. If any step fails, it gracefully falls
-  back to the default configuration.
+  Scans the raft log for config-related transactions and returns the
+  most recent committed configuration, if any exists.
   """
-  @spec bootstrap_from_storage(module(), [node()]) :: {non_neg_integer(), map()}
-  def bootstrap_from_storage(cluster, coordinator_nodes) do
-    foreman = cluster.otp_name(:foreman)
+  @spec read_latest_config_from_raft_log(term()) ::
+          {:ok, {non_neg_integer(), map()}} | {:error, term()}
+  def read_latest_config_from_raft_log(raft_log) do
+    raft_log
+    |> Log.transactions_to(:newest)
+    |> case do
+      [] ->
+        {:error, :empty_log}
 
-    with :ok <- Foreman.wait_for_healthy(foreman, timeout: 500),
-         {:ok, storage_workers} <- Foreman.storage_workers(foreman, timeout: 200) do
-      find_highest_version_storage_and_read_config(storage_workers, coordinator_nodes)
-    else
-      _ ->
-        {0, config(coordinator_nodes)}
+      transactions when is_list(transactions) ->
+        case find_latest_config_transaction(transactions) do
+          {:ok, {version, config}} -> {:ok, {version, config}}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  rescue
+    error -> {:error, {:exception, error}}
+  end
+
+  @spec find_latest_config_transaction([term()]) ::
+          {:ok, {non_neg_integer(), map()}} | {:error, term()}
+  defp find_latest_config_transaction(transactions) do
+    # Scan transactions in reverse order (newest first) looking for config data
+    # Prioritize rich configs over empty ones
+    rich_config_result =
+      transactions
+      |> Enum.reverse()
+      |> Enum.with_index()
+      |> Enum.find_value(fn {transaction, index} ->
+        case extract_config_from_transaction(transaction) do
+          {:ok, config} when is_map(config) -> {:ok, {length(transactions) - index, config}}
+          # Skip empty configs in first pass
+          {:ok, {:empty_config, _config}} -> nil
+          {:error, _} -> nil
+        end
+      end)
+
+    case rich_config_result do
+      {:ok, result} ->
+        {:ok, result}
+
+      nil ->
+        # No rich config found, try again looking for any config (including empty ones)
+        transactions
+        |> Enum.reverse()
+        |> Enum.with_index()
+        |> Enum.find_value(fn {transaction, index} ->
+          case extract_config_from_transaction(transaction) do
+            {:ok, config} when is_map(config) -> {:ok, {length(transactions) - index, config}}
+            {:ok, {:empty_config, config}} -> {:ok, {length(transactions) - index, config}}
+            {:error, _} -> nil
+          end
+        end)
+        |> case do
+          {:ok, result} -> {:ok, result}
+          nil -> {:error, :no_config_found}
+        end
+    end
+  end
+
+  @spec extract_config_from_transaction(term()) ::
+          {:ok, Config.t() | {:empty_config, Config.t()}} | {:error, term()}
+  defp extract_config_from_transaction(transaction) do
+    # Try to extract config data from transaction
+    # Raft transactions should contain the config map
+    case transaction do
+      config when is_map(config) ->
+        # Check if this looks like a bedrock config with actual services
+        if Map.has_key?(config, :coordinators) and Map.has_key?(config, :epoch) and
+             Map.has_key?(config, :transaction_system_layout) do
+          # Prefer configs with populated transaction_system_layout (non-empty services)
+          case get_in(config, [:transaction_system_layout, :services]) do
+            services when is_map(services) and map_size(services) > 0 ->
+              {:ok, config}
+
+            _empty_or_nil ->
+              # This is a default/empty config, mark as lower priority
+              {:ok, {:empty_config, config}}
+          end
+        else
+          {:error, :not_config}
+        end
+
+      _other ->
+        {:error, :invalid_format}
     end
   end
 

@@ -119,6 +119,12 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
 
       nil ->
         layout
+
+      :unavailable ->
+        Map.put(layout, field, :unavailable)
+
+      :unset ->
+        layout
     end
   end
 
@@ -130,6 +136,12 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
         Map.put(layout, field, otp_reference_to_pid({otp_name, node}))
 
       nil ->
+        layout
+
+      :unavailable ->
+        layout
+
+      :unset ->
         layout
     end
   end

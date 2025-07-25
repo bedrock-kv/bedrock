@@ -2,10 +2,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.NodeTracking
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
 
@@ -91,11 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
         t
         |> Map.put(:state, :running)
-        |> Map.update!(:config, fn config ->
-          config
-          |> Map.delete(:recovery_attempt)
-          |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
-        end)
+        |> Map.put(:config, completed.cluster_config)
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -105,6 +102,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           config
           |> Map.put(:recovery_attempt, stalled)
         end)
+    end
+    |> persist_recovery_attempt()
+  end
+
+  @spec persist_recovery_attempt(State.t()) :: State.t()
+  def persist_recovery_attempt(t) do
+    case Coordinator.write_config(t.coordinator, t.config) do
+      {:ok, txn_id} ->
+        Logger.info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
+        t
+
+      {:error, reason} ->
+        Logger.error("Failed to persist recovery attempt: #{inspect(reason)}")
+        t
     end
   end
 
@@ -159,7 +170,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   defp next_phase(:define_resolvers), do: __MODULE__.ResolverPhase
   defp next_phase(:final_checks), do: __MODULE__.ValidationPhase
   defp next_phase(:persist_system_state), do: __MODULE__.PersistencePhase
-  defp next_phase(:persist_coordinator_config), do: __MODULE__.CoordinatorConfigPhase
   defp next_phase(:monitor_components), do: __MODULE__.MonitoringPhase
   defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.WorkerCleanupPhase
 end

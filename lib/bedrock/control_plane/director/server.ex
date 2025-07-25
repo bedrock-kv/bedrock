@@ -81,7 +81,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
     %{t | services: get_services_from_config(t.config)}
     |> ping_all_coordinators()
     |> try_to_recover()
-    # |> store_changes_to_config()
     |> noreply()
   end
 
@@ -93,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
-  def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, _t) do
+  def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do
     # ANY transaction component failure triggers immediate director exit
     Logger.error(
       "Transaction component #{inspect(failed_pid)} failed with reason: #{inspect(reason)}"
@@ -101,8 +100,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
     Logger.error("Director exiting immediately due to component failure")
 
-    # Exit immediately - let coordinator restart us with fresh epoch
-    exit({:component_failure, failed_pid, reason})
+    t
+    |> Map.put(:state, :stopped)
+    |> stop(:normal)
   end
 
   @impl true
@@ -133,7 +133,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
       {:ok, t} ->
         t
         |> try_to_recover()
-        # |> store_changes_to_config()
         |> reply(:ok)
 
       {:error, _reason} = error ->
@@ -174,7 +173,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
     t
     |> node_added_worker(node, worker_info, now())
     |> try_to_recover()
-    # |> store_changes_to_config()
     |> noreply()
   end
 
@@ -184,19 +182,4 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @spec get_services_from_config(Config.t()) :: %{Worker.id() => ServiceDescriptor.t()}
   def get_services_from_config(%{transaction_system_layout: %{services: services}}),
     do: services || %{}
-
-  @spec store_changes_to_config(State.t()) :: State.t()
-  def store_changes_to_config(%{config: nil} = t), do: t
-
-  def store_changes_to_config(%State{coordinator: coordinator, config: config} = t) do
-    case Coordinator.write_config(coordinator, config) do
-      :ok ->
-        Logger.info("Configuration successfully written to coordinator")
-        t
-
-      {:error, reason} ->
-        Logger.warning("Failed to write config: #{inspect(reason)}")
-        t
-    end
-  end
 end

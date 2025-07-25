@@ -18,17 +18,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   require Logger
 
-  @type ack_fn :: (-> :ok)
+  @type ack_fn :: (term() -> :ok)
   @type waiting_list :: %{Raft.transaction_id() => ack_fn()}
 
   @spec durably_write_config(State.t(), Config.t(), ack_fn()) ::
-          {:ok, State.t()} | {:error, :not_leader}
+          {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
   def durably_write_config(t, config, ack_fn) do
     with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(config) do
       {:ok,
        t
        |> set_raft(raft)
        |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+    else
+      {:error, _reason} = error ->
+        ack_fn.(error)
+        error
     end
   end
 
@@ -51,7 +55,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   @spec maybe_put_director_from_config(State.t()) :: State.t()
   def maybe_put_director_from_config(t)
-      when t.director != t.config.transaction_system_layout.director do
+      when t.director != t.config.transaction_system_layout.director and
+             t.config.transaction_system_layout.director != :unset do
     %{epoch: epoch, transaction_system_layout: %{director: director}} = t.config
     trace_director_changed(director)
 
@@ -71,7 +76,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
         waiting_list
 
       {ack_fn, waiting_list} ->
-        ack_fn.()
+        ack_fn.({:ok, txn_id})
         waiting_list
     end
   end

@@ -34,7 +34,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
           config :: Config.t(),
           timeout_ms :: timeout_in_ms()
         ) ::
-          :ok | {:error, :unavailable}
+          {:ok, txn_id :: term()}
+          | {:error, :unavailable}
+          | {:error, :failed}
+          | {:error, :not_leader}
   def write_config(coordinator, config, timeout \\ 5_000),
     do: coordinator |> call({:write_config, config}, timeout)
 end

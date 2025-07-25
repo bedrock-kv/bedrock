@@ -9,8 +9,6 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           my_node: node(),
           epoch: Bedrock.epoch(),
           director: Director.ref() | :unavailable,
-          director_monitor: reference() | nil,
-          director_retry_state: map() | nil,
           otp_name: atom(),
           raft: Raft.t(),
           supervisor_otp_name: atom(),
@@ -23,8 +21,6 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             my_node: nil,
             epoch: nil,
             director: :unavailable,
-            director_monitor: nil,
-            director_retry_state: nil,
             otp_name: nil,
             raft: nil,
             supervisor_otp_name: nil,
@@ -61,11 +57,5 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
     def put_last_durable_txn_id(t, last_durable_txn_id),
       do: %{t | last_durable_txn_id: last_durable_txn_id}
-
-    @spec put_director_monitor(t :: State.t(), monitor_ref :: reference() | nil) :: State.t()
-    def put_director_monitor(t, monitor_ref), do: %{t | director_monitor: monitor_ref}
-
-    @spec put_director_retry_state(t :: State.t(), retry_state :: map() | nil) :: State.t()
-    def put_director_retry_state(t, retry_state), do: %{t | director_retry_state: retry_state}
   end
 end

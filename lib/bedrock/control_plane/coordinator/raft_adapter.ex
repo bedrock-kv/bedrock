@@ -2,6 +2,8 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   @moduledoc false
   @behaviour Bedrock.Raft.Interface
 
+  require Logger
+
   @spec determine_timeout(pos_integer(), pos_integer()) :: pos_integer()
   defp determine_timeout(min_ms, max_ms) when min_ms == max_ms, do: min_ms
   defp determine_timeout(min_ms, max_ms) when min_ms > max_ms, do: raise("invalid_timeout")
@@ -50,4 +52,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
     send(self(), {:raft, :consensus_reached, log, transaction_id, consistency})
     :ok
   end
+
+  @impl true
+  def quorum_lost(_active_followers, _total_followers, _term), do: :step_down
 end

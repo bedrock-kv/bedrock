@@ -57,8 +57,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
       %{
         recovery_attempt
-        | state: :persist_coordinator_config,
-          transaction_system_layout: transaction_system_layout
+        | state: :monitor_components,
+          cluster_config:
+            context.cluster_config
+            |> Map.take([:coordinators, :parameters, :policies])
+            |> Map.put(:epoch, recovery_attempt.epoch)
+            |> Map.put(:transaction_system_layout, transaction_system_layout)
       }
     else
       {:error, reason} ->
@@ -431,11 +435,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     durable_version = recovery_attempt.durable_version
 
     transaction_system_layout.storage_teams
-    |> Enum.flat_map(fn %{storage_ids: storage_ids} ->
-      storage_ids
-      |> Enum.map(fn storage_id ->
-        {storage_id, Map.fetch!(recovery_attempt.service_pids, storage_id)}
-      end)
+    |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
+    |> Enum.uniq()
+    |> Enum.map(fn storage_id ->
+      {storage_id, Map.fetch!(recovery_attempt.service_pids, storage_id)}
     end)
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->

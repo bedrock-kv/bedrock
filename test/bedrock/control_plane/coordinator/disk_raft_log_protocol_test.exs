@@ -118,11 +118,11 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       # Get all transactions to newest
       transactions = Log.transactions_to(log, :newest)
-      assert transactions == [{1, :tx1}, {1, :tx2}, {2, :tx3}]
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
 
       # Get transactions to specific ID
       transactions = Log.transactions_to(log, {1, 2})
-      assert transactions == [{1, :tx1}, {1, :tx2}]
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
 
       # Get transactions to newest safe (initially nothing committed)
       transactions = Log.transactions_to(log, :newest_safe)
@@ -131,7 +131,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       # Commit some and try again
       {:ok, log} = Log.commit_up_to(log, {1, 2})
       transactions = Log.transactions_to(log, :newest_safe)
-      assert transactions == [{1, :tx1}, {1, :tx2}]
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
     end
 
     test "implements transactions_from/3", %{log: log} do
@@ -148,15 +148,67 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       # Get transactions from initial to newest
       transactions = Log.transactions_from(log, initial_id, Log.newest_transaction_id(log))
-      assert transactions == [{1, :tx1}, {1, :tx2}, {1, :tx3}, {2, :tx4}]
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{1, 3}, :tx3}, {{2, 4}, :tx4}]
 
       # Get transactions from specific ID
       transactions = Log.transactions_from(log, {1, 1}, {1, 3})
-      assert transactions == [{1, :tx2}, {1, :tx3}]
+      assert transactions == [{{1, 2}, :tx2}, {{1, 3}, :tx3}]
 
       # Get transactions from middle to end
       transactions = Log.transactions_from(log, {1, 2}, Log.newest_transaction_id(log))
-      assert transactions == [{1, :tx3}, {2, :tx4}]
+      assert transactions == [{{1, 3}, :tx3}, {{2, 4}, :tx4}]
+    end
+
+    test "implements transactions_from/3 with :newest atom - CRITICAL BUG FIX", %{log: log} do
+      initial_id = Log.initial_transaction_id(log)
+
+      # Add some transactions
+      {:ok, log} =
+        Log.append_transactions(log, initial_id, [
+          {1, :tx1},
+          {1, :tx2},
+          {2, :tx3}
+        ])
+
+      # Test the critical bug fix: transactions_from with :newest atom
+      # This was causing the log replication stall in client logs
+      transactions = Log.transactions_from(log, initial_id, :newest)
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
+
+      # Test from middle to :newest  
+      transactions = Log.transactions_from(log, {1, 1}, :newest)
+      assert transactions == [{{1, 2}, :tx2}, {{2, 3}, :tx3}]
+
+      # Test empty result case
+      transactions = Log.transactions_from(log, {2, 3}, :newest)
+      assert transactions == []
+    end
+
+    test "implements transactions_from/3 with :newest_safe atom - CRITICAL BUG FIX", %{log: log} do
+      initial_id = Log.initial_transaction_id(log)
+
+      # Add some transactions
+      {:ok, log} =
+        Log.append_transactions(log, initial_id, [
+          {1, :tx1},
+          {1, :tx2},
+          {1, :tx3}
+        ])
+
+      # Initially no transactions are committed
+      transactions = Log.transactions_from(log, initial_id, :newest_safe)
+      assert transactions == []
+
+      # Commit first two transactions
+      {:ok, log} = Log.commit_up_to(log, {1, 2})
+
+      # Now transactions_from with :newest_safe should work correctly
+      transactions = Log.transactions_from(log, initial_id, :newest_safe)
+      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
+
+      # Test from middle to :newest_safe
+      transactions = Log.transactions_from(log, {1, 1}, :newest_safe)
+      assert transactions == [{{1, 2}, :tx2}]
     end
 
     test "implements purge_transactions_after/2", %{log: log} do

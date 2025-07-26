@@ -26,13 +26,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     trace_recovery_monitoring_components()
 
     # Monitor sequencer
-    if is_pid(recovery_attempt.sequencer) do
-      Process.monitor(recovery_attempt.sequencer)
-      Logger.debug("Director monitoring sequencer: #{inspect(recovery_attempt.sequencer)}")
+    recovery_attempt
+    |> Map.get(:sequencer)
+    |> case do
+      nil ->
+        Logger.warning("No sequencer to monitor")
+
+      sequencer_pid when is_pid(sequencer_pid) ->
+        Process.monitor(sequencer_pid)
+        Logger.debug("Director monitoring sequencer: #{inspect(sequencer_pid)}")
     end
 
     # Monitor commit proxies
-    recovery_attempt.proxies
+    recovery_attempt
+    |> Map.get(:proxies, [])
     |> Enum.each(fn proxy ->
       if is_pid(proxy) do
         Process.monitor(proxy)
@@ -41,7 +48,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     end)
 
     # Monitor resolvers
-    recovery_attempt.resolvers
+    recovery_attempt
+    |> Map.get(:resolvers, [])
     |> Enum.each(fn resolver ->
       if is_pid(resolver) do
         Process.monitor(resolver)
@@ -51,7 +59,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
     # Monitor logs (get PIDs from services)
     log_pids =
-      recovery_attempt.required_services
+      recovery_attempt
+      |> Map.get(:services, %{})
       |> Enum.filter(fn {_id, service} -> service.kind == :log end)
       |> Enum.filter(fn {_id, service} -> match?({:up, _}, service.status) end)
       |> Enum.map(fn {_id, service} -> elem(service.status, 1) end)

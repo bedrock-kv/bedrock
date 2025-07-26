@@ -189,4 +189,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
       results: results
     })
   end
+
+  @spec trace_recovery_log_recruitment_completed(
+          [any()],
+          %{any() => any()},
+          %{any() => any()},
+          %{any() => any()}
+        ) :: :ok
+  def trace_recovery_log_recruitment_completed(
+        log_ids,
+        service_pids,
+        available_services,
+        updated_services
+      ) do
+    Telemetry.execute([:bedrock, :recovery, :log_recruitment_completed], %{}, %{
+      log_ids: log_ids,
+      service_pids: service_pids,
+      available_services: available_services,
+      updated_services: updated_services
+    })
+  end
+
+  @spec trace_recovery_log_validation_started([any()], %{any() => any()}) :: :ok
+  def trace_recovery_log_validation_started(log_ids, available_services) do
+    Telemetry.execute([:bedrock, :recovery, :log_validation_started], %{}, %{
+      log_ids: log_ids,
+      available_services: available_services
+    })
+  end
+
+  @spec trace_recovery_log_service_status(any(), :found | :missing, any()) :: :ok
+  def trace_recovery_log_service_status(log_id, status, service) do
+    Telemetry.execute([:bedrock, :recovery, :log_service_status], %{}, %{
+      log_id: log_id,
+      status: status,
+      service: service
+    })
+  end
 end

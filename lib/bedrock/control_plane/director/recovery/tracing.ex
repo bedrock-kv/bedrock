@@ -29,7 +29,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :cleanup_started],
         [:bedrock, :recovery, :cleanup_completed],
         [:bedrock, :recovery, :node_cleanup_started],
-        [:bedrock, :recovery, :node_cleanup_completed]
+        [:bedrock, :recovery, :node_cleanup_completed],
+        [:bedrock, :recovery, :log_recruitment_completed],
+        [:bedrock, :recovery, :log_validation_started],
+        [:bedrock, :recovery, :log_service_status]
       ],
       &__MODULE__.handler/4,
       nil
@@ -203,6 +206,43 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     end
   end
 
+  def trace(:log_recruitment_completed, _, %{
+        log_ids: log_ids,
+        service_pids: service_pids,
+        available_services: available_services,
+        updated_services: updated_services
+      }) do
+    info("Log recruitment completed: #{length(log_ids)} logs created")
+
+    debug("""
+      Created logs: #{inspect(log_ids)}
+      Service PIDs: #{inspect(Map.keys(service_pids))}
+      Available services: #{inspect(Map.keys(available_services))}
+      Updated services: #{inspect(Map.keys(updated_services))}
+    """)
+  end
+
+  def trace(:log_validation_started, _, %{
+        log_ids: log_ids,
+        available_services: available_services
+      }) do
+    debug("""
+    Starting log validation: #{length(log_ids)} logs to validate
+      Log IDs: #{inspect(log_ids)}
+      Available services: #{inspect(Map.keys(available_services))}
+    """)
+  end
+
+  def trace(:log_service_status, _, %{log_id: log_id, status: status, service: service}) do
+    case status do
+      :found ->
+        debug("  Log #{inspect(log_id)}: #{inspect(service.status)})")
+
+      :missing ->
+        debug("  Log #{inspect(log_id)}: NO MATCHING SERVICE (found: #{inspect(service)})")
+    end
+  end
+
   @spec info(String.t()) :: :ok
   defp info(message) do
     metadata = Logger.metadata()
@@ -222,6 +262,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
     Logger.error("Bedrock [#{cluster.name()}/#{epoch}]: #{message}",
       ansi_color: :red
+    )
+  end
+
+  @spec debug(String.t()) :: :ok
+  defp debug(message) do
+    metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
+    epoch = Keyword.fetch!(metadata, :epoch)
+
+    Logger.debug("Bedrock [#{cluster.name()}/#{epoch}]: #{message}",
+      ansi_color: :cyan
     )
   end
 end

@@ -57,6 +57,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
           extract_service_pids(updated_services)
         )
 
+      trace_recovery_log_recruitment_completed(
+        Map.keys(logs),
+        all_log_pids,
+        context.available_services,
+        updated_services
+      )
+
       recovery_attempt
       |> Map.put(:logs, logs)
       |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))

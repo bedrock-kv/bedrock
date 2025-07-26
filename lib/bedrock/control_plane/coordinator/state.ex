@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           raft: Raft.t(),
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
-          config: Config.t(),
+          config: Config.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()}
         }
   defstruct cluster: nil,

@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def fetch_config(coordinator, timeout \\ 5_000),
     do: coordinator |> call(:fetch_config, timeout)
 
-  @spec write_config(
+  @spec update_config(
           coordinator_ref :: ref(),
           config :: Config.t(),
           timeout_ms :: timeout_in_ms()
@@ -38,6 +38,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def write_config(coordinator, config, timeout \\ 5_000),
-    do: coordinator |> call({:write_config, config}, timeout)
+  def update_config(coordinator, config, timeout \\ 5_000),
+    do: coordinator |> call({:update_config, config}, timeout)
 end

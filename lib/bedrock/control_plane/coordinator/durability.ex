@@ -2,29 +2,22 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.ControlPlane.Coordinator.State
-  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Coordinator.Commands
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
       trace_director_changed: 1
     ]
 
-  import Bedrock.ControlPlane.Coordinator.State.Changes,
-    only: [
-      set_raft: 2,
-      put_config: 2,
-      put_last_durable_txn_id: 2
-    ]
-
-  require Logger
+  import Bedrock.ControlPlane.Coordinator.State.Changes
 
   @type ack_fn :: (term() -> :ok)
   @type waiting_list :: %{Raft.transaction_id() => ack_fn()}
 
-  @spec durably_write_config(State.t(), Config.t(), ack_fn()) ::
+  @spec durably_write_config(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
-  def durably_write_config(t, config, ack_fn) do
-    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(config) do
+  def durably_write_config(t, command, ack_fn) do
+    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(command) do
       {:ok,
        t
        |> set_raft(raft)
@@ -41,19 +34,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   def wait_for_durable_write_to_complete(t, ack_fn, txn_id),
     do: update_in(t.waiting_list, &Map.put(&1, txn_id, ack_fn))
 
-  @spec durable_write_to_config_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
-  def durable_write_to_config_completed(t, log, durable_txn_id) do
+  @spec durable_write_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
+  def durable_write_completed(t, log, durable_txn_id) do
     log
     |> Log.transactions_from(t.last_durable_txn_id, durable_txn_id)
-    |> Enum.reduce(t, fn {txn_id, newest_durable_config}, t ->
-      update_in(t.waiting_list, &reply_to_waiter(&1, txn_id))
-      |> put_config(newest_durable_config)
+    |> Enum.reduce(t, fn {txn_id, command}, t ->
+      t
+      |> update_in([Access.key!(:waiting_list)], &reply_to_waiter(&1, txn_id))
+      |> process_command(command)
       |> put_last_durable_txn_id(txn_id)
     end)
-    |> maybe_put_director_from_config()
   end
 
   @spec maybe_put_director_from_config(State.t()) :: State.t()
+  def maybe_put_director_from_config(%State{config: nil} = t), do: t
+
   def maybe_put_director_from_config(t)
       when t.director != t.config.transaction_system_layout.director and
              t.config.transaction_system_layout.director != :unset do
@@ -61,8 +56,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     trace_director_changed(director)
 
     t
-    |> State.Changes.put_epoch(epoch)
-    |> State.Changes.put_director(director)
+    |> put_epoch(epoch)
+    |> put_director(director)
   end
 
   def maybe_put_director_from_config(t), do: t
@@ -79,5 +74,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
         ack_fn.({:ok, txn_id})
         waiting_list
     end
+  end
+
+  @spec process_command(State.t(), Commands.command()) :: State.t()
+  def process_command(t, {:update_config, %{config: config}}) do
+    t
+    |> put_config(config)
+    |> maybe_put_director_from_config()
+  end
+
+  def process_command(
+        t,
+        {:start_epoch, %{epoch: epoch, director: director, relieving: _relieving}}
+      ) do
+    t
+    |> put_epoch(epoch)
+    |> put_director(director)
   end
 end

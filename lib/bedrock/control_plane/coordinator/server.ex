@@ -8,29 +8,24 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
 
-  alias Bedrock.ControlPlane.Config.Parameters
-  alias Bedrock.ControlPlane.Config.Policies
-
-  import Bedrock.ControlPlane.Coordinator.Impl,
-    only: [
-      read_latest_config_from_raft_log: 1
-    ]
+  alias Bedrock.ControlPlane.Coordinator.Commands
 
   import Bedrock.ControlPlane.Coordinator.Durability,
     only: [
       durably_write_config: 3,
-      durable_write_to_config_completed: 3
+      durable_write_completed: 3
     ]
 
   import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
-      start_director_if_necessary: 1,
+      try_to_start_director: 1,
       handle_director_failure: 3
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
       put_leader_node: 2,
+      put_epoch: 2,
       update_raft: 2
     ]
 
@@ -72,37 +67,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
-      # Read latest config from raft log, use minimal config for first startup
-      config =
-        case read_latest_config_from_raft_log(raft_log) do
-          {:ok, {_version, persisted_config}} ->
-            persisted_config
-
-          {:error, _reason} ->
-            # For first startup, use minimal config without director
-            # Director will be set when elected and will trigger proper config write
-            %{
-              coordinators: coordinator_nodes,
-              epoch: 0,
-              parameters: Parameters.parameters(coordinator_nodes),
-              policies: Policies.default_policies(),
-              transaction_system_layout: %{
-                id: 0,
-                # Changed from nil to :unset to distinguish first startup
-                director: :unset,
-                sequencer: nil,
-                rate_keeper: nil,
-                proxies: [],
-                resolvers: [],
-                logs: %{},
-                storage_teams: [],
-                services: %{}
-              }
-            }
-        end
-
-      last_durable_txn_id = Log.newest_transaction_id(raft_log)
-
       {:ok,
        %State{
          cluster: cluster,
@@ -116,8 +80,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
              raft_log,
              RaftAdapter
            ),
-         config: config,
-         last_durable_txn_id: last_durable_txn_id
+         last_durable_txn_id: Log.initial_transaction_id(raft_log)
        }}
     else
       {:error, :unavailable} -> :ignore
@@ -134,12 +97,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_call(:fetch_director_and_epoch, _from, t),
     do: t |> reply({:ok, {t.director, t.epoch}})
 
-  def handle_call({:write_config, config}, from, t) do
+  def handle_call({:update_config, config}, from, t) do
+    command = Commands.update_config(config)
+
     t
-    |> durably_write_config(config, ack_fn(from))
+    |> durably_write_config(command, ack_fn(from))
     |> case do
       {:ok, t} -> t |> noreply()
-      {:error, _reason} -> t |> reply({:error, :failed})
+      {:error, _reason} = error -> t |> reply(error)
     end
   end
 
@@ -152,12 +117,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
-  def handle_info({:raft, :leadership_changed, {new_leader, _raft_epoch}}, t) do
+  def handle_info({:raft, :leadership_changed, {new_leader, raft_epoch}}, t) do
     trace_election_completed(new_leader)
 
     t
     |> put_leader_node(new_leader)
-    |> start_director_if_necessary()
+    |> put_epoch(raft_epoch)
+    |> try_to_start_director()
     |> noreply()
   end
 
@@ -179,7 +145,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     trace_consensus_reached(durable_txn_id)
 
     t
-    |> durable_write_to_config_completed(log, durable_txn_id)
+    |> durable_write_completed(log, durable_txn_id)
     |> noreply()
   end
 

@@ -108,7 +108,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec persist_recovery_attempt(State.t()) :: State.t()
   def persist_recovery_attempt(t) do
-    case Coordinator.write_config(t.coordinator, t.config) do
+    case Coordinator.update_config(t.coordinator, t.config) do
       {:ok, txn_id} ->
         Logger.info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
         t

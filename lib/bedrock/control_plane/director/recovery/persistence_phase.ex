@@ -43,6 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
            build_system_transaction(
              recovery_attempt.epoch,
              context.cluster_config,
+             transaction_system_layout,
              recovery_attempt.cluster
            ),
          :ok <-
@@ -145,17 +146,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   @spec build_system_transaction(
           epoch :: non_neg_integer(),
           cluster_config :: Config.t(),
+          transaction_system_layout :: TransactionSystemLayout.t(),
           cluster :: module()
         ) :: Bedrock.transaction()
-  defp build_system_transaction(epoch, cluster_config, cluster) do
-    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
-    transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
+  defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
+    updated_config =
+      cluster_config
+      |> Map.put(:epoch, epoch)
+      |> Map.put(:transaction_system_layout, transaction_system_layout)
+
+    encoded_config = Persistence.encode_for_storage(updated_config, cluster)
 
     encoded_layout =
       Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
 
     monolithic_keys = build_monolithic_keys(epoch, encoded_config, encoded_layout)
-    decomposed_keys = build_decomposed_keys(epoch, cluster_config, cluster)
+    decomposed_keys = build_decomposed_keys(epoch, updated_config, cluster)
 
     all_keys = Map.merge(monolithic_keys, decomposed_keys)
 
@@ -366,6 +372,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp validate_logs(logs, available_services) when is_map(logs) do
     log_ids = Map.keys(logs)
 
+    trace_recovery_log_validation_started(log_ids, available_services)
+
+    # Log the status of each log service
+    log_ids
+    |> Enum.each(fn log_id ->
+      case Map.get(available_services, log_id) do
+        %{kind: :log, status: _status} = service ->
+          trace_recovery_log_service_status(log_id, :found, service)
+
+        other ->
+          trace_recovery_log_service_status(log_id, :missing, other)
+      end
+    end)
+
     # Check that all log IDs have corresponding services
     missing_services =
       log_ids
@@ -377,8 +397,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       end)
 
     case missing_services do
-      [] -> :ok
-      missing -> {:error, {:missing_log_services, missing}}
+      [] ->
+        :ok
+
+      missing ->
+        {:error, {:missing_log_services, missing}}
     end
   end
 

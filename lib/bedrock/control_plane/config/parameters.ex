@@ -42,8 +42,8 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
           transaction_window_in_ms: pos_integer()
         }
 
-  @spec parameters(coordinators :: [node()]) :: t()
-  def parameters(coordinators),
+  @spec new(coordinators :: [node()]) :: t()
+  def new(coordinators),
     do: %{
       nodes: coordinators,
       desired_coordinators: length(coordinators),

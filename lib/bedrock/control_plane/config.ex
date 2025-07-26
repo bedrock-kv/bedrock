@@ -10,10 +10,6 @@ defmodule Bedrock.ControlPlane.Config do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  import Bedrock.ControlPlane.Config.Policies
-  import Bedrock.ControlPlane.Config.Parameters
-  import Bedrock.ControlPlane.Config.TransactionSystemLayout
-
   @typedoc """
   Struct representing the control plane configuration.
 
@@ -42,14 +38,14 @@ defmodule Bedrock.ControlPlane.Config do
   @doc """
   Creates a new `Config` struct.
   """
-  @spec config(coordinators :: [node()]) :: t()
-  def config(coordinators) do
+  @spec new(coordinators :: [node()], epoch :: non_neg_integer()) :: t()
+  def new(coordinators, epoch \\ 0) do
     %{
       coordinators: coordinators,
-      epoch: 0,
-      parameters: parameters(coordinators),
-      policies: default_policies(),
-      transaction_system_layout: transaction_system_layout()
+      epoch: epoch,
+      parameters: Parameters.new(coordinators),
+      policies: Policies.default_policies(),
+      transaction_system_layout: TransactionSystemLayout.default()
     }
   end
 

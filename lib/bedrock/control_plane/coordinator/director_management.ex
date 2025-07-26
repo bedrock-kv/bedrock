@@ -1,6 +1,5 @@
 defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
-  alias Bedrock.ControlPlane.Config.Parameters
-  alias Bedrock.ControlPlane.Config.Policies
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
 
@@ -31,19 +30,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   @spec maybe_put_default_config(State.t()) :: State.t()
   defp maybe_put_default_config(%{config: nil} = t) do
-    coordinators = Bedrock.Raft.known_peers(t.raft)
-
     t
-    |> put_config(%{
-      coordinators: coordinators,
-      epoch: t.epoch,
-      parameters: Parameters.parameters(coordinators),
-      policies: Policies.default_policies(),
-      transaction_system_layout: %{
-        logs: %{},
-        services: %{}
-      }
-    })
+    |> put_config(Config.new(Bedrock.Raft.known_peers(t.raft), t.epoch))
   end
 
   defp maybe_put_default_config(t), do: t

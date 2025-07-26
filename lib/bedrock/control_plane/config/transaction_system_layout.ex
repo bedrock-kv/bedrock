@@ -53,8 +53,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type id :: non_neg_integer()
 
-  @spec transaction_system_layout() :: t()
-  def transaction_system_layout(),
+  @spec default() :: t()
+  def default(),
     do: %{
       id: 0,
       director: nil,

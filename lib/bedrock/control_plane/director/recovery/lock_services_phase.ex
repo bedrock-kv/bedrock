@@ -43,12 +43,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   end
 
   @spec determine_next_phase(map(), TransactionSystemLayout.t()) :: map()
-  defp determine_next_phase(recovery_attempt, %{logs: logs, storage_teams: []})
-       when map_size(logs) == 0,
-       do: recovery_attempt |> Map.put(:state, :first_time_initialization)
+  defp determine_next_phase(recovery_attempt, layout) do
+    logs = Map.get(layout, :logs, %{})
+    storage_teams = Map.get(layout, :storage_teams, [])
 
-  defp determine_next_phase(recovery_attempt, _last_transaction_system_layout),
-    do: recovery_attempt |> Map.put(:state, :determine_old_logs_to_copy)
+    case {map_size(logs), Enum.empty?(storage_teams)} do
+      {0, true} ->
+        recovery_attempt |> Map.put(:state, :first_time_initialization)
+
+      _ ->
+        recovery_attempt |> Map.put(:state, :determine_old_logs_to_copy)
+    end
+  end
 
   @spec lock_available_services_timeout() :: Bedrock.timeout_in_ms()
   def lock_available_services_timeout, do: 200

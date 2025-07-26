@@ -40,7 +40,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       parameters: Parameters.parameters(coordinators),
       policies: Policies.default_policies(),
       transaction_system_layout: %{
-        logs: [],
+        logs: %{},
         services: %{}
       }
     })

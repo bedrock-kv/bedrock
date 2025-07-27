@@ -10,7 +10,6 @@ defmodule Bedrock.Internal.GenServerApi do
             defdelegate child_spec(opts), to: unquote(module)
 
             def start_link(opts) do
-              IO.inspect("Starting #{unquote(module)} with opts: #{inspect(opts)} ")
               GenServer.start_link(unquote(module), opts)
             end
           end

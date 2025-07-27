@@ -22,9 +22,9 @@ defmodule Bedrock.ControlPlane.Director do
 
   @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
-  @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_ms :: timeout_in_ms()) ::
+  @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_in_ms :: timeout_in_ms()) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout | :unknown}
-  def fetch_transaction_system_layout(director, timeout_in_ms),
+  def fetch_transaction_system_layout(director, timeout_in_ms \\ 5_000),
     do: director |> call(:fetch_transaction_system_layout, timeout_in_ms)
 
   @doc """

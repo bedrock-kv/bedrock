@@ -107,6 +107,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
@@ -121,6 +122,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @type recovery_context :: %{
           cluster_config: Config.t(),
+          old_transaction_system_layout: TransactionSystemLayout.t(),
           node_tracking: NodeTracking.t(),
           lock_token: binary(),
           available_services: %{Worker.id() => ServiceDescriptor.t()},
@@ -181,6 +183,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
     context = %{
       cluster_config: t.config,
+      old_transaction_system_layout: t.old_transaction_system_layout,
       node_tracking: t.node_tracking,
       lock_token: t.lock_token,
       available_services: t.services,
@@ -198,9 +201,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.update!(:config, fn config ->
           config
           |> Map.delete(:recovery_attempt)
-          |> Map.put(:epoch, completed.epoch)
-          |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         end)
+        |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
+        |> persist_config()
+        |> persist_new_transaction_system_layout()
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -210,12 +214,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           config
           |> Map.put(:recovery_attempt, stalled)
         end)
+        |> persist_config()
     end
-    |> persist_recovery_attempt()
   end
 
-  @spec persist_recovery_attempt(State.t()) :: State.t()
-  def persist_recovery_attempt(t) do
+  @spec persist_config(State.t()) :: State.t()
+  def persist_config(t) do
     case Coordinator.update_config(t.coordinator, t.config) do
       {:ok, txn_id} ->
         Logger.info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
@@ -223,6 +227,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
       {:error, reason} ->
         Logger.error("Failed to persist recovery attempt: #{inspect(reason)}")
+        t
+    end
+  end
+
+  @spec persist_new_transaction_system_layout(State.t()) :: State.t()
+  def persist_new_transaction_system_layout(t) do
+    case Coordinator.update_transaction_system_layout(t.coordinator, t.transaction_system_layout) do
+      {:ok, txn_id} ->
+        Logger.info("New transaction system layout persisted with txn ID: #{inspect(txn_id)}")
+        t
+
+      {:error, reason} ->
+        Logger.error("Failed to persist new transaction system layout: #{inspect(reason)}")
         t
     end
   end

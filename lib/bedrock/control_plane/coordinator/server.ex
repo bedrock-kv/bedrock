@@ -13,6 +13,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.Durability,
     only: [
       durably_write_config: 3,
+      durably_write_transaction_system_layout: 3,
       durable_write_completed: 3
     ]
 
@@ -91,6 +92,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_call(:fetch_config, _from, t), do: t |> reply({:ok, t.config})
 
+  def handle_call(:fetch_transaction_system_layout, _from, t),
+    do: t |> reply({:ok, t.transaction_system_layout})
+
   def handle_call(:fetch_director_and_epoch, _from, t) when t.director == :unavailable,
     do: t |> reply({:error, :unavailable})
 
@@ -102,6 +106,17 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> durably_write_config(command, ack_fn(from))
+    |> case do
+      {:ok, t} -> t |> noreply()
+      {:error, _reason} = error -> t |> reply(error)
+    end
+  end
+
+  def handle_call({:update_transaction_system_layout, transaction_system_layout}, from, t) do
+    command = Commands.update_transaction_system_layout(transaction_system_layout)
+
+    t
+    |> durably_write_transaction_system_layout(command, ack_fn(from))
     |> case do
       {:ok, t} -> t |> noreply()
       {:error, _reason} = error -> t |> reply(error)

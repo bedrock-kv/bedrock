@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Worker
 
@@ -15,7 +16,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
       request_to_rejoin: 5,
       node_added_worker: 4,
       update_last_seen_at: 3,
-      # determine_dead_nodes: 2,
       update_minimum_read_version: 3,
       ping_all_coordinators: 1,
       request_worker_creation: 4
@@ -35,6 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
           opts :: [
             cluster: module(),
             config: Config.t(),
+            old_transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             relieving: Director.ref() | nil
@@ -43,6 +44,10 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster param"
     config = opts[:config] || raise "Missing :config param"
+
+    old_transaction_system_layout =
+      opts[:old_transaction_system_layout] || raise "Missing :old_transaction_system_layout param"
+
     epoch = opts[:epoch] || raise "Missing :epoch param"
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     relieving = opts[:relieving]
@@ -53,18 +58,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, epoch, coordinator, relieving}
+           {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, epoch, coordinator, relieving}) do
+  def init({cluster, config, old_transaction_system_layout, epoch, coordinator, relieving}) do
     %State{
       epoch: epoch,
       cluster: cluster,
       config: config,
+      old_transaction_system_layout: old_transaction_system_layout,
       coordinator: coordinator,
       node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
       lock_token: :crypto.strong_rand_bytes(32)
@@ -78,7 +84,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
       old_director |> Director.stand_relieved({t.epoch, self()})
     end
 
-    %{t | services: get_services_from_config(t.config)}
+    %{t | services: get_services_from_transaction_system_layout(t.old_transaction_system_layout)}
     |> ping_all_coordinators()
     |> try_to_recover()
     |> noreply()
@@ -114,7 +120,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     do: t |> reply({:error, {:relieved_by, t.my_relief}})
 
   def handle_call(:fetch_transaction_system_layout, _from, t) do
-    case t.config.transaction_system_layout do
+    case t.transaction_system_layout do
       nil -> t |> reply({:error, :unavailable})
       transaction_system_layout -> t |> reply({:ok, transaction_system_layout})
     end
@@ -179,7 +185,10 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
 
-  @spec get_services_from_config(Config.t()) :: %{Worker.id() => ServiceDescriptor.t()}
-  def get_services_from_config(%{transaction_system_layout: %{services: services}}),
+  @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
+          %{Worker.id() => ServiceDescriptor.t()}
+  def get_services_from_transaction_system_layout(%{services: services}),
     do: services || %{}
+
+  def get_services_from_transaction_system_layout(_), do: %{}
 end

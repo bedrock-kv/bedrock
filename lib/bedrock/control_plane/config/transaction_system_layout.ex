@@ -41,6 +41,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type t :: %{
           id: id(),
+          epoch: non_neg_integer(),
           director: process_ref() | :unavailable,
           sequencer: process_ref(),
           rate_keeper: process_ref(),
@@ -57,6 +58,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   def default(),
     do: %{
       id: 0,
+      epoch: 0,
       director: nil,
       sequencer: nil,
       rate_keeper: nil,

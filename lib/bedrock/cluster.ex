@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster do
-  alias Bedrock.Cluster
   alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
@@ -29,12 +29,15 @@ defmodule Bedrock.Cluster do
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
   @callback fetch_gateway() :: {:ok, Gateway.ref()} | {:error, :unavailable}
+  @callback fetch_transaction_system_layout() ::
+              {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
   @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
   @callback name() :: String.t()
   @callback node_config() :: Keyword.t()
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
   @callback path_to_descriptor() :: Path.t()
+  @callback transaction_system_layout!() :: TransactionSystemLayout.t()
 
   @doc false
   defmacro __using__(opts) do
@@ -89,6 +92,23 @@ defmodule Bedrock.Cluster do
       @impl true
       @spec config!() :: Config.t()
       def config!, do: ClusterSupervisor.config!(__MODULE__)
+
+      @doc """
+      Fetch the transaction system layout for the cluster.
+      """
+      @impl true
+      @spec fetch_transaction_system_layout() ::
+              {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
+      def fetch_transaction_system_layout,
+        do: ClusterSupervisor.fetch_transaction_system_layout(__MODULE__)
+
+      @doc """
+      Get the transaction system layout for the cluster.
+      """
+      @impl true
+      @spec transaction_system_layout!() :: TransactionSystemLayout.t()
+      def transaction_system_layout!,
+        do: ClusterSupervisor.transaction_system_layout!(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.

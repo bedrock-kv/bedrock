@@ -30,7 +30,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
   @impl true
   def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
     assigned_log_ids =
-      context.cluster_config.transaction_system_layout.logs |> Map.keys() |> MapSet.new()
+      context.old_transaction_system_layout
+      |> Map.get(:logs)
+      |> Map.keys()
+      |> MapSet.new()
 
     all_log_ids =
       context.available_services

@@ -39,7 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
         |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
         |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
         |> Map.put(:locked_service_ids, locked_service_ids)
-        |> determine_next_phase(context.cluster_config.transaction_system_layout)
+        |> determine_next_phase(context.old_transaction_system_layout)
     end
   end
 

@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     determine_old_logs_to_copy(
-      context.cluster_config.transaction_system_layout.logs,
+      context.old_transaction_system_layout |> Map.get(:logs, %{}),
       recovery_attempt.log_recovery_info_by_id,
       context.cluster_config.parameters.desired_logs |> determine_quorum()
     )

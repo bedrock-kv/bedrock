@@ -3,6 +3,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Foreman
 
@@ -164,6 +165,23 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> case do
       {:ok, config} -> config
       {:error, _} -> raise "No configuration available"
+    end
+  end
+
+  @spec fetch_transaction_system_layout(Cluster.t()) ::
+          {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
+  def fetch_transaction_system_layout(module) do
+    with {:ok, coordinator} <- module.fetch_coordinator() do
+      Coordinator.fetch_transaction_system_layout(coordinator)
+    end
+  end
+
+  @spec transaction_system_layout!(Cluster.t()) :: TransactionSystemLayout.t()
+  def transaction_system_layout!(module) do
+    fetch_transaction_system_layout(module)
+    |> case do
+      {:ok, layout} -> layout
+      {:error, _} -> raise "No transaction system layout available"
     end
   end
 

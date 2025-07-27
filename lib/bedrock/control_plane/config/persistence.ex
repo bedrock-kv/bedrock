@@ -9,6 +9,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   """
 
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @type otp_reference :: {atom(), node()}
   @type encoded_config :: map()
@@ -29,10 +30,9 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   - Sanitized configuration suitable for BERT encoding
   """
   @spec encode_for_storage(Config.t(), module()) :: encoded_config()
-  def encode_for_storage(config, cluster) do
+  def encode_for_storage(config, _cluster) do
     config
     |> remove_ephemeral_state()
-    |> encode_transaction_system_layout(cluster)
   end
 
   @doc """
@@ -48,9 +48,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   - Runtime configuration with PIDs restored
   """
   @spec decode_from_storage(encoded_config(), module()) :: Config.t()
-  def decode_from_storage(encoded_config, cluster) do
+  def decode_from_storage(encoded_config, _cluster) do
     encoded_config
-    |> decode_transaction_system_layout(cluster)
   end
 
   @doc """
@@ -66,7 +65,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   ## Returns
   - Sanitized layout suitable for BERT encoding
   """
-  @spec encode_transaction_system_layout_for_storage(map(), module()) :: map()
+  @spec encode_transaction_system_layout_for_storage(TransactionSystemLayout.t(), module()) ::
+          map()
   def encode_transaction_system_layout_for_storage(layout, cluster) do
     layout
     |> encode_single_reference(:director, cluster)
@@ -76,38 +76,35 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     |> encode_service_map(cluster)
   end
 
+  @doc """
+  Decodes a transaction system layout from persistent storage.
+
+  Converts {otp_name, node} tuples back to PIDs for runtime use.
+
+  ## Parameters
+  - `encoded_layout`: The layout read from storage
+  - `cluster`: The cluster module for OTP name resolution
+
+  ## Returns
+  - Runtime layout with PIDs restored
+  """
+  @spec decode_transaction_system_layout_from_storage(map(), module()) ::
+          TransactionSystemLayout.t()
+  def decode_transaction_system_layout_from_storage(encoded_layout, cluster) do
+    encoded_layout
+    |> decode_single_reference(:director, cluster)
+    |> decode_single_reference(:sequencer, cluster)
+    |> decode_single_reference(:rate_keeper, cluster)
+    |> decode_proxy_list(cluster)
+    |> decode_service_map(cluster)
+  end
+
   # Remove state that shouldn't be persisted
   @spec remove_ephemeral_state(Config.t()) :: Config.t()
   defp remove_ephemeral_state(config) do
     config
     # Recovery state is ephemeral
     |> Map.delete(:recovery_attempt)
-  end
-
-  # Encode transaction system layout PIDs to {otp_name, node} tuples
-  @spec encode_transaction_system_layout(Config.t(), module()) :: Config.t()
-  defp encode_transaction_system_layout(config, cluster) do
-    Map.update!(config, :transaction_system_layout, fn layout ->
-      layout
-      |> encode_single_reference(:director, cluster)
-      |> encode_single_reference(:sequencer, cluster)
-      |> encode_single_reference(:rate_keeper, cluster)
-      |> encode_proxy_list(cluster)
-      |> encode_service_map(cluster)
-    end)
-  end
-
-  # Decode transaction system layout {otp_name, node} tuples to PIDs
-  @spec decode_transaction_system_layout(Config.t(), module()) :: Config.t()
-  defp decode_transaction_system_layout(config, _cluster) do
-    Map.update!(config, :transaction_system_layout, fn layout ->
-      layout
-      |> decode_single_reference(:director)
-      |> decode_single_reference(:sequencer)
-      |> decode_single_reference(:rate_keeper)
-      |> decode_proxy_list()
-      |> decode_service_map()
-    end)
   end
 
   # Generic single reference encoding (director, sequencer, rate_keeper)
@@ -129,8 +126,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Generic single reference decoding
-  @spec decode_single_reference(map(), atom()) :: map()
-  defp decode_single_reference(layout, field) do
+  @spec decode_single_reference(map(), atom(), module()) :: map()
+  defp decode_single_reference(layout, field, _cluster) do
     case layout[field] do
       {otp_name, node} when is_atom(otp_name) and is_atom(node) ->
         Map.put(layout, field, otp_reference_to_pid({otp_name, node}))
@@ -162,8 +159,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Proxy list decoding
-  @spec decode_proxy_list(map()) :: map()
-  defp decode_proxy_list(layout) do
+  @spec decode_proxy_list(map(), module()) :: map()
+  defp decode_proxy_list(layout, _cluster) do
     proxies = layout[:proxies] || []
 
     decoded_proxies =
@@ -197,8 +194,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   end
 
   # Service map decoding
-  @spec decode_service_map(map()) :: map()
-  defp decode_service_map(layout) do
+  @spec decode_service_map(map(), module()) :: map()
+  defp decode_service_map(layout, _cluster) do
     services = layout[:services] || %{}
 
     decoded_services =

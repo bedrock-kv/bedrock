@@ -24,6 +24,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     end
   end
 
+  @spec durably_write_transaction_system_layout(State.t(), Commands.command(), ack_fn()) ::
+          {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
+  def durably_write_transaction_system_layout(t, command, ack_fn) do
+    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(command) do
+      {:ok,
+       t
+       |> set_raft(raft)
+       |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+    else
+      {:error, _reason} = error ->
+        ack_fn.(error)
+        error
+    end
+  end
+
   @spec wait_for_durable_write_to_complete(State.t(), ack_fn(), Raft.transaction_id()) ::
           State.t()
   def wait_for_durable_write_to_complete(t, ack_fn, txn_id),
@@ -59,8 +74,17 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   def process_command(t, {:update_config, %{config: config}}) do
     t
     |> put_config(config)
-    |> put_epoch(config.epoch)
-    |> put_director(config.transaction_system_layout.director)
+  end
+
+  def process_command(
+        t,
+        {:update_transaction_system_layout,
+         %{transaction_system_layout: transaction_system_layout}}
+      ) do
+    t
+    |> put_transaction_system_layout(transaction_system_layout)
+    |> put_epoch(transaction_system_layout.epoch)
+    |> put_director(transaction_system_layout.director)
   end
 
   def process_command(

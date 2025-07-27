@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.State do
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
 
   @type state :: :starting | :recovery | :running | :stopped
@@ -15,6 +16,8 @@ defmodule Bedrock.ControlPlane.Director.State do
           my_relief: {Bedrock.epoch(), director :: pid()} | nil,
           cluster: module(),
           config: Config.t() | nil,
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
+          old_transaction_system_layout: TransactionSystemLayout.t() | nil,
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
           timers: timer_registry() | nil,
@@ -27,6 +30,8 @@ defmodule Bedrock.ControlPlane.Director.State do
             my_relief: nil,
             cluster: nil,
             config: nil,
+            transaction_system_layout: nil,
+            old_transaction_system_layout: nil,
             coordinator: nil,
             node_tracking: nil,
             timers: nil,

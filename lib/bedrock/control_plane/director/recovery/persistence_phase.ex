@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
-    with :ok <- validate_recovery_state(recovery_attempt, context.available_services),
+    with :ok <- validate_recovery_state(recovery_attempt),
          {:ok, transaction_system_layout} <-
            build_transaction_system_layout(recovery_attempt, context),
          system_transaction <-
@@ -80,6 +80,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     {:ok,
      %{
        id: TransactionSystemLayout.random_id(),
+       epoch: recovery_attempt.epoch,
        director: self(),
        sequencer: recovery_attempt.sequencer,
        rate_keeper: nil,
@@ -133,7 +134,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
       service_descriptor = %{
         kind: kind,
-        last_seen: nil,
         status: {:up, pid}
       }
 
@@ -149,18 +149,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           cluster :: module()
         ) :: Bedrock.transaction()
   defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
-    updated_config =
-      cluster_config
-      |> Map.put(:epoch, epoch)
-      |> Map.put(:transaction_system_layout, transaction_system_layout)
-
-    encoded_config = Persistence.encode_for_storage(updated_config, cluster)
+    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
 
     encoded_layout =
       Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
 
     monolithic_keys = build_monolithic_keys(epoch, encoded_config, encoded_layout)
-    decomposed_keys = build_decomposed_keys(epoch, updated_config, cluster)
+
+    decomposed_keys =
+      build_decomposed_keys(epoch, cluster_config, transaction_system_layout, cluster)
 
     all_keys = Map.merge(monolithic_keys, decomposed_keys)
 
@@ -178,12 +175,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     }
   end
 
-  @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), module()) :: %{
-          Bedrock.key() => binary()
-        }
-  defp build_decomposed_keys(epoch, cluster_config, cluster) do
-    transaction_system_layout = Map.get(cluster_config, :transaction_system_layout)
-
+  @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), TransactionSystemLayout.t(), module()) ::
+          %{
+            Bedrock.key() => binary()
+          }
+  defp build_decomposed_keys(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_sequencer = encode_component_for_storage(transaction_system_layout.sequencer, cluster)
     encoded_proxies = encode_components_for_storage(transaction_system_layout.proxies, cluster)
 
@@ -286,16 +282,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Validate that recovery state is ready for system transaction
-  @spec validate_recovery_state(
-          RecoveryAttempt.t(),
-          available_services :: %{Worker.id() => ServiceDescriptor.t()}
-        ) ::
+  @spec validate_recovery_state(RecoveryAttempt.t()) ::
           :ok | {:error, {:invalid_recovery_state, atom() | {atom(), [binary()]}}}
-  defp validate_recovery_state(recovery_attempt, available_services) do
+  defp validate_recovery_state(recovery_attempt) do
     with :ok <- validate_sequencer(recovery_attempt.sequencer),
          :ok <- validate_commit_proxies(recovery_attempt.proxies),
          :ok <- validate_resolvers(recovery_attempt.resolvers),
-         :ok <- validate_logs(recovery_attempt.logs, available_services) do
+         :ok <- validate_logs(recovery_attempt.logs, recovery_attempt.service_pids) do
       :ok
     else
       {:error, reason} -> {:error, {:invalid_recovery_state, reason}}
@@ -342,32 +335,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => ServiceDescriptor.t()}) ::
+  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => pid()}) ::
           :ok | {:error, {:missing_log_services, [binary()]}}
-  defp validate_logs(logs, available_services) when is_map(logs) do
+  defp validate_logs(logs, service_pids) when is_map(logs) do
     log_ids = Map.keys(logs)
 
-    trace_recovery_log_validation_started(log_ids, available_services)
+    trace_recovery_log_validation_started(log_ids, service_pids)
 
-    # Log the status of each log service
-    log_ids
-    |> Enum.each(fn log_id ->
-      case Map.get(available_services, log_id) do
-        %{kind: :log, status: _status} = service ->
-          trace_recovery_log_service_status(log_id, :found, service)
-
-        other ->
-          trace_recovery_log_service_status(log_id, :missing, other)
-      end
-    end)
-
-    # Check that all log IDs have corresponding services
+    # Check that all log IDs have corresponding PIDs in service_pids
     missing_services =
       log_ids
       |> Enum.reject(fn log_id ->
-        case Map.get(available_services, log_id) do
-          %{kind: :log, status: {:up, _pid}} -> true
-          _ -> false
+        case Map.get(service_pids, log_id) do
+          pid when is_pid(pid) ->
+            trace_recovery_log_service_status(log_id, :found, %{status: {:up, pid}})
+            true
+
+          _ ->
+            trace_recovery_log_service_status(log_id, :missing, nil)
+            false
         end
       end)
 

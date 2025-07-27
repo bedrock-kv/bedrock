@@ -7,10 +7,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   """
 
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @type command ::
           start_epoch_command()
           | update_config_command()
+          | update_transaction_system_layout_command()
 
   @type start_epoch_command ::
           {:start_epoch,
@@ -24,6 +26,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
           {:update_config,
            %{
              config: Config.t()
+           }}
+
+  @type update_transaction_system_layout_command ::
+          {:update_transaction_system_layout,
+           %{
+             transaction_system_layout: TransactionSystemLayout.t()
            }}
 
   @doc """
@@ -49,5 +57,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
     do: {
       :update_config,
       %{config: config}
+    }
+
+  @doc """
+  Create a command to update transaction system layout via consensus.
+  """
+  @spec update_transaction_system_layout(TransactionSystemLayout.t()) ::
+          update_transaction_system_layout_command()
+  def update_transaction_system_layout(transaction_system_layout),
+    do: {
+      :update_transaction_system_layout,
+      %{transaction_system_layout: transaction_system_layout}
     }
 end

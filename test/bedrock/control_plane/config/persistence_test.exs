@@ -136,7 +136,6 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
             },
             "storage-1" => %{
               kind: :storage,
-              last_seen: nil,
               status: :down
             }
           }

@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   """
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
@@ -40,4 +41,27 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :not_leader}
   def update_config(coordinator, config, timeout \\ 5_000),
     do: coordinator |> call({:update_config, config}, timeout)
+
+  @spec fetch_transaction_system_layout(
+          coordinator_ref :: ref(),
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:ok, transaction_system_layout :: TransactionSystemLayout.t()}
+          | {:error, :unavailable | :timeout}
+  def fetch_transaction_system_layout(coordinator, timeout \\ 5_000),
+    do: coordinator |> call(:fetch_transaction_system_layout, timeout)
+
+  @spec update_transaction_system_layout(
+          coordinator_ref :: ref(),
+          transaction_system_layout :: TransactionSystemLayout.t(),
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:ok, txn_id :: term()}
+          | {:error, :unavailable}
+          | {:error, :failed}
+          | {:error, :not_leader}
+  def update_transaction_system_layout(coordinator, transaction_system_layout, timeout \\ 5_000),
+    do:
+      coordinator
+      |> call({:update_transaction_system_layout, transaction_system_layout}, timeout)
 end

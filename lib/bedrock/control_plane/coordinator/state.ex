@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Raft
 
   @type t :: %__MODULE__{
@@ -14,6 +15,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()}
         }
   defstruct cluster: nil,
@@ -26,6 +28,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             supervisor_otp_name: nil,
             last_durable_txn_id: nil,
             config: nil,
+            transaction_system_layout: nil,
             waiting_list: %{}
 
   defmodule Changes do
@@ -57,5 +60,10 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
     def put_last_durable_txn_id(t, last_durable_txn_id),
       do: %{t | last_durable_txn_id: last_durable_txn_id}
+
+    @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
+            State.t()
+    def put_transaction_system_layout(t, transaction_system_layout),
+      do: %{t | transaction_system_layout: transaction_system_layout}
   end
 end

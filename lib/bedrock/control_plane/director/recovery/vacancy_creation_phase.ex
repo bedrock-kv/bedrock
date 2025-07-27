@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   @moduledoc """
-  Handles the :create_vacancies phase of recovery.
+  Creates vacancy placeholders for logs and storage teams to meet desired replication levels.
 
-  This phase is responsible for creating vacancies for logs and storage teams
-  to ensure the desired replication levels are met.
+  Analyzes current log and storage configurations against desired counts and
+  replication factors. Creates vacancy entries for missing services that need
+  to be recruited by later phases.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Vacancies are placeholder entries that mark where new services should be
+  assigned. This separation allows recruitment phases to see all available
+  services before making optimal placement decisions.
+
+  For logs, creates vacancies when the current count is below the desired
+  number. For storage teams, creates vacancies when teams have insufficient
+  replicas to meet the replication factor.
+
+  Always succeeds since it only modifies in-memory structures. Transitions to
+  :recruit_logs_to_fill_vacancies to begin service assignment.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -16,13 +26,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   alias Bedrock.DataPlane.Storage
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
-
-  @doc """
-  Execute the vacancy creation phase of recovery.
-
-  Creates vacancies for both logs and storage teams based on the desired
-  configuration parameters.
-  """
 
   @impl true
   def execute(%{state: :create_vacancies} = recovery_attempt, context) do
@@ -45,14 +48,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
     end
   end
 
-  @doc """
-  Creates vacancies for the specified logs to ensure the desired number of log instances.
-
-  This function takes a list of logs and a desired number of logs, generating
-  the necessary "vacancy" entries to reach the desired count for each distinct
-  set of log tags. Each vacancy is represented as a `LogDescriptor` with the
-  placeholder data.
-  """
   @spec create_vacancies_for_logs(%{Log.id() => LogDescriptor.t()}, pos_integer()) ::
           {:ok, %{Log.id() => LogDescriptor.t()}, non_neg_integer()}
   def create_vacancies_for_logs(logs, desired_logs) do
@@ -76,14 +71,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   @type expanded_tag_set_roster ::
           %{[Bedrock.range_tag()] => [Storage.id() | StorageTeamDescriptor.vacancy()]}
 
-  @doc """
-  Creates vacancies for the given storage teams to achieve the desired replication.
-
-  This function calculates the necessary vacancies needed to reach the desired
-  replication factor for storage teams with specific tags. If no vacancies are
-  needed (i.e., if the current storage teams already meet the desired replication),
-  the original storage teams list is returned.
-  """
   @spec create_vacancies_for_storage_teams(
           [StorageTeamDescriptor.t()],
           pos_integer()

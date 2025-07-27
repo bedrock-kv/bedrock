@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   @moduledoc """
-  Handles the :determine_durable_version phase of recovery.
+  Determines the highest durable version across storage teams and identifies degraded teams.
 
-  This phase is responsible for determining the highest durable version
-  across all storage teams and identifying which teams are healthy vs degraded.
+  Queries all storage teams to find the highest version that is durably committed
+  across the required replication factor. Storage teams that cannot meet the
+  durable version are marked as degraded and will need data repair.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  The durable version represents the recovery baseline - all transactions at or
+  below this version are guaranteed to be persistent. Transactions above this
+  version may need to be replayed from logs.
+
+  Degraded teams are identified early so later phases can prioritize their repair
+  during data distribution. Teams missing too many replicas cannot contribute to
+  the durable version calculation.
+
+  Transitions to :create_vacancies with the established durable version and list
+  of teams requiring repair.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -15,12 +25,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the durable version determination phase of recovery.
-
-  Analyzes storage team health and determines the highest version that
-  can be considered durably committed across the cluster.
-  """
   @impl true
   def execute(%{state: :determine_durable_version} = recovery_attempt, context) do
     determine_durable_version(
@@ -43,36 +47,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
     end
   end
 
-  @doc """
-  Determines the latest durable version for a given set of storage teams.
-
-  For each storage team, the function checks if a quorum of storage nodes
-  agree on a version that should be considered the latest durable version.
-  If any storage team does not have enough supporting nodes to reach a
-  quorum, it is classified as failed.
-
-  ## Parameters
-
-    - `teams`: A list of `StorageTeamDescriptor` structs, each representing a
-      storage team whose durable version needs to be determined.
-
-    - `info_by_id`: A map where each storage identifier is mapped to its
-      `durable_version` and `oldest_version` information.
-
-    - `quorum`: The minimum number of nodes that must agree on a durable
-      version for consensus.
-
-  ## Returns
-
-    - `{:ok, durable_version, degraded_teams}`: On successful determination of
-      the durable version, where `durable_version` is the latest version
-      agreed upon, and `degraded_teams` lists teams not reaching the full
-      healthy quorum.
-
-    - `{:error, {:insufficient_replication, failed_tags}}`: If any storage team
-      lacks sufficient storage servers to meet the quorum requirements. We
-      return the full set of failed tags in this case.
-  """
   @spec determine_durable_version(
           teams :: [StorageTeamDescriptor.t()],
           info_by_id :: %{Storage.id() => Storage.recovery_info()},
@@ -108,14 +82,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   def smallest_version(nil, b), do: b
   def smallest_version(a, b), do: min(a, b)
 
-  @doc """
-  Determine the most recent durable version available among a list of storage
-  servers, based on the provided quorum. It's also important that we discard
-  any storage servers from consideration that do not have a full-copy (back to
-  the initial transaction) of the data. We also use the quorum to determine
-  whether or not the team is healthy or degraded.
-
-  """
   @spec determine_durable_version_and_status_for_storage_team(
           team :: StorageTeamDescriptor.t(),
           info_by_id :: %{

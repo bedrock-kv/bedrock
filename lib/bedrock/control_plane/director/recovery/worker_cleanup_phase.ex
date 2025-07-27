@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   @moduledoc """
-  Handles the :cleanup_obsolete_workers phase of recovery.
+  Cleans up workers that are no longer part of the running transaction system.
 
-  This phase is responsible for cleaning up workers that are no longer
-  part of the running transaction system after a successful recovery.
+  Identifies log and storage workers that were available during recovery but
+  not selected for the final transaction system layout. These obsolete workers
+  are terminated to free resources and avoid confusion.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Worker cleanup only removes workers that are definitively not needed. Workers
+  that might be useful for future recovery attempts or cluster expansion are
+  preserved.
+
+  This cleanup step ensures the cluster runs with only the workers that are
+  actually part of the current configuration, making monitoring and debugging
+  easier.
+
+  Always succeeds since worker cleanup failures do not affect cluster operation.
+  Transitions to :completed to mark recovery as finished.
   """
 
   alias Bedrock.Service.Foreman
@@ -43,10 +53,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     required_worker_ids = MapSet.new(Map.keys(recovery_attempt.service_pids))
     tracked_worker_ids = MapSet.new(Map.keys(context.available_services))
 
-    # Get all nodes with storage capability (foreman runs on storage nodes)
     available_nodes = get_nodes_with_capability(context, :storage)
 
-    # Query each foreman for all workers and find untracked ones
     available_nodes
     |> Enum.flat_map(fn node ->
       foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}

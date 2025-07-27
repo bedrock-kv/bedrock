@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   @moduledoc """
-  Handles the :define_commit_proxies phase of recovery.
+  Starts commit proxy components that batch transactions and coordinate commits.
 
-  This phase is responsible for starting commit proxy components
-  which batch transactions and coordinate commits.
+  Commit proxies receive transactions from gateways, batch them for efficiency,
+  and coordinate the commit process with sequencer, resolvers, and logs. Multiple
+  proxies run concurrently to provide horizontal scalability.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Starts the desired number of commit proxy processes distributed across
+  available nodes. Each proxy is configured with the sequencer and resolver
+  information needed for transaction processing.
+
+  Can stall if insufficient nodes are available or if proxy startup fails.
+  At least one commit proxy must be operational for the cluster to accept
+  transactions.
+
+  Transitions to :define_resolvers to continue starting transaction system
+  components.
   """
 
   alias Bedrock.Cluster
@@ -15,12 +25,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   @behaviour RecoveryPhase
 
-  @doc """
-  Execute the commit proxy definition phase of recovery.
-
-  Starts the desired number of commit proxy components across
-  available nodes.
-  """
   @impl true
   def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt, context) do
     sup_otp_name = recovery_attempt.cluster.otp_name(:sup)

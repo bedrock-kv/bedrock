@@ -1,12 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   @moduledoc """
-  Handles the :determine_old_logs_to_copy phase of recovery.
+  Identifies logs from the previous layout that contain data requiring preservation.
 
-  This phase is responsible for determining which logs from the previous
-  transaction system layout should be copied and what version vector
-  should be used for recovery.
+  Runs when recovering from an existing cluster. Examines the previous transaction
+  system layout to determine which logs contain committed transactions that must
+  be copied to the new layout.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Establishes the version vector representing the cluster's committed state at
+  recovery time. This version is used by storage teams to determine authoritative
+  data and provides the baseline for new transaction processing.
+
+  Identifies logs needing data migration based on content and layout changes.
+  Logs with committed transactions must be preserved to maintain durability
+  guarantees across recovery.
+
+  Transitions to :determine_durable_version with a list of logs requiring data
+  migration and the current cluster version vector.
   """
 
   alias Bedrock.DataPlane.Log
@@ -19,12 +28,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the log discovery phase of recovery.
-
-  Determines which old logs need to be copied based on the previous layout
-  and available log recovery information.
-  """
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     determine_old_logs_to_copy(
@@ -46,22 +49,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     end
   end
 
-  @doc """
-  Determines the old logs that need to be copied to recover a cluster to a
-  consistent state.
-
-  This function takes a list of logs described by `LogDescriptor`s, a map of
-  recovery information indexed by log ID, and a quorum. We take a shortcut
-  if the quorum is 1, as we can just copy the one existing log and use it's
-  version vector.
-
-  Otherwise, we generate all possible combinations of logs that can satisfy the
-  quorum, and then rank them by the difference between the newest and oldest
-  log's version vectors. We then return the log IDs of the combination with the
-  smallest difference, as well as the version vector. We calculate the version
-  vector by taking the oldest version from the oldest log and the newest version
-  from the newest log in the set.
-  """
   @spec determine_old_logs_to_copy(
           old_logs :: %{Log.id() => LogDescriptor.t()},
           %{Log.id() => Log.recovery_info()},

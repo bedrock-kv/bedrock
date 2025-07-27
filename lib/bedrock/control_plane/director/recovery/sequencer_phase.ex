@@ -1,11 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   @moduledoc """
-  Handles the :define_sequencer phase of recovery.
+  Starts the sequencer component that assigns global version numbers to transactions.
 
-  This phase is responsible for starting the sequencer component
-  which assigns global version numbers to transactions.
+  The sequencer is a critical component that provides strict ordering for all
+  transactions in the cluster. Only one sequencer runs at a time to ensure
+  consistent version assignment across all transaction processing.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Selects a node and starts the sequencer process with the current durable
+  version as the starting point. The sequencer will assign version numbers
+  incrementally from this baseline for new transactions.
+
+  Can stall if no suitable nodes are available or if the sequencer fails to
+  start. The sequencer must be operational before commit proxies can process
+  transactions.
+
+  Transitions to :define_commit_proxies once the sequencer is running and ready.
   """
 
   alias Bedrock.DataPlane.Sequencer

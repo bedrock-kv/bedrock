@@ -6,16 +6,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
   interfaces and access to necessary context data.
   """
 
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.NodeTracking
 
   @type context :: %{
           node_tracking: NodeTracking.t(),
-          lock_token: binary()
-          # Future: Add more context fields as needed
-          # cluster: module(),
-          # config: Config.t(),
-          # etc.
+          lock_token: binary(),
+          cluster_config: Config.t()
         }
 
   @doc """

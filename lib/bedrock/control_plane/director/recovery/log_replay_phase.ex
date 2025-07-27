@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   @moduledoc """
-  Handles the :replay_old_logs phase of recovery.
+  Replays transactions from old logs into the new log configuration.
 
-  This phase is responsible for replaying transactions from old logs
-  into the new log configuration to ensure data consistency.
+  Copies committed transactions from logs identified in the log discovery phase
+  to the newly recruited logs. This ensures data consistency when the log layout
+  changes between recovery attempts.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Only replays transactions that were committed in the previous configuration.
+  Uncommitted transactions are discarded since they were never guaranteed to
+  be durable.
+
+  The replay process maintains transaction ordering and ensures all committed
+  data remains accessible in the new layout. Logs are replayed concurrently
+  to minimize recovery time.
+
+  Can stall if source logs are unavailable or if the replay process fails.
+  Transitions to :repair_data_distribution once all required data is copied.
   """
 
   alias Bedrock.DataPlane.Log
@@ -14,12 +24,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the log replay phase of recovery.
-
-  Replays transactions from old logs into new logs based on the
-  determined version vector and log configuration.
-  """
   @impl true
   def execute(%{state: :replay_old_logs} = recovery_attempt, _context) do
     replay_old_logs_into_new_logs(
@@ -40,12 +44,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     end
   end
 
-  @doc """
-  Replays a selected set of transactions from the old log servers into the new
-  ones. We use the provided `version_vector` and `pid_for_id` function to find
-  the pid for each log. Logs are processed in parallel to decrease the recovery
-  time.
-  """
   @spec replay_old_logs_into_new_logs(
           old_log_ids :: [Log.id()],
           new_log_ids :: [Log.id()],

@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   @moduledoc """
-  Handles the :define_resolvers phase of recovery.
+  Starts resolver components that implement MVCC conflict detection.
 
-  This phase is responsible for starting resolver components
-  which implement MVCC conflict detection.
+  Resolvers detect conflicts between concurrent transactions by maintaining
+  read and write tracking for each key range. Each resolver is responsible
+  for a specific key range and coordinates with storage teams in that range.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Creates resolver processes based on the resolver descriptors generated
+  during data distribution repair. Each resolver is assigned a key range
+  and configured with the appropriate storage teams.
+
+  Can stall if resolver startup fails or if insufficient nodes are available.
+  Resolvers are essential for maintaining transaction isolation and consistency
+  guarantees.
+
+  Transitions to :final_checks once all resolvers are operational and ready
+  to handle transaction conflict detection.
   """
 
   alias Bedrock.DataPlane.Resolver
@@ -18,12 +28,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   @behaviour RecoveryPhase
 
-  @doc """
-  Execute the resolver definition phase of recovery.
-
-  Starts resolver components for conflict detection across
-  the key space.
-  """
   @impl true
   def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, context) do
     sup_otp_name = recovery_attempt.cluster.otp_name(:sup)

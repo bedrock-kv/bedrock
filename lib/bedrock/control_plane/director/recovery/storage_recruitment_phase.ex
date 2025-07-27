@@ -1,11 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   @moduledoc """
-  Handles the :recruit_storage_to_fill_vacancies phase of recovery.
+  Fills storage team vacancies with available storage workers.
 
-  This phase is responsible for filling storage team vacancies with
-  available storage workers.
+  Identifies unassigned storage workers and assigns them to vacant positions
+  in storage teams first. If insufficient existing workers are available,
+  creates new storage workers on nodes with storage capability.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Storage workers are distributed across nodes to maximize fault tolerance
+  within each team. The phase prefers existing workers before creating new
+  ones to minimize resource usage.
+
+  Can stall if insufficient nodes are available for required storage workers
+  or if worker creation fails. Teams must have adequate replicas to participate
+  in transaction processing.
+
+  Transitions to :replay_old_logs once all storage teams have sufficient membership.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -19,12 +28,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the storage recruitment phase of recovery.
-
-  Fills storage team vacancies with available storage workers.
-  """
-
   @impl true
   def execute(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt, context) do
     assigned_storage_ids =
@@ -34,7 +37,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     all_storage_ids =
       recovery_attempt.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
 
-    # Get nodes with storage capability from node tracking
     available_storage_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :storage)
 
     fill_storage_team_vacancies(
@@ -48,7 +50,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
         recovery_attempt |> Map.put(:state, {:stalled, reason})
 
       {:ok, storage_teams, new_worker_ids} ->
-        # Create the new workers if any are needed
         case create_new_storage_workers(
                new_worker_ids,
                available_storage_nodes,

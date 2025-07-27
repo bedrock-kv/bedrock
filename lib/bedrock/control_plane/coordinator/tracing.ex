@@ -12,6 +12,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :started],
         [:bedrock, :control_plane, :coordinator, :election_completed],
         [:bedrock, :control_plane, :coordinator, :director_changed],
+        [:bedrock, :control_plane, :coordinator, :director_launch],
         [:bedrock, :control_plane, :coordinator, :consensus_reached]
       ],
       &__MODULE__.handler/4,
@@ -48,6 +49,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
 
   def trace(:director_changed, _, %{director: director}),
     do: info("Director changed to #{inspect(director)}")
+
+  def trace(:director_launch, _, %{epoch: epoch, config_summary: nil}),
+    do: info("Starting director for epoch #{epoch} with NO CONFIG")
+
+  def trace(:director_launch, _, %{epoch: epoch, config_summary: summary}),
+    do:
+      info(
+        "Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count}, storage_teams: #{summary.storage_teams_count})"
+      )
 
   def trace(:consensus_reached, _, %{transaction_id: tx_id}),
     do: info("Consensus reached at #{inspect(tx_id)}")

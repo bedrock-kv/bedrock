@@ -1,5 +1,108 @@
 defmodule Bedrock.ControlPlane.Director.Recovery do
-  @moduledoc false
+  @moduledoc """
+  Bedrock's distributed system recovery orchestrator.
+
+  This module implements the core recovery process that rebuilds the transaction system
+  after failures, following a fast-recovery approach inspired by FoundationDB combined
+  with Erlang/OTP's "let it crash" philosophy.
+
+  ## Recovery Philosophy
+
+  Bedrock combines two proven approaches to create a robust, fast-recovering system:
+
+  ### "Let It Crash" (Erlang/OTP)
+  - **Fast Failure Detection**: Use `Process.monitor/1` rather than complex health checking
+  - **Immediate Failure Response**: Any critical component failure triggers immediate director shutdown
+  - **Supervision Tree Restart**: Let Erlang's supervision trees handle automatic restart
+  - **Fail-Fast Error Handling**: Prefer immediate failure over complex error recovery
+
+  ### Fast Recovery Over Complex Error Handling (FoundationDB)
+  - **Component Failure Triggers Full Recovery**: Any transaction system component failure causes complete recovery
+  - **Process Suicide**: Processes terminate themselves when they detect newer generations
+  - **Recovery Count Mechanism**: Each recovery increments an epoch counter for generation management
+  - **Simple Failure Detection**: Use heartbeats and process monitoring, not complex availability checking
+
+  ## When Recovery Triggers
+
+  ### Critical Components (Recovery Triggers)
+  Recovery is triggered when any of these components fail:
+  - **Coordinator**: Raft consensus failure or network partition
+  - **Director**: Recovery coordinator failure
+  - **Sequencer**: Version assignment failure
+  - **Commit Proxies**: Transaction batching failure
+  - **Resolvers**: Conflict detection failure
+  - **Transaction Logs**: Durability system failure
+
+  ### Non-Critical Components (No Recovery)
+  These failures do NOT trigger recovery:
+  - **Storage Servers**: Data distributor handles storage failures
+  - **Gateways**: Client interface failures are handled locally
+  - **Rate Keeper**: Independent component with separate lifecycle
+
+  ## Recovery State Machine
+
+  The recovery process follows a linear state machine through these phases:
+
+  1. `:start` → `StartPhase` - Initialize recovery attempt with timestamp
+  2. `:lock_available_services` → `LockServicesPhase` - Lock services with current epoch
+  3. Branch point:
+     - `:first_time_initialization` → `InitializationPhase` - Bootstrap new cluster
+     - `:determine_old_logs_to_copy` → `LogDiscoveryPhase` - Find logs to recover
+  4. `:determine_durable_version` → `DurableVersionPhase` - Find highest committed version
+  5. `:create_vacancies` → `VacancyCreationPhase` - Create placeholders for missing services
+  6. `:recruit_logs_to_fill_vacancies` → `LogRecruitmentPhase` - Assign/create log workers
+  7. `:recruit_storage_to_fill_vacancies` → `StorageRecruitmentPhase` - Assign/create storage workers
+  8. `:replay_old_logs` → `LogReplayPhase` - Replay transactions from old logs
+  9. `:repair_data_distribution` → `DataDistributionPhase` - Fix data distribution
+  10. `:define_sequencer` → `SequencerPhase` - Start sequencer component
+  11. `:define_commit_proxies` → `CommitProxyPhase` - Start commit proxies
+  12. `:define_resolvers` → `ResolverPhase` - Start resolver components
+  13. `:final_checks` → `ValidationPhase` - Final validation before persistence
+  14. `:persist_system_state` → `PersistencePhase` - System transaction test and persist
+  15. `:monitor_components` → `MonitoringPhase` - Set up component monitoring
+  16. `:cleanup_obsolete_workers` → `WorkerCleanupPhase` - Clean up unused workers
+  17. `:completed` - Recovery complete
+
+  Any phase can transition to `{:stalled, reason}` which triggers retry logic.
+
+  ## Epoch-Based Split-Brain Prevention
+
+  Durable services use epoch management to prevent split-brain scenarios:
+  - **Service Locking**: Director locks services with new epoch during recovery
+  - **Old Epoch Services**: Services with older epochs stop participating
+  - **New Epoch Services**: Only services locked with current epoch participate
+  - **Fail-Safe**: Services refuse commands from directors with older epochs
+
+  ## Error Handling Patterns
+
+  - **Fail-Fast Implementation**: Exit immediately on component failure rather than complex recovery
+  - **Epoch-Based Generation Management**: Each recovery increments epoch, components self-terminate on newer epochs
+  - **Process Monitoring**: Use `Process.monitor/1` for component failure detection
+  - **Immediate Director Exit**: Any transaction component failure triggers director termination
+
+  ## Performance Characteristics
+
+  - **Cold Start**: 5-15 seconds (depending on cluster size)
+  - **Warm Restart**: 1-5 seconds (with persistent configuration)
+  - **Component Failure**: Sub-second detection, 1-3 second restart
+  - **Node Count**: Recovery time increases logarithmically with cluster size
+
+  ## Implementation Guidelines
+
+  1. **Always use `Process.monitor/1` for component monitoring**
+  2. **Exit immediately on component failure - don't attempt recovery**
+  3. **Use epoch counters for generation management**
+  4. **Implement fail-fast error handling**
+  5. **Test recovery paths extensively**
+  6. **Accept recovery restart on node rejoin - don't prevent it**
+  7. **Ensure durable services properly handle epoch transitions**
+
+  ## See Also
+
+  - `Bedrock.ControlPlane.Director.Recovery.RecoveryPhase` - Behavior for recovery phases
+  - Individual phase modules in `Bedrock.ControlPlane.Director.Recovery.*Phase`
+  - [Recovery Guide](https://github.com/your-org/bedrock/blob/main/lib/bedrock/control_plane/director/recovery.ex) - Comprehensive recovery documentation
+  """
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
@@ -92,7 +195,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
         t
         |> Map.put(:state, :running)
-        |> Map.put(:config, completed.cluster_config)
+        |> Map.update!(:config, fn config ->
+          config
+          |> Map.delete(:recovery_attempt)
+          |> Map.put(:epoch, completed.epoch)
+          |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
+        end)
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)

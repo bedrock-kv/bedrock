@@ -1,11 +1,22 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   @moduledoc """
-  Handles the :monitor_components phase of recovery.
+  Sets up monitoring of all transaction system components and marks recovery as complete.
 
-  This phase is responsible for setting up monitoring of all
-  transaction system components and marking recovery as complete.
+  Establishes process monitoring for sequencer, commit proxies, resolvers, logs,
+  and storage servers. Any failure of these critical components will trigger
+  immediate director shutdown and recovery restart.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  This monitoring implements Bedrock's fail-fast philosophy - rather than
+  attempting complex error recovery, component failures cause the director
+  to exit and let the coordinator restart recovery with a new epoch.
+
+  The monitoring setup represents the final step before the cluster becomes
+  operational. Once monitoring is active, the director shifts from recovery
+  mode to operational mode.
+
+  Always succeeds since monitoring setup is local to the director process.
+  Transitions to :cleanup_obsolete_workers to remove unused services before
+  completing recovery.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -14,18 +25,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the monitoring phase of recovery.
-
-  Sets up process monitoring for all transaction system components
-  and marks the recovery as completed.
-  """
-
   @impl true
   def execute(%{state: :monitor_components} = recovery_attempt, _context) do
     trace_recovery_monitoring_components()
 
-    # Monitor sequencer
     recovery_attempt
     |> Map.get(:sequencer)
     |> case do
@@ -37,7 +40,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
         Logger.debug("Director monitoring sequencer: #{inspect(sequencer_pid)}")
     end
 
-    # Monitor commit proxies
     recovery_attempt
     |> Map.get(:proxies, [])
     |> Enum.each(fn proxy ->
@@ -47,7 +49,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
       end
     end)
 
-    # Monitor resolvers
     recovery_attempt
     |> Map.get(:resolvers, [])
     |> Enum.each(fn resolver ->
@@ -57,7 +58,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
       end
     end)
 
-    # Monitor logs (get PIDs from services)
     log_pids =
       recovery_attempt
       |> Map.get(:services, %{})

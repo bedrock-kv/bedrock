@@ -1,11 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   @moduledoc """
-  Handles the :first_time_initialization phase of recovery.
+  Creates the initial transaction system layout for a new cluster.
 
-  This phase is responsible for setting up a brand new cluster with empty logs
-  and storage teams by creating placeholders based on desired configuration.
+  Runs only when no previous cluster state exists. Creates log descriptors with
+  evenly distributed key ranges and storage teams with the configured replication
+  factor. Uses vacancy placeholders instead of assigning specific services immediately.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  The keyspace is divided evenly among the desired number of logs. Each log covers
+  a contiguous key range from empty key to \\xff\\xff. Storage teams are created
+  empty and filled by later recruitment phases.
+
+  Creating vacancies rather than immediate service assignment allows later phases
+  to optimize placement across available nodes and handle assignment failures
+  independently.
+
+  Always succeeds since it only creates in-memory structures. Transitions to
+  :create_vacancies to begin service assignment.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -17,12 +27,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the first-time initialization phase of recovery.
-
-  Creates initial log and storage team configurations for a new cluster
-  and transitions to log vacancy recruitment.
-  """
   @impl true
   def execute(%RecoveryAttempt{state: :first_time_initialization} = recovery_attempt, context) do
     trace_recovery_first_time_initialization()

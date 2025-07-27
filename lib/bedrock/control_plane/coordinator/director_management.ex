@@ -9,7 +9,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
       trace_director_changed: 1,
-      trace_director_failure_detected: 2
+      trace_director_failure_detected: 2,
+      trace_director_launch: 2
     ]
 
   require Logger
@@ -17,6 +18,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node do
     t = t |> maybe_put_default_config()
+
+    trace_director_launch(t.epoch, t.config)
 
     {:ok, new_director} = start_director_with_monitoring!(t)
 

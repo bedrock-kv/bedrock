@@ -4,11 +4,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Coordinator.Commands
 
-  import Bedrock.ControlPlane.Coordinator.Telemetry,
-    only: [
-      trace_director_changed: 1
-    ]
-
   import Bedrock.ControlPlane.Coordinator.State.Changes
 
   @type ack_fn :: (term() -> :ok)
@@ -46,22 +41,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     end)
   end
 
-  @spec maybe_put_director_from_config(State.t()) :: State.t()
-  def maybe_put_director_from_config(%State{config: nil} = t), do: t
-
-  def maybe_put_director_from_config(t)
-      when t.director != t.config.transaction_system_layout.director and
-             t.config.transaction_system_layout.director != :unset do
-    %{epoch: epoch, transaction_system_layout: %{director: director}} = t.config
-    trace_director_changed(director)
-
-    t
-    |> put_epoch(epoch)
-    |> put_director(director)
-  end
-
-  def maybe_put_director_from_config(t), do: t
-
   @spec reply_to_waiter(waiting_list(), Raft.transaction_id()) :: waiting_list()
   def reply_to_waiter(waiting_list, txn_id) do
     waiting_list
@@ -80,7 +59,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   def process_command(t, {:update_config, %{config: config}}) do
     t
     |> put_config(config)
-    |> maybe_put_director_from_config()
+    |> put_epoch(config.epoch)
+    |> put_director(config.transaction_system_layout.director)
   end
 
   def process_command(

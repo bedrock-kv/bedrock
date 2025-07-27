@@ -1,12 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   @moduledoc """
-  Handles the :lock_available_services phase of recovery.
+  Locks all available services with the current epoch and determines the recovery path.
 
-  This phase is responsible for locking all available services for the current epoch
-  and determining whether this is a first-time initialization or a recovery from
-  an existing cluster state.
+  This phase prevents split-brain by ensuring only one director can control services.
+  Each service accepts locks from only one director at a time. Services with older
+  epochs terminate when they detect newer epochs.
 
-  See: [Recovery Guide - Service Discovery and Locking](docs/knowledge_base/01-guides/recovery-guide.md#phase-3-service-discovery-and-locking)
+  After locking services, the phase checks for existing cluster state to decide
+  between first-time initialization or recovery from existing data.
+
+  Service locking happens first because it establishes exclusive control before
+  any other recovery work begins. If locking fails, recovery stalls early rather
+  than proceeding with incomplete service availability.
+
+  Transitions to :first_time_initialization if no existing layout is found,
+  or :determine_old_logs_to_copy if existing layout exists.
   """
 
   require Logger
@@ -19,13 +27,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   @behaviour RecoveryPhase
 
-  @doc """
-  Execute the service locking phase of recovery.
-
-  Attempts to lock all available services for the current epoch. If successful,
-  determines the next phase based on whether this is a first-time initialization
-  or recovery from existing state.
-  """
   @impl true
   def execute(%{state: :lock_available_services} = recovery_attempt, context) do
     lock_available_services(context.available_services, recovery_attempt.epoch, 200)
@@ -59,17 +60,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   @spec lock_available_services_timeout() :: Bedrock.timeout_in_ms()
   def lock_available_services_timeout, do: 200
 
-  @doc """
-  Attempts to lock services for recovery. It then sends an invitation to each
-  eligible service in parallel, requesting that they lock for recovery in this
-  new epoch.
-
-  The operation runs within the bounded-time  specified by `timeout_in_ms` and
-  all of the services are contacted asynchronously. If the function encounters a
-  service indicating that a newer epoch exists, it will halt further processing
-  and return that as an error. Otherwise, it will collect the process IDs and
-  lock/status information and return that in a success tuple.
-  """
   @spec lock_available_services(
           %{Worker.id() => ServiceDescriptor.t()},
           Bedrock.quorum(),

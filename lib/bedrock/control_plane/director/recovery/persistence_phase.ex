@@ -1,11 +1,23 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   @moduledoc """
-  Handles the :persist_system_state phase of recovery.
+  Persists cluster configuration and tests the complete transaction system.
 
-  This phase is responsible for persisting cluster state via a system
-  transaction that serves as both persistence and comprehensive system test.
+  Constructs a system transaction containing the full cluster configuration and
+  submits it through the entire data plane pipeline. This simultaneously persists
+  the new configuration and validates that all transaction components work correctly.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  Unlocks services before submitting the transaction since the transaction itself
+  requires unlocked services to process. Commit proxies are configured with the
+  new layout and storage servers are unlocked with the durable version.
+
+  Stores configuration in both monolithic and decomposed formats. Monolithic keys
+  support coordinator handoff while decomposed keys allow targeted component access.
+
+  If the system transaction fails, the director exits immediately rather than
+  retrying. System transaction failure indicates fundamental problems that require
+  coordinator restart with a new epoch.
+
+  Transitions to :monitor_components on success or exits the director on failure.
   """
 
   alias Bedrock.ControlPlane.Config
@@ -26,12 +38,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the persistence phase of recovery.
-
-  Validates recovery state, builds cluster configuration, creates system
-  transaction, and submits it to test the entire transaction pipeline.
-  """
   @impl true
   def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, context) do
     trace_recovery_persisting_system_state()
@@ -59,22 +65,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       %{
         recovery_attempt
         | state: :monitor_components,
-          cluster_config:
-            context.cluster_config
-            |> Map.take([:coordinators, :parameters, :policies])
-            |> Map.put(:epoch, recovery_attempt.epoch)
-            |> Map.put(:transaction_system_layout, transaction_system_layout)
+          transaction_system_layout: transaction_system_layout
       }
     else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
-        # Fail fast - exit director and let coordinator retry
         exit({:recovery_system_test_failed, reason})
     end
   end
 
   defp build_transaction_system_layout(recovery_attempt, context) do
-    # Build service descriptors from both logs and storage services
     services = build_all_service_descriptors(recovery_attempt, context)
 
     {:ok,
@@ -124,7 +124,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_service_descriptors_with_types(service_pids, available_services) do
     service_pids
     |> Enum.map(fn {service_id, pid} ->
-      # Get the correct service type from available services, defaulting to :log for new services
       kind =
         case Map.get(available_services, service_id) do
           %{kind: service_kind} -> service_kind
@@ -168,7 +167,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     {nil, all_keys}
   end
 
-  # Build monolithic keys for backward compatibility and coordinator handoff
   @spec build_monolithic_keys(Bedrock.epoch(), map(), map()) :: %{Bedrock.key() => binary()}
   defp build_monolithic_keys(epoch, encoded_config, encoded_layout) do
     %{
@@ -180,7 +178,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     }
   end
 
-  # Build decomposed keys for targeted component consumption
   @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), module()) :: %{
           Bedrock.key() => binary()
         }
@@ -262,41 +259,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp encode_component_for_storage(nil, _cluster), do: nil
   defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
 
-  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid) do
-    # Handle resolver tuples {start_key, pid}
-    {start_key, pid}
-  end
+  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid),
+    do: {start_key, pid}
 
-  defp encode_component_for_storage(%{resolver: pid} = resolver_map, _cluster) when is_pid(pid) do
-    # Handle resolver maps %{resolver: pid, start_key: key}
-    resolver_map
-  end
+  defp encode_component_for_storage(%{resolver: pid} = resolver_map, _cluster) when is_pid(pid),
+    do: resolver_map
 
-  defp encode_component_for_storage(%{resolver: nil} = resolver_map, _cluster) do
-    # Handle resolver maps with nil resolver
-    resolver_map
-  end
+  defp encode_component_for_storage(%{resolver: nil} = resolver_map, _cluster), do: resolver_map
+  defp encode_component_for_storage(other, _cluster), do: other
 
-  defp encode_component_for_storage(other, _cluster) do
-    # Pass through other formats as-is
-    other
-  end
+  defp encode_components_for_storage(components, cluster) when is_list(components),
+    do: Enum.map(components, &encode_component_for_storage(&1, cluster))
 
-  @spec encode_components_for_storage([pid() | {Bedrock.key(), pid()} | map()], module()) :: [
-          pid() | {Bedrock.key(), pid()} | map()
-        ]
-  defp encode_components_for_storage(components, cluster) when is_list(components) do
-    Enum.map(components, &encode_component_for_storage(&1, cluster))
-  end
-
-  @spec encode_services_for_storage(%{Worker.id() => ServiceDescriptor.t()}, module()) :: %{
-          Worker.id() => ServiceDescriptor.t()
-        }
-  defp encode_services_for_storage(services, _cluster) when is_map(services) do
-    # For decomposed keys, store services as-is for now
-    # The monolithic keys already handle proper encoding
-    services
-  end
+  defp encode_services_for_storage(services, _cluster) when is_map(services), do: services
 
   @spec encode_log_descriptor_for_storage([term()], module()) :: [term()]
   defp encode_log_descriptor_for_storage(log_descriptor, _cluster) do

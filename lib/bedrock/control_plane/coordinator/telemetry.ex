@@ -23,6 +23,26 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     })
   end
 
+  @spec trace_director_launch(epoch :: non_neg_integer(), config :: map() | nil) :: :ok
+  def trace_director_launch(epoch, config) do
+    config_summary =
+      if config do
+        %{
+          epoch: config.epoch,
+          has_transaction_system_layout: not is_nil(config.transaction_system_layout),
+          logs_count: map_size(config.transaction_system_layout.logs || %{}),
+          storage_teams_count: length(config.transaction_system_layout.storage_teams || [])
+        }
+      else
+        nil
+      end
+
+    Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{
+      epoch: epoch,
+      config_summary: config_summary
+    })
+  end
+
   @spec trace_consensus_reached(transaction_id :: binary()) :: :ok
   def trace_consensus_reached(transaction_id) do
     Telemetry.execute([:bedrock, :control_plane, :coordinator, :consensus_reached], %{}, %{

@@ -1,8 +1,8 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
-  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
@@ -69,10 +69,10 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :resolvers,
     :proxies,
     :sequencer,
-    log_recovery_info_by_id: %{},
-    storage_recovery_info_by_id: %{},
-    service_pids: %{},
-    cluster_config: nil
+    :log_recovery_info_by_id,
+    :storage_recovery_info_by_id,
+    :service_pids,
+    :transaction_system_layout
   ]
 
   @type t :: %__MODULE__{
@@ -95,7 +95,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           proxies: [pid()],
           sequencer: pid() | nil,
           service_pids: %{Worker.id() => pid()},
-          cluster_config: Config.t() | nil
+          transaction_system_layout: TransactionSystemLayout.t() | nil
         }
 
   @doc """
@@ -121,7 +121,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       storage_teams: [],
       resolvers: [],
       proxies: [],
-      sequencer: nil
+      sequencer: nil,
+      service_pids: %{},
+      transaction_system_layout: nil
     }
   end
 end

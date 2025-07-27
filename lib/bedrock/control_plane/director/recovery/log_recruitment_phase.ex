@@ -1,11 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   @moduledoc """
-  Handles the :recruit_logs_to_fill_vacancies phase of recovery.
+  Fills log vacancies by assigning existing log workers or creating new ones.
 
-  This phase is responsible for filling log vacancies by assigning existing
-  log workers or creating new ones as needed.
+  Identifies unassigned log workers and assigns them to vacant positions first.
+  If insufficient existing workers are available, creates new log workers on
+  nodes with log capability.
 
-  See: [Recovery Guide](docs/knowledge_base/01-guides/recovery-guide.md#recovery-process)
+  New workers are distributed across available nodes to maximize fault tolerance.
+  The phase prefers to use existing workers before creating new ones to minimize
+  resource usage.
+
+  Can stall if insufficient nodes are available to create required workers or
+  if worker creation fails. Successful completion provides all logs needed for
+  the transaction system layout.
+
+  Transitions to :recruit_storage_to_fill_vacancies to continue service assignment.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -18,13 +27,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  @doc """
-  Execute the log recruitment phase of recovery.
-
-  Fills log vacancies with available workers or creates new workers
-  on available nodes.
-  """
-
   @impl true
   def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
     assigned_log_ids =
@@ -36,7 +38,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
 
-    # Get nodes with log capability from node tracking
     available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
 
     with {:ok, logs, new_worker_ids} <-
@@ -50,7 +51,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
            create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context) do
       trace_recovery_all_log_vacancies_filled()
 
-      # Collect PIDs for all recruited logs (existing + new)
       all_log_pids =
         Map.merge(
           extract_existing_log_pids(logs, context.available_services),
@@ -92,25 +92,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     n_candidates = MapSet.size(candidates_ids)
 
     if n_vacancies <= n_candidates do
-      # We have enough existing workers
       {:ok,
        replace_vacancies_with_log_ids(
          logs,
          Enum.zip(vacancies, candidates_ids) |> Map.new()
        ), []}
     else
-      # We need to create new workers
       needed_workers = n_vacancies - n_candidates
 
       if length(available_nodes) < needed_workers do
         {:error, {:insufficient_nodes, needed_workers, length(available_nodes)}}
       else
-        # Create new worker IDs
         new_worker_ids =
           1..needed_workers
           |> Enum.map(fn _ -> Worker.random_id() end)
 
-        # Use existing candidates plus new worker IDs
         all_worker_ids = Enum.concat(candidates_ids, new_worker_ids)
 
         {:ok,

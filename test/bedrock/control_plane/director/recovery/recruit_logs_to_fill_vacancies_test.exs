@@ -1,8 +1,8 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhaseTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
 
-  alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
+  alias Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
   import RecoveryTestSupport
 
@@ -35,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       capture_log(fn ->
         result =
-          LogRecruitmentPhase.execute(
+          RecruitLogsToFillVacanciesPhase.execute(
             recovery_attempt,
             context
           )
@@ -66,7 +66,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           }
         })
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, context)
+      result = RecruitLogsToFillVacanciesPhase.execute(recovery_attempt, context)
 
       assert result.state == :recruit_storage_to_fill_vacancies
       assert Map.has_key?(result.logs, {:log, 2})
@@ -86,7 +86,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       available_nodes = [:node1, :node2]
 
       {:ok, updated_logs, new_worker_ids} =
-        LogRecruitmentPhase.fill_log_vacancies(
+        RecruitLogsToFillVacanciesPhase.fill_log_vacancies(
           logs,
           assigned_log_ids,
           all_log_ids,
@@ -111,7 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       available_nodes = [:node1, :node2]
 
       {:ok, updated_logs, new_worker_ids} =
-        LogRecruitmentPhase.fill_log_vacancies(
+        RecruitLogsToFillVacanciesPhase.fill_log_vacancies(
           logs,
           assigned_log_ids,
           all_log_ids,
@@ -138,7 +138,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       available_nodes = [:node1]
 
       {:error, {:insufficient_nodes, 2, 1}} =
-        LogRecruitmentPhase.fill_log_vacancies(
+        RecruitLogsToFillVacanciesPhase.fill_log_vacancies(
           logs,
           assigned_log_ids,
           all_log_ids,
@@ -156,7 +156,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         {:vacancy, 4} => %{role: :log}
       }
 
-      vacancies = LogRecruitmentPhase.all_vacancies(logs)
+      vacancies = RecruitLogsToFillVacanciesPhase.all_vacancies(logs)
 
       assert MapSet.size(vacancies) == 3
       assert MapSet.member?(vacancies, {:vacancy, 1})
@@ -171,7 +171,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         {:log, 2} => %{role: :log}
       }
 
-      vacancies = LogRecruitmentPhase.all_vacancies(logs)
+      vacancies = RecruitLogsToFillVacanciesPhase.all_vacancies(logs)
 
       assert MapSet.size(vacancies) == 0
     end
@@ -190,7 +190,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         {:vacancy, 3} => {:log, 200}
       }
 
-      updated_logs = LogRecruitmentPhase.replace_vacancies_with_log_ids(logs, log_id_for_vacancy)
+      updated_logs =
+        RecruitLogsToFillVacanciesPhase.replace_vacancies_with_log_ids(logs, log_id_for_vacancy)
 
       assert Map.has_key?(updated_logs, {:log, 100})
       assert Map.has_key?(updated_logs, {:log, 2})
@@ -207,7 +208,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       log_id_for_vacancy = %{}
 
-      updated_logs = LogRecruitmentPhase.replace_vacancies_with_log_ids(logs, log_id_for_vacancy)
+      updated_logs =
+        RecruitLogsToFillVacanciesPhase.replace_vacancies_with_log_ids(logs, log_id_for_vacancy)
 
       assert Map.has_key?(updated_logs, {:vacancy, 1})
       assert Map.has_key?(updated_logs, {:log, 2})
@@ -234,7 +236,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           }
         })
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, context)
+      result = RecruitLogsToFillVacanciesPhase.execute(recovery_attempt, context)
 
       # Should transition to stalled state when insufficient nodes available
       assert {:stalled, {:insufficient_nodes, 2, _}} = result.state

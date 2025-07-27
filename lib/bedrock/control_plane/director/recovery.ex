@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
      - `:determine_old_logs_to_copy` → `LogDiscoveryPhase` - Find logs to recover
   4. `:determine_durable_version` → `DurableVersionPhase` - Find highest committed version
   5. `:create_vacancies` → `VacancyCreationPhase` - Create placeholders for missing services
-  6. `:recruit_logs_to_fill_vacancies` → `LogRecruitmentPhase` - Assign/create log workers
+  6. `:recruit_logs_to_fill_vacancies` → `RecruitLogsToFillVacanciesPhase` - Assign/create log workers
   7. `:recruit_storage_to_fill_vacancies` → `StorageRecruitmentPhase` - Assign/create storage workers
   8. `:replay_old_logs` → `LogReplayPhase` - Replay transactions from old logs
   9. `:repair_data_distribution` → `DataDistributionPhase` - Fix data distribution
@@ -269,7 +269,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   defp next_phase(:determine_old_logs_to_copy), do: __MODULE__.LogDiscoveryPhase
   defp next_phase(:create_vacancies), do: __MODULE__.VacancyCreationPhase
   defp next_phase(:determine_durable_version), do: __MODULE__.DurableVersionPhase
-  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.LogRecruitmentPhase
+  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.RecruitLogsToFillVacanciesPhase
   defp next_phase(:recruit_storage_to_fill_vacancies), do: __MODULE__.StorageRecruitmentPhase
   defp next_phase(:replay_old_logs), do: __MODULE__.LogReplayPhase
   defp next_phase(:repair_data_distribution), do: __MODULE__.DataDistributionPhase

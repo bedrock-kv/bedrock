@@ -60,7 +60,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
     log_pids =
       recovery_attempt
-      |> Map.get(:services, %{})
+      |> Map.get(:required_services, %{})
       |> Enum.filter(fn {_id, service} -> service.kind == :log end)
       |> Enum.filter(fn {_id, service} -> match?({:up, _}, service.status) end)
       |> Enum.map(fn {_id, service} -> elem(service.status, 1) end)

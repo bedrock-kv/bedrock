@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase do
   @moduledoc """
   Fills log vacancies by assigning existing log workers or creating new ones.
 

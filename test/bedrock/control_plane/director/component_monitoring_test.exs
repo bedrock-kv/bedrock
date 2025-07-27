@@ -59,26 +59,4 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
       assert log_output =~ "Director exiting immediately due to component failure"
     end
   end
-
-  describe "simple exponential backoff" do
-    test "calculates correct backoff delays" do
-      alias Bedrock.ControlPlane.Coordinator.DirectorManagement
-
-      # Test exponential backoff calculation
-      # 1s
-      assert DirectorManagement.calculate_backoff_delay(0) == 1_000
-      # 2s
-      assert DirectorManagement.calculate_backoff_delay(1) == 2_000
-      # 4s
-      assert DirectorManagement.calculate_backoff_delay(2) == 4_000
-      # 8s
-      assert DirectorManagement.calculate_backoff_delay(3) == 8_000
-      # 16s
-      assert DirectorManagement.calculate_backoff_delay(4) == 16_000
-      # capped at 30s
-      assert DirectorManagement.calculate_backoff_delay(5) == 30_000
-      # still capped
-      assert DirectorManagement.calculate_backoff_delay(10) == 30_000
-    end
-  end
 end

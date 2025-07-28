@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     all_obsolete_services = Map.merge(obsolete_services, untracked_workers)
 
     if has_obsolete_services?(all_obsolete_services) do
-      execute_cleanup(all_obsolete_services, recovery_attempt)
+      execute_cleanup(all_obsolete_services, recovery_attempt, context)
     else
       complete_recovery(recovery_attempt)
     end
@@ -55,15 +55,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
 
     available_nodes = get_nodes_with_capability(context, :storage)
 
+    foreman_all_fn = Map.get(context, :foreman_all_fn, &Foreman.all/2)
+    worker_info_fn = Map.get(context, :worker_info_fn, &Worker.info/3)
+
     available_nodes
     |> Enum.flat_map(fn node ->
       foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-      case Foreman.all(foreman_ref, timeout: 5_000) do
+      case foreman_all_fn.(foreman_ref, timeout: 5_000) do
         {:ok, worker_refs} ->
           worker_refs
           |> Enum.map(fn worker_ref ->
-            case Bedrock.Service.Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid],
+            case worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid],
                    timeout_in_ms: 5_000
                  ) do
               {:ok, worker_info} ->
@@ -107,9 +110,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   @spec has_obsolete_services?(map()) :: boolean()
   defp has_obsolete_services?(obsolete_services), do: map_size(obsolete_services) > 0
 
-  @spec execute_cleanup(map(), map()) :: map()
-  defp execute_cleanup(obsolete_services, recovery_attempt) do
-    case cleanup_obsolete_workers(obsolete_services, recovery_attempt.cluster) do
+  @spec execute_cleanup(map(), map(), map()) :: map()
+  defp execute_cleanup(obsolete_services, recovery_attempt, context) do
+    case cleanup_obsolete_workers(obsolete_services, recovery_attempt.cluster, context) do
       {:ok, cleanup_stats} ->
         trace_cleanup_completion(cleanup_stats)
         complete_recovery(recovery_attempt)
@@ -135,12 +138,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
   defp stall_recovery_with_cleanup_failure(recovery_attempt, reason),
     do: Map.put(recovery_attempt, :state, {:stalled, {:worker_cleanup_failed, reason}})
 
-  @spec cleanup_obsolete_workers(map(), module()) :: {:ok, map()} | {:error, term()}
-  defp cleanup_obsolete_workers(obsolete_services, cluster) do
+  @spec cleanup_obsolete_workers(map(), module(), map()) :: {:ok, map()} | {:error, term()}
+  defp cleanup_obsolete_workers(obsolete_services, cluster, context) do
     workers_by_node = group_workers_by_node(obsolete_services)
 
     trace_cleanup_started(obsolete_services, workers_by_node)
-    cleanup_results = execute_node_cleanups(workers_by_node, cluster)
+    cleanup_results = execute_node_cleanups(workers_by_node, cluster, context)
     calculate_cleanup_statistics(obsolete_services, cleanup_results)
   rescue
     error ->
@@ -162,18 +165,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
     trace_recovery_cleanup_started(total_workers, affected_nodes)
   end
 
-  @spec execute_node_cleanups(map(), module()) :: map()
-  defp execute_node_cleanups(workers_by_node, cluster),
-    do: workers_by_node |> Enum.map(&cleanup_workers_on_node(&1, cluster)) |> Map.new()
+  @spec execute_node_cleanups(map(), module(), map()) :: map()
+  defp execute_node_cleanups(workers_by_node, cluster, context),
+    do: workers_by_node |> Enum.map(&cleanup_workers_on_node(&1, cluster, context)) |> Map.new()
 
-  @spec cleanup_workers_on_node({node(), [{String.t(), map()}]}, module()) :: {node(), map()}
-  defp cleanup_workers_on_node({node, workers}, cluster) do
+  @spec cleanup_workers_on_node({node(), [{String.t(), map()}]}, module(), map()) ::
+          {node(), map()}
+  defp cleanup_workers_on_node({node, workers}, cluster, context) do
     worker_ids = extract_worker_ids(workers)
     foreman_ref = build_foreman_ref(cluster, node)
 
+    remove_workers_fn = Map.get(context, :remove_workers_fn, &Foreman.remove_workers/3)
+
     trace_recovery_node_cleanup_started(node, length(worker_ids))
 
-    results = Foreman.remove_workers(foreman_ref, worker_ids, timeout: 30_000)
+    results = remove_workers_fn.(foreman_ref, worker_ids, timeout: 30_000)
     trace_recovery_node_cleanup_completed(node, Map.to_list(results))
     {node, results}
   end

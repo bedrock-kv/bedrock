@@ -29,8 +29,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   Starts the sequencer component with the current epoch and version vector.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :define_sequencer} = recovery_attempt, _context) do
-    starter_fn = get_starter_function(recovery_attempt)
+  def execute(%RecoveryAttempt{state: :define_sequencer} = recovery_attempt, context) do
+    starter_fn = get_starter_function(recovery_attempt, context)
 
     recovery_attempt
     |> build_sequencer_child_spec()
@@ -40,12 +40,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
 
   # Private helper functions
 
-  @spec get_starter_function(RecoveryAttempt.t()) :: (Supervisor.child_spec(), node() ->
-                                                        {:ok, pid()} | {:error, term()})
-  defp get_starter_function(recovery_attempt) do
-    :sup
-    |> recovery_attempt.cluster.otp_name()
-    |> Shared.starter_for()
+  @spec get_starter_function(RecoveryAttempt.t(), map()) :: (Supervisor.child_spec(), node() ->
+                                                               {:ok, pid()} | {:error, term()})
+  defp get_starter_function(recovery_attempt, context) do
+    Map.get(context, :start_supervised_fn, fn child_spec, _node ->
+      starter_fn = recovery_attempt.cluster.otp_name(:sup) |> Shared.starter_for()
+      starter_fn.(child_spec, node())
+    end)
   end
 
   @spec build_sequencer_child_spec(RecoveryAttempt.t()) :: Supervisor.child_spec()

@@ -151,10 +151,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
           {:ok, %{String.t() => map()}} | {:error, term()}
   defp create_new_log_workers([], _available_nodes, _recovery_attempt, _context), do: {:ok, %{}}
 
-  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt, _context) do
+  defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt, context) do
     new_worker_ids
     |> assign_workers_to_nodes(available_nodes)
-    |> Enum.map(&create_worker_on_node(&1, recovery_attempt))
+    |> Enum.map(&create_worker_on_node(&1, recovery_attempt, context))
     |> separate_successes_from_failures()
     |> handle_worker_creation_outcome()
   end
@@ -169,13 +169,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     end)
   end
 
-  @spec create_worker_on_node({String.t(), node()}, map()) ::
+  @spec create_worker_on_node({String.t(), node()}, map(), map()) ::
           {String.t(), map()} | {:error, {String.t(), node(), term()}}
-  defp create_worker_on_node({worker_id, node}, recovery_attempt) do
+  defp create_worker_on_node({worker_id, node}, recovery_attempt, context) do
     foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
 
-    with {:ok, worker_ref} <- Foreman.new_worker(foreman_ref, worker_id, :log, timeout: 10_000),
-         {:ok, worker_info} <- Worker.info({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
+    create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
+    worker_info_fn = Map.get(context, :worker_info_fn, &Worker.info/3)
+
+    with {:ok, worker_ref} <- create_worker_fn.(foreman_ref, worker_id, :log, timeout: 10_000),
+         {:ok, worker_info} <- worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
       {worker_id,
        %{
          kind: :log,

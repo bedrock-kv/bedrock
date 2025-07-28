@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
 
   @impl true
   def execute(%{state: :lock_available_services} = recovery_attempt, context) do
-    lock_available_services(context.available_services, recovery_attempt.epoch, 200)
+    lock_available_services(context.available_services, recovery_attempt.epoch, 200, context)
     |> case do
       {:error, :newer_epoch_exists = reason} ->
         recovery_attempt |> Map.put(:state, {:stalled, reason})
@@ -63,17 +63,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
   @spec lock_available_services(
           %{Worker.id() => ServiceDescriptor.t()},
           Bedrock.quorum(),
-          Bedrock.timeout_in_ms()
+          Bedrock.timeout_in_ms(),
+          map()
         ) ::
           {:ok, locked_ids :: MapSet.t(Worker.id()),
            new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
            new_storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}}
           | {:error, :newer_epoch_exists}
-  def lock_available_services(available_services, epoch, timeout_in_ms) do
+  def lock_available_services(available_services, epoch, timeout_in_ms, context \\ %{}) do
     available_services
     |> Task.async_stream(
       fn {id, service} ->
-        {id, lock_service_for_recovery(service, epoch)}
+        {id, lock_service_for_recovery(service, epoch, context)}
       end,
       timeout: timeout_in_ms,
       on_timeout: :kill_task,
@@ -105,13 +106,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockServicesPhase do
     end
   end
 
-  @spec lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch()) ::
+  @spec lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch(), map()) ::
           {:ok, pid(), map()} | {:error, term()}
-  def lock_service_for_recovery(%{kind: :log, last_seen: name}, epoch),
+  def lock_service_for_recovery(service, epoch, context \\ %{}) do
+    lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
+    lock_fn.(service, epoch)
+  end
+
+  @spec lock_service_impl(ServiceDescriptor.t(), Bedrock.epoch()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  defp lock_service_impl(%{kind: :log, last_seen: name}, epoch),
     do: Log.lock_for_recovery(name, epoch)
 
-  def lock_service_for_recovery(%{kind: :storage, last_seen: name}, epoch),
+  defp lock_service_impl(%{kind: :storage, last_seen: name}, epoch),
     do: Storage.lock_for_recovery(name, epoch)
 
-  def lock_service_for_recovery(_, _), do: {:error, :unavailable}
+  defp lock_service_impl(_, _), do: {:error, :unavailable}
 end

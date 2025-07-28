@@ -56,10 +56,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
            unlock_services(
              recovery_attempt,
              transaction_system_layout,
-             context.lock_token
+             context.lock_token,
+             context
            ),
          {:ok, _version} <-
-           submit_system_transaction(system_transaction, recovery_attempt.proxies) do
+           submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
       trace_recovery_system_state_persisted()
 
       %{
@@ -303,43 +304,59 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec submit_system_transaction(Bedrock.transaction(), [pid()]) ::
+  @spec submit_system_transaction(Bedrock.transaction(), [pid()], map()) ::
           {:ok, Bedrock.version()} | {:error, :no_commit_proxies | :timeout | :unavailable}
-  defp submit_system_transaction(_system_transaction, []), do: {:error, :no_commit_proxies}
+  defp submit_system_transaction(_system_transaction, [], _context),
+    do: {:error, :no_commit_proxies}
 
-  defp submit_system_transaction(system_transaction, proxies) when is_list(proxies) do
+  defp submit_system_transaction(system_transaction, proxies, context) when is_list(proxies) do
+    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/2)
+
     proxies
     |> Enum.random()
-    |> CommitProxy.commit(system_transaction)
+    |> commit_fn.(system_transaction)
   end
 
   # Unlock commit proxies and storage servers before exercising the transaction system
-  @spec unlock_services(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token()) ::
+  @spec unlock_services(
+          RecoveryAttempt.t(),
+          TransactionSystemLayout.t(),
+          Bedrock.lock_token(),
+          map()
+        ) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(
          recovery_attempt,
          transaction_system_layout,
-         lock_token
+         lock_token,
+         context
        )
        when is_binary(lock_token) do
     with :ok <-
-           unlock_commit_proxies(recovery_attempt.proxies, transaction_system_layout, lock_token),
+           unlock_commit_proxies(
+             recovery_attempt.proxies,
+             transaction_system_layout,
+             lock_token,
+             context
+           ),
          :ok <-
-           unlock_storage_servers(recovery_attempt, transaction_system_layout) do
+           unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
       :ok
     else
       {:error, reason} -> {:error, {:unlock_failed, reason}}
     end
   end
 
-  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token()) ::
+  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
-  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token)
+  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context)
        when is_list(proxies) do
+    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/3)
+
     proxies
     |> Task.async_stream(
       fn proxy ->
-        CommitProxy.recover_from(proxy, lock_token, transaction_system_layout)
+        unlock_fn.(proxy, lock_token, transaction_system_layout)
       end,
       ordered: false
     )
@@ -350,10 +367,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t()) ::
+  @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t(), map()) ::
           :ok | {:error, :timeout | :unavailable}
-  defp unlock_storage_servers(recovery_attempt, transaction_system_layout) do
+  defp unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
     durable_version = recovery_attempt.durable_version
+    unlock_fn = Map.get(context, :unlock_storage_fn, &Storage.unlock_after_recovery/3)
 
     transaction_system_layout.storage_teams
     |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
@@ -365,7 +383,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->
         {storage_id,
-         Storage.unlock_after_recovery(
+         unlock_fn.(
            storage_pid,
            durable_version,
            transaction_system_layout

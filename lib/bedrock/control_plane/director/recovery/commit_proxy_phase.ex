@@ -27,8 +27,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
 
   @impl true
   def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt, context) do
-    sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
-    starter_fn = Shared.starter_for(sup_otp_name)
+    start_supervised_fn =
+      Map.get(context, :start_supervised_fn, fn child_spec, node ->
+        sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
+        starter_fn = Shared.starter_for(sup_otp_name)
+        starter_fn.(child_spec, node)
+      end)
 
     define_commit_proxies(
       context.cluster_config.parameters.desired_commit_proxies,
@@ -36,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
       recovery_attempt.epoch,
       self(),
       Node.list(),
-      starter_fn,
+      start_supervised_fn,
       context.lock_token
     )
     |> case do

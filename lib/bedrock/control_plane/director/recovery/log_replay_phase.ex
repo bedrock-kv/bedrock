@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :replay_old_logs} = recovery_attempt, _context) do
+  def execute(%{state: :replay_old_logs} = recovery_attempt, context) do
     replay_old_logs_into_new_logs(
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),
@@ -35,7 +35,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           %{status: {:up, pid}} -> pid
           _ -> :none
         end
-      end
+      end,
+      context
     )
     |> case do
       :ok ->
@@ -53,7 +54,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           old_log_ids :: [Log.id()],
           new_log_ids :: [Log.id()],
           version_vector :: Bedrock.version_vector(),
-          pid_for_id :: (Log.id() -> pid() | :none)
+          pid_for_id :: (Log.id() -> pid() | :none),
+          context :: map()
         ) ::
           :ok
           | {:error,
@@ -63,14 +65,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
         old_log_ids,
         new_log_ids,
         {first_version, last_version},
-        pid_for_id
+        pid_for_id,
+        context \\ %{}
       ) do
+    log_recover_fn = Map.get(context, :log_recover_fn, &Log.recover_from/4)
+
     new_log_ids
     |> pair_with_old_log_ids(old_log_ids)
     |> Task.async_stream(
       fn {new_log_id, old_log_id} ->
         {new_log_id,
-         Log.recover_from(
+         log_recover_fn.(
            pid_for_id.(new_log_id),
            old_log_id && pid_for_id.(old_log_id),
            first_version,

@@ -330,39 +330,281 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
   end
 
-  describe "recovery phase states" do
-    test "validates phase dispatch mechanism works" do
-      # Verify that run_recovery_attempt/2 exists and next_phase/1 works for key states
-      {:module, Recovery} = Code.ensure_loaded(Recovery)
-      function_clauses = Recovery.__info__(:functions)
+  describe "Full recovery run" do
+    test "stalls with insufficient nodes when only one node available" do
+      recovery_attempt = create_first_time_recovery_attempt()
+      context = create_test_context()
 
-      assert {:run_recovery_attempt, 2} in function_clauses
+      {{:stalled, reason}, stalled_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Test that next_phase works for common states
-      key_states = [
-        :start,
-        :lock_available_services,
-        :determine_durable_version,
-        :persist_system_state,
-        :monitor_components
-      ]
-
-      # Verify that run_recovery_attempt works with these states by testing
-      # that it doesn't immediately crash with a FunctionClauseError
-      for state <- key_states do
-        test_attempt = %RecoveryAttempt{state: state, cluster: TestCluster, epoch: 1}
-
-        # This should not raise FunctionClauseError for valid states
-        # (though it may fail for other reasons like missing data)
-        try do
-          Recovery.run_recovery_attempt(test_attempt, %{node_tracking: nil})
-        rescue
-          FunctionClauseError -> flunk("State #{state} is not handled by recovery system")
-        catch
-          # Other errors are fine, we're just testing dispatch works
-          _, _ -> :ok
-        end
-      end
+      assert reason == {:insufficient_nodes, 2, 1}
+      assert stalled_attempt.state == {:stalled, {:insufficient_nodes, 2, 1}}
     end
+
+    test "returns already stalled recovery attempts immediately" do
+      recovery_attempt = %{
+        create_first_time_recovery_attempt()
+        | state: {:stalled, :test_stall_reason}
+      }
+
+      context = create_test_context()
+
+      {{:stalled, reason}, returned_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      assert reason == :test_stall_reason
+      assert returned_attempt.state == {:stalled, :test_stall_reason}
+    end
+
+    test "existing cluster stalls unable to meet log quorum when logs unavailable" do
+      recovery_attempt = create_existing_cluster_recovery_attempt()
+
+      context =
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{"existing_log_1" => %{kind: :log}},
+            storage_teams: [%{storage_ids: ["existing_storage_1"], tag: 0}]
+          }
+        )
+
+      {{:stalled, reason}, _stalled_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      assert reason == :unable_to_meet_log_quorum
+    end
+
+    test "with multiple nodes and log services but no worker creation mocks" do
+      recovery_attempt = create_first_time_recovery_attempt()
+
+      context =
+        create_test_context()
+        |> with_multiple_nodes()
+        |> with_available_log_services()
+
+      {{:stalled, reason}, _stalled_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      # Should fail when trying to create workers since worker creation isn't mocked
+      assert match?({:all_workers_failed, _}, reason)
+    end
+
+    test "with nodes and services but no service locking" do
+      recovery_attempt = create_first_time_recovery_attempt()
+
+      context =
+        create_test_context()
+        |> with_multiple_nodes()
+        |> with_available_log_services()
+        |> with_available_storage_services()
+
+      {{:stalled, reason}, _stalled_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      # Should stall when worker creation fails without mocks
+      assert match?({:all_workers_failed, _}, reason)
+    end
+
+    test "stalls with recovery system failure when persistence phase detects invalid state" do
+      recovery_attempt = create_first_time_recovery_attempt()
+
+      context =
+        create_test_context()
+        |> with_multiple_nodes()
+        |> with_available_log_services()
+        |> with_available_storage_services()
+        |> with_mocked_service_locking()
+        |> with_mocked_worker_creation()
+        |> with_mocked_supervision()
+        |> with_mocked_transactions()
+        |> with_mocked_log_recovery()
+        |> with_mocked_worker_management()
+
+      {{:stalled, reason}, stalled_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
+
+      assert stalled_attempt.state ==
+               {:stalled,
+                {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
+    end
+  end
+
+  # Helper function to create a first-time recovery attempt
+  defp create_first_time_recovery_attempt do
+    RecoveryAttempt.new(TestCluster, 1, nil)
+  end
+
+  # Helper function to create an existing cluster recovery attempt
+  defp create_existing_cluster_recovery_attempt do
+    RecoveryAttempt.new(TestCluster, 2, nil)
+    |> Map.put(:log_recovery_info_by_id, %{
+      "existing_log_1" => %{kind: :log, oldest_version: 0, last_version: 100},
+      "existing_log_2" => %{kind: :log, oldest_version: 0, last_version: 100}
+    })
+    |> Map.put(:storage_recovery_info_by_id, %{
+      "existing_storage_1" => %{
+        kind: :storage,
+        durable_version: 95,
+        oldest_durable_version: 0
+      },
+      "storage_worker_2" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0},
+      "storage_worker_3" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0}
+    })
+  end
+
+  # Composable context modification functions
+  defp with_multiple_nodes(context) do
+    :ets.delete_all_objects(context.node_tracking)
+
+    :ets.insert(context.node_tracking, [
+      {:node1@host, :up, [:log, :storage], :up, true, nil},
+      {:node2@host, :up, [:log, :storage], :up, true, nil},
+      {:node3@host, :up, [:log, :storage], :up, true, nil}
+    ])
+
+    Map.put(context, :node_list_fn, fn -> [:node1@host, :node2@host, :node3@host] end)
+  end
+
+  defp with_available_log_services(context) do
+    log_services = %{
+      "log_worker_1" => %{
+        kind: :log,
+        last_seen: {:log_worker_1, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "log_worker_2" => %{
+        kind: :log,
+        last_seen: {:log_worker_2, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      }
+    }
+
+    Map.update(context, :available_services, log_services, &Map.merge(&1, log_services))
+  end
+
+  defp with_available_storage_services(context) do
+    storage_services = %{
+      "storage_worker_1" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_1, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "storage_worker_2" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_2, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "storage_worker_3" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_3, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "storage_worker_4" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_4, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "storage_worker_5" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_5, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      },
+      "storage_worker_6" => %{
+        kind: :storage,
+        last_seen: {:storage_worker_6, :node1},
+        status: {:up, spawn(fn -> :ok end)}
+      }
+    }
+
+    Map.update(context, :available_services, storage_services, &Map.merge(&1, storage_services))
+  end
+
+  defp with_mocked_service_locking(context) do
+    lock_service_fn = fn service, _epoch ->
+      pid = spawn(fn -> :ok end)
+      {:ok, pid, %{kind: service.kind, durable_version: 95, oldest_version: 0, last_version: 100}}
+    end
+
+    Map.put(context, :lock_service_fn, lock_service_fn)
+  end
+
+  defp with_mocked_worker_creation(context) do
+    create_worker_fn = fn _foreman_ref, worker_id, _kind, _opts ->
+      {:ok, "#{worker_id}_ref"}
+    end
+
+    worker_info_fn = fn {worker_ref, _node}, _fields, _opts ->
+      worker_id = String.replace(worker_ref, "_ref", "")
+
+      {:ok,
+       [
+         id: worker_id,
+         otp_name: String.to_atom(worker_id),
+         kind: :log,
+         pid: spawn(fn -> :ok end)
+       ]}
+    end
+
+    context
+    |> Map.put(:create_worker_fn, create_worker_fn)
+    |> Map.put(:worker_info_fn, worker_info_fn)
+  end
+
+  defp with_mocked_supervision(context) do
+    start_supervised_fn = fn _child_spec, _node ->
+      {:ok,
+       spawn(fn ->
+         receive do
+           {:"$gen_call", from, {:recover_from, _token, _logs, _first, _last}} ->
+             GenServer.reply(from, :ok)
+
+             receive do
+               :stop -> :ok
+             after
+               5000 -> :ok
+             end
+
+           _ ->
+             :ok
+         after
+           5000 -> :ok
+         end
+       end)}
+    end
+
+    Map.put(context, :start_supervised_fn, start_supervised_fn)
+  end
+
+  defp with_mocked_transactions(context) do
+    commit_transaction_fn = fn _proxy, _transaction -> {:ok, 101} end
+    unlock_commit_proxy_fn = fn _proxy, _lock_token, _layout -> :ok end
+    unlock_storage_fn = fn _storage_pid, _durable_version, _layout -> :ok end
+
+    context
+    |> Map.put(:commit_transaction_fn, commit_transaction_fn)
+    |> Map.put(:unlock_commit_proxy_fn, unlock_commit_proxy_fn)
+    |> Map.put(:unlock_storage_fn, unlock_storage_fn)
+  end
+
+  defp with_mocked_log_recovery(context) do
+    log_recover_fn = fn _new_log_pid, _old_log_pid, _first_version, _last_version -> :ok end
+    Map.put(context, :log_recover_fn, log_recover_fn)
+  end
+
+  defp with_mocked_worker_management(context) do
+    foreman_all_fn = fn _foreman_ref, _opts -> {:ok, []} end
+
+    remove_workers_fn = fn _foreman_ref, worker_ids, _opts ->
+      worker_ids |> Enum.map(&{&1, :ok}) |> Map.new()
+    end
+
+    monitor_fn = fn pid -> Process.monitor(pid) end
+
+    context
+    |> Map.put(:foreman_all_fn, foreman_all_fn)
+    |> Map.put(:remove_workers_fn, remove_workers_fn)
+    |> Map.put(:monitor_fn, monitor_fn)
   end
 end

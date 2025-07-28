@@ -30,8 +30,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
 
   @impl true
   def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, context) do
-    sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
-    starter_fn = Shared.starter_for(sup_otp_name)
+    start_supervised_fn =
+      Map.get(context, :start_supervised_fn, fn child_spec, node ->
+        sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
+        starter_fn = Shared.starter_for(sup_otp_name)
+        starter_fn.(child_spec, node)
+      end)
+
+    node_list_fn = Map.get(context, :node_list_fn, &Node.list/0)
 
     running_logs_by_id =
       context.available_services
@@ -49,9 +55,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
       recovery_attempt.logs,
       running_logs_by_id,
       recovery_attempt.epoch,
-      Node.list(),
+      node_list_fn.(),
       recovery_attempt.version_vector,
-      starter_fn,
+      start_supervised_fn,
       context.lock_token
     )
     |> case do

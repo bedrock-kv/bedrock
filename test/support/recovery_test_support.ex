@@ -43,7 +43,19 @@ defmodule RecoveryTestSupport do
     %{
       node_tracking: node_tracking,
       old_transaction_system_layout: old_transaction_system_layout,
-      cluster_config: %{},
+      cluster_config: %{
+        coordinators: [],
+        parameters: %{
+          desired_logs: 2,
+          desired_replication_factor: 3,
+          desired_commit_proxies: 1,
+          desired_coordinators: 1,
+          desired_read_version_proxies: 1,
+          ping_rate_in_hz: 10,
+          retransmission_rate_in_hz: 5,
+          transaction_window_in_ms: 1000
+        }
+      },
       available_services: %{},
       lock_token: "test_token",
       coordinator: self()

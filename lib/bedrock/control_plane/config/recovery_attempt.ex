@@ -41,6 +41,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | {:need_log_workers, pos_integer()}
           | {:need_storage_workers, pos_integer()}
           | {:insufficient_replication, [Bedrock.range_tag()]}
+          | {:recovery_system_failed, term()}
 
   @type log_replication_factor :: pos_integer()
   @type storage_replication_factor :: pos_integer()

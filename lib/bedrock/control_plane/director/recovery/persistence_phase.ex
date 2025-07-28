@@ -71,7 +71,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
-        exit({:recovery_system_test_failed, reason})
+        %{recovery_attempt | state: {:stalled, {:recovery_system_failed, reason}}}
     end
   end
 

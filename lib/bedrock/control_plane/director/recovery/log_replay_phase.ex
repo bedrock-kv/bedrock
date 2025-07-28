@@ -30,7 +30,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),
       recovery_attempt.version_vector,
-      &Map.get(recovery_attempt.service_pids, &1, :none)
+      fn log_id ->
+        case Map.get(recovery_attempt.transaction_services, log_id) do
+          %{status: {:up, pid}} -> pid
+          _ -> :none
+        end
+      end
     )
     |> case do
       :ok ->

@@ -44,13 +44,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
           Worker.id() => ServiceDescriptor.t()
         }
   defp find_obsolete_services(recovery_attempt, context),
-    do: Map.drop(context.available_services, Map.keys(recovery_attempt.service_pids))
+    do: Map.drop(context.available_services, Map.keys(recovery_attempt.transaction_services))
 
   @spec find_untracked_workers(RecoveryAttempt.t(), RecoveryPhase.context()) :: %{
           Worker.id() => ServiceDescriptor.t()
         }
   defp find_untracked_workers(recovery_attempt, context) do
-    required_worker_ids = MapSet.new(Map.keys(recovery_attempt.service_pids))
+    required_worker_ids = MapSet.new(Map.keys(recovery_attempt.transaction_services))
     tracked_worker_ids = MapSet.new(Map.keys(context.available_services))
 
     available_nodes = get_nodes_with_capability(context, :storage)

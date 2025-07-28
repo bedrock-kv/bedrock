@@ -59,17 +59,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
           {:ok, updated_services} ->
             trace_recovery_all_storage_team_vacancies_filled()
 
-            # Collect PIDs for all recruited storage servers (existing + new)
-            all_storage_pids =
+            # Collect ServiceDescriptors for all recruited storage servers (existing + new)
+            all_storage_services =
               Map.merge(
-                extract_existing_storage_pids(storage_teams, context.available_services),
-                extract_service_pids(updated_services)
+                extract_existing_storage_services(storage_teams, context.available_services),
+                updated_services
               )
 
             recovery_attempt
             |> Map.put(:storage_teams, storage_teams)
             |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
-            |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
+            |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
             |> Map.put(:state, :replay_old_logs)
 
           {:error, reason} ->
@@ -229,24 +229,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     )
   end
 
-  @spec extract_service_pids(%{String.t() => %{status: {:up, pid()}}}) :: %{String.t() => pid()}
-  defp extract_service_pids(services) do
-    services
-    |> Enum.filter(fn {_id, %{status: status}} -> match?({:up, _}, status) end)
-    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
-    |> Map.new()
-  end
-
-  @spec extract_existing_storage_pids([StorageTeamDescriptor.t()], %{String.t() => map()}) :: %{
-          String.t() => pid()
-        }
-  defp extract_existing_storage_pids(storage_teams, available_services) do
+  @spec extract_existing_storage_services([StorageTeamDescriptor.t()], %{String.t() => map()}) ::
+          %{
+            String.t() => map()
+          }
+  defp extract_existing_storage_services(storage_teams, available_services) do
     storage_teams
     |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
     |> Enum.reject(&match?({:vacancy, _}, &1))
     |> Enum.map(fn storage_id ->
       case Map.get(available_services, storage_id) do
-        %{status: {:up, pid}} -> {storage_id, pid}
+        %{} = service_descriptor -> {storage_id, service_descriptor}
         _ -> nil
       end
     end)

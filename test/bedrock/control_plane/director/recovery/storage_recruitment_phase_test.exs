@@ -118,7 +118,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           # Available for vacancy
           "storage_3" => %{}
         },
-        service_pids: %{}
+        transaction_services: %{}
       }
 
       context = %{
@@ -134,24 +134,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
 
       assert result.state == :replay_old_logs
 
-      # Verify that storage PIDs have been collected
-      assert Map.has_key?(result, :service_pids)
-      assert Map.get(result.service_pids, "storage_1") == mock_pid_1
-      assert Map.get(result.service_pids, "storage_2") == mock_pid_2
+      # Verify that storage services have been collected
+      assert Map.has_key?(result, :transaction_services)
+      assert %{status: {:up, ^mock_pid_1}} = Map.get(result.transaction_services, "storage_1")
+      assert %{status: {:up, ^mock_pid_2}} = Map.get(result.transaction_services, "storage_2")
       # The one assigned to fill vacancy
-      assert Map.has_key?(result.service_pids, "storage_3")
+      assert Map.has_key?(result.transaction_services, "storage_3")
 
-      # Verify all assigned storage servers have PIDs
+      # Verify all assigned storage servers have service descriptors
       all_storage_ids =
         result.storage_teams
         |> Enum.flat_map(& &1.storage_ids)
         |> Enum.reject(&match?({:vacancy, _}, &1))
 
       for storage_id <- all_storage_ids do
-        assert Map.has_key?(result.service_pids, storage_id),
-               "Missing PID for storage ID: #{storage_id}"
+        assert Map.has_key?(result.transaction_services, storage_id),
+               "Missing service descriptor for storage ID: #{storage_id}"
 
-        assert is_pid(result.service_pids[storage_id])
+        assert %{status: {:up, pid}} = result.transaction_services[storage_id]
+        assert is_pid(pid)
       end
     end
   end

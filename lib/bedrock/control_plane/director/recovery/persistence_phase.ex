@@ -74,9 +74,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp build_transaction_system_layout(recovery_attempt, context) do
-    services = build_all_service_descriptors(recovery_attempt, context)
-
+  defp build_transaction_system_layout(recovery_attempt, _context) do
     {:ok,
      %{
        id: TransactionSystemLayout.random_id(),
@@ -88,58 +86,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
        resolvers: recovery_attempt.resolvers,
        logs: recovery_attempt.logs,
        storage_teams: recovery_attempt.storage_teams,
-       services: services
+       services: recovery_attempt.transaction_services
      }}
-  end
-
-  @spec build_all_service_descriptors(RecoveryAttempt.t(), map()) :: %{
-          Worker.id() => ServiceDescriptor.t()
-        }
-  defp build_all_service_descriptors(recovery_attempt, context) do
-    recovery_attempt.service_pids
-    |> Map.merge(extract_existing_storage_pids(recovery_attempt, context.available_services))
-    |> build_service_descriptors_with_types(context.available_services)
-  end
-
-  @spec extract_existing_storage_pids(RecoveryAttempt.t(), %{Worker.id() => ServiceDescriptor.t()}) ::
-          %{Worker.id() => pid()}
-  defp extract_existing_storage_pids(recovery_attempt, available_services) do
-    locked_storage_ids =
-      recovery_attempt.storage_recovery_info_by_id
-      |> Map.keys()
-      |> MapSet.new()
-
-    available_services
-    |> Enum.filter(fn {id, %{kind: kind}} ->
-      kind == :storage and MapSet.member?(locked_storage_ids, id)
-    end)
-    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
-    |> Map.new()
-  end
-
-  @spec build_service_descriptors_with_types(%{Worker.id() => pid()}, %{
-          Worker.id() => ServiceDescriptor.t()
-        }) :: %{
-          Worker.id() => ServiceDescriptor.t()
-        }
-  defp build_service_descriptors_with_types(service_pids, available_services) do
-    service_pids
-    |> Enum.map(fn {service_id, pid} ->
-      kind =
-        case Map.get(available_services, service_id) do
-          %{kind: service_kind} -> service_kind
-          # New services created during recruitment are logs
-          _ -> :log
-        end
-
-      service_descriptor = %{
-        kind: kind,
-        status: {:up, pid}
-      }
-
-      {service_id, service_descriptor}
-    end)
-    |> Map.new()
   end
 
   @spec build_system_transaction(
@@ -282,7 +230,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     with :ok <- validate_sequencer(recovery_attempt.sequencer),
          :ok <- validate_commit_proxies(recovery_attempt.proxies),
          :ok <- validate_resolvers(recovery_attempt.resolvers),
-         :ok <- validate_logs(recovery_attempt.logs, recovery_attempt.service_pids) do
+         :ok <- validate_logs(recovery_attempt.logs, recovery_attempt.transaction_services) do
       :ok
     else
       {:error, reason} -> {:error, {:invalid_recovery_state, reason}}
@@ -324,19 +272,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => pid()}) ::
+  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => ServiceDescriptor.t()}) ::
           :ok | {:error, {:missing_log_services, [binary()]}}
-  defp validate_logs(logs, service_pids) when is_map(logs) do
+  defp validate_logs(logs, transaction_services) when is_map(logs) do
     log_ids = Map.keys(logs)
 
-    trace_recovery_log_validation_started(log_ids, service_pids)
+    trace_recovery_log_validation_started(log_ids, transaction_services)
 
-    # Check that all log IDs have corresponding PIDs in service_pids
+    # Check that all log IDs have corresponding services in transaction_services
     missing_services =
       log_ids
       |> Enum.reject(fn log_id ->
-        case Map.get(service_pids, log_id) do
-          pid when is_pid(pid) ->
+        case Map.get(transaction_services, log_id) do
+          %{status: {:up, pid}} when is_pid(pid) ->
             trace_recovery_log_service_status(log_id, :found, %{status: {:up, pid}})
             true
 
@@ -411,7 +359,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
     |> Enum.uniq()
     |> Enum.map(fn storage_id ->
-      {storage_id, Map.fetch!(recovery_attempt.service_pids, storage_id)}
+      %{status: {:up, pid}} = Map.fetch!(recovery_attempt.transaction_services, storage_id)
+      {storage_id, pid}
     end)
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->

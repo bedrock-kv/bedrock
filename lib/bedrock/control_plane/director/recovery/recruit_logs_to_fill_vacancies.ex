@@ -54,11 +54,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
            create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context) do
       trace_recovery_all_log_vacancies_filled()
 
-      all_log_pids =
+      all_log_services =
         Map.merge(
-          extract_existing_log_pids(logs, context.available_services),
-          extract_service_pids(updated_services)
+          extract_existing_log_services(logs, context.available_services),
+          updated_services
         )
+
+      all_log_pids = extract_service_pids(all_log_services)
 
       trace_recovery_log_recruitment_completed(
         Map.keys(logs),
@@ -69,7 +71,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
       recovery_attempt
       |> Map.put(:logs, logs)
-      |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
+      |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
       |> Map.put(:state, :recruit_storage_to_fill_vacancies)
     else
       {:error, reason} ->
@@ -219,24 +221,29 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     )
   end
 
-  @spec extract_service_pids(%{String.t() => %{status: {:up, pid()}}}) :: %{String.t() => pid()}
+  @spec extract_service_pids(%{String.t() => map()}) :: %{String.t() => pid()}
   defp extract_service_pids(services) do
     services
-    |> Enum.filter(fn {_id, %{status: status}} -> match?({:up, _}, status) end)
+    |> Enum.filter(fn {_id, service} ->
+      case service do
+        %{status: {:up, _}} -> true
+        _ -> false
+      end
+    end)
     |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
     |> Map.new()
   end
 
-  @spec extract_existing_log_pids(%{Log.id() => any()}, %{String.t() => map()}) :: %{
-          String.t() => pid()
+  @spec extract_existing_log_services(%{Log.id() => any()}, %{String.t() => map()}) :: %{
+          String.t() => map()
         }
-  defp extract_existing_log_pids(logs, available_services) do
+  defp extract_existing_log_services(logs, available_services) do
     logs
     |> Map.keys()
     |> Enum.reject(&match?({:vacancy, _}, &1))
     |> Enum.map(fn log_id ->
       case Map.get(available_services, log_id) do
-        %{status: {:up, pid}} -> {log_id, pid}
+        %{} = service_descriptor -> {log_id, service_descriptor}
         _ -> nil
       end
     end)

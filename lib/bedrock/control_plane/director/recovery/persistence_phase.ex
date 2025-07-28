@@ -250,19 +250,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Map.merge(recovery_keys)
   end
 
-  @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()} | map(), module()) ::
-          nil | pid() | {Bedrock.key(), pid()} | map()
+  @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()}, module()) ::
+          nil | pid() | {Bedrock.key(), pid()}
   defp encode_component_for_storage(nil, _cluster), do: nil
   defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
 
   defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid),
     do: {start_key, pid}
-
-  defp encode_component_for_storage(%{resolver: pid} = resolver_map, _cluster) when is_pid(pid),
-    do: resolver_map
-
-  defp encode_component_for_storage(%{resolver: nil} = resolver_map, _cluster), do: resolver_map
-  defp encode_component_for_storage(other, _cluster), do: other
 
   defp encode_components_for_storage(components, cluster) when is_list(components),
     do: Enum.map(components, &encode_component_for_storage(&1, cluster))
@@ -313,18 +307,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   defp validate_commit_proxies(_), do: {:error, :invalid_commit_proxies}
 
-  @spec validate_resolvers([pid() | {Bedrock.key(), pid()} | map()]) :: :ok | {:error, atom()}
+  @spec validate_resolvers([{Bedrock.key(), pid()}]) :: :ok | {:error, atom()}
   defp validate_resolvers([]), do: {:error, :no_resolvers}
 
   defp validate_resolvers(resolvers) when is_list(resolvers) do
-    # Resolvers can be either PIDs directly or tuples of {start_key, pid}
     valid_resolvers =
       Enum.all?(resolvers, fn
-        pid when is_pid(pid) -> true
         {_start_key, pid} when is_pid(pid) -> true
-        %{resolver: pid} when is_pid(pid) -> true
-        # Invalid resolver descriptor
-        %{resolver: nil} -> false
         _ -> false
       end)
 

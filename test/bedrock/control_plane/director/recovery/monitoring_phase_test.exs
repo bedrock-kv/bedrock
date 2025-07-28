@@ -4,111 +4,156 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
 
+  # Helper to create test transaction system layout
+  defp create_layout(opts \\ []) do
+    sequencer = Keyword.get(opts, :sequencer, spawn(fn -> :timer.sleep(100) end))
+    proxies = Keyword.get(opts, :proxies, [spawn(fn -> :timer.sleep(100) end)])
+    resolvers = Keyword.get(opts, :resolvers, [{"start_key", spawn(fn -> :timer.sleep(100) end)}])
+    logs = Keyword.get(opts, :logs, %{{:log, 1} => %{}})
+
+    # Create services map based on the components
+    services =
+      Keyword.get(opts, :services, %{
+        {:log, 1} => %{kind: :log, status: {:up, spawn(fn -> :timer.sleep(100) end)}}
+      })
+
+    %{
+      sequencer: sequencer,
+      proxies: proxies,
+      resolvers: resolvers,
+      logs: logs,
+      services: services
+    }
+  end
+
   describe "execute/1" do
-    test "monitors all components and logs debug messages" do
-      sequencer_pid = spawn(fn -> :timer.sleep(100) end)
-      proxy_pid = spawn(fn -> :timer.sleep(100) end)
-      resolver_pid = spawn(fn -> :timer.sleep(100) end)
-      log_pid = spawn(fn -> :timer.sleep(100) end)
+    test "monitors all components when all PIDs are valid" do
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
 
       recovery_attempt = %{
         state: :monitor_components,
-        sequencer: sequencer_pid,
-        proxies: [proxy_pid],
-        resolvers: [resolver_pid],
-        required_services: %{
-          {:log, 1} => %{kind: :log, status: {:up, log_pid}}
-        }
+        transaction_system_layout: create_layout()
       }
 
       log_output =
-        capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
+        capture_log([level: :info], fn ->
+          result = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
           assert result.state == :completed
         end)
 
-      assert log_output =~ "Director monitoring sequencer:"
-      assert log_output =~ "Director monitoring commit proxy:"
-      assert log_output =~ "Director monitoring resolver:"
-      assert log_output =~ "Director monitoring log:"
+      assert log_output =~ "Director monitoring 4 processes"
+
+      # Should have monitored sequencer, 1 proxy, 1 resolver, 1 log
+      assert_received {:monitored, _}
+      assert_received {:monitored, _}
+      assert_received {:monitored, _}
+      assert_received {:monitored, _}
     end
 
-    test "handles empty components gracefully" do
+    test "uses default Process.monitor when no monitor_fn provided" do
       recovery_attempt = %{
         state: :monitor_components,
-        sequencer: nil,
-        proxies: [],
-        resolvers: [],
-        required_services: %{}
+        transaction_system_layout: create_layout()
       }
 
-      log_output =
-        capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
-          assert result.state == :completed
-        end)
-
-      refute log_output =~ "Director monitoring sequencer:"
-      refute log_output =~ "Director monitoring commit proxy:"
-      refute log_output =~ "Director monitoring resolver:"
-      refute log_output =~ "Director monitoring log:"
+      result = MonitoringPhase.execute(recovery_attempt, %{})
+      assert result.state == :completed
     end
 
     test "logs monitoring summary for multiple components" do
-      sequencer_pid = spawn(fn -> :timer.sleep(100) end)
-      proxy1_pid = spawn(fn -> :timer.sleep(100) end)
-      proxy2_pid = spawn(fn -> :timer.sleep(100) end)
-      resolver1_pid = spawn(fn -> :timer.sleep(100) end)
-      resolver2_pid = spawn(fn -> :timer.sleep(100) end)
       log1_pid = spawn(fn -> :timer.sleep(100) end)
       log2_pid = spawn(fn -> :timer.sleep(100) end)
 
       recovery_attempt = %{
         state: :monitor_components,
-        sequencer: sequencer_pid,
-        proxies: [proxy1_pid, proxy2_pid],
-        resolvers: [resolver1_pid, resolver2_pid],
-        required_services: %{
-          {:log, 1} => %{kind: :log, status: {:up, log1_pid}},
-          {:log, 2} => %{kind: :log, status: {:up, log2_pid}},
-          {:storage, 1} => %{kind: :storage, status: {:up, spawn(fn -> :timer.sleep(100) end)}}
-        }
+        transaction_system_layout:
+          create_layout(
+            proxies: [spawn(fn -> :timer.sleep(100) end), spawn(fn -> :timer.sleep(100) end)],
+            resolvers: [
+              {"key1", spawn(fn -> :timer.sleep(100) end)},
+              {"key2", spawn(fn -> :timer.sleep(100) end)}
+            ],
+            logs: %{
+              {:log, 1} => %{},
+              {:log, 2} => %{}
+            },
+            services: %{
+              {:log, 1} => %{kind: :log, status: {:up, log1_pid}},
+              {:log, 2} => %{kind: :log, status: {:up, log2_pid}},
+              # Storage services shouldn't be monitored 
+              {:storage, 1} => %{
+                kind: :storage,
+                status: {:up, spawn(fn -> :timer.sleep(100) end)}
+              }
+            }
+          )
       }
 
       log_output =
-        capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
+        capture_log([level: :info], fn ->
+          result = MonitoringPhase.execute(recovery_attempt, %{})
           assert result.state == :completed
         end)
 
-      assert log_output =~ "Director monitoring 2 proxies, 2 resolvers, 2 logs, and 1 sequencer"
+      # 1 sequencer + 2 proxies + 2 resolvers + 2 logs = 7 processes
+      assert log_output =~ "Director monitoring 7 processes"
     end
 
-    test "filters invalid PIDs during monitoring" do
-      valid_pid = spawn(fn -> :timer.sleep(100) end)
+    test "excludes storage services from monitoring" do
+      storage_pid = spawn(fn -> :timer.sleep(100) end)
+
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
 
       recovery_attempt = %{
         state: :monitor_components,
-        sequencer: valid_pid,
-        proxies: [valid_pid, :not_a_pid],
-        resolvers: [:not_a_pid, valid_pid],
-        required_services: %{
-          {:log, 1} => %{kind: :log, status: {:up, valid_pid}},
-          {:log, 2} => %{kind: :log, status: {:down, nil}},
-          {:other, 1} => %{kind: :other, status: {:up, valid_pid}}
-        }
+        transaction_system_layout:
+          create_layout(
+            services: %{
+              {:log, 1} => %{kind: :log, status: {:up, spawn(fn -> :timer.sleep(100) end)}},
+              {:storage, 1} => %{kind: :storage, status: {:up, storage_pid}}
+            }
+          )
       }
 
-      log_output =
-        capture_log([level: :debug], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{node_tracking: nil})
-          assert result.state == :completed
-        end)
+      MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
 
-      monitoring_calls =
-        String.split(log_output, "Director monitoring") |> length() |> Kernel.-(1)
+      # Should not receive monitoring message for storage PID
+      refute_received {:monitored, ^storage_pid}
+    end
 
-      assert monitoring_calls >= 3
+    test "crashes if services are not in :up status" do
+      down_log_pid = spawn(fn -> :timer.sleep(100) end)
+
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
+
+      recovery_attempt = %{
+        state: :monitor_components,
+        transaction_system_layout:
+          create_layout(
+            logs: %{
+              {:log, 1} => %{},
+              {:log, 2} => %{}
+            },
+            services: %{
+              {:log, 1} => %{kind: :log, status: {:up, spawn(fn -> :timer.sleep(100) end)}},
+              {:log, 2} => %{kind: :log, status: {:down, down_log_pid}}
+            }
+          )
+      }
+
+      # Should crash when trying to extract PID from :down service
+      assert_raise FunctionClauseError, fn ->
+        MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
+      end
     end
   end
 end

@@ -91,7 +91,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           degraded_teams: [Bedrock.range_tag()],
           logs: %{Log.id() => LogDescriptor.t()},
           storage_teams: [StorageTeamDescriptor.t()],
-          resolvers: [pid()],
+          resolvers: [{Bedrock.key(), pid()}],
           proxies: [pid()],
           sequencer: pid() | nil,
           service_pids: %{Worker.id() => pid()},

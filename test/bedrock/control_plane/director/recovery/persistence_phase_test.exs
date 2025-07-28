@@ -40,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: nil,
         proxies: [self()],
-        resolvers: [self()],
+        resolvers: [{"start_key", self()}],
         logs: %{"log_1" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -69,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: self(),
         proxies: [],
-        resolvers: [self()],
+        resolvers: [{"start_key", self()}],
         logs: %{"log_1" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -122,7 +122,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: self(),
         proxies: [self()],
-        resolvers: [self()],
+        resolvers: [{"start_key", self()}],
         logs: %{"log_1" => %{}, "log_2" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -151,7 +151,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: :invalid_sequencer,
         proxies: [self()],
-        resolvers: [self()],
+        resolvers: [{"start_key", self()}],
         logs: %{"log_1" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -176,7 +176,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: self(),
         proxies: [:invalid_proxy],
-        resolvers: [self()],
+        resolvers: [{"start_key", self()}],
         logs: %{"log_1" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -201,7 +201,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: self(),
         proxies: [self()],
-        resolvers: [%{resolver: nil}],
+        resolvers: [:invalid_resolver],
         logs: %{"log_1" => %{}},
         epoch: 1,
         storage_teams: [],
@@ -225,9 +225,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   describe "execute/1 with valid components" do
     test "validates resolver formats" do
       valid_resolvers = [
-        spawn(fn -> :ok end),
-        {:start_key, spawn(fn -> :ok end)},
-        %{resolver: spawn(fn -> :ok end)}
+        {"start_key1", spawn(fn -> :ok end)},
+        {"start_key2", spawn(fn -> :ok end)},
+        {"start_key3", spawn(fn -> :ok end)}
       ]
 
       recovery_attempt = %RecoveryAttempt{
@@ -264,7 +264,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         state: :persist_system_state,
         sequencer: spawn(fn -> :ok end),
         proxies: [],
-        resolvers: [spawn(fn -> :ok end)],
+        resolvers: [{"start_key", spawn(fn -> :ok end)}],
         logs: %{"log_1" => %{}, "log_2" => %{}},
         epoch: 42,
         storage_teams: [%{id: "team_1"}],
@@ -303,19 +303,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   end
 
   describe "component encoding" do
-    test "encode_component_for_storage handles various component types" do
+    test "encode_component_for_storage handles resolver tuple format" do
       test_pid = spawn(fn -> :ok end)
 
-      # Test the encoding through the build process with different resolver formats
+      # Test the encoding through the build process with correct resolver format
       recovery_attempt =
         create_valid_recovery_attempt(%{
           resolvers: [
-            # Direct PID
-            test_pid,
-            # Tuple format
-            {:start_key, test_pid},
-            # Map format with resolver
-            %{resolver: test_pid}
+            {"start_key1", test_pid},
+            {"start_key2", test_pid}
           ],
           # Trigger commit proxy failure to test encoding
           proxies: []
@@ -334,11 +330,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       )
     end
 
-    test "encode_component_for_storage handles nil values" do
+    test "encode_component_for_storage rejects invalid resolver formats" do
       recovery_attempt =
         create_valid_recovery_attempt(%{
-          # Map format with nil resolver
-          resolvers: [%{resolver: nil}],
+          # Invalid resolver format
+          resolvers: [:invalid_resolver],
           # Add proxy to get past commit proxy validation
           proxies: [self()]
         })
@@ -405,7 +401,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
               id: 42,
               sequencer: self(),
               proxies: [mock_proxy],
-              resolvers: [self()],
+              resolvers: [{"start_key", self()}],
               logs: %{"log_1" => ["tag_a"]},
               storage_teams: [],
               services: %{
@@ -484,12 +480,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         create_valid_recovery_attempt(%{
           resolvers: [
-            # Valid PID
-            self(),
             # Valid tuple
-            {:start_key, self()},
-            # Valid map
-            %{resolver: self()},
+            {"start_key1", self()},
             # Invalid type
             :invalid_resolver
           ],
@@ -699,21 +691,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   end
 
   describe "encoding edge cases" do
-    test "encodes complex resolver structures" do
+    test "encodes resolver tuple structures" do
       test_pid = spawn(fn -> :ok end)
 
       recovery_attempt =
         create_valid_recovery_attempt(%{
           resolvers: [
-            test_pid,
-            {:complex_start_key, test_pid},
-            %{resolver: test_pid, start_key: "custom_key", extra_field: "value"},
-            # Map without start_key
-            %{resolver: test_pid}
+            {"simple_key", test_pid},
+            {"complex_start_key", test_pid}
           ]
         })
 
-      # Test complex resolver encoding through the build process
+      # Test resolver encoding through the build process
       assert_exit_with_reason(
         {:recovery_system_test_failed, {:invalid_recovery_state, :no_commit_proxies}},
         fn ->
@@ -850,7 +839,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       state: :persist_system_state,
       sequencer: self(),
       proxies: [],
-      resolvers: [self()],
+      resolvers: [{"start_key", self()}],
       logs: %{"log_1" => %{}},
       epoch: 1,
       storage_teams: [],

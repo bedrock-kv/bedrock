@@ -18,6 +18,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
       result =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
+          old_transaction_system_layout: %{
+            logs: %{
+              {:log, 1} => ["tag_a"],
+              {:log, 2} => ["tag_b"]
+            },
+            storage_teams: []
+          },
           cluster_config: %{
             # Quorum = 2, with two logs
             parameters: %{desired_logs: 3},
@@ -45,6 +52,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
       result =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
+          old_transaction_system_layout: %{logs: %{}, storage_teams: []},
           cluster_config: %{
             # Quorum = 2, but no logs
             parameters: %{desired_logs: 3},
@@ -69,6 +77,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
       result =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
+          old_transaction_system_layout: %{
+            logs: %{
+              {:log, 1} => ["tag_a"]
+            },
+            storage_teams: []
+          },
           cluster_config: %{
             # Quorum = 1
             parameters: %{desired_logs: 1},

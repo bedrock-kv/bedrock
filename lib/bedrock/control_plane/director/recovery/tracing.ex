@@ -32,7 +32,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :node_cleanup_completed],
         [:bedrock, :recovery, :log_recruitment_completed],
         [:bedrock, :recovery, :log_validation_started],
-        [:bedrock, :recovery, :log_service_status]
+        [:bedrock, :recovery, :log_service_status],
+        [:bedrock, :recovery, :attempt_persisted],
+        [:bedrock, :recovery, :attempt_persist_failed],
+        [:bedrock, :recovery, :layout_persisted],
+        [:bedrock, :recovery, :layout_persist_failed],
+        [:bedrock, :recovery, :unexpected_state]
       ],
       &__MODULE__.handler/4,
       nil
@@ -241,6 +246,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
       :missing ->
         debug("  Log #{inspect(log_id)}: NO MATCHING SERVICE (found: #{inspect(service)})")
     end
+  end
+
+  def trace(:attempt_persisted, _, %{txn_id: txn_id}),
+    do: info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
+
+  def trace(:attempt_persist_failed, _, %{reason: reason}),
+    do: error("Failed to persist recovery attempt: #{inspect(reason)}")
+
+  def trace(:layout_persisted, _, %{txn_id: txn_id}),
+    do: info("New transaction system layout persisted with txn ID: #{inspect(txn_id)}")
+
+  def trace(:layout_persist_failed, _, %{reason: reason}),
+    do: error("Failed to persist new transaction system layout: #{inspect(reason)}")
+
+  def trace(:unexpected_state, _, %{unexpected_state: unexpected_state, full_state: full_state}) do
+    error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
+    debug("Full recovery state: #{inspect(full_state)}")
   end
 
   @spec info(String.t()) :: :ok

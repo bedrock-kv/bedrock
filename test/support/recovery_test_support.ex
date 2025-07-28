@@ -28,11 +28,25 @@ defmodule RecoveryTestSupport do
   end
 
   @doc """
-  Creates a basic test context with node tracking.
+  Creates a basic test context with node tracking and old transaction system layout.
   """
-  def create_test_context() do
+  def create_test_context(opts \\ []) do
     node_tracking = :ets.new(:test_node_tracking, [:ordered_set])
     :ets.insert(node_tracking, [{Node.self(), :unknown, [:log, :storage], :up, true, nil}])
-    %{node_tracking: node_tracking}
+
+    old_transaction_system_layout =
+      Keyword.get(opts, :old_transaction_system_layout, %{
+        logs: %{},
+        storage_teams: []
+      })
+
+    %{
+      node_tracking: node_tracking,
+      old_transaction_system_layout: old_transaction_system_layout,
+      cluster_config: %{},
+      available_services: %{},
+      lock_token: "test_token",
+      coordinator: self()
+    }
   end
 end

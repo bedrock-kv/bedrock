@@ -226,4 +226,40 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
       service: service
     })
   end
+
+  @spec trace_recovery_attempt_persisted(any()) :: :ok
+  def trace_recovery_attempt_persisted(txn_id) do
+    Telemetry.execute([:bedrock, :recovery, :attempt_persisted], %{}, %{
+      txn_id: txn_id
+    })
+  end
+
+  @spec trace_recovery_attempt_persist_failed(term()) :: :ok
+  def trace_recovery_attempt_persist_failed(reason) do
+    Telemetry.execute([:bedrock, :recovery, :attempt_persist_failed], %{}, %{
+      reason: reason
+    })
+  end
+
+  @spec trace_recovery_layout_persisted(any()) :: :ok
+  def trace_recovery_layout_persisted(txn_id) do
+    Telemetry.execute([:bedrock, :recovery, :layout_persisted], %{}, %{
+      txn_id: txn_id
+    })
+  end
+
+  @spec trace_recovery_layout_persist_failed(term()) :: :ok
+  def trace_recovery_layout_persist_failed(reason) do
+    Telemetry.execute([:bedrock, :recovery, :layout_persist_failed], %{}, %{
+      reason: reason
+    })
+  end
+
+  @spec trace_recovery_unexpected_state(atom(), any()) :: :ok
+  def trace_recovery_unexpected_state(unexpected_state, full_state) do
+    Telemetry.execute([:bedrock, :recovery, :unexpected_state], %{}, %{
+      unexpected_state: unexpected_state,
+      full_state: full_state
+    })
+  end
 end

@@ -108,7 +108,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
     t
     |> Map.put(:state, :stopped)
-    |> stop(:normal)
+    |> stop({:component_failure, failed_pid, reason})
   end
 
   @impl true

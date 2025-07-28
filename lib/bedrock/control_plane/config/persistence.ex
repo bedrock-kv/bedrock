@@ -30,9 +30,10 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   - Sanitized configuration suitable for BERT encoding
   """
   @spec encode_for_storage(Config.t(), module()) :: encoded_config()
-  def encode_for_storage(config, _cluster) do
+  def encode_for_storage(config, cluster) do
     config
     |> remove_ephemeral_state()
+    |> encode_transaction_system_layout(cluster)
   end
 
   @doc """
@@ -48,8 +49,9 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   - Runtime configuration with PIDs restored
   """
   @spec decode_from_storage(encoded_config(), module()) :: Config.t()
-  def decode_from_storage(encoded_config, _cluster) do
+  def decode_from_storage(encoded_config, cluster) do
     encoded_config
+    |> decode_transaction_system_layout(cluster)
   end
 
   @doc """
@@ -105,6 +107,32 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     config
     # Recovery state is ephemeral
     |> Map.delete(:recovery_attempt)
+  end
+
+  # Encode transaction_system_layout field within config
+  @spec encode_transaction_system_layout(Config.t(), module()) :: Config.t()
+  defp encode_transaction_system_layout(config, cluster) do
+    case config[:transaction_system_layout] do
+      nil ->
+        config
+
+      layout ->
+        encoded_layout = encode_transaction_system_layout_for_storage(layout, cluster)
+        Map.put(config, :transaction_system_layout, encoded_layout)
+    end
+  end
+
+  # Decode transaction_system_layout field within config
+  @spec decode_transaction_system_layout(Config.t(), module()) :: Config.t()
+  defp decode_transaction_system_layout(config, cluster) do
+    case config[:transaction_system_layout] do
+      nil ->
+        config
+
+      encoded_layout ->
+        decoded_layout = decode_transaction_system_layout_from_storage(encoded_layout, cluster)
+        Map.put(config, :transaction_system_layout, decoded_layout)
+    end
   end
 
   # Generic single reference encoding (director, sequencer, rate_keeper)

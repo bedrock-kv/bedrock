@@ -25,7 +25,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       }
 
       context =
-        create_test_context()
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{{:log, 1} => %{}, {:log, 2} => %{}},
+            storage_teams: []
+          }
+        )
         |> Map.merge(%{
           cluster_config: %{
             transaction_system_layout: %{logs: %{{:log, 1} => %{}, {:log, 2} => %{}}}
@@ -55,7 +60,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       }
 
       context =
-        create_test_context()
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{{:log, 1} => %{}},
+            storage_teams: []
+          }
+        )
         |> Map.merge(%{
           cluster_config: %{
             transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
@@ -228,7 +238,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       }
 
       context =
-        create_test_context()
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{{:log, 1} => %{}},
+            storage_teams: []
+          }
+        )
         |> Map.merge(%{
           available_services: %{},
           cluster_config: %{

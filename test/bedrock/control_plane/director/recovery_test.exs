@@ -18,6 +18,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       cluster: __MODULE__.TestCluster,
       epoch: 1,
       node_tracking: node_tracking,
+      old_transaction_system_layout: %{
+        logs: %{},
+        storage_teams: []
+      },
       config: %{
         coordinators: [],
         parameters: %{
@@ -305,15 +309,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         started_at: 12345
       }
 
-      log_output =
-        capture_log([level: :warning], fn ->
-          {{:stalled, :test_reason}, result} =
-            Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
+      {{:stalled, :test_reason}, result} =
+        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
-          assert result.state == {:stalled, :test_reason}
-        end)
-
-      assert log_output =~ "Recovery is stalled: :test_reason"
+      assert result.state == {:stalled, :test_reason}
     end
 
     test "raises for invalid state" do

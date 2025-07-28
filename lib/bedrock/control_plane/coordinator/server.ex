@@ -198,13 +198,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     case Keyword.get(coordinator_config, :path) do
       nil ->
         # No path supplied - use in-memory log (non-persistent)
-        Logger.info("Bedrock: Using in-memory raft log (no path configured)")
         {:ok, InMemoryLog.new(:tuple)}
 
       base_path ->
         # Path supplied - use persistent disk-based log
         working_directory = Path.join(base_path, "raft")
-        Logger.info("Bedrock: Using persistent raft log at #{working_directory}")
         File.mkdir_p!(working_directory)
 
         raft_log = DiskRaftLog.new(log_dir: working_directory)

@@ -21,12 +21,14 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
               send(self(), {:DOWN, make_ref(), :process, failed_pid, reason})
 
               # Use the actual handle_info logic
-              try do
-                Server.handle_info({:DOWN, make_ref(), :process, failed_pid, reason}, %{})
-              catch
-                :exit, exit_reason ->
+              case Server.handle_info({:DOWN, make_ref(), :process, failed_pid, reason}, %{}) do
+                {:stop, exit_reason, _state} ->
                   send(test_process, {:director_exited, exit_reason})
                   exit(exit_reason)
+
+                other ->
+                  send(test_process, {:unexpected_result, other})
+                  exit(:unexpected_result)
               end
           end
         end)

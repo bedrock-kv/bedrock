@@ -114,8 +114,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
 
-  require Logger
-
   import Bedrock.Internal.Time, only: [now: 0]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
@@ -222,11 +220,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def persist_config(t) do
     case Coordinator.update_config(t.coordinator, t.config) do
       {:ok, txn_id} ->
-        Logger.info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
+        trace_recovery_attempt_persisted(txn_id)
         t
 
       {:error, reason} ->
-        Logger.error("Failed to persist recovery attempt: #{inspect(reason)}")
+        trace_recovery_attempt_persist_failed(reason)
         t
     end
   end
@@ -235,11 +233,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def persist_new_transaction_system_layout(t) do
     case Coordinator.update_transaction_system_layout(t.coordinator, t.transaction_system_layout) do
       {:ok, txn_id} ->
-        Logger.info("New transaction system layout persisted with txn ID: #{inspect(txn_id)}")
+        trace_recovery_layout_persisted(txn_id)
         t
 
       {:error, reason} ->
-        Logger.error("Failed to persist new transaction system layout: #{inspect(reason)}")
+        trace_recovery_layout_persist_failed(reason)
         t
     end
   end
@@ -251,7 +249,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def run_recovery_attempt(t, context) do
     case t.state do
       {:stalled, reason} ->
-        Logger.warning("Recovery is stalled: #{inspect(reason)}")
         {{:stalled, reason}, t}
 
       :completed ->
@@ -272,8 +269,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
           # Catch any unexpected states
           %{state: unexpected_state} = recovery_state ->
-            Logger.error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
-            Logger.debug("Full recovery state: #{inspect(recovery_state)}")
+            trace_recovery_unexpected_state(unexpected_state, recovery_state)
             {:error, {:unexpected_recovery_state, unexpected_state}}
         end
     end

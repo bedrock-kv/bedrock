@@ -127,7 +127,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         epoch: 1,
         storage_teams: [],
         required_services: %{},
-        cluster: TestCluster
+        cluster: TestCluster,
+        service_pids: %{"log_1" => self()}
       }
 
       assert_exit_with_reason(
@@ -855,7 +856,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       storage_teams: [],
       required_services: %{},
       cluster: TestCluster,
-      version_vector: {1, 100}
+      version_vector: {1, 100},
+      service_pids: %{"log_1" => self()},
+      storage_recovery_info_by_id: %{}
     }
 
     Map.merge(base, overrides)

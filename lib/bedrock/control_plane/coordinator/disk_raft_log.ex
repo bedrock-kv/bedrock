@@ -361,10 +361,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
     transactions
     |> Enum.with_index(next_sequence)
-    |> Enum.map(fn {{transaction_id, data}, _sequence} ->
-      # transaction_id is already in {term, index} format from the Raft library
-      # We should use it directly, not create a new one
-      {transaction_id, elem(transaction_id, 0), data}
+    |> Enum.map(fn {{term, data}, sequence} ->
+      # Create proper transaction_id in {term, sequence} format
+      transaction_id = {term, sequence}
+      {transaction_id, term, data}
     end)
   end
 

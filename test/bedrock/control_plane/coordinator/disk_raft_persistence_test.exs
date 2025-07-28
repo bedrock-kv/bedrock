@@ -56,9 +56,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       # Check specific transaction content
       [
-        {1, {:coordinator_config, config1}},
-        {1, {:director_assignment, director}},
-        {2, {:coordinator_config, config2}}
+        {{1, 1}, {:coordinator_config, config1}},
+        {{1, 2}, {:director_assignment, director}},
+        {{2, 3}, {:coordinator_config, config2}}
       ] = restored_transactions
 
       assert config1 == %{epoch: 1, coordinators: [:node1, :node2]}

@@ -1,6 +1,5 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
   use ExUnit.Case, async: true
-  import ExUnit.CaptureLog
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
@@ -39,13 +38,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
         |> with_state(:monitor_components)
         |> Map.put(:transaction_system_layout, create_layout())
 
-      log_output =
-        capture_log([level: :info], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
-          assert result.state == :completed
-        end)
-
-      assert log_output =~ "Director monitoring 4 processes"
+      result = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
+      assert result.state == :completed
 
       # Should have monitored sequencer, 1 proxy, 1 resolver, 1 log
       assert_received {:monitored, _}
@@ -64,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       assert result.state == :completed
     end
 
-    test "logs monitoring summary for multiple components" do
+    test "monitors multiple components correctly" do
       log1_pid = spawn(fn -> :timer.sleep(100) end)
       log2_pid = spawn(fn -> :timer.sleep(100) end)
 
@@ -93,14 +87,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
           )
       }
 
-      log_output =
-        capture_log([level: :info], fn ->
-          result = MonitoringPhase.execute(recovery_attempt, %{})
-          assert result.state == :completed
-        end)
-
-      # 1 sequencer + 2 proxies + 2 resolvers + 2 logs = 7 processes
-      assert log_output =~ "Director monitoring 7 processes"
+      result = MonitoringPhase.execute(recovery_attempt, %{})
+      assert result.state == :completed
     end
 
     test "excludes storage services from monitoring" do

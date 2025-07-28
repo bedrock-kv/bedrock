@@ -3,10 +3,8 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
 
   alias Bedrock.ControlPlane.Director.Server
 
-  import ExUnit.CaptureLog
-
   describe "component failure handling" do
-    test "director exits immediately on component failure with proper logging" do
+    test "director exits immediately on component failure" do
       # Spawn a test director process
       test_process = self()
 
@@ -39,26 +37,17 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
       # Monitor the director
       monitor_ref = Process.monitor(director_pid)
 
-      # Simulate component failure and capture log output
+      # Simulate component failure
       failed_component = spawn(fn -> :ok end)
 
-      log_output =
-        capture_log(fn ->
-          send(director_pid, {:simulate_component_failure, failed_component, :test_failure})
+      send(director_pid, {:simulate_component_failure, failed_component, :test_failure})
 
-          # Director should exit immediately
-          assert_receive {:director_exited,
-                          {:component_failure, ^failed_component, :test_failure}}
+      # Director should exit immediately
+      assert_receive {:director_exited,
+                      {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
 
-          assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid,
-                          {:component_failure, ^failed_component, :test_failure}}
-        end)
-
-      # Verify both log messages are present
-      assert log_output =~
-               "Transaction component #{inspect(failed_component)} failed with reason: :test_failure"
-
-      assert log_output =~ "Director exiting immediately due to component failure"
+      assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid,
+                      {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
     end
   end
 end

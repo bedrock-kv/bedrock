@@ -30,7 +30,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     recovery_attempt.transaction_system_layout
     |> extract_pids_to_monitor()
     |> monitor_all_pids(monitor_fn)
-    |> log_monitoring_count()
 
     recovery_attempt |> Map.put(:state, :completed)
   end
@@ -58,10 +57,5 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   defp monitor_all_pids(pids, monitor_fn) do
     Enum.each(pids, monitor_fn)
     pids
-  end
-
-  @spec log_monitoring_count([pid()]) :: :ok
-  defp log_monitoring_count(pids) do
-    Logger.info("Director monitoring #{length(pids)} processes")
   end
 end

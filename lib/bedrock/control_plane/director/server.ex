@@ -99,16 +99,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @impl true
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do
-    # ANY transaction component failure triggers immediate director exit
-    Logger.error(
-      "Transaction component #{inspect(failed_pid)} failed with reason: #{inspect(reason)}"
-    )
-
-    Logger.error("Director exiting immediately due to component failure")
-
     t
     |> Map.put(:state, :stopped)
-    |> stop({:component_failure, failed_pid, reason})
+    |> stop({:shutdown, {:component_failure, failed_pid, reason}})
   end
 
   @impl true
@@ -180,6 +173,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> node_added_worker(node, worker_info, now())
     |> try_to_recover()
     |> noreply()
+  end
+
+  @impl true
+  def terminate(reason, _t) do
+    Logger.error("Director terminating due to: #{inspect(reason)}")
+    :ok
   end
 
   @spec now() :: DateTime.t()

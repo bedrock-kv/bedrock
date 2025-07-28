@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
 
@@ -33,10 +34,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
         make_ref()
       end
 
-      recovery_attempt = %{
-        state: :monitor_components,
-        transaction_system_layout: create_layout()
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:monitor_components)
+        |> Map.put(:transaction_system_layout, create_layout())
 
       log_output =
         capture_log([level: :info], fn ->
@@ -54,10 +55,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
     end
 
     test "uses default Process.monitor when no monitor_fn provided" do
-      recovery_attempt = %{
-        state: :monitor_components,
-        transaction_system_layout: create_layout()
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:monitor_components)
+        |> Map.put(:transaction_system_layout, create_layout())
 
       result = MonitoringPhase.execute(recovery_attempt, %{})
       assert result.state == :completed

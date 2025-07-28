@@ -1,9 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
   use ExUnit.Case, async: true
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.SequencerPhase
-
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -17,13 +16,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
       # We can't easily mock the DynamicSupervisor call, but we can test
       # that the phase structure is correct for error handling
 
-      recovery_attempt = %RecoveryAttempt{
-        state: :define_sequencer,
-        cluster: TestCluster,
-        epoch: 1,
-        version_vector: {0, 100},
-        sequencer: nil
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:define_sequencer)
+        |> with_cluster(TestCluster)
+        |> with_epoch(1)
+        |> with_version_vector({0, 100})
+        |> with_sequencer(nil)
 
       # The actual execution will fail because TestCluster.otp_name(:sup)
       # doesn't point to a real supervisor, but now it should return an error
@@ -42,13 +41,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
       # This is more complex to test directly, so we'll focus on the integration behavior
 
       # Create a recovery attempt that will use a mocked starter
-      recovery_attempt = %RecoveryAttempt{
-        state: :define_sequencer,
-        cluster: TestCluster,
-        epoch: 1,
-        version_vector: {0, 100},
-        sequencer: nil
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:define_sequencer)
+        |> with_cluster(TestCluster)
+        |> with_epoch(1)
+        |> with_version_vector({0, 100})
+        |> with_sequencer(nil)
 
       # Since we can't easily mock Shared.starter_for in this context,
       # we'll test the error handling path through the actual execution
@@ -60,13 +59,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
     end
 
     test "handles startup errors gracefully" do
-      recovery_attempt = %RecoveryAttempt{
-        state: :define_sequencer,
-        cluster: TestCluster,
-        epoch: 1,
-        version_vector: {0, 100},
-        sequencer: nil
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:define_sequencer)
+        |> with_cluster(TestCluster)
+        |> with_epoch(1)
+        |> with_version_vector({0, 100})
+        |> with_sequencer(nil)
 
       result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
 

@@ -1,18 +1,19 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
   use ExUnit.Case, async: true
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
-      recovery_attempt = %RecoveryAttempt{
-        state: :determine_old_logs_to_copy,
-        log_recovery_info_by_id: %{
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:determine_old_logs_to_copy)
+        |> with_log_recovery_info(%{
           {:log, 1} => %{oldest_version: 10, last_version: 50},
           {:log, 2} => %{oldest_version: 5, last_version: 45}
-        }
-      }
+        })
 
       # Quorum = 2
       result =

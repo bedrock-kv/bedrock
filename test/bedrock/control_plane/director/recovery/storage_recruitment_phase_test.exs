@@ -1,9 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
   use ExUnit.Case, async: true
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
-
-  import NodeTrackingHelper
 
   # Mock cluster for testing
   defmodule TestCluster do
@@ -12,24 +11,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
 
   describe "execute/1" do
     test "successfully fills storage team vacancies and advances state" do
-      recovery_attempt = %{
-        state: :recruit_storage_to_fill_vacancies,
-        cluster: TestCluster,
-        storage_teams: [
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:recruit_storage_to_fill_vacancies)
+        |> with_cluster(TestCluster)
+        |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
           %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
-        ],
-        storage_recovery_info_by_id: %{
+        ])
+        |> with_storage_recovery_info(%{
           "storage_1" => %{},
           "storage_2" => %{},
           # Available for vacancy
           "storage_3" => %{},
           # Available for vacancy
           "storage_4" => %{}
-        }
-      }
+        })
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
+      result =
+        StorageRecruitmentPhase.execute(
+          recovery_attempt,
+          recovery_context() |> with_node_tracking(nodes: 1)
+        )
 
       assert result.state == :replay_old_logs
       assert is_list(result.storage_teams)
@@ -42,60 +45,72 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
     end
 
     test "stalls recovery when insufficient storage workers available" do
-      recovery_attempt = %{
-        state: :recruit_storage_to_fill_vacancies,
-        cluster: TestCluster,
-        storage_teams: [
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:recruit_storage_to_fill_vacancies)
+        |> with_cluster(TestCluster)
+        |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
           %{tag: "team_2", storage_ids: ["storage_2", {:vacancy, 1}]}
-        ],
-        storage_recovery_info_by_id: %{
+        ])
+        |> with_storage_recovery_info(%{
           "storage_1" => %{},
           "storage_2" => %{},
           # Only 1 available, but need 2 vacancies filled
           "storage_3" => %{}
-        }
-      }
+        })
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
+      result =
+        StorageRecruitmentPhase.execute(
+          recovery_attempt,
+          recovery_context() |> with_node_tracking(nodes: 1)
+        )
 
       assert {:stalled, {:all_workers_failed, _failed_workers}} = result.state
     end
 
     test "handles storage teams with no vacancies" do
-      recovery_attempt = %{
-        state: :recruit_storage_to_fill_vacancies,
-        cluster: TestCluster,
-        storage_teams: [
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:recruit_storage_to_fill_vacancies)
+        |> with_cluster(TestCluster)
+        |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", "storage_2"]},
           %{tag: "team_2", storage_ids: ["storage_3", "storage_4"]}
-        ],
-        storage_recovery_info_by_id: %{
+        ])
+        |> with_storage_recovery_info(%{
           "storage_1" => %{},
           "storage_2" => %{},
           "storage_3" => %{},
           "storage_4" => %{}
-        }
-      }
+        })
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
+      result =
+        StorageRecruitmentPhase.execute(
+          recovery_attempt,
+          recovery_context() |> with_node_tracking(nodes: 1)
+        )
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == recovery_attempt.storage_teams
     end
 
     test "handles empty storage teams" do
-      recovery_attempt = %{
-        state: :recruit_storage_to_fill_vacancies,
-        cluster: TestCluster,
-        storage_teams: [],
-        storage_recovery_info_by_id: %{
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:recruit_storage_to_fill_vacancies)
+        |> with_cluster(TestCluster)
+        |> with_storage_teams([])
+        |> with_storage_recovery_info(%{
           "storage_1" => %{},
           "storage_2" => %{}
-        }
-      }
+        })
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, create_mock_context())
+      result =
+        StorageRecruitmentPhase.execute(
+          recovery_attempt,
+          recovery_context() |> with_node_tracking(nodes: 1)
+        )
 
       assert result.state == :replay_old_logs
       assert result.storage_teams == []
@@ -105,24 +120,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
       mock_pid_1 = spawn(fn -> :timer.sleep(1000) end)
       mock_pid_2 = spawn(fn -> :timer.sleep(1000) end)
 
-      recovery_attempt = %{
-        state: :recruit_storage_to_fill_vacancies,
-        cluster: TestCluster,
-        storage_teams: [
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:recruit_storage_to_fill_vacancies)
+        |> with_cluster(TestCluster)
+        |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
           %{tag: "team_2", storage_ids: ["storage_2"]}
-        ],
-        storage_recovery_info_by_id: %{
+        ])
+        |> with_storage_recovery_info(%{
           "storage_1" => %{},
           "storage_2" => %{},
           # Available for vacancy
           "storage_3" => %{}
-        },
-        transaction_services: %{}
-      }
+        })
+        |> with_transaction_services(%{})
 
       context = %{
-        node_tracking: create_mock_node_tracking(),
+        node_tracking: mock_node_tracking(),
         available_services: %{
           "storage_1" => %{status: {:up, mock_pid_1}},
           "storage_2" => %{status: {:up, mock_pid_2}},

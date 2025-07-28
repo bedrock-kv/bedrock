@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase
 
@@ -20,10 +21,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         "storage_6" => %{durable_version: 97, oldest_durable_version: 40}
       }
 
-      recovery_attempt = %{
-        state: :determine_durable_version,
-        storage_recovery_info_by_id: storage_recovery_info
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:determine_durable_version)
+        |> with_storage_recovery_info(storage_recovery_info)
 
       capture_log(fn ->
         result =
@@ -51,10 +52,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         "storage_1" => %{durable_version: 100, oldest_durable_version: 50}
       }
 
-      recovery_attempt = %{
-        state: :determine_durable_version,
-        storage_recovery_info_by_id: storage_recovery_info
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:determine_durable_version)
+        |> with_storage_recovery_info(storage_recovery_info)
 
       result =
         DurableVersionPhase.execute(recovery_attempt, %{
@@ -85,10 +86,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         "storage_5" => %{durable_version: 97, oldest_durable_version: 40}
       }
 
-      recovery_attempt = %{
-        state: :determine_durable_version,
-        storage_recovery_info_by_id: storage_recovery_info
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:determine_durable_version)
+        |> with_storage_recovery_info(storage_recovery_info)
 
       result =
         DurableVersionPhase.execute(recovery_attempt, %{

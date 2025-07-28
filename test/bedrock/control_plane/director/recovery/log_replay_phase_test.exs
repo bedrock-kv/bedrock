@@ -1,21 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   use ExUnit.Case, async: true
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
 
   describe "execute/1" do
     test "successfully advances state with empty logs" do
       # Test with empty configurations to avoid Log.recover_from calls
-      recovery_attempt = %{
-        state: :replay_old_logs,
-        # No old logs to copy
-        old_log_ids_to_copy: [],
-        # No new logs
-        logs: %{},
-        version_vector: {10, 50},
-        available_services: %{},
-        service_pids: %{}
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:replay_old_logs)
+        |> with_logs(%{})
+        |> with_version_vector({10, 50})
+        |> Map.put(:old_log_ids_to_copy, [])
+        |> Map.put(:available_services, %{})
+        |> Map.put(:service_pids, %{})
 
       result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
@@ -25,14 +24,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
 
     test "handles actual log replay scenarios with stall expectation" do
       # Test with no old logs to copy AND no new logs - this completely avoids Log.recover_from calls
-      recovery_attempt = %{
-        state: :replay_old_logs,
-        old_log_ids_to_copy: [],
-        logs: %{},
-        version_vector: {10, 50},
-        available_services: %{},
-        service_pids: %{}
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:replay_old_logs)
+        |> with_logs(%{})
+        |> with_version_vector({10, 50})
+        |> Map.put(:old_log_ids_to_copy, [])
+        |> Map.put(:available_services, %{})
+        |> Map.put(:service_pids, %{})
 
       result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
@@ -259,16 +258,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
     test "execute advances to repair_data_distribution on success" do
       # This test can't easily succeed without mocking Log.recover_from
       # but we can test the structure
-      recovery_attempt = %{
-        state: :replay_old_logs,
-        # Empty to minimize processing
-        old_log_ids_to_copy: [],
-        # Empty to minimize processing
-        logs: %{},
-        version_vector: {10, 50},
-        available_services: %{},
-        service_pids: %{}
-      }
+      recovery_attempt =
+        recovery_attempt()
+        |> with_state(:replay_old_logs)
+        |> with_logs(%{})
+        |> with_version_vector({10, 50})
+        |> Map.put(:old_log_ids_to_copy, [])
+        |> Map.put(:available_services, %{})
+        |> Map.put(:service_pids, %{})
 
       result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 

@@ -433,17 +433,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Helper function to create a first-time recovery attempt
   defp create_first_time_recovery_attempt do
-    RecoveryAttempt.new(TestCluster, 1, nil)
+    first_time_recovery()
   end
 
   # Helper function to create an existing cluster recovery attempt
   defp create_existing_cluster_recovery_attempt do
-    RecoveryAttempt.new(TestCluster, 2, nil)
-    |> Map.put(:log_recovery_info_by_id, %{
+    existing_cluster_recovery()
+    |> with_log_recovery_info(%{
       "existing_log_1" => %{kind: :log, oldest_version: 0, last_version: 100},
       "existing_log_2" => %{kind: :log, oldest_version: 0, last_version: 100}
     })
-    |> Map.put(:storage_recovery_info_by_id, %{
+    |> with_storage_recovery_info(%{
       "existing_storage_1" => %{
         kind: :storage,
         durable_version: 95,

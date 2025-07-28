@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -36,12 +36,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   describe "execute/1 validation" do
     test "validates sequencer presence" do
-      recovery_attempt = create_valid_recovery_attempt(%{sequencer: nil})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_sequencer(nil)
 
       # Capture logs to see what's being emitted during validation
       _log_output =
         capture_log(fn ->
-          result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+          result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
           assert result.state ==
                    {:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_sequencer}}}
@@ -49,9 +51,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "validates commit proxies presence" do
-      recovery_attempt = create_valid_recovery_attempt(%{proxies: []})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_proxies([])
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -59,16 +63,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "validates resolvers presence" do
-      recovery_attempt = create_valid_recovery_attempt(%{resolvers: []})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_resolvers([])
 
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{
-              "log_1" => %{kind: :log, status: {:up, self()}},
-              "storage_1" => %{kind: :storage, status: {:up, self()}}
-            }
+          persistence_context()
+          |> with_available_services(%{
+            "log_1" => %{kind: :log, status: {:up, self()}},
+            "storage_1" => %{kind: :storage, status: {:up, self()}}
           })
         )
 
@@ -78,20 +83,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "validates log services availability" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          logs: %{"log_1" => %{}, "log_2" => %{}},
-          transaction_services: %{
-            "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
-            # Missing log_2 service to trigger the validation failure
-          }
+        persistence_recovery_attempt()
+        |> with_logs(%{"log_1" => %{}, "log_2" => %{}})
+        |> with_transaction_services(%{
+          "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
+          # Missing log_2 service to trigger the validation failure
         })
 
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
-          })
+          persistence_context()
+          |> with_available_services(%{"log_1" => %{kind: :log, status: {:up, self()}}})
         )
 
       assert result.state ==
@@ -103,9 +106,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   describe "execute/1 with invalid components" do
     test "fails with invalid sequencer type" do
-      recovery_attempt = create_valid_recovery_attempt(%{sequencer: :invalid_sequencer})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_sequencer(:invalid_sequencer)
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -113,9 +118,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "fails with invalid commit proxies type" do
-      recovery_attempt = create_valid_recovery_attempt(%{proxies: [:invalid_proxy]})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_proxies([:invalid_proxy])
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -123,9 +130,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "fails with invalid resolvers type" do
-      recovery_attempt = create_valid_recovery_attempt(%{resolvers: [:invalid_resolver]})
+      recovery_attempt =
+        persistence_recovery_attempt()
+        |> with_resolvers([:invalid_resolver])
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -142,14 +151,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       ]
 
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          resolvers: valid_resolvers,
-          # This will trigger the no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_resolvers(valid_resolvers)
+        |> with_proxies([])
 
       # This will fail due to no commit proxies available
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -162,24 +169,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # We can't directly test the private functions, but we can verify the structure
       # through the integration test that fails at the commit proxy stage
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          epoch: 42,
-          logs: %{"log_1" => %{}, "log_2" => %{}},
-          storage_teams: [%{id: "team_1"}],
-          required_services: %{service_1: %{kind: :test}},
-          # This will trigger no_commit_proxies validation failure
-          proxies: [],
-          transaction_services: %{
-            "log_1" => %{
-              kind: :log,
-              last_seen: {:log_1, :node1},
-              status: {:up, spawn(fn -> :ok end)}
-            },
-            "log_2" => %{
-              kind: :log,
-              last_seen: {:log_2, :node1},
-              status: {:up, spawn(fn -> :ok end)}
-            }
+        persistence_recovery_attempt()
+        |> with_epoch(42)
+        |> with_logs(%{"log_1" => %{}, "log_2" => %{}})
+        |> with_storage_teams([%{id: "team_1"}])
+        |> with_required_services(%{service_1: %{kind: :test}})
+        |> with_proxies([])
+        |> with_transaction_services(%{
+          "log_1" => %{
+            kind: :log,
+            last_seen: {:log_1, :node1},
+            status: {:up, spawn(fn -> :ok end)}
+          },
+          "log_2" => %{
+            kind: :log,
+            last_seen: {:log_2, :node1},
+            status: {:up, spawn(fn -> :ok end)}
           }
         })
 
@@ -188,11 +193,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{
-              "log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}},
-              "log_2" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}
-            }
+          persistence_context()
+          |> with_available_services(%{
+            "log_1" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}},
+            "log_2" => %{kind: :log, status: {:up, spawn(fn -> :ok end)}}
           })
         )
 
@@ -208,17 +212,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       # Test the encoding through the build process with correct resolver format
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          resolvers: [
-            {"start_key1", test_pid},
-            {"start_key2", test_pid}
-          ],
-          # Trigger commit proxy failure to test encoding
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_resolvers([
+          {"start_key1", test_pid},
+          {"start_key2", test_pid}
+        ])
+        |> with_proxies([])
 
       # This tests the encoding logic through the validation and build path
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -227,14 +229,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "encode_component_for_storage rejects invalid resolver formats" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          # Invalid resolver format
-          resolvers: [:invalid_resolver]
-          # Keep valid proxies so it fails at resolver validation, not proxy validation
-        })
+        persistence_recovery_attempt()
+        |> with_resolvers([:invalid_resolver])
 
       # This should fail at validation stage for invalid resolvers
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -260,49 +259,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         end)
 
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          proxies: [mock_proxy]
-        })
+        persistence_recovery_attempt()
+        |> with_proxies([mock_proxy])
 
       # This should pass all validations and reach the commit stage
       # where it will fail due to our mock returning an error
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            cluster_config: %{
-              parameters: %{
-                desired_commit_proxies: 1,
-                desired_coordinators: 1,
-                desired_logs: 1,
-                desired_read_version_proxies: 1,
-                desired_replication_factor: 1,
-                desired_resolvers: 1,
-                ping_rate_in_hz: 10,
-                retransmission_rate_in_hz: 5,
-                transaction_window_in_ms: 1000
-              },
-              policies: %{
-                allow_volunteer_nodes_to_join: true
-              },
-              coordinators: [:coord1, :coord2],
-              transaction_system_layout: %{
-                id: 42,
-                sequencer: self(),
-                proxies: [mock_proxy],
-                resolvers: [{"start_key", self()}],
-                logs: %{"log_1" => ["tag_a"]},
-                storage_teams: [],
-                services: %{
-                  "log_1" => %{kind: :log, status: {:up, self()}},
-                  "storage_1" => %{kind: :storage, status: {:up, self()}}
-                }
+          persistence_context()
+          |> with_cluster_config(
+            basic_cluster_config()
+            |> with_transaction_system_layout(%{
+              id: 42,
+              sequencer: self(),
+              proxies: [mock_proxy],
+              resolvers: [{"start_key", self()}],
+              logs: %{"log_1" => ["tag_a"]},
+              storage_teams: [],
+              services: %{
+                "log_1" => %{kind: :log, status: {:up, self()}},
+                "storage_1" => %{kind: :storage, status: {:up, self()}}
               }
-            },
-            available_services: %{
-              "log_1" => %{kind: :log, status: {:up, self()}},
-              "storage_1" => %{kind: :storage, status: {:up, self()}}
-            }
+            })
+          )
+          |> with_available_services(%{
+            "log_1" => %{kind: :log, status: {:up, self()}},
+            "storage_1" => %{kind: :storage, status: {:up, self()}}
           })
         )
 
@@ -314,35 +297,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   describe "configuration building" do
     test "builds cluster config with all required fields" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          epoch: 42,
-          storage_teams: [%{tag: "team_1", storage_ids: ["s1", "s2"]}],
-          required_services: %{service1: %{kind: :test}},
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_epoch(42)
+        |> with_storage_teams([%{tag: "team_1", storage_ids: ["s1", "s2"]}])
+        |> with_required_services(%{service1: %{kind: :test}})
+        |> with_proxies([])
 
       # Test config building through validation (which calls build_cluster_config)
       # We expect this to fail at commit proxy stage, confirming config was built
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            cluster_config: %{
-              coordinators: [:coord1, :coord2],
-              parameters: %{
-                desired_logs: 5,
-                desired_replication_factor: 3,
-                custom_param: "test",
-                desired_commit_proxies: 1,
-                desired_coordinators: 1,
-                desired_read_version_proxies: 1,
-                ping_rate_in_hz: 10,
-                retransmission_rate_in_hz: 5,
-                transaction_window_in_ms: 1000
-              }
-            }
-          })
+          persistence_context()
+          |> with_cluster_config(
+            basic_cluster_config()
+            |> merge_parameters(%{
+              desired_logs: 5,
+              desired_replication_factor: 3
+            })
+          )
         )
 
       assert result.state ==
@@ -354,11 +327,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   describe "validation edge cases" do
     test "validates commit proxies with mixed invalid types" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          proxies: [self(), :invalid, "also_invalid"]
-        })
+        persistence_recovery_attempt()
+        |> with_proxies([self(), :invalid, "also_invalid"])
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -367,17 +339,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "validates resolvers with mixed valid and invalid types" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          resolvers: [
-            # Valid tuple
-            {"start_key1", self()},
-            # Invalid type
-            :invalid_resolver
-          ]
-          # Keep valid proxies so it fails at resolver validation
-        })
+        persistence_recovery_attempt()
+        |> with_resolvers([
+          # Valid tuple
+          {"start_key1", self()},
+          # Invalid type
+          :invalid_resolver
+        ])
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -386,23 +356,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "validates logs with services in down state" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          logs: %{"log_1" => %{}, "log_2" => %{}},
-          transaction_services: %{
-            "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
-            # Missing log_2 service to trigger validation failure
-          }
+        persistence_recovery_attempt()
+        |> with_logs(%{"log_1" => %{}, "log_2" => %{}})
+        |> with_transaction_services(%{
+          "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
+          # Missing log_2 service to trigger validation failure
         })
 
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{
-              "log_1" => %{kind: :log, status: {:up, self()}},
-              # Down service
-              "log_2" => %{kind: :log, status: {:down, nil}}
-            }
+          persistence_context()
+          |> with_available_services(%{
+            "log_1" => %{kind: :log, status: {:up, self()}},
+            # Down service
+            "log_2" => %{kind: :log, status: {:down, nil}}
           })
         )
 
@@ -414,23 +382,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "validates logs with non-log service types" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          logs: %{"log_1" => %{}, "service_1" => %{}},
-          transaction_services: %{
-            "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
-            # Missing service_1 in transaction_services to trigger validation failure
-          }
+        persistence_recovery_attempt()
+        |> with_logs(%{"log_1" => %{}, "service_1" => %{}})
+        |> with_transaction_services(%{
+          "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
+          # Missing service_1 in transaction_services to trigger validation failure
         })
 
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{
-              "log_1" => %{kind: :log, status: {:up, self()}},
-              # Wrong kind
-              "service_1" => %{kind: :storage, status: {:up, self()}}
-            }
+          persistence_context()
+          |> with_available_services(%{
+            "log_1" => %{kind: :log, status: {:up, self()}},
+            # Wrong kind
+            "service_1" => %{kind: :storage, status: {:up, self()}}
           })
         )
 
@@ -444,51 +410,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   describe "transaction structure validation" do
     test "builds system transaction with comprehensive key structure" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          epoch: 123,
-          logs: %{
-            {:log, 1} => ["tag_a"],
-            {:log, 2} => ["tag_b", "tag_c"]
-          },
-          storage_teams: [
-            %{tag: "team_1", storage_ids: ["s1", "s2"]},
-            %{tag: "team_2", storage_ids: ["s3", "s4"]}
-          ],
-          required_services: %{
-            log_service: %{kind: :log, status: {:up, self()}},
-            storage_service: %{kind: :storage, status: {:up, self()}}
-          },
-          transaction_services: %{
-            {:log, 1} => %{kind: :log, last_seen: {{:log, 1}, :node1}, status: {:up, self()}},
-            {:log, 2} => %{kind: :log, last_seen: {{:log, 2}, :node1}, status: {:up, self()}}
-          },
-          # Trigger no_commit_proxies validation failure
-          proxies: []
+        persistence_recovery_attempt()
+        |> with_epoch(123)
+        |> with_logs(%{
+          {:log, 1} => ["tag_a"],
+          {:log, 2} => ["tag_b", "tag_c"]
         })
+        |> with_storage_teams([
+          %{tag: "team_1", storage_ids: ["s1", "s2"]},
+          %{tag: "team_2", storage_ids: ["s3", "s4"]}
+        ])
+        |> with_required_services(%{
+          log_service: %{kind: :log, status: {:up, self()}},
+          storage_service: %{kind: :storage, status: {:up, self()}}
+        })
+        |> with_transaction_services(%{
+          {:log, 1} => %{kind: :log, last_seen: {{:log, 1}, :node1}, status: {:up, self()}},
+          {:log, 2} => %{kind: :log, last_seen: {{:log, 2}, :node1}, status: {:up, self()}}
+        })
+        |> with_proxies([])
 
       # This comprehensive test validates that all transaction building paths work
       # Even though it fails at commit proxy stage, it exercises the full build pipeline
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            cluster_config: %{
-              coordinators: [:coord1, :coord2],
-              parameters: %{
-                desired_logs: 3,
-                desired_replication_factor: 2,
-                desired_commit_proxies: 2,
-                desired_coordinators: 3,
-                desired_read_version_proxies: 1,
-                ping_rate_in_hz: 20,
-                retransmission_rate_in_hz: 10,
-                transaction_window_in_ms: 2000
-              }
-            },
-            available_services: %{
-              {:log, 1} => %{kind: :log, status: {:up, self()}},
-              {:log, 2} => %{kind: :log, status: {:up, self()}}
-            }
+          persistence_context()
+          |> with_cluster_config(
+            basic_cluster_config()
+            |> merge_parameters(%{
+              desired_logs: 3,
+              desired_replication_factor: 2
+            })
+          )
+          |> with_available_services(%{
+            {:log, 1} => %{kind: :log, status: {:up, self()}},
+            {:log, 2} => %{kind: :log, status: {:up, self()}}
           })
         )
 
@@ -499,16 +456,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "builds transaction with empty storage teams and logs" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          logs: %{},
-          storage_teams: [],
-          transaction_services: %{},
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_logs(%{})
+        |> with_storage_teams([])
+        |> with_transaction_services(%{})
+        |> with_proxies([])
 
       # This tests the transaction building with minimal components
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -517,39 +472,36 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "builds transaction with complex log structures" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          logs: %{
-            {:log, "complex_1"} => ["tag_a", "tag_b"],
-            {:log, "complex_2"} => [],
-            {:log, 42} => ["numeric_tag"]
-          },
-          transaction_services: %{
-            {:log, "complex_1"} => %{
-              kind: :log,
-              last_seen: {{:log, "complex_1"}, :node1},
-              status: {:up, self()}
-            },
-            {:log, "complex_2"} => %{
-              kind: :log,
-              last_seen: {{:log, "complex_2"}, :node1},
-              status: {:up, self()}
-            },
-            {:log, 42} => %{kind: :log, last_seen: {{:log, 42}, :node1}, status: {:up, self()}}
-          },
-          # Trigger no_commit_proxies validation failure
-          proxies: []
+        persistence_recovery_attempt()
+        |> with_logs(%{
+          {:log, "complex_1"} => ["tag_a", "tag_b"],
+          {:log, "complex_2"} => [],
+          {:log, 42} => ["numeric_tag"]
         })
+        |> with_transaction_services(%{
+          {:log, "complex_1"} => %{
+            kind: :log,
+            last_seen: {{:log, "complex_1"}, :node1},
+            status: {:up, self()}
+          },
+          {:log, "complex_2"} => %{
+            kind: :log,
+            last_seen: {{:log, "complex_2"}, :node1},
+            status: {:up, self()}
+          },
+          {:log, 42} => %{kind: :log, last_seen: {{:log, 42}, :node1}, status: {:up, self()}}
+        })
+        |> with_proxies([])
 
       # This tests transaction building with various log ID types and descriptors
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            available_services: %{
-              {:log, "complex_1"} => %{kind: :log, status: {:up, self()}},
-              {:log, "complex_2"} => %{kind: :log, status: {:up, self()}},
-              {:log, 42} => %{kind: :log, status: {:up, self()}}
-            }
+          persistence_context()
+          |> with_available_services(%{
+            {:log, "complex_1"} => %{kind: :log, status: {:up, self()}},
+            {:log, "complex_2"} => %{kind: :log, status: {:up, self()}},
+            {:log, 42} => %{kind: :log, status: {:up, self()}}
           })
         )
 
@@ -563,12 +515,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     test "handles commit proxy selection failure" do
       # Create a recovery attempt that passes validation but has no commit proxies
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_proxies([])
 
       # Should fail at the commit proxy selection stage
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -577,11 +528,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "handles invalid commit proxy format" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          proxies: "not_a_list"
-        })
+        persistence_recovery_attempt()
+        |> with_proxies("not_a_list")
 
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -594,17 +544,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       test_pid = spawn(fn -> :ok end)
 
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          resolvers: [
-            {"simple_key", test_pid},
-            {"complex_start_key", test_pid}
-          ],
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_resolvers([
+          {"simple_key", test_pid},
+          {"complex_start_key", test_pid}
+        ])
+        |> with_proxies([])
 
       # Test resolver encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -613,18 +561,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "encodes services with various formats" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          required_services: %{
-            service_1: %{kind: :log, status: {:up, self()}, extra: "data"},
-            service_2: %{kind: :storage, status: {:down, nil}},
-            service_3: %{kind: :custom, metadata: %{foo: "bar"}}
-          },
-          # Trigger no_commit_proxies validation failure
-          proxies: []
+        persistence_recovery_attempt()
+        |> with_required_services(%{
+          service_1: %{kind: :log, status: {:up, self()}, extra: "data"},
+          service_2: %{kind: :storage, status: {:down, nil}},
+          service_3: %{kind: :custom, metadata: %{foo: "bar"}}
         })
+        |> with_proxies([])
 
       # Test service encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -633,19 +579,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "encodes storage teams with complex structures" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          storage_teams: [
-            %{tag: "simple", storage_ids: ["s1"]},
-            %{tag: "complex", storage_ids: ["s2", "s3"], metadata: "extra"},
-            %{tag: "empty", storage_ids: []},
-            %{tag: "mixed", storage_ids: [{:vacancy, 0}, "s4"], other_field: 42}
-          ],
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_storage_teams([
+          %{tag: "simple", storage_ids: ["s1"]},
+          %{tag: "complex", storage_ids: ["s2", "s3"], metadata: "extra"},
+          %{tag: "empty", storage_ids: []},
+          %{tag: "mixed", storage_ids: [{:vacancy, 0}, "s4"], other_field: 42}
+        ])
+        |> with_proxies([])
 
       # Test storage team encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, create_valid_context())
+      result = PersistencePhase.execute(recovery_attempt, persistence_context())
 
       assert result.state ==
                {:stalled,
@@ -656,31 +600,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   describe "parameter handling" do
     test "handles missing optional parameters" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_proxies([])
 
       # Should still build successfully even with minimal parameters
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            cluster_config: %{
-              coordinators: [],
-              parameters: %{
-                desired_logs: 1,
-                desired_replication_factor: 1,
-                # Missing optional parameters but including required ones
-                desired_commit_proxies: 1,
-                desired_coordinators: 1,
-                desired_read_version_proxies: 1,
-                ping_rate_in_hz: 10,
-                retransmission_rate_in_hz: 5,
-                transaction_window_in_ms: 1000
-              }
-            }
-          })
+          persistence_context()
+          |> with_cluster_config(
+            basic_cluster_config()
+            |> merge_parameters(%{
+              desired_logs: 1,
+              desired_replication_factor: 1
+            })
+          )
         )
 
       assert result.state ==
@@ -690,33 +624,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "handles comprehensive parameter set" do
       recovery_attempt =
-        create_valid_recovery_attempt(%{
-          # Trigger no_commit_proxies validation failure
-          proxies: []
-        })
+        persistence_recovery_attempt()
+        |> with_proxies([])
 
       # Should handle all parameters correctly
       result =
         PersistencePhase.execute(
           recovery_attempt,
-          create_valid_context(%{
-            cluster_config: %{
-              coordinators: [],
-              parameters: %{
-                desired_logs: 5,
-                desired_replication_factor: 3,
-                desired_commit_proxies: 2,
-                desired_coordinators: 3,
-                desired_read_version_proxies: 1,
-                ping_rate_in_hz: 15,
-                retransmission_rate_in_hz: 8,
-                transaction_window_in_ms: 1500,
-                custom_param_1: "test",
-                custom_param_2: 42,
-                nested_param: %{a: 1, b: 2}
-              }
-            }
-          })
+          persistence_context()
+          |> with_cluster_config(
+            basic_cluster_config()
+            |> merge_parameters(%{
+              desired_logs: 5,
+              desired_replication_factor: 3,
+              desired_commit_proxies: 2,
+              desired_coordinators: 3,
+              ping_rate_in_hz: 15,
+              transaction_window_in_ms: 1500
+            })
+          )
         )
 
       assert result.state ==
@@ -725,48 +651,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
   end
 
-  # Helper function to create a valid recovery attempt with overrides
-  defp create_valid_recovery_attempt(overrides) when is_map(overrides) do
-    base =
-      RecoveryAttempt.new(TestCluster, 1, DateTime.utc_now())
-      |> Map.put(:state, :persist_system_state)
-      # Valid sequencer by default
-      |> Map.put(:sequencer, self())
-      # Valid proxy by default
-      |> Map.put(:proxies, [self()])
-      # Valid resolvers by default
-      |> Map.put(:resolvers, [{"start_key", self()}])
-      # Valid logs by default
-      |> Map.put(:logs, %{"log_1" => %{}})
-      |> Map.put(:version_vector, {1, 100})
-      |> Map.put(:transaction_services, %{
-        "log_1" => %{kind: :log, last_seen: {:log_1, :node1}, status: {:up, self()}}
-      })
-
-    Map.merge(base, overrides)
+  # Helper function to create a recovery attempt for persistence testing
+  defp persistence_recovery_attempt do
+    minimal_valid_recovery()
+    |> with_state(:persist_system_state)
+    |> with_version_vector({1, 100})
   end
 
-  # Helper function to create a context with required cluster_config
-  defp create_valid_context(overrides \\ %{}) do
-    base = %{
-      node_tracking: nil,
-      lock_token: :crypto.strong_rand_bytes(32),
-      cluster_config: %{
-        coordinators: [],
-        parameters: %{
-          desired_logs: 2,
-          desired_replication_factor: 3,
-          desired_commit_proxies: 1,
-          desired_coordinators: 1,
-          desired_read_version_proxies: 1,
-          ping_rate_in_hz: 10,
-          retransmission_rate_in_hz: 5,
-          transaction_window_in_ms: 1000
-        }
-      },
-      available_services: %{}
-    }
-
-    Map.merge(base, overrides)
+  # Helper function to create a context for persistence testing
+  defp persistence_context do
+    recovery_context()
+    |> with_lock_token(:crypto.strong_rand_bytes(32))
   end
 end

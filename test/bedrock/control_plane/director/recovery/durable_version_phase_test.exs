@@ -29,8 +29,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         result =
           DurableVersionPhase.execute(recovery_attempt, %{
             node_tracking: nil,
+            old_transaction_system_layout: %{storage_teams: storage_teams},
             cluster_config: %{
-              transaction_system_layout: %{storage_teams: storage_teams},
               parameters: %{desired_replication_factor: 3}
             }
           })
@@ -59,8 +59,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       result =
         DurableVersionPhase.execute(recovery_attempt, %{
           node_tracking: nil,
+          old_transaction_system_layout: %{storage_teams: storage_teams},
           cluster_config: %{
-            transaction_system_layout: %{storage_teams: storage_teams},
             # Quorum = 2, but only 1 storage
             parameters: %{desired_replication_factor: 3}
           }
@@ -93,8 +93,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       result =
         DurableVersionPhase.execute(recovery_attempt, %{
           node_tracking: nil,
+          old_transaction_system_layout: %{storage_teams: storage_teams},
           cluster_config: %{
-            transaction_system_layout: %{storage_teams: storage_teams},
             # Quorum = 2
             parameters: %{desired_replication_factor: 3}
           }

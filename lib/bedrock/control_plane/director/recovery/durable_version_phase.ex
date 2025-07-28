@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   @impl true
   def execute(%{state: :determine_durable_version} = recovery_attempt, context) do
     determine_durable_version(
-      context.cluster_config.transaction_system_layout.storage_teams,
+      context.old_transaction_system_layout.storage_teams,
       recovery_attempt.storage_recovery_info_by_id,
       context.cluster_config.parameters.desired_replication_factor |> determine_quorum()
     )

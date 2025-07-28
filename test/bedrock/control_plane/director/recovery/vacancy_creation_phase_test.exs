@@ -6,23 +6,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
   describe "execute/1" do
     test "successfully creates vacancies for logs and storage teams" do
       recovery_attempt = %{
-        state: :create_vacancies,
-        parameters: %{
-          desired_logs: 3,
-          desired_replication_factor: 2
-        }
+        state: :create_vacancies
       }
 
       context = %{
         node_tracking: nil,
+        old_transaction_system_layout: %{
+          logs: %{
+            {:log, 1} => ["tag_a"]
+          },
+          storage_teams: [
+            %{tag: "storage_tag_1", storage_ids: ["storage_1"]}
+          ]
+        },
         cluster_config: %{
-          transaction_system_layout: %{
-            logs: %{
-              {:log, 1} => ["tag_a"]
-            },
-            storage_teams: [
-              %{tag: "storage_tag_1", storage_ids: ["storage_1"]}
-            ]
+          parameters: %{
+            desired_logs: 3,
+            desired_replication_factor: 2
           }
         }
       }
@@ -39,19 +39,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
     test "handles empty logs and storage teams" do
       recovery_attempt = %{
-        state: :create_vacancies,
-        parameters: %{
-          desired_logs: 2,
-          desired_replication_factor: 3
-        }
+        state: :create_vacancies
       }
 
       context = %{
         node_tracking: nil,
+        old_transaction_system_layout: %{
+          logs: %{},
+          storage_teams: []
+        },
         cluster_config: %{
-          transaction_system_layout: %{
-            logs: %{},
-            storage_teams: []
+          parameters: %{
+            desired_logs: 2,
+            desired_replication_factor: 3
           }
         }
       }

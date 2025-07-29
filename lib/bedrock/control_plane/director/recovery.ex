@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   The recovery process follows a linear state machine through these phases:
 
   1. `:start` → `StartPhase` - Initialize recovery attempt with timestamp
-  2. `:lock_available_services` → `LockServicesPhase` - Lock services with current epoch
+  2. `:lock_old_system_services` → `LockOldSystemServicesPhase` - Lock services from old system layout
   3. Branch point:
      - `:first_time_initialization` → `InitializationPhase` - Bootstrap new cluster
      - `:determine_old_logs_to_copy` → `LogDiscoveryPhase` - Find logs to recover
@@ -188,6 +188,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       coordinator: t.coordinator
     }
 
+    # Trace what services the director has when starting recovery
+    old_logs = t.old_transaction_system_layout |> Map.get(:logs, %{}) |> Map.keys()
+    available_service_ids = t.services |> Map.keys()
+
+    trace_recovery_service_availability(old_logs, available_service_ids, t.services)
+
     t.recovery_attempt
     |> run_recovery_attempt(context)
     |> case do
@@ -278,7 +284,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec next_phase(RecoveryAttempt.state()) :: module()
   defp next_phase(:start), do: __MODULE__.StartPhase
-  defp next_phase(:lock_available_services), do: __MODULE__.LockServicesPhase
+  defp next_phase(:lock_old_system_services), do: __MODULE__.LockOldSystemServicesPhase
   defp next_phase(:first_time_initialization), do: __MODULE__.InitializationPhase
   defp next_phase(:determine_old_logs_to_copy), do: __MODULE__.LogDiscoveryPhase
   defp next_phase(:create_vacancies), do: __MODULE__.VacancyCreationPhase

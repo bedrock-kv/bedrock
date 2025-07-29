@@ -202,7 +202,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     trace_recover_from(source_log, first_version, last_version)
 
     case recover_from(t, source_log, first_version, last_version) do
-      {:ok, t} -> t |> reply(:ok)
+      {:ok, t} -> t |> reply({:ok, self()})
       {:error, reason} -> t |> reply({:error, {:failed_to_recover, reason}})
     end
   end

@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
 
   @type state ::
           :start
-          | :lock_available_services
+          | :lock_old_system_services
           | :determine_old_logs_to_copy
           | :determine_durable_version
           | :recruit_logs_to_fill_vacancies

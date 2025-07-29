@@ -149,4 +149,23 @@ defmodule Bedrock.ControlPlane.Director do
         ) :: :ok
   def stand_relieved(director, {_new_epoch, _new_director} = relief),
     do: director |> cast({:stand_relieved, relief})
+
+  @doc """
+  Notifies the director that new services have been registered in the coordinator.
+  This allows the director to update its service directory and retry stalled recovery
+  if the new services might resolve insufficient_nodes conditions.
+
+  ## Parameters
+  - `director`: The reference to the cluster director (a GenServer).
+  - `service_infos`: List of service info tuples in format {service_id, kind, {otp_name, node}}
+
+  ## Returns
+  - `:ok`: Indicates the notification was successfully sent.
+  """
+  @spec notify_services_registered(
+          director :: ref(),
+          service_infos :: [{String.t(), atom(), {atom(), node()}}]
+        ) :: :ok
+  def notify_services_registered(director, service_infos),
+    do: director |> cast({:service_registered, service_infos})
 end

@@ -3,6 +3,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   alias Bedrock.Raft.Log
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Coordinator.Commands
+  alias Bedrock.ControlPlane.Director
 
   import Bedrock.ControlPlane.Coordinator.State.Changes
 
@@ -112,29 +113,42 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   def process_command(t, {:register_services, %{services: services}}) do
-    t
-    |> update_service_directory(fn directory ->
-      Enum.reduce(services, directory, fn {service_id, kind, worker_ref}, acc ->
-        # Only update if the service is new or changed
-        case Map.get(acc, service_id) do
-          {^kind, ^worker_ref} ->
-            # Service already exists with same info, no change needed
-            acc
-
-          _ ->
-            # Service is new or changed, update it
-            Map.put(acc, service_id, {kind, worker_ref})
+    # Filter only new or changed services before updating
+    new_or_changed_services =
+      Enum.filter(services, fn {service_id, kind, worker_ref} ->
+        case Map.get(t.service_directory, service_id) do
+          # Same service info, skip
+          {^kind, ^worker_ref} -> false
+          # New or changed service
+          _ -> true
         end
       end)
-    end)
+
+    updated_state =
+      t
+      |> update_service_directory(fn directory ->
+        Enum.into(services, directory, fn {service_id, kind, worker_ref} ->
+          {service_id, {kind, worker_ref}}
+        end)
+      end)
+
+    # Notify director of new services
+    notify_director_if_needed(updated_state.director, new_or_changed_services)
+
+    updated_state
   end
 
   def process_command(t, {:deregister_services, %{service_ids: service_ids}}) do
     t
     |> update_service_directory(fn directory ->
-      Enum.reduce(service_ids, directory, fn service_id, acc ->
-        Map.delete(acc, service_id)
-      end)
+      Map.drop(directory, service_ids)
     end)
   end
+
+  # Private helper to notify director only when needed
+  defp notify_director_if_needed(:unavailable, _service_infos), do: :ok
+  defp notify_director_if_needed(_director, []), do: :ok
+
+  defp notify_director_if_needed(director, service_infos),
+    do: Director.notify_services_registered(director, service_infos)
 end

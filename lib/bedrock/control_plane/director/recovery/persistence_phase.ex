@@ -87,8 +87,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
        resolvers: recovery_attempt.resolvers,
        logs: recovery_attempt.logs,
        storage_teams: recovery_attempt.storage_teams,
-       services: recovery_attempt.transaction_services
+       services:
+         filter_services_for_layout(
+           recovery_attempt.transaction_services,
+           recovery_attempt.logs,
+           recovery_attempt.storage_teams
+         )
      }}
+  end
+
+  @spec filter_services_for_layout(
+          transaction_services :: %{String.t() => map()},
+          logs :: %{String.t() => any()},
+          storage_teams :: [%{storage_ids: [String.t()]}]
+        ) :: %{String.t() => map()}
+  defp filter_services_for_layout(transaction_services, logs, storage_teams) do
+    # Get all service IDs referenced in the layout
+    log_service_ids = Map.keys(logs)
+
+    storage_service_ids =
+      storage_teams
+      |> Enum.flat_map(& &1.storage_ids)
+      |> MapSet.new()
+
+    referenced_service_ids = MapSet.union(MapSet.new(log_service_ids), storage_service_ids)
+
+    # Only include services that are actually referenced in the layout
+    transaction_services
+    |> Enum.filter(fn {service_id, _service} ->
+      MapSet.member?(referenced_service_ids, service_id)
+    end)
+    |> Map.new()
   end
 
   @spec build_system_transaction(

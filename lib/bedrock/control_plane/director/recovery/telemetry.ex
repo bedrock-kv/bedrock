@@ -227,6 +227,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_service_availability([String.t()], [String.t()], %{String.t() => term()}) ::
+          :ok
+  def trace_recovery_service_availability(old_logs, available_service_ids, service_details) do
+    Telemetry.execute([:bedrock, :recovery, :service_availability], %{}, %{
+      old_logs: old_logs,
+      available_service_ids: available_service_ids,
+      service_details: service_details
+    })
+  end
+
   @spec trace_recovery_attempt_persisted(any()) :: :ok
   def trace_recovery_attempt_persisted(txn_id) do
     Telemetry.execute([:bedrock, :recovery, :attempt_persisted], %{}, %{

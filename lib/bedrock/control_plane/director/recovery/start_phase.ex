@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartPhase do
   ## State Transitions
 
   - **Input**: `RecoveryAttempt` with `state: :start`
-  - **Output**: `RecoveryAttempt` with `state: :lock_available_services` and populated `started_at`
+  - **Output**: `RecoveryAttempt` with `state: :lock_old_system_services` and populated `started_at`
 
   The phase always succeeds and never stalls, making it a reliable foundation
   for the more complex phases that follow.
@@ -37,10 +37,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartPhase do
   @doc """
   Execute the start phase of recovery.
 
-  Sets the started_at timestamp and transitions to :lock_available_services.
+  Sets the started_at timestamp and transitions to :lock_old_system_services.
   """
   @impl true
   def execute(%RecoveryAttempt{state: :start} = recovery_attempt, _context) do
-    %{recovery_attempt | started_at: now(), state: :lock_available_services}
+    %{recovery_attempt | started_at: now(), state: :lock_old_system_services}
   end
 end

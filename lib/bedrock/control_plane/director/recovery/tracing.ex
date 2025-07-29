@@ -33,6 +33,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :log_recruitment_completed],
         [:bedrock, :recovery, :log_validation_started],
         [:bedrock, :recovery, :log_service_status],
+        [:bedrock, :recovery, :service_availability],
         [:bedrock, :recovery, :attempt_persisted],
         [:bedrock, :recovery, :attempt_persist_failed],
         [:bedrock, :recovery, :layout_persisted],
@@ -246,6 +247,30 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
       :missing ->
         debug("  Log #{inspect(log_id)}: NO MATCHING SERVICE (found: #{inspect(service)})")
     end
+  end
+
+  def trace(:service_availability, _, %{
+        old_logs: old_logs,
+        available_service_ids: available_service_ids,
+        service_details: service_details
+      }) do
+    info("Service availability check:")
+    info("  Old logs requiring recovery: #{inspect(old_logs)}")
+    info("  Available services: #{inspect(available_service_ids)}")
+
+    # Check which old logs have matching services
+    missing_services = old_logs |> Enum.reject(&(&1 in available_service_ids))
+    available_for_recovery = old_logs |> Enum.filter(&(&1 in available_service_ids))
+
+    if missing_services != [] do
+      error("  Missing services for old logs: #{inspect(missing_services)}")
+    end
+
+    if available_for_recovery != [] do
+      info("  Services available for recovery: #{inspect(available_for_recovery)}")
+    end
+
+    debug("  Service details: #{inspect(service_details)}")
   end
 
   def trace(:attempt_persisted, _, %{txn_id: txn_id}),

@@ -38,7 +38,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
             old_transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
-            relieving: Director.ref() | nil
+            relieving: Director.ref() | nil,
+            services: %{String.t() => {atom(), {atom(), node()}}} | nil
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -51,6 +52,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     epoch = opts[:epoch] || raise "Missing :epoch param"
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     relieving = opts[:relieving]
+    services = opts[:services] || %{}
 
     %{
       id: __MODULE__,
@@ -58,14 +60,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving}
+           {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving,
+            services}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, old_transaction_system_layout, epoch, coordinator, relieving}) do
+  def init(
+        {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving, services}
+      ) do
     %State{
       epoch: epoch,
       cluster: cluster,
@@ -73,7 +78,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
       old_transaction_system_layout: old_transaction_system_layout,
       coordinator: coordinator,
       node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
-      lock_token: :crypto.strong_rand_bytes(32)
+      lock_token: :crypto.strong_rand_bytes(32),
+      services: convert_coordinator_services_to_director_format(services)
     }
     |> then(&{:ok, &1, {:continue, {:start_recovery, relieving}}})
   end
@@ -84,7 +90,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
       old_director |> Director.stand_relieved({t.epoch, self()})
     end
 
-    %{t | services: get_services_from_transaction_system_layout(t.old_transaction_system_layout)}
+    # Services are already provided by coordinator from service directory
+    t
     |> ping_all_coordinators()
     |> try_to_recover()
     |> noreply()
@@ -175,6 +182,13 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> noreply()
   end
 
+  def handle_cast({:service_registered, service_infos}, %State{} = t) do
+    t
+    |> add_services_to_directory(service_infos)
+    |> try_to_recover_if_stalled()
+    |> noreply()
+  end
+
   @impl true
   def terminate(reason, _t) do
     Logger.error("Director terminating due to: #{inspect(reason)}")
@@ -190,4 +204,38 @@ defmodule Bedrock.ControlPlane.Director.Server do
     do: services || %{}
 
   def get_services_from_transaction_system_layout(_), do: %{}
+
+  @spec convert_coordinator_services_to_director_format(%{
+          String.t() => {atom(), {atom(), node()}}
+        }) :: %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}}
+  def convert_coordinator_services_to_director_format(coordinator_services) do
+    coordinator_services
+    |> Map.new(fn {service_id, {kind, {otp_name, node}}} ->
+      {service_id, %{kind: kind, last_seen: {otp_name, node}}}
+    end)
+  end
+
+  @spec add_services_to_directory(State.t(), [{String.t(), atom(), {atom(), node()}}]) ::
+          State.t()
+  def add_services_to_directory(t, service_infos) do
+    new_services =
+      service_infos
+      |> Map.new(fn {service_id, kind, {otp_name, node}} ->
+        {service_id, %{kind: kind, last_seen: {otp_name, node}}}
+      end)
+
+    %{t | services: Map.merge(t.services, new_services)}
+  end
+
+  @spec try_to_recover_if_stalled(State.t()) :: State.t()
+  def try_to_recover_if_stalled(%{state: :recovery} = t) do
+    # If we're in recovery state, new services might resolve insufficient_nodes
+    # So we should retry recovery
+    t |> try_to_recover()
+  end
+
+  def try_to_recover_if_stalled(t) do
+    # If not in recovery state, no need to retry
+    t
+  end
 end

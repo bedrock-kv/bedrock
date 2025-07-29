@@ -1,24 +1,23 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase do
   @moduledoc """
-  Fills log vacancies by assigning existing log workers or creating new ones.
+  Recruits log services for the new system by selecting from services not involved in the old system.
 
-  Identifies unassigned log workers and assigns them to vacant positions first.
-  If insufficient existing workers are available, creates new log workers on
-  nodes with log capability.
+  Services from the old transaction system layout are excluded from recruitment to preserve
+  their data in case another recovery is needed. This phase fills log vacancies by identifying
+  available log services that weren't part of the old system, assigning them to vacant positions,
+  and locking them to establish exclusive control.
 
-  New workers are distributed across available nodes to maximize fault tolerance.
-  The phase prefers to use existing workers before creating new ones to minimize
-  resource usage.
+  When insufficient existing services are available, new log workers are created and
+  distributed across nodes for fault tolerance. All recruited services must be locked
+  before the phase completes to ensure they can participate in subsequent recovery operations.
 
-  Can stall if insufficient nodes are available to create required workers or
-  if worker creation fails. Successful completion provides all logs needed for
-  the transaction system layout.
-
-  Transitions to :recruit_storage_to_fill_vacancies to continue service assignment.
+  The phase stalls if nodes are insufficient for worker creation or if locking fails,
+  otherwise transitions to storage recruitment.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
@@ -29,13 +28,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
   @impl true
   def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
-    assigned_log_ids =
+    old_system_log_ids =
       context.old_transaction_system_layout
       |> Map.get(:logs)
       |> Map.keys()
       |> MapSet.new()
 
-    all_log_ids =
+    available_log_ids =
       context.available_services
       |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
       |> Enum.map(&elem(&1, 0))
@@ -46,20 +45,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     with {:ok, logs, new_worker_ids} <-
            fill_log_vacancies(
              recovery_attempt.logs,
-             assigned_log_ids,
-             all_log_ids,
+             old_system_log_ids,
+             available_log_ids,
              available_log_nodes
            ),
          {:ok, updated_services} <-
-           create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context) do
+           create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context),
+         {:ok, existing_log_services} <-
+           extract_and_lock_existing_log_services(
+             logs,
+             context.available_services,
+             recovery_attempt,
+             context
+           ) do
       trace_recovery_all_log_vacancies_filled()
 
-      all_log_services =
-        Map.merge(
-          extract_existing_log_services(logs, context.available_services),
-          updated_services
-        )
-
+      all_log_services = Map.merge(existing_log_services, updated_services)
       all_log_pids = extract_service_pids(all_log_services)
 
       trace_recovery_log_recruitment_completed(
@@ -81,19 +82,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
   @spec fill_log_vacancies(
           logs :: %{Log.id() => any()},
-          assigned_log_ids :: MapSet.t(Log.id()),
-          all_log_ids :: MapSet.t(Log.id()),
+          old_system_log_ids :: MapSet.t(Log.id()),
+          available_log_ids :: MapSet.t(Log.id()),
           available_nodes :: [node()]
         ) ::
           {:ok, %{Log.id() => any()}, [Log.id()]}
           | {:error,
              {:insufficient_nodes, needed_workers :: pos_integer(),
               available_nodes :: non_neg_integer()}}
-  def fill_log_vacancies(logs, assigned_log_ids, all_log_ids, available_nodes) do
+  def fill_log_vacancies(logs, old_system_log_ids, available_log_ids, available_nodes) do
     vacancies = all_vacancies(logs)
     n_vacancies = MapSet.size(vacancies)
 
-    candidates_ids = all_log_ids |> MapSet.difference(assigned_log_ids)
+    candidates_ids = available_log_ids |> MapSet.difference(old_system_log_ids)
     n_candidates = MapSet.size(candidates_ids)
 
     if n_vacancies <= n_candidates do
@@ -237,20 +238,60 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     |> Map.new()
   end
 
-  @spec extract_existing_log_services(%{Log.id() => any()}, %{String.t() => map()}) :: %{
-          String.t() => map()
-        }
-  defp extract_existing_log_services(logs, available_services) do
-    logs
-    |> Map.keys()
-    |> Enum.reject(&match?({:vacancy, _}, &1))
-    |> Enum.map(fn log_id ->
+  @spec extract_and_lock_existing_log_services(
+          %{Log.id() => any()},
+          %{String.t() => map()},
+          map(),
+          map()
+        ) ::
+          {:ok, %{String.t() => map()}} | {:error, term()}
+  defp extract_and_lock_existing_log_services(logs, available_services, recovery_attempt, context) do
+    existing_log_ids =
+      logs
+      |> Map.keys()
+      |> Enum.reject(&match?({:vacancy, _}, &1))
+
+    # Lock each existing log service that was recruited
+    existing_log_ids
+    |> Enum.reduce_while({:ok, %{}}, fn log_id, {:ok, locked_services} ->
       case Map.get(available_services, log_id) do
-        %{} = service_descriptor -> {log_id, service_descriptor}
-        _ -> nil
+        %{} = service_descriptor ->
+          case lock_recruited_service(service_descriptor, recovery_attempt.epoch, context) do
+            {:ok, pid, info} ->
+              locked_service = %{
+                status: {:up, pid},
+                kind: info.kind,
+                last_seen: service_descriptor.last_seen
+              }
+
+              {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
+
+            {:error, reason} ->
+              {:halt, {:error, {:failed_to_lock_recruited_service, log_id, reason}}}
+          end
+
+        _ ->
+          # Service not available - this shouldn't happen if recruitment logic is correct
+          {:halt, {:error, {:recruited_service_unavailable, log_id}}}
       end
     end)
-    |> Enum.reject(&is_nil/1)
-    |> Map.new()
   end
+
+  @spec lock_recruited_service(map(), pos_integer(), map()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  defp lock_recruited_service(service_descriptor, epoch, context) do
+    lock_service_for_recovery(service_descriptor, epoch, context)
+  end
+
+  @spec lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch(), map()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  def lock_service_for_recovery(service, epoch, context \\ %{}) do
+    lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
+    lock_fn.(service, epoch)
+  end
+
+  @spec lock_service_impl(ServiceDescriptor.t(), Bedrock.epoch()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  defp lock_service_impl(%{kind: :log, last_seen: name}, epoch),
+    do: Log.lock_for_recovery(name, epoch)
 end

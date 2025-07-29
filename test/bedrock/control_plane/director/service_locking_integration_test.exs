@@ -115,18 +115,17 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       assert lock_phase_result.state == :determine_old_logs_to_copy
     end
 
-    test "recruitment phases should lock newly assigned services" do
-      # This test verifies that recruitment phases lock services they assign
-      # This is the missing piece that caused the validation failure
+    test "log recruitment phase should lock newly assigned services" do
+      # This test verifies that log recruitment phase locks services they assign
 
       # Start with recovery attempt that has completed lock services phase
       recovery_attempt =
         existing_cluster_recovery()
         |> Map.put(:epoch, 2)
         |> Map.put(:state, :recruit_logs_to_fill_vacancies)
-        # Need to fill one log vacancy
+        # Need to fill one log vacancy - kilvu2af should be recruited for this
         |> Map.put(:logs, %{{:vacancy, 1} => [0, 1]})
-        # Old service already locked
+        # Old service already locked  
         |> Map.put(:locked_service_ids, MapSet.new(["bwecaxvz"]))
         |> Map.put(:transaction_services, %{
           "bwecaxvz" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
@@ -140,9 +139,16 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
         "gb6cddk5" => %{kind: :storage, last_seen: {:storage_1, :node1}}
       }
 
+      # Set up old system layout so bwecaxvz is excluded from recruitment
+      old_transaction_system_layout = %{
+        logs: %{"bwecaxvz" => [0, 1]},
+        storage_teams: []
+      }
+
       context =
         create_test_context()
         |> Map.put(:available_services, available_services)
+        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
         |> with_multiple_nodes()
         |> with_mocked_service_locking_that_tracks_calls()
 
@@ -150,23 +156,71 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       alias Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       result = RecruitLogsToFillVacanciesPhase.execute(recovery_attempt, context)
 
-      # Debug: Print the result
-      IO.inspect(result, label: "Recruitment result")
-
-      IO.inspect(Map.keys(result.transaction_services),
-        label: "Transaction services after recruitment"
-      )
-
-      IO.inspect(result.logs, label: "Final logs assignment")
-
       # Should have recruited kilvu2af and added it to transaction_services
       assert result.state == :recruit_storage_to_fill_vacancies
       assert "kilvu2af" in Map.keys(result.transaction_services)
 
       # Most importantly: kilvu2af should have been locked during recruitment
-      # (This is verified by the mocked locking function tracking calls)
       locked_services = get_locked_services_from_context(context)
       assert "kilvu2af" in locked_services
+    end
+
+    test "storage recruitment phase should lock newly assigned services" do
+      # This test verifies that storage recruitment phase locks services they assign
+      # and excludes old system storage services from recruitment
+
+      # Start with recovery attempt that has completed log recruitment
+      recovery_attempt =
+        existing_cluster_recovery()
+        |> Map.put(:epoch, 2)
+        |> Map.put(:state, :recruit_storage_to_fill_vacancies)
+        # Need to fill one storage vacancy - ukawgc4e should be recruited for this
+        |> Map.put(:storage_teams, [%{tag: 0, storage_ids: [{:vacancy, 1}]}])
+        # Old services already locked
+        |> Map.put(:locked_service_ids, MapSet.new(["bwecaxvz", "gb6cddk5"]))
+        |> Map.put(:transaction_services, %{
+          "bwecaxvz" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+          "gb6cddk5" => %{status: {:up, self()}, kind: :storage, last_seen: {:storage_1, :node1}}
+        })
+        |> with_storage_recovery_info(%{
+          "gb6cddk5" => %{kind: :storage, durable_version: 0, oldest_durable_version: 0}
+        })
+
+      available_services = %{
+        # old services (should be excluded from recruitment)
+        "bwecaxvz" => %{kind: :log, last_seen: {:log_1, :node1}},
+        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_1, :node1}},
+        # new service (should be recruited and locked)
+        "ukawgc4e" => %{kind: :storage, last_seen: {:storage_2, :node2}}
+      }
+
+      # Set up old system layout so gb6cddk5 is excluded from recruitment
+      old_transaction_system_layout = %{
+        logs: %{"bwecaxvz" => [0, 1]},
+        storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"]}]
+      }
+
+      context =
+        create_test_context()
+        |> Map.put(:available_services, available_services)
+        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
+        |> with_multiple_nodes()
+        |> with_mocked_service_locking_that_tracks_calls()
+
+      # Execute storage recruitment phase
+      alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
+      result = StorageRecruitmentPhase.execute(recovery_attempt, context)
+
+      # Should have recruited ukawgc4e and added it to transaction_services
+      assert result.state == :replay_old_logs
+      assert "ukawgc4e" in Map.keys(result.transaction_services)
+
+      # Most importantly: ukawgc4e should have been locked during recruitment
+      # and gb6cddk5 should NOT have been locked again (excluded from recruitment)
+      locked_services = get_locked_services_from_context(context)
+      assert "ukawgc4e" in locked_services
+      # Should be excluded from recruitment
+      refute "gb6cddk5" in locked_services
     end
 
     test "full recovery flow: selective locking + recruitment locking" do
@@ -235,7 +289,14 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
     {:ok, tracker} = Agent.start_link(fn -> [] end)
 
     lock_service_fn = fn service, _epoch ->
-      Agent.update(tracker, fn locked -> [service.kind | locked] end)
+      # Find the service ID by looking it up in available_services 
+      service_id =
+        context.available_services
+        |> Enum.find_value(fn {id, desc} ->
+          if desc.last_seen == service.last_seen, do: id, else: nil
+        end)
+
+      Agent.update(tracker, fn locked -> [service_id | locked] end)
       pid = spawn(fn -> :ok end)
       {:ok, pid, %{kind: service.kind, durable_version: 0, oldest_version: 0, last_version: 1}}
     end

@@ -1,20 +1,17 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   @moduledoc """
-  Fills storage team vacancies with available storage workers.
+  Fills storage team vacancies by preferring existing storage services over creating new ones.
 
-  Identifies unassigned storage workers and assigns them to vacant positions
-  in storage teams first. If insufficient existing workers are available,
-  creates new storage workers on nodes with storage capability.
+  Storage services contain persistent data that must be preserved. The phase first attempts
+  to assign available storage services (those not affiliated with the current transaction
+  system) to vacant team positions. These workers will be reset to fill their new positions.
 
-  Storage workers are distributed across nodes to maximize fault tolerance
-  within each team. The phase prefers existing workers before creating new
-  ones to minimize resource usage.
+  Only when insufficient available storage services exist will new workers be created
+  and distributed across nodes for fault tolerance. All recruited services are locked to
+  establish exclusive control before participating in subsequent recovery operations.
 
-  Can stall if insufficient nodes are available for required storage workers
-  or if worker creation fails. Teams must have adequate replicas to participate
-  in transaction processing.
-
-  Transitions to :replay_old_logs once all storage teams have sufficient membership.
+  The phase stalls if nodes are insufficient for worker creation or if locking fails,
+  otherwise transitions to log replay.
   """
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -34,15 +31,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       recovery_attempt.storage_teams
       |> Enum.reduce(MapSet.new(), &Enum.into(&1.storage_ids, &2))
 
-    all_storage_ids =
-      recovery_attempt.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
+    old_system_storage_ids =
+      context.old_transaction_system_layout
+      |> Map.get(:storage_teams, [])
+      |> Enum.flat_map(& &1.storage_ids)
+      |> MapSet.new()
+
+    available_storage_ids =
+      context.available_services
+      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :storage end)
+      |> Enum.map(&elem(&1, 0))
+      |> MapSet.new()
+      |> MapSet.difference(old_system_storage_ids)
 
     available_storage_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :storage)
 
     fill_storage_team_vacancies(
       recovery_attempt.storage_teams,
       assigned_storage_ids,
-      all_storage_ids,
+      available_storage_ids,
       available_storage_nodes
     )
     |> case do
@@ -59,18 +66,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
           {:ok, updated_services} ->
             trace_recovery_all_storage_team_vacancies_filled()
 
-            # Collect ServiceDescriptors for all recruited storage servers (existing + new)
-            all_storage_services =
-              Map.merge(
-                extract_existing_storage_services(storage_teams, context.available_services),
-                updated_services
-              )
+            # Lock and collect all recruited storage services (existing + new)
+            case extract_and_lock_existing_storage_services(
+                   storage_teams,
+                   context.available_services,
+                   recovery_attempt,
+                   context
+                 ) do
+              {:ok, locked_existing_services} ->
+                all_storage_services = Map.merge(locked_existing_services, updated_services)
 
-            recovery_attempt
-            |> Map.put(:storage_teams, storage_teams)
-            |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
-            |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
-            |> Map.put(:state, :replay_old_logs)
+                recovery_attempt
+                |> Map.put(:storage_teams, storage_teams)
+                |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
+                |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
+                |> Map.put(:state, :replay_old_logs)
+
+              {:error, reason} ->
+                recovery_attempt |> Map.put(:state, {:stalled, reason})
+            end
 
           {:error, reason} ->
             recovery_attempt |> Map.put(:state, {:stalled, reason})
@@ -79,14 +93,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   end
 
   @doc """
-  Fills vacancies in storage teams by assigning IDs of storage workers that are
-  not currently part of the transaction system. If there are not enough storage
-  workers to fill all vacancies, an error is returned.
+  Fills vacancies in storage teams by assigning IDs of available storage workers.
+  If there are not enough available storage workers to fill all vacancies, 
+  new workers will be created.
   """
   @spec fill_storage_team_vacancies(
           storage_teams :: [StorageTeamDescriptor.t()],
           assigned_storage_ids :: MapSet.t(Storage.id()),
-          all_storage_ids :: MapSet.t(Storage.id()),
+          available_storage_ids :: MapSet.t(Storage.id()),
           available_nodes :: [node()]
         ) ::
           {:ok, [StorageTeamDescriptor.t()], [Storage.id()]}
@@ -94,13 +108,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   def fill_storage_team_vacancies(
         storage_teams,
         assigned_storage_ids,
-        all_storage_ids,
+        available_storage_ids,
         available_nodes
       ) do
     vacancies = assigned_storage_ids |> MapSet.filter(&vacancy?/1)
     n_vacancies = MapSet.size(vacancies)
 
-    candidate_ids = all_storage_ids |> MapSet.difference(assigned_storage_ids)
+    candidate_ids = available_storage_ids
     n_candidates = MapSet.size(candidate_ids)
 
     if n_vacancies <= n_candidates do
@@ -186,7 +200,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
     with {:ok, worker_ref} <-
            create_worker_fn.(foreman_ref, worker_id, :storage, timeout: 10_000),
-         {:ok, worker_info} <- worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
+         {:ok, worker_info} <-
+           worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid], []) do
       {worker_id,
        %{
          kind: :storage,
@@ -232,21 +247,65 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     )
   end
 
-  @spec extract_existing_storage_services([StorageTeamDescriptor.t()], %{String.t() => map()}) ::
-          %{
-            String.t() => map()
-          }
-  defp extract_existing_storage_services(storage_teams, available_services) do
-    storage_teams
-    |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
-    |> Enum.reject(&match?({:vacancy, _}, &1))
-    |> Enum.map(fn storage_id ->
+  @spec extract_and_lock_existing_storage_services(
+          [StorageTeamDescriptor.t()],
+          %{String.t() => map()},
+          map(),
+          map()
+        ) ::
+          {:ok, %{String.t() => map()}} | {:error, term()}
+  defp extract_and_lock_existing_storage_services(
+         storage_teams,
+         available_services,
+         recovery_attempt,
+         context
+       ) do
+    existing_storage_ids =
+      storage_teams
+      |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
+      |> Enum.reject(&match?({:vacancy, _}, &1))
+
+    # Lock each existing storage service that was recruited
+    existing_storage_ids
+    |> Enum.reduce_while({:ok, %{}}, fn storage_id, {:ok, locked_services} ->
       case Map.get(available_services, storage_id) do
-        %{} = service_descriptor -> {storage_id, service_descriptor}
-        _ -> nil
+        %{} = service_descriptor ->
+          case lock_recruited_service(service_descriptor, recovery_attempt.epoch, context) do
+            {:ok, pid, info} ->
+              locked_service = %{
+                status: {:up, pid},
+                kind: info.kind,
+                last_seen: service_descriptor.last_seen
+              }
+
+              {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
+
+            {:error, reason} ->
+              {:halt, {:error, {:failed_to_lock_recruited_service, storage_id, reason}}}
+          end
+
+        _ ->
+          # Service not available - this shouldn't happen if recruitment logic is correct
+          {:halt, {:error, {:recruited_service_unavailable, storage_id}}}
       end
     end)
-    |> Enum.reject(&is_nil/1)
-    |> Map.new()
   end
+
+  @spec lock_recruited_service(map(), pos_integer(), map()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  defp lock_recruited_service(service_descriptor, epoch, context) do
+    lock_service_for_recovery(service_descriptor, epoch, context)
+  end
+
+  @spec lock_service_for_recovery(map(), pos_integer(), map()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  def lock_service_for_recovery(service, epoch, context \\ %{}) do
+    lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
+    lock_fn.(service, epoch)
+  end
+
+  @spec lock_service_impl(map(), pos_integer()) ::
+          {:ok, pid(), map()} | {:error, term()}
+  defp lock_service_impl(%{kind: :storage, last_seen: name}, epoch),
+    do: Storage.lock_for_recovery(name, epoch)
 end

@@ -43,6 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
       |> MapSet.difference(old_system_storage_ids)
+      |> MapSet.difference(assigned_storage_ids |> MapSet.filter(&(not vacancy?(&1))))
 
     available_storage_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :storage)
 

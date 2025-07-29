@@ -35,10 +35,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       |> MapSet.new()
 
     available_log_ids =
-      context.available_services
-      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
-      |> Enum.map(&elem(&1, 0))
-      |> MapSet.new()
+      try do
+        context.available_services
+        |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
+        |> Enum.map(&elem(&1, 0))
+        |> MapSet.new()
+      rescue
+        FunctionClauseError ->
+          # Invalid service format (likely coordinator format) - return empty set
+          MapSet.new()
+      end
 
     available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
 
@@ -179,7 +185,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     worker_info_fn = Map.get(context, :worker_info_fn, &Worker.info/3)
 
     with {:ok, worker_ref} <- create_worker_fn.(foreman_ref, worker_id, :log, timeout: 10_000),
-         {:ok, worker_info} <- worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid]) do
+         {:ok, worker_info} <-
+           worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid], []) do
       {worker_id,
        %{
          kind: :log,

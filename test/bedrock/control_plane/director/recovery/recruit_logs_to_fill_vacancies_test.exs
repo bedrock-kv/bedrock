@@ -53,6 +53,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       recovery_attempt = %{
         state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
+        epoch: 1,
         logs: %{
           {:vacancy, 1} => %{},
           {:vacancy, 2} => %{}
@@ -71,9 +72,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
             transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
           },
           available_services: %{
-            {:log, 2} => %{kind: :log},
-            {:log, 3} => %{kind: :log}
-          }
+            {:log, 2} => %{kind: :log, last_seen: {:log_2, :node1}},
+            {:log, 3} => %{kind: :log, last_seen: {:log_3, :node1}}
+          },
+          lock_service_fn: fn _service, _epoch ->
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+          end
         })
 
       result = RecruitLogsToFillVacanciesPhase.execute(recovery_attempt, context)

@@ -242,7 +242,7 @@ defmodule RecoveryTestSupport do
 
         count when is_integer(count) ->
           table = :ets.new(:test_node_tracking, [:ordered_set])
-          nodes = for i <- 1..count, do: :"node#{i}@host"
+          nodes = if count > 0, do: for(i <- 1..count, do: :"node#{i}@host"), else: []
           for node <- nodes, do: :ets.insert(table, {node, :up, [:log, :storage], :up, true, nil})
           cleanup(fn -> :ets.delete(table) end)
           table

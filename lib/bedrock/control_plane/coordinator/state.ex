@@ -16,7 +16,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          waiting_list: %{Raft.transaction_id() => pid()}
+          waiting_list: %{Raft.transaction_id() => pid()},
+          service_directory: %{String.t() => {atom(), {atom(), node()}}}
         }
   defstruct cluster: nil,
             leader_node: :undecided,
@@ -29,7 +30,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             last_durable_txn_id: nil,
             config: nil,
             transaction_system_layout: nil,
-            waiting_list: %{}
+            waiting_list: %{},
+            service_directory: %{}
 
   defmodule Changes do
     alias Bedrock.ControlPlane.Coordinator.State
@@ -65,5 +67,18 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             State.t()
     def put_transaction_system_layout(t, transaction_system_layout),
       do: %{t | transaction_system_layout: transaction_system_layout}
+
+    @spec put_service_directory(t :: State.t(), %{String.t() => {atom(), {atom(), node()}}}) ::
+            State.t()
+    def put_service_directory(t, service_directory),
+      do: %{t | service_directory: service_directory}
+
+    @spec update_service_directory(
+            t :: State.t(),
+            updater :: (%{String.t() => {atom(), {atom(), node()}}} ->
+                          %{String.t() => {atom(), {atom(), node()}}})
+          ) :: State.t()
+    def update_service_directory(t, updater),
+      do: %{t | service_directory: updater.(t.service_directory)}
   end
 end

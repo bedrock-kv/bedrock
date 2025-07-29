@@ -64,4 +64,39 @@ defmodule Bedrock.ControlPlane.Coordinator do
     do:
       coordinator
       |> call({:update_transaction_system_layout, transaction_system_layout}, timeout)
+
+  @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
+
+  @spec register_services(
+          coordinator_ref :: ref(),
+          services :: [service_info()],
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:ok, txn_id :: term()}
+          | {:error, :unavailable}
+          | {:error, :failed}
+          | {:error, :not_leader}
+  def register_services(coordinator, services, timeout \\ 5_000),
+    do: coordinator |> call({:register_services, services}, timeout)
+
+  @spec deregister_services(
+          coordinator_ref :: ref(),
+          service_ids :: [String.t()],
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:ok, txn_id :: term()}
+          | {:error, :unavailable}
+          | {:error, :failed}
+          | {:error, :not_leader}
+  def deregister_services(coordinator, service_ids, timeout \\ 5_000),
+    do: coordinator |> call({:deregister_services, service_ids}, timeout)
+
+  @spec ping(
+          coordinator_ref :: ref(),
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:pong, epoch :: Bedrock.epoch(), leader :: ref() | nil}
+          | {:error, :timeout}
+  def ping(coordinator, timeout \\ 5_000),
+    do: coordinator |> call(:ping, timeout)
 end

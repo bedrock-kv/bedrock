@@ -14,6 +14,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       durably_write_config: 3,
       durably_write_transaction_system_layout: 3,
+      durably_write_service_registration: 3,
       durable_write_completed: 3
     ]
 
@@ -121,6 +122,33 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       {:ok, t} -> t |> noreply()
       {:error, _reason} = error -> t |> reply(error)
     end
+  end
+
+  def handle_call({:register_services, services}, from, t) do
+    command = Commands.register_services(services)
+
+    t
+    |> durably_write_service_registration(command, ack_fn(from))
+    |> case do
+      {:ok, t} -> t |> noreply()
+      {:error, _reason} = error -> t |> reply(error)
+    end
+  end
+
+  def handle_call({:deregister_services, service_ids}, from, t) do
+    command = Commands.deregister_services(service_ids)
+
+    t
+    |> durably_write_service_registration(command, ack_fn(from))
+    |> case do
+      {:ok, t} -> t |> noreply()
+      {:error, _reason} = error -> t |> reply(error)
+    end
+  end
+
+  def handle_call(:ping, _from, t) do
+    leader = if t.leader_node == t.my_node, do: self(), else: nil
+    t |> reply({:pong, t.epoch, leader})
   end
 
   @impl true

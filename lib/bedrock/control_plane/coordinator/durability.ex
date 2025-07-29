@@ -39,6 +39,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     end
   end
 
+  @spec durably_write_service_registration(State.t(), Commands.command(), ack_fn()) ::
+          {:ok, State.t()} | {:error, :not_leader}
+  def durably_write_service_registration(t, command, ack_fn) do
+    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(command) do
+      {:ok,
+       t
+       |> set_raft(raft)
+       |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+    else
+      {:error, _reason} = error ->
+        ack_fn.(error)
+        error
+    end
+  end
+
   @spec wait_for_durable_write_to_complete(State.t(), ack_fn(), Raft.transaction_id()) ::
           State.t()
   def wait_for_durable_write_to_complete(t, ack_fn, txn_id),
@@ -94,5 +109,32 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     t
     |> put_epoch(epoch)
     |> put_director(director)
+  end
+
+  def process_command(t, {:register_services, %{services: services}}) do
+    t
+    |> update_service_directory(fn directory ->
+      Enum.reduce(services, directory, fn {service_id, kind, worker_ref}, acc ->
+        # Only update if the service is new or changed
+        case Map.get(acc, service_id) do
+          {^kind, ^worker_ref} ->
+            # Service already exists with same info, no change needed
+            acc
+
+          _ ->
+            # Service is new or changed, update it
+            Map.put(acc, service_id, {kind, worker_ref})
+        end
+      end)
+    end)
+  end
+
+  def process_command(t, {:deregister_services, %{service_ids: service_ids}}) do
+    t
+    |> update_service_directory(fn directory ->
+      Enum.reduce(service_ids, directory, fn service_id, acc ->
+        Map.delete(acc, service_id)
+      end)
+    end)
   end
 end

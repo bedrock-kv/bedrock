@@ -1,6 +1,7 @@
 defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -127,6 +128,40 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     end
   end
 
+  @spec advertise_worker_with_leader_check(State.t(), Worker.ref()) :: State.t()
+  def advertise_worker_with_leader_check(%{known_leader: :unavailable} = t, _worker_pid) do
+    # Ignore service notifications when no leader is available
+    t
+  end
+
+  def advertise_worker_with_leader_check(t, worker_pid) do
+    # Leader is available, process worker advertisement using batched registration
+    worker_pid
+    |> register_single_worker_via_coordinator(t)
+    |> handle_registration_result(t, worker_pid)
+  end
+
+  defp handle_registration_result(:ok, t, _worker_pid), do: t
+
+  defp handle_registration_result({:error, _}, t, worker_pid),
+    do: advertise_worker_to_director(t, worker_pid)
+
+  @spec pull_services_from_foreman_and_register(State.t()) :: State.t()
+  def pull_services_from_foreman_and_register(%{known_leader: :unavailable} = t), do: t
+
+  def pull_services_from_foreman_and_register(t),
+    do: t |> get_all_services_from_foreman() |> handle_foreman_services_result(t)
+
+  # No services to register
+  defp handle_foreman_services_result({:ok, []}, t), do: t
+
+  defp handle_foreman_services_result({:ok, services}, t),
+    do: register_services_with_coordinator(t, services)
+
+  defp handle_foreman_services_result({:error, _reason}, t),
+    # Failed to get services from foreman, continue with existing state
+    do: t
+
   @spec running_services(State.t()) ::
           {:ok, Director.running_service_info_by_id()}
           | {:error, :unavailable | :timeout | :unknown}
@@ -151,8 +186,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   @spec gather_info_from_worker(Worker.ref()) ::
           {:ok, Director.running_service_info()}
           | {:error, :unavailable}
-  def gather_info_from_worker(worker),
-    do: Worker.info(worker, [:id, :otp_name, :kind, :pid])
+  def gather_info_from_worker(worker), do: Worker.info(worker, [:id, :otp_name, :kind, :pid])
 
   @spec publish_director_replaced_to_pubsub(State.t()) :: State.t()
   def publish_director_replaced_to_pubsub(t) do
@@ -224,6 +258,69 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
   @spec maybe_set_ping_timer(State.t()) :: State.t()
   def maybe_set_ping_timer(%{director: :unavailable} = t), do: t
 
-  def maybe_set_ping_timer(t),
-    do: t |> set_timer(:ping, t.cluster.gateway_ping_timeout_in_ms())
+  def maybe_set_ping_timer(t), do: t |> set_timer(:ping, t.cluster.gateway_ping_timeout_in_ms())
+
+  # New helper functions for enhanced service registration
+
+  @spec get_all_services_from_foreman(State.t()) ::
+          {:ok, [{String.t(), :log | :storage, {atom(), node()}}]} | {:error, term()}
+  defp get_all_services_from_foreman(t),
+    do: Foreman.get_all_running_services(t.cluster.otp_name(:foreman))
+
+  @spec register_services_with_coordinator(State.t(), [
+          {String.t(), :log | :storage, {atom(), node()}}
+        ]) :: State.t()
+  defp register_services_with_coordinator(t, services) do
+    t.known_leader
+    |> extract_coordinator_ref()
+    |> register_with_coordinator_ref(services)
+    |> handle_coordinator_registration_result(t)
+  end
+
+  defp extract_coordinator_ref({coordinator_ref, _epoch}), do: coordinator_ref
+  defp extract_coordinator_ref(:unavailable), do: :unavailable
+
+  defp register_with_coordinator_ref(:unavailable, _services), do: :no_leader
+
+  defp register_with_coordinator_ref(coordinator_ref, services),
+    do: Coordinator.register_services(coordinator_ref, services)
+
+  defp handle_coordinator_registration_result(:no_leader, t), do: t
+  defp handle_coordinator_registration_result({:ok, _txn_id}, t), do: t
+  defp handle_coordinator_registration_result({:error, _reason}, t), do: t
+
+  @spec register_single_worker_via_coordinator(Worker.ref(), State.t()) ::
+          :ok | {:error, term()}
+  defp register_single_worker_via_coordinator(worker_pid, t) do
+    worker_pid
+    |> gather_info_from_worker()
+    |> transform_to_service_info()
+    |> register_service_info_with_leader(t.known_leader)
+  end
+
+  defp transform_to_service_info({:ok, info}),
+    do: {:ok, worker_info_to_service_info(info)}
+
+  defp transform_to_service_info({:error, _} = error), do: error
+
+  defp register_service_info_with_leader({:ok, service_info}, {coordinator_ref, _epoch}) do
+    Coordinator.register_services(coordinator_ref, [service_info])
+    |> case do
+      {:ok, _txn_id} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp register_service_info_with_leader({:ok, _service_info}, :unavailable) do
+    {:error, :no_leader}
+  end
+
+  defp register_service_info_with_leader({:error, _} = error, _known_leader) do
+    error
+  end
+
+  @spec worker_info_to_service_info(Director.running_service_info()) ::
+          {String.t(), :log | :storage, {atom(), node()}}
+  def worker_info_to_service_info(worker_info),
+    do: {worker_info[:id], worker_info[:kind], {worker_info[:otp_name], Node.self()}}
 end

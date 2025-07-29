@@ -8,7 +8,8 @@ defmodule Bedrock.Cluster.Gateway.State do
           cluster: module(),
           path_to_descriptor: Path.t(),
           descriptor: Descriptor.t(),
-          coordinator: Coordinator.ref() | :unavailable,
+          known_leader:
+            {coordinator_ref :: Coordinator.ref(), epoch :: Bedrock.epoch()} | :unavailable,
           director: {director :: pid(), Bedrock.epoch()} | :unavailable,
           timers: %{atom() => reference()} | nil,
           missed_pongs: non_neg_integer(),
@@ -25,7 +26,7 @@ defmodule Bedrock.Cluster.Gateway.State do
             cluster: nil,
             path_to_descriptor: nil,
             descriptor: nil,
-            coordinator: :unavailable,
+            known_leader: :unavailable,
             director: :unavailable,
             timers: nil,
             missed_pongs: 0,

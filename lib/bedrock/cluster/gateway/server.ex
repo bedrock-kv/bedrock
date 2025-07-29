@@ -22,9 +22,10 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   import Bedrock.Cluster.Gateway.DirectorRelations,
     only: [
-      advertise_worker_to_director: 2,
       pong_received_from_director: 2,
-      pong_was_not_received: 1
+      pong_was_not_received: 1,
+      pull_services_from_foreman_and_register: 1,
+      advertise_worker_with_leader_check: 2
     ]
 
   require Logger
@@ -81,7 +82,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
       cluster: cluster,
       descriptor: descriptor,
       path_to_descriptor: path_to_descriptor,
-      coordinator: :unavailable,
+      known_leader: :unavailable,
       director: :unavailable,
       transaction_system_layout: nil,
       storage_table: storage_table,
@@ -187,11 +188,27 @@ defmodule Bedrock.Cluster.Gateway.Server do
     |> noreply()
   end
 
+  @spec handle_info(:pull_services_from_foreman, State.t()) :: {:noreply, State.t()}
+  def handle_info(:pull_services_from_foreman, t) do
+    t
+    |> pull_services_from_foreman_and_register()
+    |> noreply()
+  end
+
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:DOWN, _ref, :process, name, _reason}, t) do
-    if name == t.coordinator ||
-         (is_tuple(name) and elem(name, 0) == t.cluster.otp_name(:coordinator)) do
+    coordinator_matches =
+      case t.known_leader do
+        {coordinator_ref, _epoch} ->
+          name == coordinator_ref ||
+            (is_tuple(name) and elem(name, 0) == t.cluster.otp_name(:coordinator))
+
+        :unavailable ->
+          is_tuple(name) and elem(name, 0) == t.cluster.otp_name(:coordinator)
+      end
+
+    if coordinator_matches do
       t
       |> change_coordinator(:unavailable)
       |> noreply(continue: :find_a_live_coordinator)
@@ -211,5 +228,5 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   @spec handle_cast({:advertise_worker, pid()}, State.t()) :: {:noreply, State.t()}
   def handle_cast({:advertise_worker, worker_pid}, t),
-    do: t |> advertise_worker_to_director(worker_pid) |> noreply()
+    do: t |> advertise_worker_with_leader_check(worker_pid) |> noreply()
 end

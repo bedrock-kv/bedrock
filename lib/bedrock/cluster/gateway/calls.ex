@@ -59,8 +59,8 @@ defmodule Bedrock.Cluster.Gateway.Calls do
 
   @spec fetch_coordinator(State.t()) ::
           {:ok, Coordinator.ref()} | {:error, :unavailable}
-  def fetch_coordinator(%{coordinator: :unavailable}), do: {:error, :unavailable}
-  def fetch_coordinator(t), do: {:ok, t.coordinator}
+  def fetch_coordinator(%{known_leader: :unavailable}), do: {:error, :unavailable}
+  def fetch_coordinator(%{known_leader: {coordinator_ref, _epoch}}), do: {:ok, coordinator_ref}
 
   @spec fetch_director(State.t()) ::
           {:ok, Director.ref()} | {:error, :unavailable}

@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   At least one commit proxy must be operational for the cluster to accept
   transactions.
 
-  Transitions to :define_resolvers to continue starting transaction system
+  Transitions to resolver startup to continue starting transaction system
   components.
   """
 

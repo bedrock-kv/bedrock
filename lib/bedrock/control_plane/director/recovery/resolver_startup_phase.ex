@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   Resolvers are essential for maintaining transaction isolation and consistency
   guarantees.
 
-  Transitions to :final_checks once all resolvers are operational and ready
+  Transitions to validation once all resolvers are operational and ready
   to handle transaction conflict detection.
   """
 

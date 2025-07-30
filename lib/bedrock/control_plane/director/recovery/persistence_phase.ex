@@ -17,18 +17,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   retrying. System transaction failure indicates fundamental problems that require
   coordinator restart with a new epoch.
 
-  Transitions to :monitor_components on success or exits the director on failure.
+  Transitions to monitoring on success or exits the director on failure.
   """
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.Persistence
-  alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.CommitProxy
-  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -39,8 +36,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   def execute(recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
-    with :ok <- validate_recovery_state(recovery_attempt),
-         {:ok, transaction_system_layout} <-
+    with {:ok, transaction_system_layout} <-
            build_transaction_system_layout(recovery_attempt, context),
          system_transaction <-
            build_system_transaction(
@@ -91,30 +87,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
      }}
   end
 
-  @spec build_services_for_layout(
-          RecoveryAttempt.t(),
-          RecoveryPhase.context()
-        ) :: %{String.t() => ServiceDescriptor.t()}
+  @spec build_services_for_layout(RecoveryAttempt.t(), RecoveryPhase.context()) ::
+          %{String.t() => ServiceDescriptor.t()}
   defp build_services_for_layout(recovery_attempt, context) do
-    # Get all service IDs referenced in the layout
-    log_service_ids = Map.keys(recovery_attempt.logs)
-
-    storage_service_ids =
-      recovery_attempt.storage_teams
-      |> Enum.flat_map(& &1.storage_ids)
-      |> MapSet.new()
-
-    referenced_service_ids = MapSet.union(MapSet.new(log_service_ids), storage_service_ids)
-
-    # Build ServiceDescriptor entries for referenced services
-    referenced_service_ids
+    recovery_attempt
+    |> extract_service_ids()
     |> Enum.map(fn service_id ->
-      service_descriptor = build_service_descriptor(service_id, recovery_attempt, context)
-      {service_id, service_descriptor}
+      service_id
+      |> build_service_descriptor(recovery_attempt, context)
+      |> then(&{service_id, &1})
     end)
     |> Enum.reject(fn {_id, descriptor} -> is_nil(descriptor) end)
     |> Map.new()
   end
+
+  defp extract_service_ids(recovery_attempt) do
+    MapSet.union(
+      extract_log_service_ids(recovery_attempt),
+      extract_storage_service_ids(recovery_attempt)
+    )
+  end
+
+  defp extract_log_service_ids(recovery_attempt),
+    do: recovery_attempt.logs |> Map.keys() |> MapSet.new()
+
+  defp extract_storage_service_ids(recovery_attempt),
+    do: recovery_attempt.storage_teams |> Enum.flat_map(& &1.storage_ids) |> MapSet.new()
 
   @spec build_service_descriptor(
           String.t(),
@@ -277,86 +275,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp encode_storage_team_for_storage(storage_team, _cluster) do
     # Storage team descriptors typically don't contain PIDs directly
     storage_team
-  end
-
-  # Validate that recovery state is ready for system transaction
-  @spec validate_recovery_state(RecoveryAttempt.t()) ::
-          :ok | {:error, {:invalid_recovery_state, atom() | {atom(), [binary()]}}}
-  defp validate_recovery_state(recovery_attempt) do
-    with :ok <- validate_sequencer(recovery_attempt.sequencer),
-         :ok <- validate_commit_proxies(recovery_attempt.proxies),
-         :ok <- validate_resolvers(recovery_attempt.resolvers),
-         :ok <- validate_logs(recovery_attempt.logs, recovery_attempt.transaction_services) do
-      :ok
-    else
-      {:error, reason} -> {:error, {:invalid_recovery_state, reason}}
-    end
-  end
-
-  @spec validate_sequencer(nil | pid()) :: :ok | {:error, atom()}
-  defp validate_sequencer(nil), do: {:error, :no_sequencer}
-  defp validate_sequencer(sequencer) when is_pid(sequencer), do: :ok
-  defp validate_sequencer(_), do: {:error, :invalid_sequencer}
-
-  @spec validate_commit_proxies([pid()]) :: :ok | {:error, atom()}
-  defp validate_commit_proxies([]), do: {:error, :no_commit_proxies}
-
-  defp validate_commit_proxies(proxies) when is_list(proxies) do
-    if Enum.all?(proxies, &is_pid/1) do
-      :ok
-    else
-      {:error, :invalid_commit_proxies}
-    end
-  end
-
-  defp validate_commit_proxies(_), do: {:error, :invalid_commit_proxies}
-
-  @spec validate_resolvers([{Bedrock.key(), pid()}]) :: :ok | {:error, atom()}
-  defp validate_resolvers([]), do: {:error, :no_resolvers}
-
-  defp validate_resolvers(resolvers) when is_list(resolvers) do
-    valid_resolvers =
-      Enum.all?(resolvers, fn
-        {_start_key, pid} when is_pid(pid) -> true
-        _ -> false
-      end)
-
-    if valid_resolvers do
-      :ok
-    else
-      {:error, :invalid_resolvers}
-    end
-  end
-
-  @spec validate_logs(%{Log.id() => LogDescriptor.t()}, %{Worker.id() => ServiceDescriptor.t()}) ::
-          :ok | {:error, {:missing_log_services, [binary()]}}
-  defp validate_logs(logs, transaction_services) when is_map(logs) do
-    log_ids = Map.keys(logs)
-
-    trace_recovery_log_validation_started(log_ids, transaction_services)
-
-    # Check that all log IDs have corresponding services in transaction_services
-    missing_services =
-      log_ids
-      |> Enum.reject(fn log_id ->
-        case Map.get(transaction_services, log_id) do
-          %{status: {:up, pid}} when is_pid(pid) ->
-            trace_recovery_log_service_status(log_id, :found, %{status: {:up, pid}})
-            true
-
-          _ ->
-            trace_recovery_log_service_status(log_id, :missing, nil)
-            false
-        end
-      end)
-
-    case missing_services do
-      [] ->
-        :ok
-
-      missing ->
-        {:error, {:missing_log_services, missing}}
-    end
   end
 
   @spec submit_system_transaction(Bedrock.transaction(), [pid()], map()) ::

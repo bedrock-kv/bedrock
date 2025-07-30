@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   replicas to meet the replication factor.
 
   Always succeeds since it only modifies in-memory structures. Transitions to
-  :recruit_logs_to_fill_vacancies to begin service assignment.
+  version determination to establish the recovery baseline.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

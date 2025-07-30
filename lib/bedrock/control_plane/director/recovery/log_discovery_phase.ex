@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   Logs with committed transactions must be preserved to maintain durability
   guarantees across recovery.
 
-  Transitions to :determine_durable_version with a list of logs requiring data
+  Transitions to vacancy creation with a list of logs requiring data
   migration and the current cluster version vector.
   """
 

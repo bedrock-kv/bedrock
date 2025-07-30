@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase do
   are prioritized for repair.
 
   Always succeeds since resolver descriptors can be created from available
-  storage teams. Transitions to :define_sequencer to begin starting transaction
+  storage teams. Transitions to sequencer startup to begin starting transaction
   system components.
   """
 

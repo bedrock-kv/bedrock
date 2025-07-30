@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   during data distribution. Teams missing too many replicas cannot contribute to
   the durable version calculation.
 
-  Transitions to :create_vacancies with the established durable version and list
+  Transitions to log recruitment with the established durable version and list
   of teams requiring repair.
   """
 

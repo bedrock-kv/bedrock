@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   independently.
 
   Always succeeds since it only creates in-memory structures. Transitions to
-  :create_vacancies to begin service assignment.
+  log recruitment to begin service assignment.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   start. The sequencer must be operational before commit proxies can process
   transactions.
 
-  Transitions to :define_commit_proxies once the sequencer is running and ready.
+  Transitions to proxy startup once the sequencer is running and ready.
   """
 
   alias Bedrock.DataPlane.Sequencer

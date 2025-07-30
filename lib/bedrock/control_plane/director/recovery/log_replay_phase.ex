@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   to minimize recovery time.
 
   Can stall if source logs are unavailable or if the replay process fails.
-  Transitions to :repair_data_distribution once all required data is copied.
+  Transitions to data distribution once all required data is copied.
   """
 
   alias Bedrock.DataPlane.Log

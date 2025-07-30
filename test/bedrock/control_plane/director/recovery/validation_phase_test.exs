@@ -105,7 +105,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhaseTest do
         ValidationPhase.execute(recovery_attempt, validation_context())
 
       assert result == recovery_attempt
-      assert next_phase_or_stall == Bedrock.ControlPlane.Director.Recovery.PersistencePhase
+
+      assert next_phase_or_stall ==
+               Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase
     end
   end
 

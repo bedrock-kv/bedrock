@@ -1,20 +1,20 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   @moduledoc """
-  Performs final validation before proceeding to system state persistence.
+  Performs final validation before Transaction System Layout construction.
 
   Conducts comprehensive checks to ensure all transaction system components
-  are properly configured and ready for operation. This is the last opportunity
-  to detect problems before committing to the new configuration.
+  are properly configured and ready for TSL construction. This is the last
+  opportunity to detect problems before building the critical system blueprint.
 
   Validates that sequencer, commit proxies, resolvers, logs, and storage teams
-  are all operational and properly connected. Checks that the transaction
-  system layout is complete and consistent.
+  are all operational and properly connected. Ensures all required services
+  are available and that the recovery state is consistent and complete.
 
-  The validation phase acts as a safety gate before the critical persistence
+  The validation phase acts as a safety gate before the critical TSL construction
   phase. Any problems detected here can be addressed through recovery retry
-  rather than system transaction failure.
+  rather than system transaction failure during persistence.
 
-  Transitions to persistence to begin the final persistence and testing phase.
+  Transitions to Transaction System Layout construction to build the TSL and prepare services.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   def execute(recovery_attempt, _context) do
     case validate_recovery_state(recovery_attempt) do
       :ok ->
-        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase}
 
       {:error, reason} ->
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}

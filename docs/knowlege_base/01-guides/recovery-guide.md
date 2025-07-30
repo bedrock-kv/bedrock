@@ -16,7 +16,7 @@ Bedrock's recovery system orchestrates the complex coordination required to brin
 ### Key Concepts
 - **Fail-Fast Philosophy**: Combines Erlang/OTP "let it crash" with FoundationDB fast recovery - use `Process.monitor/1` rather than complex health checking, with immediate failure response
 - **Epoch-Based Management**: Prevents split-brain with generation counters - each recovery increments an epoch, processes terminate themselves when they detect newer generations  
-- **Linear State Machine**: 17-phase recovery process from start through completion, with branch point for new vs existing clusters
+- **Linear State Machine**: 18-phase recovery process from start through completion, with branch point for new vs existing clusters
 - **Component Monitoring**: Any transaction component failure triggers immediate director exit and full recovery restart
 
 ## When Recovery Triggers
@@ -215,7 +215,7 @@ Once the Director receives the complete service directory, it proceeds to lock s
 3. **Legacy Termination**: Services with older epochs detect the newer epoch and terminate
 4. **Capability Collection**: Director gathers service capabilities and health status
 
-Once service discovery completes, the Director receives the complete service directory and begins the formal 17-phase recovery state machine.
+Once service discovery completes, the Director receives the complete service directory and begins the formal 18-phase recovery state machine.
 
 ### Recovery State Machine
 
@@ -265,18 +265,21 @@ Starts commit proxy components that batch transactions and coordinate commits.
 Starts resolver components that implement MVCC conflict detection.
 
 #### Phase 13: Validation (`ValidationPhase`)
-Performs final validation before proceeding to system state persistence. Acts as a safety gate before the critical persistence phase.
+Performs final validation before Transaction System Layout construction. Conducts comprehensive checks to ensure all transaction system components are properly configured and ready for TSL construction.
 
-#### Phase 14: Persistence (`PersistencePhase`)
+#### Phase 14: Transaction System Layout (`TransactionSystemLayoutPhase`)
+Constructs the Transaction System Layout, the critical blueprint defining how the distributed system operates. Builds the complete system topology containing sequencer, commit proxies, resolvers, logs, storage teams, and service descriptors. Unlocks all services in parallel to prepare them for transaction processing.
+
+#### Phase 15: Persistence (`PersistencePhase`)
 Constructs a system transaction containing the full cluster configuration and submits it through the entire data plane pipeline. This simultaneously persists the new configuration and validates that all transaction components work correctly.
 
-#### Phase 15: Monitoring (`MonitoringPhase`)
+#### Phase 16: Monitoring (`MonitoringPhase`)
 Sets up monitoring of all transaction system components using `Process.monitor/1`. Any failure of critical components will trigger immediate director shutdown and recovery restart, implementing Bedrock's fail-fast philosophy.
 
-#### Phase 16: Cleanup (`CleanupPhase`)
+#### Phase 17: Cleanup (`CleanupPhase`)
 Cleans up unused workers that are no longer needed in the new system layout.
 
-#### Phase 17: Recovery Complete
+#### Phase 18: Recovery Complete
 Recovery is marked as complete and the system transitions to operational mode.
 
 ### Key Implementation Points

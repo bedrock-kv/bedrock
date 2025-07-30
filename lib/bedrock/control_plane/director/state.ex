@@ -20,7 +20,7 @@ defmodule Bedrock.ControlPlane.Director.State do
           coordinator: pid(),
           node_tracking: NodeTracking.t(),
           timers: timer_registry() | nil,
-          services: %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},
+          services: %{Worker.id() => {atom(), {atom(), node()}}},
           lock_token: binary(),
           recovery_attempt: Config.RecoveryAttempt.t() | nil
         }

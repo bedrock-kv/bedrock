@@ -126,7 +126,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         ) :: ServiceDescriptor.t() | nil
   defp build_service_descriptor(service_id, recovery_attempt, context) do
     case Map.get(context.available_services, service_id) do
-      %{kind: kind, last_seen: last_seen} = _service ->
+      {kind, last_seen} = _service ->
         status = determine_service_status(service_id, recovery_attempt.service_pids)
 
         %{

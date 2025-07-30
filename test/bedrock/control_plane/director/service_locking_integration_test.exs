@@ -23,10 +23,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
       # Available services (simulating c1 startup)
       available_services = %{
-        "bwecaxvz" => %{kind: :log, last_seen: {:log_worker_1, :node1}},
-        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_worker_1, :node1}},
-        "kilvu2af" => %{kind: :log, last_seen: {:log_worker_2, :node1}},
-        "zwtq7mfs" => %{kind: :storage, last_seen: {:storage_worker_2, :node1}}
+        "bwecaxvz" => {:log, {:log_worker_1, :node1}},
+        "gb6cddk5" => {:storage, {:storage_worker_1, :node1}},
+        "kilvu2af" => {:log, {:log_worker_2, :node1}},
+        "zwtq7mfs" => {:storage, {:storage_worker_2, :node1}}
       }
 
       # Empty old layout (first-time initialization)
@@ -74,13 +74,13 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
       # Available services (simulating c2 restart after c1 established system)
       available_services = %{
-        "bwecaxvz" => %{kind: :log, last_seen: {:log_worker_1, :node1}},
-        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_worker_1, :node1}},
+        "bwecaxvz" => {:log, {:log_worker_1, :node1}},
+        "gb6cddk5" => {:storage, {:storage_worker_1, :node1}},
         # new node service
-        "kilvu2af" => %{kind: :log, last_seen: {:log_worker_2, :node2}},
+        "kilvu2af" => {:log, {:log_worker_2, :node2}},
         # new node service
-        "ukawgc4e" => %{kind: :storage, last_seen: {:storage_worker_3, :node2}},
-        "zwtq7mfs" => %{kind: :storage, last_seen: {:storage_worker_2, :node1}}
+        "ukawgc4e" => {:storage, {:storage_worker_3, :node2}},
+        "zwtq7mfs" => {:storage, {:storage_worker_2, :node1}}
       }
 
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
@@ -132,10 +132,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
       available_services = %{
         # old service (locked)
-        "bwecaxvz" => %{kind: :log, last_seen: {:log_1, :node1}},
+        "bwecaxvz" => {:log, {:log_1, :node1}},
         # new service (should be locked during recruitment)
-        "kilvu2af" => %{kind: :log, last_seen: {:log_2, :node2}},
-        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_1, :node1}}
+        "kilvu2af" => {:log, {:log_2, :node2}},
+        "gb6cddk5" => {:storage, {:storage_1, :node1}}
       }
 
       # Set up old system layout so bwecaxvz is excluded from recruitment
@@ -186,10 +186,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
       available_services = %{
         # old services (should be excluded from recruitment)
-        "bwecaxvz" => %{kind: :log, last_seen: {:log_1, :node1}},
-        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_1, :node1}},
+        "bwecaxvz" => {:log, {:log_1, :node1}},
+        "gb6cddk5" => {:storage, {:storage_1, :node1}},
         # new service (should be recruited and locked)
-        "ukawgc4e" => %{kind: :storage, last_seen: {:storage_2, :node2}}
+        "ukawgc4e" => {:storage, {:storage_2, :node2}}
       }
 
       # Set up old system layout so gb6cddk5 is excluded from recruitment
@@ -238,10 +238,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
       # Services available for locking/recruitment
       available_services = %{
-        "bwecaxvz" => %{kind: :log, last_seen: {:log_1, :node1}},
-        "gb6cddk5" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-        "kilvu2af" => %{kind: :log, last_seen: {:log_2, :node2}},
-        "ukawgc4e" => %{kind: :storage, last_seen: {:storage_2, :node2}}
+        "bwecaxvz" => {:log, {:log_1, :node1}},
+        "gb6cddk5" => {:storage, {:storage_1, :node1}},
+        "kilvu2af" => {:log, {:log_2, :node2}},
+        "ukawgc4e" => {:storage, {:storage_2, :node2}}
       }
 
       old_transaction_system_layout = %{
@@ -322,16 +322,19 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
     {:ok, tracker} = Agent.start_link(fn -> [] end)
 
     lock_service_fn = fn service, _epoch ->
+      # Handle coordinator format: {kind, {otp_name, node}}
+      {kind, location} = service
+
       # Find the service ID by looking it up in available_services
       service_id =
         context.available_services
-        |> Enum.find_value(fn {id, desc} ->
-          if desc.last_seen == service.last_seen, do: id, else: nil
+        |> Enum.find_value(fn {id, {_kind, desc_location}} ->
+          if desc_location == location, do: id, else: nil
         end)
 
       Agent.update(tracker, fn locked -> [service_id | locked] end)
       pid = spawn(fn -> :ok end)
-      {:ok, pid, %{kind: service.kind, durable_version: 0, oldest_version: 0, last_version: 1}}
+      {:ok, pid, %{kind: kind, durable_version: 0, oldest_version: 0, last_version: 1}}
     end
 
     context
@@ -350,7 +353,9 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
   defp with_mocked_service_locking(context) do
     lock_service_fn = fn service, _epoch ->
       pid = spawn(fn -> :ok end)
-      {:ok, pid, %{kind: service.kind, durable_version: 0, oldest_version: 0, last_version: 1}}
+      # Handle coordinator format: {kind, {otp_name, node}}
+      {kind, _location} = service
+      {:ok, pid, %{kind: kind, durable_version: 0, oldest_version: 0, last_version: 1}}
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)

@@ -160,7 +160,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       _ ->
         # Check available_services from context for newly created services
         case get_in(context, [:available_services, log_id]) do
-          %{last_seen: {name, node}} ->
+          {_kind, {name, node}} ->
             {:ok, {name, node}}
 
           _ ->

@@ -1,8 +1,28 @@
 defmodule Bedrock.ControlPlane.Director do
   @moduledoc """
-  The director is a singleton within the cluster. It is created by the winner
-  of the coordinator election. It is responsible for bringing up the data plane
-  and putting the cluster into a writable state.
+  The director is a singleton within the cluster that orchestrates transaction
+  system lifecycle and epoch-based generation management.
+
+  Created by the coordinator election winner, the director is responsible for
+  bringing up the data plane and maintaining the cluster in a writable state.
+  It coordinates recovery after component failures and manages the distributed
+  consensus required for consistent system operation.
+
+  ## Epoch Management
+
+  The director implements epoch-based generation management to prevent split-brain
+  scenarios during recovery. Each recovery increments the cluster epoch, which
+  serves as a generation counter that ensures clean transitions between system
+  configurations.
+
+  Services locked with newer epochs take precedence over older ones, and processes
+  from previous epochs terminate themselves when they detect a generation change.
+  This approach eliminates the need for complex coordination protocols while
+  maintaining system consistency during concurrent recovery attempts.
+
+  The epoch mechanism ensures that only one director generation can make progress
+  at any given time, preventing conflicting recovery operations that could
+  compromise data integrity or system availability.
   """
   alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Director

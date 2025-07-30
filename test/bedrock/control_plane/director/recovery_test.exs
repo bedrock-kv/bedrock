@@ -6,7 +6,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Director.Server
 
   import RecoveryTestSupport
 
@@ -480,10 +479,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert Enum.all?(monitored_messages, &is_pid/1)
     end
 
-    test "coordinator service format conversion enables early recovery phases" do
-      # This test verifies that coordinator → director service format conversion
-      # produces services compatible with early recovery phases (LogDiscovery, DataDistribution, etc.)
-      # This validates the critical conversion that real deployments rely on
+    test "coordinator service format works directly with early recovery phases" do
+      # This test verifies that coordinator service format is directly compatible
+      # with early recovery phases (LogDiscovery, DataDistribution, etc.)
+      # This validates that no conversion is needed
 
       # Simulate an existing cluster with logs that need to be recovered
       old_transaction_system_layout = %{
@@ -522,15 +521,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         "new_log_1" => {:log, {:log_worker_new_1, :node2}}
       }
 
-      # Convert using the director's conversion function (this is what real system does)
-      converted_services =
-        Server.convert_coordinator_services_to_director_format(coordinator_format_services)
-
+      # Use coordinator format directly (no conversion needed anymore)
       context =
         create_test_context(old_transaction_system_layout: old_transaction_system_layout)
         |> with_multiple_nodes()
-        # Use converted format!
-        |> Map.put(:available_services, converted_services)
+        # Use coordinator format directly!
+        |> Map.put(:available_services, coordinator_format_services)
         |> with_mocked_service_locking_coordinator_format()
         |> with_mocked_worker_creation()
         |> with_mocked_supervision()
@@ -548,21 +544,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           end)
         end)
 
-      # The conversion should enable early recovery phases to proceed
+      # The coordinator format should enable early recovery phases to proceed
       # but stall at CommitProxyPhase due to incomplete test setup
       {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Should fail with missing commit proxies (validates conversion worked through early phases)
+      # Should fail with missing commit proxies (validates coordinator format worked through early phases)
       assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
 
-      # Should have progressed past LogDiscoveryPhase (validates conversion compatibility)
+      # Should have progressed past LogDiscoveryPhase (validates coordinator format compatibility)
       # State field no longer exists - test passes if we get the expected error
     end
 
-    test "recovery with converted coordinator-format services succeeds (regression test)" do
-      # This test ensures that with proper conversion, coordinator-format services work
-      # This validates our new architecture where coordinator services are converted to director format
+    test "recovery with coordinator-format services succeeds (regression test)" do
+      # This test ensures that coordinator-format services work directly
+      # This validates our new architecture where coordinator services are used without conversion
 
       old_transaction_system_layout = %{
         logs: %{"existing_log_1" => [0, 1, 2]},
@@ -575,17 +571,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
-      # Coordinator services converted to director format
-      converted_services = %{
-        "existing_log_1" => %{kind: :log, last_seen: {:log_worker_existing_1, :node1}},
-        "storage_1" => %{kind: :storage, last_seen: {:storage_worker_1, :node1}}
+      # Coordinator services in their native format
+      coordinator_services = %{
+        "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
+        "storage_1" => {:storage, {:storage_worker_1, :node1}}
       }
 
       context =
         create_test_context()
         |> with_multiple_nodes()
-        # Converted format - should work!
-        |> Map.put(:available_services, converted_services)
+        # Coordinator format - should work directly!
+        |> Map.put(:available_services, coordinator_services)
         |> with_mocked_service_locking()
         |> with_mocked_worker_creation()
         |> with_mocked_supervision()
@@ -642,16 +638,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   defp with_available_log_services(context) do
     log_services = %{
-      "log_worker_1" => %{
-        kind: :log,
-        last_seen: {:log_worker_1, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "log_worker_2" => %{
-        kind: :log,
-        last_seen: {:log_worker_2, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      }
+      "log_worker_1" => {:log, {:log_worker_1, :node1}},
+      "log_worker_2" => {:log, {:log_worker_2, :node1}}
     }
 
     Map.update(context, :available_services, log_services, &Map.merge(&1, log_services))
@@ -659,36 +647,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   defp with_available_storage_services(context) do
     storage_services = %{
-      "storage_worker_1" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_1, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "storage_worker_2" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_2, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "storage_worker_3" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_3, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "storage_worker_4" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_4, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "storage_worker_5" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_5, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      },
-      "storage_worker_6" => %{
-        kind: :storage,
-        last_seen: {:storage_worker_6, :node1},
-        status: {:up, spawn(fn -> :ok end)}
-      }
+      "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
+      "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
+      "storage_worker_3" => {:storage, {:storage_worker_3, :node1}},
+      "storage_worker_4" => {:storage, {:storage_worker_4, :node1}},
+      "storage_worker_5" => {:storage, {:storage_worker_5, :node1}},
+      "storage_worker_6" => {:storage, {:storage_worker_6, :node1}}
     }
 
     Map.update(context, :available_services, storage_services, &Map.merge(&1, storage_services))
@@ -697,24 +661,26 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   defp with_mocked_service_locking(context) do
     lock_service_fn = fn service, _epoch ->
       pid = spawn(fn -> :ok end)
-      {:ok, pid, %{kind: service.kind, durable_version: 95, oldest_version: 0, last_version: 100}}
+      # Handle coordinator format: {kind, {otp_name, node}}
+      {kind, _location} = service
+      {:ok, pid, %{kind: kind, durable_version: 95, oldest_version: 0, last_version: 100}}
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)
   end
 
   defp with_mocked_service_locking_coordinator_format(context) do
-    # Mock that handles coordinator-format services after they've been converted to ServiceDescriptor format
+    # Mock that handles coordinator-format services directly
     lock_service_fn = fn service, _epoch ->
       pid = spawn(fn -> :ok end)
 
-      # The service should now be in ServiceDescriptor format with :kind and :last_seen
+      # The service is in coordinator format: {kind, {otp_name, node}}
       case service do
-        %{kind: kind} ->
+        {kind, _location} ->
           {:ok, pid, %{kind: kind, durable_version: 95, oldest_version: 0, last_version: 100}}
 
         _ ->
-          # If we get here, the format conversion failed
+          # If we get here, the format is unexpected
           {:error, :invalid_service_format}
       end
     end

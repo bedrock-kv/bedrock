@@ -1,5 +1,28 @@
 defmodule Bedrock.ControlPlane.Director.Nodes do
-  @moduledoc false
+  @moduledoc """
+  Manages node lifecycle and service discovery integration for the director.
+
+  This module handles the registration and tracking of services as nodes join
+  and leave the cluster. It serves as the bridge between the coordinator's
+  service discovery and the director's internal service representation.
+
+  ## Service Discovery Integration
+
+  Services discovered through the coordinator are registered directly in
+  coordinator format without conversion. This unified approach maintains
+  consistent service identity throughout the system while eliminating
+  format translation overhead.
+
+  The coordinator format `{kind, {otp_name, node}}` flows directly from
+  service registration through recovery phases, ensuring that service
+  identity and location information remains consistent across all system
+  components. Status information is tracked separately when needed, allowing
+  the core service identity to remain simple and cacheable.
+
+  Node rejoin operations batch service registrations to minimize state
+  transitions while maintaining atomic updates to the director's service
+  directory.
+  """
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Director
@@ -124,11 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
         services
         |> Map.put(
           service_info[:id],
-          %{
-            kind: service_info[:kind],
-            last_seen: {service_info[:otp_name], node},
-            status: {:up, service_info[:pid]}
-          }
+          {service_info[:kind], {service_info[:otp_name], node}}
         )
       end)
     end)
@@ -142,11 +161,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
       services
       |> Map.put(
         service_info[:id],
-        %{
-          kind: service_info[:kind],
-          last_seen: {service_info[:otp_name], node},
-          status: {:up, service_info[:pid]}
-        }
+        {service_info[:kind], {service_info[:otp_name], node}}
       )
     end)
   end

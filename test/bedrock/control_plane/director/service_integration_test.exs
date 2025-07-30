@@ -6,34 +6,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
   alias Bedrock.ControlPlane.Config
 
   describe "director service integration" do
-    test "convert_coordinator_services_to_director_format/1 converts service format correctly" do
-      coordinator_services = %{
-        "service-1" => {:storage, {:storage_1, :node1}},
-        "service-2" => {:log, {:log_1, :node2}}
-      }
-
-      result = Server.convert_coordinator_services_to_director_format(coordinator_services)
-
-      # Services should be converted from coordinator format to ServiceDescriptor format
-      assert result == %{
-               "service-1" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-               "service-2" => %{kind: :log, last_seen: {:log_1, :node2}}
-             }
-    end
-
-    test "convert_coordinator_services_to_director_format/1 handles empty services" do
-      result = Server.convert_coordinator_services_to_director_format(%{})
-      assert result == %{}
-    end
-
     test "add_services_to_directory/2 adds new services to existing directory" do
       state = %State{
         services: %{
-          "existing-service" => %{
-            kind: :storage,
-            last_seen: {:existing, :node1},
-            status: :unknown
-          }
+          "existing-service" => {:storage, {:existing, :node1}}
         }
       }
 
@@ -48,22 +24,14 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
       assert Map.has_key?(result.services, "new-service-1")
       assert Map.has_key?(result.services, "new-service-2")
 
-      assert result.services["new-service-1"] == %{kind: :log, last_seen: {:log_1, :node2}}
-
-      assert result.services["new-service-2"] == %{
-               kind: :storage,
-               last_seen: {:storage_2, :node3}
-             }
+      assert result.services["new-service-1"] == {:log, {:log_1, :node2}}
+      assert result.services["new-service-2"] == {:storage, {:storage_2, :node3}}
     end
 
     test "add_services_to_directory/2 overwrites existing services with same ID" do
       state = %State{
         services: %{
-          "service-1" => %{
-            kind: :storage,
-            last_seen: {:old_name, :old_node},
-            status: :unknown
-          }
+          "service-1" => {:storage, {:old_name, :old_node}}
         }
       }
 
@@ -73,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
 
       result = Server.add_services_to_directory(state, service_infos)
 
-      assert result.services["service-1"] == %{kind: :log, last_seen: {:new_name, :new_node}}
+      assert result.services["service-1"] == {:log, {:new_name, :new_node}}
     end
 
     test "try_to_recover_if_stalled/1 handles different states correctly" do

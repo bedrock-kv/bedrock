@@ -70,8 +70,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
             transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
           },
           available_services: %{
-            {:log, 2} => %{kind: :log, last_seen: {:log_2, :node1}},
-            {:log, 3} => %{kind: :log, last_seen: {:log_3, :node1}}
+            {:log, 2} => {:log, {:log_2, :node1}},
+            {:log, 3} => {:log, {:log_3, :node1}}
           },
           lock_service_fn: fn _service, _epoch ->
             pid = spawn(fn -> :ok end)

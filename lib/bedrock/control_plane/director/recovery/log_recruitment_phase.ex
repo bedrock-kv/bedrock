@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
     available_log_ids =
       context.available_services
-      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
+      |> Enum.filter(fn {_id, {kind, _}} -> kind == :log end)
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
 
@@ -257,13 +257,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     existing_log_ids
     |> Enum.reduce_while({:ok, %{}}, fn log_id, {:ok, locked_services} ->
       case Map.get(available_services, log_id) do
-        %{kind: _, last_seen: _} = service ->
+        {_kind, last_seen} = service ->
           case lock_recruited_service(service, recovery_attempt.epoch, context) do
             {:ok, pid, info} ->
               locked_service = %{
                 status: {:up, pid},
                 kind: info.kind,
-                last_seen: service.last_seen
+                last_seen: last_seen
               }
 
               {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
@@ -279,14 +279,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end)
   end
 
-  @spec lock_recruited_service(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer(), map()) ::
+  @spec lock_recruited_service({atom(), {atom(), node()}}, pos_integer(), map()) ::
           {:ok, pid(), map()} | {:error, term()}
   defp lock_recruited_service(service, epoch, context) do
     lock_service_for_recovery(service, epoch, context)
   end
 
   @spec lock_service_for_recovery(
-          %{kind: atom(), last_seen: {atom(), node()}},
+          {atom(), {atom(), node()}},
           Bedrock.epoch(),
           map()
         ) ::
@@ -296,8 +296,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     lock_fn.(service, epoch)
   end
 
-  @spec lock_service_impl(%{kind: atom(), last_seen: {atom(), node()}}, Bedrock.epoch()) ::
+  @spec lock_service_impl({atom(), {atom(), node()}}, Bedrock.epoch()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl(%{kind: :log, last_seen: name}, epoch),
+  defp lock_service_impl({:log, name}, epoch),
     do: Log.lock_for_recovery(name, epoch)
 end

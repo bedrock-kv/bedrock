@@ -34,10 +34,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           |> with_node_tracking(nodes: 3)
           |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
           |> Map.put(:available_services, %{
-            "storage_1" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-            "storage_2" => %{kind: :storage, last_seen: {:storage_2, :node1}},
-            "storage_3" => %{kind: :storage, last_seen: {:storage_3, :node1}},
-            "storage_4" => %{kind: :storage, last_seen: {:storage_4, :node1}}
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
           })
           |> Map.put(:lock_service_fn, fn _service, _epoch ->
             pid = spawn(fn -> :ok end)
@@ -78,9 +78,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           |> with_node_tracking(nodes: 0)
           |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
           |> Map.put(:available_services, %{
-            "storage_1" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-            "storage_2" => %{kind: :storage, last_seen: {:storage_2, :node1}},
-            "storage_3" => %{kind: :storage, last_seen: {:storage_3, :node1}}
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}}
             # Only storage_3 available for vacancies, should need to create 1 new worker
           })
           |> Map.put(:lock_service_fn, fn _service, _epoch ->
@@ -115,10 +115,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           |> with_node_tracking(nodes: 3)
           |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
           |> Map.put(:available_services, %{
-            "storage_1" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-            "storage_2" => %{kind: :storage, last_seen: {:storage_2, :node1}},
-            "storage_3" => %{kind: :storage, last_seen: {:storage_3, :node1}},
-            "storage_4" => %{kind: :storage, last_seen: {:storage_4, :node1}}
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
           })
           |> Map.put(:lock_service_fn, fn _service, _epoch ->
             pid = spawn(fn -> :ok end)
@@ -147,10 +147,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           |> with_node_tracking(nodes: 3)
           |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
           |> Map.put(:available_services, %{
-            "storage_1" => %{kind: :storage, last_seen: {:storage_1, :node1}},
-            "storage_2" => %{kind: :storage, last_seen: {:storage_2, :node1}},
-            "storage_3" => %{kind: :storage, last_seen: {:storage_3, :node1}},
-            "storage_4" => %{kind: :storage, last_seen: {:storage_4, :node1}}
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
           })
           |> Map.put(:lock_service_fn, fn _service, _epoch ->
             pid = spawn(fn -> :ok end)
@@ -185,27 +185,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         node_capabilities: mock_node_tracking(),
         old_transaction_system_layout: %{logs: %{}, storage_teams: []},
         available_services: %{
-          "storage_1" => %{
-            status: {:up, mock_pid_1},
-            kind: :storage,
-            last_seen: {:storage_1, :node1}
-          },
-          "storage_2" => %{
-            status: {:up, mock_pid_2},
-            kind: :storage,
-            last_seen: {:storage_2, :node1}
-          },
-          "storage_3" => %{
-            status: {:up, spawn(fn -> :timer.sleep(1000) end)},
-            kind: :storage,
-            last_seen: {:storage_3, :node1}
-          }
+          "storage_1" => {:storage, {:storage_1, :node1}},
+          "storage_2" => {:storage, {:storage_2, :node1}},
+          "storage_3" => {:storage, {:storage_3, :node1}}
         },
         lock_service_fn: fn service, _epoch ->
-          # Extract the existing PID from the service status if it exists
+          # Handle coordinator format: {kind, {otp_name, node}}
+          {_kind, {otp_name, _node}} = service
+
+          # Map specific services to their expected PIDs for testing
           existing_pid =
-            case Map.get(service, :status) do
-              {:up, pid} -> pid
+            case otp_name do
+              :storage_1 -> mock_pid_1
+              :storage_2 -> mock_pid_2
               _ -> spawn(fn -> :ok end)
             end
 

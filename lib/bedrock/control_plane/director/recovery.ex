@@ -1,107 +1,28 @@
 defmodule Bedrock.ControlPlane.Director.Recovery do
   @moduledoc """
-  Bedrock's distributed system recovery orchestrator.
+  Orchestrates distributed system recovery through a coordinated phase sequence.
 
-  This module implements the core recovery process that rebuilds the transaction system
-  after failures, following a fast-recovery approach inspired by FoundationDB combined
-  with Erlang/OTP's "let it crash" philosophy.
+  This module implements Bedrock's recovery orchestration, which rebuilds the
+  transaction system after critical component failures. Recovery follows a
+  linear state machine where each phase either transitions to the next phase
+  or stalls pending resource availability.
 
-  ## Recovery Philosophy
+  The process begins by attempting to lock services from the previous transaction
+  system layout, then branches into either first-time initialization or recovery
+  from existing persistent state. Each phase validates its prerequisites and
+  may stall if conditions are not met, with retry logic triggered when the
+  environment changes.
 
-  Bedrock combines two proven approaches to create a robust, fast-recovering system:
+  Recovery attempts are persisted at major milestones, allowing resumption from
+  consistent checkpoints if interrupted. The orchestrator coordinates between
+  phases but delegates specific recovery logic to individual phase modules.
 
-  ### "Let It Crash" (Erlang/OTP)
-  - **Fast Failure Detection**: Use `Process.monitor/1` rather than complex health checking
-  - **Immediate Failure Response**: Any critical component failure triggers immediate director shutdown
-  - **Supervision Tree Restart**: Let Erlang's supervision trees handle automatic restart
-  - **Fail-Fast Error Handling**: Prefer immediate failure over complex error recovery
+  Critical components that trigger recovery include coordinators, directors,
+  sequencers, commit proxies, resolvers, and transaction logs. Storage servers
+  and gateways handle failures independently without triggering full recovery.
 
-  ### Fast Recovery Over Complex Error Handling (FoundationDB)
-  - **Component Failure Triggers Full Recovery**: Any transaction system component failure causes complete recovery
-  - **Process Suicide**: Processes terminate themselves when they detect newer generations
-  - **Recovery Count Mechanism**: Each recovery increments an epoch counter for generation management
-  - **Simple Failure Detection**: Use heartbeats and process monitoring, not complex availability checking
-
-  ## When Recovery Triggers
-
-  ### Critical Components (Recovery Triggers)
-  Recovery is triggered when any of these components fail:
-  - **Coordinator**: Raft consensus failure or network partition
-  - **Director**: Recovery coordinator failure
-  - **Sequencer**: Version assignment failure
-  - **Commit Proxies**: Transaction batching failure
-  - **Resolvers**: Conflict detection failure
-  - **Transaction Logs**: Durability system failure
-
-  ### Non-Critical Components (No Recovery)
-  These failures do NOT trigger recovery:
-  - **Storage Servers**: Data distributor handles storage failures
-  - **Gateways**: Client interface failures are handled locally
-  - **Rate Keeper**: Independent component with separate lifecycle
-
-  ## Recovery State Machine
-
-  The recovery process follows a linear state machine through these phases:
-
-  1. `:startup` → `StartupPhase` - Initialize recovery attempt with timestamp
-  2. `:locking` → `LockingPhase` - Lock services from old system layout
-  3. Branch point:
-     - `:initialization` → `InitializationPhase` - Bootstrap new cluster
-     - `:log_discovery` → `LogDiscoveryPhase` - Find logs to recover
-  4. `:version_determination` → `VersionDeterminationPhase` - Find highest committed version
-  5. `:vacancy_creation` → `VacancyCreationPhase` - Create placeholders for missing services
-  6. `:log_recruitment` → `LogRecruitmentPhase` - Assign/create log workers
-  7. `:storage_recruitment` → `StorageRecruitmentPhase` - Assign/create storage workers
-  8. `:log_replay` → `LogReplayPhase` - Replay transactions from old logs
-  9. `:data_distribution` → `DataDistributionPhase` - Fix data distribution
-  10. `:sequencer_startup` → `SequencerStartupPhase` - Start sequencer component
-  11. `:proxy_startup` → `ProxyStartupPhase` - Start commit proxies
-  12. `:resolver_startup` → `ResolverStartupPhase` - Start resolver components
-  13. `:validation` → `ValidationPhase` - Final validation before persistence
-  14. `:persistence` → `PersistencePhase` - System transaction test and persist
-  15. `:monitoring` → `MonitoringPhase` - Set up component monitoring
-  16. `:cleanup` → `CleanupPhase` - Clean up unused workers
-  17. `:completed` - Recovery complete
-
-  Any phase can transition to `{:stalled, reason}` which triggers retry logic.
-
-  ## Epoch-Based Split-Brain Prevention
-
-  Durable services use epoch management to prevent split-brain scenarios:
-  - **Service Locking**: Director locks services with new epoch during recovery
-  - **Old Epoch Services**: Services with older epochs stop participating
-  - **New Epoch Services**: Only services locked with current epoch participate
-  - **Fail-Safe**: Services refuse commands from directors with older epochs
-
-  ## Error Handling Patterns
-
-  - **Fail-Fast Implementation**: Exit immediately on component failure rather than complex recovery
-  - **Epoch-Based Generation Management**: Each recovery increments epoch, components self-terminate on newer epochs
-  - **Process Monitoring**: Use `Process.monitor/1` for component failure detection
-  - **Immediate Director Exit**: Any transaction component failure triggers director termination
-
-  ## Performance Characteristics
-
-  - **Cold Start**: 5-15 seconds (depending on cluster size)
-  - **Warm Restart**: 1-5 seconds (with persistent configuration)
-  - **Component Failure**: Sub-second detection, 1-3 second restart
-  - **Node Count**: Recovery time increases logarithmically with cluster size
-
-  ## Implementation Guidelines
-
-  1. **Always use `Process.monitor/1` for component monitoring**
-  2. **Exit immediately on component failure - don't attempt recovery**
-  3. **Use epoch counters for generation management**
-  4. **Implement fail-fast error handling**
-  5. **Test recovery paths extensively**
-  6. **Accept recovery restart on node rejoin - don't prevent it**
-  7. **Ensure durable services properly handle epoch transitions**
-
-  ## See Also
-
-  - `Bedrock.ControlPlane.Director.Recovery.RecoveryPhase` - Behavior for recovery phases
-  - Individual phase modules in `Bedrock.ControlPlane.Director.Recovery.*Phase`
-  - [Recovery Guide](https://github.com/your-org/bedrock/blob/main/lib/bedrock/control_plane/director/recovery.ex) - Comprehensive recovery documentation
+  See `Bedrock.ControlPlane.Director` for epoch management and
+  `Bedrock.ControlPlane.Director.Nodes` for service discovery integration.
   """
 
   alias Bedrock.ControlPlane.Config
@@ -122,7 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           old_transaction_system_layout: TransactionSystemLayout.t(),
           node_capabilities: NodeTracking.node_capabilities(),
           lock_token: binary(),
-          available_services: %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},
+          available_services: %{Worker.id() => {atom(), {atom(), node()}}},
           coordinator: pid()
         }
 

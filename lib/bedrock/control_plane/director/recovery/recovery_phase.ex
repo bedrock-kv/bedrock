@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
           old_transaction_system_layout: Config.TransactionSystemLayout.t(),
           node_capabilities: NodeTracking.node_capabilities(),
           lock_token: binary(),
-          available_services: %{String.t() => %{kind: atom(), last_seen: {atom(), node()}}},
+          available_services: %{String.t() => {atom(), {atom(), node()}}},
           coordinator: pid()
         }
 

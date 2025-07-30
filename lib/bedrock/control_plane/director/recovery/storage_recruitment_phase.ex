@@ -38,7 +38,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
     available_storage_ids =
       context.available_services
-      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :storage end)
+      |> Enum.filter(fn {_id, {kind, _}} -> kind == :storage end)
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
       |> MapSet.difference(old_system_storage_ids)
@@ -286,13 +286,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     existing_storage_ids
     |> Enum.reduce_while({:ok, %{}}, fn storage_id, {:ok, locked_services} ->
       case Map.get(available_services, storage_id) do
-        %{kind: _, last_seen: _} = service ->
+        {_kind, last_seen} = service ->
           case lock_recruited_service(service, recovery_attempt.epoch, context) do
             {:ok, pid, info} ->
               locked_service = %{
                 status: {:up, pid},
                 kind: info.kind,
-                last_seen: service.last_seen
+                last_seen: last_seen
               }
 
               {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
@@ -308,14 +308,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     end)
   end
 
-  @spec lock_recruited_service(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer(), map()) ::
+  @spec lock_recruited_service({atom(), {atom(), node()}}, pos_integer(), map()) ::
           {:ok, pid(), map()} | {:error, term()}
   defp lock_recruited_service(service, epoch, context) do
     lock_service_for_recovery(service, epoch, context)
   end
 
   @spec lock_service_for_recovery(
-          %{kind: atom(), last_seen: {atom(), node()}},
+          {atom(), {atom(), node()}},
           pos_integer(),
           map()
         ) ::
@@ -325,8 +325,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     lock_fn.(service, epoch)
   end
 
-  @spec lock_service_impl(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer()) ::
+  @spec lock_service_impl({atom(), {atom(), node()}}, pos_integer()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl(%{kind: :storage, last_seen: name}, epoch),
+  defp lock_service_impl({:storage, name}, epoch),
     do: Storage.lock_for_recovery(name, epoch)
 end

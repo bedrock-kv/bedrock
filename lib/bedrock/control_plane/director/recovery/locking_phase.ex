@@ -103,7 +103,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           Map.put(transaction_services, id, %{
             status: {:up, pid},
             kind: info.kind,
-            last_seen: service.last_seen
+            last_seen:
+              case service do
+                {_kind, location} -> location
+                %{last_seen: location} -> location
+              end
           }), Map.put(service_pids, id, pid)}}
 
       {:ok, {_id, _, {:error, _}}}, acc ->
@@ -126,7 +130,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   end
 
   @spec lock_service_for_recovery(
-          %{kind: atom(), last_seen: {atom(), node()}},
+          {atom(), {atom(), node()}},
           Bedrock.epoch(),
           map()
         ) ::
@@ -136,20 +140,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
     lock_fn.(service, epoch)
   end
 
-  @spec lock_service_impl(%{kind: atom(), last_seen: {atom(), node()}}, Bedrock.epoch()) ::
+  @spec lock_service_impl({atom(), {atom(), node()}}, Bedrock.epoch()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl(%{kind: :log, last_seen: name}, epoch),
+  defp lock_service_impl({:log, name}, epoch),
     do: Log.lock_for_recovery(name, epoch)
 
-  defp lock_service_impl(%{kind: :storage, last_seen: name}, epoch),
+  defp lock_service_impl({:storage, name}, epoch),
     do: Storage.lock_for_recovery(name, epoch)
 
   defp lock_service_impl(_, _), do: {:error, :unavailable}
 
   @spec extract_old_system_services(map(), %{
-          Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}
+          Worker.id() => {atom(), {atom(), node()}}
         }) ::
-          %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}}
+          %{Worker.id() => {atom(), {atom(), node()}}}
   defp extract_old_system_services(old_layout, available_services) do
     old_service_ids =
       (Map.keys(Map.get(old_layout, :logs, %{})) ++

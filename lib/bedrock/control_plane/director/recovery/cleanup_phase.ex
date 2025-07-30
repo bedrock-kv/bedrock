@@ -40,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
   end
 
   @spec find_obsolete_services(RecoveryAttempt.t(), RecoveryPhase.context()) :: %{
-          Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}
+          Worker.id() => {atom(), {atom(), node()}}
         }
   defp find_obsolete_services(recovery_attempt, context),
     do: Map.drop(context.available_services, Map.keys(recovery_attempt.transaction_services))

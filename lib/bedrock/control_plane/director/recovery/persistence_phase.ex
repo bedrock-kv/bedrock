@@ -93,26 +93,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     recovery_attempt
     |> extract_service_ids()
     |> Enum.map(fn service_id ->
-      service_id
-      |> build_service_descriptor(recovery_attempt, context)
-      |> then(&{service_id, &1})
+      {service_id, build_service_descriptor(service_id, recovery_attempt, context)}
     end)
     |> Enum.reject(fn {_id, descriptor} -> is_nil(descriptor) end)
     |> Map.new()
   end
 
   defp extract_service_ids(recovery_attempt) do
-    MapSet.union(
-      extract_log_service_ids(recovery_attempt),
-      extract_storage_service_ids(recovery_attempt)
-    )
+    [extract_log_service_ids(recovery_attempt), extract_storage_service_ids(recovery_attempt)]
+    |> Enum.reduce(MapSet.new(), &MapSet.union/2)
   end
 
-  defp extract_log_service_ids(recovery_attempt),
-    do: recovery_attempt.logs |> Map.keys() |> MapSet.new()
+  defp extract_log_service_ids(recovery_attempt) do
+    recovery_attempt.logs
+    |> Map.keys()
+    |> MapSet.new()
+  end
 
-  defp extract_storage_service_ids(recovery_attempt),
-    do: recovery_attempt.storage_teams |> Enum.flat_map(& &1.storage_ids) |> MapSet.new()
+  defp extract_storage_service_ids(recovery_attempt) do
+    recovery_attempt.storage_teams
+    |> Enum.flat_map(& &1.storage_ids)
+    |> MapSet.new()
+  end
 
   @spec build_service_descriptor(
           String.t(),
@@ -156,14 +158,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     encoded_layout =
       Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
 
-    monolithic_keys = build_monolithic_keys(epoch, encoded_config, encoded_layout)
-
-    decomposed_keys =
-      build_decomposed_keys(epoch, cluster_config, transaction_system_layout, cluster)
-
-    all_keys = Map.merge(monolithic_keys, decomposed_keys)
-
-    {nil, all_keys}
+    build_monolithic_keys(epoch, encoded_config, encoded_layout)
+    |> Map.merge(build_decomposed_keys(epoch, cluster_config, transaction_system_layout, cluster))
+    |> then(&{nil, &1})
   end
 
   @spec build_monolithic_keys(Bedrock.epoch(), map(), map()) :: %{Bedrock.key() => binary()}
@@ -178,9 +175,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   @spec build_decomposed_keys(Bedrock.epoch(), Config.t(), TransactionSystemLayout.t(), module()) ::
-          %{
-            Bedrock.key() => binary()
-          }
+          %{Bedrock.key() => binary()}
   defp build_decomposed_keys(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_sequencer = encode_component_for_storage(transaction_system_layout.sequencer, cluster)
     encoded_proxies = encode_components_for_storage(transaction_system_layout.proxies, cluster)
@@ -227,8 +222,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     log_keys =
       transaction_system_layout.logs
       |> Enum.into(%{}, fn {log_id, log_descriptor} ->
-        encoded_log = encode_log_descriptor_for_storage(log_descriptor, cluster)
-        {SystemKeys.layout_log(log_id), :erlang.term_to_binary(encoded_log)}
+        encoded_descriptor =
+          log_descriptor
+          |> encode_log_descriptor_for_storage(cluster)
+          |> :erlang.term_to_binary()
+
+        {SystemKeys.layout_log(log_id), encoded_descriptor}
       end)
 
     storage_keys =
@@ -236,20 +235,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       |> Enum.with_index()
       |> Enum.into(%{}, fn {storage_team, index} ->
         team_id = "team_#{index}"
-        encoded_team = encode_storage_team_for_storage(storage_team, cluster)
-        {SystemKeys.layout_storage_team(team_id), :erlang.term_to_binary(encoded_team)}
+
+        encoded_team =
+          storage_team
+          |> encode_storage_team_for_storage(cluster)
+          |> :erlang.term_to_binary()
+
+        {SystemKeys.layout_storage_team(team_id), encoded_team}
       end)
 
     recovery_keys = %{
       SystemKeys.recovery_attempt() => :erlang.term_to_binary(1),
       SystemKeys.recovery_last_completed() =>
-        :erlang.term_to_binary(System.system_time(:millisecond))
+        System.system_time(:millisecond) |> :erlang.term_to_binary()
     }
 
-    Map.merge(cluster_keys, layout_keys)
-    |> Map.merge(log_keys)
-    |> Map.merge(storage_keys)
-    |> Map.merge(recovery_keys)
+    [cluster_keys, layout_keys, log_keys, storage_keys, recovery_keys]
+    |> Enum.reduce(%{}, &Map.merge/2)
   end
 
   @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()}, module()) ::
@@ -287,7 +289,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     proxies
     |> Enum.random()
-    |> commit_fn.(system_transaction)
+    |> then(&commit_fn.(&1, system_transaction))
   end
 
   # Unlock commit proxies and storage servers before exercising the transaction system
@@ -328,9 +330,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     proxies
     |> Task.async_stream(
-      fn proxy ->
-        unlock_fn.(proxy, lock_token, transaction_system_layout)
-      end,
+      &unlock_fn.(&1, lock_token, transaction_system_layout),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn
@@ -350,17 +350,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
     |> Enum.uniq()
     |> Enum.map(fn storage_id ->
-      %{status: {:up, pid}} = Map.fetch!(recovery_attempt.transaction_services, storage_id)
-      {storage_id, pid}
+      recovery_attempt.transaction_services
+      |> Map.fetch!(storage_id)
+      |> then(fn %{status: {:up, pid}} -> {storage_id, pid} end)
     end)
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->
-        {storage_id,
-         unlock_fn.(
-           storage_pid,
-           durable_version,
-           transaction_system_layout
-         )}
+        {storage_id, unlock_fn.(storage_pid, durable_version, transaction_system_layout)}
       end,
       ordered: false,
       timeout: 5000

@@ -9,13 +9,10 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
   """
 
   use ExUnit.Case, async: true
-  import ExUnit.CaptureLog
 
-  alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.Recovery.LockOldSystemServicesPhase
   alias Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   import RecoveryTestSupport
 
@@ -127,7 +124,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
         |> Map.put(:state, :recruit_logs_to_fill_vacancies)
         # Need to fill one log vacancy - kilvu2af should be recruited for this
         |> Map.put(:logs, %{{:vacancy, 1} => [0, 1]})
-        # Old service already locked  
+        # Old service already locked
         |> Map.put(:locked_service_ids, MapSet.new(["bwecaxvz"]))
         |> Map.put(:transaction_services, %{
           "bwecaxvz" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
@@ -283,7 +280,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       assert "kilvu2af" in Map.keys(log_result.transaction_services)
       assert %{status: {:up, _}, kind: :log} = log_result.transaction_services["kilvu2af"]
 
-      # 3. Test storage recruitment phase  
+      # 3. Test storage recruitment phase
       storage_recovery_attempt = %{
         log_result
         | state: :recruit_storage_to_fill_vacancies,
@@ -300,7 +297,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       locked_services = get_locked_services_from_context(context)
       # old system log
       assert "bwecaxvz" in locked_services
-      # old system storage  
+      # old system storage
       assert "gb6cddk5" in locked_services
       # recruited log
       assert "kilvu2af" in locked_services
@@ -326,7 +323,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
     {:ok, tracker} = Agent.start_link(fn -> [] end)
 
     lock_service_fn = fn service, _epoch ->
-      # Find the service ID by looking it up in available_services 
+      # Find the service ID by looking it up in available_services
       service_id =
         context.available_services
         |> Enum.find_value(fn {id, desc} ->
@@ -362,16 +359,6 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
 
   defp with_multiple_nodes(context) do
     Map.put(context, :node_list_fn, fn -> [:node1, :node2, :node3] end)
-  end
-
-  defp with_single_log_config(context) do
-    Map.update!(context, :cluster_config, fn config ->
-      Map.update!(config, :parameters, fn params ->
-        params
-        |> Map.put(:desired_logs, 1)
-        |> Map.put(:desired_replication_factor, 1)
-      end)
-    end)
   end
 
   defp with_mocked_worker_creation(context) do

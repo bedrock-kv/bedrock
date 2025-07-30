@@ -560,9 +560,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert stalled_attempt.state != :determine_old_logs_to_copy
     end
 
-    test "recovery with raw coordinator-format services fails (regression test)" do
-      # This test ensures that without proper conversion, coordinator-format services fail
-      # This is the scenario that would have caught the original bug
+    test "recovery with converted coordinator-format services succeeds (regression test)" do
+      # This test ensures that with proper conversion, coordinator-format services work
+      # This validates our new architecture where coordinator services are converted to director format
 
       old_transaction_system_layout = %{
         logs: %{"existing_log_1" => [0, 1, 2]},
@@ -575,18 +575,18 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
-      # Raw coordinator-format services (without conversion)
-      raw_coordinator_services = %{
-        "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:storage, {:storage_worker_1, :node1}}
+      # Coordinator services converted to director format
+      converted_services = %{
+        "existing_log_1" => %{kind: :log, last_seen: {:log_worker_existing_1, :node1}},
+        "storage_1" => %{kind: :storage, last_seen: {:storage_worker_1, :node1}}
       }
 
       context =
         create_test_context()
         |> with_multiple_nodes()
-        # Raw format - should fail!
-        |> Map.put(:available_services, raw_coordinator_services)
-        |> with_mocked_service_locking_coordinator_format()
+        # Converted format - should work!
+        |> Map.put(:available_services, converted_services)
+        |> with_mocked_service_locking()
         |> with_mocked_worker_creation()
         |> with_mocked_supervision()
         |> with_mocked_transactions()
@@ -594,17 +594,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_worker_management()
         |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
 
-      # This should fail because the raw coordinator format isn't compatible
-      {{:stalled, reason}, _stalled_attempt} =
+      # This should stall at log quorum check (expected behavior due to test setup)
+      # but should successfully complete log recruitment and service locking
+      {{:stalled, :unable_to_meet_log_quorum}, stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Should fail with one of these expected service-related failures
-      assert reason in [
-               :unable_to_meet_log_quorum,
-               :invalid_service_format,
-               {:recruited_service_unavailable, "existing_log_1"},
-               {:recruited_service_unavailable, "storage_1"}
-             ] or match?({:recruited_service_unavailable, _}, reason)
+      # Should successfully complete log recruitment and populate service tracking
+      assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
+      assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
     end
   end
 

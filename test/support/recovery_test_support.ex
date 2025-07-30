@@ -88,6 +88,7 @@ defmodule RecoveryTestSupport do
       proxies: [],
       sequencer: nil,
       transaction_services: %{},
+      service_pids: %{},
       transaction_system_layout: nil
     }
 

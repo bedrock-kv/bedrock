@@ -106,7 +106,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.NodeTracking
@@ -123,7 +122,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           old_transaction_system_layout: TransactionSystemLayout.t(),
           node_tracking: NodeTracking.t(),
           lock_token: binary(),
-          available_services: %{Worker.id() => ServiceDescriptor.t()},
+          available_services: %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},
           coordinator: pid()
         }
 

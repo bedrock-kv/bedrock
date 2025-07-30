@@ -75,7 +75,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp build_transaction_system_layout(recovery_attempt, _context) do
+  defp build_transaction_system_layout(recovery_attempt, context) do
     {:ok,
      %{
        id: TransactionSystemLayout.random_id(),
@@ -88,36 +88,66 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
        logs: recovery_attempt.logs,
        storage_teams: recovery_attempt.storage_teams,
        services:
-         filter_services_for_layout(
-           recovery_attempt.transaction_services,
-           recovery_attempt.logs,
-           recovery_attempt.storage_teams
+         build_services_for_layout(
+           recovery_attempt,
+           context
          )
      }}
   end
 
-  @spec filter_services_for_layout(
-          transaction_services :: %{String.t() => map()},
-          logs :: %{String.t() => any()},
-          storage_teams :: [%{storage_ids: [String.t()]}]
-        ) :: %{String.t() => map()}
-  defp filter_services_for_layout(transaction_services, logs, storage_teams) do
+  @spec build_services_for_layout(
+          RecoveryAttempt.t(),
+          RecoveryPhase.context()
+        ) :: %{String.t() => ServiceDescriptor.t()}
+  defp build_services_for_layout(recovery_attempt, context) do
     # Get all service IDs referenced in the layout
-    log_service_ids = Map.keys(logs)
+    log_service_ids = Map.keys(recovery_attempt.logs)
 
     storage_service_ids =
-      storage_teams
+      recovery_attempt.storage_teams
       |> Enum.flat_map(& &1.storage_ids)
       |> MapSet.new()
 
     referenced_service_ids = MapSet.union(MapSet.new(log_service_ids), storage_service_ids)
 
-    # Only include services that are actually referenced in the layout
-    transaction_services
-    |> Enum.filter(fn {service_id, _service} ->
-      MapSet.member?(referenced_service_ids, service_id)
+    # Build ServiceDescriptor entries for referenced services
+    referenced_service_ids
+    |> Enum.map(fn service_id ->
+      service_descriptor = build_service_descriptor(service_id, recovery_attempt, context)
+      {service_id, service_descriptor}
     end)
+    |> Enum.reject(fn {_id, descriptor} -> is_nil(descriptor) end)
     |> Map.new()
+  end
+
+  @spec build_service_descriptor(
+          String.t(),
+          RecoveryAttempt.t(),
+          RecoveryPhase.context()
+        ) :: ServiceDescriptor.t() | nil
+  defp build_service_descriptor(service_id, recovery_attempt, context) do
+    case Map.get(context.available_services, service_id) do
+      %{kind: kind, last_seen: last_seen} = _service ->
+        status = determine_service_status(service_id, recovery_attempt.service_pids)
+
+        %{
+          kind: kind,
+          last_seen: last_seen,
+          status: status
+        }
+
+      _ ->
+        # Service not found in available services
+        nil
+    end
+  end
+
+  @spec determine_service_status(String.t(), %{String.t() => pid()}) :: ServiceDescriptor.status()
+  defp determine_service_status(service_id, service_pids) do
+    case Map.get(service_pids, service_id) do
+      pid when is_pid(pid) -> {:up, pid}
+      _ -> :down
+    end
   end
 
   @spec build_system_transaction(

@@ -73,6 +73,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :log_recovery_info_by_id,
     :storage_recovery_info_by_id,
     :transaction_services,
+    :service_pids,
     :transaction_system_layout
   ]
 
@@ -96,6 +97,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           proxies: [pid()],
           sequencer: pid() | nil,
           transaction_services: %{Worker.id() => ServiceDescriptor.t()},
+          service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil
         }
 
@@ -124,6 +126,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       proxies: [],
       sequencer: nil,
       transaction_services: %{},
+      service_pids: %{},
       transaction_system_layout: nil
     }
   end

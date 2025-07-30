@@ -17,7 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
@@ -35,16 +34,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       |> MapSet.new()
 
     available_log_ids =
-      try do
-        context.available_services
-        |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
-        |> Enum.map(&elem(&1, 0))
-        |> MapSet.new()
-      rescue
-        FunctionClauseError ->
-          # Invalid service format (likely coordinator format) - return empty set
-          MapSet.new()
-      end
+      context.available_services
+      |> Enum.filter(fn {_id, %{kind: kind}} -> kind == :log end)
+      |> Enum.map(&elem(&1, 0))
+      |> MapSet.new()
 
     available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
 
@@ -79,6 +72,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       recovery_attempt
       |> Map.put(:logs, logs)
       |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
+      |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
       |> Map.put(:state, :recruit_storage_to_fill_vacancies)
     else
       {:error, reason} ->
@@ -262,13 +256,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     existing_log_ids
     |> Enum.reduce_while({:ok, %{}}, fn log_id, {:ok, locked_services} ->
       case Map.get(available_services, log_id) do
-        %{} = service_descriptor ->
-          case lock_recruited_service(service_descriptor, recovery_attempt.epoch, context) do
+        %{kind: _, last_seen: _} = service ->
+          case lock_recruited_service(service, recovery_attempt.epoch, context) do
             {:ok, pid, info} ->
               locked_service = %{
                 status: {:up, pid},
                 kind: info.kind,
-                last_seen: service_descriptor.last_seen
+                last_seen: service.last_seen
               }
 
               {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
@@ -284,20 +278,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
     end)
   end
 
-  @spec lock_recruited_service(map(), pos_integer(), map()) ::
+  @spec lock_recruited_service(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer(), map()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_recruited_service(service_descriptor, epoch, context) do
-    lock_service_for_recovery(service_descriptor, epoch, context)
+  defp lock_recruited_service(service, epoch, context) do
+    lock_service_for_recovery(service, epoch, context)
   end
 
-  @spec lock_service_for_recovery(ServiceDescriptor.t(), Bedrock.epoch(), map()) ::
+  @spec lock_service_for_recovery(
+          %{kind: atom(), last_seen: {atom(), node()}},
+          Bedrock.epoch(),
+          map()
+        ) ::
           {:ok, pid(), map()} | {:error, term()}
   def lock_service_for_recovery(service, epoch, context \\ %{}) do
     lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
     lock_fn.(service, epoch)
   end
 
-  @spec lock_service_impl(ServiceDescriptor.t(), Bedrock.epoch()) ::
+  @spec lock_service_impl(%{kind: atom(), last_seen: {atom(), node()}}, Bedrock.epoch()) ::
           {:ok, pid(), map()} | {:error, term()}
   defp lock_service_impl(%{kind: :log, last_seen: name}, epoch),
     do: Log.lock_for_recovery(name, epoch)

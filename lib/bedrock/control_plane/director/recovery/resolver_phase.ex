@@ -40,14 +40,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
     node_list_fn = Map.get(context, :node_list_fn, &Node.list/0)
 
     running_logs_by_id =
-      context.available_services
+      recovery_attempt.service_pids
       |> Map.take(recovery_attempt.logs |> Map.keys())
-      |> Enum.map(fn
-        {id, %{status: {:up, pid}}} -> {id, pid}
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Map.new()
 
     define_resolvers(
       recovery_attempt.resolvers,

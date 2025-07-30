@@ -76,11 +76,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
                  ) do
               {:ok, locked_existing_services} ->
                 all_storage_services = Map.merge(locked_existing_services, updated_services)
+                all_storage_pids = extract_service_pids(all_storage_services)
 
                 recovery_attempt
                 |> Map.put(:storage_teams, storage_teams)
                 |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
                 |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
+                |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
                 |> Map.put(:state, :replay_old_logs)
 
               {:error, reason} ->
@@ -248,6 +250,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     )
   end
 
+  @spec extract_service_pids(%{String.t() => map()}) :: %{String.t() => pid()}
+  defp extract_service_pids(services) do
+    services
+    |> Enum.filter(fn {_id, service} ->
+      case service do
+        %{status: {:up, _}} -> true
+        _ -> false
+      end
+    end)
+    |> Enum.map(fn {id, %{status: {:up, pid}}} -> {id, pid} end)
+    |> Map.new()
+  end
+
   @spec extract_and_lock_existing_storage_services(
           [StorageTeamDescriptor.t()],
           %{String.t() => map()},
@@ -270,13 +285,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     existing_storage_ids
     |> Enum.reduce_while({:ok, %{}}, fn storage_id, {:ok, locked_services} ->
       case Map.get(available_services, storage_id) do
-        %{} = service_descriptor ->
-          case lock_recruited_service(service_descriptor, recovery_attempt.epoch, context) do
+        %{kind: _, last_seen: _} = service ->
+          case lock_recruited_service(service, recovery_attempt.epoch, context) do
             {:ok, pid, info} ->
               locked_service = %{
                 status: {:up, pid},
                 kind: info.kind,
-                last_seen: service_descriptor.last_seen
+                last_seen: service.last_seen
               }
 
               {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
@@ -292,20 +307,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     end)
   end
 
-  @spec lock_recruited_service(map(), pos_integer(), map()) ::
+  @spec lock_recruited_service(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer(), map()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_recruited_service(service_descriptor, epoch, context) do
-    lock_service_for_recovery(service_descriptor, epoch, context)
+  defp lock_recruited_service(service, epoch, context) do
+    lock_service_for_recovery(service, epoch, context)
   end
 
-  @spec lock_service_for_recovery(map(), pos_integer(), map()) ::
+  @spec lock_service_for_recovery(
+          %{kind: atom(), last_seen: {atom(), node()}},
+          pos_integer(),
+          map()
+        ) ::
           {:ok, pid(), map()} | {:error, term()}
   def lock_service_for_recovery(service, epoch, context \\ %{}) do
     lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
     lock_fn.(service, epoch)
   end
 
-  @spec lock_service_impl(map(), pos_integer()) ::
+  @spec lock_service_impl(%{kind: atom(), last_seen: {atom(), node()}}, pos_integer()) ::
           {:ok, pid(), map()} | {:error, term()}
   defp lock_service_impl(%{kind: :storage, last_seen: name}, epoch),
     do: Storage.lock_for_recovery(name, epoch)

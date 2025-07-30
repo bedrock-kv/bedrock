@@ -15,9 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   otherwise transitions to storage recruitment.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker

@@ -20,8 +20,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   @impl true
   def execute(recovery_attempt, context) do

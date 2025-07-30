@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   :recruit_logs_to_fill_vacancies to begin service assignment.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor

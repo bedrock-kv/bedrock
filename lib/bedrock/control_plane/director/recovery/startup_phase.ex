@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartupPhase do
   for the more complex phases that follow.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   import Bedrock.Internal.Time, only: [now: 0]

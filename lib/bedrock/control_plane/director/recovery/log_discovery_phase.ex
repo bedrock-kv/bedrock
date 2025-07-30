@@ -21,10 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
 
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
-
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 

@@ -19,8 +19,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   the final persistence and testing phase.
   """
 
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   @impl true
   def execute(recovery_attempt, _context) do

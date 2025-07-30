@@ -24,8 +24,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   @impl true
   def execute(recovery_attempt, context) do

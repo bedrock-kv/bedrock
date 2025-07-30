@@ -21,7 +21,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   """
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.LogDescriptor
@@ -32,9 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
 
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 

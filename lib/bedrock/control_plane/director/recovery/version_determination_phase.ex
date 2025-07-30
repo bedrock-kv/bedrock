@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   of teams requiring repair.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage

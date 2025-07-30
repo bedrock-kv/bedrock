@@ -21,8 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   @impl true
   def execute(recovery_attempt, context) do

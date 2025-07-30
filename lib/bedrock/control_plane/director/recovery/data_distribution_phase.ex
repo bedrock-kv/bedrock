@@ -20,8 +20,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase do
   """
 
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 

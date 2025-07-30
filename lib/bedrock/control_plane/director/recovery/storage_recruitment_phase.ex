@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   otherwise transitions to log replay.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor

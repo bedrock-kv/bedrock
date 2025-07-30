@@ -18,9 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   :create_vacancies to begin service assignment.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock, only: [key_range: 2]
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]

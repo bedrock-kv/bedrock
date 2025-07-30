@@ -20,8 +20,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   @doc """
   Execute the sequencer definition phase of recovery.

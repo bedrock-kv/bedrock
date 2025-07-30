@@ -39,7 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%RecoveryAttempt{state: :persist_system_state} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
     with :ok <- validate_recovery_state(recovery_attempt),
@@ -63,15 +63,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
            submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
       trace_recovery_system_state_persisted()
 
-      %{
-        recovery_attempt
-        | state: :monitor_components,
-          transaction_system_layout: transaction_system_layout
-      }
+      updated_recovery_attempt =
+        %{recovery_attempt | transaction_system_layout: transaction_system_layout}
+
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
     else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
-        %{recovery_attempt | state: {:stalled, {:recovery_system_failed, reason}}}
+        {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
     end
   end
 

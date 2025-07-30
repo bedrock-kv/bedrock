@@ -26,7 +26,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :determine_durable_version} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     determine_durable_version(
       context.old_transaction_system_layout.storage_teams,
       recovery_attempt.storage_recovery_info_by_id,
@@ -34,16 +34,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, durable_version, healthy_teams, degraded_teams} ->
         trace_recovery_durable_version_chosen(durable_version)
         trace_recovery_team_health(healthy_teams, degraded_teams)
 
-        recovery_attempt
-        |> Map.put(:durable_version, durable_version)
-        |> Map.put(:degraded_teams, degraded_teams)
-        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
+        updated_recovery_attempt =
+          recovery_attempt
+          |> Map.put(:durable_version, durable_version)
+          |> Map.put(:degraded_teams, degraded_teams)
+
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
     end
   end
 

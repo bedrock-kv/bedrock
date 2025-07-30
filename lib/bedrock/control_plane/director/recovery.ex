@@ -163,8 +163,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Map.update!(:recovery_attempt, fn recovery_attempt ->
       %{
         recovery_attempt
-        | attempt: recovery_attempt.attempt + 1,
-          state: :startup
+        | attempt: recovery_attempt.attempt + 1
       }
     end)
   end
@@ -187,7 +186,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       coordinator: t.coordinator
     }
 
-    # Trace what services the director has when starting recovery
     old_logs = t.old_transaction_system_layout |> Map.get(:logs, %{}) |> Map.keys()
     available_service_ids = t.services |> Map.keys()
 
@@ -197,7 +195,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> run_recovery_attempt(context)
     |> case do
       {:ok, completed} ->
-        IO.inspect(completed, label: "Recovery completed")
         trace_recovery_completed(Interval.between(completed.started_at, now()))
 
         t
@@ -248,75 +245,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     end
   end
 
-  @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context()) ::
+  @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-          | {:error, {:unexpected_recovery_state, atom()}}
-  def run_recovery_attempt(t, context) do
-    case t.state do
-      {:stalled, reason} ->
-        {{:stalled, reason}, t}
+  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.StartupPhase) do
+    case next_phase_module.execute(t, context) do
+      {completed_attempt, :completed} ->
+        {:ok, completed_attempt}
 
-      :completed ->
-        {:ok, t}
+      {stalled_attempt, {:stalled, _reason} = stalled} ->
+        {stalled, stalled_attempt}
 
-      state ->
-        phase = next_phase(state)
-
-        case phase.execute(t, context) do
-          %{state: :completed} = t ->
-            {:ok, t}
-
-          %{state: {:stalled, _reason} = stalled} = t ->
-            {stalled, t}
-
-          %{state: new_state} = new_t when t.state != new_state ->
-            new_t |> run_recovery_attempt(context)
-
-          # Catch any unexpected states
-          %{state: unexpected_state} = recovery_state ->
-            trace_recovery_unexpected_state(unexpected_state, recovery_state)
-            {:error, {:unexpected_recovery_state, unexpected_state}}
-        end
+      {updated_attempt, next_next_phase_module} ->
+        updated_attempt |> run_recovery_attempt(context, next_next_phase_module)
     end
   end
-
-  @spec next_phase(RecoveryAttempt.state()) :: module()
-  # New state atoms
-  defp next_phase(:startup), do: __MODULE__.StartupPhase
-  defp next_phase(:locking), do: __MODULE__.LockingPhase
-  defp next_phase(:initialization), do: __MODULE__.InitializationPhase
-  defp next_phase(:log_discovery), do: __MODULE__.LogDiscoveryPhase
-  defp next_phase(:vacancy_creation), do: __MODULE__.VacancyCreationPhase
-  defp next_phase(:version_determination), do: __MODULE__.VersionDeterminationPhase
-  defp next_phase(:log_recruitment), do: __MODULE__.LogRecruitmentPhase
-  defp next_phase(:storage_recruitment), do: __MODULE__.StorageRecruitmentPhase
-  defp next_phase(:log_replay), do: __MODULE__.LogReplayPhase
-  defp next_phase(:data_distribution), do: __MODULE__.DataDistributionPhase
-  defp next_phase(:sequencer_startup), do: __MODULE__.SequencerStartupPhase
-  defp next_phase(:proxy_startup), do: __MODULE__.ProxyStartupPhase
-  defp next_phase(:resolver_startup), do: __MODULE__.ResolverStartupPhase
-  defp next_phase(:validation), do: __MODULE__.ValidationPhase
-  defp next_phase(:persistence), do: __MODULE__.PersistencePhase
-  defp next_phase(:monitoring), do: __MODULE__.MonitoringPhase
-  defp next_phase(:cleanup), do: __MODULE__.CleanupPhase
-
-  # Backward compatibility for old state atoms
-  defp next_phase(:start), do: __MODULE__.StartupPhase
-  defp next_phase(:lock_old_system_services), do: __MODULE__.LockingPhase
-  defp next_phase(:first_time_initialization), do: __MODULE__.InitializationPhase
-  defp next_phase(:determine_old_logs_to_copy), do: __MODULE__.LogDiscoveryPhase
-  defp next_phase(:create_vacancies), do: __MODULE__.VacancyCreationPhase
-  defp next_phase(:determine_durable_version), do: __MODULE__.VersionDeterminationPhase
-  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.LogRecruitmentPhase
-  defp next_phase(:recruit_storage_to_fill_vacancies), do: __MODULE__.StorageRecruitmentPhase
-  defp next_phase(:replay_old_logs), do: __MODULE__.LogReplayPhase
-  defp next_phase(:repair_data_distribution), do: __MODULE__.DataDistributionPhase
-  defp next_phase(:define_sequencer), do: __MODULE__.SequencerStartupPhase
-  defp next_phase(:define_commit_proxies), do: __MODULE__.ProxyStartupPhase
-  defp next_phase(:define_resolvers), do: __MODULE__.ResolverStartupPhase
-  defp next_phase(:final_checks), do: __MODULE__.ValidationPhase
-  defp next_phase(:persist_system_state), do: __MODULE__.PersistencePhase
-  defp next_phase(:monitor_components), do: __MODULE__.MonitoringPhase
-  defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.CleanupPhase
 end

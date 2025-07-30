@@ -43,9 +43,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Capture logs to see what's being emitted during validation
       _log_output =
         capture_log(fn ->
-          result = PersistencePhase.execute(recovery_attempt, persistence_context())
+          {_result, next_phase_or_stall} =
+            PersistencePhase.execute(recovery_attempt, persistence_context())
 
-          assert result.state ==
+          assert next_phase_or_stall ==
                    {:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_sequencer}}}
         end)
     end
@@ -55,9 +56,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_proxies([])
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -67,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_resolvers([])
 
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -77,7 +79,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}
     end
 
@@ -90,14 +92,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           # Missing log_2 service to trigger the validation failure
         })
 
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
           |> with_available_services(%{"log_1" => %{kind: :log, status: {:up, self()}}})
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed,
                  {:invalid_recovery_state, {:missing_log_services, ["log_2"]}}}}
@@ -110,9 +112,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_sequencer(:invalid_sequencer)
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_sequencer}}}
     end
@@ -122,9 +125,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_proxies([:invalid_proxy])
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_commit_proxies}}}
     end
@@ -134,9 +138,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_resolvers([:invalid_resolver])
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_resolvers}}}
     end
@@ -156,9 +161,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # This will fail due to no commit proxies available
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -190,7 +196,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       # This will fail at the commit proxy stage, but we can verify the transaction
       # structure is built correctly based on the error handling
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -200,7 +206,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -220,9 +226,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # This tests the encoding logic through the validation and build path
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -233,9 +240,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_resolvers([:invalid_resolver])
 
       # This should fail at validation stage for invalid resolvers
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_resolvers}}}
     end
@@ -264,7 +272,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       # This should pass all validations and reach the commit stage
       # where it will fail due to our mock returning an error
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -290,7 +298,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         )
 
       # Mock commit failure should be properly propagated in stalled state
-      assert result.state == {:stalled, {:recovery_system_failed, :mock_commit_failure}}
+      assert next_phase_or_stall == {:stalled, {:recovery_system_failed, :mock_commit_failure}}
     end
   end
 
@@ -305,7 +313,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       # Test config building through validation (which calls build_cluster_config)
       # We expect this to fail at commit proxy stage, confirming config was built
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -318,7 +326,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           )
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -330,9 +338,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_proxies([self(), :invalid, "also_invalid"])
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_commit_proxies}}}
     end
@@ -347,9 +356,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           :invalid_resolver
         ])
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_resolvers}}}
     end
@@ -363,7 +373,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           # Missing log_2 service to trigger validation failure
         })
 
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -374,7 +384,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed,
                  {:invalid_recovery_state, {:missing_log_services, ["log_2"]}}}}
@@ -389,7 +399,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           # Missing service_1 in transaction_services to trigger validation failure
         })
 
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -400,7 +410,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed,
                  {:invalid_recovery_state, {:missing_log_services, ["service_1"]}}}}
@@ -432,7 +442,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       # This comprehensive test validates that all transaction building paths work
       # Even though it fails at commit proxy stage, it exercises the full build pipeline
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -449,7 +459,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -463,9 +473,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # This tests the transaction building with minimal components
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -494,7 +505,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # This tests transaction building with various log ID types and descriptors
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -505,7 +516,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           })
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -519,9 +530,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Should fail at the commit proxy selection stage
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -531,9 +543,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         persistence_recovery_attempt()
         |> with_proxies("not_a_list")
 
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :invalid_commit_proxies}}}
     end
@@ -552,9 +565,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Test resolver encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -570,9 +584,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Test service encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -589,9 +604,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Test storage team encoding through the build process
-      result = PersistencePhase.execute(recovery_attempt, persistence_context())
+      {_result, next_phase_or_stall} =
+        PersistencePhase.execute(recovery_attempt, persistence_context())
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -604,7 +620,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Should still build successfully even with minimal parameters
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -617,7 +633,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           )
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -628,7 +644,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([])
 
       # Should handle all parameters correctly
-      result =
+      {_result, next_phase_or_stall} =
         PersistencePhase.execute(
           recovery_attempt,
           persistence_context()
@@ -645,7 +661,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
           )
         )
 
-      assert result.state ==
+      assert next_phase_or_stall ==
                {:stalled,
                 {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
     end
@@ -654,7 +670,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   # Helper function to create a recovery attempt for persistence testing
   defp persistence_recovery_attempt do
     minimal_valid_recovery()
-    |> with_state(:persist_system_state)
     |> with_version_vector({1, 100})
   end
 

@@ -28,8 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%RecoveryAttempt{state: state} = recovery_attempt, context)
-      when state in [:first_time_initialization, :initialization] do
+  def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     trace_recovery_first_time_initialization()
 
     log_vacancies =
@@ -38,23 +37,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
     storage_team_vacancies =
       1..context.cluster_config.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
-    recovery_attempt
-    |> Map.put(:durable_version, 0)
-    |> Map.put(:old_log_ids_to_copy, [])
-    |> Map.put(:version_vector, {0, 0})
-    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
-    |> Map.put(:storage_teams, [
-      storage_team_descriptor(
-        0,
-        key_range(<<0xFF>>, :end),
-        storage_team_vacancies
-      ),
-      storage_team_descriptor(
-        1,
-        key_range(<<>>, <<0xFF>>),
-        storage_team_vacancies
-      )
-    ])
-    |> Map.put(:state, :recruit_logs_to_fill_vacancies)
+    updated_recovery_attempt =
+      recovery_attempt
+      |> Map.put(:durable_version, 0)
+      |> Map.put(:old_log_ids_to_copy, [])
+      |> Map.put(:version_vector, {0, 0})
+      |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
+      |> Map.put(:storage_teams, [
+        storage_team_descriptor(
+          0,
+          key_range(<<0xFF>>, :end),
+          storage_team_vacancies
+        ),
+        storage_team_descriptor(
+          1,
+          key_range(<<>>, <<0xFF>>),
+          storage_team_vacancies
+        )
+      ])
+
+    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
   end
 end

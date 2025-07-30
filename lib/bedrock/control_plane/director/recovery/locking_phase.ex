@@ -24,8 +24,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   @behaviour RecoveryPhase
 
   @impl true
-  def execute(%{state: state} = recovery_attempt, context)
-      when state in [:lock_old_system_services, :locking] do
+  def execute(recovery_attempt, context) do
     old_system_services =
       extract_old_system_services(
         context.old_transaction_system_layout,
@@ -35,24 +34,29 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
     lock_old_system_services(old_system_services, recovery_attempt.epoch, context)
     |> case do
       {:error, :newer_epoch_exists = reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, locked_service_ids, log_recovery_info_by_id, storage_recovery_info_by_id,
        transaction_services, service_pids} ->
-        next_state =
+        next_phase_module =
           if MapSet.size(locked_service_ids) == 0 do
-            :initialization
+            Bedrock.ControlPlane.Director.Recovery.InitializationPhase
           else
-            :log_discovery
+            Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
           end
 
-        recovery_attempt
-        |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
-        |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
-        |> Map.put(:locked_service_ids, locked_service_ids)
-        |> Map.update!(:transaction_services, &Map.merge(transaction_services, &1))
-        |> Map.update!(:service_pids, &Map.merge(service_pids, &1))
-        |> Map.put(:state, next_state)
+        updated_recovery_attempt =
+          recovery_attempt
+          |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
+          |> Map.update!(
+            :storage_recovery_info_by_id,
+            &Map.merge(storage_recovery_info_by_id, &1)
+          )
+          |> Map.put(:locked_service_ids, locked_service_ids)
+          |> Map.update!(:transaction_services, &Map.merge(transaction_services, &1))
+          |> Map.update!(:service_pids, &Map.merge(service_pids, &1))
+
+        {updated_recovery_attempt, next_phase_module}
     end
   end
 

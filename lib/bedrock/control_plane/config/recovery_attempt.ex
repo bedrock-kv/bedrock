@@ -7,25 +7,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
 
-  @type state ::
-          :start
-          | :lock_old_system_services
-          | :determine_old_logs_to_copy
-          | :determine_durable_version
-          | :recruit_logs_to_fill_vacancies
-          | :recruit_storage_to_fill_vacancies
-          | :first_time_initialization
-          | :create_vacancies
-          | :define_sequencer
-          | :define_commit_proxies
-          | :define_resolvers
-          #
-          | :replay_old_logs
-          | :repair_data_distribution
-          | :final_checks
-          | :completed
-          | {:stalled, reason_for_stall()}
-
   @type reason_for_stall ::
           :newer_epoch_exists
           | :waiting_for_services
@@ -54,7 +35,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @type storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}
 
   defstruct [
-    :state,
     :attempt,
     :cluster,
     :epoch,
@@ -78,7 +58,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   ]
 
   @type t :: %__MODULE__{
-          state: state(),
           attempt: non_neg_integer(),
           cluster: module(),
           epoch: non_neg_integer(),
@@ -107,7 +86,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @spec new(cluster :: module(), epoch :: non_neg_integer(), started_at :: DateTime.t()) :: t()
   def new(cluster, epoch, started_at) do
     %__MODULE__{
-      state: :start,
       attempt: 1,
       cluster: cluster,
       epoch: epoch,

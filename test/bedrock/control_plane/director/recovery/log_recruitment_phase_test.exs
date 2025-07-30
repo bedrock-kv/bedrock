@@ -15,7 +15,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   describe "execute/1" do
     test "transitions to stalled state when insufficient nodes available" do
       recovery_attempt = %{
-        state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
         logs: %{
           {:vacancy, 1} => %{},
@@ -39,19 +38,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         })
 
       capture_log(fn ->
-        result =
+        {_result, next_phase_or_stall} =
           LogRecruitmentPhase.execute(
             recovery_attempt,
             context
           )
 
-        assert {:stalled, {:insufficient_nodes, 3, _}} = result.state
+        assert {:stalled, {:insufficient_nodes, 3, _}} = next_phase_or_stall
       end)
     end
 
     test "transitions to recruit_storage_to_fill_vacancies when vacancies filled with existing workers" do
       recovery_attempt = %{
-        state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
         epoch: 1,
         logs: %{
@@ -81,9 +79,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           end
         })
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, context)
+      {result, next_phase} = LogRecruitmentPhase.execute(recovery_attempt, context)
 
-      assert result.state == :recruit_storage_to_fill_vacancies
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
       assert Map.has_key?(result.logs, {:log, 2})
       assert Map.has_key?(result.logs, {:log, 3})
     end
@@ -234,7 +232,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   describe "integration with worker creation" do
     test "handles insufficient nodes error" do
       recovery_attempt = %{
-        state: :recruit_logs_to_fill_vacancies,
         cluster: TestCluster,
         logs: %{
           {:vacancy, 1} => %{},
@@ -256,10 +253,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           }
         })
 
-      result = LogRecruitmentPhase.execute(recovery_attempt, context)
+      {_result, next_phase_or_stall} = LogRecruitmentPhase.execute(recovery_attempt, context)
 
       # Should transition to stalled state when insufficient nodes available
-      assert {:stalled, {:insufficient_nodes, 2, _}} = result.state
+      assert {:stalled, {:insufficient_nodes, 2, _}} = next_phase_or_stall
     end
   end
 end

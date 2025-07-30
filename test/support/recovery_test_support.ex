@@ -71,7 +71,6 @@ defmodule RecoveryTestSupport do
   """
   def recovery_attempt(overrides \\ %{}) do
     base = %RecoveryAttempt{
-      state: :start,
       cluster: TestCluster,
       epoch: 1,
       attempt: 1,
@@ -150,11 +149,6 @@ defmodule RecoveryTestSupport do
   # ============================================================================
   # Pipeable Transformation Functions for RecoveryAttempt
   # ============================================================================
-
-  @doc """
-  Sets the recovery state.
-  """
-  def with_state(recovery_attempt, state), do: Map.put(recovery_attempt, :state, state)
 
   @doc """
   Sets the cluster.

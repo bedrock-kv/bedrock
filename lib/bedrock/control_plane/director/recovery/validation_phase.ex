@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
   @behaviour RecoveryPhase
 
   @impl true
-  def execute(%{state: :final_checks} = recovery_attempt, _context) do
-    recovery_attempt |> Map.put(:state, :persist_system_state)
+  def execute(recovery_attempt, _context) do
+    {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
   end
 end

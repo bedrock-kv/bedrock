@@ -9,34 +9,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       # Test with empty configurations to avoid Log.recover_from calls
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:replay_old_logs)
         |> with_logs(%{})
         |> with_version_vector({10, 50})
         |> Map.put(:old_log_ids_to_copy, [])
         |> Map.put(:available_services, %{})
         |> Map.put(:service_pids, %{})
 
-      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert result.state == :repair_data_distribution
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
     end
 
     test "handles actual log replay scenarios with stall expectation" do
       # Test with no old logs to copy AND no new logs - this completely avoids Log.recover_from calls
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:replay_old_logs)
         |> with_logs(%{})
         |> with_version_vector({10, 50})
         |> Map.put(:old_log_ids_to_copy, [])
         |> Map.put(:available_services, %{})
         |> Map.put(:service_pids, %{})
 
-      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert result.state == :repair_data_distribution
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
     end
   end
 
@@ -189,7 +187,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       # Test with empty logs to avoid Log.recover_from calls
       # but still verify the data structure is correctly set up
       recovery_attempt = %{
-        state: :replay_old_logs,
         old_log_ids_to_copy: [],
         logs: %{},
         version_vector: {10, 50},
@@ -200,10 +197,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         }
       }
 
-      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance successfully
-      assert result.state == :repair_data_distribution
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
     end
   end
 
@@ -260,22 +257,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       # but we can test the structure
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:replay_old_logs)
         |> with_logs(%{})
         |> with_version_vector({10, 50})
         |> Map.put(:old_log_ids_to_copy, [])
         |> Map.put(:available_services, %{})
         |> Map.put(:service_pids, %{})
 
-      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should succeed
-      assert result.state == :repair_data_distribution
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
     end
 
     test "execute preserves other recovery_attempt fields" do
       recovery_attempt = %{
-        state: :replay_old_logs,
         old_log_ids_to_copy: [],
         logs: %{},
         version_vector: {10, 50},
@@ -285,7 +280,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         another_field: 42
       }
 
-      result = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {result, _next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       assert result.extra_field == "preserved"
       assert result.another_field == 42

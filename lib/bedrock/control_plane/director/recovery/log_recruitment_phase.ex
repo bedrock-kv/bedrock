@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :recruit_logs_to_fill_vacancies} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     old_system_log_ids =
       context.old_transaction_system_layout
       |> Map.get(:logs)
@@ -68,14 +68,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         updated_services
       )
 
-      recovery_attempt
-      |> Map.put(:logs, logs)
-      |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
-      |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
-      |> Map.put(:state, :recruit_storage_to_fill_vacancies)
+      updated_recovery_attempt =
+        recovery_attempt
+        |> Map.put(:logs, logs)
+        |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
+        |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
+
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase}
     else
       {:error, reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
     end
   end
 

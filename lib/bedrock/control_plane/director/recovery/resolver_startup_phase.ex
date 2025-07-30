@@ -21,7 +21,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Log
   alias Bedrock.ControlPlane.Config.LogDescriptor
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.Shared
@@ -29,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   @behaviour RecoveryPhase
 
   @impl true
-  def execute(%RecoveryAttempt{state: :define_resolvers} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     start_supervised_fn =
       Map.get(context, :start_supervised_fn, fn child_spec, node ->
         sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
@@ -56,10 +55,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
     )
     |> case do
       {:error, reason} ->
-        %{recovery_attempt | state: {:stalled, reason}}
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, resolvers} ->
-        %{recovery_attempt | resolvers: resolvers, state: :final_checks}
+        updated_recovery_attempt = %{recovery_attempt | resolvers: resolvers}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.ValidationPhase}
     end
   end
 

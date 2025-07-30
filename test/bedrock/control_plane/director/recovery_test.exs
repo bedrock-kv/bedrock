@@ -15,7 +15,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     node_tracking = NodeTracking.new([Node.self()])
 
     base_state = %State{
-      state: :starting,
       cluster: __MODULE__.TestCluster,
       epoch: 1,
       node_tracking: node_tracking,
@@ -57,14 +56,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Mock phases that return completed or stalled states
   defmodule MockStartPhase do
-    def execute(recovery_attempt) do
-      %{recovery_attempt | state: :lock_available_services}
+    def execute(_recovery_attempt) do
+      # Mock phase does nothing
+      nil
     end
   end
 
   defmodule MockStalledPhase do
     def execute(recovery_attempt) do
-      %{recovery_attempt | state: {:stalled, :test_reason}}
+      {recovery_attempt, {:stalled, :test_reason}}
     end
   end
 
@@ -74,7 +74,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       result = Recovery.try_to_recover(state)
 
-      assert result.state == :recovery
       assert result.recovery_attempt.cluster == __MODULE__.TestCluster
       assert result.recovery_attempt.epoch == 1
       assert result.recovery_attempt.attempt == 1
@@ -85,12 +84,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        state: :completed,
         started_at: 12345
       }
 
       state = %State{
-        state: :recovery,
         cluster: TestCluster,
         epoch: 1,
         recovery_attempt: existing_recovery_attempt,
@@ -106,7 +103,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       result = Recovery.setup_for_subsequent_recovery(state)
 
       assert result.recovery_attempt.attempt == 2
-      assert result.recovery_attempt.state == :startup
     end
 
     test "returns unchanged state for other states" do
@@ -121,7 +117,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   describe "setup_for_initial_recovery/1" do
     test "resets transaction system layout components" do
       state = %State{
-        state: :starting,
         cluster: TestCluster,
         epoch: 1,
         config: %{
@@ -147,7 +142,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       empty_map = %{}
 
       assert %State{
-               state: :recovery,
                epoch: 1,
                my_relief: nil,
                cluster: TestCluster,
@@ -168,7 +162,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                  }
                },
                recovery_attempt: %RecoveryAttempt{
-                 state: :start,
                  attempt: 1,
                  cluster: TestCluster,
                  epoch: 1,
@@ -197,12 +190,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 3,
-        state: {:stalled, :some_reason},
         started_at: 12345
       }
 
       state = %State{
-        state: :recovery,
         recovery_attempt: recovery_attempt,
         config: %{},
         services: %{new: :service, updated: :service}
@@ -212,7 +203,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       updated_attempt = result.recovery_attempt
       assert updated_attempt.attempt == 4
-      assert updated_attempt.state == :startup
       # Other fields should be preserved
       assert updated_attempt.cluster == TestCluster
       assert updated_attempt.epoch == 1
@@ -221,113 +211,112 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "run_recovery_attempt/1" do
-    test "detects invalid state and handles it" do
-      recovery_attempt = %RecoveryAttempt{
-        state: :truly_invalid_state,
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345,
-        required_services: %{},
-        locked_service_ids: MapSet.new(),
-        log_recovery_info_by_id: %{},
-        storage_recovery_info_by_id: %{},
-        old_log_ids_to_copy: [],
-        version_vector: {0, 0},
-        durable_version: 0,
-        degraded_teams: [],
-        logs: %{},
-        storage_teams: [],
-        resolvers: [],
-        proxies: [],
-        sequencer: nil
-      }
+    test "processes recovery attempt without state validation" do
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
-      # :truly_invalid_state is not a valid recovery state - should raise
-      assert_raise FunctionClauseError, fn ->
+      # Without state field, no pre-validation occurs, recovery proceeds normally
+      {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-      end
+
+      # Will stall with insufficient nodes for the minimal setup
+      assert match?({:insufficient_nodes, _, _}, reason)
     end
 
-    test "returns stalled for stalled recovery" do
-      recovery_attempt = %RecoveryAttempt{
-        state: {:stalled, :test_reason},
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345
-      }
+    test "returns stalled result when recovery cannot proceed" do
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
       capture_log([level: :warning], fn ->
         result = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-        assert {{:stalled, :test_reason}, ^recovery_attempt} = result
+        # Without state-based pre-handling, recovery attempts go through actual phases
+        # and will stall with insufficient nodes for this minimal test setup
+        assert {{:stalled, {:insufficient_nodes, _, _}}, _} = result
       end)
     end
 
-    test "continues when state changes" do
-      # This test requires mocking the recovery function to return a different state
-      # Since we can't easily mock it, we'll test the error case instead
-      recovery_attempt = %RecoveryAttempt{
-        state: :invalid_state,
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345
-      }
+    test "recovery proceeds through normal flow without state field" do
+      # This test verifies that recovery works without the state field
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
-      assert_raise FunctionClauseError, fn ->
+      # Should not raise an exception, should return a stall result
+      {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-      end
+
+      # Will stall with insufficient nodes in this minimal test setup
+      assert match?({:insufficient_nodes, _, _}, reason)
     end
   end
 
   describe "recovery/1 state dispatch" do
     test "dispatches start state" do
-      recovery_attempt = %RecoveryAttempt{
-        state: :start,
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345
-      }
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
       capture_log(fn ->
         # For a start state, we can only test the first phase transition since the subsequent
         # phases will need complete data. Let's test just that the start phase works.
         start_phase = Bedrock.ControlPlane.Director.Recovery.StartupPhase
-        result = start_phase.execute(recovery_attempt, create_test_context())
-        assert result.state == :locking
+        {result, next_phase} = start_phase.execute(recovery_attempt, create_test_context())
+
+        # State field is no longer updated by phases - phases control transitions via return tuples
+        # Remains at original state
         assert %DateTime{} = result.started_at
+        assert next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
       end)
     end
 
-    test "handles stalled state correctly" do
-      recovery_attempt = %RecoveryAttempt{
-        state: {:stalled, :test_reason},
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345
-      }
+    test "handles recovery attempt flow correctly" do
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
-      {{:stalled, :test_reason}, result} =
+      {{:stalled, reason}, _result} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
-      assert result.state == {:stalled, :test_reason}
+      # Without state-based pre-handling, gets actual stall reason from recovery flow
+      assert match?({:insufficient_nodes, _, _}, reason)
     end
 
-    test "raises for invalid state" do
-      recovery_attempt = %RecoveryAttempt{
-        state: :completely_invalid,
-        cluster: TestCluster,
-        epoch: 1,
-        attempt: 1,
-        started_at: 12345
-      }
+    test "processes recovery attempt without state validation" do
+      recovery_attempt =
+        recovery_attempt(%{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 1,
+          started_at: 12345
+        })
 
-      assert_raise FunctionClauseError, fn ->
+      # No longer raises exceptions for "invalid states" since state field is removed
+      {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-      end
+
+      assert match?({:insufficient_nodes, _, _}, reason)
     end
   end
 
@@ -336,26 +325,25 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       recovery_attempt = create_first_time_recovery_attempt()
       context = create_test_context()
 
-      {{:stalled, reason}, stalled_attempt} =
+      {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       assert reason == {:insufficient_nodes, 2, 1}
-      assert stalled_attempt.state == {:stalled, {:insufficient_nodes, 2, 1}}
+      # Note: stalled_attempt.state is no longer updated since phases control transitions
+      # Should remain at original state
     end
 
-    test "returns already stalled recovery attempts immediately" do
-      recovery_attempt = %{
-        create_first_time_recovery_attempt()
-        | state: {:stalled, :test_stall_reason}
-      }
+    test "recovery attempts without state field go through normal flow" do
+      recovery_attempt = create_first_time_recovery_attempt()
 
       context = create_test_context()
 
-      {{:stalled, reason}, returned_attempt} =
+      {{:stalled, reason}, _returned_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      assert reason == :test_stall_reason
-      assert returned_attempt.state == {:stalled, :test_stall_reason}
+      # With no state-based pre-handling, all attempts go through the normal recovery flow
+      # This test now verifies that stateless recovery attempts work correctly
+      assert match?({:insufficient_nodes, _, _}, reason)
     end
 
     test "existing cluster stalls unable to meet log quorum when logs unavailable" do
@@ -422,21 +410,20 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_log_recovery()
         |> with_mocked_worker_management()
 
-      {{:stalled, reason}, stalled_attempt} =
+      {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
 
-      assert stalled_attempt.state ==
-               {:stalled,
-                {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}}
+      # Note: stalled_attempt.state is no longer updated since phases control transitions
+      # Should remain at original state
     end
 
     test "monitoring phase correctly handles new transaction_services format" do
       alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
 
       # Test data that simulates the new format with both logs and storage
-      layout = %{
+      _layout = %{
         sequencer: spawn(fn -> :ok end),
         proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
         resolvers: [{"start", spawn(fn -> :ok end)}],
@@ -448,8 +435,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         }
       }
 
-      recovery_attempt = %{state: :monitor_components, transaction_system_layout: layout}
-
       context = %{
         monitor_fn: fn pid ->
           send(self(), {:monitored, pid})
@@ -458,9 +443,24 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       # Should complete without errors
-      result = MonitoringPhase.execute(recovery_attempt, context)
+      recovery_attempt =
+        recovery_attempt(%{
+          transaction_system_layout: %{
+            sequencer: spawn(fn -> :ok end),
+            proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
+            resolvers: [{"start", spawn(fn -> :ok end)}],
+            services: %{
+              "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+              "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage},
+              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage}
+            }
+          }
+        })
 
-      assert result.state == :completed
+      {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, context)
+
+      assert next_phase == :completed
 
       # Should monitor sequencer, proxies, resolvers, and logs (but not storage)
       # Expected: 1 sequencer + 2 proxies + 1 resolver + 2 logs = 6 processes
@@ -550,14 +550,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # The conversion should enable early recovery phases to proceed
       # but stall at CommitProxyPhase due to incomplete test setup
-      {{:stalled, reason}, stalled_attempt} =
+      {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # Should fail with missing commit proxies (validates conversion worked through early phases)
       assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
 
       # Should have progressed past LogDiscoveryPhase (validates conversion compatibility)
-      assert stalled_attempt.state != :determine_old_logs_to_copy
+      # State field no longer exists - test passes if we get the expected error
     end
 
     test "recovery with converted coordinator-format services succeeds (regression test)" do

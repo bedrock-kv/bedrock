@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
   describe "execute/1" do
     test "successfully creates vacancies for logs and storage teams" do
-      recovery_attempt = recovery_attempt() |> with_state(:create_vacancies)
+      recovery_attempt = recovery_attempt()
 
       context =
         recovery_context()
@@ -21,9 +21,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      result = VacancyCreationPhase.execute(recovery_attempt, context)
+      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert result.state == :determine_durable_version
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
       assert is_map(result.logs)
       assert is_list(result.storage_teams)
       # Should have vacancies created for both logs and storage
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
     end
 
     test "handles empty logs and storage teams" do
-      recovery_attempt = recovery_attempt() |> with_state(:create_vacancies)
+      recovery_attempt = recovery_attempt()
 
       context =
         recovery_context()
@@ -44,9 +44,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      result = VacancyCreationPhase.execute(recovery_attempt, context)
+      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert result.state == :determine_durable_version
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
       assert result.logs == %{}
       assert result.storage_teams == []
     end

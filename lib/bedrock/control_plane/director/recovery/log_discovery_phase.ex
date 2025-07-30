@@ -37,15 +37,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, log_ids, version_vector} ->
         trace_recovery_suitable_logs_chosen(log_ids, version_vector)
 
-        recovery_attempt
-        |> Map.put(:old_log_ids_to_copy, log_ids)
-        |> Map.put(:version_vector, version_vector)
-        |> Map.put(:state, :create_vacancies)
+        updated_recovery_attempt =
+          recovery_attempt
+          |> Map.put(:old_log_ids_to_copy, log_ids)
+          |> Map.put(:version_vector, version_vector)
+
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase}
     end
   end
 

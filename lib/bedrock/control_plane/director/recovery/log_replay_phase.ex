@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :replay_old_logs} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     replay_old_logs_into_new_logs(
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),
@@ -36,12 +36,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     |> case do
       :ok ->
         trace_recovery_old_logs_replayed()
-
-        recovery_attempt
-        |> Map.put(:state, :repair_data_distribution)
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase}
 
       {:error, reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
     end
   end
 

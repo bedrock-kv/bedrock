@@ -26,13 +26,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase do
   import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 
   @impl true
-  def execute(%{state: :repair_data_distribution} = recovery_attempt, _context) do
+  def execute(recovery_attempt, _context) do
     resolver_descriptors =
       create_resolver_descriptors_from_storage_teams(recovery_attempt.storage_teams)
 
-    recovery_attempt
-    |> Map.put(:resolvers, resolver_descriptors)
-    |> Map.put(:state, :define_sequencer)
+    updated_recovery_attempt =
+      recovery_attempt
+      |> Map.put(:resolvers, resolver_descriptors)
+
+    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase}
   end
 
   @spec create_resolver_descriptors_from_storage_teams([map()]) :: [ResolverDescriptor.t()]

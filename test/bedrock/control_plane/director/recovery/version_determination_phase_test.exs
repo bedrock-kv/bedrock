@@ -23,11 +23,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:determine_durable_version)
         |> with_storage_recovery_info(storage_recovery_info)
 
       capture_log(fn ->
-        result =
+        {result, next_phase} =
           VersionDeterminationPhase.execute(recovery_attempt, %{
             node_tracking: nil,
             old_transaction_system_layout: %{storage_teams: storage_teams},
@@ -36,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
             }
           })
 
-        assert result.state == :recruit_logs_to_fill_vacancies
+        assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
         assert result.durable_version == 98
         assert length(result.degraded_teams) == 2
       end)
@@ -54,10 +53,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:determine_durable_version)
         |> with_storage_recovery_info(storage_recovery_info)
 
-      result =
+      {_result, next_phase_or_stall} =
         VersionDeterminationPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{storage_teams: storage_teams},
@@ -67,7 +65,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
           }
         })
 
-      assert {:stalled, {:insufficient_replication, ["team_1"]}} = result.state
+      assert {:stalled, {:insufficient_replication, ["team_1"]}} = next_phase_or_stall
     end
 
     test "identifies degraded teams correctly" do
@@ -88,10 +86,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:determine_durable_version)
         |> with_storage_recovery_info(storage_recovery_info)
 
-      result =
+      {result, next_phase} =
         VersionDeterminationPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{storage_teams: storage_teams},
@@ -101,7 +98,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
           }
         })
 
-      assert result.state == :recruit_logs_to_fill_vacancies
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
       # min(100, 98) from team quorums
       assert result.durable_version == 98
       # 2 storages == 2 quorum (healthy)

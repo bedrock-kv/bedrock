@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :recruit_storage_to_fill_vacancies} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     assigned_storage_ids =
       recovery_attempt.storage_teams
       |> Enum.reduce(MapSet.new(), &Enum.into(&1.storage_ids, &2))
@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     )
     |> case do
       {:error, reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, storage_teams, new_worker_ids} ->
         case create_new_storage_workers(
@@ -77,19 +77,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
                 all_storage_services = Map.merge(locked_existing_services, updated_services)
                 all_storage_pids = extract_service_pids(all_storage_services)
 
-                recovery_attempt
-                |> Map.put(:storage_teams, storage_teams)
-                |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
-                |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
-                |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
-                |> Map.put(:state, :replay_old_logs)
+                updated_recovery_attempt =
+                  recovery_attempt
+                  |> Map.put(:storage_teams, storage_teams)
+                  |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
+                  |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
+                  |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
+
+                {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
 
               {:error, reason} ->
-                recovery_attempt |> Map.put(:state, {:stalled, reason})
+                {recovery_attempt, {:stalled, reason}}
             end
 
           {:error, reason} ->
-            recovery_attempt |> Map.put(:state, {:stalled, reason})
+            {recovery_attempt, {:stalled, reason}}
         end
     end
   end

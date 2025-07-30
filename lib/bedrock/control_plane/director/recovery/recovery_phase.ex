@@ -24,8 +24,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
 
   The context provides access to Director state that phases need but
   shouldn't be stored in the recovery attempt itself.
+
+  Returns either:
+  - `{updated_recovery_attempt, next_phase_module}` - Normal transition with next phase
+  - `updated_recovery_attempt` - For backward compatibility or terminal states
   """
-  @callback execute(RecoveryAttempt.t(), context()) :: RecoveryAttempt.t()
+  @callback execute(RecoveryAttempt.t(), context()) ::
+              RecoveryAttempt.t() | {RecoveryAttempt.t(), module()}
 
   defmacro __using__(_) do
     quote do

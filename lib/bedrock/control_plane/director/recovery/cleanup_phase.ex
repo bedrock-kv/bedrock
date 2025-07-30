@@ -27,7 +27,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :cleanup_obsolete_workers} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     obsolete_services = find_obsolete_services(recovery_attempt, context)
     untracked_workers = find_untracked_workers(recovery_attempt, context)
     all_obsolete_services = Map.merge(obsolete_services, untracked_workers)
@@ -108,7 +108,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
   @spec has_obsolete_services?(map()) :: boolean()
   defp has_obsolete_services?(obsolete_services), do: map_size(obsolete_services) > 0
 
-  @spec execute_cleanup(map(), map(), map()) :: map()
+  @spec execute_cleanup(map(), map(), map()) :: {map(), :completed} | {map(), {:stalled, term()}}
   defp execute_cleanup(obsolete_services, recovery_attempt, context) do
     case cleanup_obsolete_workers(obsolete_services, recovery_attempt.cluster, context) do
       {:ok, cleanup_stats} ->
@@ -129,12 +129,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
     )
   end
 
-  @spec complete_recovery(map()) :: map()
-  defp complete_recovery(recovery_attempt), do: Map.put(recovery_attempt, :state, :completed)
+  @spec complete_recovery(map()) :: {map(), :completed}
+  defp complete_recovery(recovery_attempt), do: {recovery_attempt, :completed}
 
-  @spec stall_recovery_with_cleanup_failure(map(), term()) :: map()
+  @spec stall_recovery_with_cleanup_failure(map(), term()) :: {map(), {:stalled, term()}}
   defp stall_recovery_with_cleanup_failure(recovery_attempt, reason),
-    do: Map.put(recovery_attempt, :state, {:stalled, {:worker_cleanup_failed, reason}})
+    do: {recovery_attempt, {:stalled, {:worker_cleanup_failed, reason}}}
 
   @spec cleanup_obsolete_workers(map(), module(), map()) :: {:ok, map()} | {:error, term()}
   defp cleanup_obsolete_workers(obsolete_services, cluster, context) do

@@ -1,6 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.ChangingParameters do
-  alias Bedrock.ControlPlane.Director.State
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.Parameters
+  alias Bedrock.ControlPlane.Director.State
 
   @type parameter_name ::
           :ping_rate_in_hz

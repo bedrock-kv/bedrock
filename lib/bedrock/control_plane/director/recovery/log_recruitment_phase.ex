@@ -254,27 +254,65 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     # Lock each existing log service that was recruited
     existing_log_ids
     |> Enum.reduce_while({:ok, %{}}, fn log_id, {:ok, locked_services} ->
-      case Map.get(available_services, log_id) do
-        {_kind, last_seen} = service ->
-          case lock_recruited_service(service, recovery_attempt.epoch, context) do
-            {:ok, pid, info} ->
-              locked_service = %{
-                status: {:up, pid},
-                kind: info.kind,
-                last_seen: last_seen
-              }
-
-              {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
-
-            {:error, reason} ->
-              {:halt, {:error, {:failed_to_lock_recruited_service, log_id, reason}}}
-          end
-
-        _ ->
-          # Service not available - this shouldn't happen if recruitment logic is correct
-          {:halt, {:error, {:recruited_service_unavailable, log_id}}}
-      end
+      process_log_service_locking(
+        log_id,
+        available_services,
+        recovery_attempt,
+        context,
+        locked_services
+      )
     end)
+  end
+
+  @spec process_log_service_locking(String.t(), map(), map(), map(), map()) ::
+          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
+  defp process_log_service_locking(
+         log_id,
+         available_services,
+         recovery_attempt,
+         context,
+         locked_services
+       ) do
+    case Map.get(available_services, log_id) do
+      {_kind, last_seen} = service ->
+        handle_log_service_locking(
+          service,
+          last_seen,
+          log_id,
+          recovery_attempt,
+          context,
+          locked_services
+        )
+
+      _ ->
+        # Service not available - this shouldn't happen if recruitment logic is correct
+        {:halt, {:error, {:recruited_service_unavailable, log_id}}}
+    end
+  end
+
+  @spec handle_log_service_locking(tuple(), tuple(), String.t(), map(), map(), map()) ::
+          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
+  defp handle_log_service_locking(
+         service,
+         last_seen,
+         log_id,
+         recovery_attempt,
+         context,
+         locked_services
+       ) do
+    case lock_recruited_service(service, recovery_attempt.epoch, context) do
+      {:ok, pid, info} ->
+        locked_service = %{
+          status: {:up, pid},
+          kind: info.kind,
+          last_seen: last_seen
+        }
+
+        {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
+
+      {:error, reason} ->
+        {:halt, {:error, {:failed_to_lock_recruited_service, log_id, reason}}}
+    end
   end
 
   @spec lock_recruited_service({atom(), {atom(), node()}}, pos_integer(), map()) ::

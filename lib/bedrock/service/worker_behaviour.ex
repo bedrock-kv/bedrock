@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.WorkerBehaviour do
+  @moduledoc false
+
   @callback kind() :: :log | :storage
   @callback one_time_initialization(Path.t()) :: :ok | {:error, File.posix()}
 

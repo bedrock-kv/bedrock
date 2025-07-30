@@ -18,10 +18,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   components.
   """
 
-  alias Bedrock.Cluster
-  alias Bedrock.DataPlane.CommitProxy
-  alias Bedrock.ControlPlane.Director.Recovery.Shared
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
+  alias Bedrock.Cluster
+  alias Bedrock.ControlPlane.Director.Recovery.Shared
+  alias Bedrock.DataPlane.CommitProxy
 
   @impl true
   def execute(recovery_attempt, context) do

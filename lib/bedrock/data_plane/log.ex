@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Log do
-  @moduledoc """
-  """
+  @moduledoc false
 
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction

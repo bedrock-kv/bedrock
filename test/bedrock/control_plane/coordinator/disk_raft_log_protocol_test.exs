@@ -175,7 +175,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       transactions = Log.transactions_from(log, initial_id, :newest)
       assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
 
-      # Test from middle to :newest  
+      # Test from middle to :newest
       transactions = Log.transactions_from(log, {1, 1}, :newest)
       assert transactions == [{{1, 2}, :tx2}, {{2, 3}, :tx3}]
 

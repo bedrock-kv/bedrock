@@ -25,13 +25,13 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   """
 
   alias Bedrock.Cluster
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.ControlPlane.Config
+  alias Bedrock.Internal.TimerManagement
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.Internal.TimerManagement
 
   use TimerManagement
 
@@ -193,15 +193,20 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
       case Foreman.new_worker(foreman_ref, worker_id, kind, timeout: 10_000) do
         {:ok, worker_ref} ->
-          # Get detailed info about the created worker
-          case Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
-            {:ok, worker_info} -> {:ok, worker_info}
-            {:error, reason} -> {:error, {:worker_info_failed, reason}}
-          end
+          get_worker_info(worker_ref)
 
         {:error, reason} ->
           {:error, {:worker_creation_failed, reason}}
       end
+    end
+  end
+
+  @spec get_worker_info(Worker.ref()) ::
+          {:ok, Director.running_service_info()} | {:error, {:worker_info_failed, term()}}
+  defp get_worker_info(worker_ref) do
+    case Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
+      {:ok, worker_info} -> {:ok, worker_info}
+      {:error, reason} -> {:error, {:worker_info_failed, reason}}
     end
   end
 end

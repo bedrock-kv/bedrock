@@ -2,9 +2,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @moduledoc """
   The Coordinator module is responsible for managing the state of the cluster.
   """
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Director
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 

@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   @moduledoc false
 
@@ -142,9 +143,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         suitable_logs: suitable_logs,
         log_version_vector: log_version_vector
       }) do
-    info(
-      "Suitable logs chosen for copying: #{suitable_logs |> Enum.map(&inspect/1) |> Enum.join(", ")}"
-    )
+    info("Suitable logs chosen for copying: #{Enum.map_join(suitable_logs, ", ", &inspect/1)}")
 
     info("Version vector: #{inspect(log_version_vector)}")
   end

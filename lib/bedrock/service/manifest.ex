@@ -1,4 +1,7 @@
 defmodule Bedrock.Service.Manifest do
+  @moduledoc """
+  Service manifest utilities for worker specifications and metadata.
+  """
   alias Bedrock.Cluster
 
   @derive Jason.Encoder

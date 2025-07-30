@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Storage do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
 

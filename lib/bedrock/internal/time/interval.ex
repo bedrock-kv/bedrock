@@ -1,4 +1,7 @@
 defmodule Bedrock.Internal.Time.Interval do
+  @moduledoc """
+  Time interval utilities for measuring elapsed time and duration calculations.
+  """
   @units [:week, :day, :hour, :minute, :second, :millisecond, :microsecond, :nanosecond]
   @type unit ::
           :week

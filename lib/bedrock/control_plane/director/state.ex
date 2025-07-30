@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.State do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.Service.Worker
 
   @type state :: :starting | :recovery | :running | :stopped
@@ -39,6 +39,8 @@ defmodule Bedrock.ControlPlane.Director.State do
             recovery_attempt: nil
 
   defmodule Changes do
+    @moduledoc false
+
     alias Bedrock.ControlPlane.Director.State
 
     @spec put_state(State.t(), State.state()) :: State.t()

@@ -1,7 +1,9 @@
 defmodule Bedrock.Cluster.Gateway.State do
+  @moduledoc false
+
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator
 
   @type t :: %__MODULE__{
           node: node(),

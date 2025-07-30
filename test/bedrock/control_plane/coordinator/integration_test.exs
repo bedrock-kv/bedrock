@@ -1,8 +1,8 @@
 defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Coordinator.Commands
+  alias Bedrock.ControlPlane.Coordinator.State
 
   describe "service registration integration" do
     test "handles register_services call" do

@@ -1,12 +1,14 @@
 defmodule Bedrock.Cluster do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Storage
 
   require Logger
 

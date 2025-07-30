@@ -1,6 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
-  alias Bedrock.DataPlane.Storage
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.DataPlane.Storage
 
   import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 

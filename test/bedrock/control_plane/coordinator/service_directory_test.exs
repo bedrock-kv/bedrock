@@ -1,8 +1,8 @@
 defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Coordinator.Durability
+  alias Bedrock.ControlPlane.Coordinator.State
 
   describe "service directory processing" do
     test "process_command handles register_services" do

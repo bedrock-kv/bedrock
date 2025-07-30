@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Resolver do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Log
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server

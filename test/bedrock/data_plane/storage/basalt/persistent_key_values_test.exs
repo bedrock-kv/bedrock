@@ -1,10 +1,10 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
 
-  defp random_file_name() do
+  defp random_file_name do
     random_chars =
       :crypto.strong_rand_bytes(16)
       |> Base.encode16()

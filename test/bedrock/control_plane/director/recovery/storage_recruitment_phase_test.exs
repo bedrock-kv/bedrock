@@ -89,7 +89,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           end)
         )
 
-      # Should fail due to insufficient nodes for worker creation, not worker creation failure  
+      # Should fail due to insufficient nodes for worker creation, not worker creation failure
       assert {:stalled, {:insufficient_nodes, 1, 0}} = next_phase_or_stall
     end
 

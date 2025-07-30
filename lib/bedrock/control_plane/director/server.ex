@@ -1,11 +1,13 @@
 defmodule Bedrock.ControlPlane.Director.Server do
-  alias Bedrock.ControlPlane.Director
-  alias Bedrock.ControlPlane.Director.NodeTracking
-  alias Bedrock.ControlPlane.Director.State
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Director.NodeTracking
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Service.Worker
 
   import Bedrock.ControlPlane.Director.State.Changes,

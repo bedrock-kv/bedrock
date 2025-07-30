@@ -1,4 +1,7 @@
 defmodule Bedrock.Service.Foreman do
+  @moduledoc """
+  Manages worker processes and service lifecycle operations.
+  """
   use Bedrock.Internal.GenServerApi, for: Bedrock.Service.Foreman.Supervisor
 
   alias Bedrock.Service.Worker

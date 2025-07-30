@@ -5,8 +5,8 @@ defmodule Bedrock.Cluster.Gateway do
   a cluster.
   """
 
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.CommitProxy
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server

@@ -24,9 +24,9 @@ defmodule Bedrock.ControlPlane.Director do
   at any given time, preventing conflicting recovery operations that could
   compromise data integrity or system availability.
   """
-  alias Bedrock.Service.Worker
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.Service.Worker
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 

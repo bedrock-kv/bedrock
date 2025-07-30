@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Putting do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   @spec do_put(State.t(), Bedrock.key(), Bedrock.value()) :: {:ok, State.t()} | :key_error

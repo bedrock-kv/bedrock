@@ -75,7 +75,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
             services: %{
               {:log, 1} => %{kind: :log, status: {:up, log1_pid}},
               {:log, 2} => %{kind: :log, status: {:up, log2_pid}},
-              # Storage services shouldn't be monitored 
+              # Storage services shouldn't be monitored
               {:storage, 1} => %{
                 kind: :storage,
                 status: {:up, spawn(fn -> :timer.sleep(100) end)}

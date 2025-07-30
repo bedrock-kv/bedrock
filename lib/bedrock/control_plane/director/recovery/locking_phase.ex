@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   newer epochs causing older ones to terminate.
 
   Only services referenced in the old transaction system layout are locked - these contain
-  data that must be copied during recovery. If the old layout is empty (first-time 
+  data that must be copied during recovery. If the old layout is empty (first-time
   initialization), no services are locked. Other available services remain unlocked until
   recruitment phases assign them to specific roles.
 

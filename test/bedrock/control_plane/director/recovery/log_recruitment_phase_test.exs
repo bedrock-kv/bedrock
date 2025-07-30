@@ -8,7 +8,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   # Mock cluster module for testing
   defmodule TestCluster do
-    def name(), do: "test_cluster"
+    def name, do: "test_cluster"
     def otp_name(:foreman), do: :test_foreman
   end
 

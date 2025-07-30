@@ -1,4 +1,6 @@
 defmodule Bedrock.KeyCodec.BinaryKeyCodec do
+  @moduledoc false
+
   @behaviour Bedrock.KeyCodec
 
   @impl true

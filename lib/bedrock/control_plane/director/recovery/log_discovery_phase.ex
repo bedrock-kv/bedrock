@@ -18,10 +18,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   migration and the current cluster version vector.
   """
 
-  alias Bedrock.DataPlane.Log
-  alias Bedrock.ControlPlane.Config.LogDescriptor
-
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
+  alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.DataPlane.Log
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 

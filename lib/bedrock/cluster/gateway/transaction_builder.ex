@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 

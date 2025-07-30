@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.ResolverDescriptor do
+  @moduledoc false
+
   @type t :: %{
           start_key: Bedrock.key(),
           resolver: pid() | nil

@@ -31,26 +31,36 @@ defmodule Bedrock.Internal.Repo do
         end
 
       if :ok == result || (is_tuple(result) and :ok == elem(result, 0)) do
-        txn
-        |> commit()
-        |> case do
-          {:ok, _} ->
-            result
-
-          {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
-            retry_count = opts[:retry_count] || 0
-
-            if retry_count > 0 do
-              opts = Keyword.put(opts, :retry_count, retry_count - 1)
-              transaction(cluster, fun, opts)
-            else
-              raise "Transaction failed: #{inspect(reason)}"
-            end
-        end
+        handle_commit_result(txn, result, cluster, fun, opts)
       else
         rollback(txn)
         result
       end
+    end
+  end
+
+  @spec handle_commit_result(transaction(), term(), module(), function(), keyword()) :: term()
+  defp handle_commit_result(txn, result, cluster, fun, opts) do
+    txn
+    |> commit()
+    |> case do
+      {:ok, _} ->
+        result
+
+      {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
+        handle_commit_retry(cluster, fun, opts, reason)
+    end
+  end
+
+  @spec handle_commit_retry(module(), function(), keyword(), atom()) :: term()
+  defp handle_commit_retry(cluster, fun, opts, reason) do
+    retry_count = opts[:retry_count] || 0
+
+    if retry_count > 0 do
+      opts = Keyword.put(opts, :retry_count, retry_count - 1)
+      transaction(cluster, fun, opts)
+    else
+      raise "Transaction failed: #{inspect(reason)}"
     end
   end
 
@@ -95,5 +105,5 @@ defmodule Bedrock.Internal.Repo do
     do: cast(t, :rollback)
 
   @spec default_timeout_in_ms() :: pos_integer()
-  def default_timeout_in_ms(), do: 1_000
+  def default_timeout_in_ms, do: 1_000
 end

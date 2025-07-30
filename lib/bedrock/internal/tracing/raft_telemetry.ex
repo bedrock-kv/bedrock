@@ -1,4 +1,5 @@
 defmodule Bedrock.Internal.Tracing.RaftTelemetry do
+  @moduledoc false
   require Logger
 
   @spec handler_id() :: String.t()

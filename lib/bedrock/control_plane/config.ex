@@ -58,6 +58,8 @@ defmodule Bedrock.ControlPlane.Config do
     do: div(1000, get_in(t.parameters.ping_rate_in_hz))
 
   defmodule Changes do
+    @moduledoc false
+
     alias Bedrock.ControlPlane.Config
 
     # Puts

@@ -1,7 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.Server do
+  @moduledoc false
+
+  alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Cluster.Descriptor
-  alias Bedrock.Cluster.Descriptor
   alias Bedrock.Internal.TimerManagement
 
   use GenServer

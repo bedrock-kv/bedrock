@@ -1,11 +1,13 @@
 defmodule Bedrock.Cluster.Gateway.DirectorRelations do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.Internal.TimerManagement
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.Internal.TimerManagement
 
   use TimerManagement
 
@@ -76,7 +78,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
 
       transaction_system_layout
       |> Map.get(:storage_teams, [])
-      |> Enum.map(fn
+      |> Enum.each(fn
         %{tag: tag, key_range: key_range, storage_ids: storage_ids} ->
           Enum.each(storage_ids, fn storage_id ->
             :ets.insert(

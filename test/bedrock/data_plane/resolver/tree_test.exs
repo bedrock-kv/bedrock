@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Resolver.Interval.TreeTest do
 
   alias Bedrock.DataPlane.Resolver.Tree
 
-  def key_or_range_generator() do
+  def key_or_range_generator do
     string(:alphanumeric)
     |> StreamData.bind(fn v1 ->
       string(:alphanumeric)

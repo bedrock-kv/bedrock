@@ -1,7 +1,9 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
-  alias Bedrock.ControlPlane.Director
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
 
   @type t :: %__MODULE__{
@@ -34,6 +36,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             service_directory: %{}
 
   defmodule Changes do
+    @moduledoc false
+
     alias Bedrock.ControlPlane.Coordinator.State
 
     @spec put_epoch(t :: State.t(), epoch :: Bedrock.epoch()) :: State.t()

@@ -18,13 +18,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   to handle transaction conflict detection.
   """
 
-  alias Bedrock.DataPlane.Resolver
-  alias Bedrock.DataPlane.Log
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Resolver
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -41,17 +42,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       recovery_attempt.service_pids
       |> Map.take(recovery_attempt.logs |> Map.keys())
 
-    define_resolvers(
-      recovery_attempt.resolvers,
-      recovery_attempt.storage_teams,
-      recovery_attempt.logs,
-      running_logs_by_id,
-      recovery_attempt.epoch,
-      node_list_fn.(),
-      recovery_attempt.version_vector,
-      start_supervised_fn,
-      context.lock_token
-    )
+    resolver_context = %{
+      resolvers: recovery_attempt.resolvers,
+      storage_teams: recovery_attempt.storage_teams,
+      logs: recovery_attempt.logs,
+      running_logs: running_logs_by_id,
+      epoch: recovery_attempt.epoch,
+      available_nodes: node_list_fn.(),
+      version_vector: recovery_attempt.version_vector,
+      start_supervised_fn: start_supervised_fn,
+      lock_token: context.lock_token
+    }
+
+    define_resolvers(resolver_context)
     |> case do
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
@@ -62,41 +65,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
     end
   end
 
-  @spec define_resolvers(
-          resolvers :: [ResolverDescriptor.t()],
-          storage_teams :: [StorageTeamDescriptor.t()],
-          logs :: %{Log.id() => LogDescriptor.t()},
-          running_logs :: %{Log.id() => pid()},
-          epoch :: Bedrock.epoch(),
-          available_nodes :: [node()],
-          version_vector :: Bedrock.version_vector(),
-          start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
-          lock_token :: Bedrock.lock_token()
-        ) ::
+  @spec define_resolvers(%{
+          resolvers: [ResolverDescriptor.t()],
+          storage_teams: [StorageTeamDescriptor.t()],
+          logs: %{Log.id() => LogDescriptor.t()},
+          running_logs: %{Log.id() => pid()},
+          epoch: Bedrock.epoch(),
+          available_nodes: [node()],
+          version_vector: Bedrock.version_vector(),
+          start_supervised_fn: (Supervisor.child_spec(), node() ->
+                                  {:ok, pid()} | {:error, term()}),
+          lock_token: Bedrock.lock_token()
+        }) ::
           {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
-  def define_resolvers(
-        resolvers,
-        storage_teams,
-        logs,
-        running_logs,
-        epoch,
-        available_nodes,
-        version_vector,
-        start_supervised,
-        lock_token
-      ) do
+  def define_resolvers(context) do
     resolver_boot_info =
-      resolvers
+      context.resolvers
       |> generate_resolver_ranges()
-      |> prepare_resolver_range_tags(storage_teams)
-      |> assign_logs_to_resolvers(logs, running_logs)
+      |> prepare_resolver_range_tags(context.storage_teams)
+      |> assign_logs_to_resolvers(context.logs, context.running_logs)
       |> Enum.map(fn {{start_key, _end_key} = key_range, logs_to_copy} ->
-        {child_spec_for_resolver(epoch, key_range, lock_token), start_key, logs_to_copy,
-         lock_token}
+        {child_spec_for_resolver(context.epoch, key_range, context.lock_token), start_key,
+         logs_to_copy, context.lock_token}
       end)
 
-    start_resolvers(resolver_boot_info, available_nodes, version_vector, start_supervised)
+    start_resolvers(
+      resolver_boot_info,
+      context.available_nodes,
+      context.version_vector,
+      context.start_supervised_fn
+    )
   end
 
   @spec generate_resolver_ranges([ResolverDescriptor.t()]) :: [[Bedrock.key() | :end]]
@@ -159,17 +158,30 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   defp assign_logs_to_resolvers(resolver_range_tags, tags_by_log_id, running_logs) do
     resolver_range_tags
     |> Enum.map(fn {key_range, tags} ->
-      minimal_logs =
-        Enum.reduce(running_logs, [], fn {log_id, pid}, acc ->
-          if log_id not in acc and Enum.any?(tags, &(&1 in tags_by_log_id[log_id])) do
-            [{log_id, pid} | acc]
-          else
-            acc
-          end
-        end)
-
+      minimal_logs = collect_matching_logs(running_logs, tags, tags_by_log_id)
       {key_range, minimal_logs |> Map.new()}
     end)
+  end
+
+  @spec collect_matching_logs(%{Log.id() => pid()}, [Bedrock.range_tag()], %{
+          Log.id() => LogDescriptor.t()
+        }) ::
+          [{Log.id(), pid()}]
+  defp collect_matching_logs(running_logs, tags, tags_by_log_id) do
+    Enum.reduce(running_logs, [], fn {log_id, pid}, acc ->
+      if log_matches_tags?(log_id, pid, acc, tags, tags_by_log_id) do
+        [{log_id, pid} | acc]
+      else
+        acc
+      end
+    end)
+  end
+
+  @spec log_matches_tags?(Log.id(), pid(), [{Log.id(), pid()}], [Bedrock.range_tag()], %{
+          Log.id() => LogDescriptor.t()
+        }) :: boolean()
+  defp log_matches_tags?(log_id, _pid, acc, tags, tags_by_log_id) do
+    log_id not in acc and Enum.any?(tags, &(&1 in tags_by_log_id[log_id]))
   end
 
   @spec start_resolvers(

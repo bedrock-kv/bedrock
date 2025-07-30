@@ -19,10 +19,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  alias Bedrock.DataPlane.Log
-  alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 

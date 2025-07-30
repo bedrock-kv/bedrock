@@ -1,10 +1,12 @@
 defmodule Bedrock.Cluster.Gateway.Calls do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder
-  alias Bedrock.DataPlane.Sequencer
-  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.DataPlane.Sequencer
 
   @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
           {:ok, pid()}

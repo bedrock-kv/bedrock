@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator.State

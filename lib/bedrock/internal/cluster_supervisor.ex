@@ -1,19 +1,20 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.Internal.Tracing.RaftTelemetry
   alias Bedrock.Service.Foreman
 
-  alias Cluster.Gateway.Tracing, as: GatewayTracing
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
   alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
-  alias Bedrock.Internal.Tracing.RaftTelemetry
+  alias Cluster.Gateway.Tracing, as: GatewayTracing
 
   require Logger
 
@@ -48,7 +49,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
         {:error, :not_in_a_cluster} ->
           Logger.warning(
-            "Bedrock: This node is not part of a cluster (use the \"--name\" or \"--sname\" option when starting the Erlang VM)"
+            ~s[Bedrock: This node is not part of a cluster (use the "--name" or "--sname" option when starting the Erlang VM)]
           )
 
         {:error, _reason} ->

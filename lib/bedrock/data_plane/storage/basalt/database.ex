@@ -1,11 +1,10 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Database do
-  @moduledoc """
-  """
+  @moduledoc false
 
-  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
-  alias Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl, as: MVCC
-  alias Bedrock.DataPlane.Storage.Basalt.Keyspace
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Storage.Basalt.Keyspace
+  alias Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl, as: MVCC
+  alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
   alias Bedrock.DataPlane.Version
 
   @opaque t :: %__MODULE__{

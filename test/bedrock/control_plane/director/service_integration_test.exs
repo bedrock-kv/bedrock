@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director.Server
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.ControlPlane.Config
 
   describe "director service integration" do
     test "add_services_to_directory/2 adds new services to existing directory" do

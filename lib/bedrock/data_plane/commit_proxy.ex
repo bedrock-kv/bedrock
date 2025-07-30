@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server

@@ -1,10 +1,12 @@
 defmodule Bedrock.DataPlane.Log.Shale.State do
-  alias Bedrock.Service.Worker
-  alias Bedrock.Service.Foreman
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Log.Shale.Segment
-  alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
+  alias Bedrock.DataPlane.Log.Shale.Writer
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
 
   @type mode :: :locked | :running | :recovering
 

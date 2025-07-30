@@ -1,4 +1,6 @@
 defmodule Bedrock.ValueCodec.BertValueCodec do
+  @moduledoc false
+
   @behaviour Bedrock.ValueCodec
 
   @impl true

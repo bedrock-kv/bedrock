@@ -5,7 +5,9 @@ defmodule FinalizationTestSupport do
 
   # Mock cluster module for testing
   defmodule TestCluster do
-    def name(), do: "test_cluster"
+    @moduledoc false
+
+    def name, do: "test_cluster"
 
     def otp_name(component) when is_atom(component) do
       :"test_cluster_#{component}"
@@ -16,7 +18,7 @@ defmodule FinalizationTestSupport do
   Creates a mock log server that responds to GenServer calls.
   Automatically registers cleanup via on_exit to ensure the process is killed.
   """
-  def create_mock_log_server() do
+  def create_mock_log_server do
     pid =
       spawn(fn ->
         receive do
@@ -50,7 +52,7 @@ defmodule FinalizationTestSupport do
   @doc """
   Creates a multi-log transaction system layout for testing.
   """
-  def multi_log_transaction_system_layout() do
+  def multi_log_transaction_system_layout do
     %{
       logs: %{
         "log_1" => [0],
@@ -68,7 +70,7 @@ defmodule FinalizationTestSupport do
   @doc """
   Creates sample storage teams configuration for testing.
   """
-  def sample_storage_teams() do
+  def sample_storage_teams do
     [
       %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
       %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
@@ -122,13 +124,17 @@ defmodule FinalizationTestSupport do
     fn logs, _fun, _opts ->
       logs
       |> Enum.map(fn {log_id, _service_descriptor} ->
-        case Map.get(responses, log_id) do
-          :ok -> {:ok, {log_id, :ok}}
-          {:error, reason} -> {:ok, {log_id, {:error, reason}}}
-          # Default to success
-          nil -> {:ok, {log_id, :ok}}
-        end
+        process_log_response(log_id, responses)
       end)
+    end
+  end
+
+  defp process_log_response(log_id, responses) do
+    case Map.get(responses, log_id) do
+      :ok -> {:ok, {log_id, :ok}}
+      {:error, reason} -> {:ok, {log_id, {:error, reason}}}
+      # Default to success
+      nil -> {:ok, {log_id, :ok}}
     end
   end
 end

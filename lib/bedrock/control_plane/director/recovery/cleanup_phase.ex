@@ -50,51 +50,71 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
   defp find_untracked_workers(recovery_attempt, context) do
     required_worker_ids = MapSet.new(Map.keys(recovery_attempt.transaction_services))
     tracked_worker_ids = MapSet.new(Map.keys(context.available_services))
-
     available_nodes = get_nodes_with_capability(context, :storage)
 
-    foreman_all_fn = Map.get(context, :foreman_all_fn, &Foreman.all/2)
-    worker_info_fn = Map.get(context, :worker_info_fn, &Worker.info/3)
+    cleanup_context = %{
+      required_worker_ids: required_worker_ids,
+      tracked_worker_ids: tracked_worker_ids,
+      foreman_all_fn: Map.get(context, :foreman_all_fn, &Foreman.all/2),
+      worker_info_fn: Map.get(context, :worker_info_fn, &Worker.info/3)
+    }
 
     available_nodes
-    |> Enum.flat_map(fn node ->
-      foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
-
-      case foreman_all_fn.(foreman_ref, timeout: 5_000) do
-        {:ok, worker_refs} ->
-          worker_refs
-          |> Enum.map(fn worker_ref ->
-            case worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid],
-                   timeout_in_ms: 5_000
-                 ) do
-              {:ok, worker_info} ->
-                worker_id = worker_info[:id]
-
-                # Only include workers that are not required and not already tracked
-                if not MapSet.member?(required_worker_ids, worker_id) and
-                     not MapSet.member?(tracked_worker_ids, worker_id) do
-                  service_info = %{
-                    kind: worker_info[:kind],
-                    last_seen: {worker_info[:otp_name], node},
-                    status: {:up, worker_info[:pid]}
-                  }
-
-                  {worker_id, service_info}
-                else
-                  nil
-                end
-
-              _ ->
-                nil
-            end
-          end)
-          |> Enum.reject(&is_nil/1)
-
-        _ ->
-          []
-      end
-    end)
+    |> Enum.flat_map(
+      &find_untracked_workers_on_node(&1, recovery_attempt.cluster, cleanup_context)
+    )
     |> Map.new()
+  end
+
+  @spec find_untracked_workers_on_node(node(), module(), map()) :: [{Worker.id(), map()}]
+  defp find_untracked_workers_on_node(node, cluster, cleanup_context) do
+    foreman_ref = {cluster.otp_name(:foreman), node}
+
+    case cleanup_context.foreman_all_fn.(foreman_ref, timeout: 5_000) do
+      {:ok, worker_refs} ->
+        worker_refs
+        |> Enum.map(&process_worker_ref(&1, node, cleanup_context))
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  @spec process_worker_ref(term(), node(), map()) :: {Worker.id(), map()} | nil
+  defp process_worker_ref(worker_ref, node, cleanup_context) do
+    case cleanup_context.worker_info_fn.({worker_ref, node}, [:id, :otp_name, :kind, :pid],
+           timeout_in_ms: 5_000
+         ) do
+      {:ok, worker_info} ->
+        create_untracked_worker_entry(worker_info, node, cleanup_context)
+
+      _ ->
+        nil
+    end
+  end
+
+  @spec create_untracked_worker_entry(map(), node(), map()) :: {Worker.id(), map()} | nil
+  defp create_untracked_worker_entry(worker_info, node, cleanup_context) do
+    worker_id = worker_info[:id]
+
+    if untracked_worker?(worker_id, cleanup_context) do
+      service_info = %{
+        kind: worker_info[:kind],
+        last_seen: {worker_info[:otp_name], node},
+        status: {:up, worker_info[:pid]}
+      }
+
+      {worker_id, service_info}
+    else
+      nil
+    end
+  end
+
+  @spec untracked_worker?(Worker.id(), map()) :: boolean()
+  defp untracked_worker?(worker_id, cleanup_context) do
+    not MapSet.member?(cleanup_context.required_worker_ids, worker_id) and
+      not MapSet.member?(cleanup_context.tracked_worker_ids, worker_id)
   end
 
   @spec get_nodes_with_capability(RecoveryPhase.context(), Bedrock.Cluster.capability()) :: [

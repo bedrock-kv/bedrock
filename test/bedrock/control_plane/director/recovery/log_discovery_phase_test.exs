@@ -2,8 +2,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do

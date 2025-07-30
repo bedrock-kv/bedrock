@@ -17,10 +17,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   Transitions to proxy startup once the sequencer is running and ready.
   """
 
-  alias Bedrock.DataPlane.Sequencer
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  alias Bedrock.DataPlane.Sequencer
 
   @doc """
   Execute the sequencer definition phase of recovery.

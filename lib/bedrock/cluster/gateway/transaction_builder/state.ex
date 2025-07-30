@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
+  @moduledoc false
+
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back | :expired,
           gateway: pid(),

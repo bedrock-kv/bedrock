@@ -1,8 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ValidationPhaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.ControlPlane.Director.Recovery.ValidationPhase
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.ValidationPhase
 
   import RecoveryTestSupport
 

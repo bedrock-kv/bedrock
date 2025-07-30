@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Shale.Pulling do
+  @moduledoc false
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Transaction

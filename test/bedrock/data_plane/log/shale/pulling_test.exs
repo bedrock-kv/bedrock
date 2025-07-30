@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
-  alias Bedrock.DataPlane.Log.Shale.{Pulling, State, Segment}
   alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.Log.Shale.{Pulling, Segment, State}
 
   @default_params %{default_pull_limit: 1000, max_pull_limit: 2000}
 

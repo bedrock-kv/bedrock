@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.State do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo

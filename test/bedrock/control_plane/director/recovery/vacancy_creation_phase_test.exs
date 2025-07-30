@@ -63,7 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       # Creates 2 unique tag groups (tag_a, tag_b)
       # Each group gets desired_logs vacancies = 3
-      # Total: 2 * 3 = 6 vacancies created  
+      # Total: 2 * 3 = 6 vacancies created
       assert map_size(updated_logs) == 6
       # n_vacancies = map_size(updated_logs) = 6
       assert n_vacancies == 6
@@ -182,7 +182,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       # storage_1 should be in tags ["tag_1", "tag_2"] -> sorted as ["tag_1", "tag_2"]
       # storage_2 should be in tags ["tag_1"]
-      # storage_3 should be in tags ["tag_2"]  
+      # storage_3 should be in tags ["tag_2"]
       # storage_4 should be in tags ["tag_3"]
 
       assert is_map(rosters)

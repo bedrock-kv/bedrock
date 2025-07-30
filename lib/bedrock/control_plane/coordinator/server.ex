@@ -1,12 +1,12 @@
 defmodule Bedrock.ControlPlane.Coordinator.Server do
   @moduledoc false
-  alias Bedrock.Raft
-  alias Bedrock.Raft.Log
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
-  alias Bedrock.Raft.Log.InMemoryLog
-  alias Bedrock.Raft.Log.TupleInMemoryLog
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.Raft
+  alias Bedrock.Raft.Log
+  alias Bedrock.Raft.Log.InMemoryLog
+  alias Bedrock.Raft.Log.TupleInMemoryLog
 
   alias Bedrock.ControlPlane.Coordinator.Commands
 

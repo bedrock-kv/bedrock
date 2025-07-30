@@ -1,4 +1,8 @@
 defmodule Bedrock.KeyCodec.TupleKeyCodec do
+  @moduledoc """
+  Codec for encoding/decoding tuple keys in Bedrock's key-value system.
+  """
+
   # Public API
 
   @spec encode_key(tuple() | number() | Bedrock.key()) ::

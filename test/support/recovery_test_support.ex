@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule RecoveryTestSupport do
   @moduledoc """
   Shared test utilities and fixtures for recovery tests.
@@ -11,7 +12,9 @@ defmodule RecoveryTestSupport do
 
   # Mock cluster module for testing
   defmodule TestCluster do
-    def name(), do: "test_cluster"
+    @moduledoc false
+
+    def name, do: "test_cluster"
     def otp_name(component), do: :"test_#{component}"
   end
 
@@ -538,12 +541,7 @@ defmodule RecoveryTestSupport do
 
   defp add_failure_scenario(:service_locking_failures, context) do
     lock_service_fn = fn service, _epoch ->
-      if String.contains?(service, "fail") do
-        {:error, :service_lock_timeout}
-      else
-        {:ok, spawn(fn -> :ok end),
-         %{kind: :test, durable_version: 95, oldest_version: 0, last_version: 100}}
-      end
+      handle_service_locking_with_failures(service)
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)
@@ -581,6 +579,19 @@ defmodule RecoveryTestSupport do
 
   defp add_failure_scenario(_unknown_failure, context), do: context
 
+  defp handle_service_locking_with_failures(service) do
+    if String.contains?(service, "fail") do
+      {:error, :service_lock_timeout}
+    else
+      create_successful_service_lock()
+    end
+  end
+
+  defp create_successful_service_lock do
+    {:ok, spawn(fn -> :ok end),
+     %{kind: :test, durable_version: 95, oldest_version: 0, last_version: 100}}
+  end
+
   # ============================================================================
   # Enhanced Mock Management
   # ============================================================================
@@ -589,27 +600,36 @@ defmodule RecoveryTestSupport do
   Creates realistic mock PIDs that simulate actual process behavior.
   """
   def with_realistic_pids(context, pid_type \\ :long_running) do
-    mock_pid_fn =
-      case pid_type do
-        :long_running ->
-          fn ->
-            pid = spawn(fn -> receive(do: (:shutdown -> :ok)) end)
-            cleanup(fn -> send(pid, :shutdown) end)
-            pid
-          end
-
-        :short_lived ->
-          fn ->
-            pid = spawn(fn -> Process.sleep(50) end)
-            cleanup(fn -> Process.exit(pid, :kill) end)
-            pid
-          end
-
-        :immediate_exit ->
-          fn -> spawn(fn -> :ok end) end
-      end
-
+    mock_pid_fn = create_mock_pid_function(pid_type)
     Map.put(context, :mock_pid_fn, mock_pid_fn)
+  end
+
+  defp create_mock_pid_function(pid_type) do
+    case pid_type do
+      :long_running -> create_long_running_pid_function()
+      :short_lived -> create_short_lived_pid_function()
+      :immediate_exit -> create_immediate_exit_pid_function()
+    end
+  end
+
+  defp create_long_running_pid_function do
+    fn ->
+      pid = spawn(fn -> receive(do: (:shutdown -> :ok)) end)
+      cleanup(fn -> send(pid, :shutdown) end)
+      pid
+    end
+  end
+
+  defp create_short_lived_pid_function do
+    fn ->
+      pid = spawn(fn -> Process.sleep(50) end)
+      cleanup(fn -> Process.exit(pid, :kill) end)
+      pid
+    end
+  end
+
+  defp create_immediate_exit_pid_function do
+    fn -> spawn(fn -> :ok end) end
   end
 
   # Private helper for GenServer mock loop
@@ -637,15 +657,17 @@ defmodule RecoveryTestSupport do
       end
 
     unless behavior == :immediate_exit do
-      cleanup(fn ->
-        case behavior do
-          b when b in [:gen_server_mock, :long_running] -> send(pid, :shutdown)
-          _ -> Process.exit(pid, :kill)
-        end
-      end)
+      cleanup(fn -> terminate_managed_process(pid, behavior) end)
     end
 
     pid
+  end
+
+  defp terminate_managed_process(pid, behavior) do
+    case behavior do
+      b when b in [:gen_server_mock, :long_running] -> send(pid, :shutdown)
+      _ -> Process.exit(pid, :kill)
+    end
   end
 
   @doc """

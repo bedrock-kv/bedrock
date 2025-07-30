@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.Server do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.State
   import Bedrock.Service.Foreman.State, only: [new_state: 1]

@@ -326,11 +326,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       {kind, location} = service
 
       # Find the service ID by looking it up in available_services
-      service_id =
-        context.available_services
-        |> Enum.find_value(fn {id, {_kind, desc_location}} ->
-          if desc_location == location, do: id, else: nil
-        end)
+      service_id = find_service_id_by_location(context.available_services, location)
 
       Agent.update(tracker, fn locked -> [service_id | locked] end)
       pid = spawn(fn -> :ok end)
@@ -347,6 +343,17 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
       nil -> []
       tracker -> Agent.get(tracker, & &1)
     end
+  end
+
+  defp find_service_id_by_location(available_services, location) do
+    available_services
+    |> Enum.find_value(fn {id, {_kind, desc_location}} ->
+      match_service_location(desc_location, location, id)
+    end)
+  end
+
+  defp match_service_location(desc_location, target_location, id) do
+    if desc_location == target_location, do: id, else: nil
   end
 
   # Reuse existing test helpers

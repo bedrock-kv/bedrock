@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Sequencer.State do
+  @moduledoc false
+
   @type t() :: %__MODULE__{
           director: pid(),
           epoch: Bedrock.epoch(),

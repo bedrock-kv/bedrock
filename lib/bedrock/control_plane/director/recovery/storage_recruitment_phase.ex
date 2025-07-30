@@ -16,9 +16,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -46,59 +46,106 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
     available_storage_nodes = Map.get(context.node_capabilities, :storage, [])
 
-    fill_storage_team_vacancies(
-      recovery_attempt.storage_teams,
-      assigned_storage_ids,
-      available_storage_ids,
-      available_storage_nodes
-    )
-    |> case do
+    case fill_storage_team_vacancies(
+           recovery_attempt.storage_teams,
+           assigned_storage_ids,
+           available_storage_ids,
+           available_storage_nodes
+         ) do
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
 
       {:ok, storage_teams, new_worker_ids} ->
-        case create_new_storage_workers(
-               new_worker_ids,
-               available_storage_nodes,
-               recovery_attempt,
-               context
-             ) do
-          {:ok, updated_services} ->
-            trace_recovery_all_storage_team_vacancies_filled()
-
-            # Lock and collect all recruited storage services (existing + new)
-            case extract_and_lock_existing_storage_services(
-                   storage_teams,
-                   context.available_services,
-                   recovery_attempt,
-                   context
-                 ) do
-              {:ok, locked_existing_services} ->
-                all_storage_services = Map.merge(locked_existing_services, updated_services)
-                all_storage_pids = extract_service_pids(all_storage_services)
-
-                updated_recovery_attempt =
-                  recovery_attempt
-                  |> Map.put(:storage_teams, storage_teams)
-                  |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
-                  |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
-                  |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
-
-                {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
-
-              {:error, reason} ->
-                {recovery_attempt, {:stalled, reason}}
-            end
-
-          {:error, reason} ->
-            {recovery_attempt, {:stalled, reason}}
-        end
+        handle_successful_vacancy_filling(
+          storage_teams,
+          new_worker_ids,
+          available_storage_nodes,
+          recovery_attempt,
+          context
+        )
     end
+  end
+
+  @spec handle_successful_vacancy_filling([map()], [String.t()], [node()], map(), map()) ::
+          {map(), module()} | {map(), {:stalled, term()}}
+  defp handle_successful_vacancy_filling(
+         storage_teams,
+         new_worker_ids,
+         available_storage_nodes,
+         recovery_attempt,
+         context
+       ) do
+    case create_new_storage_workers(
+           new_worker_ids,
+           available_storage_nodes,
+           recovery_attempt,
+           context
+         ) do
+      {:ok, updated_services} ->
+        handle_successful_worker_creation(
+          storage_teams,
+          updated_services,
+          recovery_attempt,
+          context
+        )
+
+      {:error, reason} ->
+        {recovery_attempt, {:stalled, reason}}
+    end
+  end
+
+  @spec handle_successful_worker_creation([map()], map(), map(), map()) ::
+          {map(), module()} | {map(), {:stalled, term()}}
+  defp handle_successful_worker_creation(
+         storage_teams,
+         updated_services,
+         recovery_attempt,
+         context
+       ) do
+    trace_recovery_all_storage_team_vacancies_filled()
+
+    case extract_and_lock_existing_storage_services(
+           storage_teams,
+           context.available_services,
+           recovery_attempt,
+           context
+         ) do
+      {:ok, locked_existing_services} ->
+        finalize_storage_recruitment(
+          storage_teams,
+          locked_existing_services,
+          updated_services,
+          recovery_attempt
+        )
+
+      {:error, reason} ->
+        {recovery_attempt, {:stalled, reason}}
+    end
+  end
+
+  @spec finalize_storage_recruitment([map()], map(), map(), map()) :: {map(), module()}
+  defp finalize_storage_recruitment(
+         storage_teams,
+         locked_existing_services,
+         updated_services,
+         recovery_attempt
+       ) do
+    all_storage_services = Map.merge(locked_existing_services, updated_services)
+    all_storage_pids = extract_service_pids(all_storage_services)
+
+    updated_recovery_attempt =
+      recovery_attempt
+      |> Map.put(:storage_teams, storage_teams)
+      |> Map.update!(:storage_recovery_info_by_id, &Map.merge(&1, updated_services))
+      |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_storage_services))
+      |> Map.update(:service_pids, %{}, &Map.merge(&1, all_storage_pids))
+
+    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
   end
 
   @doc """
   Fills vacancies in storage teams by assigning IDs of available storage workers.
-  If there are not enough available storage workers to fill all vacancies, 
+  If there are not enough available storage workers to fill all vacancies,
   new workers will be created.
   """
   @spec fill_storage_team_vacancies(
@@ -285,27 +332,65 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     # Lock each existing storage service that was recruited
     existing_storage_ids
     |> Enum.reduce_while({:ok, %{}}, fn storage_id, {:ok, locked_services} ->
-      case Map.get(available_services, storage_id) do
-        {_kind, last_seen} = service ->
-          case lock_recruited_service(service, recovery_attempt.epoch, context) do
-            {:ok, pid, info} ->
-              locked_service = %{
-                status: {:up, pid},
-                kind: info.kind,
-                last_seen: last_seen
-              }
-
-              {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
-
-            {:error, reason} ->
-              {:halt, {:error, {:failed_to_lock_recruited_service, storage_id, reason}}}
-          end
-
-        _ ->
-          # Service not available - this shouldn't happen if recruitment logic is correct
-          {:halt, {:error, {:recruited_service_unavailable, storage_id}}}
-      end
+      process_storage_service_locking(
+        storage_id,
+        available_services,
+        recovery_attempt,
+        context,
+        locked_services
+      )
     end)
+  end
+
+  @spec process_storage_service_locking(String.t(), map(), map(), map(), map()) ::
+          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
+  defp process_storage_service_locking(
+         storage_id,
+         available_services,
+         recovery_attempt,
+         context,
+         locked_services
+       ) do
+    case Map.get(available_services, storage_id) do
+      {_kind, last_seen} = service ->
+        handle_storage_service_locking(
+          service,
+          last_seen,
+          storage_id,
+          recovery_attempt,
+          context,
+          locked_services
+        )
+
+      _ ->
+        # Service not available - this shouldn't happen if recruitment logic is correct
+        {:halt, {:error, {:recruited_service_unavailable, storage_id}}}
+    end
+  end
+
+  @spec handle_storage_service_locking(tuple(), tuple(), String.t(), map(), map(), map()) ::
+          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
+  defp handle_storage_service_locking(
+         service,
+         last_seen,
+         storage_id,
+         recovery_attempt,
+         context,
+         locked_services
+       ) do
+    case lock_recruited_service(service, recovery_attempt.epoch, context) do
+      {:ok, pid, info} ->
+        locked_service = %{
+          status: {:up, pid},
+          kind: info.kind,
+          last_seen: last_seen
+        }
+
+        {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
+
+      {:error, reason} ->
+        {:halt, {:error, {:failed_to_lock_recruited_service, storage_id, reason}}}
+    end
   end
 
   @spec lock_recruited_service({atom(), {atom(), node()}}, pos_integer(), map()) ::

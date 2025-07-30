@@ -34,8 +34,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
 
   defmacro __using__(_) do
     quote do
-      alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
       alias Bedrock.ControlPlane.Config.RecoveryAttempt
+      alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
       @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
     end

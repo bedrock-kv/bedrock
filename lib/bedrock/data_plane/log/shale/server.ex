@@ -1,10 +1,11 @@
 defmodule Bedrock.DataPlane.Log.Shale.Server do
+  @moduledoc false
   alias Bedrock.Cluster
-  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
+  alias Bedrock.DataPlane.Log.Shale.State
 
   import Bedrock.DataPlane.Log.Shale.ColdStarting, only: [reload_segments_at_path: 1]
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]

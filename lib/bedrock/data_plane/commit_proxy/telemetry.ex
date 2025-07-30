@@ -1,6 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
-  alias Bedrock.Telemetry
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.Telemetry
 
   @type telemetry_metadata :: %{optional(atom()) => term()}
 

@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.MinimumReadVersions do
+  @moduledoc false
+
   @type deadline_by_version :: %{Bedrock.version() => Bedrock.timestamp_in_ms()}
 
   alias Bedrock.Cluster.Gateway.State

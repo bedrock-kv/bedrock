@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   @moduledoc false
 

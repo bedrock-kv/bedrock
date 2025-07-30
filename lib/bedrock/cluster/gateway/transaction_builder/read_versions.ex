@@ -1,6 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   @spec next_read_version(State.t()) ::
           {:ok, Bedrock.version(), Bedrock.interval_in_ms()}

@@ -1,8 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.Telemetry do
-  alias Bedrock.Telemetry
   alias Bedrock.Cluster
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.Telemetry
 
   @spec trace_started(cluster :: module()) :: :ok
   def trace_started(cluster) do

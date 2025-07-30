@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.Impl do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Service.Foreman.State

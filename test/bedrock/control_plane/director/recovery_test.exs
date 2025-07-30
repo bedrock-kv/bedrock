@@ -2,10 +2,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
 
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.ControlPlane.Director.NodeTracking
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
 
   import RecoveryTestSupport
 
@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Mock cluster module for testing
   defmodule TestCluster do
-    def name(), do: "test_cluster"
+    def name, do: "test_cluster"
 
     def otp_name(component) do
       case component do
@@ -83,7 +83,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 1,
-        started_at: 12345
+        started_at: 12_345
       }
 
       state = %State{
@@ -189,7 +189,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         cluster: TestCluster,
         epoch: 1,
         attempt: 3,
-        started_at: 12345
+        started_at: 12_345
       }
 
       state = %State{
@@ -205,7 +205,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Other fields should be preserved
       assert updated_attempt.cluster == TestCluster
       assert updated_attempt.epoch == 1
-      assert updated_attempt.started_at == 12345
+      assert updated_attempt.started_at == 12_345
     end
   end
 
@@ -216,7 +216,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       # Without state field, no pre-validation occurs, recovery proceeds normally
@@ -233,7 +233,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       capture_log([level: :warning], fn ->
@@ -251,7 +251,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       # Should not raise an exception, should return a stall result
@@ -270,7 +270,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       capture_log(fn ->
@@ -292,7 +292,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       {{:stalled, reason}, _result} =
@@ -308,7 +308,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           cluster: TestCluster,
           epoch: 1,
           attempt: 1,
-          started_at: 12345
+          started_at: 12_345
         })
 
       # No longer raises exceptions for "invalid states" since state field is removed
@@ -492,7 +492,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       recovery_attempt =
         first_time_recovery()
-        # Epoch 2 recovery scenario  
+        # Epoch 2 recovery scenario
         |> Map.put(:epoch, 2)
         # Set up log recovery info for existing cluster scenario
         |> Map.put(:log_recovery_info_by_id, %{
@@ -502,7 +502,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> Map.put(:storage_recovery_info_by_id, %{
           "storage_1" => %{kind: :storage, durable_version: 2, oldest_durable_version: 0}
         })
-        # Set up logs field with existing log 
+        # Set up logs field with existing log
         |> Map.put(:logs, %{
           "existing_log_1" => [0, 1, 2]
         })

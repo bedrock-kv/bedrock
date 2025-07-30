@@ -463,18 +463,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     with {:ok, combined_writes_by_tag} <-
            plan.transactions
            |> Enum.with_index()
-           |> Enum.reduce_while({:ok, %{}}, fn {{_reply_fn, {_reads, writes}}, idx}, {:ok, acc} ->
-             if MapSet.member?(aborted_set, idx) do
-               {:cont, {:ok, acc}}
-             else
-               case group_writes_by_tag(writes, plan.storage_teams) do
-                 {:ok, tag_grouped_writes} ->
-                   {:cont, {:ok, merge_writes_by_tag(acc, tag_grouped_writes)}}
-
-                 {:error, _reason} = error ->
-                   {:halt, error}
-               end
-             end
+           |> Enum.reduce_while({:ok, %{}}, fn transaction_with_idx, {:ok, acc} ->
+             process_transaction_for_grouping(
+               transaction_with_idx,
+               aborted_set,
+               plan.storage_teams,
+               acc
+             )
            end) do
       result =
         combined_writes_by_tag
@@ -482,6 +477,44 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         |> Map.new()
 
       {:ok, result}
+    end
+  end
+
+  @spec process_transaction_for_grouping(
+          {{function(), {[term()], %{Bedrock.key() => term()}}}, non_neg_integer()},
+          MapSet.t(non_neg_integer()),
+          [StorageTeamDescriptor.t()],
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+        ) ::
+          {:cont, {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
+          | {:halt, {:error, term()}}
+  defp process_transaction_for_grouping(
+         {{_reply_fn, {_reads, writes}}, idx},
+         aborted_set,
+         storage_teams,
+         acc
+       ) do
+    if MapSet.member?(aborted_set, idx) do
+      {:cont, {:ok, acc}}
+    else
+      handle_non_aborted_transaction(writes, storage_teams, acc)
+    end
+  end
+
+  @spec handle_non_aborted_transaction(
+          %{Bedrock.key() => term()},
+          [StorageTeamDescriptor.t()],
+          %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
+        ) ::
+          {:cont, {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
+          | {:halt, {:error, term()}}
+  defp handle_non_aborted_transaction(writes, storage_teams, acc) do
+    case group_writes_by_tag(writes, storage_teams) do
+      {:ok, tag_grouped_writes} ->
+        {:cont, {:ok, merge_writes_by_tag(acc, tag_grouped_writes)}}
+
+      {:error, _reason} = error ->
+        {:halt, error}
     end
   end
 

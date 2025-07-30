@@ -1,4 +1,6 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.DataPlane.Log.Shale.Segment do
+  @moduledoc false
   require Logger
 
   alias Bedrock.DataPlane.Log.EncodedTransaction

@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.Discovery do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Coordinator
@@ -68,20 +70,18 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   @spec try_direct_coordinator_call(Coordinator.ref(), module()) ::
           {:ok, {Coordinator.ref(), Bedrock.epoch()}} | {:error, :unavailable}
   defp try_direct_coordinator_call(coordinator_ref, cluster) do
-    try do
-      case GenServer.call(coordinator_ref, :ping, cluster.coordinator_ping_timeout_in_ms()) do
-        {:pong, epoch, leader_pid} when leader_pid != nil ->
-          {:ok, {leader_pid, epoch}}
+    case GenServer.call(coordinator_ref, :ping, cluster.coordinator_ping_timeout_in_ms()) do
+      {:pong, epoch, leader_pid} when leader_pid != nil ->
+        {:ok, {leader_pid, epoch}}
 
-        {:pong, _epoch, nil} ->
-          {:error, :unavailable}
+      {:pong, _epoch, nil} ->
+        {:error, :unavailable}
 
-        _ ->
-          {:error, :unavailable}
-      end
-    catch
-      :exit, _ -> {:error, :unavailable}
+      _ ->
+        {:error, :unavailable}
     end
+  catch
+    :exit, _ -> {:error, :unavailable}
   end
 
   @spec discover_leader_coordinator(module(), [node()]) ::

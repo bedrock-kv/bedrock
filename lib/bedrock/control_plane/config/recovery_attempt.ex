@@ -1,6 +1,8 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log

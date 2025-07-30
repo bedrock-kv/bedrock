@@ -1,9 +1,9 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase
+  alias Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
 
   describe "execute/1" do
     test "successfully determines durable version with healthy teams" do
@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
       capture_log(fn ->
         result =
-          DurableVersionPhase.execute(recovery_attempt, %{
+          VersionDeterminationPhase.execute(recovery_attempt, %{
             node_tracking: nil,
             old_transaction_system_layout: %{storage_teams: storage_teams},
             cluster_config: %{
@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         |> with_storage_recovery_info(storage_recovery_info)
 
       result =
-        DurableVersionPhase.execute(recovery_attempt, %{
+        VersionDeterminationPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{storage_teams: storage_teams},
           cluster_config: %{
@@ -92,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
         |> with_storage_recovery_info(storage_recovery_info)
 
       result =
-        DurableVersionPhase.execute(recovery_attempt, %{
+        VersionDeterminationPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{storage_teams: storage_teams},
           cluster_config: %{
@@ -128,7 +128,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, durable_version, _healthy_teams, degraded_teams} =
-        DurableVersionPhase.determine_durable_version(teams, info_by_id, 2)
+        VersionDeterminationPhase.determine_durable_version(teams, info_by_id, 2)
 
       # min(101, 98)
       assert durable_version == 98
@@ -151,7 +151,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:error, {:insufficient_replication, failed_teams}} =
-        DurableVersionPhase.determine_durable_version(teams, info_by_id, 2)
+        VersionDeterminationPhase.determine_durable_version(teams, info_by_id, 2)
 
       assert "team_1" in failed_teams
     end
@@ -173,7 +173,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, durable_version, healthy_teams, degraded_teams} =
-        DurableVersionPhase.determine_durable_version(teams, info_by_id, 2)
+        VersionDeterminationPhase.determine_durable_version(teams, info_by_id, 2)
 
       # min(101, 98)
       assert durable_version == 98
@@ -193,7 +193,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, durable_version, _healthy_teams, degraded_teams} =
-        DurableVersionPhase.determine_durable_version(teams, info_by_id, 2)
+        VersionDeterminationPhase.determine_durable_version(teams, info_by_id, 2)
 
       # From s1 and s2, quorum of 2
       assert durable_version == 100
@@ -204,16 +204,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
   describe "smallest_version/2" do
     test "returns second argument when first is nil" do
-      assert DurableVersionPhase.smallest_version(nil, 100) == 100
+      assert VersionDeterminationPhase.smallest_version(nil, 100) == 100
     end
 
     test "returns minimum of two versions" do
-      assert DurableVersionPhase.smallest_version(150, 100) == 100
-      assert DurableVersionPhase.smallest_version(50, 100) == 50
+      assert VersionDeterminationPhase.smallest_version(150, 100) == 100
+      assert VersionDeterminationPhase.smallest_version(50, 100) == 50
     end
 
     test "handles equal versions" do
-      assert DurableVersionPhase.smallest_version(100, 100) == 100
+      assert VersionDeterminationPhase.smallest_version(100, 100) == 100
     end
   end
 
@@ -228,7 +228,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, version, status} =
-        DurableVersionPhase.determine_durable_version_and_status_for_storage_team(
+        VersionDeterminationPhase.determine_durable_version_and_status_for_storage_team(
           team,
           info_by_id,
           2
@@ -249,7 +249,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, version, status} =
-        DurableVersionPhase.determine_durable_version_and_status_for_storage_team(
+        VersionDeterminationPhase.determine_durable_version_and_status_for_storage_team(
           team,
           info_by_id,
           2
@@ -269,7 +269,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:error, :insufficient_replication} =
-        DurableVersionPhase.determine_durable_version_and_status_for_storage_team(
+        VersionDeterminationPhase.determine_durable_version_and_status_for_storage_team(
           team,
           info_by_id,
           2
@@ -286,7 +286,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
       }
 
       {:ok, version, status} =
-        DurableVersionPhase.determine_durable_version_and_status_for_storage_team(
+        VersionDeterminationPhase.determine_durable_version_and_status_for_storage_team(
           team,
           info_by_id,
           2
@@ -311,7 +311,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhaseTest do
 
       # Quorum of 3 means we take the 3rd highest version
       {:ok, version, status} =
-        DurableVersionPhase.determine_durable_version_and_status_for_storage_team(
+        VersionDeterminationPhase.determine_durable_version_and_status_for_storage_team(
           team,
           info_by_id,
           3

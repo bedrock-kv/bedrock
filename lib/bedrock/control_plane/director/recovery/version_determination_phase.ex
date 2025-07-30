@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   @moduledoc """
   Determines the highest durable version across storage teams and identifies degraded teams.
 

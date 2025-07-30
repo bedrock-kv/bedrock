@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.LockOldSystemServicesPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   @moduledoc """
   Establishes exclusive director control by selectively locking services from the old system layout.
 
@@ -24,7 +24,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockOldSystemServicesPhase do
   @behaviour RecoveryPhase
 
   @impl true
-  def execute(%{state: :lock_old_system_services} = recovery_attempt, context) do
+  def execute(%{state: state} = recovery_attempt, context)
+      when state in [:lock_old_system_services, :locking] do
     old_system_services =
       extract_old_system_services(
         context.old_transaction_system_layout,
@@ -40,9 +41,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockOldSystemServicesPhase do
        transaction_services, service_pids} ->
         next_state =
           if MapSet.size(locked_service_ids) == 0 do
-            :first_time_initialization
+            :initialization
           else
-            :determine_old_logs_to_copy
+            :log_discovery
           end
 
         recovery_attempt

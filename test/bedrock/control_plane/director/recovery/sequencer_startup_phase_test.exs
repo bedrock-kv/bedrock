@@ -1,8 +1,8 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.SequencerPhase
+  alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -27,7 +27,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
       # The actual execution will fail because TestCluster.otp_name(:sup)
       # doesn't point to a real supervisor, but now it should return an error
       # instead of exiting thanks to our try-catch fix
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should be stalled due to supervisor not existing
       assert {:stalled, {:failed_to_start, :sequencer, _, {:supervisor_exit, _}}} = result.state
@@ -51,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
 
       # Since we can't easily mock Shared.starter_for in this context,
       # we'll test the error handling path through the actual execution
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should be stalled due to supervisor not existing (which is our expected error case)
       assert {:stalled, {:failed_to_start, :sequencer, _, _}} = result.state
@@ -67,7 +67,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
         |> with_version_vector({0, 100})
         |> with_sequencer(nil)
 
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      result = SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should transition to stalled state on any startup failure
       assert {:stalled, {:failed_to_start, :sequencer, _, _}} = result.state

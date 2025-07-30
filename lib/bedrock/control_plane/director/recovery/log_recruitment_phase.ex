@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   @moduledoc """
   Recruits log services for the new system by selecting from services not involved in the old system.
 

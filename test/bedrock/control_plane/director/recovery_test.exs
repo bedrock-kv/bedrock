@@ -106,7 +106,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       result = Recovery.setup_for_subsequent_recovery(state)
 
       assert result.recovery_attempt.attempt == 2
-      assert result.recovery_attempt.state == :start
+      assert result.recovery_attempt.state == :startup
     end
 
     test "returns unchanged state for other states" do
@@ -212,7 +212,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       updated_attempt = result.recovery_attempt
       assert updated_attempt.attempt == 4
-      assert updated_attempt.state == :start
+      assert updated_attempt.state == :startup
       # Other fields should be preserved
       assert updated_attempt.cluster == TestCluster
       assert updated_attempt.epoch == 1
@@ -294,9 +294,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       capture_log(fn ->
         # For a start state, we can only test the first phase transition since the subsequent
         # phases will need complete data. Let's test just that the start phase works.
-        start_phase = Bedrock.ControlPlane.Director.Recovery.StartPhase
+        start_phase = Bedrock.ControlPlane.Director.Recovery.StartupPhase
         result = start_phase.execute(recovery_attempt, create_test_context())
-        assert result.state == :lock_old_system_services
+        assert result.state == :locking
         assert %DateTime{} = result.started_at
       end)
     end

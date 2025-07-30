@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   @moduledoc """
   Starts commit proxy components that batch transactions and coordinate commits.
 

@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.CleanupPhase do
   @moduledoc """
   Cleans up workers that are no longer part of the running transaction system.
 

@@ -43,24 +43,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   The recovery process follows a linear state machine through these phases:
 
-  1. `:start` → `StartPhase` - Initialize recovery attempt with timestamp
-  2. `:lock_old_system_services` → `LockOldSystemServicesPhase` - Lock services from old system layout
+  1. `:startup` → `StartupPhase` - Initialize recovery attempt with timestamp
+  2. `:locking` → `LockingPhase` - Lock services from old system layout
   3. Branch point:
-     - `:first_time_initialization` → `InitializationPhase` - Bootstrap new cluster
-     - `:determine_old_logs_to_copy` → `LogDiscoveryPhase` - Find logs to recover
-  4. `:determine_durable_version` → `DurableVersionPhase` - Find highest committed version
-  5. `:create_vacancies` → `VacancyCreationPhase` - Create placeholders for missing services
-  6. `:recruit_logs_to_fill_vacancies` → `RecruitLogsToFillVacanciesPhase` - Assign/create log workers
-  7. `:recruit_storage_to_fill_vacancies` → `StorageRecruitmentPhase` - Assign/create storage workers
-  8. `:replay_old_logs` → `LogReplayPhase` - Replay transactions from old logs
-  9. `:repair_data_distribution` → `DataDistributionPhase` - Fix data distribution
-  10. `:define_sequencer` → `SequencerPhase` - Start sequencer component
-  11. `:define_commit_proxies` → `CommitProxyPhase` - Start commit proxies
-  12. `:define_resolvers` → `ResolverPhase` - Start resolver components
-  13. `:final_checks` → `ValidationPhase` - Final validation before persistence
-  14. `:persist_system_state` → `PersistencePhase` - System transaction test and persist
-  15. `:monitor_components` → `MonitoringPhase` - Set up component monitoring
-  16. `:cleanup_obsolete_workers` → `WorkerCleanupPhase` - Clean up unused workers
+     - `:initialization` → `InitializationPhase` - Bootstrap new cluster
+     - `:log_discovery` → `LogDiscoveryPhase` - Find logs to recover
+  4. `:version_determination` → `VersionDeterminationPhase` - Find highest committed version
+  5. `:vacancy_creation` → `VacancyCreationPhase` - Create placeholders for missing services
+  6. `:log_recruitment` → `LogRecruitmentPhase` - Assign/create log workers
+  7. `:storage_recruitment` → `StorageRecruitmentPhase` - Assign/create storage workers
+  8. `:log_replay` → `LogReplayPhase` - Replay transactions from old logs
+  9. `:data_distribution` → `DataDistributionPhase` - Fix data distribution
+  10. `:sequencer_startup` → `SequencerStartupPhase` - Start sequencer component
+  11. `:proxy_startup` → `ProxyStartupPhase` - Start commit proxies
+  12. `:resolver_startup` → `ResolverStartupPhase` - Start resolver components
+  13. `:validation` → `ValidationPhase` - Final validation before persistence
+  14. `:persistence` → `PersistencePhase` - System transaction test and persist
+  15. `:monitoring` → `MonitoringPhase` - Set up component monitoring
+  16. `:cleanup` → `CleanupPhase` - Clean up unused workers
   17. `:completed` - Recovery complete
 
   Any phase can transition to `{:stalled, reason}` which triggers retry logic.
@@ -164,7 +164,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       %{
         recovery_attempt
         | attempt: recovery_attempt.attempt + 1,
-          state: :start
+          state: :startup
       }
     end)
   end
@@ -282,21 +282,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   end
 
   @spec next_phase(RecoveryAttempt.state()) :: module()
-  defp next_phase(:start), do: __MODULE__.StartPhase
-  defp next_phase(:lock_old_system_services), do: __MODULE__.LockOldSystemServicesPhase
+  # New state atoms
+  defp next_phase(:startup), do: __MODULE__.StartupPhase
+  defp next_phase(:locking), do: __MODULE__.LockingPhase
+  defp next_phase(:initialization), do: __MODULE__.InitializationPhase
+  defp next_phase(:log_discovery), do: __MODULE__.LogDiscoveryPhase
+  defp next_phase(:vacancy_creation), do: __MODULE__.VacancyCreationPhase
+  defp next_phase(:version_determination), do: __MODULE__.VersionDeterminationPhase
+  defp next_phase(:log_recruitment), do: __MODULE__.LogRecruitmentPhase
+  defp next_phase(:storage_recruitment), do: __MODULE__.StorageRecruitmentPhase
+  defp next_phase(:log_replay), do: __MODULE__.LogReplayPhase
+  defp next_phase(:data_distribution), do: __MODULE__.DataDistributionPhase
+  defp next_phase(:sequencer_startup), do: __MODULE__.SequencerStartupPhase
+  defp next_phase(:proxy_startup), do: __MODULE__.ProxyStartupPhase
+  defp next_phase(:resolver_startup), do: __MODULE__.ResolverStartupPhase
+  defp next_phase(:validation), do: __MODULE__.ValidationPhase
+  defp next_phase(:persistence), do: __MODULE__.PersistencePhase
+  defp next_phase(:monitoring), do: __MODULE__.MonitoringPhase
+  defp next_phase(:cleanup), do: __MODULE__.CleanupPhase
+
+  # Backward compatibility for old state atoms
+  defp next_phase(:start), do: __MODULE__.StartupPhase
+  defp next_phase(:lock_old_system_services), do: __MODULE__.LockingPhase
   defp next_phase(:first_time_initialization), do: __MODULE__.InitializationPhase
   defp next_phase(:determine_old_logs_to_copy), do: __MODULE__.LogDiscoveryPhase
   defp next_phase(:create_vacancies), do: __MODULE__.VacancyCreationPhase
-  defp next_phase(:determine_durable_version), do: __MODULE__.DurableVersionPhase
-  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.RecruitLogsToFillVacanciesPhase
+  defp next_phase(:determine_durable_version), do: __MODULE__.VersionDeterminationPhase
+  defp next_phase(:recruit_logs_to_fill_vacancies), do: __MODULE__.LogRecruitmentPhase
   defp next_phase(:recruit_storage_to_fill_vacancies), do: __MODULE__.StorageRecruitmentPhase
   defp next_phase(:replay_old_logs), do: __MODULE__.LogReplayPhase
   defp next_phase(:repair_data_distribution), do: __MODULE__.DataDistributionPhase
-  defp next_phase(:define_sequencer), do: __MODULE__.SequencerPhase
-  defp next_phase(:define_commit_proxies), do: __MODULE__.CommitProxyPhase
-  defp next_phase(:define_resolvers), do: __MODULE__.ResolverPhase
+  defp next_phase(:define_sequencer), do: __MODULE__.SequencerStartupPhase
+  defp next_phase(:define_commit_proxies), do: __MODULE__.ProxyStartupPhase
+  defp next_phase(:define_resolvers), do: __MODULE__.ResolverStartupPhase
   defp next_phase(:final_checks), do: __MODULE__.ValidationPhase
   defp next_phase(:persist_system_state), do: __MODULE__.PersistencePhase
   defp next_phase(:monitor_components), do: __MODULE__.MonitoringPhase
-  defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.WorkerCleanupPhase
+  defp next_phase(:cleanup_obsolete_workers), do: __MODULE__.CleanupPhase
 end

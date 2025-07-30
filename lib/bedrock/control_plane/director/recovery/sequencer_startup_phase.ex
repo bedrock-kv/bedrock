@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   @moduledoc """
   Starts the sequencer component that assigns global version numbers to transactions.
 

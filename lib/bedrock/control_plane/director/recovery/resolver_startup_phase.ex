@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.ResolverPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   @moduledoc """
   Starts resolver components that implement MVCC conflict detection.
 

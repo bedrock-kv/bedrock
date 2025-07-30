@@ -28,7 +28,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%RecoveryAttempt{state: :first_time_initialization} = recovery_attempt, context) do
+  def execute(%RecoveryAttempt{state: state} = recovery_attempt, context)
+      when state in [:first_time_initialization, :initialization] do
     trace_recovery_first_time_initialization()
 
     log_vacancies =

@@ -9,6 +9,7 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   alias Bedrock.Cluster
 
   @type t :: :ets.table()
+  @type node_capabilities :: %{Cluster.capability() => [node()]}
 
   @typep last_seen_at :: integer() | :unknown
   @typep capabilities :: [Cluster.capability()] | :unknown
@@ -198,5 +199,26 @@ defmodule Bedrock.ControlPlane.Director.NodeTracking do
   def down(t, node) do
     :ets.update_element(t, node, [{4, :down}, {6, nil}])
     t
+  end
+
+  @doc """
+  Extract a static snapshot of node capabilities for recovery phases.
+  Only includes nodes that are up and authorized.
+  """
+  @spec extract_node_capabilities(t()) :: node_capabilities()
+  def extract_node_capabilities(t) do
+    # Get all alive and authorized nodes with their capabilities
+    alive_authorized_nodes_with_caps =
+      :ets.select(t, [
+        {{:"$1", :_, :"$3", :up, true, :_}, [], [{{:"$1", :"$3"}}]}
+      ])
+
+    # Group nodes by capability, filtering out nodes with unknown capabilities
+    alive_authorized_nodes_with_caps
+    |> Enum.filter(fn {_node, capabilities} -> is_list(capabilities) end)
+    |> Enum.flat_map(fn {node, capabilities} ->
+      Enum.map(capabilities, fn capability -> {capability, node} end)
+    end)
+    |> Enum.group_by(fn {capability, _node} -> capability end, fn {_capability, node} -> node end)
   end
 end

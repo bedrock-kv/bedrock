@@ -102,8 +102,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.WorkerCleanupPhase do
           node()
         ]
   defp get_nodes_with_capability(context, capability) do
-    alias Bedrock.ControlPlane.Director.NodeTracking
-    NodeTracking.nodes_with_capability(context.node_tracking, capability)
+    Map.get(context.node_capabilities, capability, [])
   end
 
   @spec has_obsolete_services?(map()) :: boolean()

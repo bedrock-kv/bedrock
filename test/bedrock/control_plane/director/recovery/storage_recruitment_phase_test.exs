@@ -187,7 +187,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         |> with_transaction_services(%{})
 
       context = %{
-        node_tracking: mock_node_tracking(),
+        node_capabilities: mock_node_tracking(),
         old_transaction_system_layout: %{logs: %{}, storage_teams: []},
         available_services: %{
           "storage_1" => %{

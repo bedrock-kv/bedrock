@@ -17,7 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
 
   @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
@@ -39,7 +38,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecruitLogsToFillVacanciesPhase
       |> Enum.map(&elem(&1, 0))
       |> MapSet.new()
 
-    available_log_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :log)
+    available_log_nodes = Map.get(context.node_capabilities, :log, [])
 
     with {:ok, logs, new_worker_ids} <-
            fill_log_vacancies(

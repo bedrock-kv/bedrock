@@ -630,15 +630,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Composable context modification functions
   defp with_multiple_nodes(context) do
-    :ets.delete_all_objects(context.node_tracking)
+    node_capabilities = %{
+      log: [:node1@host, :node2@host, :node3@host],
+      storage: [:node1@host, :node2@host, :node3@host]
+    }
 
-    :ets.insert(context.node_tracking, [
-      {:node1@host, :up, [:log, :storage], :up, true, nil},
-      {:node2@host, :up, [:log, :storage], :up, true, nil},
-      {:node3@host, :up, [:log, :storage], :up, true, nil}
-    ])
-
-    Map.put(context, :node_list_fn, fn -> [:node1@host, :node2@host, :node3@host] end)
+    context
+    |> Map.put(:node_capabilities, node_capabilities)
+    |> Map.put(:node_list_fn, fn -> [:node1@host, :node2@host, :node3@host] end)
   end
 
   defp with_available_log_services(context) do

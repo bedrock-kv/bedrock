@@ -21,7 +21,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.ControlPlane.Director.NodeTracking
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -45,7 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       |> MapSet.difference(old_system_storage_ids)
       |> MapSet.difference(assigned_storage_ids |> MapSet.filter(&(not vacancy?(&1))))
 
-    available_storage_nodes = NodeTracking.nodes_with_capability(context.node_tracking, :storage)
+    available_storage_nodes = Map.get(context.node_capabilities, :storage, [])
 
     fill_storage_team_vacancies(
       recovery_attempt.storage_teams,

@@ -25,18 +25,20 @@ defmodule RecoveryTestSupport do
   end
 
   @doc """
-  Creates a basic test context with node tracking and old transaction system layout.
+  Creates a basic test context with node capabilities and old transaction system layout.
   """
   def create_test_context(opts \\ []) do
-    node_tracking = :ets.new(:test_node_tracking, [:ordered_set])
-    :ets.insert(node_tracking, [{Node.self(), :unknown, [:log, :storage], :up, true, nil}])
-    cleanup(fn -> :ets.delete(node_tracking) end)
+    node_capabilities =
+      Keyword.get(opts, :node_capabilities, %{
+        log: [Node.self()],
+        storage: [Node.self()]
+      })
 
     old_transaction_system_layout =
       Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}, storage_teams: []})
 
     %{
-      node_tracking: node_tracking,
+      node_capabilities: node_capabilities,
       old_transaction_system_layout: old_transaction_system_layout,
       cluster_config: %{
         coordinators: [],
@@ -233,48 +235,31 @@ defmodule RecoveryTestSupport do
   # ============================================================================
 
   @doc """
-  Sets up node tracking with specified number of nodes or custom setup.
+  Sets up node capabilities with specified number of nodes or custom setup.
   """
   def with_node_tracking(context, opts) do
-    node_tracking =
+    node_capabilities =
       case Keyword.get(opts, :nodes) do
         nil ->
-          context.node_tracking
+          context.node_capabilities
 
         count when is_integer(count) ->
-          table = :ets.new(:test_node_tracking, [:ordered_set])
           nodes = if count > 0, do: for(i <- 1..count, do: :"node#{i}@host"), else: []
-          for node <- nodes, do: :ets.insert(table, {node, :up, [:log, :storage], :up, true, nil})
-          cleanup(fn -> :ets.delete(table) end)
-          table
+          %{log: nodes, storage: nodes}
 
         nodes when is_list(nodes) ->
-          table = :ets.new(:test_node_tracking, [:ordered_set])
-          for node <- nodes, do: :ets.insert(table, {node, :up, [:log, :storage], :up, true, nil})
-          cleanup(fn -> :ets.delete(table) end)
-          table
+          %{log: nodes, storage: nodes}
       end
-
-    nodes_with_capability_fn = fn _node_tracking, capability ->
-      case capability do
-        :storage -> Keyword.get(opts, :nodes, 1)
-        _ -> 0
-      end
-    end
 
     context
-    |> Map.put(:node_tracking, node_tracking)
-    |> Map.put(:nodes_with_capability_fn, nodes_with_capability_fn)
+    |> Map.put(:node_capabilities, node_capabilities)
   end
 
   @doc """
-  Creates a simple mock node tracking table for testing.
+  Creates a simple mock node capabilities for testing.
   """
   def mock_node_tracking(nodes \\ [:node1@host]) do
-    table = :ets.new(:test_node_tracking, [:ordered_set])
-    for node <- nodes, do: :ets.insert(table, {node, :up, [:log, :storage], :up, true, nil})
-    cleanup(fn -> :ets.delete(table) end)
-    table
+    %{log: nodes, storage: nodes}
   end
 
   @doc """

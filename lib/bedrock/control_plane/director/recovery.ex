@@ -120,7 +120,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @type recovery_context :: %{
           cluster_config: Config.t(),
           old_transaction_system_layout: TransactionSystemLayout.t(),
-          node_tracking: NodeTracking.t(),
+          node_capabilities: NodeTracking.node_capabilities(),
           lock_token: binary(),
           available_services: %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},
           coordinator: pid()
@@ -181,7 +181,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     context = %{
       cluster_config: t.config,
       old_transaction_system_layout: t.old_transaction_system_layout,
-      node_tracking: t.node_tracking,
+      node_capabilities: NodeTracking.extract_node_capabilities(t.node_tracking),
       lock_token: t.lock_token,
       available_services: t.services,
       coordinator: t.coordinator

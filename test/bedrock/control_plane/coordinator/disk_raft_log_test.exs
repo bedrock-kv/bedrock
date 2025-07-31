@@ -1,222 +1,173 @@
 defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogTest do
   use ExUnit.Case, async: false
 
+  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
+
   @moduletag :tmp_dir
 
-  describe "basic disk_log functionality" do
-    test "can create and open a disk log", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "test.log") |> String.to_charlist()
+  describe "module initialization" do
+    test "creates new log with proper structure", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :test_log)
 
-      # Test that we can open a new disk_log
-      assert {:ok, :test_log} =
-               :disk_log.open([
-                 {:name, :test_log},
-                 {:file, log_file},
-                 {:type, :halt},
-                 {:format, :internal},
-                 {:quiet, true}
-               ])
-
-      # Test that we can write to it
-      assert :ok = :disk_log.log(:test_log, {{1, 1}, 1, :test_data})
-      assert :ok = :disk_log.sync(:test_log)
-
-      # Test that we can read from it
-      assert {_, [{{1, 1}, 1, :test_data}]} = :disk_log.chunk(:test_log, :start)
-
-      assert :ok = :disk_log.close(:test_log)
+      assert %DiskRaftLog{} = log
+      assert log.table_name == :test_log
+      assert String.contains?(List.to_string(log.table_file), "raft_log.dets")
+      assert log.is_open == false
     end
 
-    test "survives crash and recovery", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "recovery.log") |> String.to_charlist()
+    test "creates log directory if it doesn't exist" do
+      non_existent_dir = "/tmp/bedrock_test_#{:rand.uniform(1_000_000)}"
 
-      # Create log and write data
-      {:ok, :recovery_test} =
-        :disk_log.open([
-          {:name, :recovery_test},
-          {:file, log_file},
-          {:type, :halt},
-          {:format, :internal}
-        ])
-
-      :disk_log.log(:recovery_test, {{1, 1}, 1, :before_crash})
-      :disk_log.log(:recovery_test, {{1, 2}, 1, :also_before_crash})
-      :disk_log.sync(:recovery_test)
-
-      # Simulate crash (close without proper shutdown)
-      :disk_log.close(:recovery_test)
-
-      # Reopen and verify data survived
-      {:ok, :recovery_test} =
-        :disk_log.open([
-          {:name, :recovery_test},
-          {:file, log_file}
-        ])
-
-      # Read all entries
-      entries = read_all_entries(:recovery_test)
-      assert length(entries) == 2
-      assert {{1, 1}, 1, :before_crash} in entries
-      assert {{1, 2}, 1, :also_before_crash} in entries
-
-      :disk_log.close(:recovery_test)
-    end
-
-    test "handles sequential access patterns", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "sequential.log") |> String.to_charlist()
-
-      {:ok, :seq_test} =
-        :disk_log.open([
-          {:name, :seq_test},
-          {:file, log_file},
-          {:type, :halt},
-          {:format, :internal}
-        ])
-
-      # Write a sequence of entries
-      entries =
-        for i <- 1..10 do
-          entry = {{1, i}, 1, {:entry, i}}
-          :disk_log.log(:seq_test, entry)
-          entry
-        end
-
-      :disk_log.sync(:seq_test)
-
-      # Read them back sequentially
-      read_entries = read_all_entries(:seq_test)
-      assert read_entries == entries
-
-      :disk_log.close(:seq_test)
-    end
-  end
-
-  describe "raft-specific transaction ID patterns" do
-    test "can store and retrieve raft-style transaction IDs", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "raft_ids.log") |> String.to_charlist()
-
-      {:ok, :raft_test} =
-        :disk_log.open([
-          {:name, :raft_test},
-          {:file, log_file},
-          {:type, :halt},
-          {:format, :internal}
-        ])
-
-      # Test various raft transaction patterns
-      raft_entries = [
-        # Initial/genesis entry
-        {{0, 0}, 0, :initial},
-        # No-op entry
-        {{1, 1}, 1, :noop},
-        # Config change
-        {{1, 2}, 1, {:config, :add_node}},
-        # User data
-        {{1, 3}, 1, {:user_data, "test"}},
-        # New term
-        {{2, 4}, 2, {:term_change}},
-        # More user data
-        {{2, 5}, 2, {:user_data, "more"}}
-      ]
-
-      # Write all entries
-      Enum.each(raft_entries, fn entry ->
-        assert :ok = :disk_log.log(:raft_test, entry)
+      on_exit(fn ->
+        if File.exists?(non_existent_dir), do: File.rm_rf!(non_existent_dir)
       end)
 
-      :disk_log.sync(:raft_test)
+      refute File.exists?(non_existent_dir)
 
-      # Read back and verify
-      read_entries = read_all_entries(:raft_test)
-      assert read_entries == raft_entries
+      _log = DiskRaftLog.new(log_dir: non_existent_dir)
 
-      :disk_log.close(:raft_test)
+      assert File.exists?(non_existent_dir)
+      assert File.dir?(non_existent_dir)
+    end
+  end
+
+  describe "DETS table lifecycle" do
+    test "can open and close DETS table", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :lifecycle_test)
+
+      assert {:ok, opened_log} = DiskRaftLog.open(log)
+      assert opened_log.is_open == true
+
+      assert :ok = DiskRaftLog.close(opened_log)
     end
 
-    test "supports transaction ID ordering", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "ordering.log") |> String.to_charlist()
+    test "handles DETS errors gracefully" do
+      log = %DiskRaftLog{
+        table_name: :bad_table,
+        table_file: ~c"/non/existent/path/test.dets",
+        is_open: false
+      }
 
-      {:ok, :order_test} =
-        :disk_log.open([
-          {:name, :order_test},
-          {:file, log_file},
-          {:type, :halt},
-          {:format, :internal}
-        ])
+      assert {:error, _reason} = DiskRaftLog.open(log)
+    end
 
-      # Write entries with different terms
-      entries = [
-        {{1, 1}, 1, :term1_entry1},
-        {{1, 2}, 1, :term1_entry2},
-        # Term change
-        {{2, 3}, 2, :term2_entry1},
-        {{2, 4}, 2, :term2_entry2},
-        {{2, 5}, 2, :term2_entry3}
+    test "survives table recreation", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :recreation_test)
+
+      # Open, write some test data, and close
+      {:ok, log} = DiskRaftLog.open(log)
+      :dets.insert(log.table_name, {{1, 1}, :test_data})
+      :dets.close(log.table_name)
+
+      # Reopen and verify data persisted
+      {:ok, log} = DiskRaftLog.open(log)
+      assert [{_id, :test_data}] = :dets.lookup(log.table_name, {1, 1})
+
+      DiskRaftLog.close(log)
+    end
+  end
+
+  describe "helper functions" do
+    test "build_chain_links/2 creates proper forward pointers" do
+      transactions = [
+        {{1, 1}, :data1},
+        {{1, 2}, :data2},
+        {{1, 3}, :data3}
       ]
 
-      Enum.each(entries, &:disk_log.log(:order_test, &1))
-      :disk_log.sync(:order_test)
+      prev_id = {0, 0}
 
-      # Verify ordering is preserved
-      read_entries = read_all_entries(:order_test)
-      assert read_entries == entries
+      chain_links = DiskRaftLog.build_chain_links(prev_id, transactions)
 
-      # Verify we can extract transaction IDs
-      transaction_ids = Enum.map(read_entries, fn {id, _term, _data} -> id end)
-      expected_ids = [{1, 1}, {1, 2}, {2, 3}, {2, 4}, {2, 5}]
-      assert transaction_ids == expected_ids
+      expected = [
+        # prev -> first
+        {{:chain, {0, 0}}, {1, 1}},
+        # first -> second
+        {{:chain, {1, 1}}, {1, 2}},
+        # second -> third
+        {{:chain, {1, 2}}, {1, 3}},
+        # third -> nil (end)
+        {{:chain, {1, 3}}, nil}
+      ]
 
-      :disk_log.close(:order_test)
+      assert chain_links == expected
+    end
+
+    test "build_chain_links/2 handles empty transaction list" do
+      assert [] = DiskRaftLog.build_chain_links({0, 0}, [])
+    end
+
+    test "build_chain_links/2 handles single transaction" do
+      transactions = [{{1, 1}, :data1}]
+      prev_id = {0, 0}
+
+      chain_links = DiskRaftLog.build_chain_links(prev_id, transactions)
+
+      expected = [
+        # prev -> first
+        {{:chain, {0, 0}}, {1, 1}},
+        # first -> nil (end)
+        {{:chain, {1, 1}}, nil}
+      ]
+
+      assert chain_links == expected
+    end
+
+    test "walk_chain_inclusive/3 follows chain correctly", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :chain_test)
+      {:ok, log} = DiskRaftLog.open(log)
+
+      # Set up test chain: {1,1} -> {1,2} -> {1,3}
+      test_data = [
+        {{1, 1}, :data1},
+        {{1, 2}, :data2},
+        {{1, 3}, :data3},
+        {{:chain, {1, 1}}, {1, 2}},
+        {{:chain, {1, 2}}, {1, 3}},
+        {{:chain, {1, 3}}, nil}
+      ]
+
+      :dets.insert(log.table_name, test_data)
+
+      # Walk full chain
+      result = DiskRaftLog.walk_chain_inclusive(log, {1, 1}, {1, 3})
+      expected = [{{1, 1}, :data1}, {{1, 2}, :data2}, {{1, 3}, :data3}]
+      assert result == expected
+
+      # Walk partial chain
+      result = DiskRaftLog.walk_chain_inclusive(log, {1, 2}, {1, 3})
+      expected = [{{1, 2}, :data2}, {{1, 3}, :data3}]
+      assert result == expected
+
+      # Walk single element
+      result = DiskRaftLog.walk_chain_inclusive(log, {1, 2}, {1, 2})
+      expected = [{{1, 2}, :data2}]
+      assert result == expected
+
+      # Walk beyond range (should stop at boundary)
+      result = DiskRaftLog.walk_chain_inclusive(log, {1, 1}, {1, 2})
+      expected = [{{1, 1}, :data1}, {{1, 2}, :data2}]
+      assert result == expected
+
+      DiskRaftLog.close(log)
     end
   end
 
-  describe "error handling and edge cases" do
-    test "handles empty logs gracefully", %{tmp_dir: tmp_dir} do
-      log_file = Path.join(tmp_dir, "empty.log") |> String.to_charlist()
+  describe "DETS sync functionality" do
+    test "sync returns :ok when table is open", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :sync_test)
+      {:ok, log} = DiskRaftLog.open(log)
 
-      {:ok, :empty_test} =
-        :disk_log.open([
-          {:name, :empty_test},
-          {:file, log_file},
-          {:type, :halt},
-          {:format, :internal}
-        ])
+      assert :ok = DiskRaftLog.sync(log)
 
-      # Try to read from empty log
-      assert :eof = :disk_log.chunk(:empty_test, :start)
-
-      :disk_log.close(:empty_test)
+      DiskRaftLog.close(log)
     end
 
-    test "handles file permissions and disk errors" do
-      # Test opening a log in a non-existent directory
-      bad_log_file = ~c"/non/existent/path/test.log"
+    test "sync handles closed table gracefully", %{tmp_dir: tmp_dir} do
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :closed_sync_test)
 
-      assert {:error, _reason} =
-               :disk_log.open([
-                 {:name, :bad_test},
-                 {:file, bad_log_file},
-                 {:type, :halt},
-                 {:format, :internal}
-               ])
-    end
-  end
-
-  # Helper function to read all entries from a disk_log
-  defp read_all_entries(log_name) do
-    read_entries_recursive(log_name, :start, [])
-  end
-
-  defp read_entries_recursive(log_name, continuation, acc) do
-    case :disk_log.chunk(log_name, continuation) do
-      :eof ->
-        Enum.reverse(acc)
-
-      {:error, reason} ->
-        flunk("Error reading from disk_log: #{inspect(reason)}")
-
-      {next_continuation, terms} ->
-        read_entries_recursive(log_name, next_continuation, Enum.reverse(terms) ++ acc)
+      # Don't open the table, just try to sync
+      assert {:error, _reason} = DiskRaftLog.sync(log)
     end
   end
 end

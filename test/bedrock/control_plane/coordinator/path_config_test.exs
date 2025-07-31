@@ -26,7 +26,7 @@ defmodule Bedrock.ControlPlane.Coordinator.PathConfigTest do
       # Verify it created the expected directory structure
       working_directory = Path.join(coordinator_path, "raft")
       assert File.exists?(working_directory)
-      assert File.exists?(Path.join(working_directory, "raft_log.LOG"))
+      assert File.exists?(Path.join(working_directory, "raft_log.dets"))
 
       # Verify it's actually a DiskRaftLog
       assert %DiskRaftLog{} = raft_log

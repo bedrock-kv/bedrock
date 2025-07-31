@@ -56,9 +56,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       # Check specific transaction content
       [
-        {{1, 1}, {:coordinator_config, config1}},
-        {{1, 2}, {:director_assignment, director}},
-        {{2, 3}, {:coordinator_config, config2}}
+        {{1, 1}, {1, {:coordinator_config, config1}}},
+        {{1, 2}, {1, {:director_assignment, director}}},
+        {{2, 3}, {2, {:coordinator_config, config2}}}
       ] = restored_transactions
 
       assert config1 == %{epoch: 1, coordinators: [:node1, :node2]}
@@ -86,7 +86,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       # Verify standard directory structure is created
       assert File.exists?(working_directory)
-      raft_log_file = Path.join(working_directory, "raft_log.LOG")
+      raft_log_file = Path.join(working_directory, "raft_log.dets")
       assert File.exists?(raft_log_file)
 
       # Add and verify a transaction

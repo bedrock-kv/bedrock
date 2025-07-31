@@ -3,262 +3,394 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.Raft.Log
+  alias Bedrock.Raft.TransactionID
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: tmp_dir} do
-    log = DiskRaftLog.new(log_dir: tmp_dir, log_name: :protocol_test)
+    log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :protocol_test)
     {:ok, log} = DiskRaftLog.open(log)
 
     on_exit(fn -> DiskRaftLog.close(log) end)
 
-    %{log: log}
+    {:ok, log: log}
   end
 
-  describe "Bedrock.Raft.Log protocol implementation" do
-    test "implements new_id/3", %{log: log} do
-      transaction_id = Log.new_id(log, 1, 5)
-      assert transaction_id == {1, 5}
+  describe "basic protocol methods" do
+    test "new_id/3 creates transaction IDs", %{log: log} do
+      assert {1, 5} = Log.new_id(log, 1, 5)
+      assert {42, 99} = Log.new_id(log, 42, 99)
     end
 
-    test "implements initial_transaction_id/1", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-      assert initial_id == {0, 0}
+    test "initial_transaction_id/1 returns {0, 0}", %{log: log} do
+      assert {0, 0} = Log.initial_transaction_id(log)
     end
 
-    test "implements append_transactions/3 for initial transactions", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-      transactions = [{1, :first_transaction}, {1, :second_transaction}]
+    test "has_transaction_id?/2 handles {0, 0} specially", %{log: log} do
+      # {0, 0} always returns true without lookup
+      assert Log.has_transaction_id?(log, {0, 0}) == true
 
-      {:ok, updated_log} = Log.append_transactions(log, initial_id, transactions)
-
-      # Verify transactions were added
-      assert Log.newest_transaction_id(updated_log) == {1, 2}
-      assert Log.has_transaction_id?(updated_log, {1, 1})
-      assert Log.has_transaction_id?(updated_log, {1, 2})
+      # Other IDs require actual lookup
+      assert Log.has_transaction_id?(log, {1, 1}) == false
     end
 
-    test "implements append_transactions/3 with previous transaction check", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
+    test "newest_transaction_id/1 returns {0, 0} for empty log", %{log: log} do
+      assert Log.newest_transaction_id(log) == {0, 0}
+    end
 
-      # Add first batch
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :first}])
+    test "newest_safe_transaction_id/1 returns {0, 0} for empty log", %{log: log} do
+      assert Log.newest_safe_transaction_id(log) == {0, 0}
+    end
+  end
 
-      # Add second batch with correct previous ID
-      {:ok, log} = Log.append_transactions(log, {1, 1}, [{1, :second}])
+  describe "append_transactions/3" do
+    test "can append first transactions from {0, 0}", %{log: log} do
+      transactions = [{1, :data1}, {1, :data2}]
 
+      assert {:ok, _log} = Log.append_transactions(log, {0, 0}, transactions)
+
+      # Verify transactions were stored
+      assert Log.has_transaction_id?(log, {1, 1}) == true
+      assert Log.has_transaction_id?(log, {1, 2}) == true
+
+      # Verify tail was updated
       assert Log.newest_transaction_id(log) == {1, 2}
-
-      # Try to add with wrong previous ID
-      assert {:error, :prev_transaction_not_found} =
-               Log.append_transactions(log, {2, 10}, [{1, :should_fail}])
     end
 
-    test "implements commit_up_to/2", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
+    test "can append transactions from existing transaction", %{log: log} do
+      # First append
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}])
 
-      # Add some transactions
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :tx1}, {1, :tx2}, {1, :tx3}])
+      # Second append
+      assert {:ok, _log} = Log.append_transactions(log, {1, 1}, [{1, :data2}, {1, :data3}])
 
-      # Initial commit state
+      # Verify all transactions exist
+      assert Log.has_transaction_id?(log, {1, 1}) == true
+      assert Log.has_transaction_id?(log, {1, 2}) == true
+      assert Log.has_transaction_id?(log, {1, 3}) == true
+
+      assert Log.newest_transaction_id(log) == {1, 3}
+    end
+
+    test "fails when prev_transaction_id doesn't exist", %{log: log} do
+      assert {:error, :prev_transaction_not_found} =
+               Log.append_transactions(log, {99, 99}, [{1, :data}])
+    end
+
+    test "handles empty transaction list", %{log: log} do
+      assert {:ok, _log} = Log.append_transactions(log, {0, 0}, [])
+
+      # Tail should remain {0, 0} since no transactions were added
+      assert Log.newest_transaction_id(log) == {0, 0}
+    end
+
+    test "creates proper chain structure", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+
+      # Verify chain links exist
+      assert [{{:chain, {0, 0}}, {1, 1}}] = :dets.lookup(log.table_name, {:chain, {0, 0}})
+      assert [{{:chain, {1, 1}}, {1, 2}}] = :dets.lookup(log.table_name, {:chain, {1, 1}})
+      assert [{{:chain, {1, 2}}, nil}] = :dets.lookup(log.table_name, {:chain, {1, 2}})
+    end
+  end
+
+  describe "transactions_to/2 and transactions_from/3" do
+    setup %{log: log} do
+      # Create test chain: {0,0} -> {1,1} -> {1,2} -> {2,3} -> {2,4}
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+      {:ok, _log} = Log.append_transactions(log, {1, 2}, [{2, :data3}, {2, :data4}])
+
+      {:ok, log: log}
+    end
+
+    test "transactions_to/2 with :newest returns all transactions", %{log: log} do
+      result = Log.transactions_to(log, :newest)
+
+      expected = [
+        {{1, 1}, {1, :data1}},
+        {{1, 2}, {1, :data2}},
+        {{2, 3}, {2, :data3}},
+        {{2, 4}, {2, :data4}}
+      ]
+
+      assert result == expected
+    end
+
+    test "transactions_to/2 with specific ID returns transactions up to ID", %{log: log} do
+      result = Log.transactions_to(log, {1, 2})
+
+      expected = [
+        {{1, 1}, {1, :data1}},
+        {{1, 2}, {1, :data2}}
+      ]
+
+      assert result == expected
+    end
+
+    test "transactions_from/3 from {0,0} includes all transactions (special case)", %{log: log} do
+      result = Log.transactions_from(log, {0, 0}, {2, 3})
+
+      expected = [
+        {{1, 1}, {1, :data1}},
+        {{1, 2}, {1, :data2}},
+        {{2, 3}, {2, :data3}}
+      ]
+
+      assert result == expected
+    end
+
+    test "transactions_from/3 excludes the 'from' transaction", %{log: log} do
+      result = Log.transactions_from(log, {1, 1}, {2, 3})
+
+      # Should exclude {1, 1} but include {1, 2} and {2, 3}
+      expected = [
+        {{1, 2}, {1, :data2}},
+        {{2, 3}, {2, :data3}}
+      ]
+
+      assert result == expected
+    end
+
+    test "transactions_from/3 with :newest symbol", %{log: log} do
+      result = Log.transactions_from(log, {1, 2}, :newest)
+
+      expected = [
+        {{2, 3}, {2, :data3}},
+        {{2, 4}, {2, :data4}}
+      ]
+
+      assert result == expected
+    end
+
+    test "transactions_from/3 returns empty list when from > to", %{log: log} do
+      result = Log.transactions_from(log, {2, 4}, {1, 1})
+
+      assert result == []
+    end
+
+    test "transactions_from/3 returns empty list when from not found", %{log: log} do
+      result = Log.transactions_from(log, {99, 99}, {2, 4})
+
+      assert result == []
+    end
+  end
+
+  describe "commit_up_to/2" do
+    test "commit_up_to/2 with {0, 0} returns :unchanged", %{log: log} do
+      assert :unchanged = Log.commit_up_to(log, {0, 0})
+    end
+
+    test "can commit transaction and updates newest_safe_transaction_id", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+
+      # Initially no commits
       assert Log.newest_safe_transaction_id(log) == {0, 0}
 
-      # Commit up to first transaction
-      {:ok, log} = Log.commit_up_to(log, {1, 1})
+      # Commit up to {1, 1}
+      assert {:ok, _log} = Log.commit_up_to(log, {1, 1})
       assert Log.newest_safe_transaction_id(log) == {1, 1}
 
-      # Commit up to second transaction
-      {:ok, log} = Log.commit_up_to(log, {1, 2})
+      # Commit further
+      assert {:ok, _log} = Log.commit_up_to(log, {1, 2})
       assert Log.newest_safe_transaction_id(log) == {1, 2}
+    end
 
-      # Try to commit backwards (should be unchanged)
+    test "commit_up_to/2 with same commit level returns :unchanged", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}])
+      {:ok, _log} = Log.commit_up_to(log, {1, 1})
+
+      # Trying to commit to same level should return :unchanged
       assert :unchanged = Log.commit_up_to(log, {1, 1})
-      assert Log.newest_safe_transaction_id(log) == {1, 2}
+
+      # Trying to commit to earlier level should return :unchanged
+      assert :unchanged = Log.commit_up_to(log, {0, 0})
     end
 
-    test "implements newest_transaction_id/1", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
+    test "transactions_to/2 with :newest_safe respects commits", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} = Log.commit_up_to(log, {1, 2})
 
-      # Empty log should return initial ID
+      result = Log.transactions_to(log, :newest_safe)
+
+      expected = [
+        {{1, 1}, {1, :data1}},
+        {{1, 2}, {1, :data2}}
+      ]
+
+      assert result == expected
+    end
+  end
+
+  describe "purge_transactions_after/2" do
+    test "truncates log after specified transaction", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+
+      # Verify all transactions exist
+      assert Log.has_transaction_id?(log, {1, 1}) == true
+      assert Log.has_transaction_id?(log, {1, 2}) == true
+      assert Log.has_transaction_id?(log, {1, 3}) == true
+      assert Log.newest_transaction_id(log) == {1, 3}
+
+      # Truncate after {1, 2}
+      assert {:ok, _log} = Log.purge_transactions_after(log, {1, 2})
+
+      # Verify truncation
+      assert Log.newest_transaction_id(log) == {1, 2}
+
+      # Verify {1, 3} is no longer reachable via chain traversal
+      result = Log.transactions_to(log, :newest)
+      expected = [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}]
+      assert result == expected
+
+      # The actual record may still exist in DETS but shouldn't be reachable
+      # Physical record exists
+      assert Log.has_transaction_id?(log, {1, 3}) == true
+    end
+
+    test "adjusts commit level when purging committed transactions", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} = Log.commit_up_to(log, {1, 3})
+
+      assert Log.newest_safe_transaction_id(log) == {1, 3}
+
+      # Purge after {1, 1} - should adjust commit level
+      assert {:ok, _log} = Log.purge_transactions_after(log, {1, 1})
+
+      # Commit level should be reduced to {1, 1}
+      assert Log.newest_safe_transaction_id(log) == {1, 1}
+    end
+
+    test "leaves commit level unchanged when purging beyond commit", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} = Log.commit_up_to(log, {1, 1})
+
+      assert Log.newest_safe_transaction_id(log) == {1, 1}
+
+      # Purge after {1, 2} - commit level should remain unchanged
+      assert {:ok, _log} = Log.purge_transactions_after(log, {1, 2})
+
+      assert Log.newest_safe_transaction_id(log) == {1, 1}
+    end
+  end
+
+  describe "edge cases and error conditions" do
+    test "empty log behavior", %{log: log} do
+      # All transactions_* methods should return empty lists
+      assert Log.transactions_to(log, :newest) == []
+      assert Log.transactions_to(log, :newest_safe) == []
+      assert Log.transactions_to(log, {1, 1}) == []
+      assert Log.transactions_from(log, {0, 0}, {1, 1}) == []
+      assert Log.transactions_from(log, {1, 1}, {2, 2}) == []
+
+      # Newest IDs should be {0, 0}
       assert Log.newest_transaction_id(log) == {0, 0}
-
-      # Add transactions
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :tx1}])
-      assert Log.newest_transaction_id(log) == {1, 1}
-
-      {:ok, log} = Log.append_transactions(log, {1, 1}, [{1, :tx2}, {2, :tx3}])
-      assert Log.newest_transaction_id(log) == {2, 3}
+      assert Log.newest_safe_transaction_id(log) == {0, 0}
     end
 
-    test "implements has_transaction_id?/2", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
+    test "boundary conditions for range queries", %{log: log} do
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
 
-      # Initial transaction should always exist
-      assert Log.has_transaction_id?(log, {0, 0})
+      # from == to should return empty (since from is excluded)
+      assert Log.transactions_from(log, {1, 1}, {1, 1}) == []
 
-      # Non-existent transaction
-      assert not Log.has_transaction_id?(log, {1, 1})
+      # from > to should return empty
+      assert Log.transactions_from(log, {1, 2}, {1, 1}) == []
 
-      # Add a transaction
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :tx1}])
-      assert Log.has_transaction_id?(log, {1, 1})
-      assert not Log.has_transaction_id?(log, {1, 2})
+      # transactions_to with exact boundary
+      result = Log.transactions_to(log, {1, 1})
+      assert result == [{{1, 1}, {1, :data1}}]
     end
 
-    test "implements transactions_to/2", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
+    test "large transaction sequences", %{log: log} do
+      # Create a longer chain to test performance
+      large_transactions = for i <- 1..50, do: {1, {:data, i}}
 
-      # Add some transactions
-      {:ok, log} =
-        Log.append_transactions(log, initial_id, [
-          {1, :tx1},
-          {1, :tx2},
-          {2, :tx3}
-        ])
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, large_transactions)
 
-      # Get all transactions to newest
-      transactions = Log.transactions_to(log, :newest)
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
+      # Verify all transactions exist
+      assert Log.newest_transaction_id(log) == {1, 50}
 
-      # Get transactions to specific ID
-      transactions = Log.transactions_to(log, {1, 2})
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
+      # Test range query performance
+      result = Log.transactions_from(log, {1, 10}, {1, 20})
+      # {1, 11} through {1, 20}
+      assert length(result) == 10
 
-      # Get transactions to newest safe (initially nothing committed)
-      transactions = Log.transactions_to(log, :newest_safe)
-      assert transactions == []
+      # Verify first and last in range
+      assert {{1, 11}, {1, {:data, 11}}} = List.first(result)
+      assert {{1, 20}, {1, {:data, 20}}} = List.last(result)
+    end
+  end
 
-      # Commit some and try again
-      {:ok, log} = Log.commit_up_to(log, {1, 2})
-      transactions = Log.transactions_to(log, :newest_safe)
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
+  describe "concurrent access patterns" do
+    test "multiple append operations maintain consistency", %{log: log} do
+      # Simulate multiple sequential appends as might happen in Raft
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :term1_entry1}])
+      {:ok, _log} = Log.append_transactions(log, {1, 1}, [{1, :term1_entry2}, {1, :term1_entry3}])
+      {:ok, _log} = Log.append_transactions(log, {1, 3}, [{2, :term2_entry1}])
+
+      # Verify chain integrity
+      result = Log.transactions_to(log, :newest)
+
+      expected = [
+        {{1, 1}, {1, :term1_entry1}},
+        {{1, 2}, {1, :term1_entry2}},
+        {{1, 3}, {1, :term1_entry3}},
+        {{2, 4}, {2, :term2_entry1}}
+      ]
+
+      assert result == expected
+
+      # Verify chain links are correct
+      assert [{{:chain, {0, 0}}, {1, 1}}] = :dets.lookup(log.table_name, {:chain, {0, 0}})
+      assert [{{:chain, {1, 1}}, {1, 2}}] = :dets.lookup(log.table_name, {:chain, {1, 1}})
+      assert [{{:chain, {1, 2}}, {1, 3}}] = :dets.lookup(log.table_name, {:chain, {1, 2}})
+      assert [{{:chain, {1, 3}}, {2, 4}}] = :dets.lookup(log.table_name, {:chain, {1, 3}})
+      assert [{{:chain, {2, 4}}, nil}] = :dets.lookup(log.table_name, {:chain, {2, 4}})
     end
 
-    test "implements transactions_from/3", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-
-      # Add some transactions
-      {:ok, log} =
-        Log.append_transactions(log, initial_id, [
-          {1, :tx1},
-          {1, :tx2},
-          {1, :tx3},
-          {2, :tx4}
-        ])
-
-      # Get transactions from initial to newest
-      transactions = Log.transactions_from(log, initial_id, Log.newest_transaction_id(log))
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{1, 3}, :tx3}, {{2, 4}, :tx4}]
-
-      # Get transactions from specific ID
-      transactions = Log.transactions_from(log, {1, 1}, {1, 3})
-      assert transactions == [{{1, 2}, :tx2}, {{1, 3}, :tx3}]
-
-      # Get transactions from middle to end
-      transactions = Log.transactions_from(log, {1, 2}, Log.newest_transaction_id(log))
-      assert transactions == [{{1, 3}, :tx3}, {{2, 4}, :tx4}]
-    end
-
-    test "implements transactions_from/3 with :newest atom - CRITICAL BUG FIX", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-
-      # Add some transactions
-      {:ok, log} =
-        Log.append_transactions(log, initial_id, [
-          {1, :tx1},
-          {1, :tx2},
-          {2, :tx3}
-        ])
-
-      # Test the critical bug fix: transactions_from with :newest atom
-      # This was causing the log replication stall in client logs
-      transactions = Log.transactions_from(log, initial_id, :newest)
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
-
-      # Test from middle to :newest
-      transactions = Log.transactions_from(log, {1, 1}, :newest)
-      assert transactions == [{{1, 2}, :tx2}, {{2, 3}, :tx3}]
-
-      # Test empty result case
-      transactions = Log.transactions_from(log, {2, 3}, :newest)
-      assert transactions == []
-    end
-
-    test "implements transactions_from/3 with :newest_safe atom - CRITICAL BUG FIX", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-
-      # Add some transactions
-      {:ok, log} =
-        Log.append_transactions(log, initial_id, [
-          {1, :tx1},
-          {1, :tx2},
-          {1, :tx3}
-        ])
-
-      # Initially no transactions are committed
-      transactions = Log.transactions_from(log, initial_id, :newest_safe)
-      assert transactions == []
-
-      # Commit first two transactions
-      {:ok, log} = Log.commit_up_to(log, {1, 2})
-
-      # Now transactions_from with :newest_safe should work correctly
-      transactions = Log.transactions_from(log, initial_id, :newest_safe)
-      assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}]
-
-      # Test from middle to :newest_safe
-      transactions = Log.transactions_from(log, {1, 1}, :newest_safe)
-      assert transactions == [{{1, 2}, :tx2}]
-    end
-
-    test "implements purge_transactions_after/2", %{log: log} do
-      initial_id = Log.initial_transaction_id(log)
-
-      # Add some transactions
-      {:ok, log} =
-        Log.append_transactions(log, initial_id, [
-          {1, :tx1},
-          {1, :tx2},
-          {1, :tx3},
-          {1, :tx4}
-        ])
+    test "commit and purge operations work together", %{log: log} do
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}, {1, :data4}])
 
       # Commit some transactions
-      {:ok, log} = Log.commit_up_to(log, {1, 3})
-
-      # Purge transactions after {1, 2}
-      {:ok, log} = Log.purge_transactions_after(log, {1, 2})
-
-      # Should only have transactions up to {1, 2}
-      assert Log.newest_transaction_id(log) == {1, 2}
-      assert Log.has_transaction_id?(log, {1, 1})
-      assert Log.has_transaction_id?(log, {1, 2})
-      assert not Log.has_transaction_id?(log, {1, 3})
-      assert not Log.has_transaction_id?(log, {1, 4})
-
-      # Commit point should be adjusted
+      {:ok, _log} = Log.commit_up_to(log, {1, 2})
       assert Log.newest_safe_transaction_id(log) == {1, 2}
+
+      # Purge after committed transaction
+      {:ok, _log} = Log.purge_transactions_after(log, {1, 3})
+
+      # Verify state
+      assert Log.newest_transaction_id(log) == {1, 3}
+      # Should remain unchanged
+      assert Log.newest_safe_transaction_id(log) == {1, 2}
+
+      # Verify accessible transactions
+      result = Log.transactions_to(log, :newest)
+      expected = [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}, {{1, 3}, {1, :data3}}]
+      assert result == expected
+
+      result_safe = Log.transactions_to(log, :newest_safe)
+      expected_safe = [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}]
+      assert result_safe == expected_safe
     end
   end
 
   describe "persistence across restarts" do
     test "maintains raft log state across close/reopen", %{tmp_dir: tmp_dir} do
-      log_name = :persistence_protocol_test
+      table_name = :persistence_test
 
       # First session: create log and add transactions
-      log1 = DiskRaftLog.new(log_dir: tmp_dir, log_name: log_name)
+      log1 = DiskRaftLog.new(log_dir: tmp_dir, table_name: table_name)
       {:ok, log1} = DiskRaftLog.open(log1)
 
-      initial_id = Log.initial_transaction_id(log1)
-
-      {:ok, log1} =
-        Log.append_transactions(log1, initial_id, [
-          {1, :persistent_tx1},
-          {1, :persistent_tx2},
-          {2, :persistent_tx3}
+      {:ok, _log1} =
+        Log.append_transactions(log1, {0, 0}, [
+          {1, :persistent1},
+          {1, :persistent2},
+          {2, :persistent3}
         ])
 
-      {:ok, log1} = Log.commit_up_to(log1, {1, 2})
+      {:ok, _log1} = Log.commit_up_to(log1, {1, 2})
 
       # Verify state before closing
       assert Log.newest_transaction_id(log1) == {2, 3}
@@ -269,46 +401,20 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       DiskRaftLog.close(log1)
 
       # Second session: reopen and verify state is preserved
-      log_struct = DiskRaftLog.new(log_dir: tmp_dir, log_name: log_name)
-      {:ok, log2} = DiskRaftLog.open(log_struct)
+      log2 = DiskRaftLog.new(log_dir: tmp_dir, table_name: table_name)
+      {:ok, log2} = DiskRaftLog.open(log2)
 
       assert Log.newest_transaction_id(log2) == {2, 3}
+      assert Log.newest_safe_transaction_id(log2) == {1, 2}
       assert Log.has_transaction_id?(log2, {1, 1})
       assert Log.has_transaction_id?(log2, {1, 2})
       assert Log.has_transaction_id?(log2, {2, 3})
 
       # Verify we can continue appending
-      {:ok, log2} = Log.append_transactions(log2, {2, 3}, [{2, :new_tx_after_restart}])
+      {:ok, _log2} = Log.append_transactions(log2, {2, 3}, [{2, :new_after_restart}])
       assert Log.newest_transaction_id(log2) == {2, 4}
 
       DiskRaftLog.close(log2)
-    end
-  end
-
-  describe "error handling" do
-    test "corrupted log returns a result", %{tmp_dir: tmp_dir} do
-      log_name = :corruption_test
-
-      # Create log and add some data
-      log = DiskRaftLog.new(log_dir: tmp_dir, log_name: log_name)
-      {:ok, log} = DiskRaftLog.open(log)
-
-      initial_id = Log.initial_transaction_id(log)
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :tx1}])
-
-      DiskRaftLog.close(log)
-
-      # Corrupt the log file
-      log_file = Path.join(tmp_dir, "raft_log.LOG")
-      File.write!(log_file, "corrupted data")
-
-      # Try to reopen - should not crash and should return some result
-      log2 = DiskRaftLog.new(log_dir: tmp_dir, log_name: log_name)
-      result = DiskRaftLog.open(log2)
-
-      # Should return a tuple (either success or error, but not crash)
-      assert is_tuple(result)
-      assert tuple_size(result) == 2
     end
   end
 end

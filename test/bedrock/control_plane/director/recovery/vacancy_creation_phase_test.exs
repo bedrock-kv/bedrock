@@ -261,16 +261,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
       assert is_integer(n_vacancies)
       assert is_map(expanded_rosters)
 
-      # Check that vacancy IDs are present if vacancies were created
-      if n_vacancies > 0 do
-        all_vacancies =
-          expanded_rosters
-          |> Map.values()
-          |> List.flatten()
-          |> Enum.filter(fn id -> match?({:vacancy, _}, id) end)
+      # Check that when vacancies are needed, some are created in the rosters
+      all_vacancies =
+        expanded_rosters
+        |> Map.values()
+        |> List.flatten()
+        |> Enum.filter(fn id -> match?({:vacancy, _}, id) end)
 
-        assert length(all_vacancies) > 0
-      end
+      # With 2 existing storages and needing 3 total, we expect some vacancies
+      assert n_vacancies == 2
+      assert length(all_vacancies) == 4
     end
   end
 

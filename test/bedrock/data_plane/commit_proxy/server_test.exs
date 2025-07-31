@@ -82,19 +82,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       # After our fix, handle_call should catch this and handle it properly
       # by not passing the {:stop, reason} tuple to the batching pipeline
 
-      # We verify this by ensuring the error case is handled before
-      # any batching functions are called
-      case invalid_state do
-        {:stop, reason} ->
-          # This should be caught in handle_call and not passed to batching
-          assert reason == :timeout
-          # No batching functions should be called with this invalid state
-          :ok
-
-        state when is_map(state) ->
-          # Only valid state maps should reach the batching logic
-          assert Map.has_key?(state, :batch)
-      end
+      # Verify the invalid state is the expected error tuple
+      assert invalid_state == {:stop, :timeout}
     end
 
     test "handle_call pattern matches correctly for error cases" do
@@ -114,20 +103,15 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       # Simulate what happens when ask_for_transaction_system_layout_if_needed returns {:stop, reason}
       error_result = {:stop, :timeout}
 
-      # The handle_call should pattern match on this and:
-      # 1. Reply to client with {:error, reason}
-      # 2. Return {:stop, reason, state}
-      case error_result do
-        {:stop, reason} ->
-          # This is the pattern that should be matched in handle_call
-          assert reason == :timeout
-          # The function should reply with error and stop
-          expected_reply = {:error, reason}
-          expected_return = {:stop, reason, state}
+      # Verify the error result structure
+      assert error_result == {:stop, :timeout}
 
-          assert expected_reply == {:error, :timeout}
-          assert expected_return == {:stop, :timeout, state}
-      end
+      # The expected behavior for this error case
+      expected_reply = {:error, :timeout}
+      expected_return = {:stop, :timeout, state}
+
+      assert expected_reply == {:error, :timeout}
+      assert expected_return == {:stop, :timeout, state}
     end
 
     test "state validation ensures proper structure" do

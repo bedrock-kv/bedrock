@@ -30,6 +30,17 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   alias Bedrock.Raft
 
+  # Type definitions based on Raft types for better specificity
+  @type input_transaction :: {term :: Raft.election_term(), data :: term()}
+  @type stored_transaction_record :: {Raft.transaction_id(), input_transaction()}
+  @type chain_link_record :: {{:chain, Raft.transaction_id()}, Raft.transaction_id() | nil}
+  @type metadata_record :: {:tail, Raft.transaction_id()} | {:last_commit, Raft.transaction_id()}
+  @type dets_record :: stored_transaction_record() | chain_link_record() | metadata_record()
+  @type dets_error ::
+          {:error, :file_not_found | :permission_denied | :badarg | :table_not_open | term()}
+  @type open_result :: {:ok, t()} | dets_error()
+  @type dets_operation_result :: {:ok, t()} | dets_error()
+
   @type t :: %__MODULE__{
           table_name: atom(),
           table_file: String.t(),
@@ -79,7 +90,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   This must be called before any other operations.
   """
-  @spec open(t()) :: {:ok, t()} | {:error, term()}
+  @spec open(t()) :: open_result()
   def open(%__MODULE__{} = log) do
     case :dets.open_file(log.table_name, [{:file, log.table_file |> String.to_charlist()}]) do
       {:ok, table_name} ->
@@ -101,8 +112,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   @doc """
   Helper function to build chain link records.
   """
-  @spec build_chain_links(Raft.transaction_id(), [Raft.transaction()]) :: [
-          {{:chain, Raft.transaction_id()}, Raft.transaction_id() | nil}
+  @spec build_chain_links(Raft.transaction_id(), [stored_transaction_record()]) :: [
+          chain_link_record()
         ]
   def build_chain_links(prev_id, transactions) do
     case transactions do
@@ -117,25 +128,29 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
         chain_links =
           transactions
           |> Enum.zip(rest ++ [nil])
-          |> Enum.map(fn {{id, _}, next} ->
-            next_id =
-              case next do
-                {next_id, _} -> next_id
-                nil -> nil
-              end
-
-            {{:chain, id}, next_id}
-          end)
+          |> Enum.map(&build_chain_link/1)
 
         [first_link | chain_links]
     end
+  end
+
+  @spec build_chain_link({stored_transaction_record(), stored_transaction_record() | nil}) ::
+          chain_link_record()
+  defp build_chain_link({{id, _}, next}) do
+    next_id =
+      case next do
+        {next_id, _} -> next_id
+        nil -> nil
+      end
+
+    {{:chain, id}, next_id}
   end
 
   @doc """
   Helper function to walk chain inclusively from current to target.
   """
   @spec walk_chain_inclusive(t(), Raft.transaction_id(), Raft.transaction_id()) :: [
-          {Raft.transaction_id(), term()}
+          stored_transaction_record()
         ]
   def walk_chain_inclusive(log, current_id, to_id) when current_id <= to_id do
     case :dets.lookup(log.table_name, current_id) do
@@ -156,40 +171,45 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
+  @spec walk_chain_inclusive(t(), Raft.transaction_id(), Raft.transaction_id()) :: []
   def walk_chain_inclusive(_log, _current_id, _to_id), do: []
 
   @doc """
   Sync the DETS table to disk to ensure durability.
   """
-  @spec sync(t()) :: :ok | {:error, term()}
+  @spec sync(t()) :: :ok | {:error, :table_not_open | term()}
   def sync(%__MODULE__{table_name: table_name}) do
-    try do
-      case :dets.sync(table_name) do
-        :ok -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    rescue
-      ArgumentError -> {:error, :table_not_open}
+    case :dets.sync(table_name) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
     end
+  rescue
+    ArgumentError -> {:error, :table_not_open}
   end
-end
 
-# Implement the Bedrock.Raft.Log protocol
-defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
-  @type t :: Bedrock.ControlPlane.Coordinator.DiskRaftLog.t()
+  # Raft.Log protocol implementation functions
 
-  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.Raft.TransactionID
 
   @initial_transaction_id TransactionID.new(0, 0)
 
-  @impl true
+  @doc """
+  Create a new log with the given term and sequence number.
+  """
+  @spec new_id(t(), Raft.election_term(), Raft.index()) :: Raft.tuple_transaction_id()
   def new_id(_t, term, sequence), do: TransactionID.new(term, sequence)
 
-  @impl true
+  @doc """
+  Get the initial transaction for the log.
+  """
+  @spec initial_transaction_id(t()) :: Raft.tuple_transaction_id()
   def initial_transaction_id(_t), do: @initial_transaction_id
 
-  @impl true
+  @doc """
+  Append the given block of transactions to the log.
+  """
+  @spec append_transactions(t(), Raft.transaction_id(), [input_transaction()]) ::
+          dets_operation_result() | {:error, :prev_transaction_not_found}
   def append_transactions(t, prev_id, transactions) do
     if has_transaction_id?(t, prev_id) do
       # Convert input transactions to proper transaction records
@@ -211,7 +231,7 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
         end)
 
       # Build chain links using the transaction records
-      chain_links = DiskRaftLog.build_chain_links(prev_id, transaction_records)
+      chain_links = build_chain_links(prev_id, transaction_records)
 
       new_tail_id =
         case List.last(transaction_records) do
@@ -230,7 +250,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Purge the log of all transactions after the given id.
+  """
+  @spec purge_transactions_after(t(), Raft.transaction_id()) :: dets_operation_result()
   def purge_transactions_after(t, transaction_id) do
     # Get current commit to ensure it doesn't go beyond purge point
     current_commit = newest_safe_transaction_id(t)
@@ -249,10 +272,12 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Mark all transactions up to and including the given transaction as committed.
+  """
+  @spec commit_up_to(t(), Raft.transaction_id()) :: dets_operation_result() | :unchanged
   def commit_up_to(_t, @initial_transaction_id), do: :unchanged
 
-  @impl true
   def commit_up_to(t, transaction_id) do
     current_commit = newest_safe_transaction_id(t)
 
@@ -266,7 +291,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Get the newest transaction in the log.
+  """
+  @spec newest_transaction_id(t()) :: Raft.transaction_id()
   def newest_transaction_id(t) do
     case :dets.lookup(t.table_name, :tail) do
       [{:tail, transaction_id}] -> transaction_id
@@ -275,7 +303,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Get the newest safe transaction in the log.
+  """
+  @spec newest_safe_transaction_id(t()) :: Raft.transaction_id()
   def newest_safe_transaction_id(t) do
     case :dets.lookup(t.table_name, :last_commit) do
       [{:last_commit, transaction_id}] -> transaction_id
@@ -284,9 +315,12 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Does the log contain the given transaction?
+  """
+  @spec has_transaction_id?(t(), Raft.transaction_id()) :: boolean()
   def has_transaction_id?(_t, @initial_transaction_id), do: true
-  @impl true
+
   def has_transaction_id?(t, transaction_id) do
     case :dets.lookup(t.table_name, transaction_id) do
       [_] -> true
@@ -294,31 +328,39 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
+  @doc """
+  Get a list of transactions that have occurred up to the given transaction.
+  """
+  @spec transactions_to(t(), Raft.transaction_id() | :newest | :newest_safe) :: [
+          stored_transaction_record()
+        ]
   def transactions_to(t, :newest),
     do: transactions_from(t, @initial_transaction_id, newest_transaction_id(t))
 
-  @impl true
   def transactions_to(t, :newest_safe),
     do: transactions_from(t, @initial_transaction_id, newest_safe_transaction_id(t))
 
-  @impl true
   def transactions_to(t, to), do: transactions_from(t, @initial_transaction_id, to)
 
-  @impl true
+  @doc """
+  Get a list of transactions from the given starting point.
+  """
+  @spec transactions_from(
+          t(),
+          Raft.transaction_id(),
+          Raft.transaction_id() | :newest | :newest_safe
+        ) :: [stored_transaction_record()]
   def transactions_from(t, from, :newest),
     do: transactions_from(t, from, newest_transaction_id(t))
 
-  @impl true
   def transactions_from(t, from, :newest_safe),
     do: transactions_from(t, from, newest_safe_transaction_id(t))
 
-  @impl true
   def transactions_from(t, @initial_transaction_id, to) do
     # Special case: from initial_transaction_id includes all up to 'to'
     case :dets.lookup(t.table_name, {:chain, @initial_transaction_id}) do
       [{{:chain, @initial_transaction_id}, first_real_txn}] when first_real_txn != nil ->
-        DiskRaftLog.walk_chain_inclusive(t, first_real_txn, to)
+        walk_chain_inclusive(t, first_real_txn, to)
 
       # Empty chain
       _ ->
@@ -326,7 +368,6 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @impl true
   def transactions_from(t, from, to) when from != @initial_transaction_id do
     # Normal case: exclude 'from', include up to 'to'
     case :dets.lookup(t.table_name, from) do
@@ -338,11 +379,26 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
         # Follow chain starting from NEXT after from
         case :dets.lookup(t.table_name, {:chain, from}) do
           [{{:chain, ^from}, next_id}] when next_id != nil and next_id <= to ->
-            DiskRaftLog.walk_chain_inclusive(t, next_id, to)
+            walk_chain_inclusive(t, next_id, to)
 
           _ ->
             []
         end
     end
   end
+end
+
+# Implement the Bedrock.Raft.Log protocol using delegation
+defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
+  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
+  defdelegate new_id(t, term, sequence), to: DiskRaftLog
+  defdelegate initial_transaction_id(t), to: DiskRaftLog
+  defdelegate append_transactions(t, prev_id, transactions), to: DiskRaftLog
+  defdelegate purge_transactions_after(t, transaction_id), to: DiskRaftLog
+  defdelegate commit_up_to(t, transaction_id), to: DiskRaftLog
+  defdelegate newest_transaction_id(t), to: DiskRaftLog
+  defdelegate newest_safe_transaction_id(t), to: DiskRaftLog
+  defdelegate has_transaction_id?(t, transaction_id), to: DiskRaftLog
+  defdelegate transactions_to(t, to), to: DiskRaftLog
+  defdelegate transactions_from(t, from, to), to: DiskRaftLog
 end

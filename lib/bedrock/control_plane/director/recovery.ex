@@ -115,7 +115,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> run_recovery_attempt(context)
     |> case do
       {:ok, completed} ->
-        trace_recovery_completed(Interval.between(completed.started_at, now()))
+        trace_recovery_completed(Interval.between(completed.started_at, now(), :microsecond))
 
         t
         |> Map.put(:state, :running)

@@ -11,10 +11,8 @@ defmodule Bedrock.KeyCodec.BinaryKeyCodecTest do
   end
 
   property "encode_key/1 returns {:error, :invalid_key} for non-binary keys" do
-    check all(key <- term()) do
-      if not is_binary(key) do
-        assert BinaryKeyCodec.encode_key(key) == {:error, :invalid_key}
-      end
+    check all(key <- term(), not is_binary(key)) do
+      assert BinaryKeyCodec.encode_key(key) == {:error, :invalid_key}
     end
   end
 
@@ -25,10 +23,8 @@ defmodule Bedrock.KeyCodec.BinaryKeyCodecTest do
   end
 
   property "decode_key/1 returns {:error, :invalid_key} for non-binary encoded_keys" do
-    check all(encoded_key <- term()) do
-      if not is_binary(encoded_key) do
-        assert BinaryKeyCodec.decode_key(encoded_key) == {:error, :invalid_key}
-      end
+    check all(encoded_key <- term(), not is_binary(encoded_key)) do
+      assert BinaryKeyCodec.decode_key(encoded_key) == {:error, :invalid_key}
     end
   end
 end

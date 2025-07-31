@@ -1,9 +1,10 @@
 defmodule Bedrock.DataPlane.Resolver.Recovery do
+  @moduledoc false
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree
-  alias Bedrock.DataPlane.Log.Transaction
-  alias Bedrock.DataPlane.Log.EncodedTransaction
 
   @spec recover_from(
           State.t(),

@@ -1,4 +1,7 @@
 defmodule Bedrock.Internal.TimerManagement do
+  @moduledoc """
+  Utilities for managing GenServer timers in a structured way.
+  """
   @type timer_container :: %{:timers => %{atom() => reference()} | nil, optional(atom()) => any()}
   defmacro __using__(_opts) do
     quote do

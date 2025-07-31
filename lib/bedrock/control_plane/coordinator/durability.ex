@@ -1,8 +1,11 @@
 defmodule Bedrock.ControlPlane.Coordinator.Durability do
+  @moduledoc false
+
+  alias Bedrock.ControlPlane.Coordinator.Commands
+  alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
-  alias Bedrock.ControlPlane.Coordinator.State
-  alias Bedrock.ControlPlane.Coordinator.Commands
 
   import Bedrock.ControlPlane.Coordinator.State.Changes
 
@@ -12,12 +15,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @spec durably_write_config(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
   def durably_write_config(t, command, ack_fn) do
-    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(command) do
-      {:ok,
-       t
-       |> set_raft(raft)
-       |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
-    else
+    case t.raft |> Raft.add_transaction(command) do
+      {:ok, raft, txn_id} ->
+        {:ok,
+         t
+         |> set_raft(raft)
+         |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+
       {:error, _reason} = error ->
         ack_fn.(error)
         error
@@ -27,12 +31,29 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @spec durably_write_transaction_system_layout(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
   def durably_write_transaction_system_layout(t, command, ack_fn) do
-    with {:ok, raft, txn_id} <- t.raft |> Raft.add_transaction(command) do
-      {:ok,
-       t
-       |> set_raft(raft)
-       |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
-    else
+    case t.raft |> Raft.add_transaction(command) do
+      {:ok, raft, txn_id} ->
+        {:ok,
+         t
+         |> set_raft(raft)
+         |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+
+      {:error, _reason} = error ->
+        ack_fn.(error)
+        error
+    end
+  end
+
+  @spec durably_write_service_registration(State.t(), Commands.command(), ack_fn()) ::
+          {:ok, State.t()} | {:error, :not_leader}
+  def durably_write_service_registration(t, command, ack_fn) do
+    case t.raft |> Raft.add_transaction(command) do
+      {:ok, raft, txn_id} ->
+        {:ok,
+         t
+         |> set_raft(raft)
+         |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
+
       {:error, _reason} = error ->
         ack_fn.(error)
         error
@@ -95,4 +116,44 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     |> put_epoch(epoch)
     |> put_director(director)
   end
+
+  def process_command(t, {:register_services, %{services: services}}) do
+    # Filter only new or changed services before updating
+    new_or_changed_services =
+      Enum.filter(services, fn {service_id, kind, worker_ref} ->
+        case Map.get(t.service_directory, service_id) do
+          # Same service info, skip
+          {^kind, ^worker_ref} -> false
+          # New or changed service
+          _ -> true
+        end
+      end)
+
+    updated_state =
+      t
+      |> update_service_directory(fn directory ->
+        Enum.into(services, directory, fn {service_id, kind, worker_ref} ->
+          {service_id, {kind, worker_ref}}
+        end)
+      end)
+
+    # Notify director of new services
+    notify_director_if_needed(updated_state.director, new_or_changed_services)
+
+    updated_state
+  end
+
+  def process_command(t, {:deregister_services, %{service_ids: service_ids}}) do
+    t
+    |> update_service_directory(fn directory ->
+      Map.drop(directory, service_ids)
+    end)
+  end
+
+  # Private helper to notify director only when needed
+  defp notify_director_if_needed(:unavailable, _service_infos), do: :ok
+  defp notify_director_if_needed(_director, []), do: :ok
+
+  defp notify_director_if_needed(director, service_infos),
+    do: Director.notify_services_registered(director, service_infos)
 end

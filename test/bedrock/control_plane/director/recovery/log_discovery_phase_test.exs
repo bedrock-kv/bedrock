@@ -2,21 +2,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:determine_old_logs_to_copy)
         |> with_log_recovery_info(%{
           {:log, 1} => %{oldest_version: 10, last_version: 50},
           {:log, 2} => %{oldest_version: 5, last_version: 45}
         })
 
       # Quorum = 2
-      result =
+      {result, next_phase} =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{
@@ -38,7 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
           }
         })
 
-      assert result.state == :create_vacancies
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
       assert is_list(result.old_log_ids_to_copy)
       assert is_tuple(result.version_vector)
       assert length(result.old_log_ids_to_copy) > 0
@@ -46,11 +45,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
 
     test "stalls recovery when unable to meet log quorum" do
       recovery_attempt = %RecoveryAttempt{
-        state: :determine_old_logs_to_copy,
         log_recovery_info_by_id: %{}
       }
 
-      result =
+      {_result, next_phase_or_stall} =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{logs: %{}, storage_teams: []},
@@ -64,18 +62,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
           }
         })
 
-      assert result.state == {:stalled, :unable_to_meet_log_quorum}
+      assert {:stalled, :unable_to_meet_log_quorum} = next_phase_or_stall
     end
 
     test "handles single log with quorum of 1" do
       recovery_attempt = %RecoveryAttempt{
-        state: :determine_old_logs_to_copy,
         log_recovery_info_by_id: %{
           {:log, 1} => %{oldest_version: 10, last_version: 50}
         }
       }
 
-      result =
+      {result, next_phase} =
         LogDiscoveryPhase.execute(recovery_attempt, %{
           node_tracking: nil,
           old_transaction_system_layout: %{
@@ -95,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhaseTest do
           }
         })
 
-      assert result.state == :create_vacancies
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
       assert result.old_log_ids_to_copy == [{:log, 1}]
       assert result.version_vector == {10, 50}
     end

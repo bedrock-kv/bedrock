@@ -10,15 +10,15 @@ defmodule TestTelemetryHandler do
         on_exit(fn -> TestTelemetryHandler.detach(handler) end)
         %{telemetry_handler: handler}
       end
-      
+
       test "emits recovery started event", %{telemetry_handler: handler} do
         # Code that emits telemetry
         :telemetry.execute([:bedrock, :recovery, :started], %{}, %{attempt: 1})
-        
+
         # Assert on captured events
         events = TestTelemetryHandler.get_events(handler)
         assert length(events) == 1
-        
+
         [event] = events
         assert event.name == [:bedrock, :recovery, :started]
         assert event.metadata.attempt == 1

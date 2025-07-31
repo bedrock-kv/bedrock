@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.State do
-  alias Bedrock.DataPlane.Storage.Basalt.Database
-  alias Bedrock.Service.Worker
-  alias Bedrock.Service.Foreman
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Storage.Basalt.Database
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
           otp_name: atom(),

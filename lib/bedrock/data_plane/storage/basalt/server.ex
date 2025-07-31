@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Server do
+  @moduledoc false
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Logic
   alias Bedrock.DataPlane.Storage.Basalt.State

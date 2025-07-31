@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.Impl do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Service.Foreman.State
@@ -25,6 +26,17 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_fetch_storage_workers(State.t()) :: [Worker.ref()]
   def do_fetch_storage_workers(t),
     do: otp_names_for_running_storage_workers(t)
+
+  @spec do_get_all_running_services(State.t()) :: [
+          {String.t(), :log | :storage, {atom(), node()}}
+        ]
+  def do_get_all_running_services(t) do
+    t.workers
+    |> Enum.filter(fn {_id, worker_info} ->
+      worker_healthy?(worker_info) and worker_info.manifest != nil
+    end)
+    |> Enum.map(fn {_id, worker_info} -> service_info_from_worker_info(worker_info) end)
+  end
 
   @spec do_new_worker(State.t(), Worker.id(), :log | :storage) :: {State.t(), Worker.ref()}
   def do_new_worker(t, id, kind) do
@@ -256,4 +268,16 @@ defmodule Bedrock.Service.Foreman.Impl do
     do: worker.kind() == :storage
 
   def storage_worker?(_), do: false
+
+  @spec worker_healthy?(WorkerInfo.t()) :: boolean()
+  def worker_healthy?(%{health: {:ok, _pid}}), do: true
+  def worker_healthy?(_), do: false
+
+  @spec service_info_from_worker_info(WorkerInfo.t()) ::
+          {String.t(), :log | :storage, {atom(), node()}}
+  def service_info_from_worker_info(%{id: id, manifest: %{worker: worker}, otp_name: otp_name}) do
+    kind = worker.kind()
+    worker_ref = {otp_name, Node.self()}
+    {id, kind, worker_ref}
+  end
 end

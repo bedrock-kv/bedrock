@@ -14,17 +14,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
   Logs with committed transactions must be preserved to maintain durability
   guarantees across recovery.
 
-  Transitions to :determine_durable_version with a list of logs requiring data
+  Transitions to vacancy creation with a list of logs requiring data
   migration and the current cluster version vector.
   """
 
-  alias Bedrock.DataPlane.Log
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
-
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
-
-  @behaviour RecoveryPhase
+  alias Bedrock.DataPlane.Log
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -37,15 +34,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase do
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, log_ids, version_vector} ->
         trace_recovery_suitable_logs_chosen(log_ids, version_vector)
 
-        recovery_attempt
-        |> Map.put(:old_log_ids_to_copy, log_ids)
-        |> Map.put(:version_vector, version_vector)
-        |> Map.put(:state, :create_vacancies)
+        updated_recovery_attempt =
+          recovery_attempt
+          |> Map.put(:old_log_ids_to_copy, log_ids)
+          |> Map.put(:version_vector, version_vector)
+
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase}
     end
   end
 

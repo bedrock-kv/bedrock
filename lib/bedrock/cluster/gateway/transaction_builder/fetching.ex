@@ -1,6 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
-  alias Bedrock.DataPlane.Storage
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.DataPlane.Storage
 
   import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 
@@ -69,7 +71,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do
       nil ->
-        storage_servers_for_key(t.storage_table, key)
+        storage_servers_for_key(t.transaction_system_layout, key)
         |> case do
           [] ->
             raise "No storage server or team found for key: #{inspect(key)}"
@@ -120,20 +122,38 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   end
 
   @doc """
-  Retrieves the set of storage servers responsible for a given key from the ETS
-  table that is maintained by the Gateway.
+  Retrieves the set of storage servers responsible for a given key from the 
+  Transaction System Layout.
   """
-  @spec storage_servers_for_key(:ets.table(), key :: binary()) :: [{Bedrock.key_range(), pid()}]
-  def storage_servers_for_key(storage_table, key) do
-    :ets.select(storage_table, [
-      {
-        {{:"$1", :"$2"}, :"$3", :"$4", :"$5"},
-        [
-          {:and, {:"=<", :"$1", key}, {:or, {:<, key, :"$2"}, {:==, :end, :"$2"}}}
-        ],
-        [{{{{:"$1", :"$2"}}, :"$5"}}]
-      }
-    ])
+  @spec storage_servers_for_key(
+          Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
+          key :: binary()
+        ) ::
+          [{Bedrock.key_range(), pid()}]
+  def storage_servers_for_key(transaction_system_layout, key) do
+    transaction_system_layout.storage_teams
+    |> Enum.filter(fn %{key_range: {min_key, max_key_exclusive}} ->
+      min_key <= key and (key < max_key_exclusive or max_key_exclusive == :end)
+    end)
+    |> Enum.flat_map(fn %{key_range: key_range, storage_ids: storage_ids} ->
+      storage_ids
+      |> Enum.map(fn storage_id ->
+        storage_server = get_storage_server_pid(transaction_system_layout, storage_id)
+        {key_range, storage_server}
+      end)
+      |> Enum.filter(fn {_key_range, pid} -> not is_nil(pid) end)
+    end)
+  end
+
+  @spec get_storage_server_pid(
+          Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
+          String.t()
+        ) :: pid() | nil
+  defp get_storage_server_pid(transaction_system_layout, storage_id) do
+    case Map.get(transaction_system_layout.services, storage_id) do
+      %{kind: :storage, status: {:up, pid}} -> pid
+      _ -> nil
+    end
   end
 
   @doc """

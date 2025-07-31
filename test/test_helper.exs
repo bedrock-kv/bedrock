@@ -5,7 +5,7 @@ Faker.start()
 
 # Default test cluster for telemetry
 defmodule DefaultTestCluster do
-  def name(), do: "test_cluster"
+  def name, do: "test_cluster"
   def otp_name(component), do: :"test_#{component}"
 
   @doc """
@@ -13,6 +13,7 @@ defmodule DefaultTestCluster do
   Call this in test setup to ensure proper cluster identification.
   """
   def setup_telemetry_metadata(epoch \\ 1) do
+    # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
     Logger.metadata(cluster: __MODULE__, epoch: epoch)
     :ok
   end

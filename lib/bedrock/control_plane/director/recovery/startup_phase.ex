@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.StartPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.StartupPhase do
   @moduledoc """
   This is the entry point for all recovery attempts, whether triggered by
   coordinator startup, director failure, or node rejoin events.
@@ -22,25 +22,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StartPhase do
 
   ## State Transitions
 
-  - **Input**: `RecoveryAttempt` with `state: :start`
-  - **Output**: `RecoveryAttempt` with `state: :lock_available_services` and populated `started_at`
+  - **Input**: `RecoveryAttempt` from recovery system
+  - **Output**: `RecoveryAttempt` with populated `started_at`
 
   The phase always succeeds and never stalls, making it a reliable foundation
   for the more complex phases that follow.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   import Bedrock.Internal.Time, only: [now: 0]
 
   @doc """
-  Execute the start phase of recovery.
+  Execute the startup phase of recovery.
 
-  Sets the started_at timestamp and transitions to :lock_available_services.
+  Sets the started_at timestamp and returns the next phase module.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :start} = recovery_attempt, _context) do
-    %{recovery_attempt | started_at: now(), state: :lock_available_services}
+  def execute(%RecoveryAttempt{} = recovery_attempt, _context) do
+    updated_attempt = %{recovery_attempt | started_at: now()}
+    {updated_attempt, Bedrock.ControlPlane.Director.Recovery.LockingPhase}
   end
 end

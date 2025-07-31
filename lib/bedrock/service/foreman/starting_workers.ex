@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.StartingWorkers do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Manifest
@@ -47,6 +48,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   end
 
   defmodule(StartWorkerOp) do
+    @moduledoc false
+
     @type t :: %__MODULE__{}
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error]
   end

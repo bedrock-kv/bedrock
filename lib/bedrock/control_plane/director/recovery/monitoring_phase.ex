@@ -15,14 +15,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   mode to operational mode.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   require Logger
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :monitor_components} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     trace_recovery_monitoring_components()
 
     monitor_fn = Map.get(context, :monitor_fn, &Process.monitor/1)
@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     |> extract_pids_to_monitor()
     |> monitor_all_pids(monitor_fn)
 
-    recovery_attempt |> Map.put(:state, :completed)
+    {recovery_attempt, :completed}
   end
 
   @spec extract_pids_to_monitor(map()) :: [pid()]

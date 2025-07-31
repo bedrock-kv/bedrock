@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batch do
+  @moduledoc false
   @type reply_fn :: ({:ok, Bedrock.version()} | {:error, :abort} -> :ok)
 
   @type t :: %__MODULE__{

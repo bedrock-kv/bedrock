@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
+  @moduledoc false
   @spec normalize_timeout_to_ms(term()) :: pos_integer()
   def normalize_timeout_to_ms(n), do: n |> normalize_timeout() |> max(10) |> min(10_000)
 

@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Log do
-  @moduledoc """
-  """
+  @moduledoc false
 
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction
@@ -171,7 +170,7 @@ defmodule Bedrock.DataPlane.Log do
 
   ## Return Values:
 
-    - `:ok`: Recovery was successful.
+    - `{:ok, pid}`: Recovery was successful, returns the log's PID for subsequent operations.
     - `{:error, :unavailable}`: The log is unavailable, and recovery cannot be
       performed.
   """
@@ -181,7 +180,7 @@ defmodule Bedrock.DataPlane.Log do
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
-          :ok | {:error, :unavailable}
+          {:ok, pid()} | {:error, :unavailable}
   def recover_from(log, source_log, first_version, last_version),
     do: call(log, {:recover_from, source_log, first_version, last_version}, :infinity)
 

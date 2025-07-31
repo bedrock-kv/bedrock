@@ -1,10 +1,10 @@
 defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Resolver.Recovery
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree
-  alias Bedrock.DataPlane.Log.EncodedTransaction
 
   describe "apply_transaction/2" do
     test "applies a decoded transaction to a tree" do

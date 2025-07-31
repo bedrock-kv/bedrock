@@ -175,7 +175,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       transactions = Log.transactions_from(log, initial_id, :newest)
       assert transactions == [{{1, 1}, :tx1}, {{1, 2}, :tx2}, {{2, 3}, :tx3}]
 
-      # Test from middle to :newest  
+      # Test from middle to :newest
       transactions = Log.transactions_from(log, {1, 1}, :newest)
       assert transactions == [{{1, 2}, :tx2}, {{2, 3}, :tx3}]
 
@@ -286,7 +286,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "error handling" do
-    test "handles corrupted log gracefully", %{tmp_dir: tmp_dir} do
+    test "corrupted log returns a result", %{tmp_dir: tmp_dir} do
       log_name = :corruption_test
 
       # Create log and add some data
@@ -302,19 +302,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       log_file = Path.join(tmp_dir, "raft_log.LOG")
       File.write!(log_file, "corrupted data")
 
-      # Try to reopen - should handle gracefully
+      # Try to reopen - should not crash and should return some result
       log2 = DiskRaftLog.new(log_dir: tmp_dir, log_name: log_name)
+      result = DiskRaftLog.open(log2)
 
-      # This might fail or recover gracefully depending on disk_log behavior
-      case DiskRaftLog.open(log2) do
-        {:ok, recovered_log} ->
-          # If it opens, it should at least not crash
-          assert %DiskRaftLog{} = recovered_log
-
-        {:error, _reason} ->
-          # Graceful failure is acceptable
-          assert true
-      end
+      # Should return a tuple (either success or error, but not crash)
+      assert is_tuple(result)
+      assert tuple_size(result) == 2
     end
   end
 end

@@ -1,4 +1,7 @@
 defmodule Bedrock.DataPlane.Proxy do
+  @moduledoc """
+  Read version proxy for Bedrock's transaction system.
+  """
   use GenServer
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director

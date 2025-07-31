@@ -1,6 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Telemetry do
-  alias Bedrock.Telemetry
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Telemetry
 
   @spec trace_metadata() :: map()
   def trace_metadata, do: Process.get(:trace_metadata, %{})
@@ -10,7 +10,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 
   @spec trace_started() :: :ok
-  def trace_started(),
+  def trace_started,
     do: Telemetry.execute([:bedrock, :log, :started], %{}, trace_metadata())
 
   @spec trace_lock_for_recovery(epoch :: Bedrock.epoch()) :: :ok

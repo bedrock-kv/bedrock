@@ -1,8 +1,10 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
+  @moduledoc false
+
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back | :expired,
           gateway: pid(),
-          storage_table: :ets.table(),
+          transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
           key_codec: module(),
           value_codec: module(),
           #
@@ -24,7 +26,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
         }
   defstruct state: nil,
             gateway: nil,
-            storage_table: nil,
+            transaction_system_layout: nil,
             key_codec: nil,
             value_codec: nil,
             #

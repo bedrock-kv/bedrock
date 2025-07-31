@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.Foreman.WorkerInfo do
+  @moduledoc false
+
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 

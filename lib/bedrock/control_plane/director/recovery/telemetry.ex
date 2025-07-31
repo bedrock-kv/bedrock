@@ -1,6 +1,6 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
-  alias Bedrock.Telemetry
   alias Bedrock.Internal.Time.Interval
+  alias Bedrock.Telemetry
 
   @doc """
   Emits a telemetry event indicating that the cluster director has started
@@ -224,6 +224,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
       log_id: log_id,
       status: status,
       service: service
+    })
+  end
+
+  @spec trace_recovery_service_availability([String.t()], [String.t()], %{String.t() => term()}) ::
+          :ok
+  def trace_recovery_service_availability(old_logs, available_service_ids, service_details) do
+    Telemetry.execute([:bedrock, :recovery, :service_availability], %{}, %{
+      old_logs: old_logs,
+      available_service_ids: available_service_ids,
+      service_details: service_details
     })
   end
 

@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
+  @moduledoc false
+
   @type server :: GenServer.server()
 
   @doc """
@@ -54,6 +56,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   end
 
   defmodule State do
+    @moduledoc false
+
     defstruct path: nil,
               segments: [],
               size: 0,
@@ -65,6 +69,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   end
 
   defmodule Logic do
+    @moduledoc false
+
     @spec unused_file_prefix() :: String.t()
     def unused_file_prefix, do: "preallocated"
     @spec generate_unused_file_name(non_neg_integer()) :: String.t()
@@ -176,6 +182,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   end
 
   defmodule Server do
+    @moduledoc false
+
     use GenServer
 
     @impl GenServer

@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   @moduledoc """
   Determines the highest durable version across storage teams and identifies degraded teams.
 
@@ -14,11 +14,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   during data distribution. Teams missing too many replicas cannot contribute to
   the durable version calculation.
 
-  Transitions to :create_vacancies with the established durable version and list
+  Transitions to log recruitment with the established durable version and list
   of teams requiring repair.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
@@ -26,7 +26,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :determine_durable_version} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     determine_durable_version(
       context.old_transaction_system_layout.storage_teams,
       recovery_attempt.storage_recovery_info_by_id,
@@ -34,16 +34,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.DurableVersionPhase do
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, durable_version, healthy_teams, degraded_teams} ->
         trace_recovery_durable_version_chosen(durable_version)
         trace_recovery_team_health(healthy_teams, degraded_teams)
 
-        recovery_attempt
-        |> Map.put(:durable_version, durable_version)
-        |> Map.put(:degraded_teams, degraded_teams)
-        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
+        updated_recovery_attempt =
+          recovery_attempt
+          |> Map.put(:durable_version, durable_version)
+          |> Map.put(:degraded_teams, degraded_teams)
+
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
     end
   end
 

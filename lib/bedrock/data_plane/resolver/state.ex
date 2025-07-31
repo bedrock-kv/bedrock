@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Resolver.State do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Tree
 

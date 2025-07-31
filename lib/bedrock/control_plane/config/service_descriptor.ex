@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.ServiceDescriptor do
+  @moduledoc false
+
   @type kind :: :log | :storage
   @type otp_name :: atom()
   @type status :: {:up, pid()} | :unknown | :down

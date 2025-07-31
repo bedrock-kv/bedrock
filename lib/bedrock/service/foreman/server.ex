@@ -1,4 +1,5 @@
 defmodule Bedrock.Service.Foreman.Server do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.State
   import Bedrock.Service.Foreman.State, only: [new_state: 1]
@@ -51,6 +52,10 @@ defmodule Bedrock.Service.Foreman.Server do
   @impl true
   def handle_call(:storage_workers, _from, t),
     do: t |> do_fetch_storage_workers() |> then(&(t |> reply({:ok, &1})))
+
+  @impl true
+  def handle_call(:get_all_running_services, _from, t),
+    do: t |> do_get_all_running_services() |> then(&(t |> reply({:ok, &1})))
 
   @impl true
   def handle_call({:new_worker, id, kind}, _from, t),

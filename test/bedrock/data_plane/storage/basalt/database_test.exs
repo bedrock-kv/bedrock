@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.Storage.Basalt.Database
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Storage.Basalt.Database
 
   def random_name, do: "basalt_database_#{Faker.random_between(0, 10_000)}" |> String.to_atom()
 

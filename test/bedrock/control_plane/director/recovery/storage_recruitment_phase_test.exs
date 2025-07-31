@@ -13,7 +13,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
     test "successfully fills storage team vacancies and advances state" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:recruit_storage_to_fill_vacancies)
         |> with_cluster(TestCluster)
         |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
@@ -28,13 +27,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           "storage_4" => %{}
         })
 
-      result =
+      {result, next_phase} =
         StorageRecruitmentPhase.execute(
           recovery_attempt,
-          recovery_context() |> with_node_tracking(nodes: 1)
+          recovery_context()
+          |> with_node_tracking(nodes: 3)
+          |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+          |> Map.put(:available_services, %{
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
+          })
+          |> Map.put(:lock_service_fn, fn _service, _epoch ->
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :storage, durable_version: 0, oldest_durable_version: 0}}
+          end)
         )
 
-      assert result.state == :replay_old_logs
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
       assert is_list(result.storage_teams)
       assert length(result.storage_teams) == 2
 
@@ -47,7 +58,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
     test "stalls recovery when insufficient storage workers available" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:recruit_storage_to_fill_vacancies)
         |> with_cluster(TestCluster)
         |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
@@ -60,19 +70,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           "storage_3" => %{}
         })
 
-      result =
+      {_result, next_phase_or_stall} =
         StorageRecruitmentPhase.execute(
           recovery_attempt,
-          recovery_context() |> with_node_tracking(nodes: 1)
+          recovery_context()
+          # No nodes available - should cause insufficient_nodes error
+          |> with_node_tracking(nodes: 0)
+          |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+          |> Map.put(:available_services, %{
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}}
+            # Only storage_3 available for vacancies, should need to create 1 new worker
+          })
+          |> Map.put(:lock_service_fn, fn _service, _epoch ->
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :storage, durable_version: 0, oldest_durable_version: 0}}
+          end)
         )
 
-      assert {:stalled, {:all_workers_failed, _failed_workers}} = result.state
+      # Should fail due to insufficient nodes for worker creation, not worker creation failure
+      assert {:stalled, {:insufficient_nodes, 1, 0}} = next_phase_or_stall
     end
 
     test "handles storage teams with no vacancies" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:recruit_storage_to_fill_vacancies)
         |> with_cluster(TestCluster)
         |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", "storage_2"]},
@@ -85,20 +108,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           "storage_4" => %{}
         })
 
-      result =
+      {result, next_phase} =
         StorageRecruitmentPhase.execute(
           recovery_attempt,
-          recovery_context() |> with_node_tracking(nodes: 1)
+          recovery_context()
+          |> with_node_tracking(nodes: 3)
+          |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+          |> Map.put(:available_services, %{
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
+          })
+          |> Map.put(:lock_service_fn, fn _service, _epoch ->
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :storage, durable_version: 0, oldest_durable_version: 0}}
+          end)
         )
 
-      assert result.state == :replay_old_logs
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
       assert result.storage_teams == recovery_attempt.storage_teams
     end
 
     test "handles empty storage teams" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:recruit_storage_to_fill_vacancies)
         |> with_cluster(TestCluster)
         |> with_storage_teams([])
         |> with_storage_recovery_info(%{
@@ -106,13 +140,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           "storage_2" => %{}
         })
 
-      result =
+      {result, next_phase} =
         StorageRecruitmentPhase.execute(
           recovery_attempt,
-          recovery_context() |> with_node_tracking(nodes: 1)
+          recovery_context()
+          |> with_node_tracking(nodes: 3)
+          |> Map.put(:old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+          |> Map.put(:available_services, %{
+            "storage_1" => {:storage, {:storage_1, :node1}},
+            "storage_2" => {:storage, {:storage_2, :node1}},
+            "storage_3" => {:storage, {:storage_3, :node1}},
+            "storage_4" => {:storage, {:storage_4, :node1}}
+          })
+          |> Map.put(:lock_service_fn, fn _service, _epoch ->
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :storage, durable_version: 0, oldest_durable_version: 0}}
+          end)
         )
 
-      assert result.state == :replay_old_logs
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
       assert result.storage_teams == []
     end
 
@@ -122,7 +168,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:recruit_storage_to_fill_vacancies)
         |> with_cluster(TestCluster)
         |> with_storage_teams([
           %{tag: "team_1", storage_ids: ["storage_1", {:vacancy, 0}]},
@@ -137,17 +182,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         |> with_transaction_services(%{})
 
       context = %{
-        node_tracking: mock_node_tracking(),
+        node_capabilities: mock_node_tracking(),
+        old_transaction_system_layout: %{logs: %{}, storage_teams: []},
         available_services: %{
-          "storage_1" => %{status: {:up, mock_pid_1}},
-          "storage_2" => %{status: {:up, mock_pid_2}},
-          "storage_3" => %{status: {:up, spawn(fn -> :timer.sleep(1000) end)}}
-        }
+          "storage_1" => {:storage, {:storage_1, :node1}},
+          "storage_2" => {:storage, {:storage_2, :node1}},
+          "storage_3" => {:storage, {:storage_3, :node1}}
+        },
+        lock_service_fn: fn service, _epoch ->
+          # Handle coordinator format: {kind, {otp_name, node}}
+          {_kind, {otp_name, _node}} = service
+
+          # Map specific services to their expected PIDs for testing
+          existing_pid =
+            case otp_name do
+              :storage_1 -> mock_pid_1
+              :storage_2 -> mock_pid_2
+              _ -> spawn(fn -> :ok end)
+            end
+
+          {:ok, existing_pid, %{kind: :storage, durable_version: 0, oldest_durable_version: 0}}
+        end
       }
 
-      result = StorageRecruitmentPhase.execute(recovery_attempt, context)
+      {result, next_phase} = StorageRecruitmentPhase.execute(recovery_attempt, context)
 
-      assert result.state == :replay_old_logs
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
 
       # Verify that storage services have been collected
       assert Map.has_key?(result, :transaction_services)
@@ -187,7 +247,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
 
@@ -222,7 +282,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
     end
@@ -240,7 +300,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
 
@@ -266,7 +326,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
 
@@ -283,7 +343,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           [],
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
 
@@ -299,15 +359,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
       assigned_storage_ids =
         MapSet.new(["storage_1", "storage_2", {:vacancy, 0}, {:vacancy, 1}, {:vacancy, 2}])
 
-      # 3 vacancies total, but only 1 candidate available  
+      # 3 vacancies total, but only 1 candidate available (after filtering out assigned ones)
       all_storage_ids = MapSet.new(["storage_1", "storage_2", "storage_3"])
+      # Should give ["storage_3"]
+      available_storage_ids = MapSet.difference(all_storage_ids, assigned_storage_ids)
       available_nodes = []
 
       {:error, {:insufficient_nodes, 2, 0}} =
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          available_storage_ids,
           available_nodes
         )
     end
@@ -327,7 +389,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
         StorageRecruitmentPhase.fill_storage_team_vacancies(
           storage_teams,
           assigned_storage_ids,
-          all_storage_ids,
+          MapSet.difference(all_storage_ids, assigned_storage_ids),
           available_nodes
         )
 

@@ -158,8 +158,9 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     end
   rescue
     FunctionClauseError ->
-      raise(
-        "Transaction decode failed: invalid binary format, expected encoded transaction structure"
+      reraise(
+        "Transaction decode failed: invalid binary format, expected encoded transaction structure",
+        __STACKTRACE__
       )
   end
 

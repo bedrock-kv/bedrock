@@ -1,8 +1,8 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.SequencerPhase
+  alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -18,7 +18,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:define_sequencer)
         |> with_cluster(TestCluster)
         |> with_epoch(1)
         |> with_version_vector({0, 100})
@@ -27,10 +26,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
       # The actual execution will fail because TestCluster.otp_name(:sup)
       # doesn't point to a real supervisor, but now it should return an error
       # instead of exiting thanks to our try-catch fix
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {result, next_phase_or_stall} =
+        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should be stalled due to supervisor not existing
-      assert {:stalled, {:failed_to_start, :sequencer, _, {:supervisor_exit, _}}} = result.state
+      assert {:stalled, {:failed_to_start, :sequencer, _, {:supervisor_exit, _}}} =
+               next_phase_or_stall
+
       assert result.sequencer == nil
     end
   end
@@ -43,7 +45,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
       # Create a recovery attempt that will use a mocked starter
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:define_sequencer)
         |> with_cluster(TestCluster)
         |> with_epoch(1)
         |> with_version_vector({0, 100})
@@ -51,26 +52,27 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhaseTest do
 
       # Since we can't easily mock Shared.starter_for in this context,
       # we'll test the error handling path through the actual execution
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {result, next_phase_or_stall} =
+        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should be stalled due to supervisor not existing (which is our expected error case)
-      assert {:stalled, {:failed_to_start, :sequencer, _, _}} = result.state
+      assert {:stalled, {:failed_to_start, :sequencer, _, _}} = next_phase_or_stall
       assert result.sequencer == nil
     end
 
     test "handles startup errors gracefully" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:define_sequencer)
         |> with_cluster(TestCluster)
         |> with_epoch(1)
         |> with_version_vector({0, 100})
         |> with_sequencer(nil)
 
-      result = SequencerPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {result, next_phase_or_stall} =
+        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # Should transition to stalled state on any startup failure
-      assert {:stalled, {:failed_to_start, :sequencer, _, _}} = result.state
+      assert {:stalled, {:failed_to_start, :sequencer, _, _}} = next_phase_or_stall
       assert result.sequencer == nil
     end
   end

@@ -9,7 +9,7 @@ defmodule Bedrock.ControlPlane.Coordinator.PathConfigTest do
 
   # Mock cluster to test the path configuration pattern
   defmodule TestPathCluster do
-    def node_config() do
+    def node_config do
       Application.get_env(:bedrock, __MODULE__, [])
     end
   end

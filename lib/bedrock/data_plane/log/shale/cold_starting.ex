@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Log.Shale.Segment
 
   @spec reload_segments_at_path(segment_dir :: String.t()) ::

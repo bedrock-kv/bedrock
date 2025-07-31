@@ -1,12 +1,31 @@
 defmodule Bedrock.ControlPlane.Director do
   @moduledoc """
-  The director is a singleton within the cluster. It is created by the winner
-  of the coordinator election. It is responsible for bringing up the data plane
-  and putting the cluster into a writable state.
+  The director is a singleton within the cluster that orchestrates transaction
+  system lifecycle and epoch-based generation management.
+
+  Created by the coordinator election winner, the director is responsible for
+  bringing up the data plane and maintaining the cluster in a writable state.
+  It coordinates recovery after component failures and manages the distributed
+  consensus required for consistent system operation.
+
+  ## Epoch Management
+
+  The director implements epoch-based generation management to prevent split-brain
+  scenarios during recovery. Each recovery increments the cluster epoch, which
+  serves as a generation counter that ensures clean transitions between system
+  configurations.
+
+  Services locked with newer epochs take precedence over older ones, and processes
+  from previous epochs terminate themselves when they detect a generation change.
+  This approach eliminates the need for complex coordination protocols while
+  maintaining system consistency during concurrent recovery attempts.
+
+  The epoch mechanism ensures that only one director generation can make progress
+  at any given time, preventing conflicting recovery operations that could
+  compromise data integrity or system availability.
   """
-  alias Bedrock.Service.Worker
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.Service.Worker
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
@@ -51,65 +70,6 @@ defmodule Bedrock.ControlPlane.Director do
     do: director |> cast({:ping, self(), minimum_read_version})
 
   @doc """
-  Reports a new worker to the cluster director.
-
-  ## Parameters
-  - `director`: The reference to the cluster director (a GenServer).
-  - `node`: The node where the new worker is located.
-  - `worker_info`: A keyword list of information about the worker.
-
-  ## Returns
-  - `:ok`: Indicates the report was successfully sent.
-  """
-  @spec advertise_worker(
-          director :: ref(),
-          node(),
-          info :: running_service_info()
-        ) :: :ok
-  def advertise_worker(director, node, worker_info),
-    do: director |> cast({:node_added_worker, node, worker_info})
-
-  @doc """
-  Requests a node to rejoin the cluster with the given capabilities and running services.
-
-  ## Parameters
-  - `director`: The reference to the cluster director (a GenServer).
-  - `node`: The node that wants to rejoin.
-  - `capabilities`: A list of atoms representing the capabilities of the node.
-  - `running_services`: A list of keywords representing the services running on the node.
-  - `timeout_in_ms`: (Optional) The timeout for this request in milliseconds, default is 5000ms.
-
-  ## Returns
-  - `:ok`: If the request was successful.
-  - `{:error, :unavailable}`: If the cluster director is unavailable.
-  - `{:error, :nodes_must_be_added_by_an_administrator}`: If nodes must be added by an administrator.
-  """
-  @spec request_to_rejoin(
-          director :: ref(),
-          node(),
-          capabilities :: [Bedrock.Cluster.capability()],
-          Director.running_service_info_by_id(),
-          timeout_in_ms()
-        ) ::
-          :ok
-          | {:error, :unavailable | :timeout | :unknown}
-          | {:error, :nodes_must_be_added_by_an_administrator}
-          | {:error, {:relieved_by, {Bedrock.epoch(), director :: pid()}}}
-  def request_to_rejoin(
-        director,
-        node,
-        capabilities,
-        running_services,
-        timeout_in_ms \\ 5_000
-      ) do
-    director
-    |> call(
-      {:request_to_rejoin, node, capabilities, running_services},
-      timeout_in_ms
-    )
-  end
-
-  @doc """
   Requests a foreman on a specific node to create a new worker.
 
   ## Parameters
@@ -149,4 +109,23 @@ defmodule Bedrock.ControlPlane.Director do
         ) :: :ok
   def stand_relieved(director, {_new_epoch, _new_director} = relief),
     do: director |> cast({:stand_relieved, relief})
+
+  @doc """
+  Notifies the director that new services have been registered in the coordinator.
+  This allows the director to update its service directory and retry stalled recovery
+  if the new services might resolve insufficient_nodes conditions.
+
+  ## Parameters
+  - `director`: The reference to the cluster director (a GenServer).
+  - `service_infos`: List of service info tuples in format {service_id, kind, {otp_name, node}}
+
+  ## Returns
+  - `:ok`: Indicates the notification was successfully sent.
+  """
+  @spec notify_services_registered(
+          director :: ref(),
+          service_infos :: [{String.t(), atom(), {atom(), node()}}]
+        ) :: :ok
+  def notify_services_registered(director, service_infos),
+    do: director |> cast({:service_registered, service_infos})
 end

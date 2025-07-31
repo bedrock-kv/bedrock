@@ -1,14 +1,37 @@
 defmodule Bedrock.ControlPlane.Director.Nodes do
-  @moduledoc false
+  @moduledoc """
+  Manages node lifecycle and service discovery integration for the director.
+
+  This module handles the registration and tracking of services as nodes join
+  and leave the cluster. It serves as the bridge between the coordinator's
+  service discovery and the director's internal service representation.
+
+  ## Service Discovery Integration
+
+  Services discovered through the coordinator are registered directly in
+  coordinator format without conversion. This unified approach maintains
+  consistent service identity throughout the system while eliminating
+  format translation overhead.
+
+  The coordinator format `{kind, {otp_name, node}}` flows directly from
+  service registration through recovery phases, ensuring that service
+  identity and location information remains consistent across all system
+  components. Status information is tracked separately when needed, allowing
+  the core service identity to remain simple and cacheable.
+
+  Node rejoin operations batch service registrations to minimize state
+  transitions while maintaining atomic updates to the director's service
+  directory.
+  """
 
   alias Bedrock.Cluster
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.ControlPlane.Config
+  alias Bedrock.Internal.TimerManagement
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-  alias Bedrock.Internal.TimerManagement
 
   use TimerManagement
 
@@ -124,11 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
         services
         |> Map.put(
           service_info[:id],
-          %{
-            kind: service_info[:kind],
-            last_seen: {service_info[:otp_name], node},
-            status: {:up, service_info[:pid]}
-          }
+          {service_info[:kind], {service_info[:otp_name], node}}
         )
       end)
     end)
@@ -142,11 +161,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
       services
       |> Map.put(
         service_info[:id],
-        %{
-          kind: service_info[:kind],
-          last_seen: {service_info[:otp_name], node},
-          status: {:up, service_info[:pid]}
-        }
+        {service_info[:kind], {service_info[:otp_name], node}}
       )
     end)
   end
@@ -178,15 +193,20 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
 
       case Foreman.new_worker(foreman_ref, worker_id, kind, timeout: 10_000) do
         {:ok, worker_ref} ->
-          # Get detailed info about the created worker
-          case Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
-            {:ok, worker_info} -> {:ok, worker_info}
-            {:error, reason} -> {:error, {:worker_info_failed, reason}}
-          end
+          get_worker_info(worker_ref)
 
         {:error, reason} ->
           {:error, {:worker_creation_failed, reason}}
       end
+    end
+  end
+
+  @spec get_worker_info(Worker.ref()) ::
+          {:ok, Director.running_service_info()} | {:error, {:worker_info_failed, term()}}
+  defp get_worker_info(worker_ref) do
+    case Worker.info(worker_ref, [:id, :otp_name, :kind, :pid]) do
+      {:ok, worker_info} -> {:ok, worker_info}
+      {:error, reason} -> {:error, {:worker_info_failed, reason}}
     end
   end
 end

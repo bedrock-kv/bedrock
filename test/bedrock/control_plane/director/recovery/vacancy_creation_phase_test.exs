@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
   describe "execute/1" do
     test "successfully creates vacancies for logs and storage teams" do
-      recovery_attempt = recovery_attempt() |> with_state(:create_vacancies)
+      recovery_attempt = recovery_attempt()
 
       context =
         recovery_context()
@@ -21,9 +21,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      result = VacancyCreationPhase.execute(recovery_attempt, context)
+      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert result.state == :determine_durable_version
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
       assert is_map(result.logs)
       assert is_list(result.storage_teams)
       # Should have vacancies created for both logs and storage
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
     end
 
     test "handles empty logs and storage teams" do
-      recovery_attempt = recovery_attempt() |> with_state(:create_vacancies)
+      recovery_attempt = recovery_attempt()
 
       context =
         recovery_context()
@@ -44,9 +44,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      result = VacancyCreationPhase.execute(recovery_attempt, context)
+      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert result.state == :determine_durable_version
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
       assert result.logs == %{}
       assert result.storage_teams == []
     end
@@ -63,7 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       # Creates 2 unique tag groups (tag_a, tag_b)
       # Each group gets desired_logs vacancies = 3
-      # Total: 2 * 3 = 6 vacancies created  
+      # Total: 2 * 3 = 6 vacancies created
       assert map_size(updated_logs) == 6
       # n_vacancies = map_size(updated_logs) = 6
       assert n_vacancies == 6
@@ -182,7 +182,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       # storage_1 should be in tags ["tag_1", "tag_2"] -> sorted as ["tag_1", "tag_2"]
       # storage_2 should be in tags ["tag_1"]
-      # storage_3 should be in tags ["tag_2"]  
+      # storage_3 should be in tags ["tag_2"]
       # storage_4 should be in tags ["tag_3"]
 
       assert is_map(rosters)
@@ -261,16 +261,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
       assert is_integer(n_vacancies)
       assert is_map(expanded_rosters)
 
-      # Check that vacancy IDs are present if vacancies were created
-      if n_vacancies > 0 do
-        all_vacancies =
-          expanded_rosters
-          |> Map.values()
-          |> List.flatten()
-          |> Enum.filter(fn id -> match?({:vacancy, _}, id) end)
+      # Check that when vacancies are needed, some are created in the rosters
+      all_vacancies =
+        expanded_rosters
+        |> Map.values()
+        |> List.flatten()
+        |> Enum.filter(fn id -> match?({:vacancy, _}, id) end)
 
-        assert length(all_vacancies) > 0
-      end
+      # With 2 existing storages and needing 3 total, we expect some vacancies
+      assert n_vacancies == 2
+      assert length(all_vacancies) == 4
     end
   end
 

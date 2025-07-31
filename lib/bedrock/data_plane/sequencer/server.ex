@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Sequencer.Server do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Sequencer.State
 
   use GenServer

@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Sequencer do
+  @moduledoc false
+
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: pid() | atom() | {atom(), node()}

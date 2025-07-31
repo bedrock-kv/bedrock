@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
@@ -6,7 +7,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
 
   # Mock cluster for testing
   defmodule TestCluster do
-    def name(), do: "test_cluster"
+    def name, do: "test_cluster"
   end
 
   setup do
@@ -435,7 +436,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
       # Stop should work
       assert Tracing.stop() == :ok
 
-      # Stopping again should return error  
+      # Stopping again should return error
       assert Tracing.stop() == {:error, :not_found}
 
       # Should be able to start again after stop

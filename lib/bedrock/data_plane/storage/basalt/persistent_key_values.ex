@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
-  @moduledoc """
-  """
+  @moduledoc false
 
   alias Bedrock.DataPlane.Log.Transaction
 

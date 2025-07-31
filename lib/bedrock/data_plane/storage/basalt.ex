@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Basalt do
+  @moduledoc false
+
   use Bedrock.Service.WorkerBehaviour, kind: :storage
 
   @doc false

@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.Foreman.Health do
+  @moduledoc false
+
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Foreman.WorkerInfo
 

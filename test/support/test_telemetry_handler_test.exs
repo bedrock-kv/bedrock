@@ -84,7 +84,7 @@ defmodule TestTelemetryHandlerTest do
       TestTelemetryHandler.clear_events(handler)
 
       events = TestTelemetryHandler.get_events(handler)
-      assert length(events) == 0
+      assert Enum.empty?(events)
     end
 
     test "waits for events with timeout" do
@@ -126,7 +126,7 @@ defmodule TestTelemetryHandlerTest do
       # Should timeout
       {:timeout, events} = TestTelemetryHandler.wait_for_events(handler, 1, 50)
 
-      assert length(events) == 0
+      assert Enum.empty?(events)
     end
   end
 end

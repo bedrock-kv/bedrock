@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.CommitProxy.Server do
-  alias Bedrock.DataPlane.CommitProxy.State
-  alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.Internal.Time
+  @moduledoc false
+
   alias Bedrock.Cluster
+  alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.State
+  alias Bedrock.Internal.Time
 
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [

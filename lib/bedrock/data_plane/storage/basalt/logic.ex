@@ -1,12 +1,13 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
-  alias Bedrock.Service.Worker
+  @moduledoc false
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.DataPlane.Storage.Basalt.Database
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
+  alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.DataPlane.Version
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.Service.Worker
 
   import Bedrock.DataPlane.Storage.Basalt.State,
     only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]

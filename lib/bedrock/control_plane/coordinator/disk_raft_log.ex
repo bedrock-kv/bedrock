@@ -17,7 +17,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   Coordinator follows standard Bedrock working directory pattern:
 
       /data/coordinator/      # Base path from config[:coordinator][:path]
-      └── raft/               # Coordinator working directory  
+      └── raft/               # Coordinator working directory
           ├── raft_log.LOG    # Main log file
           └── raft_log.IDX    # Index file (managed by disk_log)
 
@@ -150,12 +150,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   """
   @spec read_all_entries(t()) :: {:ok, [term()]} | {:error, term()}
   def read_all_entries(%__MODULE__{log_name: log_name}) do
-    try do
-      entries = read_entries_recursive(log_name, :start, [])
-      {:ok, entries}
-    rescue
-      error -> {:error, error}
-    end
+    entries = read_entries_recursive(log_name, :start, [])
+    {:ok, entries}
+  rescue
+    error -> {:error, error}
   end
 
   @doc """
@@ -332,23 +330,21 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   defp append_transactions_to_disk(t, transactions) do
     # Convert transactions to our internal format and append to disk_log
-    try do
-      numbered_transactions = number_transactions(t, transactions)
+    numbered_transactions = number_transactions(t, transactions)
 
-      Enum.each(numbered_transactions, fn {transaction_id, term, data} ->
-        entry = {transaction_id, term, data}
-        :ok = :disk_log.log(t.log_name, entry)
-      end)
+    Enum.each(numbered_transactions, fn {transaction_id, term, data} ->
+      entry = {transaction_id, term, data}
+      :ok = :disk_log.log(t.log_name, entry)
+    end)
 
-      # Update in-memory state
-      new_entries = t.entries ++ numbered_transactions
-      new_index = update_index(t.index, numbered_transactions)
+    # Update in-memory state
+    new_entries = t.entries ++ numbered_transactions
+    new_index = update_index(t.index, numbered_transactions)
 
-      updated_log = %{t | entries: new_entries, index: new_index}
-      {:ok, updated_log}
-    catch
-      :error, reason -> {:error, reason}
-    end
+    updated_log = %{t | entries: new_entries, index: new_index}
+    {:ok, updated_log}
+  catch
+    :error, reason -> {:error, reason}
   end
 
   defp number_transactions(t, transactions) do

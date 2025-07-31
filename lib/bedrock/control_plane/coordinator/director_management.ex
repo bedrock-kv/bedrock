@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator.State
@@ -67,7 +69,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
          old_transaction_system_layout: t.transaction_system_layout,
          epoch: t.epoch,
          coordinator: self(),
-         relieving: {t.epoch, t.director}
+         relieving: {t.epoch, t.director},
+         services: t.service_directory
        ]}
     )
     |> case do

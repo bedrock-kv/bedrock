@@ -1,4 +1,7 @@
 defmodule Bedrock.Service.Foreman do
+  @moduledoc """
+  Manages worker processes and service lifecycle operations.
+  """
   use Bedrock.Internal.GenServerApi, for: Bedrock.Service.Foreman.Supervisor
 
   alias Bedrock.Service.Worker
@@ -99,4 +102,19 @@ defmodule Bedrock.Service.Foreman do
         ) :: :ok
   def report_health(foreman, worker_id, health),
     do: cast(foreman, {:worker_health, worker_id, health})
+
+  @doc """
+  Return a list of all running services with information needed for coordinator registration.
+
+  Each service is returned as a tuple of {service_id, kind, worker_ref} where:
+  - service_id is the unique identifier for the service
+  - kind is :log or :storage
+  - worker_ref is {name, node} tuple for distributed system compatibility
+  """
+  @spec get_all_running_services(foreman :: ref(), opts :: [timeout: timeout()]) ::
+          {:ok,
+           [{service_id :: String.t(), kind :: :log | :storage, worker_ref :: {atom(), node()}}]}
+          | {:error, :unavailable | :timeout | :unknown}
+  def get_all_running_services(foreman, opts \\ []),
+    do: call(foreman, :get_all_running_services, to_timeout(opts[:timeout] || :infinity))
 end

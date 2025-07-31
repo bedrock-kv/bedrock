@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy.State do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
 

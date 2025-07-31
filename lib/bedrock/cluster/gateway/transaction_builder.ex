@@ -1,4 +1,6 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
@@ -11,7 +13,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   @spec start_link(
           opts :: [
             gateway: Gateway.ref(),
-            storage_table: :ets.table(),
+            transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
             key_codec: module(),
             value_codec: module()
           ]
@@ -19,10 +21,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
           {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
-    storage_table = Keyword.fetch!(opts, :storage_table)
+    transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
     key_codec = Keyword.fetch!(opts, :key_codec)
     value_codec = Keyword.fetch!(opts, :value_codec)
-    GenServer.start_link(__MODULE__, {gateway, storage_table, key_codec, value_codec})
+    GenServer.start_link(__MODULE__, {gateway, transaction_system_layout, key_codec, value_codec})
   end
 
   use GenServer
@@ -33,11 +35,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, storage_table, key_codec, value_codec}) do
+  def handle_continue(
+        :initialization,
+        {gateway, transaction_system_layout, key_codec, value_codec}
+      ) do
     %State{
       state: :valid,
       gateway: gateway,
-      storage_table: storage_table,
+      transaction_system_layout: transaction_system_layout,
       key_codec: key_codec,
       value_codec: value_codec
     }

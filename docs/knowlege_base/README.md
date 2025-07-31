@@ -29,6 +29,12 @@ This knowledge base is optimized for **token-efficient progressive loading** wit
 - **[Architecture Deep](docs/knowlege_base/02-deep/architecture-deep.md)** - Complete architectural reference
 - **[Development Deep](docs/knowlege_base/02-deep/development-deep.md)** - Comprehensive development practices
 
+## Reminders
+- Aliases are always preferred over fully qualified names.
+- Aliases always belong at the top of modules.
+- A module and the moduledoc (if present) must always be internally-consistent.
+- Tests must never contain conditional assertions.
+
 ## 🚀 Common Workflows
 
 ### Getting Started / Returning to Development

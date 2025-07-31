@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   @moduledoc """
   Starts commit proxy components that batch transactions and coordinate commits.
 
@@ -14,19 +14,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
   At least one commit proxy must be operational for the cluster to accept
   transactions.
 
-  Transitions to :define_resolvers to continue starting transaction system
+  Transitions to resolver startup to continue starting transaction system
   components.
   """
 
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.Cluster
-  alias Bedrock.DataPlane.CommitProxy
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  alias Bedrock.DataPlane.CommitProxy
 
   @impl true
-  def execute(%RecoveryAttempt{state: :define_commit_proxies} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     start_supervised_fn =
       Map.get(context, :start_supervised_fn, fn child_spec, node ->
         sup_otp_name = recovery_attempt.cluster.otp_name(:sup)
@@ -45,10 +44,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyPhase do
     )
     |> case do
       {:error, reason} ->
-        %{recovery_attempt | state: {:stalled, reason}}
+        {recovery_attempt, {:stalled, reason}}
 
       {:ok, commit_proxies} ->
-        %{recovery_attempt | proxies: commit_proxies, state: :define_resolvers}
+        updated_recovery_attempt = %{recovery_attempt | proxies: commit_proxies}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase}
     end
   end
 

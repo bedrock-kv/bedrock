@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batching do
-  alias Bedrock.DataPlane.CommitProxy.State
+  @moduledoc false
+
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.State
 
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 1]
 

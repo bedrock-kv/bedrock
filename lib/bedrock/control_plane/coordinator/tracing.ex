@@ -1,4 +1,7 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.ControlPlane.Coordinator.Tracing do
+  @moduledoc false
+
   require Logger
 
   @spec handler_id() :: String.t()

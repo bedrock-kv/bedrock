@@ -15,38 +15,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   to minimize recovery time.
 
   Can stall if source logs are unavailable or if the replay process fails.
-  Transitions to :repair_data_distribution once all required data is copied.
+  Transitions to data distribution once all required data is copied.
   """
 
   alias Bedrock.DataPlane.Log
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :replay_old_logs} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     replay_old_logs_into_new_logs(
       recovery_attempt.old_log_ids_to_copy,
       Map.keys(recovery_attempt.logs),
       recovery_attempt.version_vector,
-      fn log_id ->
-        case Map.get(recovery_attempt.transaction_services, log_id) do
-          %{status: {:up, pid}} -> pid
-          _ -> :none
-        end
-      end,
+      recovery_attempt,
       context
     )
     |> case do
       :ok ->
         trace_recovery_old_logs_replayed()
-
-        recovery_attempt
-        |> Map.put(:state, :repair_data_distribution)
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase}
 
       {:error, reason} ->
-        recovery_attempt |> Map.put(:state, {:stalled, reason})
+        {recovery_attempt, {:stalled, reason}}
     end
   end
 
@@ -54,7 +47,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           old_log_ids :: [Log.id()],
           new_log_ids :: [Log.id()],
           version_vector :: Bedrock.version_vector(),
-          pid_for_id :: (Log.id() -> pid() | :none),
+          recovery_attempt :: map(),
           context :: map()
         ) ::
           :ok
@@ -65,10 +58,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
         old_log_ids,
         new_log_ids,
         {first_version, last_version},
-        pid_for_id,
+        recovery_attempt,
         context \\ %{}
       ) do
-    log_recover_fn = Map.get(context, :log_recover_fn, &Log.recover_from/4)
+    log_recover_fn =
+      Map.get(context, :log_recover_fn, fn new_log_id,
+                                           old_log_id,
+                                           first_version,
+                                           last_version,
+                                           recovery_attempt ->
+        recover_log_with_pid_resolution(
+          new_log_id,
+          old_log_id,
+          first_version,
+          last_version,
+          recovery_attempt,
+          context
+        )
+      end)
 
     new_log_ids
     |> pair_with_old_log_ids(old_log_ids)
@@ -76,10 +83,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       fn {new_log_id, old_log_id} ->
         {new_log_id,
          log_recover_fn.(
-           pid_for_id.(new_log_id),
-           old_log_id && pid_for_id.(old_log_id),
+           new_log_id,
+           old_log_id,
            first_version,
-           last_version
+           last_version,
+           recovery_attempt
          )}
       end,
       ordered: false,
@@ -89,7 +97,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}
 
-      {:ok, {_log_id, :ok}}, failures ->
+      {:ok, {_log_id, {:ok, _pid}}}, failures ->
         {:cont, failures}
 
       {:ok, {log_id, {:error, reason}}}, failures ->
@@ -101,6 +109,63 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     |> case do
       failures when failures == %{} -> :ok
       failures -> {:error, {:failed_to_copy_some_logs, failures}}
+    end
+  end
+
+  @spec recover_log_with_pid_resolution(
+          new_log_id :: Log.id(),
+          old_log_id :: Log.id() | nil,
+          first_version :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          recovery_attempt :: map(),
+          context :: map()
+        ) :: {:ok, pid()} | {:error, term()}
+  defp recover_log_with_pid_resolution(
+         new_log_id,
+         old_log_id,
+         first_version,
+         last_version,
+         recovery_attempt,
+         context
+       ) do
+    # Get the target log name/node from available services
+    case get_log_name_node(new_log_id, recovery_attempt, context) do
+      {:ok, new_log_name_node} ->
+        old_log_name_node =
+          old_log_id &&
+            case get_log_name_node(old_log_id, recovery_attempt, context) do
+              {:ok, name_node} -> name_node
+              _ -> nil
+            end
+
+        # Call log recovery directly with {name, node} - GenServer.call will resolve PIDs
+        Log.recover_from(new_log_name_node, old_log_name_node, first_version, last_version)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @spec get_log_name_node(Log.id(), map(), map()) ::
+          {:ok, {atom(), node()}} | {:error, :unavailable}
+  defp get_log_name_node(log_id, recovery_attempt, context) do
+    # First check transaction_services (has PIDs for locked services)
+    case Map.get(recovery_attempt.transaction_services, log_id) do
+      %{last_seen: {name, node}} ->
+        {:ok, {name, node}}
+
+      %{status: {:up, _pid}, last_seen: {name, node}} ->
+        {:ok, {name, node}}
+
+      _ ->
+        # Check available_services from context for newly created services
+        case get_in(context, [:available_services, log_id]) do
+          {_kind, {name, node}} ->
+            {:ok, {name, node}}
+
+          _ ->
+            {:error, :unavailable}
+        end
     end
   end
 

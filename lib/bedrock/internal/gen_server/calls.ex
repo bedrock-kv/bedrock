@@ -1,4 +1,7 @@
 defmodule Bedrock.Internal.GenServer.Calls do
+  @moduledoc """
+  Utilities for GenServer call and cast operations.
+  """
   @spec broadcast([node()], otp_name :: atom(), message :: term()) :: :ok
   def broadcast(nodes, otp_name, message) do
     GenServer.abcast(nodes, otp_name, message)

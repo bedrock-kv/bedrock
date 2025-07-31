@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Log.Shale.Server
 
   use Bedrock.Service.WorkerBehaviour, kind: :log

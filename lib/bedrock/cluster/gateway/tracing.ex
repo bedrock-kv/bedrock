@@ -1,4 +1,7 @@
+# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.Cluster.Gateway.Tracing do
+  @moduledoc false
+
   require Logger
 
   @spec handler_id() :: String.t()
@@ -11,9 +14,6 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
       [
         [:bedrock, :cluster, :gateway, :started],
         [:bedrock, :cluster, :gateway, :advertise_capabilities],
-        [:bedrock, :cluster, :gateway, :searching_for_director],
-        [:bedrock, :cluster, :gateway, :found_director],
-        [:bedrock, :cluster, :gateway, :lost_director],
         [:bedrock, :cluster, :gateway, :searching_for_coordinator],
         [:bedrock, :cluster, :gateway, :found_coordinator]
       ],
@@ -46,18 +46,9 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
         running_services: running_services
       }) do
     info(
-      "Advertising to director (#{capabilities |> Enum.join(", ")}): #{inspect(running_services, pretty: true)}"
+      "Advertising capabilities (#{capabilities |> Enum.join(", ")}): #{inspect(running_services, pretty: true)}"
     )
   end
-
-  def trace(:searching_for_director, _, _),
-    do: info("Searching for a director")
-
-  def trace(:found_director, _, %{director: director, epoch: epoch}),
-    do: info("Found director: #{inspect(director)} for epoch #{inspect(epoch)}")
-
-  def trace(:lost_director, _, _),
-    do: info("Lost director")
 
   def trace(:searching_for_coordinator, _, _),
     do: info("Searching for a coordinator")
@@ -66,10 +57,10 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
     do: info("Found coordinator: #{inspect(coordinator)}")
 
   def trace(:missed_pong, %{missed_pongs: missed_pongs}, _) when missed_pongs > 1,
-    do: info("Missed #{inspect(missed_pongs)} pongs from director")
+    do: info("Missed #{inspect(missed_pongs)} pongs from coordinator")
 
   def trace(:missed_pong, %{missed_pongs: missed_pongs}, _),
-    do: info("Missed #{inspect(missed_pongs)} pong from director")
+    do: info("Missed #{inspect(missed_pongs)} pong from coordinator")
 
   @spec info(message :: String.t()) :: :ok
   def info(message) do

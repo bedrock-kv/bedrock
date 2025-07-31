@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Shale.Recovery do
+  @moduledoc false
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.Segment
@@ -57,18 +58,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       {:ok, transactions} ->
         transactions
-        |> Enum.reduce_while({first_version, t}, fn
-          <<version::unsigned-big-64, _::binary>> = bytes, {last_version, t} ->
-            with {:ok, transaction} <- EncodedTransaction.validate(bytes),
-                 {:ok, t} <- push(t, last_version, transaction, fn _ -> :ok end) do
-              {:cont, {version, t}}
-            else
-              {:wait, _t} -> {:halt, {:error, :tx_out_of_order}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-
-          _, _ ->
-            {:halt, {:error, :invalid_transaction}}
+        |> Enum.reduce_while({first_version, t}, fn bytes, acc ->
+          process_transaction_bytes(bytes, acc)
         end)
         |> case do
           {:error, _reason} = error -> error
@@ -77,6 +68,31 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       {:error, :unavailable} ->
         {:error, {:source_log_unavailable, log_ref}}
+    end
+  end
+
+  @spec process_transaction_bytes(binary(), {Bedrock.version(), State.t()}) ::
+          {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term()}}
+  defp process_transaction_bytes(
+         <<version::unsigned-big-64, _::binary>> = bytes,
+         {last_version, t}
+       ) do
+    handle_valid_transaction_bytes(bytes, version, last_version, t)
+  end
+
+  defp process_transaction_bytes(_, _) do
+    {:halt, {:error, :invalid_transaction}}
+  end
+
+  @spec handle_valid_transaction_bytes(binary(), Bedrock.version(), Bedrock.version(), State.t()) ::
+          {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term()}}
+  defp handle_valid_transaction_bytes(bytes, version, last_version, t) do
+    with {:ok, transaction} <- EncodedTransaction.validate(bytes),
+         {:ok, t} <- push(t, last_version, transaction, fn _ -> :ok end) do
+      {:cont, {version, t}}
+    else
+      {:wait, _t} -> {:halt, {:error, :tx_out_of_order}}
+      {:error, _reason} = error -> {:halt, error}
     end
   end
 
@@ -136,10 +152,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   @spec open_writer(State.t()) :: State.t()
   def open_writer(t) do
-    with {:ok, new_writer} <- Writer.open(t.active_segment.path) do
-      %{t | writer: new_writer}
-    else
-      {:error, _} -> raise "Failed to open writer"
+    case Writer.open(t.active_segment.path) do
+      {:ok, new_writer} ->
+        %{t | writer: new_writer}
+
+      {:error, _} ->
+        raise "Failed to open writer"
     end
   end
 

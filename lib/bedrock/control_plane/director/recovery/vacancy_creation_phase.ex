@@ -15,10 +15,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   replicas to meet the replication factor.
 
   Always succeeds since it only modifies in-memory structures. Transitions to
-  :recruit_logs_to_fill_vacancies to begin service assignment.
+  version determination to establish the recovery baseline.
   """
 
-  @behaviour Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
@@ -28,7 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
-  def execute(%{state: :create_vacancies} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     with {:ok, logs, n_log_vacancies} <-
            create_vacancies_for_logs(
              context.old_transaction_system_layout.logs,
@@ -41,10 +41,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
            ) do
       trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
 
-      recovery_attempt
-      |> Map.put(:logs, logs)
-      |> Map.put(:storage_teams, storage_teams)
-      |> Map.put(:state, :determine_durable_version)
+      updated_recovery_attempt =
+        recovery_attempt
+        |> Map.put(:logs, logs)
+        |> Map.put(:storage_teams, storage_teams)
+
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase}
     end
   end
 

@@ -1,4 +1,7 @@
 defmodule Bedrock.Internal.GenServer.Replies do
+  @moduledoc """
+  Utilities for GenServer reply tuple construction.
+  """
   @spec reply(state, result) :: {:reply, result, state} when state: term(), result: term()
   def reply(t, result), do: {:reply, result, t}
 

@@ -4,12 +4,12 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   the transaction system within the cluster.
   """
 
-  alias Bedrock.DataPlane.Log
-  alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
 
   @typedoc """
   Struct representing the layout of the transaction system within the cluster.
@@ -55,7 +55,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   @type id :: non_neg_integer()
 
   @spec default() :: t()
-  def default(),
+  def default,
     do: %{
       id: 0,
       epoch: 0,

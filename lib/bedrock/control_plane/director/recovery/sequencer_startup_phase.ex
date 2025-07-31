@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   @moduledoc """
   Starts the sequencer component that assigns global version numbers to transactions.
 
@@ -14,14 +14,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   start. The sequencer must be operational before commit proxies can process
   transactions.
 
-  Transitions to :define_commit_proxies once the sequencer is running and ready.
+  Transitions to proxy startup once the sequencer is running and ready.
   """
 
-  alias Bedrock.DataPlane.Sequencer
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.Shared
-  alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-  @behaviour RecoveryPhase
+  alias Bedrock.DataPlane.Sequencer
 
   @doc """
   Execute the sequencer definition phase of recovery.
@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   Starts the sequencer component with the current epoch and version vector.
   """
   @impl true
-  def execute(%RecoveryAttempt{state: :define_sequencer} = recovery_attempt, context) do
+  def execute(recovery_attempt, context) do
     starter_fn = get_starter_function(recovery_attempt, context)
 
     recovery_attempt
@@ -62,13 +62,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerPhase do
   end
 
   @spec handle_sequencer_result({:ok, pid()} | {:error, term()}, RecoveryAttempt.t()) ::
-          RecoveryAttempt.t()
-  defp handle_sequencer_result({:ok, sequencer}, recovery_attempt),
-    do: %{recovery_attempt | sequencer: sequencer, state: :define_commit_proxies}
+          {RecoveryAttempt.t(), module()} | {RecoveryAttempt.t(), {:stalled, term()}}
+  defp handle_sequencer_result({:ok, sequencer}, recovery_attempt) do
+    updated_recovery_attempt = %{recovery_attempt | sequencer: sequencer}
+    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase}
+  end
 
-  defp handle_sequencer_result({:error, reason}, recovery_attempt),
-    do: %{
-      recovery_attempt
-      | state: {:stalled, {:failed_to_start, :sequencer, node(), reason}}
-    }
+  defp handle_sequencer_result({:error, reason}, recovery_attempt) do
+    {recovery_attempt, {:stalled, {:failed_to_start, :sequencer, node(), reason}}}
+  end
 end

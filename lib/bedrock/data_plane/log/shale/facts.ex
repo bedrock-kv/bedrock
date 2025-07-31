@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.Facts do
-  alias Bedrock.DataPlane.Log.Shale.State
+  @moduledoc false
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.State
 
   @spec info(State.t(), Log.fact_name()) :: {:ok, term()} | {:error, :unsupported}
   @spec info(State.t(), [Log.fact_name()]) :: {:ok, %{Log.fact_name() => term()}}

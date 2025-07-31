@@ -1,4 +1,7 @@
 defmodule Bedrock.DataPlane.Version do
+  @moduledoc """
+  Version comparison utilities for Bedrock's MVCC system.
+  """
   @type t :: Bedrock.version()
 
   @spec newer?(t(), t()) :: boolean()

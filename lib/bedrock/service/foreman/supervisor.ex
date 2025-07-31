@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.Foreman.Supervisor do
+  @moduledoc false
+
   @doc false
   @type foreman_opts :: [
           cluster: module(),

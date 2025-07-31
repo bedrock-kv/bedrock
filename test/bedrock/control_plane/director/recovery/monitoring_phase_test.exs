@@ -35,11 +35,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
 
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:monitor_components)
         |> Map.put(:transaction_system_layout, create_layout())
 
-      result = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
-      assert result.state == :completed
+      {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
+      assert next_phase == :completed
 
       # Should have monitored sequencer, 1 proxy, 1 resolver, 1 log
       assert_received {:monitored, _}
@@ -51,11 +50,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
     test "uses default Process.monitor when no monitor_fn provided" do
       recovery_attempt =
         recovery_attempt()
-        |> with_state(:monitor_components)
         |> Map.put(:transaction_system_layout, create_layout())
 
-      result = MonitoringPhase.execute(recovery_attempt, %{})
-      assert result.state == :completed
+      {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{})
+      assert next_phase == :completed
     end
 
     test "monitors multiple components correctly" do
@@ -63,7 +61,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       log2_pid = spawn(fn -> :timer.sleep(100) end)
 
       recovery_attempt = %{
-        state: :monitor_components,
         transaction_system_layout:
           create_layout(
             proxies: [spawn(fn -> :timer.sleep(100) end), spawn(fn -> :timer.sleep(100) end)],
@@ -78,7 +75,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
             services: %{
               {:log, 1} => %{kind: :log, status: {:up, log1_pid}},
               {:log, 2} => %{kind: :log, status: {:up, log2_pid}},
-              # Storage services shouldn't be monitored 
+              # Storage services shouldn't be monitored
               {:storage, 1} => %{
                 kind: :storage,
                 status: {:up, spawn(fn -> :timer.sleep(100) end)}
@@ -87,8 +84,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
           )
       }
 
-      result = MonitoringPhase.execute(recovery_attempt, %{})
-      assert result.state == :completed
+      {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{})
+      assert next_phase == :completed
     end
 
     test "excludes storage services from monitoring" do
@@ -100,7 +97,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       end
 
       recovery_attempt = %{
-        state: :monitor_components,
         transaction_system_layout:
           create_layout(
             services: %{
@@ -125,7 +121,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       end
 
       recovery_attempt = %{
-        state: :monitor_components,
         transaction_system_layout:
           create_layout(
             logs: %{

@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Resolver.Server do
+  @moduledoc false
   alias Bedrock.DataPlane.Resolver.State
 
   import Bedrock.DataPlane.Resolver.Recovery, only: [recover_from: 4]

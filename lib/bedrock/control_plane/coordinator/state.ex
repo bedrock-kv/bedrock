@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
   @moduledoc false
 
+  alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
@@ -20,6 +21,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()},
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
+          node_capabilities: %{node() => [Cluster.capability()]},
           tsl_subscribers: MapSet.t(pid())
         }
   defstruct cluster: nil,
@@ -35,6 +37,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             transaction_system_layout: nil,
             waiting_list: %{},
             service_directory: %{},
+            node_capabilities: %{},
             tsl_subscribers: MapSet.new()
 
   defmodule Changes do
@@ -104,6 +107,23 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
       end
 
       t
+    end
+
+    @spec update_node_capabilities(t :: State.t(), node(), [Cluster.capability()]) :: State.t()
+    def update_node_capabilities(t, node, capabilities),
+      do: %{t | node_capabilities: Map.put(t.node_capabilities, node, capabilities)}
+
+    @spec convert_to_capability_map(%{node() => [Cluster.capability()]}) :: %{
+            Cluster.capability() => [node()]
+          }
+    def convert_to_capability_map(node_capabilities) do
+      node_capabilities
+      |> Enum.flat_map(fn {node, capabilities} ->
+        Enum.map(capabilities, fn capability -> {capability, node} end)
+      end)
+      |> Enum.group_by(fn {capability, _node} -> capability end, fn {_capability, node} ->
+        node
+      end)
     end
   end
 end

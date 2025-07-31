@@ -27,7 +27,6 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Internal.TimerManagement
   alias Bedrock.Service.Foreman
@@ -46,30 +45,19 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
           capabilities :: [Cluster.capability()],
           running_services :: [Director.running_service_info()],
           at :: DateTime.t()
-        ) ::
-          {:ok, State.t()} | {:error, :nodes_must_be_added_by_an_administrator}
-  def request_to_rejoin(t, node, capabilities, running_services, at) do
-    t =
-      t
-      |> maybe_add_node(node)
-      |> update_last_seen_at(node, at)
-      |> update_capabilities(node, capabilities)
-
-    if NodeTracking.authorized?(t.node_tracking, node) do
-      t
-      |> add_running_services(node, running_services)
-      |> then(&{:ok, &1})
-    else
-      {:error, :nodes_must_be_added_by_an_administrator}
-    end
+        ) :: {:ok, State.t()}
+  def request_to_rejoin(t, node, _capabilities, running_services, _at) do
+    # With capabilities now managed by coordinator, simply add running services
+    t
+    |> add_running_services(node, running_services)
+    |> then(&{:ok, &1})
   end
 
   @spec node_added_worker(State.t(), node(), Director.running_service_info(), DateTime.t()) ::
           State.t()
-  def node_added_worker(t, node, info, at) do
-    t
-    |> update_last_seen_at(node, at)
-    |> add_running_service(node, info)
+  def node_added_worker(t, node, info, _at) do
+    # Simply add the running service without node tracking
+    t |> add_running_service(node, info)
   end
 
   @spec ping_all_coordinators(State.t()) :: State.t()
@@ -86,8 +74,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   end
 
   @spec update_last_seen_at(State.t(), node(), at :: DateTime.t()) :: State.t()
-  def update_last_seen_at(t, node, at) do
-    NodeTracking.update_last_seen_at(t.node_tracking, node, at |> to_milliseconds())
+  def update_last_seen_at(t, _node, _at) do
+    # Node liveness now handled by coordinator registration
     t
   end
 
@@ -96,40 +84,26 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
           node(),
           minimum_read_version :: Bedrock.version() | nil
         ) :: State.t()
-  def update_minimum_read_version(t, node, minimum_read_version) do
-    NodeTracking.update_minimum_read_version(t.node_tracking, node, minimum_read_version)
+  def update_minimum_read_version(t, _node, _minimum_read_version) do
+    # Minimum read version tracking removed with NodeTracking
     t
   end
 
   @spec determine_dead_nodes(State.t(), at :: DateTime.t()) :: State.t()
-  def determine_dead_nodes(t, at) do
-    t.node_tracking
-    |> NodeTracking.dying_nodes(at |> to_milliseconds(), 3 * Config.ping_rate_in_ms(t.config))
-    |> Enum.reduce(t, fn dying_node, t ->
-      t.node_tracking |> NodeTracking.down(dying_node)
-      t |> node_down(dying_node)
-    end)
+  def determine_dead_nodes(t, _at) do
+    # Dead node detection now handled by coordinator
+    t
   end
 
-  @spec to_milliseconds(DateTime.t()) :: integer()
-  def to_milliseconds(dt), do: DateTime.to_unix(dt, :millisecond)
-
   @spec maybe_add_node(State.t(), node()) :: State.t()
-  def maybe_add_node(t, node) do
-    if not NodeTracking.exists?(t.node_tracking, node) do
-      NodeTracking.add_node(
-        t.node_tracking,
-        node,
-        Config.allow_volunteer_nodes_to_join?(t.config)
-      )
-    end
-
+  def maybe_add_node(t, _node) do
+    # Node addition now handled by coordinator registration
     t
   end
 
   @spec update_capabilities(State.t(), node(), [Cluster.capability()]) :: State.t()
-  def update_capabilities(t, node, capabilities) do
-    NodeTracking.update_capabilities(t.node_tracking, node, capabilities)
+  def update_capabilities(t, _node, _capabilities) do
+    # Capabilities now handled by coordinator
     t
   end
 
@@ -182,10 +156,10 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :storage) ::
           {:ok, Director.running_service_info()} | {:error, worker_creation_error()}
   def request_worker_creation(t, node, worker_id, kind) do
-    # Check if the node has the required capability
-    capabilities = NodeTracking.capabilities(t.node_tracking, node)
+    # Check if the node has the required capability using director's capability map
+    nodes_with_capability = Map.get(t.node_capabilities, kind, [])
 
-    if capabilities == :unknown or not Enum.member?(capabilities, kind) do
+    if node not in nodes_with_capability do
       {:error, {:node_lacks_capability, node, kind}}
     else
       # Contact the foreman on the target node to create the worker

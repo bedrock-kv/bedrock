@@ -29,7 +29,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
@@ -41,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @type recovery_context :: %{
           cluster_config: Config.t(),
           old_transaction_system_layout: TransactionSystemLayout.t(),
-          node_capabilities: NodeTracking.node_capabilities(),
+          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{Worker.id() => {atom(), {atom(), node()}}},
           coordinator: pid()
@@ -101,7 +100,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     context = %{
       cluster_config: t.config,
       old_transaction_system_layout: t.old_transaction_system_layout,
-      node_capabilities: NodeTracking.extract_node_capabilities(t.node_tracking),
+      node_capabilities: t.node_capabilities,
       lock_token: t.lock_token,
       available_services: t.services,
       coordinator: t.coordinator

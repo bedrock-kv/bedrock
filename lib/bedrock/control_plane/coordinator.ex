@@ -84,21 +84,21 @@ defmodule Bedrock.ControlPlane.Coordinator do
           coordinator_ref :: ref(),
           gateway_pid :: pid(),
           compact_services :: [compact_service_info()],
+          capabilities :: [Bedrock.Cluster.capability()],
           timeout_ms :: timeout_in_ms()
         ) ::
           {:ok, txn_id :: term()}
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def register_gateway(coordinator, gateway_pid, compact_services, timeout \\ 5_000),
-    do: coordinator |> call({:register_gateway, gateway_pid, compact_services}, timeout)
-
-  @spec ping(
-          coordinator_ref :: ref(),
-          timeout_ms :: timeout_in_ms()
-        ) ::
-          {:pong, epoch :: Bedrock.epoch(), leader :: ref() | nil}
-          | {:error, :timeout}
-  def ping(coordinator, timeout \\ 5_000),
-    do: coordinator |> call(:ping, timeout)
+  def register_gateway(
+        coordinator,
+        gateway_pid,
+        compact_services,
+        capabilities,
+        timeout \\ 5_000
+      ),
+      do:
+        coordinator
+        |> call({:register_gateway, gateway_pid, compact_services, capabilities}, timeout)
 end

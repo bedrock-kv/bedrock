@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
           start_epoch_command()
           | update_config_command()
           | update_transaction_system_layout_command()
-          | register_services_command()
+          | register_node_resources_command()
           | deregister_services_command()
 
   @type start_epoch_command ::
@@ -36,10 +36,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
              transaction_system_layout: TransactionSystemLayout.t()
            }}
 
-  @type register_services_command ::
-          {:register_services,
+  @type register_node_resources_command ::
+          {:register_node_resources,
            %{
-             services: [service_info()]
+             node: node(),
+             services: [service_info()],
+             capabilities: [Bedrock.Cluster.capability()]
            }}
 
   @type deregister_services_command ::
@@ -87,14 +89,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
     }
 
   @doc """
-  Create a command to register services via consensus.
+  Create a command to register node resources (services and capabilities) via consensus.
   """
-  @spec register_services([service_info()]) :: register_services_command()
-  def register_services(services) when is_list(services) do
+  @spec register_node_resources(node(), [service_info()], [Bedrock.Cluster.capability()]) ::
+          register_node_resources_command()
+  def register_node_resources(node, services, capabilities)
+      when is_atom(node) and is_list(services) and is_list(capabilities) do
     # Validate service info format
     Enum.each(services, fn
-      {service_id, kind, {name, node}}
-      when is_binary(service_id) and is_atom(kind) and is_atom(name) and is_atom(node) ->
+      {service_id, kind, {name, service_node}}
+      when is_binary(service_id) and is_atom(kind) and is_atom(name) and is_atom(service_node) ->
         :ok
 
       invalid ->
@@ -102,9 +106,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
               "Invalid service info: #{inspect(invalid)}. Expected {service_id, kind, {name, node}}"
     end)
 
+    # Validate capabilities
+    Enum.each(capabilities, fn
+      capability when is_atom(capability) -> :ok
+      invalid -> raise ArgumentError, "Invalid capability: #{inspect(invalid)}. Expected atom"
+    end)
+
     {
-      :register_services,
-      %{services: services}
+      :register_node_resources,
+      %{node: node, services: services, capabilities: capabilities}
     }
   end
 

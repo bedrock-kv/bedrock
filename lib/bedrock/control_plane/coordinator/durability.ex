@@ -117,7 +117,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     |> put_director(director)
   end
 
-  def process_command(t, {:register_services, %{services: services}}) do
+  def process_command(
+        t,
+        {:register_node_resources, %{node: node, services: services, capabilities: capabilities}}
+      ) do
     # Filter only new or changed services before updating
     new_or_changed_services =
       Enum.filter(services, fn {service_id, kind, worker_ref} ->
@@ -129,6 +132,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
         end
       end)
 
+    # Check if capabilities changed
+    current_capabilities = Map.get(t.node_capabilities, node, [])
+    capabilities_changed = current_capabilities != capabilities
+
     updated_state =
       t
       |> update_service_directory(fn directory ->
@@ -136,9 +143,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
           {service_id, {kind, worker_ref}}
         end)
       end)
+      |> update_node_capabilities(node, capabilities)
 
-    # Notify director of new services
-    notify_director_if_needed(updated_state.director, new_or_changed_services)
+    # Notify director of changes
+    notify_director_of_resource_changes(
+      updated_state.director,
+      new_or_changed_services,
+      updated_state.node_capabilities,
+      capabilities_changed
+    )
 
     updated_state
   end
@@ -150,10 +163,31 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     end)
   end
 
-  # Private helper to notify director only when needed
-  defp notify_director_if_needed(:unavailable, _service_infos), do: :ok
-  defp notify_director_if_needed(_director, []), do: :ok
+  # Private helper to notify director of resource changes
+  defp notify_director_of_resource_changes(
+         :unavailable,
+         _services,
+         _node_capabilities,
+         _capabilities_changed
+       ),
+       do: :ok
 
-  defp notify_director_if_needed(director, service_infos),
-    do: Director.notify_services_registered(director, service_infos)
+  defp notify_director_of_resource_changes(
+         director,
+         new_or_changed_services,
+         node_capabilities,
+         capabilities_changed
+       ) do
+    # Notify of service changes
+    unless Enum.empty?(new_or_changed_services) do
+      Director.notify_services_registered(director, new_or_changed_services)
+    end
+
+    # Notify of capability changes
+    if capabilities_changed do
+      # Convert full coordinator node_capabilities to director format
+      capability_map = convert_to_capability_map(node_capabilities)
+      Director.notify_capabilities_updated(director, capability_map)
+    end
+  end
 end

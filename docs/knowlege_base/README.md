@@ -33,7 +33,10 @@ This knowledge base is optimized for **token-efficient progressive loading** wit
 - Aliases are always preferred over fully qualified names.
 - Aliases always belong at the top of modules.
 - A module and the moduledoc (if present) must always be internally-consistent.
-- Tests must never contain conditional assertions.
+- Never use conditional logic in test assertions.
+- Always check assumptions before presenting them as facts.
+- Always check my suggestions and feedback before affirming them.
+- Always skim the knowledge base when searching for answers.
 
 ## 🚀 Common Workflows
 

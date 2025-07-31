@@ -6,7 +6,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Service.Worker
 
@@ -41,7 +40,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             relieving: Director.ref() | nil,
-            services: %{String.t() => {atom(), {atom(), node()}}} | nil
+            services: %{String.t() => {atom(), {atom(), node()}}} | nil,
+            node_capabilities: %{Bedrock.Cluster.capability() => [node()]} | nil
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -55,6 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     relieving = opts[:relieving]
     services = opts[:services] || %{}
+    node_capabilities = opts[:node_capabilities] || %{}
 
     %{
       id: __MODULE__,
@@ -63,7 +64,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
          [
            __MODULE__,
            {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving,
-            services}
+            services, node_capabilities}
          ]},
       restart: :temporary
     }
@@ -71,7 +72,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @impl true
   def init(
-        {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving, services}
+        {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving, services,
+         node_capabilities}
       ) do
     %State{
       epoch: epoch,
@@ -79,7 +81,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
       config: config,
       old_transaction_system_layout: old_transaction_system_layout,
       coordinator: coordinator,
-      node_tracking: config |> Config.coordinators() |> NodeTracking.new(),
+      node_capabilities: node_capabilities,
       lock_token: :crypto.strong_rand_bytes(32),
       services: services
     }
@@ -135,17 +137,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
-    t
-    |> request_to_rejoin(node, capabilities, running_services |> Map.values(), now())
-    |> case do
-      {:ok, t} ->
-        t
-        |> try_to_recover()
-        |> reply(:ok)
+    {:ok, updated_t} =
+      t |> request_to_rejoin(node, capabilities, running_services |> Map.values(), now())
 
-      {:error, _reason} = error ->
-        t |> reply(error)
-    end
+    updated_t
+    |> try_to_recover()
+    |> reply(:ok)
   end
 
   @impl true
@@ -187,6 +184,13 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_cast({:service_registered, service_infos}, %State{} = t) do
     t
     |> add_services_to_directory(service_infos)
+    |> try_to_recover_if_stalled()
+    |> noreply()
+  end
+
+  def handle_cast({:capabilities_updated, node_capabilities}, %State{} = t) do
+    t
+    |> Map.put(:node_capabilities, node_capabilities)
     |> try_to_recover_if_stalled()
     |> noreply()
   end

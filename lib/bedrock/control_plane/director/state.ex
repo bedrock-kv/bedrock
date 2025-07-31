@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.State do
   @moduledoc false
 
+  alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.Service.Worker
 
   @type state :: :starting | :recovery | :running | :stopped
@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.State do
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           old_transaction_system_layout: TransactionSystemLayout.t() | nil,
           coordinator: pid(),
-          node_tracking: NodeTracking.t(),
+          node_capabilities: %{Cluster.capability() => [node()]},
           timers: timer_registry() | nil,
           services: %{Worker.id() => {atom(), {atom(), node()}}},
           lock_token: binary(),
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.State do
             transaction_system_layout: nil,
             old_transaction_system_layout: nil,
             coordinator: nil,
-            node_tracking: nil,
+            node_capabilities: %{},
             timers: nil,
             services: %{},
             lock_token: nil,

@@ -7,7 +7,12 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   alias Bedrock.ControlPlane.Director
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
-    only: [put_director: 2, put_config: 2, put_transaction_system_layout: 2]
+    only: [
+      put_director: 2,
+      put_config: 2,
+      put_transaction_system_layout: 2,
+      convert_to_capability_map: 1
+    ]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
     only: [
@@ -70,7 +75,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
          epoch: t.epoch,
          coordinator: self(),
          relieving: {t.epoch, t.director},
-         services: t.service_directory
+         services: t.service_directory,
+         node_capabilities: convert_to_capability_map(t.node_capabilities)
        ]}
     )
     |> case do

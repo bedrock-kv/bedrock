@@ -3,20 +3,23 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Director.NodeTracking
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
 
   import RecoveryTestSupport
 
-  # Helper to create test state with node tracking
+  # Helper to create test state with node capabilities
   defp create_test_state(overrides \\ %{}) do
-    node_tracking = NodeTracking.new([Node.self()])
+    node_capabilities = %{
+      coordination: [Node.self()],
+      log: [Node.self()],
+      storage: [Node.self()]
+    }
 
     base_state = %State{
       cluster: __MODULE__.TestCluster,
       epoch: 1,
-      node_tracking: node_tracking,
+      node_capabilities: node_capabilities,
       old_transaction_system_layout: %{
         logs: %{},
         storage_teams: []

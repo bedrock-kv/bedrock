@@ -100,7 +100,9 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
 
       # Extract the init args and verify services default to %{}
       {_module, _func, [_server_module, init_args]} = child_spec.start
-      {_cluster, _config, _layout, _epoch, _coordinator, _relieving, services} = init_args
+
+      {_cluster, _config, _layout, _epoch, _coordinator, _relieving, services, _node_capabilities} =
+        init_args
 
       assert services == %{}
     end

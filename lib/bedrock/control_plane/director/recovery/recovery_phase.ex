@@ -8,12 +8,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Director.NodeTracking
 
   @type context :: %{
           cluster_config: Config.t(),
           old_transaction_system_layout: Config.TransactionSystemLayout.t(),
-          node_capabilities: NodeTracking.node_capabilities(),
+          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{String.t() => {atom(), {atom(), node()}}},
           coordinator: pid()

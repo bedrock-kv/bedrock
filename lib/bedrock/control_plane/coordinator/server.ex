@@ -121,7 +121,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   def handle_call({:register_services, services}, from, t) do
-    command = Commands.register_services(services)
+    caller_node = Node.self()
+    command = Commands.register_node_resources(caller_node, services, [])
 
     t
     |> durably_write_service_registration(command, ack_fn(from))
@@ -142,10 +143,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     end
   end
 
-  def handle_call({:register_gateway, gateway_pid, compact_services}, from, t) do
+  def handle_call({:register_gateway, gateway_pid, compact_services, capabilities}, from, t) do
     # Always subscribe gateway for TSL updates (monitor to clean up on death)
     Process.monitor(gateway_pid)
-    updated_state = add_tsl_subscriber(t, gateway_pid)
+    updated_state = t |> add_tsl_subscriber(gateway_pid)
 
     # Expand compact services to full format
     caller_node = node(gateway_pid)
@@ -153,8 +154,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     case updated_state.leader_node do
       node when node == updated_state.my_node ->
-        # I'm leader - register services via Raft
-        command = Commands.register_services(expanded_services)
+        # I'm leader - register node resources via Raft
+        command = Commands.register_node_resources(caller_node, expanded_services, capabilities)
 
         updated_state
         |> durably_write_service_registration(command, ack_fn(from))
@@ -166,7 +167,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       leader_node ->
         # Not leader - forward async to prevent blocking Raft consensus
         leader_coordinator = {updated_state.otp_name, leader_node}
-        GenServer.cast(leader_coordinator, {:forward_register_services, expanded_services, from})
+
+        GenServer.cast(
+          leader_coordinator,
+          {:forward_register_node_resources, caller_node, expanded_services, capabilities, from}
+        )
+
         updated_state |> noreply()
     end
   end
@@ -235,9 +241,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t |> noreply()
   end
 
-  def handle_cast({:forward_register_services, services, original_from}, t) do
-    # Leader receives forwarded service registration request
-    command = Commands.register_services(services)
+  def handle_cast(
+        {:forward_register_node_resources, node, services, capabilities, original_from},
+        t
+      ) do
+    # Leader receives forwarded node resource registration request
+    command = Commands.register_node_resources(node, services, capabilities)
 
     t
     |> durably_write_service_registration(command, ack_fn(original_from))

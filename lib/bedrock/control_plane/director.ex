@@ -128,4 +128,23 @@ defmodule Bedrock.ControlPlane.Director do
         ) :: :ok
   def notify_services_registered(director, service_infos),
     do: director |> cast({:service_registered, service_infos})
+
+  @doc """
+  Notifies the director that node capabilities have been updated.
+  This allows the director to update its capability map and retry stalled recovery
+  if the new capabilities might resolve insufficient_nodes conditions.
+
+  ## Parameters
+  - `director`: The reference to the cluster director (a GenServer).
+  - `node_capabilities`: Map of capability -> [nodes] for use by recovery
+
+  ## Returns
+  - `:ok`: Indicates the notification was successfully sent.
+  """
+  @spec notify_capabilities_updated(
+          director :: ref(),
+          node_capabilities :: %{Bedrock.Cluster.capability() => [node()]}
+        ) :: :ok
+  def notify_capabilities_updated(director, node_capabilities),
+    do: director |> cast({:capabilities_updated, node_capabilities})
 end

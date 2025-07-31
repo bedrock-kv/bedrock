@@ -2,9 +2,9 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   @moduledoc false
 
   alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Cluster.PubSub
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Internal.TimerManagement
+  alias Bedrock.Service.Foreman
 
   import Bedrock.Cluster.Gateway.Telemetry
 
@@ -153,11 +153,6 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   defp extract_leader_info({_node, {:pong, best_epoch, best_leader}}),
     do: {:ok, {best_leader, best_epoch}}
 
-  @doc """
-  Change the known leader coordinator. If the leader is the same as the one we already
-  have we do nothing, otherwise we publish a message to a topic to let everyone
-  on this node know that the coordinator has changed.
-  """
   @spec change_coordinator(State.t(), {Coordinator.ref(), Bedrock.epoch()} | :unavailable) ::
           State.t()
   def change_coordinator(t, coordinator) when t.known_coordinator == coordinator, do: t
@@ -165,47 +160,30 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
 
   @spec change_coordinator(State.t(), Coordinator.ref()) :: State.t()
   def change_coordinator(t, coordinator_ref) do
-    PubSub.publish(t.cluster, :coordinator_changed, {:coordinator_changed, coordinator_ref})
-    Process.monitor(coordinator_ref)
-
     t
     |> Map.put(:known_coordinator, coordinator_ref)
-    |> trigger_service_discovery_when_available()
+    |> monitor_known_coordinator()
+    |> try_register_foreman_services()
   end
 
-  @spec trigger_service_discovery_when_available(State.t()) :: State.t()
-  defp trigger_service_discovery_when_available(t) do
-    # When a coordinator becomes available, query foreman for all running services
-    # and register them with the coordinator using the unified register_gateway API
-    case t.cluster.fetch_gateway() do
-      {:ok, gateway_pid} ->
-        # Try to get foreman if available (storage/log capabilities)
-        if :storage in t.capabilities or :log in t.capabilities do
-          try_register_foreman_services(t, gateway_pid)
-        end
-
-        t
-
-      {:error, _} ->
-        t
-    end
+  @spec monitor_known_coordinator(State.t()) :: State.t()
+  defp monitor_known_coordinator(t) do
+    Process.monitor(t.known_coordinator)
+    t
   end
 
-  @spec try_register_foreman_services(State.t(), pid()) :: :ok
-  defp try_register_foreman_services(t, gateway_pid) do
-    foreman_ref = t.cluster.otp_name(:foreman)
-
-    # Query foreman for all running services
-    case GenServer.call(foreman_ref, :get_all_running_services, 1000) do
+  @spec try_register_foreman_services(State.t()) :: :ok
+  defp try_register_foreman_services(t) do
+    :foreman
+    |> t.cluster.otp_name()
+    |> Foreman.get_all_running_services(timeout: 1_000)
+    |> case do
       {:ok, [_ | _] = services} ->
-        # Register services with coordinator via the unified API
-        Coordinator.register_gateway(t.known_coordinator, gateway_pid, services)
+        Coordinator.register_gateway(t.known_coordinator, self(), services)
         :ok
 
       _ ->
         :ok
     end
-  rescue
-    _ -> :ok
   end
 end

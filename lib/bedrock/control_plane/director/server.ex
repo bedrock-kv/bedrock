@@ -116,6 +116,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
+  def handle_info({[:alias | ref], result}, t) when is_reference(ref) do
+    Logger.warning("Director received unexpected Task reply: #{inspect(result)}")
+    t |> noreply()
+  end
+
+  @impl true
   # If we have been relieved by another director in a newer epoch, we should
   # not accept any calls from the cluster. We should reply with an error
   # informing the caller that we haven been relieved and who controls now

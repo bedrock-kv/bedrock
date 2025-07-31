@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   @moduledoc """
   Integration test for selective service locking behavior.
 
@@ -313,6 +313,107 @@ defmodule Bedrock.ControlPlane.Director.ServiceLockingIntegrationTest do
         assert Map.has_key?(service, :last_seen)
         assert match?({:up, _}, service.status)
       end)
+    end
+  end
+
+  describe "Task message leak prevention" do
+    test "LockingPhase with slow tasks and race conditions does not leak Task replies" do
+      # This test demonstrates that the LockingPhase correctly uses Task.async_stream
+      # in a way that does NOT leak Task reply messages to the parent process,
+      # even when some tasks are slow and complete after processing stops.
+      #
+      # This test validates that our Director handle_info fix addresses the
+      # actual issue (Task replies from elsewhere) rather than fixing a
+      # non-existent issue in the LockingPhase itself.
+
+      # Create a mock lock_service_fn that simulates slow operations
+      mock_lock_service_fn = fn service, _epoch ->
+        case service do
+          {:log, {:slow_log, :node1}} ->
+            # Simulate slow locking operation
+            Process.sleep(50)
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :log, durable_version: 0, oldest_version: 0, last_version: 1}}
+
+          {:storage, {:slow_storage, :node2}} ->
+            # Simulate even slower locking operation
+            Process.sleep(100)
+            pid = spawn(fn -> :ok end)
+            {:ok, pid, %{kind: :storage, durable_version: 5, oldest_version: 0, last_version: 10}}
+        end
+      end
+
+      # Set up recovery attempt with old services to lock
+      recovery_attempt =
+        existing_cluster_recovery()
+        |> with_epoch(2)
+        |> with_log_recovery_info(%{
+          "slow_log" => %{kind: :log, oldest_version: 0, last_version: 5}
+        })
+        |> with_storage_recovery_info(%{
+          "slow_storage" => %{kind: :storage, durable_version: 5, oldest_durable_version: 0}
+        })
+
+      # Create context with available services matching the recovery info
+      available_services = %{
+        "slow_log" => {:log, {:slow_log, :node1}},
+        "slow_storage" => {:storage, {:slow_storage, :node2}}
+      }
+
+      context =
+        create_test_context()
+        |> Map.put(:available_services, available_services)
+        |> Map.put(:old_transaction_system_layout, %{
+          logs: %{"slow_log" => [0, 1]},
+          storage_teams: [%{storage_ids: ["slow_storage"]}]
+        })
+        |> Map.put(:lock_service_fn, mock_lock_service_fn)
+        |> with_multiple_nodes()
+
+      # Execute locking phase - this will use Task.async_stream internally
+      {lock_phase_result, next_phase} = LockingPhase.execute(recovery_attempt, context)
+
+      # Should successfully lock both services despite slow operations
+      assert lock_phase_result.locked_service_ids == MapSet.new(["slow_log", "slow_storage"])
+      assert map_size(lock_phase_result.transaction_services) == 2
+      # Should proceed to the next phase in the recovery sequence
+      assert is_atom(next_phase)
+
+      # Give extra time for any potential background tasks to complete
+      Process.sleep(200)
+
+      # The critical test: verify NO Task reply messages leaked to this process
+      leaked_messages = collect_all_messages([])
+
+      task_reply_messages =
+        leaked_messages
+        |> Enum.filter(fn
+          {[:alias | ref], _result} when is_reference(ref) -> true
+          _ -> false
+        end)
+
+      # This should pass, proving the LockingPhase doesn't have the leak issue
+      assert task_reply_messages == [], """
+      Task replies leaked from LockingPhase: #{inspect(task_reply_messages)}
+      All messages: #{inspect(leaked_messages)}
+
+      This would indicate an issue with the LockingPhase Task.async_stream implementation.
+      """
+
+      # Also verify no unexpected messages at all
+      assert leaked_messages == [], """
+      Unexpected messages during LockingPhase: #{inspect(leaked_messages)}
+
+      LockingPhase should not send messages to the parent process.
+      """
+    end
+
+    defp collect_all_messages(acc) do
+      receive do
+        message -> collect_all_messages([message | acc])
+      after
+        10 -> Enum.reverse(acc)
+      end
     end
   end
 

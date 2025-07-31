@@ -7,6 +7,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
 
+  @type leader_startup_state :: :not_leader | :leader_waiting_consensus | :leader_ready
+
   @type t :: %__MODULE__{
           cluster: module(),
           leader_node: node() | :undecided,
@@ -22,7 +24,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           waiting_list: %{Raft.transaction_id() => pid()},
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
           node_capabilities: %{node() => [Cluster.capability()]},
-          tsl_subscribers: MapSet.t(pid())
+          tsl_subscribers: MapSet.t(pid()),
+          leader_startup_state: leader_startup_state()
         }
   defstruct cluster: nil,
             leader_node: :undecided,
@@ -38,7 +41,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             waiting_list: %{},
             service_directory: %{},
             node_capabilities: %{},
-            tsl_subscribers: MapSet.new()
+            tsl_subscribers: MapSet.new(),
+            leader_startup_state: :not_leader
 
   defmodule Changes do
     @moduledoc false
@@ -55,6 +59,10 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_leader_node(t :: State.t(), leader_node :: node() | :undecided) :: State.t()
     def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}
+
+    @spec put_leader_startup_state(t :: State.t(), State.leader_startup_state()) :: State.t()
+    def put_leader_startup_state(t, leader_startup_state),
+      do: %{t | leader_startup_state: leader_startup_state}
 
     @spec set_raft(t :: State.t(), Raft.t()) :: State.t()
     def set_raft(t, raft), do: %{t | raft: raft}

@@ -78,4 +78,22 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
       reason: reason
     })
   end
+
+  @spec trace_leader_waiting_for_consensus() :: :ok
+  def trace_leader_waiting_for_consensus do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
+      %{},
+      %{}
+    )
+  end
+
+  @spec trace_leader_ready_starting_director(service_count :: non_neg_integer()) :: :ok
+  def trace_leader_ready_starting_director(service_count) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :leader_ready],
+      %{service_count: service_count},
+      %{}
+    )
+  end
 end

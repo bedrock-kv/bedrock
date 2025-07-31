@@ -28,6 +28,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       put_leader_node: 2,
       put_epoch: 2,
+      put_leader_startup_state: 2,
       update_raft: 2,
       add_tsl_subscriber: 2,
       remove_tsl_subscriber: 2
@@ -37,7 +38,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       trace_started: 2,
       trace_election_completed: 1,
-      trace_consensus_reached: 1
+      trace_consensus_reached: 1,
+      trace_leader_waiting_for_consensus: 0,
+      trace_leader_ready_starting_director: 1
     ]
 
   require Logger
@@ -194,10 +197,22 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_info({:raft, :leadership_changed, {new_leader, raft_epoch}}, t) do
     trace_election_completed(new_leader)
 
-    t
-    |> put_leader_node(new_leader)
-    |> put_epoch(raft_epoch)
-    |> try_to_start_director()
+    updated_t =
+      t
+      |> put_leader_node(new_leader)
+      |> put_epoch(raft_epoch)
+
+    if new_leader == t.my_node do
+      # We became leader - wait for first consensus before starting director
+      trace_leader_waiting_for_consensus()
+
+      updated_t
+      |> put_leader_startup_state(:leader_waiting_consensus)
+    else
+      # Someone else is leader
+      updated_t
+      |> put_leader_startup_state(:not_leader)
+    end
     |> noreply()
   end
 
@@ -220,6 +235,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> durable_write_completed(log, durable_txn_id)
+    |> try_to_start_director_after_first_consensus()
     |> noreply()
   end
 
@@ -292,6 +308,24 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   # Private helper functions
+
+  @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
+  defp try_to_start_director_after_first_consensus(
+         %{leader_startup_state: :leader_waiting_consensus} = t
+       ) do
+    # First consensus received! Now we can start director with populated service_directory
+    service_count = map_size(t.service_directory)
+    trace_leader_ready_starting_director(service_count)
+
+    t
+    |> put_leader_startup_state(:leader_ready)
+    |> try_to_start_director()
+  end
+
+  defp try_to_start_director_after_first_consensus(t) do
+    # Not waiting for consensus, or already ready
+    t
+  end
 
   @spec expand_compact_services([{atom(), atom()}], node()) :: [Commands.service_info()]
   defp expand_compact_services(compact_services, caller_node) do

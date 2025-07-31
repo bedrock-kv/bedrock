@@ -16,7 +16,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :election_completed],
         [:bedrock, :control_plane, :coordinator, :director_changed],
         [:bedrock, :control_plane, :coordinator, :director_launch],
-        [:bedrock, :control_plane, :coordinator, :consensus_reached]
+        [:bedrock, :control_plane, :coordinator, :consensus_reached],
+        [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
+        [:bedrock, :control_plane, :coordinator, :leader_ready]
       ],
       &__MODULE__.handler/4,
       nil
@@ -64,6 +66,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
 
   def trace(:consensus_reached, _, %{transaction_id: tx_id}),
     do: info("Consensus reached at #{inspect(tx_id)}")
+
+  def trace(:leader_waiting_consensus, _, _),
+    do: info("New leader waiting for first consensus before starting director")
+
+  def trace(:leader_ready, %{service_count: count}, _),
+    do: info("Leader ready - starting director with #{count} services in directory")
 
   @spec info(message :: String.t()) :: :ok
   def info(message) do

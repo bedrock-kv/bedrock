@@ -15,16 +15,13 @@ defmodule Bedrock.Cluster.Gateway.Server do
   import Bedrock.Cluster.Gateway.Discovery,
     only: [
       change_coordinator: 2,
-      find_a_live_coordinator: 1,
-      find_current_director: 1
+      find_a_live_coordinator: 1
     ]
 
   import Bedrock.Cluster.Gateway.Telemetry
 
   import Bedrock.Cluster.Gateway.DirectorRelations,
     only: [
-      pong_received_from_director: 2,
-      pong_was_not_received: 1,
       pull_services_from_foreman_and_register: 1,
       advertise_worker_with_leader_check: 2
     ]
@@ -76,17 +73,13 @@ defmodule Bedrock.Cluster.Gateway.Server do
   def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
     trace_started(cluster)
 
-    storage_table = :ets.new(:storage, [:ordered_set, :protected, read_concurrency: true])
-
     %State{
       node: Node.self(),
       cluster: cluster,
       descriptor: descriptor,
       path_to_descriptor: path_to_descriptor,
-      known_leader: :unavailable,
-      director: :unavailable,
+      known_coordinator: :unavailable,
       transaction_system_layout: nil,
-      storage_table: storage_table,
       mode: mode,
       capabilities: capabilities
     }
@@ -95,22 +88,14 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   @doc false
   @impl true
-  @spec handle_continue(:find_a_live_coordinator, State.t()) ::
-          {:noreply, State.t()} | {:noreply, State.t(), {:continue, :find_current_director}}
+  @spec handle_continue(:find_a_live_coordinator, State.t()) :: {:noreply, State.t()}
   def handle_continue(:find_a_live_coordinator, t) do
     t
     |> find_a_live_coordinator()
     |> case do
-      {t, :ok} -> t |> noreply(continue: :find_current_director)
+      {t, :ok} -> t |> noreply()
       {t, {:error, :unavailable}} -> t |> noreply()
     end
-  end
-
-  @spec handle_continue(:find_current_director, State.t()) :: {:noreply, State.t()}
-  def handle_continue(:find_current_director, t) do
-    t
-    |> find_current_director()
-    |> then(&noreply(&1))
   end
 
   @doc false
@@ -118,17 +103,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
   @spec handle_call({:begin_transaction, keyword()}, GenServer.from(), State.t()) ::
           {:reply, term(), State.t()}
   def handle_call({:begin_transaction, opts}, _, t) do
-    t
-    |> begin_transaction(opts)
-    |> then(&reply(t, &1))
-  end
-
-  @spec handle_call(:next_read_version, GenServer.from(), State.t()) ::
-          {:reply, term(), State.t()}
-  def handle_call(:next_read_version, _, t) do
-    t
-    |> next_read_version()
-    |> then(&reply(t, &1))
+    {updated_state, result} = begin_transaction(t, opts)
+    updated_state |> reply(result)
   end
 
   @spec handle_call({:renew_read_version_lease, term()}, GenServer.from(), State.t()) ::
@@ -139,55 +115,12 @@ defmodule Bedrock.Cluster.Gateway.Server do
     |> then(fn {t, result} -> t |> reply(result) end)
   end
 
-  @spec handle_call(:fetch_coordinator, GenServer.from(), State.t()) ::
-          {:reply, term(), State.t()}
-  def handle_call(:fetch_coordinator, _, t) do
-    t
-    |> fetch_coordinator()
-    |> then(&reply(t, &1))
-  end
-
-  @spec handle_call(:fetch_director, GenServer.from(), State.t()) :: {:reply, term(), State.t()}
-  def handle_call(:fetch_director, _, t) do
-    t
-    |> fetch_director()
-    |> then(&reply(t, &1))
-  end
-
-  @spec handle_call(:fetch_commit_proxy, GenServer.from(), State.t()) ::
-          {:reply, term(), State.t()}
-  def handle_call(:fetch_commit_proxy, _, t) do
-    t
-    |> fetch_commit_proxy()
-    |> then(&reply(t, &1))
-  end
-
-  @spec handle_call(:fetch_coordinator_nodes, GenServer.from(), State.t()) ::
-          {:reply, term(), State.t()}
-  def handle_call(:fetch_coordinator_nodes, _, t) do
-    t
-    |> fetch_coordinator_nodes()
-    |> then(&reply(t, &1))
-  end
-
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::
           {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: t |> noreply(continue: :find_a_live_coordinator)
-
-  @spec handle_info({:timeout, :find_current_director}, State.t()) ::
-          {:noreply, State.t(), {:continue, :find_current_director}}
-  def handle_info({:timeout, :find_current_director}, t),
-    do: t |> noreply(continue: :find_current_director)
-
-  @spec handle_info({:timeout, :ping}, State.t()) :: {:noreply, State.t()}
-  def handle_info({:timeout, :ping}, t) do
-    t
-    |> pong_was_not_received()
-    |> noreply()
-  end
 
   @spec handle_info(:pull_services_from_foreman, State.t()) :: {:noreply, State.t()}
   def handle_info(:pull_services_from_foreman, t) do
@@ -196,12 +129,19 @@ defmodule Bedrock.Cluster.Gateway.Server do
     |> noreply()
   end
 
+  @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
+  def handle_info({:tsl_updated, new_tsl}, t) do
+    # Update cached TSL when coordinator broadcasts updates
+    updated_state = %{t | transaction_system_layout: new_tsl}
+    updated_state |> noreply()
+  end
+
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:DOWN, _ref, :process, name, _reason}, t) do
     coordinator_matches =
-      case t.known_leader do
-        {coordinator_ref, _epoch} ->
+      case t.known_coordinator do
+        coordinator_ref when coordinator_ref != :unavailable ->
           name == coordinator_ref ||
             (is_tuple(name) and elem(name, 0) == t.cluster.otp_name(:coordinator))
 
@@ -220,13 +160,6 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   @doc false
   @impl true
-  @spec handle_cast({:pong, {non_neg_integer(), pid()}}, State.t()) :: {:noreply, State.t()}
-  def handle_cast({:pong, {epoch, director}}, t) do
-    t
-    |> pong_received_from_director({director, epoch})
-    |> noreply()
-  end
-
   @spec handle_cast({:advertise_worker, pid()}, State.t()) :: {:noreply, State.t()}
   def handle_cast({:advertise_worker, worker_pid}, t),
     do: t |> advertise_worker_with_leader_check(worker_pid) |> noreply()

@@ -91,6 +91,19 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def deregister_services(coordinator, service_ids, timeout \\ 5_000),
     do: coordinator |> call({:deregister_services, service_ids}, timeout)
 
+  @spec register_gateway(
+          coordinator_ref :: ref(),
+          gateway_pid :: pid(),
+          services :: [service_info()],
+          timeout_ms :: timeout_in_ms()
+        ) ::
+          {:ok, txn_id :: term()}
+          | {:error, :unavailable}
+          | {:error, :failed}
+          | {:error, :not_leader}
+  def register_gateway(coordinator, gateway_pid, services, timeout \\ 5_000),
+    do: coordinator |> call({:register_gateway, gateway_pid, services}, timeout)
+
   @spec ping(
           coordinator_ref :: ref(),
           timeout_ms :: timeout_in_ms()

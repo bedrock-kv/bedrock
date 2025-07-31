@@ -52,23 +52,31 @@ defmodule Bedrock.Cluster.Gateway.DiscoveryTest do
   end
 
   describe "change_coordinator/2" do
-    test "does not change when leader is the same" do
-      state = %State{known_leader: {:coordinator_ref, 5}}
+    test "does not change when coordinator is the same" do
+      state = %State{
+        node: :test_node,
+        cluster: TestCluster,
+        known_coordinator: :coordinator_ref
+      }
 
-      result = Discovery.change_coordinator(state, {:coordinator_ref, 5})
+      result = Discovery.change_coordinator(state, :coordinator_ref)
 
-      assert result.known_leader == {:coordinator_ref, 5}
+      assert result.known_coordinator == :coordinator_ref
     end
 
-    test "sets known_leader to unavailable when requested" do
-      state = %State{known_leader: {:coordinator_ref, 5}}
+    test "sets known_coordinator to unavailable when requested" do
+      state = %State{
+        node: :test_node,
+        cluster: TestCluster,
+        known_coordinator: :coordinator_ref
+      }
 
       result = Discovery.change_coordinator(state, :unavailable)
 
-      assert result.known_leader == :unavailable
+      assert result.known_coordinator == :unavailable
     end
 
-    test "triggers service discovery message when leader becomes available" do
+    test "triggers service discovery message when coordinator becomes available" do
       # Create a mock state with minimal cluster info to avoid PubSub calls
       # In this test we just verify the message is sent to self()
 

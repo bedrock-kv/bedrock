@@ -1,11 +1,10 @@
 defmodule Bedrock.Cluster do
   @moduledoc false
 
+  alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Storage
@@ -22,14 +21,10 @@ defmodule Bedrock.Cluster do
 
   @callback capabilities() :: [Bedrock.Cluster.capability()]
   @callback config!() :: Config.t()
-  @callback coordinator!() :: Coordinator.ref()
   @callback coordinator_nodes!() :: [node()]
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
-  @callback director!() :: Director.ref()
   @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
-  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-  @callback fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
   @callback fetch_gateway() :: {:ok, Gateway.ref()} | {:error, :unavailable}
   @callback fetch_transaction_system_layout() ::
               {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
@@ -210,45 +205,16 @@ defmodule Bedrock.Cluster do
       def fetch_gateway, do: {:ok, otp_name(:gateway)}
 
       @doc """
-      Fetch the current director for the cluster. If we can't find one, we
-      return an error.
-      """
-      @impl true
-      @spec fetch_director() :: {:ok, Director.ref()} | {:error, :unavailable}
-      def fetch_director, do: otp_name(:gateway) |> Gateway.fetch_director()
-
-      @doc """
-      Get the current director for the cluster. If we can't find one, we
-      raise an error.
-      """
-      @impl true
-      @spec director!() :: Director.ref()
-      def director!, do: ClusterSupervisor.director!(__MODULE__)
-
-      @doc """
-      Fetch a coordinator for the cluster. If there is an instance running on
-      the local node, we return it. Otherwise, we look for a live coordinator
-      on the cluster. If we can't find one, we return an error.
-      """
-      @impl true
-      @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
-      def fetch_coordinator, do: otp_name(:gateway) |> Gateway.fetch_coordinator()
-
-      @doc """
-      Get a coordinator for the cluster. If there is an instance running on
-      the local node, we return it. Otherwise, we look for a live coordinator
-      on the cluster. If we can't find one, we raise an error.
-      """
-      @impl true
-      @spec coordinator!() :: Coordinator.ref()
-      def coordinator!, do: ClusterSupervisor.coordinator!(__MODULE__)
-
-      @doc """
       Fetch the nodes that are running coordinators for the cluster.
       """
       @impl true
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def fetch_coordinator_nodes, do: otp_name(:gateway) |> Gateway.fetch_coordinator_nodes()
+      def fetch_coordinator_nodes do
+        case path_to_descriptor() |> Descriptor.read_from_file() do
+          {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
+          {:error, _reason} -> {:error, :unavailable}
+        end
+      end
 
       @doc """
       Get the nodes that are running coordinators for the cluster. If we can't

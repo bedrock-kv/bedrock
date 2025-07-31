@@ -5,10 +5,6 @@ defmodule Bedrock.Cluster.Gateway do
   a cluster.
   """
 
-  alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director
-  alias Bedrock.DataPlane.CommitProxy
-
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: pid() | atom() | {atom(), node()}
@@ -23,17 +19,6 @@ defmodule Bedrock.Cluster.Gateway do
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
-  @spec next_read_version(
-          gateway_ref :: ref(),
-          opts :: [
-            timeout_in_ms: Bedrock.timeout_in_ms()
-          ]
-        ) ::
-          {:ok, read_version :: Bedrock.version(), lease_deadline_ms :: Bedrock.interval_in_ms()}
-          | {:error, :unavailable | :timeout | :unknown}
-  def next_read_version(gateway, opts \\ []),
-    do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
-
   @doc """
   Renew the lease for a transaction based on the read version.
   """
@@ -47,49 +32,6 @@ defmodule Bedrock.Cluster.Gateway do
           {:ok, lease_deadline_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
   def renew_read_version_lease(t, read_version, opts \\ []),
     do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
-
-  @doc """
-  Get a coordinator for the cluster. We ask the running instance of the cluster
-  gateway to find one for us.
-  """
-  @spec fetch_coordinator(gateway_ref :: ref(), timeout_ms :: Bedrock.timeout_in_ms()) ::
-          {:ok, coordinator_ref :: Coordinator.ref()} | {:error, :unavailable}
-  def fetch_coordinator(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_coordinator, timeout_in_ms)
-
-  @doc """
-  Get the current director for the cluster.
-  """
-  @spec fetch_director(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Director.ref()} | {:error, :unavailable}
-  def fetch_director(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_director, timeout_in_ms)
-
-  @doc """
-  Get one of the current commit proxies
-  """
-  @spec fetch_commit_proxy(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, CommitProxy.ref()} | {:error, :unavailable}
-  def fetch_commit_proxy(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_commit_proxy, timeout_in_ms)
-
-  @doc """
-  Retrieve the list of nodes currently running the coordinator process for the
-  cluster. If successful, it returns a tuple with `:ok` and the list of nodes;
-  otherwise, it returns `{:error, :unavailable}` if unable to retrieve the
-  information.
-
-  ## Parameters
-    - `gateway`: The reference to the GenServer instance of the cluster gateway.
-
-  ## Returns
-    - `{:ok, [node()]}`: A tuple containing `:ok` and a list of nodes running the coordinators.
-    - `{:error, :unavailable}`: An error tuple indicating the information is not accessible at the moment.
-  """
-  @spec fetch_coordinator_nodes(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, [node()]} | {:error, :unavailable}
-  def fetch_coordinator_nodes(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_coordinator_nodes, timeout_in_ms)
 
   @doc """
   Report the addition of a new worker to the cluster director. It does so by

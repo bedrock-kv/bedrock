@@ -28,7 +28,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     only: [
       put_leader_node: 2,
       put_epoch: 2,
-      update_raft: 2
+      update_raft: 2,
+      add_tsl_subscriber: 2,
+      remove_tsl_subscriber: 2
     ]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
@@ -146,6 +148,31 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     end
   end
 
+  def handle_call({:register_gateway, gateway_pid, services}, from, t) do
+    # Always subscribe gateway for TSL updates (monitor to clean up on death)
+    Process.monitor(gateway_pid)
+    updated_state = add_tsl_subscriber(t, gateway_pid)
+
+    case updated_state.leader_node do
+      node when node == updated_state.my_node ->
+        # I'm leader - register services via Raft
+        command = Commands.register_services(services)
+
+        updated_state
+        |> durably_write_service_registration(command, ack_fn(from))
+        |> case do
+          {:ok, final_state} -> final_state |> noreply()
+          {:error, _reason} = error -> updated_state |> reply(error)
+        end
+
+      leader_node ->
+        # Not leader - forward async to prevent blocking Raft consensus
+        leader_coordinator = {updated_state.otp_name, leader_node}
+        GenServer.cast(leader_coordinator, {:forward_register_services, services, from})
+        updated_state |> noreply()
+    end
+  end
+
   def handle_call(:ping, _from, t) do
     leader = if t.leader_node == t.my_node, do: self(), else: nil
     t |> reply({:pong, t.epoch, leader})
@@ -192,9 +219,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
-  def handle_info({:DOWN, monitor_ref, :process, _pid, reason}, t) do
+  def handle_info({:DOWN, monitor_ref, :process, pid, reason}, t) do
     t
     |> handle_director_failure(monitor_ref, reason)
+    # Clean up TSL subscriber if process died
+    |> remove_tsl_subscriber(pid)
     |> noreply()
   end
 
@@ -206,6 +235,23 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_cast({:ping, _}, t) do
     t |> noreply()
+  end
+
+  def handle_cast({:forward_register_services, services, original_from}, t) do
+    # Leader receives forwarded service registration request
+    command = Commands.register_services(services)
+
+    t
+    |> durably_write_service_registration(command, ack_fn(original_from))
+    |> case do
+      {:ok, updated_state} ->
+        updated_state |> noreply()
+
+      {:error, _reason} = error ->
+        # Reply directly to original caller
+        GenServer.reply(original_from, error)
+        t |> noreply()
+    end
   end
 
   def handle_cast({:raft, :rpc, event, source}, t) do

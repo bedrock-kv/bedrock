@@ -19,7 +19,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           config: Config.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()},
-          service_directory: %{String.t() => {atom(), {atom(), node()}}}
+          service_directory: %{String.t() => {atom(), {atom(), node()}}},
+          tsl_subscribers: MapSet.t(pid())
         }
   defstruct cluster: nil,
             leader_node: :undecided,
@@ -33,7 +34,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             config: nil,
             transaction_system_layout: nil,
             waiting_list: %{},
-            service_directory: %{}
+            service_directory: %{},
+            tsl_subscribers: MapSet.new()
 
   defmodule Changes do
     @moduledoc false
@@ -69,8 +71,10 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
             State.t()
-    def put_transaction_system_layout(t, transaction_system_layout),
-      do: %{t | transaction_system_layout: transaction_system_layout}
+    def put_transaction_system_layout(t, transaction_system_layout) do
+      updated_state = %{t | transaction_system_layout: transaction_system_layout}
+      broadcast_tsl_update(updated_state, transaction_system_layout)
+    end
 
     @spec put_service_directory(t :: State.t(), %{String.t() => {atom(), {atom(), node()}}}) ::
             State.t()
@@ -84,5 +88,22 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           ) :: State.t()
     def update_service_directory(t, updater),
       do: %{t | service_directory: updater.(t.service_directory)}
+
+    @spec add_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
+    def add_tsl_subscriber(t, subscriber),
+      do: %{t | tsl_subscribers: MapSet.put(t.tsl_subscribers, subscriber)}
+
+    @spec remove_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
+    def remove_tsl_subscriber(t, subscriber),
+      do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
+
+    @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t()) :: State.t()
+    def broadcast_tsl_update(t, tsl) do
+      for subscriber <- t.tsl_subscribers do
+        send(subscriber, {:tsl_updated, tsl})
+      end
+
+      t
+    end
   end
 end

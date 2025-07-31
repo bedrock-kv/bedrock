@@ -156,6 +156,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     updated_state
   end
 
+  def process_command(t, {:register_services, %{services: services}}) do
+    t
+    |> update_service_directory(fn directory ->
+      Enum.into(services, directory, fn {service_id, kind, worker_ref} ->
+        {service_id, {kind, worker_ref}}
+      end)
+    end)
+  end
+
   def process_command(t, {:deregister_services, %{service_ids: service_ids}}) do
     t
     |> update_service_directory(fn directory ->

@@ -11,7 +11,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogTest do
 
       assert %DiskRaftLog{} = log
       assert log.table_name == :test_log
-      assert String.contains?(List.to_string(log.table_file), "raft_log.dets")
+      assert String.contains?(log.table_file, "raft_log.dets")
       assert log.is_open == false
     end
 
@@ -44,7 +44,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogTest do
     test "handles DETS errors gracefully" do
       log = %DiskRaftLog{
         table_name: :bad_table,
-        table_file: ~c"/non/existent/path/test.dets",
+        table_file: "/non/existent/path/test.dets",
         is_open: false
       }
 

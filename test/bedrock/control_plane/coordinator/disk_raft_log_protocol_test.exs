@@ -3,20 +3,21 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.Raft.Log
-  alias Bedrock.Raft.TransactionID
 
   @moduletag :tmp_dir
 
-  setup %{tmp_dir: tmp_dir} do
+  def with_log(%{tmp_dir: tmp_dir} = context) do
     log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :protocol_test)
     {:ok, log} = DiskRaftLog.open(log)
 
     on_exit(fn -> DiskRaftLog.close(log) end)
 
-    {:ok, log: log}
+    {:ok, context |> Map.put(:log, log)}
   end
 
   describe "basic protocol methods" do
+    setup :with_log
+
     test "new_id/3 creates transaction IDs", %{log: log} do
       assert {1, 5} = Log.new_id(log, 1, 5)
       assert {42, 99} = Log.new_id(log, 42, 99)
@@ -44,6 +45,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "append_transactions/3" do
+    setup :with_log
+
     test "can append first transactions from {0, 0}", %{log: log} do
       transactions = [{1, :data1}, {1, :data2}]
 
@@ -95,6 +98,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "transactions_to/2 and transactions_from/3" do
+    setup :with_log
+
     setup %{log: log} do
       # Create test chain: {0,0} -> {1,1} -> {1,2} -> {2,3} -> {2,4}
       {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
@@ -176,6 +181,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "commit_up_to/2" do
+    setup :with_log
+
     test "commit_up_to/2 with {0, 0} returns :unchanged", %{log: log} do
       assert :unchanged = Log.commit_up_to(log, {0, 0})
     end
@@ -222,6 +229,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "purge_transactions_after/2" do
+    setup :with_log
+
     test "truncates log after specified transaction", %{log: log} do
       {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
 
@@ -274,6 +283,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "edge cases and error conditions" do
+    setup :with_log
+
     test "empty log behavior", %{log: log} do
       # All transactions_* methods should return empty lists
       assert Log.transactions_to(log, :newest) == []
@@ -322,6 +333,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
   end
 
   describe "concurrent access patterns" do
+    setup :with_log
+
     test "multiple append operations maintain consistency", %{log: log} do
       # Simulate multiple sequential appends as might happen in Raft
       {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :term1_entry1}])
@@ -377,7 +390,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
   describe "persistence across restarts" do
     test "maintains raft log state across close/reopen", %{tmp_dir: tmp_dir} do
-      table_name = :persistence_test
+      table_name = :persistence_test2
 
       # First session: create log and add transactions
       log1 = DiskRaftLog.new(log_dir: tmp_dir, table_name: table_name)

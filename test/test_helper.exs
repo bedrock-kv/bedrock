@@ -36,3 +36,27 @@ defmodule Bedrock.DataPlane.Resolver.Behaviour do
 end
 
 Mox.defmock(Bedrock.DataPlane.ResolverMock, for: Bedrock.DataPlane.Resolver.Behaviour)
+
+defmodule QuietDetsHandler do
+  def init(_) do
+    {:ok, []}
+  end
+
+  def handle_event({:error_report, _gl, {_pid, :dets, _report}}, state) do
+    # Silently ignore DETS error reports
+    {:ok, state}
+  end
+
+  def handle_event(event, state) do
+    # Let other events through to default handler
+    :error_logger_tty_h.handle_event(event, state)
+  end
+
+  # Other required callbacks...
+  def handle_call(_request, state), do: {:ok, :ok, state}
+  def handle_info(_info, state), do: {:ok, state}
+  def terminate(_reason, _state), do: :ok
+end
+
+# Add the handler
+:error_logger.add_report_handler(QuietDetsHandler, [])

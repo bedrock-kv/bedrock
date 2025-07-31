@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   @type t :: %__MODULE__{
           table_name: atom(),
-          table_file: charlist(),
+          table_file: String.t(),
           is_open: boolean()
         }
 
@@ -65,7 +65,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     # Ensure log directory exists
     File.mkdir_p!(log_dir)
 
-    table_file = Path.join(log_dir, "raft_log.dets") |> String.to_charlist()
+    table_file = Path.join(log_dir, "raft_log.dets")
 
     %__MODULE__{
       table_name: table_name,
@@ -81,9 +81,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   """
   @spec open(t()) :: {:ok, t()} | {:error, term()}
   def open(%__MODULE__{} = log) do
-    case :dets.open_file(log.table_name, [{:file, log.table_file}]) do
-      {:ok, _table_name} ->
-        {:ok, %{log | is_open: true}}
+    case :dets.open_file(log.table_name, [{:file, log.table_file |> String.to_charlist()}]) do
+      {:ok, table_name} ->
+        {:ok, %{log | table_name: table_name, is_open: true}}
 
       {:error, reason} ->
         {:error, reason}
@@ -192,12 +192,29 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   @impl true
   def append_transactions(t, prev_id, transactions) do
     if has_transaction_id?(t, prev_id) do
-      # Build all records for atomic insert
-      transaction_records = transactions
-      chain_links = DiskRaftLog.build_chain_links(prev_id, transactions)
+      # Convert input transactions to proper transaction records
+      # Input format: [{term, data}, ...]
+      # Output format: [{{term, sequence}, data}, ...]
+      # Start sequence from prev_id sequence + 1, or 1 if prev_id is initial
+      start_sequence =
+        case prev_id do
+          @initial_transaction_id -> 1
+          {_term, seq} -> seq + 1
+        end
+
+      {transaction_records, _} =
+        Enum.map_reduce(transactions, start_sequence, fn {term, _data} = original_transaction,
+                                                         seq ->
+          transaction_id = TransactionID.new(term, seq)
+          transaction_record = {transaction_id, original_transaction}
+          {transaction_record, seq + 1}
+        end)
+
+      # Build chain links using the transaction records
+      chain_links = DiskRaftLog.build_chain_links(prev_id, transaction_records)
 
       new_tail_id =
-        case List.last(transactions) do
+        case List.last(transaction_records) do
           {id, _} -> id
           nil -> prev_id
         end

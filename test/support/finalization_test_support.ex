@@ -38,6 +38,7 @@ defmodule FinalizationTestSupport do
   """
   def basic_transaction_system_layout(log_server) do
     %{
+      sequencer: :test_sequencer,
       resolvers: [{<<0>>, :test_resolver}],
       logs: %{"log_1" => [0, 1]},
       services: %{

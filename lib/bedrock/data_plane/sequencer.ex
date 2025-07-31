@@ -34,4 +34,8 @@ defmodule Bedrock.DataPlane.Sequencer do
           | {:error, :unavailable}
   def next_commit_version(t, opts \\ []),
     do: t |> call(:next_commit_version, opts[:timeout_in_ms] || :infinity)
+
+  @spec report_successful_commit(ref(), commit_version :: Bedrock.version()) :: :ok
+  def report_successful_commit(t, commit_version),
+    do: t |> cast({:report_successful_commit, commit_version})
 end

@@ -36,7 +36,8 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     %State{
       director: director,
       epoch: epoch,
-      last_committed_version: last_committed_version
+      next_commit_version: last_committed_version,
+      read_version: last_committed_version
     }
     |> then(&{:ok, &1})
   end
@@ -46,13 +47,23 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
           {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
            State.t()}
   def handle_call(:next_read_version, _from, t),
-    do: t |> reply({:ok, t.last_committed_version})
+    do: t |> reply({:ok, t.read_version})
 
   @impl true
   def handle_call(:next_commit_version, _from, t) do
-    next_version = 1 + t.last_committed_version
+    next_version = 1 + t.next_commit_version
 
-    %{t | last_committed_version: next_version}
-    |> reply({:ok, t.last_committed_version, next_version})
+    %{t | next_commit_version: next_version}
+    |> reply({:ok, t.read_version, next_version})
+  end
+
+  @impl true
+  @spec handle_cast({:report_successful_commit, Bedrock.version()}, State.t()) ::
+          {:noreply, State.t()}
+  def handle_cast({:report_successful_commit, commit_version}, t) do
+    updated_read_version = max(t.read_version, commit_version)
+
+    %{t | read_version: updated_read_version}
+    |> noreply([])
   end
 end

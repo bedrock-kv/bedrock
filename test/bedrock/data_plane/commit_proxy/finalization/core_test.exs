@@ -249,6 +249,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
   describe "finalize_batch/3 with dependency injection" do
     test "uses injected abort_reply_fn" do
       transaction_system_layout = %{
+        sequencer: :test_sequencer,
         resolvers: [{<<0>>, :test_resolver}],
         logs: %{"log_1" => [0]},
         services: %{"log_1" => %{kind: :log, status: {:up, self()}}},

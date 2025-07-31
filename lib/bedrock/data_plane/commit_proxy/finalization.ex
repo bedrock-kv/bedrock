@@ -177,6 +177,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> split_and_notify_aborts(opts)
     |> prepare_for_logging()
     |> push_to_logs(transaction_system_layout, opts)
+    |> notify_sequencer(transaction_system_layout.sequencer)
     |> notify_successes(opts)
     |> extract_result_or_handle_error(opts)
   end
@@ -817,13 +818,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # ============================================================================
-  # STEP 7: NOTIFY SUCCESSES
+  # STEP 7: NOTIFY SEQUENCER
+  # ============================================================================
+
+  @spec notify_sequencer(FinalizationPlan.t(), Bedrock.DataPlane.Sequencer.ref()) ::
+          FinalizationPlan.t()
+  defp notify_sequencer(%FinalizationPlan{stage: :failed} = plan, _sequencer), do: plan
+
+  defp notify_sequencer(%FinalizationPlan{stage: :logged} = plan, sequencer) do
+    :ok = Bedrock.DataPlane.Sequencer.report_successful_commit(sequencer, plan.commit_version)
+    %{plan | stage: :sequencer_notified}
+  end
+
+  # ============================================================================
+  # STEP 8: NOTIFY SUCCESSES
   # ============================================================================
 
   @spec notify_successes(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
   defp notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
 
-  defp notify_successes(%FinalizationPlan{stage: :logged} = plan, opts) do
+  defp notify_successes(%FinalizationPlan{stage: :sequencer_notified} = plan, opts) do
     success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
 
     successful_indices = get_successful_indices(plan)

@@ -172,7 +172,7 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     t
   end
 
-  @spec try_register_foreman_services(State.t()) :: :ok
+  @spec try_register_foreman_services(State.t()) :: State.t()
   defp try_register_foreman_services(t) do
     :foreman
     |> t.cluster.otp_name()
@@ -180,10 +180,10 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     |> case do
       {:ok, [_ | _] = services} ->
         Coordinator.register_gateway(t.known_coordinator, self(), services)
-        :ok
+        t
 
       _ ->
-        :ok
+        t
     end
   end
 end

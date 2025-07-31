@@ -106,14 +106,14 @@ defmodule Bedrock.Service.Foreman do
   @doc """
   Return a list of all running services with information needed for coordinator registration.
 
-  Each service is returned as a tuple of {service_id, kind, worker_ref} where:
-  - service_id is the unique identifier for the service
+  Each service is returned as a compact tuple of {kind, name} where:
   - kind is :log or :storage
-  - worker_ref is {name, node} tuple for distributed system compatibility
+  - name is the OTP name atom for the worker
+
+  The coordinator will expand this to full service info using node(from) and generating service_id.
   """
   @spec get_all_running_services(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok,
-           [{service_id :: String.t(), kind :: :log | :storage, worker_ref :: {atom(), node()}}]}
+          {:ok, [{kind :: :log | :storage, name :: atom()}]}
           | {:error, :unavailable | :timeout | :unknown}
   def get_all_running_services(foreman, opts \\ []),
     do: call(foreman, :get_all_running_services, to_timeout(opts[:timeout] || :infinity))

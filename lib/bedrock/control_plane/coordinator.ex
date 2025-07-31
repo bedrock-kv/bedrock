@@ -54,6 +54,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
       |> call({:update_transaction_system_layout, transaction_system_layout}, timeout)
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
+  @type compact_service_info :: {kind :: atom(), name :: atom()}
 
   @spec register_services(
           coordinator_ref :: ref(),
@@ -82,15 +83,15 @@ defmodule Bedrock.ControlPlane.Coordinator do
   @spec register_gateway(
           coordinator_ref :: ref(),
           gateway_pid :: pid(),
-          services :: [service_info()],
+          compact_services :: [compact_service_info()],
           timeout_ms :: timeout_in_ms()
         ) ::
           {:ok, txn_id :: term()}
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def register_gateway(coordinator, gateway_pid, services, timeout \\ 5_000),
-    do: coordinator |> call({:register_gateway, gateway_pid, services}, timeout)
+  def register_gateway(coordinator, gateway_pid, compact_services, timeout \\ 5_000),
+    do: coordinator |> call({:register_gateway, gateway_pid, compact_services}, timeout)
 
   @spec ping(
           coordinator_ref :: ref(),

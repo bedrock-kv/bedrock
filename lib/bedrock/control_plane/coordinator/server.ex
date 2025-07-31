@@ -142,15 +142,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     end
   end
 
-  def handle_call({:register_gateway, gateway_pid, services}, from, t) do
+  def handle_call({:register_gateway, gateway_pid, compact_services}, from, t) do
     # Always subscribe gateway for TSL updates (monitor to clean up on death)
     Process.monitor(gateway_pid)
     updated_state = add_tsl_subscriber(t, gateway_pid)
 
+    # Expand compact services to full format
+    caller_node = node(gateway_pid)
+    expanded_services = expand_compact_services(compact_services, caller_node)
+
     case updated_state.leader_node do
       node when node == updated_state.my_node ->
         # I'm leader - register services via Raft
-        command = Commands.register_services(services)
+        command = Commands.register_services(expanded_services)
 
         updated_state
         |> durably_write_service_registration(command, ack_fn(from))
@@ -162,7 +166,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       leader_node ->
         # Not leader - forward async to prevent blocking Raft consensus
         leader_coordinator = {updated_state.otp_name, leader_node}
-        GenServer.cast(leader_coordinator, {:forward_register_services, services, from})
+        GenServer.cast(leader_coordinator, {:forward_register_services, expanded_services, from})
         updated_state |> noreply()
     end
   end
@@ -276,5 +280,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         raft_log = DiskRaftLog.new(log_dir: working_directory)
         DiskRaftLog.open(raft_log)
     end
+  end
+
+  # Private helper functions
+
+  @spec expand_compact_services([{atom(), atom()}], node()) :: [Commands.service_info()]
+  defp expand_compact_services(compact_services, caller_node) do
+    Enum.map(compact_services, fn {kind, name} ->
+      service_id = "#{name}_#{caller_node}"
+      {service_id, kind, {name, caller_node}}
+    end)
   end
 end

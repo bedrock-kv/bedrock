@@ -42,14 +42,14 @@ defmodule Bedrock.Cluster.Gateway.IntegrationTest do
     end
 
     test "register_gateway API combines registration and subscription" do
-      # Test the new unified API call format
+      # Test the new unified API call format with compact services
       gateway_pid = self()
-      services = [{"test_service", :storage, {:worker, Node.self()}}]
+      compact_services = [{:storage, :worker}]
 
       # This would be the call format to the coordinator
-      api_call = {:register_gateway, gateway_pid, services}
+      api_call = {:register_gateway, gateway_pid, compact_services}
 
-      assert {:register_gateway, ^gateway_pid, ^services} = api_call
+      assert {:register_gateway, ^gateway_pid, ^compact_services} = api_call
     end
 
     test "gateway handles TSL updates via push notifications" do

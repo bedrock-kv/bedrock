@@ -159,9 +159,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     # Check if the node has the required capability using director's capability map
     nodes_with_capability = Map.get(t.node_capabilities, kind, [])
 
-    if node not in nodes_with_capability do
-      {:error, {:node_lacks_capability, node, kind}}
-    else
+    if node in nodes_with_capability do
       # Contact the foreman on the target node to create the worker
       foreman_ref = {t.cluster.otp_name(:foreman), node}
 
@@ -172,6 +170,8 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
         {:error, reason} ->
           {:error, {:worker_creation_failed, reason}}
       end
+    else
+      {:error, {:node_lacks_capability, node, kind}}
     end
   end
 

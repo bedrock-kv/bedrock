@@ -1,12 +1,11 @@
-defmodule Bedrock.Cluster.Gateway.DirectorRelations do
+defmodule Bedrock.Cluster.Gateway.WorkerAdvertisement do
   @moduledoc """
-  Simplified module focused only on service advertisement.
-  Handles worker registration with coordinator via Raft consensus.
+  Handles worker advertisement and service registration.
+  Manages individual worker registration with coordinator via Raft consensus.
   """
 
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
   @spec advertise_worker_with_leader_check(State.t(), Worker.ref()) :: State.t()
@@ -21,37 +20,7 @@ defmodule Bedrock.Cluster.Gateway.DirectorRelations do
     t
   end
 
-  @spec pull_services_from_foreman_and_register(State.t()) :: State.t()
-  def pull_services_from_foreman_and_register(%{known_coordinator: :unavailable} = t), do: t
-
-  def pull_services_from_foreman_and_register(t) do
-    case get_all_services_from_foreman(t) do
-      {:ok, []} -> t
-      {:ok, services} -> register_services_with_coordinator(t, services)
-      {:error, _reason} -> t
-    end
-  end
-
   # Private helper functions
-
-  @spec get_all_services_from_foreman(State.t()) ::
-          {:ok, [{String.t(), :log | :storage, {atom(), node()}}]} | {:error, term()}
-  defp get_all_services_from_foreman(t),
-    do: Foreman.get_all_running_services(t.cluster.otp_name(:foreman))
-
-  @spec register_services_with_coordinator(State.t(), [
-          {String.t(), :log | :storage, {atom(), node()}}
-        ]) :: State.t()
-  defp register_services_with_coordinator(t, services) do
-    case t.known_coordinator do
-      coordinator_ref when coordinator_ref != :unavailable ->
-        Coordinator.register_services(coordinator_ref, services)
-        t
-
-      :unavailable ->
-        t
-    end
-  end
 
   @spec register_single_worker_via_coordinator(
           Worker.ref(),

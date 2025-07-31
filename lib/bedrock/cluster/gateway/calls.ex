@@ -4,18 +4,22 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
           {State.t(), {:ok, pid()} | {:error, :unavailable}}
   def begin_transaction(t, opts \\ []) do
-    case ensure_current_tsl(t) do
+    t
+    |> ensure_current_tsl()
+    |> case do
       {:ok, tsl, updated_state} ->
-        case TransactionBuilder.start_link(
-               gateway: self(),
-               transaction_system_layout: tsl,
-               key_codec: Keyword.fetch!(opts, :key_codec),
-               value_codec: Keyword.fetch!(opts, :value_codec)
-             ) do
+        TransactionBuilder.start_link(
+          gateway: self(),
+          transaction_system_layout: tsl,
+          key_codec: Keyword.fetch!(opts, :key_codec),
+          value_codec: Keyword.fetch!(opts, :value_codec)
+        )
+        |> case do
           {:ok, pid} -> {updated_state, {:ok, pid}}
           {:error, reason} -> {updated_state, {:error, reason}}
         end
@@ -26,7 +30,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   end
 
   @spec ensure_current_tsl(State.t()) ::
-          {:ok, Bedrock.ControlPlane.Config.TransactionSystemLayout.t(), State.t()}
+          {:ok, TransactionSystemLayout.t(), State.t()}
           | {:error, :unavailable}
   defp ensure_current_tsl(%{known_coordinator: :unavailable}), do: {:error, :unavailable}
 

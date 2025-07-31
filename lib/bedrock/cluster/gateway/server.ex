@@ -20,9 +20,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
 
   import Bedrock.Cluster.Gateway.Telemetry
 
-  import Bedrock.Cluster.Gateway.DirectorRelations,
+  import Bedrock.Cluster.Gateway.WorkerAdvertisement,
     only: [
-      pull_services_from_foreman_and_register: 1,
       advertise_worker_with_leader_check: 2
     ]
 
@@ -115,19 +114,21 @@ defmodule Bedrock.Cluster.Gateway.Server do
     |> then(fn {t, result} -> t |> reply(result) end)
   end
 
+  @spec handle_call(:get_known_coordinator, GenServer.from(), State.t()) ::
+          {:reply, {:ok, term()} | {:error, :unavailable}, State.t()}
+  def handle_call(:get_known_coordinator, _, t) do
+    case t.known_coordinator do
+      :unavailable -> t |> reply({:error, :unavailable})
+      coordinator -> t |> reply({:ok, coordinator})
+    end
+  end
+
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::
           {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:timeout, :find_a_live_coordinator}, t),
     do: t |> noreply(continue: :find_a_live_coordinator)
-
-  @spec handle_info(:pull_services_from_foreman, State.t()) :: {:noreply, State.t()}
-  def handle_info(:pull_services_from_foreman, t) do
-    t
-    |> pull_services_from_foreman_and_register()
-    |> noreply()
-  end
 
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
   def handle_info({:tsl_updated, new_tsl}, t) do

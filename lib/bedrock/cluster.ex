@@ -1,10 +1,10 @@
 defmodule Bedrock.Cluster do
   @moduledoc false
 
-  alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Storage
@@ -20,10 +20,12 @@ defmodule Bedrock.Cluster do
   @type capability :: :coordination | :log | :storage
 
   @callback capabilities() :: [Bedrock.Cluster.capability()]
+  @callback coordinator!() :: Bedrock.ControlPlane.Coordinator.ref()
   @callback config!() :: Config.t()
   @callback coordinator_nodes!() :: [node()]
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
   @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
+  @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback fetch_gateway() :: {:ok, Gateway.ref()} | {:error, :unavailable}
   @callback fetch_transaction_system_layout() ::
@@ -89,6 +91,13 @@ defmodule Bedrock.Cluster do
       @impl true
       @spec config!() :: Config.t()
       def config!, do: ClusterSupervisor.config!(__MODULE__)
+
+      @doc """
+      Get the coordinator for the cluster.
+      """
+      @impl true
+      @spec coordinator!() :: Coordinator.ref()
+      def coordinator!, do: ClusterSupervisor.coordinator!(__MODULE__)
 
       @doc """
       Fetch the transaction system layout for the cluster.
@@ -198,6 +207,13 @@ defmodule Bedrock.Cluster do
       ######################################################################
 
       @doc """
+      Fetch the coordinator that the gateway is connected to.
+      """
+      @impl true
+      @spec fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+      def fetch_coordinator, do: ClusterSupervisor.fetch_coordinator(__MODULE__)
+
+      @doc """
       Fetch the gateway for this node of the cluster.
       """
       @impl true
@@ -209,12 +225,7 @@ defmodule Bedrock.Cluster do
       """
       @impl true
       @spec fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-      def fetch_coordinator_nodes do
-        case path_to_descriptor() |> Descriptor.read_from_file() do
-          {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
-          {:error, _reason} -> {:error, :unavailable}
-        end
-      end
+      def fetch_coordinator_nodes, do: ClusterSupervisor.fetch_coordinator_nodes(__MODULE__)
 
       @doc """
       Get the nodes that are running coordinators for the cluster. If we can't

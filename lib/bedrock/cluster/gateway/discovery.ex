@@ -175,8 +175,37 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
 
   @spec trigger_service_discovery_when_available(State.t()) :: State.t()
   defp trigger_service_discovery_when_available(t) do
-    # When a coordinator becomes available, trigger pull-based service discovery
-    send(self(), :pull_services_from_foreman)
-    t
+    # When a coordinator becomes available, query foreman for all running services
+    # and register them with the coordinator using the unified register_gateway API
+    case t.cluster.fetch_gateway() do
+      {:ok, gateway_pid} ->
+        # Try to get foreman if available (storage/log capabilities)
+        if :storage in t.capabilities or :log in t.capabilities do
+          try_register_foreman_services(t, gateway_pid)
+        end
+
+        t
+
+      {:error, _} ->
+        t
+    end
+  end
+
+  @spec try_register_foreman_services(State.t(), pid()) :: :ok
+  defp try_register_foreman_services(t, gateway_pid) do
+    foreman_ref = t.cluster.otp_name(:foreman)
+
+    # Query foreman for all running services
+    case GenServer.call(foreman_ref, :get_all_running_services, 1000) do
+      {:ok, [_ | _] = services} ->
+        # Register services with coordinator via the unified API
+        Coordinator.register_gateway(t.known_coordinator, gateway_pid, services)
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
   end
 end

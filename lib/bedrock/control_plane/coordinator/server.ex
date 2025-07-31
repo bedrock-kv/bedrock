@@ -98,12 +98,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_call(:fetch_transaction_system_layout, _from, t),
     do: t |> reply({:ok, t.transaction_system_layout})
 
-  def handle_call(:fetch_director_and_epoch, _from, t) when t.director == :unavailable,
-    do: t |> reply({:error, :unavailable})
-
-  def handle_call(:fetch_director_and_epoch, _from, t),
-    do: t |> reply({:ok, {t.director, t.epoch}})
-
   def handle_call({:update_config, config}, from, t) do
     command = Commands.update_config(config)
 

@@ -195,18 +195,43 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
+  @spec fetch_coordinator(Cluster.t()) :: {:ok, Coordinator.ref()} | {:error, :unavailable}
+  def fetch_coordinator(module) do
+    case module.fetch_gateway() do
+      {:ok, gateway} ->
+        # Get the coordinator from the gateway's current state
+        case GenServer.call(gateway, :get_known_coordinator, 1000) do
+          {:ok, coordinator} -> {:ok, coordinator}
+          _ -> {:error, :unavailable}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  rescue
+    _ -> {:error, :unavailable}
+  end
+
   @spec coordinator!(Cluster.t()) :: Coordinator.ref()
   def coordinator!(module) do
-    module.fetch_coordinator()
+    fetch_coordinator(module)
     |> case do
       {:ok, coordinator} -> coordinator
       {:error, _} -> raise "No coordinator available"
     end
   end
 
+  @spec fetch_coordinator_nodes(Cluster.t()) :: {:ok, [node()]} | {:error, :unavailable}
+  def fetch_coordinator_nodes(module) do
+    case module.path_to_descriptor() |> Descriptor.read_from_file() do
+      {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
+      {:error, _reason} -> {:error, :unavailable}
+    end
+  end
+
   @spec coordinator_nodes!(Cluster.t()) :: [node()]
   def coordinator_nodes!(module) do
-    module.fetch_coordinator_nodes()
+    fetch_coordinator_nodes(module)
     |> case do
       {:ok, coordinator_nodes} -> coordinator_nodes
       {:error, _} -> raise "No coordinator nodes available"

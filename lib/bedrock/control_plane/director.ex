@@ -10,19 +10,25 @@ defmodule Bedrock.ControlPlane.Director do
 
   ## Epoch Management
 
-  The director implements epoch-based generation management to prevent split-brain
-  scenarios during recovery. Each recovery increments the cluster epoch, which
-  serves as a generation counter that ensures clean transitions between system
-  configurations.
+  The Director uses epoch-based generation management to prevent split-brain
+  scenarios during recovery. Epochs are managed by the Coordinators as
+  ever-increasing numbers that serve as generation counters. There is only ever
+  one Director instance for a given epoch - it either completes recovery
+  successfully or is relieved by the next Director with a higher epoch.
 
-  Services locked with newer epochs take precedence over older ones, and processes
-  from previous epochs terminate themselves when they detect a generation change.
-  This approach eliminates the need for complex coordination protocols while
-  maintaining system consistency during concurrent recovery attempts.
+  Services locked with newer epochs take precedence over older ones, and
+  processes from previous epochs terminate themselves when they detect a
+  generation change. This approach eliminates the need for complex coordination
+  protocols while maintaining system consistency during concurrent recovery
+  attempts.
 
-  The epoch mechanism ensures that only one director generation can make progress
-  at any given time, preventing conflicting recovery operations that could
-  compromise data integrity or system availability.
+  ## Service Discovery Dependencies
+
+  The Director requires a populated service directory and node capabilities to
+  orchestrate recovery effectively. The Coordinator ensures the Director
+  receives complete cluster topology and capability information at startup,
+  providing full knowledge of available cluster resources and the ability to
+  create new services when vacancies must be filled during recovery.
   """
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker

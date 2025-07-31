@@ -1,6 +1,32 @@
 defmodule Bedrock.ControlPlane.Coordinator do
   @moduledoc """
-  The Coordinator module is responsible for managing the state of the cluster.
+  Manages cluster state through Raft consensus and coordinates Director lifecycle.
+
+  The Coordinator maintains the authoritative cluster configuration and service
+  directory through distributed consensus. When elected as leader, it manages
+  Director startup with proper service discovery timing to prevent race conditions.
+
+  ## Service Registration Flow
+
+  Gateways advertise their node's services to the elected leader Coordinator by
+  calling `register_services/2` or `register_gateway/4`. The leader then persists
+  this service information through Raft consensus, propagating updates to all
+  Coordinators. The service directory is maintained consistently across the
+  cluster, ensuring the Director receives a populated service directory at startup.
+
+  ## Leader Readiness States
+
+  New leaders transition through readiness states to prevent service discovery
+  race conditions. Upon election, leaders enter `:leader_waiting_consensus` state,
+  waiting for the first consensus round to populate the service directory. Once
+  consensus completes, they transition to `:leader_ready` state and can start
+  the Director. This ensures Directors receive complete service topology before
+  beginning recovery.
+
+  ## See Also
+
+  - `Bedrock.ControlPlane.Director` - Recovery orchestration
+  - `Bedrock.ControlPlane.Coordinator.State` - Internal state management
   """
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout

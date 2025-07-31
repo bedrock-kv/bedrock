@@ -1,290 +1,115 @@
 # Recovery Guide
 
-**Comprehensive recovery patterns and troubleshooting for Bedrock's distributed system.**
+**Understanding Bedrock's distributed system recovery process.**
 
-See `Bedrock.ControlPlane.Director.Recovery` module documentation for complete implementation details.
+Recovery orchestrates the complex coordination required to bring a distributed database cluster from a failed or starting state to full operation. This guide explains how recovery works, when it triggers, and how its phases rebuild the transaction system.
 
-## See Also
-- `lib/bedrock/control_plane/director/recovery.ex` - Main recovery orchestrator
-- `lib/bedrock/control_plane/director/recovery/` - Individual phase implementations  
-- `lib/bedrock/control_plane/config/recovery_attempt.ex` - Recovery state management
+## Recovery Philosophy
 
-## Recovery Overview
+Bedrock implements a "fail-fast" recovery philosophy inspired by both Erlang/OTP and FoundationDB. Instead of complex health checking and partial failure handling, the system monitors critical components with `Process.monitor/1` and triggers immediate, complete recovery when any transaction component fails.
 
-Bedrock's recovery system orchestrates the complex coordination required to bring a distributed database cluster from a failed or starting state to full operation. The process involves multiple components working together through well-defined phases, with robust handling of timing dependencies and failure scenarios.
+This approach trades complexity for reliability: rather than attempting to patch around failures, the system rebuilds the entire transaction layer from a known-good state. Recovery typically completes in seconds, making the trade-off practical for distributed database workloads that require strict consistency.
 
-### Key Concepts
-- **Fail-Fast Philosophy**: Combines Erlang/OTP "let it crash" with FoundationDB fast recovery - use `Process.monitor/1` rather than complex health checking, with immediate failure response
-- **Epoch-Based Management**: Prevents split-brain with generation counters - each recovery increments an epoch, processes terminate themselves when they detect newer generations  
-- **Linear State Machine**: 18-phase recovery process from start through completion, with branch point for new vs existing clusters
-- **Component Monitoring**: Any transaction component failure triggers immediate director exit and full recovery restart
+Recovery uses epoch-based generation management to prevent split-brain scenarios. Each recovery increments the cluster epoch, serving as a generation counter that ensures clean transitions between system configurations. Processes from previous epochs detect newer generations and terminate themselves.
 
 ## When Recovery Triggers
 
-### Critical Components (Recovery Triggers)
-Recovery is triggered when any of these components fail:
-- **Coordinator**: Raft consensus failure or network partition
-- **Director**: Recovery coordinator failure
-- **Sequencer**: Version assignment failure
-- **Commit Proxies**: Transaction batching failure
-- **Resolvers**: Conflict detection failure
-- **Transaction Logs**: Durability system failure
+Recovery begins when any component critical to transaction processing fails:
 
-### Non-Critical Components (No Recovery)
-These failures do NOT trigger recovery:
-- **Storage Servers**: Data distributor handles storage failures
-- **Gateways**: Client interface failures are handled locally
-- **Rate Keeper**: Independent component with separate lifecycle
+**Critical Components**: Coordinator, Director, Sequencer, Commit Proxies, Resolvers, Transaction Logs  
+**Non-Critical Components**: Storage Servers, Gateways, Rate Keeper
 
-### Detection Mechanisms
-- **Coordinator Failure**: Raft heartbeat timeout → Leader election
-- **Director Failure**: `Process.monitor/1` → Coordinator restart with incremented epoch
-- **Component Failure**: Director monitors ALL transaction components → ANY failure → Director immediate exit
+The distinction reflects architectural responsibilities. Transaction components participate in every commit and must maintain strict consistency. Storage and gateway failures are handled locally through data distribution and client retry mechanisms.
 
-### Node Rejoin Triggers Recovery
-When nodes restart and advertise existing services, the Director restarts recovery to incorporate the rejoining resources. This ensures optimal service layout and prevents the complexity of incremental service integration during active recovery phases.
+Component failures are detected through different mechanisms:
+- **Coordinator Failure**: Raft heartbeat timeout triggers leader election
+- **Director Failure**: `Process.monitor/1` in Coordinator triggers restart with incremented epoch  
+- **Transaction Component Failure**: Director monitors all components; any failure triggers Director exit
 
-## Durable Services and Epoch Management
+## Recovery Prerequisites
 
-### Durable Service Nature
-Logs and storage servers are **durable by design**:
-- **Purpose**: Persist data across cold starts and node restarts
-- **Lifecycle**: Survive node restarts, director failures, and epoch changes
-- **Local Startup**: When node boots, it starts locally available durable services
-- **Cluster Integration**: Services advertise to cluster via `request_to_rejoin`
+Recovery begins only after the cluster fully forms and establishes stable coordination. The Coordinator must populate its service directory through Raft consensus before starting a Director. This prerequisite story—including node startup, leader elections, service registration, and the critical timing coordination—is covered in detail in [Cluster Startup](cluster-startup.md).
 
-### Epoch-Based Split-Brain Prevention
-Durable services use epoch management to prevent split-brain scenarios:
-- **Service Locking**: Director locks services with new epoch during recovery
-- **Old Epoch Services**: Services with older epochs stop participating
-- **New Epoch Services**: Only services locked with current epoch participate
-- **Fail-Safe**: Services refuse commands from directors with older epochs
-
-### Node Rejoin Flow
-1. **Local Service Startup**: Node boots durable services from local storage
-2. **Service Advertisement**: Services advertise through Gateway to Coordinator service directory  
-3. **Recovery Restart**: Director detects new services and restarts recovery
-4. **Integrated Discovery**: New services are incorporated through the standard service discovery process described above
+Once cluster formation completes, the Coordinator starts a Director with complete knowledge of available resources, and recovery begins.
 
 ## Recovery Process
 
-### Coordinator Election and Director Startup
-When coordinator fails, remaining coordinators detect failure via Raft heartbeat timeout and elect a new leader. The new coordinator reads persistent configuration from storage, initializes with the highest epoch, and starts a new director with incremented epoch. Any existing director detects the newer epoch and exits.
+### Phase 1: Foundation - Startup and Service Locking
 
-### Service Discovery and Coordination
+Recovery begins when the Coordinator starts a Director with the populated service directory. The Director records the recovery start time and immediately attempts to lock services from the previous transaction system layout.
 
-Before recovery begins, service discovery establishes the foundation by building a complete picture of available cluster resources through coordination between Gateway, Coordinator, Director, and Foreman components. The process handles various timing scenarios gracefully, from normal startup to leader elections and dynamic service registration.
+Service locking establishes exclusive Director control and prevents split-brain scenarios where multiple directors attempt concurrent control. Services are locked with the current epoch; services with older epochs detect the newer epoch and terminate.
 
-#### Discovery Architecture
-
-The discovery flow follows a pull-based pattern where the Gateway actively queries for services rather than relying on push notifications. This eliminates timing-dependent race conditions during cluster startup:
-
-- **Coordinator Authority**: The Raft leader coordinator maintains the authoritative service directory
-- **Gateway Discovery**: Gateway discovers the leader using enhanced polling with epoch-based selection
-- **Bulk Registration**: Gateway queries Foreman for all running services and registers them in batches
-- **Director Integration**: Director receives complete service directory from coordinator before starting recovery
-
-#### Discovery Interaction Patterns
-
-**Normal Startup with Available Leader**
-
-When the cluster starts with an established leader, service discovery proceeds smoothly:
-
-```mermaid
-sequenceDiagram
-    participant F as Foreman
-    participant G as Gateway  
-    participant C1 as Coordinator (Follower)
-    participant C2 as Coordinator (Leader)
-    participant D as Director
-
-    Note over C2: Already elected leader
-    Note over F: Service "abc123" already running
-    
-    G->>G: multi_call(all_coordinators, :ping)
-    C1->>G: {:pong, 5, C2}
-    C2->>G: {:pong, 5, C2}
-    G->>G: Select C2 as leader (epoch 5)
-    
-    G->>F: get_all_running_services()
-    F->>G: [{"abc123", :storage, ref}]
-    G->>C2: register_services([service_list])
-    C2->>C2: Store batch in Raft directory
-    
-    C2->>D: start_link(services: directory)
-    D->>D: try_to_recover() with complete services
-```
-
-The Gateway uses `multi_call` to poll all coordinators simultaneously, selecting the leader based on the highest epoch response. Once identified, the Gateway pulls all services from the Foreman and registers them as a batch, ensuring the Director starts with complete service information.
-
-**Discovery During Leader Election**
-
-When no leader is initially available, the Gateway polls until one emerges:
-
-```mermaid
-sequenceDiagram
-    participant G as Gateway
-    participant C1 as Coordinator
-    participant C2 as Coordinator (Future Leader)
-    participant D as Director
-
-    Note over C1,C2: No leader yet (election in progress)
-    
-    G->>G: multi_call(all_coordinators, :ping)
-    C1->>G: {:pong, 4, nil}
-    C2->>G: {:pong, 4, nil}  
-    G->>G: No leader found, retry timer set
-    
-    Note over C2: Becomes leader
-    
-    G->>G: multi_call(all_coordinators, :ping)
-    C1->>G: {:pong, 5, C2}
-    C2->>G: {:pong, 5, C2}
-    G->>G: Select C2 as leader (epoch 5)
-    
-    G->>F: get_all_running_services()
-    F->>G: [{"abc123", :storage, ref}]
-    G->>C2: register_services([service_list])
-    
-    C2->>D: start_link(services: directory)
-```
-
-The Gateway's polling strategy gracefully handles leader election timing by continuously retrying until a coordinator reports a non-nil leader. This approach eliminates push-based timing dependencies.
-
-**Late Service Registration**
-
-Services that start after the Director begins recovery are handled through real-time updates:
-
-```mermaid
-sequenceDiagram
-    participant F as Foreman  
-    participant G as Gateway
-    participant C as Coordinator (Leader)
-    participant D as Director
-
-    Note over C: Leader with empty directory
-    C->>D: start_link(services: {})
-    D->>D: try_to_recover() 
-    Note over D: Recovery stalls (insufficient_nodes)
-    
-    F->>F: Start service "abc123" (late)
-    F->>G: advertise_worker(pid)
-    G->>C: register_services([{"abc123", :storage, ref}])
-    C->>C: Store batch in Raft directory
-    C->>D: service_registered([service_info])
-    D->>D: try_to_recover() (retry with new service)
-```
-
-When the Director encounters insufficient services, it enters a stalled state. Late-arriving services trigger service registration events that notify the Director to retry recovery with the expanded service set.
-
-**Leader Failover Handling**
-
-Leader changes are detected through polling failures that trigger discovery mode:
-
-```mermaid
-sequenceDiagram
-    participant G as Gateway
-    participant C1 as Coordinator (Old Leader)
-    participant C2 as Coordinator (New Leader)
-    participant D2 as Director (New)
-
-    Note over G: Gateway polling C1 directly
-    G->>C1: call(C1, :ping)
-    C1->>G: {:pong, 5, C1}
-    
-    Note over C1,C2: Leader election (C1 fails)
-    Note over C2: Becomes new leader, inherits service directory
-    
-    G->>C1: call(C1, :ping) (fails - C1 down)
-    G->>G: multi_call(all_coordinators, :ping)
-    C2->>G: {:pong, 6, C2}
-    G->>G: Update leader to C2 (epoch 6)
-    
-    C2->>D2: start_link(services: directory)
-    D2->>D2: try_to_recover() with inherited services
-```
-
-The Gateway employs a two-phase polling strategy: direct calls to known leaders for efficiency, falling back to discovery mode when direct calls fail. The new leader inherits the service directory through Raft state, ensuring continuity.
-
-#### Service Locking and Epoch Management
-
-Once the Director receives the complete service directory, it proceeds to lock services using the established epoch-based protocol:
-
-1. **Service Selection**: Director identifies services needed for the transaction system layout
-2. **Epoch Locking**: Services are locked with the current epoch to prevent split-brain scenarios  
-3. **Legacy Termination**: Services with older epochs detect the newer epoch and terminate
-4. **Capability Collection**: Director gathers service capabilities and health status
-
-Once service discovery completes, the Director receives the complete service directory and begins the formal 18-phase recovery state machine.
-
-### Recovery State Machine
-
-The recovery process follows a linear state machine through these phases:
-
-#### Phase 1: Startup (`StartupPhase`)
-Records the exact timestamp when recovery begins and provides timing baseline for recovery duration metrics. Always succeeds and transitions to service locking.
-
-#### Phase 2: Locking (`LockingPhase`)
-Establishes exclusive director control by selectively locking services from the old system layout. Services are locked to prevent split-brain scenarios where multiple directors attempt concurrent control. Only services referenced in the old transaction system layout are locked - these contain data that must be copied during recovery.
-
-**Branch Point**: The recovery path is determined by what gets locked:
+**The Branch Point**: What gets locked determines the recovery path:
 - **Nothing locked** → First-time initialization (new cluster)
-- **Services locked** → Recovery from existing data
+- **Services locked** → Recovery from existing persistent state
 
-#### Phase 3a: Initialization (`InitializationPhase`)
-Creates the initial transaction system layout for a new cluster when no previous cluster state exists. Creates log descriptors with evenly distributed key ranges and storage teams with the configured replication factor using vacancy placeholders.
+### Phase 2: Initialization or Discovery
 
-#### Phase 3b: Log Discovery (`LogDiscoveryPhase`)
-For existing clusters, finds logs that need to be recovered from the previous system layout.
+**New Cluster Path**: Creates initial transaction system layout with log descriptors covering evenly distributed key ranges and storage teams with configured replication factor.
 
-#### Phase 4: Version Determination (`VersionDeterminationPhase`)
-Finds the highest committed version across all logs to establish the consistent recovery point.
+**Existing Cluster Path**: Discovers logs requiring recovery from the previous system layout, then determines the highest committed version across all logs to establish the consistent recovery point.
 
-#### Phase 5: Vacancy Creation (`VacancyCreationPhase`)
-Creates placeholders for missing services that need to be filled during recruitment phases.
+### Phase 3: Resource Allocation - Vacancies and Recruitment
 
-#### Phase 6: Log Recruitment (`LogRecruitmentPhase`)
-Assigns or creates log workers to fill the vacancy placeholders created in the previous phase.
+Recovery creates vacancy placeholders for missing services, then fills them through recruitment:
 
-#### Phase 7: Storage Recruitment (`StorageRecruitmentPhase`)
-Assigns or creates storage workers to fill storage team vacancy placeholders.
+**Log Recruitment**: Assigns or creates log workers to handle transaction durability  
+**Storage Recruitment**: Assigns or creates storage workers for data storage and replication
 
-#### Phase 8: Log Replay (`LogReplayPhase`)
-Replays transactions from old logs to ensure all committed transactions are applied to the new system.
+Recruitment prioritizes existing services over creating new ones, preserving data locality and reducing recovery time.
 
-#### Phase 9: Data Distribution (`DataDistributionPhase`)
-Fixes data distribution across storage servers to ensure proper sharding and replication.
+### Phase 4: Data Consistency - Replay and Distribution
 
-#### Phase 10: Sequencer Startup (`SequencerStartupPhase`)
-Starts the sequencer component responsible for version assignment.
+**Log Replay**: Replays transactions from old logs to ensure all committed transactions appear in the new system. This phase handles the critical data migration between transaction system generations.
 
-#### Phase 11: Proxy Startup (`ProxyStartupPhase`)
-Starts commit proxy components that batch transactions and coordinate commits.
+**Data Distribution**: Fixes data distribution across storage servers to ensure proper sharding and replication according to the new layout.
 
-#### Phase 12: Resolver Startup (`ResolverStartupPhase`)
-Starts resolver components that implement MVCC conflict detection.
+### Phase 5: Transaction System Startup
 
-#### Phase 13: Validation (`ValidationPhase`)
-Performs final validation before Transaction System Layout construction. Conducts comprehensive checks to ensure all transaction system components are properly configured and ready for TSL construction.
+Recovery starts transaction processing components in dependency order:
 
-#### Phase 14: Transaction System Layout (`TransactionSystemLayoutPhase`)
-Constructs the Transaction System Layout, the critical blueprint defining how the distributed system operates. Builds the complete system topology containing sequencer, commit proxies, resolvers, logs, storage teams, and service descriptors. Unlocks all services in parallel to prepare them for transaction processing.
+1. **Sequencer**: Provides version assignment for MVCC consistency
+2. **Commit Proxies**: Batch transactions and coordinate commits
+3. **Resolvers**: Implement conflict detection for concurrent transactions
 
-#### Phase 15: Persistence (`PersistencePhase`)
-Constructs a system transaction containing the full cluster configuration and submits it through the entire data plane pipeline. This simultaneously persists the new configuration and validates that all transaction components work correctly.
+Each component startup validates that the previous components are operational before proceeding.
 
-#### Phase 16: Monitoring (`MonitoringPhase`)
-Sets up monitoring of all transaction system components using `Process.monitor/1`. Any failure of critical components will trigger immediate director shutdown and recovery restart, implementing Bedrock's fail-fast philosophy.
+### Phase 6: Validation and Layout Construction
 
-#### Phase 17: Cleanup (`CleanupPhase`)
-Cleans up unused workers that are no longer needed in the new system layout.
+**Validation**: Performs comprehensive checks ensuring all components are properly configured and ready for transaction processing.
 
-#### Phase 18: Recovery Complete
-Recovery is marked as complete and the system transitions to operational mode.
+**Transaction System Layout**: Constructs the complete system topology containing sequencer, commit proxies, resolvers, logs, storage teams, and service descriptors. This becomes the blueprint defining how the distributed system operates.
 
-### Key Implementation Points
-- **Director monitors ALL transaction components**
-- **ANY component failure → Director immediate exit**
-- **Coordinator uses simple exponential backoff**
-- **No circuit breaker complexity**
-- **Epoch-based generation management**
+### Phase 7: Persistence and Monitoring
+
+**Persistence**: Constructs a system transaction containing the full cluster configuration and submits it through the entire data plane pipeline. This simultaneously persists the new configuration and validates that all transaction components work correctly.
+
+**Monitoring**: Sets up monitoring of all transaction system components using `Process.monitor/1`. Any subsequent failure triggers immediate director shutdown and recovery restart, implementing the fail-fast philosophy.
+
+### Phase 8: Cleanup and Completion
+
+**Cleanup**: Removes unused workers no longer needed in the new system layout.
+
+**Recovery Complete**: System transitions to operational mode, ready to process client transactions.
+
+## Recovery Patterns
+
+### Stalled Recovery and Resource Addition
+
+When recovery stalls due to insufficient resources, it enters a waiting state rather than failing permanently. New nodes joining with required services trigger Director notification to retry recovery with the expanded resource set. This only occurs when recovery is already blocked - functioning systems continue normally when nodes join.
+
+### Durable Service Integration
+
+Logs and storage servers persist data across restarts and epoch changes. When nodes boot, they start locally available durable services, which then advertise to the cluster through the Gateway-Coordinator service registration flow. The Director incorporates these services through standard recruitment phases.
+
+### Leader Changes During Recovery
+
+Leader election interrupts recovery as the old Director terminates and a new Coordinator starts a fresh Director with incremented epoch. The new leader inherits the service directory through Raft state, ensuring service continuity while resetting recovery to a known-good starting point.
+
+## See Also
+
+- [Cluster Startup](cluster-startup.md) - How clusters form before recovery begins
+- `Bedrock.ControlPlane.Director.Recovery` - Main recovery orchestrator
+- `Bedrock.ControlPlane.Director.Recovery.*Phase` - Individual phase implementations
+- `Bedrock.ControlPlane.Config.RecoveryAttempt` - Recovery state management

@@ -77,6 +77,7 @@ mix test --grep "recovery"
 - **Process crashes**: Check logs and restart processes
 - **Raft issues**: Verify leader election and log replication
 - **Recovery failures**: Check Director status and assignments
+- **Service discovery race**: Look for "New leader waiting for first consensus" followed by "Leader ready - starting director with N services" logs
 
 ## See Also
 

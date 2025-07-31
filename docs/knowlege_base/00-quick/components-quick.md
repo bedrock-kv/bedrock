@@ -5,9 +5,9 @@ Essential component responsibilities and interactions for Bedrock development.
 ## Control Plane Components
 
 ### Coordinator
-- **Purpose**: Raft consensus and Director election
+- **Purpose**: Raft consensus, service registry, and Director election
 - **Location**: `lib/bedrock/control_plane/coordinator.ex`
-- **Key Role**: Maintains cluster configuration, elects single Director
+- **Key Role**: Maintains cluster configuration, manages service directory via consensus, elects single Director with leader readiness states
 
 ### Director
 - **Purpose**: Cluster orchestration and recovery management
@@ -57,6 +57,11 @@ Essential component responsibilities and interactions for Bedrock development.
 Client → Gateway → Sequencer (read version)
 Client → Gateway → Storage (reads)
 Client → Gateway → Commit Proxy → Resolver → Log → Storage (commits)
+
+Control Plane Startup:
+Node Services → Coordinator (register via Raft consensus)
+Coordinator → Raft Consensus → Service Directory
+Leader Election → Coordinator (wait for consensus) → Director (with services)
 Director → All Components (role assignment, health monitoring)
 ```
 
@@ -68,6 +73,7 @@ Director → All Components (role assignment, health monitoring)
 
 ## See Also
 
+- **Cluster Formation**: [Cluster Startup](../01-guides/cluster-startup.md) - How components coordinate during startup
 - **Implementation**: [Implementation Guide](../01-guides/implementation-guide.md)
-- **Architecture**: [Architecture Guide](../01-guides/architecture-guide.md)
+- **Architecture**: [Architecture Guide](../01-guides/architecture-guide.md)  
 - **Deep Dive**: [Architecture Deep](../02-deep/architecture-deep.md)

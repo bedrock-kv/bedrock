@@ -29,14 +29,16 @@ This knowledge base is optimized for **token-efficient progressive loading** wit
 - **[Architecture Deep](docs/knowlege_base/02-deep/architecture-deep.md)** - Complete architectural reference
 - **[Development Deep](docs/knowlege_base/02-deep/development-deep.md)** - Comprehensive development practices
 
-## Reminders
-- Aliases are always preferred over fully qualified names.
-- Aliases always belong at the top of modules.
-- A module and the moduledoc (if present) must always be internally-consistent.
-- Never use conditional logic in test assertions.
+## Non-Negotiable Rules
+- Always prefer aliases over fully qualified names.
+- Always put aliases at the top of modules.
+- Always check that a module's (if present) is internally-consistent with the
+  code in the module.
 - Always check assumptions before presenting them as facts.
 - Always check my suggestions and feedback before affirming them.
 - Always skim the knowledge base when searching for answers.
+- Always use 80-column widths for documentation.
+- Never use conditional logic in a test assertions.
 
 ## 🚀 Common Workflows
 

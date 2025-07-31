@@ -16,7 +16,11 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
         {:ok,
          Stream.concat(
            stream,
-           from_list_of_transactions(fn -> segment.transactions |> Enum.reverse() end)
+           from_list_of_transactions(fn ->
+             segment
+             |> Segment.transactions()
+             |> Enum.reverse()
+           end)
          )}
 
       error ->
@@ -25,7 +29,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   end
 
   def from_segments([segment | _segments], target_version) do
-    segment.transactions
+    segment
+    |> Segment.transactions()
     |> Enum.reverse()
     |> Enum.drop_while(fn <<version::unsigned-big-64, _::binary>> -> version < target_version end)
     |> case do

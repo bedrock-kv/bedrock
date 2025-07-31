@@ -64,8 +64,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
-  @spec load_transactions(t()) :: t()
-  def load_transactions(%{transactions: nil} = segment) do
+  @spec ensure_transactions_are_loaded(t()) :: t()
+  def ensure_transactions_are_loaded(%{transactions: nil} = segment) do
     segment.path
     |> TransactionStreams.from_file!()
     |> Enum.reverse()
@@ -85,7 +85,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
-  def load_transactions(segment), do: segment
+  def ensure_transactions_are_loaded(segment), do: segment
+
+  @spec transactions(t()) :: [EncodedTransaction.t()]
+  def transactions(%{transactions: nil} = segment),
+    do: segment |> ensure_transactions_are_loaded() |> Map.get(:transactions, [])
+
+  def transactions(segment), do: segment.transactions
 
   @spec last_version(t()) :: Bedrock.version()
   def last_version(%{transactions: [<<version::unsigned-big-64, _::binary>> | _]}), do: version

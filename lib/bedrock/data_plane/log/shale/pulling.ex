@@ -58,13 +58,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments])
       when segment.min_version <= last_version do
-    with segment <- Segment.load_transactions(segment) do
+    with segment <- Segment.ensure_transactions_are_loaded(segment) do
       {:ok, [segment | remaining_segments]}
     end
   end
 
   def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments]) do
-    with segment <- Segment.load_transactions(segment),
+    with segment <- Segment.ensure_transactions_are_loaded(segment),
          {:ok, remaining_segments} <-
            ensure_necessary_segments_are_loaded(last_version, remaining_segments) do
       {:ok, [segment | remaining_segments]}

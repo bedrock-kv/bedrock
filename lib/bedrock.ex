@@ -1,6 +1,4 @@
 defmodule Bedrock do
-  @moduledoc false
-
   alias Bedrock.Internal.Time.Interval
 
   @type key :: binary()

@@ -1,18 +1,22 @@
 defmodule Bedrock.DataPlane.Sequencer do
-  @moduledoc false
+  @moduledoc """
+  Global version authority implementing Lamport clock semantics for MVCC transactions.
+
+  The Sequencer assigns monotonically increasing version numbers that establish
+  global ordering for transactions. Read versions provide consistent snapshot points
+  while commit versions establish transaction ordering for conflict detection.
+
+  Each commit version assignment updates the Lamport clock, ensuring the version
+  pair returned maintains proper causality relationships needed for distributed
+  MVCC conflict resolution.
+
+  For detailed version assignment concepts and architectural integration, see the
+  [Sequencer documentation](../../../../docs/components/sequencer.md).
+  """
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: pid() | atom() | {atom(), node()}
-
-  @spec invite_to_rejoin(
-          t :: ref(),
-          director :: pid(),
-          Bedrock.epoch(),
-          last_committed_version :: Bedrock.version()
-        ) :: :ok
-  def invite_to_rejoin(t, director, epoch, last_committed_version),
-    do: t |> cast({:invite_to_rejoin, director, epoch, last_committed_version})
 
   @spec next_read_version(
           ref(),

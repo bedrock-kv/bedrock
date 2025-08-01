@@ -1,5 +1,61 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
-  @moduledoc false
+  @moduledoc """
+  Manages the complete lifecycle of individual transactions.
+
+  Each transaction gets its own dedicated TransactionBuilder process that exists for
+  the entire transaction lifetime. This provides perfect isolation between transactions
+  and enables sophisticated features like nested transactions, read-your-writes
+  consistency, and performance optimizations.
+
+  ## Key Features
+
+  ### Per-Transaction Process Model
+  Each transaction runs in its own process, providing isolation and enabling complex
+  state management without cross-transaction interference.
+
+  ### Read-Your-Writes Consistency
+  Maintains a local cache of writes that are immediately visible to subsequent reads
+  within the same transaction, even before commit.
+
+  ### Lazy Read Version Acquisition
+  Delays acquiring read versions until the first read operation to minimize the
+  conflict detection window and ensure transactions see the latest committed data.
+
+  ### Horse Racing Performance
+  Simultaneously queries multiple storage servers and uses the first successful
+  response, learning which servers are fastest for future optimization.
+
+  ### Nested Transaction Support
+  Supports nested transactions where sub-transactions see parent state but maintain
+  isolated changes. Nested "commits" are local merges, while rollbacks discard both
+  reads and writes. Only the final, flattened top-level transaction is sent to
+  commit proxies.
+
+  ## Nested Transaction Semantics
+
+  When a nested transaction begins:
+  - It sees all reads and writes from the parent at that point
+  - It gets fresh read/write maps for tracking its own changes
+  - Parent state is preserved on a stack
+
+  When a nested transaction "commits":
+  - Its writes are merged into the parent transaction
+  - Its reads are merged (they contributed to surviving writes)
+  - This is a local operation, not a distributed commit
+
+  When a nested transaction rolls back:
+  - Both reads and writes are discarded entirely
+  - Those reads "didn't happen" since they didn't contribute to final state
+  - No interaction with the distributed commit system required
+
+  Only the top-level transaction (after all nested operations resolve) is sent
+  to commit proxies as a single, complete transaction.
+
+  This design provides significant performance benefits: nested transactions require
+  no network traffic, no coordination with other cluster components, and consume
+  no distributed system resources. All nested operations are purely local to the
+  TransactionBuilder process.
+  """
 
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State

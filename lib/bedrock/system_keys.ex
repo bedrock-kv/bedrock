@@ -11,20 +11,6 @@ defmodule Bedrock.SystemKeys do
   - **Cluster Configuration**: Static cluster settings (coordinators, policies, parameters)
   - **Transaction Layout**: Dynamic transaction system state (sequencer, proxies, resolvers, logs, storage)
   - **Legacy Compatibility**: Monolithic keys for backward compatibility and coordinator handoff
-
-  ## Usage
-
-      # Cluster configuration
-      SystemKeys.cluster_coordinators()
-      #=> "\xff/system/cluster/coordinators"
-
-      # Transaction layout
-      SystemKeys.layout_sequencer()
-      #=> "\xff/system/layout/sequencer"
-
-      # Dynamic keys with IDs
-      SystemKeys.layout_log("log_123")
-      #=> "\xff/system/layout/logs/log_123"
   """
 
   @system_prefix "\xff/system"

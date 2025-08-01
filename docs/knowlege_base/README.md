@@ -85,6 +85,10 @@ This knowledge base is optimized for **token-efficient progressive loading** wit
 
 For a complete architectural overview with detailed explanations and motivation, see the **[Bedrock Architecture Livebook](docs/bedrock-architecture.livemd)**. This serves as the authoritative reference, while this knowledge base provides practical development guidance.
 
+For detailed transaction processing documentation, see **[Transaction Building and Committing Process](docs/transaction-building-and-committing-process.md)** and the **[Components Deep Dive](docs/components/)** directory.
+
+**New to Bedrock?** Start with the **[Glossary](docs/glossary.md)** to understand key terms and concepts.
+
 ## Contributing to the Knowledge Base
 
 As you develop Bedrock, consider adding to this knowledge base:

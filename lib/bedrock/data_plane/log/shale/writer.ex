@@ -1,9 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.Writer do
-  alias Bedrock.DataPlane.Log.EncodedTransaction
-
   @moduledoc """
   A struct that represents a writer for a segment.
   """
+
+  alias Bedrock.DataPlane.Log.EncodedTransaction
+
   defstruct [:fd, :write_offset, :bytes_remaining]
 
   @wal_eof_version 0xFFFFFFFFFFFFFFFF

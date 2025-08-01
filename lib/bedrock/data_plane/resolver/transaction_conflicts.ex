@@ -1,8 +1,13 @@
 defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   @moduledoc """
-  A conflict detection system with read and write versioning, using interval trees
-  for efficient range-based conflict detection. Each transaction operates on a specific
-  version of the database, and conflicts are detected based on version mismatches.
+  Core conflict detection logic for the Resolver using interval trees.
+
+  Processes transaction batches to detect read-write and write-write conflicts by
+  checking for overlapping key ranges across different versions. Returns updated
+  interval trees and lists of aborted transaction indices.
+
+  Each transaction is checked against the interval tree to determine if its reads
+  or writes conflict with previously committed transactions at later versions.
   """
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Tree

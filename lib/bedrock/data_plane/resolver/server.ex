@@ -1,5 +1,14 @@
 defmodule Bedrock.DataPlane.Resolver.Server do
-  @moduledoc false
+  @moduledoc """
+  GenServer implementation for the Resolver conflict detection engine.
+
+  Manages resolver state including locked/running modes, version ordering through
+  waiting queues, and coordination with recovery processes. Handles out-of-order
+  transaction resolution by queuing later versions until earlier ones complete.
+
+  Starts in locked mode and requires explicit recovery coordination before
+  processing transaction resolution requests.
+  """
   alias Bedrock.DataPlane.Resolver.State
 
   import Bedrock.DataPlane.Resolver.Recovery, only: [recover_from: 4]

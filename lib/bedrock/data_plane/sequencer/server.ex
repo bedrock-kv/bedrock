@@ -1,5 +1,12 @@
 defmodule Bedrock.DataPlane.Sequencer.Server do
-  @moduledoc false
+  @moduledoc """
+  GenServer implementation for the Sequencer version authority.
+
+  Manages Lamport clock state for version assignment, tracking the last committed
+  version and next commit version. Implements the core Lamport clock semantics
+  where each commit version assignment updates the internal clock state to maintain
+  proper causality relationships for distributed MVCC conflict detection.
+  """
 
   alias Bedrock.DataPlane.Sequencer.State
 
@@ -14,7 +21,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     epoch = opts[:epoch] || raise "Missing :epoch option"
     otp_name = opts[:otp_name] || raise "Missing :name option"
 
-    last_committed_version =
+    known_committed_version =
       opts[:last_committed_version] || raise "Missing :last_committed_version option"
 
     %{
@@ -23,7 +30,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {director, epoch, last_committed_version},
+           {director, epoch, known_committed_version},
            [name: otp_name]
          ]},
       restart: :temporary
@@ -32,12 +39,13 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
 
   @impl true
   @spec init({pid(), Bedrock.epoch(), Bedrock.version()}) :: {:ok, State.t()}
-  def init({director, epoch, last_committed_version}) do
+  def init({director, epoch, known_committed_version}) do
     %State{
       director: director,
       epoch: epoch,
-      next_commit_version: last_committed_version,
-      read_version: last_committed_version
+      next_commit_version: known_committed_version + 1,
+      last_commit_version: known_committed_version,
+      known_committed_version: known_committed_version
     }
     |> then(&{:ok, &1})
   end
@@ -47,23 +55,23 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
           {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
            State.t()}
   def handle_call(:next_read_version, _from, t),
-    do: t |> reply({:ok, t.read_version})
+    do: t |> reply({:ok, t.known_committed_version})
 
   @impl true
   def handle_call(:next_commit_version, _from, t) do
-    next_version = 1 + t.next_commit_version
+    commit_version = t.next_commit_version
 
-    %{t | next_commit_version: next_version}
-    |> reply({:ok, t.read_version, next_version})
+    %{t | next_commit_version: commit_version + 1, last_commit_version: commit_version}
+    |> reply({:ok, t.last_commit_version, commit_version})
   end
 
   @impl true
   @spec handle_cast({:report_successful_commit, Bedrock.version()}, State.t()) ::
           {:noreply, State.t()}
   def handle_cast({:report_successful_commit, commit_version}, t) do
-    updated_read_version = max(t.read_version, commit_version)
+    updated_known_committed_version = max(t.known_committed_version, commit_version)
 
-    %{t | read_version: updated_read_version}
+    %{t | known_committed_version: updated_known_committed_version}
     |> noreply([])
   end
 end

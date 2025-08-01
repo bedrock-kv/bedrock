@@ -1,5 +1,12 @@
 defmodule Bedrock.DataPlane.Resolver.Recovery do
-  @moduledoc false
+  @moduledoc """
+  Recovery logic for rebuilding Resolver interval trees from transaction logs.
+
+  Pulls committed transactions from log servers and applies their writes to
+  reconstruct the interval tree state needed for conflict detection. Handles
+  batch processing of encoded transactions and coordination with the lock
+  token system during recovery scenarios.
+  """
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction

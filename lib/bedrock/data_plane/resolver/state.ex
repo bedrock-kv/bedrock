@@ -1,5 +1,11 @@
 defmodule Bedrock.DataPlane.Resolver.State do
-  @moduledoc false
+  @moduledoc """
+  State structure for Resolver GenServer processes.
+
+  Maintains the interval tree for conflict detection, version tracking, and
+  waiting queue for out-of-order transactions. Includes lock token for
+  recovery coordination and mode tracking for locked/running states.
+  """
 
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Tree

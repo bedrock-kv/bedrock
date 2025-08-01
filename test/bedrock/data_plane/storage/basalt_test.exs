@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.BasaltTest do
   use ExUnit.Case, async: true
 
+  import Bedrock.Test.GenServerTestHelpers
+
   alias Bedrock.DataPlane.Storage.Basalt
 
   def id, do: Faker.UUID.v4()
@@ -56,8 +58,11 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       # We expect the worker to eventually send a message to the director
       # when it's ready to accept requests.
-      assert_receive {:"$gen_cast", {:worker_health, ^expected_id, {:ok, pid}}}, 5_000
-      assert is_pid(pid)
+      assert_cast_received({:worker_health, worker_id, health_status}, 5_000) do
+        assert worker_id == expected_id
+        assert {:ok, pid} = health_status
+        assert is_pid(pid)
+      end
 
       # At this point, a physical database should have been created on disk.
       assert File.exists?(Path.join(tmp_dir, "dets"))

@@ -156,14 +156,12 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :storage) ::
           {:ok, Director.running_service_info()} | {:error, worker_creation_error()}
   def request_worker_creation(t, node, worker_id, kind) do
-    # Check if the node has the required capability using director's capability map
     nodes_with_capability = Map.get(t.node_capabilities, kind, [])
 
     if node in nodes_with_capability do
-      # Contact the foreman on the target node to create the worker
-      foreman_ref = {t.cluster.otp_name(:foreman), node}
-
-      case Foreman.new_worker(foreman_ref, worker_id, kind, timeout: 10_000) do
+      {t.cluster.otp_name(:foreman), node}
+      |> Foreman.new_worker(worker_id, kind, timeout: 10_000)
+      |> case do
         {:ok, worker_ref} ->
           get_worker_info(worker_ref)
 

@@ -73,17 +73,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
 
           {:error, reason} ->
             trace_log_pull_failed(timestamp, reason)
-
-            IO.puts("Failed to fetch from #{log_id}: #{reason}")
             new_state = mark_log_as_failed(state, log_id)
             long_pull_loop(new_state)
         end
 
       :no_available_logs ->
-        IO.puts("All logs are marked failed. Retrying after a delay.")
         ms_to_wait = retry_delay()
         trace_log_pull_circuit_breaker_tripped(timestamp, ms_to_wait)
-
         :timer.sleep(ms_to_wait)
         long_pull_loop(reset_failed_logs(state))
     end

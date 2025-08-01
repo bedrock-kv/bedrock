@@ -212,29 +212,12 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
           dets_operation_result() | {:error, :prev_transaction_not_found}
   def append_transactions(t, prev_id, transactions) do
     if has_transaction_id?(t, prev_id) do
-      # Convert input transactions to proper transaction records
-      # Input format: [{term, data}, ...]
-      # Output format: [{{term, sequence}, data}, ...]
-      # Start sequence from prev_id sequence + 1, or 1 if prev_id is initial
-      start_sequence =
-        case prev_id do
-          @initial_transaction_id -> 1
-          {_term, seq} -> seq + 1
-        end
-
-      {transaction_records, _} =
-        Enum.map_reduce(transactions, start_sequence, fn {term, _data} = original_transaction,
-                                                         seq ->
-          transaction_id = TransactionID.new(term, seq)
-          transaction_record = {transaction_id, original_transaction}
-          {transaction_record, seq + 1}
-        end)
-
-      # Build chain links using the transaction records
-      chain_links = build_chain_links(prev_id, transaction_records)
+      # Build all records for atomic insert
+      transaction_records = transactions
+      chain_links = build_chain_links(prev_id, transactions)
 
       new_tail_id =
-        case List.last(transaction_records) do
+        case List.last(transactions) do
           {id, _} -> id
           nil -> prev_id
         end

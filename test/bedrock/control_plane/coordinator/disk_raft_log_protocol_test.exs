@@ -48,7 +48,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     setup :with_log
 
     test "can append first transactions from {0, 0}", %{log: log} do
-      transactions = [{1, :data1}, {1, :data2}]
+      transactions = [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}]
 
       assert {:ok, _log} = Log.append_transactions(log, {0, 0}, transactions)
 
@@ -62,10 +62,11 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "can append transactions from existing transaction", %{log: log} do
       # First append
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}])
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}])
 
       # Second append
-      assert {:ok, _log} = Log.append_transactions(log, {1, 1}, [{1, :data2}, {1, :data3}])
+      assert {:ok, _log} =
+               Log.append_transactions(log, {1, 1}, [{{1, 2}, {1, :data2}}, {{1, 3}, {1, :data3}}])
 
       # Verify all transactions exist
       assert Log.has_transaction_id?(log, {1, 1}) == true
@@ -77,7 +78,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "fails when prev_transaction_id doesn't exist", %{log: log} do
       assert {:error, :prev_transaction_not_found} =
-               Log.append_transactions(log, {99, 99}, [{1, :data}])
+               Log.append_transactions(log, {99, 99}, [{{1, 1}, {1, :data}}])
     end
 
     test "handles empty transaction list", %{log: log} do
@@ -88,7 +89,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "creates proper chain structure", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
 
       # Verify chain links exist
       assert [{{:chain, {0, 0}}, {1, 1}}] = :dets.lookup(log.table_name, {:chain, {0, 0}})
@@ -102,8 +104,11 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     setup %{log: log} do
       # Create test chain: {0,0} -> {1,1} -> {1,2} -> {2,3} -> {2,4}
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
-      {:ok, _log} = Log.append_transactions(log, {1, 2}, [{2, :data3}, {2, :data4}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
+
+      {:ok, _log} =
+        Log.append_transactions(log, {1, 2}, [{{2, 3}, {2, :data3}}, {{2, 4}, {2, :data4}}])
 
       {:ok, log: log}
     end
@@ -188,7 +193,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "can commit transaction and updates newest_safe_transaction_id", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
 
       # Initially no commits
       assert Log.newest_safe_transaction_id(log) == {0, 0}
@@ -203,7 +209,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "commit_up_to/2 with same commit level returns :unchanged", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}])
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}])
       {:ok, _log} = Log.commit_up_to(log, {1, 1})
 
       # Trying to commit to same level should return :unchanged
@@ -214,7 +220,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "transactions_to/2 with :newest_safe respects commits", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [
+          {{1, 1}, {1, :data1}},
+          {{1, 2}, {1, :data2}},
+          {{1, 3}, {1, :data3}}
+        ])
+
       {:ok, _log} = Log.commit_up_to(log, {1, 2})
 
       result = Log.transactions_to(log, :newest_safe)
@@ -232,7 +244,12 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     setup :with_log
 
     test "truncates log after specified transaction", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [
+          {{1, 1}, {1, :data1}},
+          {{1, 2}, {1, :data2}},
+          {{1, 3}, {1, :data3}}
+        ])
 
       # Verify all transactions exist
       assert Log.has_transaction_id?(log, {1, 1}) == true
@@ -257,7 +274,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "adjusts commit level when purging committed transactions", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [
+          {{1, 1}, {1, :data1}},
+          {{1, 2}, {1, :data2}},
+          {{1, 3}, {1, :data3}}
+        ])
+
       {:ok, _log} = Log.commit_up_to(log, {1, 3})
 
       assert Log.newest_safe_transaction_id(log) == {1, 3}
@@ -270,7 +293,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "leaves commit level unchanged when purging beyond commit", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [
+          {{1, 1}, {1, :data1}},
+          {{1, 2}, {1, :data2}},
+          {{1, 3}, {1, :data3}}
+        ])
+
       {:ok, _log} = Log.commit_up_to(log, {1, 1})
 
       assert Log.newest_safe_transaction_id(log) == {1, 1}
@@ -299,7 +328,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     end
 
     test "boundary conditions for range queries", %{log: log} do
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}])
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
 
       # from == to should return empty (since from is excluded)
       assert Log.transactions_from(log, {1, 1}, {1, 1}) == []
@@ -314,7 +344,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "large transaction sequences", %{log: log} do
       # Create a longer chain to test performance
-      large_transactions = for i <- 1..50, do: {1, {:data, i}}
+      large_transactions = for i <- 1..50, do: {{1, i}, {1, {:data, i}}}
 
       {:ok, _log} = Log.append_transactions(log, {0, 0}, large_transactions)
 
@@ -337,9 +367,15 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "multiple append operations maintain consistency", %{log: log} do
       # Simulate multiple sequential appends as might happen in Raft
-      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{1, :term1_entry1}])
-      {:ok, _log} = Log.append_transactions(log, {1, 1}, [{1, :term1_entry2}, {1, :term1_entry3}])
-      {:ok, _log} = Log.append_transactions(log, {1, 3}, [{2, :term2_entry1}])
+      {:ok, _log} = Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :term1_entry1}}])
+
+      {:ok, _log} =
+        Log.append_transactions(log, {1, 1}, [
+          {{1, 2}, {1, :term1_entry2}},
+          {{1, 3}, {1, :term1_entry3}}
+        ])
+
+      {:ok, _log} = Log.append_transactions(log, {1, 3}, [{{2, 4}, {2, :term2_entry1}}])
 
       # Verify chain integrity
       result = Log.transactions_to(log, :newest)
@@ -363,7 +399,12 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "commit and purge operations work together", %{log: log} do
       {:ok, _log} =
-        Log.append_transactions(log, {0, 0}, [{1, :data1}, {1, :data2}, {1, :data3}, {1, :data4}])
+        Log.append_transactions(log, {0, 0}, [
+          {{1, 1}, {1, :data1}},
+          {{1, 2}, {1, :data2}},
+          {{1, 3}, {1, :data3}},
+          {{1, 4}, {1, :data4}}
+        ])
 
       # Commit some transactions
       {:ok, _log} = Log.commit_up_to(log, {1, 2})
@@ -398,9 +439,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       {:ok, _log1} =
         Log.append_transactions(log1, {0, 0}, [
-          {1, :persistent1},
-          {1, :persistent2},
-          {2, :persistent3}
+          {{1, 1}, {1, :persistent1}},
+          {{1, 2}, {1, :persistent2}},
+          {{2, 3}, {2, :persistent3}}
         ])
 
       {:ok, _log1} = Log.commit_up_to(log1, {1, 2})
@@ -424,7 +465,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       assert Log.has_transaction_id?(log2, {2, 3})
 
       # Verify we can continue appending
-      {:ok, _log2} = Log.append_transactions(log2, {2, 3}, [{2, :new_after_restart}])
+      {:ok, _log2} = Log.append_transactions(log2, {2, 3}, [{{2, 4}, {2, :new_after_restart}}])
       assert Log.newest_transaction_id(log2) == {2, 4}
 
       DiskRaftLog.close(log2)

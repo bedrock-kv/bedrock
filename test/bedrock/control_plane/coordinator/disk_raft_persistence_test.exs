@@ -22,9 +22,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       {:ok, log1} =
         Log.append_transactions(log1, initial_id, [
-          {1, {:coordinator_config, %{epoch: 1, coordinators: [:node1, :node2]}}},
-          {1, {:director_assignment, :node1}},
-          {2, {:coordinator_config, %{epoch: 2, coordinators: [:node1, :node2, :node3]}}}
+          {{1, 1}, {1, {:coordinator_config, %{epoch: 1, coordinators: [:node1, :node2]}}}},
+          {{1, 2}, {1, {:director_assignment, :node1}}},
+          {{2, 3},
+           {2, {:coordinator_config, %{epoch: 2, coordinators: [:node1, :node2, :node3]}}}}
         ])
 
       # Commit the transactions
@@ -67,7 +68,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       # Verify we can continue adding after restart
       {:ok, log2} =
-        Log.append_transactions(log2, {2, 3}, [{2, {:post_restart_transaction, :success}}])
+        Log.append_transactions(log2, {2, 3}, [
+          {{2, 4}, {2, {:post_restart_transaction, :success}}}
+        ])
 
       assert Log.newest_transaction_id(log2) == {2, 4}
 
@@ -91,7 +94,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
 
       # Add and verify a transaction
       initial_id = Log.initial_transaction_id(log)
-      {:ok, log} = Log.append_transactions(log, initial_id, [{1, :coordinator_startup}])
+      {:ok, log} = Log.append_transactions(log, initial_id, [{{1, 1}, {1, :coordinator_startup}}])
 
       assert Log.newest_transaction_id(log) == {1, 1}
 

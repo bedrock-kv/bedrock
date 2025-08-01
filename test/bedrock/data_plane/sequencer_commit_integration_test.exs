@@ -24,8 +24,8 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
       assert commit_v1 == 101
 
       {:ok, read_v2, commit_v2} = Sequencer.next_commit_version(sequencer_pid)
-      # read version still hasn't changed
-      assert read_v2 == 100
+      # last commit version updated from previous assignment
+      assert read_v2 == 101
       # second assigned version
       assert commit_v2 == 102
 

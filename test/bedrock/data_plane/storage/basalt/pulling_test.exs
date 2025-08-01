@@ -232,7 +232,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       state = %{
         failed_logs: %{
           "log1" => System.monotonic_time(:millisecond) + 5000,
-          "log2" => System.monotonic_time(:millisecond) + 10000
+          "log2" => System.monotonic_time(:millisecond) + 10_000
         }
       }
 
@@ -245,7 +245,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       state = %{
         start_after: 100,
         logs: %{"log1" => []},
-        failed_logs: %{"log1" => 12345}
+        failed_logs: %{"log1" => 12_345}
       }
 
       new_state = Pulling.reset_failed_logs(state)

@@ -1,4 +1,3 @@
-# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.Cluster.Gateway.Tracing do
   @moduledoc false
 

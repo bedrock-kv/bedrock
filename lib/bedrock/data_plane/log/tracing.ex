@@ -1,4 +1,3 @@
-# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.DataPlane.Log.Tracing do
   @moduledoc false
   require Logger

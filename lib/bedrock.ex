@@ -1,4 +1,12 @@
 defmodule Bedrock do
+  @moduledoc """
+  Core types and utilities for Bedrock, a distributed key-value store.
+
+  This module defines the fundamental types used throughout the Bedrock system,
+  including keys, values, versions, and time-related constructs for MVCC
+  transaction processing.
+  """
+
   alias Bedrock.Internal.Time.Interval
 
   @type key :: binary()

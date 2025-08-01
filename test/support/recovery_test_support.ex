@@ -1,4 +1,3 @@
-# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule RecoveryTestSupport do
   @moduledoc """
   Shared test utilities and fixtures for recovery tests.

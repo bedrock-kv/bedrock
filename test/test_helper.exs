@@ -13,7 +13,6 @@ defmodule DefaultTestCluster do
   Call this in test setup to ensure proper cluster identification.
   """
   def setup_telemetry_metadata(epoch \\ 1) do
-    # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
     Logger.metadata(cluster: __MODULE__, epoch: epoch)
     :ok
   end

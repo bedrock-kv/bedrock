@@ -1,4 +1,3 @@
-# credo:disable-for-this-file Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
 defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog

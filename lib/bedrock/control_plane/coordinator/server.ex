@@ -327,10 +327,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
   end
 
-  @spec expand_compact_services([{atom(), atom()}], node()) :: [Commands.service_info()]
+  @spec expand_compact_services([{String.t(), atom(), atom()}], node()) :: [
+          Commands.service_info()
+        ]
   defp expand_compact_services(compact_services, caller_node) do
-    Enum.map(compact_services, fn {kind, name} ->
-      service_id = "#{name}_#{caller_node}"
+    Enum.map(compact_services, fn {service_id, kind, name} ->
       {service_id, kind, {name, caller_node}}
     end)
   end

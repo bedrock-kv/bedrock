@@ -297,12 +297,12 @@ defmodule Bedrock.Service.ForemanTest do
       assert length(result) == 2
 
       # Check storage service info (compact format)
-      storage_service = Enum.find(result, fn {kind, _name} -> kind == :storage end)
-      assert storage_service == {:storage, :storage_1_worker}
+      storage_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :storage end)
+      assert storage_service == {"storage_1", :storage, :storage_1_worker}
 
       # Check log service info (compact format)  
-      log_service = Enum.find(result, fn {kind, _name} -> kind == :log end)
-      assert log_service == {:log, :log_1_worker}
+      log_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :log end)
+      assert log_service == {"log_1", :log, :log_1_worker}
     end
 
     test "excludes unhealthy workers" do
@@ -355,7 +355,7 @@ defmodule Bedrock.Service.ForemanTest do
       result = Impl.do_get_all_running_services(state)
 
       assert length(result) == 1
-      assert result == [{:storage, :storage_1_worker}]
+      assert result == [{"storage_1", :storage, :storage_1_worker}]
     end
 
     test "handles workers with nil manifest gracefully" do
@@ -394,7 +394,7 @@ defmodule Bedrock.Service.ForemanTest do
       # Should exclude workers with nil manifest and only return valid ones
       result = Impl.do_get_all_running_services(state)
       assert length(result) == 1
-      assert result == [{:storage, :storage_1_worker}]
+      assert result == [{"storage_1", :storage, :storage_1_worker}]
     end
 
     test "only includes workers that are both healthy and have valid manifests" do
@@ -432,7 +432,7 @@ defmodule Bedrock.Service.ForemanTest do
 
       result = Impl.do_get_all_running_services(state)
       assert length(result) == 1
-      assert result == [{:storage, :storage_1_worker}]
+      assert result == [{"storage_1", :storage, :storage_1_worker}]
     end
   end
 
@@ -454,7 +454,7 @@ defmodule Bedrock.Service.ForemanTest do
       }
 
       result = Impl.compact_service_info_from_worker_info(worker_info)
-      assert result == {:storage, :storage_1_worker}
+      assert result == {"storage_1", :storage, :storage_1_worker}
     end
 
     test "extracts compact service info from log worker" do
@@ -474,7 +474,7 @@ defmodule Bedrock.Service.ForemanTest do
       }
 
       result = Impl.compact_service_info_from_worker_info(worker_info)
-      assert result == {:log, :log_1_worker}
+      assert result == {"log_1", :log, :log_1_worker}
     end
   end
 

@@ -271,10 +271,15 @@ defmodule Bedrock.Service.Foreman.Impl do
   def worker_healthy?(%{health: {:ok, _pid}}), do: true
   def worker_healthy?(_), do: false
 
-  @spec compact_service_info_from_worker_info(WorkerInfo.t()) :: {:log | :storage, atom()}
-  def compact_service_info_from_worker_info(%{manifest: %{worker: worker}, otp_name: otp_name}) do
+  @spec compact_service_info_from_worker_info(WorkerInfo.t()) ::
+          {String.t(), :log | :storage, atom()}
+  def compact_service_info_from_worker_info(%{
+        id: id,
+        manifest: %{worker: worker},
+        otp_name: otp_name
+      }) do
     kind = worker.kind()
-    {kind, otp_name}
+    {id, kind, otp_name}
   end
 
   @spec service_info_from_worker_info(WorkerInfo.t()) ::

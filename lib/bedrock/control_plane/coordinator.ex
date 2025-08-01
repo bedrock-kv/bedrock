@@ -80,7 +80,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
       |> call({:update_transaction_system_layout, transaction_system_layout}, timeout)
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
-  @type compact_service_info :: {kind :: atom(), name :: atom()}
+  @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}
 
   @spec register_services(
           coordinator_ref :: ref(),

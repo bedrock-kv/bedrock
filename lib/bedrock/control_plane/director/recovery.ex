@@ -168,7 +168,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.StartupPhase) do
+  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.LockingPhase) do
     case next_phase_module.execute(t, context) do
       {completed_attempt, :completed} ->
         {:ok, completed_attempt}

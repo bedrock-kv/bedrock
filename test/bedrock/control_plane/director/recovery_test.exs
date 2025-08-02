@@ -267,28 +267,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "recovery/1 state dispatch" do
-    test "dispatches start state" do
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
-
-      capture_log(fn ->
-        # For a start state, we can only test the first phase transition since the subsequent
-        # phases will need complete data. Let's test just that the start phase works.
-        start_phase = Bedrock.ControlPlane.Director.Recovery.StartupPhase
-        {result, next_phase} = start_phase.execute(recovery_attempt, create_test_context())
-
-        # State field is no longer updated by phases - phases control transitions via return tuples
-        # Remains at original state
-        assert %DateTime{} = result.started_at
-        assert next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
-      end)
-    end
-
     test "handles recovery attempt flow correctly" do
       recovery_attempt =
         recovery_attempt(%{

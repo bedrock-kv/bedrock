@@ -30,6 +30,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   def trace_recovery_completed(elapsed),
     do: Telemetry.execute([:bedrock, :recovery, :completed], %{}, %{elapsed: elapsed})
 
+  @spec trace_recovery_failed(elapsed :: Interval.t(), reason :: term()) :: :ok
+  def trace_recovery_failed(elapsed, reason) do
+    Telemetry.execute([:bedrock, :recovery, :failed], %{}, %{elapsed: elapsed, reason: reason})
+  end
+
   @spec trace_recovery_services_locked(
           n_services :: non_neg_integer(),
           n_reporting :: non_neg_integer()

@@ -136,6 +136,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           |> Map.put(:recovery_attempt, stalled)
         end)
         |> persist_config()
+
+      {{:error, reason}, _failed_attempt} ->
+        # Errors are fatal - this director should stop trying to recover
+        trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
+
+        # TODO: implement graceful director shutdown for fatal errors
+        t
     end
   end
 
@@ -168,10 +175,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
+          | {{:error, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
   def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.LockingPhase) do
     case next_phase_module.execute(t, context) do
       {completed_attempt, :completed} ->
         {:ok, completed_attempt}
+
+      {stalled_attempt, {:error, _reason} = error} ->
+        {error, stalled_attempt}
 
       {stalled_attempt, {:stalled, _reason} = stalled} ->
         {stalled, stalled_attempt}

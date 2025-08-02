@@ -2,17 +2,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   @moduledoc """
   Establishes exclusive director control by selectively locking services from the old system layout.
 
-  Services are locked to prevent split-brain scenarios where multiple directors attempt
-  concurrent control. Each service accepts locks from only one director at a time, with
-  newer epochs causing older ones to terminate.
+  Service locking serves three purposes: prevent split-brain scenarios where multiple directors
+  attempt concurrent control, halt all transaction processing from the old system, and validate
+  service reachability while collecting recovery state information (transaction versions,
+  durability status).
 
   Only services referenced in the old transaction system layout are locked - these contain
-  data that must be copied during recovery. If the old layout is empty (first-time
-  initialization), no services are locked. Other available services remain unlocked until
-  recruitment phases assign them to specific roles.
+  data that must be preserved during recovery. Individual service failures (unreachable, timeout)
+  are ignored since recovery gathers as many services as possible from a potentially failed system.
+  However, if any service is already locked with a newer epoch, this director has been superseded
+  and should stop all recovery attempts.
 
-  The recovery path is determined by what gets locked: nothing locked means first-time
-  initialization, services locked means recovery from existing data.
+  The recovery path is determined by whether the old layout contained logs: no logs means
+  first-time initialization, logs present means recovery from existing data.
+
+  See the Service Locking section in `docs/knowlege_base/02-deep/recovery-narrative.md` for
+  detailed explanation of the recovery flow and rationale.
   """
 
   require Logger
@@ -33,8 +38,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
     lock_old_system_services(old_system_services, recovery_attempt.epoch, context)
     |> case do
-      {:error, :newer_epoch_exists = reason} ->
-        {recovery_attempt, {:stalled, reason}}
+      {:error, :newer_epoch_exists} = error ->
+        {recovery_attempt, error}
 
       {:ok, locked_service_ids, log_recovery_info_by_id, storage_recovery_info_by_id,
        transaction_services, service_pids} ->
@@ -61,7 +66,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   end
 
   @spec lock_old_system_services_timeout() :: Bedrock.timeout_in_ms()
-  def lock_old_system_services_timeout, do: 200
+  def lock_old_system_services_timeout, do: 2_000
 
   @spec lock_old_system_services(
           %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},

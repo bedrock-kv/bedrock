@@ -580,6 +580,32 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
       assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
     end
+
+    test "newer epoch exists returns error instead of stall" do
+      # Create recovery attempt for existing cluster (so locking actually happens)
+      recovery_attempt = create_existing_cluster_recovery_attempt()
+
+      # Mock lock_service_fn to return newer_epoch_exists
+      context =
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{"existing_log_1" => %{kind: :log}},
+            storage_teams: [%{storage_ids: ["existing_storage_1"], tag: 0}]
+          }
+        )
+        |> with_multiple_nodes()
+        |> Map.put(:available_services, %{
+          "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
+          "existing_storage_1" => {:storage, {:storage_worker_1, :node1}}
+        })
+        |> Map.put(:lock_service_fn, fn _service, _epoch ->
+          {:error, :newer_epoch_exists}
+        end)
+
+      # Should return error, not stall
+      {{:error, :newer_epoch_exists}, _failed_attempt} =
+        Recovery.run_recovery_attempt(recovery_attempt, context)
+    end
   end
 
   # Helper function to create a first-time recovery attempt

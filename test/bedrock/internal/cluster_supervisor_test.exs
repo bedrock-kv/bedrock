@@ -83,7 +83,6 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       expected_name = Faker.Lorem.word()
 
       expect(Bedrock.MockCluster, :name, fn -> expected_name end)
-      expect(Bedrock.MockCluster, :path_to_descriptor, fn -> "path-to-invalid-descriptor" end)
 
       expected_spec = %{
         id: Bedrock.Internal.ClusterSupervisor,
@@ -92,7 +91,7 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
           {Supervisor, :start_link,
            [
              Bedrock.Internal.ClusterSupervisor,
-             {:some_node, Bedrock.MockCluster, "path-to-invalid-descriptor",
+             {:some_node, Bedrock.MockCluster, nil, nil, "bedrock.cluster",
               %Bedrock.Cluster.Descriptor{
                 cluster_name: expected_name,
                 coordinator_nodes: [:some_node]
@@ -130,7 +129,7 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
           {Supervisor, :start_link,
            [
              Bedrock.Internal.ClusterSupervisor,
-             {:some_node, Bedrock.MockCluster, "path-to-invalid-descriptor",
+             {:some_node, Bedrock.MockCluster, nil, nil, "path-to-invalid-descriptor",
               %Bedrock.Cluster.Descriptor{
                 cluster_name: expected_name,
                 coordinator_nodes: [:some_node]

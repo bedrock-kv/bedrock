@@ -25,14 +25,20 @@ defmodule Bedrock.Internal.ClusterSupervisor do
           opts :: [
             cluster: Cluster.t(),
             node: node(),
+            otp_app: atom() | nil,
+            static_config: Keyword.t() | nil,
             path_to_descriptor: Path.t()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     node = opts[:node] || Node.self()
+    otp_app = opts[:otp_app]
+    static_config = opts[:static_config]
     cluster_name = cluster.name()
-    path_to_descriptor = opts[:path_to_descriptor] || cluster.path_to_descriptor()
+
+    path_to_descriptor =
+      opts[:path_to_descriptor] || path_to_descriptor(cluster, otp_app, static_config)
 
     descriptor =
       with :ok <- check_node_is_in_a_cluster(node),
@@ -70,7 +76,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
         {Supervisor, :start_link,
          [
            __MODULE__,
-           {node, cluster, path_to_descriptor, descriptor},
+           {node, cluster, otp_app, static_config, path_to_descriptor, descriptor},
            []
          ]},
       restart: :permanent,
@@ -93,19 +99,20 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @doc false
   @impl Supervisor
-  def init({_node, cluster, path_to_descriptor, descriptor}) do
-    capabilities = cluster.capabilities()
+  def init({_node, cluster, otp_app, static_config, path_to_descriptor, descriptor}) do
+    capabilities = capabilities(cluster, otp_app, static_config)
+    config = node_config(cluster, otp_app, static_config)
 
-    cluster.node_config()
+    config
     |> Keyword.get(:trace, [])
     |> Enum.each(fn
-      :coordinator -> :ok = CoordinatorTracing.start()
-      :commit_proxy -> :ok = CommitProxyTracing.start()
-      :log -> :ok = LogTracing.start()
-      :storage -> :ok = StorageTracing.start()
-      :gateway -> :ok = GatewayTracing.start()
-      :raft -> :ok = RaftTelemetry.start()
-      :recovery -> :ok = RecoveryTracing.start()
+      :coordinator -> start_tracing(CoordinatorTracing)
+      :commit_proxy -> start_tracing(CommitProxyTracing)
+      :log -> start_tracing(LogTracing)
+      :storage -> start_tracing(StorageTracing)
+      :gateway -> start_tracing(GatewayTracing)
+      :raft -> start_tracing(RaftTelemetry)
+      :recovery -> start_tracing(RecoveryTracing)
       unsupported -> Logger.warning("Unsupported tracing module: #{inspect(unsupported)}")
     end)
 
@@ -122,7 +129,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
            capabilities: capabilities,
            mode: mode_for_capabilities(capabilities)
          ]}
-        | children_for_capabilities(cluster, capabilities)
+        | children_for_capabilities(cluster, capabilities, config)
       ]
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -131,18 +138,35 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   defp mode_for_capabilities([]), do: :passive
   defp mode_for_capabilities(_), do: :active
 
-  defp children_for_capabilities(_cluster, []), do: []
+  defp children_for_capabilities(_cluster, [], _config), do: []
 
-  defp children_for_capabilities(cluster, capabilities) do
+  defp children_for_capabilities(cluster, capabilities, config) do
     capabilities
     |> Enum.map(&{module_for_capability(&1), &1})
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
     |> Enum.map(fn {module, capabilities} ->
+      # For modules that serve multiple capabilities (like Foreman),
+      # we need to find a common config that works for all capabilities
+      capability_configs =
+        capabilities
+        |> Enum.map(fn capability ->
+          Keyword.get(config, capability, [])
+        end)
+        |> Enum.reduce([], fn capability_config, acc ->
+          Keyword.merge(acc, capability_config)
+        end)
+
+      # Fall back to module-specific config if no capability-specific config exists
+      module_config = Keyword.get(config, module.config_key(), [])
+
+      # Merge configs with capability-specific taking precedence
+      merged_config = Keyword.merge(module_config, capability_configs)
+
       {module,
        [
          cluster: cluster,
          capabilities: capabilities
-       ] ++ Keyword.get(cluster.node_config(), module.config_key(), [])}
+       ] ++ merged_config}
     end)
   end
 
@@ -152,6 +176,13 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   defp module_for_capability(capability),
     do: raise("Unknown capability: #{inspect(capability)}")
+
+  defp start_tracing(module) do
+    case module.start() do
+      :ok -> :ok
+      {:error, :already_exists} -> :ok
+    end
+  end
 
   @spec fetch_config(Cluster.t()) :: {:ok, Config.t()} | {:error, :unavailable}
   def fetch_config(module) do
@@ -238,15 +269,69 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec path_to_descriptor(Cluster.t(), otp_app :: atom()) :: Path.t()
-  def path_to_descriptor(module, otp_app) do
-    module.node_config()
+  @spec node_config(Cluster.t(), otp_app :: atom() | nil, static_config :: Keyword.t() | nil) ::
+          Keyword.t()
+  def node_config(module, otp_app, static_config) do
+    case static_config do
+      nil when otp_app != nil ->
+        Application.get_env(otp_app, module, [])
+
+      nil ->
+        []
+
+      config ->
+        config
+    end
+  end
+
+  @spec capabilities(Cluster.t(), otp_app :: atom() | nil, static_config :: Keyword.t() | nil) ::
+          [Cluster.capability()]
+  def capabilities(module, otp_app, static_config) do
+    node_config(module, otp_app, static_config)
+    |> Keyword.get(:capabilities, [])
+  end
+
+  @spec coordinator_ping_timeout_in_ms(
+          Cluster.t(),
+          otp_app :: atom() | nil,
+          static_config :: Keyword.t() | nil
+        ) :: non_neg_integer()
+  def coordinator_ping_timeout_in_ms(module, otp_app, static_config) do
+    node_config(module, otp_app, static_config)
+    |> Keyword.get(:coordinator_ping_timeout_in_ms, 300)
+  end
+
+  @spec gateway_ping_timeout_in_ms(
+          Cluster.t(),
+          otp_app :: atom() | nil,
+          static_config :: Keyword.t() | nil
+        ) :: non_neg_integer()
+  def gateway_ping_timeout_in_ms(module, otp_app, static_config) do
+    node_config(module, otp_app, static_config)
+    |> Keyword.get(:gateway_ping_timeout_in_ms, 300)
+  end
+
+  @spec path_to_descriptor(
+          Cluster.t(),
+          otp_app :: atom() | nil,
+          static_config :: Keyword.t() | nil
+        ) :: Path.t()
+  def path_to_descriptor(module, otp_app, static_config) do
+    node_config(module, otp_app, static_config)
     |> Keyword.get(
       :path_to_descriptor,
-      Path.join(
-        Application.app_dir(otp_app, "priv"),
-        Cluster.default_descriptor_file_name()
-      )
+      case otp_app do
+        nil ->
+          Cluster.default_descriptor_file_name()
+
+        app ->
+          Path.join(
+            Application.app_dir(app, "priv"),
+            Cluster.default_descriptor_file_name()
+          )
+      end
     )
+  rescue
+    _ -> Cluster.default_descriptor_file_name()
   end
 end

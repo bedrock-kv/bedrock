@@ -40,8 +40,13 @@ defmodule Bedrock.Cluster do
 
   @doc false
   defmacro __using__(opts) do
-    otp_app = opts[:otp_app] || raise "Missing :otp_app option"
+    otp_app = opts[:otp_app]
+    config = opts[:config]
     name = opts[:name] || raise "Missing :name option"
+
+    unless otp_app || config do
+      raise "Must provide either :otp_app or :config option"
+    end
 
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote location: :keep do
@@ -54,10 +59,9 @@ defmodule Bedrock.Cluster do
       alias Bedrock.Internal.ClusterSupervisor
       alias Bedrock.Service.Worker
 
-      @default_coordinator_ping_timeout_in_ms 300
-      @default_gateway_ping_timeout_in_ms 300
-
       @name unquote(name)
+      @otp_app unquote(otp_app)
+      @static_config unquote(config)
       @otp_name Cluster.otp_name(@name)
 
       @supervisor_otp_name Cluster.otp_name(@name, :sup)
@@ -121,14 +125,16 @@ defmodule Bedrock.Cluster do
       """
       @impl true
       @spec node_config() :: Keyword.t()
-      def node_config, do: Application.get_env(unquote(otp_app), __MODULE__, [])
+      def node_config,
+        do: ClusterSupervisor.node_config(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
       @impl true
       @spec capabilities() :: [Cluster.capability()]
-      def capabilities, do: node_config() |> Keyword.get(:capabilities, [])
+      def capabilities,
+        do: ClusterSupervisor.capabilities(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the
@@ -139,17 +145,15 @@ defmodule Bedrock.Cluster do
       @impl true
       @spec path_to_descriptor() :: Path.t()
       def path_to_descriptor,
-        do: ClusterSupervisor.path_to_descriptor(__MODULE__, unquote(otp_app))
+        do: ClusterSupervisor.path_to_descriptor(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
       """
       @impl true
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
-      def coordinator_ping_timeout_in_ms do
-        node_config()
-        |> Keyword.get(:coordinator_ping_timeout_in_ms, @default_coordinator_ping_timeout_in_ms)
-      end
+      def coordinator_ping_timeout_in_ms,
+        do: ClusterSupervisor.coordinator_ping_timeout_in_ms(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the timeout (in milliseconds) for a gateway process waiting to
@@ -160,10 +164,8 @@ defmodule Bedrock.Cluster do
       """
       @impl true
       @spec gateway_ping_timeout_in_ms() :: non_neg_integer()
-      def gateway_ping_timeout_in_ms do
-        node_config()
-        |> Keyword.get(:gateway_ping_timeout_in_ms, @default_gateway_ping_timeout_in_ms)
-      end
+      def gateway_ping_timeout_in_ms,
+        do: ClusterSupervisor.gateway_ping_timeout_in_ms(__MODULE__, @otp_app, @static_config)
 
       ######################################################################
       # OTP Names
@@ -238,7 +240,14 @@ defmodule Bedrock.Cluster do
       @doc false
       @spec child_spec(Keyword.t()) :: Supervisor.child_spec()
       def child_spec(opts),
-        do: ClusterSupervisor.child_spec([{:cluster, __MODULE__}, {:node, Node.self()} | opts])
+        do:
+          ClusterSupervisor.child_spec([
+            {:cluster, __MODULE__},
+            {:node, Node.self()},
+            {:otp_app, @otp_app},
+            {:static_config, @static_config}
+            | opts
+          ])
     end
   end
 

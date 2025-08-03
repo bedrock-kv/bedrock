@@ -201,6 +201,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> noreply()
   end
 
+  # Catch-all for unexpected cast messages (e.g., from old incarnations)
+  def handle_cast(message, %State{} = t) do
+    Logger.debug("Director ignoring unexpected cast message: #{inspect(message)}")
+    t |> noreply()
+  end
+
   @impl true
   def terminate(reason, _t) do
     Logger.error("Director terminating due to: #{inspect(reason)}")

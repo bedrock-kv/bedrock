@@ -33,7 +33,9 @@ defmodule RecoveryTestSupport do
     node_capabilities =
       Keyword.get(opts, :node_capabilities, %{
         log: [Node.self()],
-        storage: [Node.self()]
+        storage: [Node.self()],
+        coordination: [Node.self()],
+        resolution: [Node.self()]
       })
 
     old_transaction_system_layout =

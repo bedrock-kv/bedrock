@@ -17,7 +17,7 @@ defmodule Bedrock.Cluster do
   @type transaction :: Transaction.t()
   @type storage :: Storage.ref()
   @type log :: Log.ref()
-  @type capability :: :coordination | :log | :storage
+  @type capability :: :coordination | :log | :storage | :resolution
 
   @callback capabilities() :: [Bedrock.Cluster.capability()]
   @callback coordinator!() :: Bedrock.ControlPlane.Coordinator.ref()

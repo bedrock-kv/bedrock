@@ -26,10 +26,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :all_storage_team_vacancies_filled],
         [:bedrock, :recovery, :replaying_old_logs],
         [:bedrock, :recovery, :storage_unlocking],
-        [:bedrock, :recovery, :cleanup_started],
-        [:bedrock, :recovery, :cleanup_completed],
-        [:bedrock, :recovery, :node_cleanup_started],
-        [:bedrock, :recovery, :node_cleanup_completed],
         [:bedrock, :recovery, :log_recruitment_completed],
         [:bedrock, :recovery, :log_validation_started],
         [:bedrock, :recovery, :log_service_status],
@@ -149,66 +145,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   def trace(:storage_unlocking, _, %{storage_worker_id: storage_worker_id}),
     do: info("Storage worker #{storage_worker_id} unlocking")
-
-  def trace(:cleanup_started, _, %{total_obsolete_workers: total, affected_nodes: nodes}) do
-    case {total, length(nodes)} do
-      {0, _} ->
-        info("No obsolete workers to clean up")
-
-      {total, 1} ->
-        info("Starting cleanup of #{total} obsolete workers on 1 node")
-
-      {total, node_count} ->
-        info("Starting cleanup of #{total} obsolete workers across #{node_count} nodes")
-    end
-  end
-
-  def trace(:cleanup_completed, _, %{
-        total_obsolete_workers: total,
-        successful_cleanups: success,
-        failed_cleanups: failed
-      }) do
-    case {success, failed} do
-      {0, 0} ->
-        info("No workers were cleaned up")
-
-      {^total, 0} ->
-        info("Successfully cleaned up all #{total} obsolete workers")
-
-      {success, 0} ->
-        info("Successfully cleaned up #{success}/#{total} workers")
-
-      {0, failed} ->
-        error("Failed to clean up all #{failed} workers")
-
-      {success, failed} ->
-        info("Cleaned up #{success}/#{total} workers (#{failed} failed)")
-    end
-  end
-
-  def trace(:node_cleanup_started, _, %{node: node, worker_count: count}) do
-    info("Starting cleanup of #{count} workers on node #{node}")
-  end
-
-  def trace(:node_cleanup_completed, _, %{
-        node: node,
-        successful_cleanups: success,
-        failed_cleanups: failed
-      }) do
-    case {success, failed} do
-      {0, 0} ->
-        info("No workers cleaned up on node #{node}")
-
-      {success, 0} ->
-        info("Successfully cleaned up #{success} workers on node #{node}")
-
-      {0, failed} ->
-        error("Failed to clean up #{failed} workers on node #{node}")
-
-      {success, failed} ->
-        info("Cleaned up #{success} workers on node #{node} (#{failed} failed)")
-    end
-  end
 
   def trace(:log_recruitment_completed, _, %{
         log_ids: log_ids,

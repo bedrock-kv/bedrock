@@ -2,13 +2,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   @moduledoc """
   Creates the initial transaction system layout for a new cluster.
 
-  Runs only when no previous cluster state exists. Creates log descriptors with
-  evenly distributed key ranges and storage teams with the configured replication
-  factor. Uses vacancy placeholders instead of assigning specific services immediately.
+  Runs only when no logs existed in the previous layout. Creates log vacancy placeholders 
+  for the desired number of logs and exactly two storage teams with fixed key range 
+  boundaries. Uses vacancy placeholders instead of assigning specific services immediately.
 
-  The keyspace is divided evenly among the desired number of logs. Each log covers
-  a contiguous key range from empty key to \\xff\\xff. Storage teams are created
-  empty and filled by later recruitment phases.
+  Log vacancies are assigned initial version ranges [0, 1] to establish the starting point 
+  for transaction processing. Storage teams divide the keyspace with a fundamental user/system 
+  boundary - one team handles user data (empty string to 0xFF), the other handles system data 
+  (0xFF to end-of-keyspace), with keys above the user space reserved for system metadata.
 
   Creating vacancies rather than immediate service assignment allows later phases
   to optimize placement across available nodes and handle assignment failures
@@ -16,6 +17,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   Always succeeds since it only creates in-memory structures. Transitions to
   log recruitment to begin service assignment.
+
+  See the New Cluster Initialization section in `docs/knowlege_base/02-deep/recovery-narrative.md` 
+  for detailed explanation of the initialization flow and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

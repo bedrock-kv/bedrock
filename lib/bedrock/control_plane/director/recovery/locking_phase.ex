@@ -47,7 +47,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           if MapSet.size(locked_service_ids) == 0 do
             Bedrock.ControlPlane.Director.Recovery.InitializationPhase
           else
-            Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
+            Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
           end
 
         updated_recovery_attempt =

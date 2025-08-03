@@ -1,21 +1,26 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   @moduledoc """
-  Starts resolver components that implement MVCC conflict detection.
+  Solves the critical concurrency control challenge by starting resolver components
+  that implement MVCC conflict detection through sophisticated range-to-storage-team
+  mapping and tag-based log assignment.
 
-  Resolvers detect conflicts between concurrent transactions by maintaining
-  read and write tracking for each key range. Each resolver is responsible
-  for a specific key range and coordinates with storage teams in that range.
+  Transforms resolver descriptors from vacancy creation into operational resolver
+  processes that understand which storage teams they coordinate with and which
+  transaction logs contain relevant historical data. Uses complex algorithms for
+  range overlap detection and tag-based filtering to ensure precise data assignment.
 
-  Creates resolver processes based on the resolver descriptors generated
-  during data distribution repair. Each resolver is assigned a key range
-  and configured with the appropriate storage teams.
+  Uses round-robin distribution across resolution-capable nodes from
+  `context.node_capabilities.resolution`, ensuring fault tolerance by spreading
+  resolvers across different machines. Each resolver recovers historical conflict
+  detection state from assigned logs within the version vector range.
 
-  Can stall if resolver startup fails or if insufficient nodes are available.
-  Resolvers are essential for maintaining transaction isolation and consistency
-  guarantees.
+  Stalls if no resolution-capable nodes are available or if individual resolver
+  startup fails since conflict detection is fundamental to transaction isolation
+  guarantees. Resolvers remain locked until system layout phase transitions them
+  to operational mode.
 
-  Transitions to validation once all resolvers are operational and ready
-  to handle transaction conflict detection.
+  See the Resolver Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the concurrency control problem and mapping algorithms.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -36,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
         starter_fn.(child_spec, node)
       end)
 
-    node_list_fn = Map.get(context, :node_list_fn, &Node.list/0)
+    available_resolver_nodes = Map.get(context.node_capabilities, :resolution, [])
 
     running_logs_by_id =
       recovery_attempt.service_pids
@@ -48,7 +53,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       logs: recovery_attempt.logs,
       running_logs: running_logs_by_id,
       epoch: recovery_attempt.epoch,
-      available_nodes: node_list_fn.(),
+      available_nodes: available_resolver_nodes,
       version_vector: recovery_attempt.version_vector,
       start_supervised_fn: start_supervised_fn,
       lock_token: context.lock_token
@@ -61,7 +66,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
 
       {:ok, resolvers} ->
         updated_recovery_attempt = %{recovery_attempt | resolvers: resolvers}
-        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.ValidationPhase}
+
+        {updated_recovery_attempt,
+         Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase}
     end
   end
 

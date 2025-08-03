@@ -229,6 +229,11 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 **Service Descriptor**
 : A data structure that describes the current status and capabilities of a system component.
 
+<a id="split-brain"></a>
+
+**Split-Brain**
+: A failure scenario where multiple instances of the same system component operate simultaneously, potentially creating conflicting states. In Bedrock, epoch-based locking prevents split-brain by ensuring only one director can control services at a time.
+
 <a id="shale"></a>
 
 **[Shale](components/shale.md)** (one kind of [Log](components/log.md))
@@ -271,8 +276,8 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 
 <a id="transaction-system-layout"></a>
 
-**Transaction System Layout**
-: The configuration describing the current assignment of key ranges to components and the status of all system services.
+**[Transaction System Layout](transaction-system-layout.md)**
+: The blueprint that defines how all components in a Bedrock cluster connect and communicate during transaction processing. Contains component process IDs, key range assignments, service mappings, and operational status for the entire cluster.
 
 <a id="version"></a>
 

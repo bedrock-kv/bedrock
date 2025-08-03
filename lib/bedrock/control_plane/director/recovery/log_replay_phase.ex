@@ -1,21 +1,31 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   @moduledoc """
-  Replays transactions from old logs into the new log configuration.
+  Migrates the active transaction window from old logs to newly recruited log configuration.
 
-  Copies committed transactions from logs identified in the log discovery phase
-  to the newly recruited logs. This ensures data consistency when the log layout
-  changes between recovery attempts.
+  Solves the critical data migration challenge of transferring the current window of committed
+  transactions to known-good storage. Since recovery must read old logs anyway to verify what's
+  recoverable, it duplicates that data to new logs rather than trusting potentially corrupted
+  or failing storage. This ensures storage servers can continue processing from reliable storage.
 
-  Only replays transactions that were committed in the previous configuration.
-  Uncommitted transactions are discarded since they were never guaranteed to
-  be durable.
+  **Migration Strategy**: Pairs each new log with old logs using round-robin assignment,
+  cycling through old logs when scaling up or pairing with `:none` during initialization.
+  All pairings operate efficiently in parallel to minimize recovery time.
 
-  The replay process maintains transaction ordering and ensures all committed
-  data remains accessible in the new layout. Logs are replayed concurrently
-  to minimize recovery time.
+  **Service Access**: All log services (old and new) are locked by this point in recovery,
+  so the phase simply retrieves their PIDs from the `service_pids` map using `Map.fetch!`
+  to enforce that all required services must be available.
 
-  Can stall if source logs are unavailable or if the replay process fails.
-  Transitions to data distribution once all required data is copied.
+  **Data Integrity**: Only copies committed transactions within the established version
+  vector (the active window), discarding uncommitted transactions that lack durability
+  guarantees. Maintains transaction ordering and ensures storage servers can continue
+  processing seamlessly in the new configuration.
+
+  Stalls with detailed failure information if log copying fails due to service issues.
+  However, immediately halts with error if any log reports `:newer_epoch_exists` (this
+  director has been superseded). Transitions to sequencer startup with complete migration.
+
+  See the Log Replay section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the migration strategy and robustness approach.
   """
 
   alias Bedrock.DataPlane.Log
@@ -36,7 +46,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     |> case do
       :ok ->
         trace_recovery_old_logs_replayed()
-        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase}
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase}
 
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
@@ -67,13 +77,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
                                            first_version,
                                            last_version,
                                            recovery_attempt ->
-        recover_log_with_pid_resolution(
+        copy_log_data(
           new_log_id,
           old_log_id,
           first_version,
           last_version,
-          recovery_attempt,
-          context
+          recovery_attempt.service_pids
         )
       end)
 
@@ -112,61 +121,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     end
   end
 
-  @spec recover_log_with_pid_resolution(
+  @spec copy_log_data(
           new_log_id :: Log.id(),
           old_log_id :: Log.id() | nil,
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version(),
-          recovery_attempt :: map(),
-          context :: map()
+          service_pids :: %{Log.id() => pid()}
         ) :: {:ok, pid()} | {:error, term()}
-  defp recover_log_with_pid_resolution(
-         new_log_id,
-         old_log_id,
-         first_version,
-         last_version,
-         recovery_attempt,
-         context
-       ) do
-    # Get the target log name/node from available services
-    case get_log_name_node(new_log_id, recovery_attempt, context) do
-      {:ok, new_log_name_node} ->
-        old_log_name_node =
-          old_log_id &&
-            case get_log_name_node(old_log_id, recovery_attempt, context) do
-              {:ok, name_node} -> name_node
-              _ -> nil
-            end
-
-        # Call log recovery directly with {name, node} - GenServer.call will resolve PIDs
-        Log.recover_from(new_log_name_node, old_log_name_node, first_version, last_version)
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  @spec get_log_name_node(Log.id(), map(), map()) ::
-          {:ok, {atom(), node()}} | {:error, :unavailable}
-  defp get_log_name_node(log_id, recovery_attempt, context) do
-    # First check transaction_services (has PIDs for locked services)
-    case Map.get(recovery_attempt.transaction_services, log_id) do
-      %{last_seen: {name, node}} ->
-        {:ok, {name, node}}
-
-      %{status: {:up, _pid}, last_seen: {name, node}} ->
-        {:ok, {name, node}}
-
-      _ ->
-        # Check available_services from context for newly created services
-        case get_in(context, [:available_services, log_id]) do
-          {_kind, {name, node}} ->
-            {:ok, {name, node}}
-
-          _ ->
-            {:error, :unavailable}
-        end
-    end
+  defp copy_log_data(new_log_id, old_log_id, first_version, last_version, service_pids) do
+    Log.recover_from(
+      Map.fetch!(service_pids, new_log_id),
+      Map.fetch!(service_pids, old_log_id),
+      first_version,
+      last_version
+    )
   end
 
   @spec pair_with_old_log_ids([Log.id()], [Log.id()]) ::

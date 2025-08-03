@@ -111,7 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
                "gb6cddk5"
              ]
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogDiscoveryPhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
     end
 
     test "log recruitment phase should lock newly assigned services" do

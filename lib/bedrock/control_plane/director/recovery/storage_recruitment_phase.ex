@@ -1,17 +1,26 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   @moduledoc """
-  Fills storage team vacancies by preferring existing storage services over creating new ones.
+  Transforms storage team vacancy placeholders into concrete service assignments using 
+  ultra-conservative data preservation approach.
 
-  Storage services contain persistent data that must be preserved. The phase first attempts
-  to assign available storage services (those not affiliated with the current transaction
-  system) to vacant team positions. These workers will be reset to fill their new positions.
+  Solves the challenge of filling storage positions without accidentally destroying valuable
+  persistent data. Unlike logs which can be replayed, storage services contain committed data
+  that's expensive to recreate and potentially irreplaceable if lost.
 
-  Only when insufficient available storage services exist will new workers be created
-  and distributed across nodes for fault tolerance. All recruited services are locked to
-  establish exclusive control before participating in subsequent recovery operations.
+  **Assignment Strategy**: Count all storage vacancies across teams, identify candidate services
+  (available storage not part of old system or current assignments), assign directly if sufficient,
+  otherwise create needed workers with round-robin distribution across nodes for fault tolerance.
 
-  The phase stalls if nodes are insufficient for worker creation or if locking fails,
-  otherwise transitions to log replay.
+  **Data Preservation Hierarchy**: Preserve old system services (never touch during recruitment),
+  reuse available unaffiliated services, create new workers only as last resort.
+
+  Stalls if insufficient nodes exist for worker creation or if recruited services fail
+  to lock. However, immediately halts with error if any service is locked by a newer
+  epoch (this director has been superseded). Transitions to log replay with complete 
+  storage service assignments.
+
+  See the Storage Recruitment section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the conservative assignment strategy and data preservation approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -67,7 +76,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   end
 
   @spec handle_successful_vacancy_filling([map()], [String.t()], [node()], map(), map()) ::
-          {map(), module()} | {map(), {:stalled, term()}}
+          {map(), module()} | {map(), {:stalled, term()}} | {map(), {:error, :newer_epoch_exists}}
   defp handle_successful_vacancy_filling(
          storage_teams,
          new_worker_ids,
@@ -95,7 +104,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   end
 
   @spec handle_successful_worker_creation([map()], map(), map(), map()) ::
-          {map(), module()} | {map(), {:stalled, term()}}
+          {map(), module()} | {map(), {:stalled, term()}} | {map(), {:error, :newer_epoch_exists}}
   defp handle_successful_worker_creation(
          storage_teams,
          updated_services,
@@ -117,6 +126,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
           updated_services,
           recovery_attempt
         )
+
+      {:error, :newer_epoch_exists} = error ->
+        {recovery_attempt, error}
 
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
@@ -387,6 +399,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
         }
 
         {:cont, {:ok, Map.put(locked_services, storage_id, locked_service)}}
+
+      {:error, :newer_epoch_exists} = error ->
+        {:halt, error}
 
       {:error, reason} ->
         {:halt, {:error, {:failed_to_lock_recruited_service, storage_id, reason}}}

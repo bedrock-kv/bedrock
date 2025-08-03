@@ -1,20 +1,26 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   @moduledoc """
-  Starts the sequencer component that assigns global version numbers to transactions.
+  Solves the fundamental ordering problem by starting the sequencer component that
+  provides authoritative global version numbers for all transactions.
 
-  The sequencer is a critical component that provides strict ordering for all
-  transactions in the cluster. Only one sequencer runs at a time to ensure
-  consistent version assignment across all transaction processing.
+  Without global ordering, transaction processing would collapse as different components
+  assign conflicting version numbers to concurrent transactions. The sequencer is a
+  critical singleton component where only one instance runs cluster-wide to ensure
+  consistent version assignment.
 
-  Selects a node and starts the sequencer process with the current durable
-  version as the starting point. The sequencer will assign version numbers
-  incrementally from this baseline for new transactions.
+  Starts the sequencer process on the director's current node with the last committed
+  version from the version vector as the starting point. The sequencer assigns version
+  numbers incrementally from this baseline, ensuring no gaps or overlaps in the sequence.
+  Configured with current epoch, director PID, and OTP name for service coordination.
 
-  Can stall if no suitable nodes are available or if the sequencer fails to
-  start. The sequencer must be operational before commit proxies can process
-  transactions.
+  Immediately halts recovery with a fatal error if sequencer startup fails, since version
+  assignment is fundamental to transaction processing. Unlike temporary resource shortages,
+  sequencer startup failure indicates serious system problems requiring immediate attention.
 
-  Transitions to proxy startup once the sequencer is running and ready.
+  Transitions to proxy startup once the sequencer is operational and ready.
+
+  See the Sequencer Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the ordering problem and startup process.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -24,9 +30,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   alias Bedrock.DataPlane.Sequencer
 
   @doc """
-  Execute the sequencer definition phase of recovery.
+  Execute the sequencer startup phase of recovery.
 
-  Starts the sequencer component with the current epoch and version vector.
+  Starts the sequencer component with the current epoch and last committed version
+  from the version vector.
   """
   @impl true
   def execute(recovery_attempt, context) do
@@ -69,6 +76,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   end
 
   defp handle_sequencer_result({:error, reason}, recovery_attempt) do
-    {recovery_attempt, {:stalled, {:failed_to_start, :sequencer, node(), reason}}}
+    {recovery_attempt, {:error, {:failed_to_start, :sequencer, node(), reason}}}
   end
 end

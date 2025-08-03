@@ -1,21 +1,25 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   @moduledoc """
-  Determines the highest durable version across storage teams and identifies degraded teams.
+  Establishes the highest transaction version guaranteed durable across the entire cluster.
 
-  Queries all storage teams to find the highest version that is durably committed
-  across the required replication factor. Storage teams that cannot meet the
-  durable version are marked as degraded and will need data repair.
+  Solves the critical problem of determining what data can be safely considered persistent
+  when storage servers may be at different transaction versions due to processing lag,
+  network delays, or partial failures.
 
-  The durable version represents the recovery baseline - all transactions at or
-  below this version are guaranteed to be persistent. Transactions above this
-  version may need to be replayed from logs.
+  **Algorithm**: For each storage team, sorts available replica versions and selects the
+  quorum-th highest version to ensure fault tolerance. Takes the minimum across all teams
+  to guarantee cluster-wide data availability. Teams are classified as healthy (exactly
+  quorum replicas), degraded (too few/many replicas), or failed (insufficient for quorum).
 
-  Degraded teams are identified early so later phases can prioritize their repair
-  during data distribution. Teams missing too many replicas cannot contribute to
-  the durable version calculation.
+  **Recovery Baseline**: All transactions at or below the durable version are guaranteed
+  safe for recovery, while transactions above may need replay from logs. Stalls if any
+  team cannot meet quorum requirements since data durability cannot be guaranteed.
 
-  Transitions to log recruitment with the established durable version and list
-  of teams requiring repair.
+  Transitions to log recruitment with the established recovery baseline and list of teams
+  requiring rebalancing or repair during data distribution.
+
+  See the Version Determination section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the fault-tolerant algorithm and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

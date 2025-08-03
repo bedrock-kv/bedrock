@@ -125,13 +125,18 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             Cluster.capability() => [node()]
           }
     def convert_to_capability_map(node_capabilities) do
-      node_capabilities
-      |> Enum.flat_map(fn {node, capabilities} ->
-        Enum.map(capabilities, fn capability -> {capability, node} end)
-      end)
-      |> Enum.group_by(fn {capability, _node} -> capability end, fn {_capability, node} ->
-        node
-      end)
+      capability_map =
+        node_capabilities
+        |> Enum.flat_map(fn {node, capabilities} ->
+          Enum.map(capabilities, fn capability -> {capability, node} end)
+        end)
+        |> Enum.group_by(fn {capability, _node} -> capability end, fn {_capability, node} ->
+          node
+        end)
+
+      # For now, set resolution capable nodes to the same as coordination capable nodes
+      coordination_nodes = Map.get(capability_map, :coordination, [])
+      Map.put(capability_map, :resolution, coordination_nodes)
     end
   end
 end

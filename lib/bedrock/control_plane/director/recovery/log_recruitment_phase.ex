@@ -1,18 +1,27 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   @moduledoc """
-  Recruits log services for the new system by selecting from services not involved in the old system.
+  Transforms abstract vacancy placeholders into concrete service assignments.
 
-  Services from the old transaction system layout are excluded from recruitment to preserve
-  their data in case another recovery is needed. This phase fills log vacancies by identifying
-  available log services that weren't part of the old system, assigning them to vacant positions,
-  and locking them to establish exclusive control.
+  Solves the practical challenge of assigning real services to fill log vacancies while
+  balancing efficiency with safety—reusing existing services when possible but avoiding
+  services from the old system that contain recovery data.
 
-  When insufficient existing services are available, new log workers are created and
-  distributed across nodes for fault tolerance. All recruited services must be locked
-  before the phase completes to ensure they can participate in subsequent recovery operations.
+  **Three-Phase Assignment Strategy**:
+  1. Prefer existing log services that weren't part of the old transaction system
+  2. Create new log workers using round-robin distribution across nodes when needed  
+  3. Lock all recruited services (existing and new) to establish exclusive control
 
-  The phase stalls if nodes are insufficient for worker creation or if locking fails,
-  otherwise transitions to storage recruitment.
+  **Constraints**: Old system services are excluded to preserve committed transaction data
+  in case this recovery fails and another one starts. All recruited services must be 
+  successfully locked before proceeding to ensure readiness for transaction processing.
+
+  Stalls if insufficient nodes exist for worker creation or if recruited services fail
+  to lock. However, immediately halts with error if any service is locked by a newer
+  epoch (this director has been superseded). Transitions to storage recruitment with
+  complete log service assignments.
+
+  See the Log Recruitment section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the assignment strategy and fault tolerance approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -74,6 +83,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
       {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase}
     else
+      {:error, :newer_epoch_exists} = error ->
+        {recovery_attempt, error}
+
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
     end
@@ -309,6 +321,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         }
 
         {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
+
+      {:error, :newer_epoch_exists} = error ->
+        {:halt, error}
 
       {:error, reason} ->
         {:halt, {:error, {:failed_to_lock_recruited_service, log_id, reason}}}

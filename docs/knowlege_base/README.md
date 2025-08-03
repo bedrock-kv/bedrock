@@ -87,6 +87,8 @@ For a complete architectural overview with detailed explanations and motivation,
 
 For detailed transaction processing documentation, see **[Transaction Building and Committing Process](docs/transaction-building-and-committing-process.md)** and the **[Components Deep Dive](docs/components/)** directory.
 
+For system coordination understanding, see the **[Transaction System Layout](docs/transaction-system-layout.md)** specification.
+
 **New to Bedrock?** Start with the **[Glossary](docs/glossary.md)** to understand key terms and concepts.
 
 ## Contributing to the Knowledge Base

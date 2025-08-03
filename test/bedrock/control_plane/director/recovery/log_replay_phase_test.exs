@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
     end
 
     test "handles actual log replay scenarios with stall expectation" do
@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
     end
   end
 
@@ -200,7 +200,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance successfully
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
     end
   end
 
@@ -266,7 +266,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should succeed
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.DataDistributionPhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
     end
 
     test "execute preserves other recovery_attempt fields" do

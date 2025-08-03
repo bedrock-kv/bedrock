@@ -1,30 +1,45 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   @moduledoc """
-  Creates vacancy placeholders for logs and storage teams to meet desired replication levels.
+  Creates vacancy placeholders that specify what services the new system needs without
+  committing to specific service assignments.
 
-  Analyzes current log and storage configurations against desired counts and
-  replication factors. Creates vacancy entries for missing services that need
-  to be recruited by later phases.
+  This phase solves a fundamental planning problem: how to specify system requirements
+  (logs, storage servers, and resolvers for each shard) while allowing later phases to 
+  make optimal placement decisions based on the complete picture of available resources.
 
-  Vacancies are placeholder entries that mark where new services should be
-  assigned. This separation allows recruitment phases to see all available
-  services before making optimal placement decisions.
+  **Log Planning**: Creates a clean-slate log layout by generating the desired number 
+  of log vacancies for each shard combination from the old system. This ensures the 
+  new layout meets current configuration requirements rather than being constrained 
+  by historical decisions.
 
-  For logs, creates vacancies when the current count is below the desired
-  number. For storage teams, creates vacancies when teams have insufficient
-  replicas to meet the replication factor.
+  **Storage Planning**: Takes a conservative approach, calculating additional storage
+  capacity needed per shard to meet replication requirements. Existing storage servers
+  are preserved since they contain persistent data that's expensive to move.
 
-  Always succeeds since it only modifies in-memory structures. Transitions to
-  version determination to establish the recovery baseline.
+  **Resolver Planning**: Creates resolver descriptors mapping storage team key ranges
+  to resolver vacancies. These descriptors enable resolvers to route transactions to
+  appropriate storage servers during conflict detection.
+
+  Vacancies use numbered placeholders `{:vacancy, counter}` that represent "job postings"
+  for services. The separation of planning from assignment allows recruitment phases to
+  optimize service placement across available machines for fault tolerance and efficiency.
+
+  Always succeeds since it only modifies in-memory planning structures. Transitions to
+  VersionDeterminationPhase to establish the recovery baseline.
+
+  See the Vacancy Creation section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the planning strategy and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
 
+  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
@@ -41,10 +56,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
            ) do
       trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
 
+      # Create resolver descriptors from storage teams with vacancy marks
+      resolver_descriptors = create_resolver_descriptors_from_storage_teams(storage_teams)
+
       updated_recovery_attempt =
         recovery_attempt
         |> Map.put(:logs, logs)
         |> Map.put(:storage_teams, storage_teams)
+        |> Map.put(:resolvers, resolver_descriptors)
 
       {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase}
     end
@@ -140,5 +159,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
       storage_teams,
       &Map.put(&1, :storage_ids, Map.get(new_rosters_by_tag, &1.tag))
     )
+  end
+
+  @spec create_resolver_descriptors_from_storage_teams([map()]) :: [ResolverDescriptor.t()]
+  defp create_resolver_descriptors_from_storage_teams(storage_teams) do
+    storage_teams
+    |> Enum.filter(&Map.has_key?(&1, :key_range))
+    |> Enum.with_index()
+    |> Enum.map(fn {storage_team, index} ->
+      {start_key, _end_key} = storage_team.key_range
+      resolver_descriptor(start_key, {:vacancy, index + 1})
+    end)
+    |> Enum.uniq_by(& &1.start_key)
+    |> Enum.sort_by(& &1.start_key)
   end
 end

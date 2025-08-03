@@ -1,21 +1,24 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
   @moduledoc """
-  Starts commit proxy components that batch transactions and coordinate commits.
+  Solves the scalability challenge by starting commit proxy components that coordinate
+  transaction processing across multiple distributed processes.
 
-  Commit proxies receive transactions from gateways, batch them for efficiency,
-  and coordinate the commit process with sequencer, resolvers, and logs. Multiple
-  proxies run concurrently to provide horizontal scalability.
+  Commit proxies act as the critical bridge between client gateways and the core
+  transaction system, batching requests and distributing coordination workload.
+  Multiple proxies provide horizontal scalability—as transaction volume increases,
+  more proxies handle the load without bottlenecks.
 
-  Starts the desired number of commit proxy processes distributed across
-  available nodes. Each proxy is configured with the sequencer and resolver
-  information needed for transaction processing.
+  Uses round-robin distribution to start proxies across nodes with coordination capabilities
+  from `context.node_capabilities.coordination`, ensuring fault tolerance by spreading
+  proxies across different machines. Each proxy is configured with epoch and director
+  information for recovery coordination.
 
-  Can stall if insufficient nodes are available or if proxy startup fails.
-  At least one commit proxy must be operational for the cluster to accept
-  transactions.
+  Stalls if no coordination-capable nodes are available since at least one proxy
+  must be operational for transaction processing. Proxies remain locked until
+  Transaction System Layout phase transitions them to operational mode.
 
-  Transitions to resolver startup to continue starting transaction system
-  components.
+  See the Proxy Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
+  for detailed explanation of the scalability problem and coordination approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -33,12 +36,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
         starter_fn.(child_spec, node)
       end)
 
+    available_commit_proxy_nodes = Map.get(context.node_capabilities, :coordination, [])
+
     define_commit_proxies(
       context.cluster_config.parameters.desired_commit_proxies,
       recovery_attempt.cluster,
       recovery_attempt.epoch,
       self(),
-      Node.list(),
+      available_commit_proxy_nodes,
       start_supervised_fn,
       context.lock_token
     )
@@ -61,7 +66,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
           lock_token :: binary()
         ) ::
-          {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), reason :: term()}}
+          {:ok, [pid()]}
+          | {:error, {:failed_to_start, :commit_proxy, node(), reason :: term()}}
+          | {:error,
+             {:insufficient_nodes, :no_coordination_capable_nodes, requested :: pos_integer(),
+              available :: non_neg_integer()}}
   def define_commit_proxies(
         n_proxies,
         cluster,
@@ -71,34 +80,47 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
         start_supervised,
         lock_token
       ) do
-    child_spec = child_spec_for_commit_proxy(cluster, epoch, director, lock_token)
+    if Enum.empty?(available_nodes) do
+      {:error, {:insufficient_nodes, :no_coordination_capable_nodes, n_proxies, 0}}
+    else
+      child_spec = child_spec_for_commit_proxy(cluster, epoch, director, lock_token)
 
-    available_nodes
-    |> Enum.take(n_proxies)
-    |> Task.async_stream(
-      fn node ->
-        start_supervised.(child_spec, node)
-        |> case do
-          {:ok, pid} -> {node, pid}
-          {:error, reason} -> {node, {:error, reason}}
-        end
-      end,
-      ordered: false
-    )
-    |> Enum.reduce_while([], fn
-      {:ok, {_node, pid}}, pids when is_pid(pid) ->
-        {:cont, [pid | pids]}
+      available_nodes
+      |> distribute_proxies_round_robin(n_proxies)
+      |> Task.async_stream(
+        fn node ->
+          start_supervised.(child_spec, node)
+          |> case do
+            {:ok, pid} -> {node, pid}
+            {:error, reason} -> {node, {:error, reason}}
+          end
+        end,
+        ordered: false
+      )
+      |> Enum.reduce_while([], fn
+        {:ok, {_node, pid}}, pids when is_pid(pid) ->
+          {:cont, [pid | pids]}
 
-      {:ok, {node, {:error, reason}}}, _ ->
-        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
+        {:ok, {node, {:error, reason}}}, _ ->
+          {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
 
-      {:exit, {node, reason}}, _ ->
-        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
-    end)
-    |> case do
-      {:error, reason} -> {:error, reason}
-      pids -> {:ok, pids}
+        {:exit, {node, reason}}, _ ->
+          {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
+      end)
+      |> case do
+        {:error, reason} -> {:error, reason}
+        pids -> {:ok, pids}
+      end
     end
+  end
+
+  @spec distribute_proxies_round_robin([node()], pos_integer()) :: [node()]
+  defp distribute_proxies_round_robin([], _n_proxies), do: []
+
+  defp distribute_proxies_round_robin(available_nodes, n_proxies) do
+    available_nodes
+    |> Stream.cycle()
+    |> Enum.take(n_proxies)
   end
 
   @spec child_spec_for_commit_proxy(

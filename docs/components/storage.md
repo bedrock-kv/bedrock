@@ -12,11 +12,11 @@ This creates a classic consistency challenge: how do you serve fast reads from l
 
 ## Multi-Version Time Travel
 
-Storage servers solve the consistency problem through multi-version concurrency control. Every piece of data in Bedrock exists at multiple points in time. When a key gets updated by different transactions, storage servers keep all the historical [Version](../glossary.md#version) rather than overwriting the old value. This enables "time travel"—a transaction can ask for the value of a key as it existed at any point in the past.
+Storage servers solve the consistency problem through multi-version concurrency control. Every piece of data in Bedrock exists at multiple points in time. When a key gets updated by different transactions, storage servers keep all the historical [versions](../glossary.md#version) rather than overwriting the old value. This enables "time travel"—a transaction can ask for the value of a key as it existed at any point after the [minimum read version](../glossary.md#minimum-read-version).
 
-This multi-version approach is what makes [Optimistic Concurrency Control (OCC)](../glossary.md#optimistic-concurrency-control-occ) possible. When the system needs to detect [Conflict](../glossary.md#conflict) between transactions, it can look at exactly which versions each transaction read and determine whether they interfered with each other. Without version history, this conflict detection would be impossible.
+This multi-version approach is what makes [Optimistic Concurrency Control (OCC)](../glossary.md#optimistic-concurrency-control-occ) possible. When the system needs to detect [conflict](../glossary.md#conflict) between transactions, it can look at exactly which versions each transaction read and determine whether they interfered with each other. Without version history, this conflict detection would be impossible.
 
-Version management also solves garbage collection elegantly. Storage servers can safely delete old versions once they know that no future transaction will need them, based on tracking the oldest [read version](../glossary.md#read-version) still in use across the cluster.
+Version management also solves garbage collection elegantly. Storage servers can safely delete old versions once they know that no future transaction will need them, based on tracking the [minimum read version](../glossary.md#oldest-read-version) still in use across the cluster.
 
 ## The Eventual Consistency Dance
 

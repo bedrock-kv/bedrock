@@ -393,7 +393,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
+      assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}
 
       # Note: stalled_attempt.state is no longer updated since phases control transitions
       # Should remain at original state
@@ -526,14 +526,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         end)
 
       # The coordinator format should enable early recovery phases to proceed
-      # but stall at CommitProxyPhase due to incomplete test setup
-      {{:stalled, reason}, _stalled_attempt} =
+      # and now succeeds completely since we have proper coordination capabilities
+      {:ok, completed_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Should fail with missing commit proxies (validates coordinator format worked through early phases)
-      assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_commit_proxies}}
+      # Should successfully complete (validates coordinator format worked through all phases)
+      assert completed_attempt.transaction_system_layout != nil
 
-      # Should have progressed past LogDiscoveryPhase (validates coordinator format compatibility)
+      # Should have progressed past LogRecoveryPlanningPhase (validates coordinator format compatibility)
       # State field no longer exists - test passes if we get the expected error
     end
 
@@ -571,9 +571,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_worker_management()
         |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
 
-      # This should stall at log quorum check (expected behavior due to test setup)
-      # but should successfully complete log recruitment and service locking
-      {{:stalled, :unable_to_meet_log_quorum}, stalled_attempt} =
+      # This should stall at version determination due to insufficient storage replication
+      # (only one storage service but requires quorum) but should successfully complete 
+      # log recruitment and service locking first
+      {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # Should successfully complete log recruitment and populate service tracking
@@ -635,7 +636,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   defp with_multiple_nodes(context) do
     node_capabilities = %{
       log: [:node1@host, :node2@host, :node3@host],
-      storage: [:node1@host, :node2@host, :node3@host]
+      storage: [:node1@host, :node2@host, :node3@host],
+      coordination: [:node1@host, :node2@host, :node3@host],
+      resolution: [:node1@host, :node2@host, :node3@host]
     }
 
     context

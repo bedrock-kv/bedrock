@@ -24,12 +24,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
   The context provides access to Director state that phases need but
   shouldn't be stored in the recovery attempt itself.
 
-  Returns either:
-  - `{updated_recovery_attempt, next_phase_module}` - Normal transition with next phase
-  - `updated_recovery_attempt` - For backward compatibility or terminal states
+  Returns:
+  - `{updated_recovery_attempt, next_phase_module}` - Normal transition to next phase
+  - `{updated_recovery_attempt, :completed}` - Terminal state, recovery complete
+  - `updated_recovery_attempt` - Legacy terminal state for backward compatibility
+  - `{recovery_attempt, {:stalled, reason}}` - Phase cannot proceed, will retry
+  - `{recovery_attempt, :newer_epoch_exists}` - Director superseded, halt immediately
+
+  **Stall vs Error Handling**: Stall conditions indicate temporary issues (insufficient
+  resources, service unavailability) where recovery should retry. Error conditions like
+  `:newer_epoch_exists` indicate permanent failures requiring immediate halt.
   """
   @callback execute(RecoveryAttempt.t(), context()) ::
-              RecoveryAttempt.t() | {RecoveryAttempt.t(), module()}
+              {RecoveryAttempt.t(), module()}
+              | {RecoveryAttempt.t(), :completed}
+              | {RecoveryAttempt.t(), {:stalled, term()}}
+              | {RecoveryAttempt.t(), :newer_epoch_exists}
 
   defmacro __using__(_) do
     quote do

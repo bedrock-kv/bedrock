@@ -100,7 +100,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   @doc false
   @impl Supervisor
   def init({_node, cluster, otp_app, static_config, path_to_descriptor, descriptor}) do
-    capabilities = capabilities(cluster, otp_app, static_config)
+    capabilities = node_capabilities(cluster, otp_app, static_config)
     config = node_config(cluster, otp_app, static_config)
 
     config
@@ -284,9 +284,13 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
-  @spec capabilities(Cluster.t(), otp_app :: atom() | nil, static_config :: Keyword.t() | nil) ::
+  @spec node_capabilities(
+          Cluster.t(),
+          otp_app :: atom() | nil,
+          static_config :: Keyword.t() | nil
+        ) ::
           [Cluster.capability()]
-  def capabilities(module, otp_app, static_config) do
+  def node_capabilities(module, otp_app, static_config) do
     node_config(module, otp_app, static_config)
     |> Keyword.get(:capabilities, [])
   end

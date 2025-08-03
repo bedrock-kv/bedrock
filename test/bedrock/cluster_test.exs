@@ -32,7 +32,7 @@ defmodule Bedrock.ClusterTest do
       end
 
       assert TestClusterWithConfig.name() == "test_config"
-      assert TestClusterWithConfig.capabilities() == [:coordination, :storage]
+      assert TestClusterWithConfig.node_capabilities() == [:coordination, :storage]
       assert TestClusterWithConfig.coordinator_ping_timeout_in_ms() == 500
       assert TestClusterWithConfig.path_to_descriptor() == "/tmp/test.cluster"
     end
@@ -50,7 +50,7 @@ defmodule Bedrock.ClusterTest do
       )
 
       assert TestClusterWithOtpApp.name() == "test_otp_app"
-      assert TestClusterWithOtpApp.capabilities() == [:log]
+      assert TestClusterWithOtpApp.node_capabilities() == [:log]
       assert TestClusterWithOtpApp.coordinator_ping_timeout_in_ms() == 1000
     end
 
@@ -80,7 +80,7 @@ defmodule Bedrock.ClusterTest do
 
       Application.put_env(:test_app, TestClusterBoth, capabilities: [:coordination])
 
-      assert TestClusterBoth.capabilities() == [:storage]
+      assert TestClusterBoth.node_capabilities() == [:storage]
     end
 
     test "defaults to empty config when only name is provided with config: []" do
@@ -90,7 +90,7 @@ defmodule Bedrock.ClusterTest do
           config: []
       end
 
-      assert TestClusterEmpty.capabilities() == []
+      assert TestClusterEmpty.node_capabilities() == []
       assert TestClusterEmpty.coordinator_ping_timeout_in_ms() == 300
     end
   end

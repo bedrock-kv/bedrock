@@ -54,6 +54,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     })
   end
 
+  @spec trace_epoch_ended(previous_epoch :: Bedrock.epoch() | nil) :: :ok
+  def trace_epoch_ended(previous_epoch) do
+    Telemetry.execute([:bedrock, :control_plane, :coordinator, :epoch_ended], %{}, %{
+      previous_epoch: previous_epoch
+    })
+  end
+
   @spec trace_director_failure_detected(director :: pid() | :unavailable, reason :: term()) :: :ok
   def trace_director_failure_detected(director, reason) do
     Telemetry.execute(

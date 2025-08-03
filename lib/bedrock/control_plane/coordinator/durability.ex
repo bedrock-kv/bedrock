@@ -108,33 +108,68 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     |> put_director(transaction_system_layout.director)
   end
 
-  def process_command(
-        t,
-        {:start_epoch, %{epoch: epoch, director: director, relieving: _relieving}}
-      ) do
+  def process_command(t, {:end_epoch, _previous_epoch}) do
     t
-    |> put_epoch(epoch)
-    |> put_director(director)
   end
 
   def process_command(
         t,
-        {:register_node_resources, %{node: node, services: services, capabilities: capabilities}}
+        {:set_node_resources, %{node: node, services: services, capabilities: capabilities}}
       ) do
-    # Filter only new or changed services before updating
+    existing_services_for_node =
+      t.service_directory
+      |> Enum.filter(fn {_service_id, {_kind, {_name, service_node}}} -> service_node == node end)
+      |> Enum.map(fn {service_id, _} -> service_id end)
+
     new_or_changed_services =
       Enum.filter(services, fn {service_id, kind, worker_ref} ->
         case Map.get(t.service_directory, service_id) do
-          # Same service info, skip
           {^kind, ^worker_ref} -> false
-          # New or changed service
           _ -> true
         end
       end)
 
-    # Check if capabilities changed
     current_capabilities = Map.get(t.node_capabilities, node, [])
     capabilities_changed = current_capabilities != capabilities
+
+    updated_state =
+      t
+      |> update_service_directory(fn directory ->
+        directory
+        |> Map.drop(existing_services_for_node)
+        |> Map.merge(
+          Enum.into(services, %{}, fn {service_id, kind, worker_ref} ->
+            {service_id, {kind, worker_ref}}
+          end)
+        )
+      end)
+      |> update_node_capabilities(node, capabilities)
+
+    notify_director_of_resource_changes(
+      updated_state.director,
+      new_or_changed_services,
+      updated_state.node_capabilities,
+      capabilities_changed || true
+    )
+
+    updated_state
+  end
+
+  def process_command(
+        t,
+        {:merge_node_resources, %{node: node, services: services, capabilities: capabilities}}
+      ) do
+    new_or_changed_services =
+      Enum.filter(services, fn {service_id, kind, worker_ref} ->
+        case Map.get(t.service_directory, service_id) do
+          {^kind, ^worker_ref} -> false
+          _ -> true
+        end
+      end)
+
+    current_capabilities = Map.get(t.node_capabilities, node, [])
+    merged_capabilities = (current_capabilities ++ capabilities) |> Enum.uniq()
+    capabilities_changed = current_capabilities != merged_capabilities
 
     updated_state =
       t
@@ -143,9 +178,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
           {service_id, {kind, worker_ref}}
         end)
       end)
-      |> update_node_capabilities(node, capabilities)
+      |> update_node_capabilities(node, merged_capabilities)
 
-    # Notify director of changes
     notify_director_of_resource_changes(
       updated_state.director,
       new_or_changed_services,
@@ -187,14 +221,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
          node_capabilities,
          capabilities_changed
        ) do
-    # Notify of service changes
     unless Enum.empty?(new_or_changed_services) do
       Director.notify_services_registered(director, new_or_changed_services)
     end
 
-    # Notify of capability changes
     if capabilities_changed do
-      # Convert full coordinator node_capabilities to director format
       capability_map = convert_to_capability_map(node_capabilities)
       Director.notify_capabilities_updated(director, capability_map)
     end

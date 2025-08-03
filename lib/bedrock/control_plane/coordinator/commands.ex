@@ -10,20 +10,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @type command ::
-          start_epoch_command()
+          end_epoch_command()
           | update_config_command()
           | update_transaction_system_layout_command()
-          | register_node_resources_command()
+          | set_node_resources_command()
+          | merge_node_resources_command()
           | register_services_command()
           | deregister_services_command()
 
-  @type start_epoch_command ::
-          {:start_epoch,
-           %{
-             epoch: Bedrock.epoch(),
-             director: pid(),
-             relieving: {Bedrock.epoch(), pid()} | {Bedrock.epoch(), :unavailable}
-           }}
+  @type end_epoch_command :: {:end_epoch, Bedrock.epoch() | nil}
 
   @type update_config_command ::
           {:update_config,
@@ -37,8 +32,16 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
              transaction_system_layout: TransactionSystemLayout.t()
            }}
 
-  @type register_node_resources_command ::
-          {:register_node_resources,
+  @type set_node_resources_command ::
+          {:set_node_resources,
+           %{
+             node: node(),
+             services: [service_info()],
+             capabilities: [Bedrock.Cluster.capability()]
+           }}
+
+  @type merge_node_resources_command ::
+          {:merge_node_resources,
            %{
              node: node(),
              services: [service_info()],
@@ -60,19 +63,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
 
   @doc """
-  Create a command to start a new epoch with its director via consensus.
+  Create a command to end the previous epoch via consensus.
+  This triggers the initial consensus round needed for director startup.
   """
-  @spec start_epoch(Bedrock.epoch(), pid(), {Bedrock.epoch(), pid() | :unavailable}) ::
-          start_epoch_command()
-  def start_epoch(epoch, director, relieving),
-    do: {
-      :start_epoch,
-      %{
-        epoch: epoch,
-        director: director,
-        relieving: relieving
-      }
-    }
+  @spec end_epoch(Bedrock.epoch() | nil) :: end_epoch_command()
+  def end_epoch(previous_epoch), do: {:end_epoch, previous_epoch}
 
   @doc """
   Create a command to update cluster configuration via consensus.
@@ -96,31 +91,35 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
     }
 
   @doc """
-  Create a command to register node resources (services and capabilities) via consensus.
+  Create a command to SET node resources (services and capabilities) via consensus.
+  SET semantics: completely replaces all resources for the specified node.
+  Use for initial node registration or complete resource declarations.
   """
-  @spec register_node_resources(node(), [service_info()], [Bedrock.Cluster.capability()]) ::
-          register_node_resources_command()
-  def register_node_resources(node, services, capabilities)
+  @spec set_node_resources(node(), [service_info()], [Bedrock.Cluster.capability()]) ::
+          set_node_resources_command()
+  def set_node_resources(node, services, capabilities)
       when is_atom(node) and is_list(services) and is_list(capabilities) do
-    # Validate service info format
-    Enum.each(services, fn
-      {service_id, kind, {name, service_node}}
-      when is_binary(service_id) and is_atom(kind) and is_atom(name) and is_atom(service_node) ->
-        :ok
-
-      invalid ->
-        raise ArgumentError,
-              "Invalid service info: #{inspect(invalid)}. Expected {service_id, kind, {name, node}}"
-    end)
-
-    # Validate capabilities
-    Enum.each(capabilities, fn
-      capability when is_atom(capability) -> :ok
-      invalid -> raise ArgumentError, "Invalid capability: #{inspect(invalid)}. Expected atom"
-    end)
+    validate_node_resources!(services, capabilities)
 
     {
-      :register_node_resources,
+      :set_node_resources,
+      %{node: node, services: services, capabilities: capabilities}
+    }
+  end
+
+  @doc """
+  Create a command to MERGE node resources (services and capabilities) via consensus.
+  MERGE semantics: adds/updates specified resources, preserves existing unspecified resources.
+  Use for incremental service registration (e.g., individual worker advertisement).
+  """
+  @spec merge_node_resources(node(), [service_info()], [Bedrock.Cluster.capability()]) ::
+          merge_node_resources_command()
+  def merge_node_resources(node, services, capabilities)
+      when is_atom(node) and is_list(services) and is_list(capabilities) do
+    validate_node_resources!(services, capabilities)
+
+    {
+      :merge_node_resources,
       %{node: node, services: services, capabilities: capabilities}
     }
   end
@@ -162,5 +161,28 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
       :deregister_services,
       %{service_ids: service_ids}
     }
+  end
+
+  # Private validation helper
+  @spec validate_node_resources!([service_info()], [Bedrock.Cluster.capability()]) :: :ok
+  defp validate_node_resources!(services, capabilities) do
+    # Validate service info format
+    Enum.each(services, fn
+      {service_id, kind, {name, service_node}}
+      when is_binary(service_id) and is_atom(kind) and is_atom(name) and is_atom(service_node) ->
+        :ok
+
+      invalid ->
+        raise ArgumentError,
+              "Invalid service info: #{inspect(invalid)}. Expected {service_id, kind, {name, node}}"
+    end)
+
+    # Validate capabilities
+    Enum.each(capabilities, fn
+      capability when is_atom(capability) -> :ok
+      invalid -> raise ArgumentError, "Invalid capability: #{inspect(invalid)}. Expected atom"
+    end)
+
+    :ok
   end
 end

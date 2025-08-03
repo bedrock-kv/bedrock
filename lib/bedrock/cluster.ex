@@ -19,7 +19,7 @@ defmodule Bedrock.Cluster do
   @type log :: Log.ref()
   @type capability :: :coordination | :log | :storage | :resolution
 
-  @callback capabilities() :: [Bedrock.Cluster.capability()]
+  @callback node_capabilities() :: [Bedrock.Cluster.capability()]
   @callback coordinator!() :: Bedrock.ControlPlane.Coordinator.ref()
   @callback config!() :: Config.t()
   @callback coordinator_nodes!() :: [node()]
@@ -132,9 +132,9 @@ defmodule Bedrock.Cluster do
       Get the capability advertised to the cluster by this node.
       """
       @impl true
-      @spec capabilities() :: [Cluster.capability()]
-      def capabilities,
-        do: ClusterSupervisor.capabilities(__MODULE__, @otp_app, @static_config)
+      @spec node_capabilities() :: [Cluster.capability()]
+      def node_capabilities,
+        do: ClusterSupervisor.node_capabilities(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the

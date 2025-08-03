@@ -88,11 +88,43 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
              RaftAdapter
            ),
          last_durable_txn_id: Log.initial_transaction_id(raft_log)
-       }}
+       }, {:continue, :check_recovery_consensus}}
     else
       {:error, :unavailable} -> :ignore
       {:error, :not_a_coordinator} -> :ignore
     end
+  end
+
+  @impl true
+  def handle_continue(:check_recovery_consensus, t) do
+    # Check if this is a single-node cluster that needs recovery consensus
+    if Raft.am_i_the_leader?(t.raft) and t.raft.quorum == 0 do
+      # Single-node cluster: check for already-committed transactions that need consensus
+      log = Raft.log(t.raft)
+      newest_safe_txn_id = Log.newest_safe_transaction_id(log)
+
+      # Find any pending transactions that are actually already committed
+      already_committed_txns =
+        Map.keys(t.waiting_list)
+        |> Enum.filter(fn txn_id ->
+          # Transaction is committed if it's <= newest_safe_transaction_id
+          txn_id <= newest_safe_txn_id
+        end)
+        |> Enum.sort()
+
+      if length(already_committed_txns) > 0 do
+        Logger.info(
+          "Bedrock [#{t.cluster}]: Sending recovery consensus for #{length(already_committed_txns)} already-committed transactions: #{inspect(already_committed_txns)}"
+        )
+
+        # Send consensus_reached messages for each already-committed transaction
+        Enum.each(already_committed_txns, fn txn_id ->
+          send(self(), {:raft, :consensus_reached, log, txn_id, :latest})
+        end)
+      end
+    end
+
+    {:noreply, t}
   end
 
   @impl true
@@ -125,7 +157,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_call({:register_services, services}, from, t) do
     caller_node = Node.self()
-    command = Commands.register_node_resources(caller_node, services, [])
+    command = Commands.merge_node_resources(caller_node, services, [])
 
     t
     |> durably_write_service_registration(command, ack_fn(from))
@@ -157,8 +189,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     case updated_state.leader_node do
       node when node == updated_state.my_node ->
-        # I'm leader - register node resources via Raft
-        command = Commands.register_node_resources(caller_node, expanded_services, capabilities)
+        command = Commands.set_node_resources(caller_node, expanded_services, capabilities)
 
         updated_state
         |> durably_write_service_registration(command, ack_fn(from))
@@ -261,8 +292,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         {:forward_register_node_resources, node, services, capabilities, original_from},
         t
       ) do
-    # Leader receives forwarded node resource registration request
-    command = Commands.register_node_resources(node, services, capabilities)
+    command = Commands.set_node_resources(node, services, capabilities)
 
     t
     |> durably_write_service_registration(command, ack_fn(original_from))

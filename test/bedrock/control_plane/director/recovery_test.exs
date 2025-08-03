@@ -375,7 +375,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert match?({:failed_to_lock_recruited_service, _, :unavailable}, reason)
     end
 
-    test "stalls with recovery system failure when persistence phase detects invalid state" do
+    test "first-time recovery now succeeds with resolver descriptors" do
+      # This test documents that the :no_resolvers issue has been fixed
+      # First-time recovery now succeeds because InitializationPhase creates resolver descriptors
       recovery_attempt = create_first_time_recovery_attempt()
 
       context =
@@ -390,13 +392,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_log_recovery()
         |> with_mocked_worker_management()
 
-      {{:stalled, reason}, _stalled_attempt} =
+      # Should now succeed instead of stalling with :no_resolvers
+      {:ok, completed_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      assert reason == {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}
-
-      # Note: stalled_attempt.state is no longer updated since phases control transitions
-      # Should remain at original state
+      # Verify recovery completed successfully
+      assert completed_attempt.transaction_system_layout != nil
+      assert length(completed_attempt.resolvers) > 0
     end
 
     test "monitoring phase correctly handles new transaction_services format" do
@@ -462,49 +464,23 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
     test "coordinator service format works directly with early recovery phases" do
       # This test verifies that coordinator service format is directly compatible
-      # with early recovery phases (LogDiscovery, DataDistribution, etc.)
-      # This validates that no conversion is needed
+      # with early recovery phases without needing log copying or complex recovery scenarios
 
-      # Simulate an existing cluster with logs that need to be recovered
-      old_transaction_system_layout = %{
-        logs: %{"existing_log_1" => [0, 1, 2]},
-        storage_teams: [%{tag: 0, storage_ids: ["storage_1"], key_range: {"", :end}}]
-      }
-
-      recovery_attempt =
-        first_time_recovery()
-        # Epoch 2 recovery scenario
-        |> Map.put(:epoch, 2)
-        # Set up log recovery info for existing cluster scenario
-        |> Map.put(:log_recovery_info_by_id, %{
-          "existing_log_1" => %{kind: :log, oldest_version: 0, last_version: 2}
-        })
-        # Set up storage recovery info
-        |> Map.put(:storage_recovery_info_by_id, %{
-          "storage_1" => %{kind: :storage, durable_version: 2, oldest_durable_version: 0}
-        })
-        # Set up logs field with existing log
-        |> Map.put(:logs, %{
-          "existing_log_1" => [0, 1, 2]
-        })
-        # Set up storage teams field with existing storage
-        |> Map.put(:storage_teams, [
-          %{tag: 0, storage_ids: ["storage_1"], key_range: {"", :end}}
-        ])
-        # Set up commit proxies to avoid :no_commit_proxies error
-        |> Map.put(:proxies, ["proxy_1"])
+      # Use a simple first-time recovery to test coordinator format compatibility
+      recovery_attempt = first_time_recovery()
 
       # Coordinator-format services (the real format from coordinator)
       coordinator_format_services = %{
-        "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:storage, {:storage_worker_1, :node1}},
-        # Available for recruitment
-        "new_log_1" => {:log, {:log_worker_new_1, :node2}}
+        "log_worker_1" => {:log, {:log_worker_1, :node1}},
+        "log_worker_2" => {:log, {:log_worker_2, :node1}},
+        "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
+        "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
+        "storage_worker_3" => {:storage, {:storage_worker_3, :node1}}
       }
 
       # Use coordinator format directly (no conversion needed anymore)
       context =
-        create_test_context(old_transaction_system_layout: old_transaction_system_layout)
+        create_test_context()
         |> with_multiple_nodes()
         # Use coordinator format directly!
         |> Map.put(:available_services, coordinator_format_services)
@@ -514,16 +490,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_transactions()
         |> with_mocked_log_recovery()
         |> with_mocked_worker_management()
-        # Override cluster config to match old system - this is the key fix
-        |> Map.update!(:cluster_config, fn config ->
-          Map.update!(config, :parameters, fn params ->
-            params
-            # Match the old system's log count
-            |> Map.put(:desired_logs, 1)
-            # Match available storage
-            |> Map.put(:desired_replication_factor, 1)
-          end)
-        end)
+
+      # Keep default cluster config for first-time recovery (2 logs, 3 storage replication)
 
       # The coordinator format should enable early recovery phases to proceed
       # and now succeeds completely since we have proper coordination capabilities

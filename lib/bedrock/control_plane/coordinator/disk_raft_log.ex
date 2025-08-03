@@ -224,9 +224,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
       records = transaction_records ++ chain_links ++ [{:tail, new_tail_id}]
 
-      case :dets.insert(t.table_name, records) do
-        :ok -> {:ok, t}
-        error -> error
+      with :ok <- :dets.insert(t.table_name, records),
+           :ok <- sync(t) do
+        {:ok, t}
       end
     else
       {:error, :prev_transaction_not_found}
@@ -249,9 +249,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
       {:last_commit, new_commit}
     ]
 
-    case :dets.insert(t.table_name, records) do
-      :ok -> {:ok, t}
-      error -> error
+    with :ok <- :dets.insert(t.table_name, records),
+         :ok <- sync(t) do
+      {:ok, t}
     end
   end
 
@@ -265,9 +265,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     current_commit = newest_safe_transaction_id(t)
 
     if transaction_id > current_commit do
-      case :dets.insert(t.table_name, {:last_commit, transaction_id}) do
-        :ok -> {:ok, t}
-        error -> error
+      with :ok <- :dets.insert(t.table_name, {:last_commit, transaction_id}),
+           :ok <- sync(t) do
+        {:ok, t}
       end
     else
       :unchanged

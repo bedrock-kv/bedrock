@@ -179,7 +179,7 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     |> Foreman.get_all_running_services(timeout: 1_000)
     |> case do
       {:ok, services} ->
-        capabilities = t.cluster.capabilities()
+        capabilities = t.cluster.node_capabilities()
         Coordinator.register_gateway(t.known_coordinator, self(), services, capabilities)
         t
 

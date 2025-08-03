@@ -71,33 +71,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
         recovery_attempt,
         context \\ %{}
       ) do
-    log_recover_fn =
-      Map.get(context, :log_recover_fn, fn new_log_id,
-                                           old_log_id,
-                                           first_version,
-                                           last_version,
-                                           recovery_attempt ->
-        copy_log_data(
-          new_log_id,
-          old_log_id,
-          first_version,
-          last_version,
-          recovery_attempt.service_pids
-        )
-      end)
+    copy_log_data_fn = Map.get(context, :copy_log_data_fn, &copy_log_data/5)
+    service_pids = recovery_attempt.service_pids
 
     new_log_ids
     |> pair_with_old_log_ids(old_log_ids)
     |> Task.async_stream(
       fn {new_log_id, old_log_id} ->
-        {new_log_id,
-         log_recover_fn.(
-           new_log_id,
-           old_log_id,
-           first_version,
-           last_version,
-           recovery_attempt
-         )}
+        copy_log_data_fn.(new_log_id, old_log_id, first_version, last_version, service_pids)
+        |> then(&{new_log_id, &1})
       end,
       ordered: false,
       zip_input_on_exit: true
@@ -123,12 +105,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   @spec copy_log_data(
           new_log_id :: Log.id(),
-          old_log_id :: Log.id() | nil,
+          old_log_id :: Log.id() | :none,
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version(),
           service_pids :: %{Log.id() => pid()}
-        ) :: {:ok, pid()} | {:error, term()}
-  defp copy_log_data(new_log_id, old_log_id, first_version, last_version, service_pids) do
+        ) :: {:ok, pid() | :no_recovery_needed} | {:error, term()}
+  def copy_log_data(_new_log_id, :none, _first_version, _last_version, _service_pids) do
+    {:ok, :no_recovery_needed}
+  end
+
+  def copy_log_data(new_log_id, old_log_id, first_version, last_version, service_pids) do
     Log.recover_from(
       Map.fetch!(service_pids, new_log_id),
       Map.fetch!(service_pids, old_log_id),

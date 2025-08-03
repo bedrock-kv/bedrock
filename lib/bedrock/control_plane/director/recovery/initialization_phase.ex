@@ -26,6 +26,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   import Bedrock, only: [key_range: 2]
   import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
+  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
@@ -39,24 +40,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
     storage_team_vacancies =
       1..context.cluster_config.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
 
+    key_ranges = [
+      {0, key_range(<<0xFF>>, :end)},
+      {1, key_range(<<>>, <<0xFF>>)}
+    ]
+
+    storage_teams =
+      key_ranges
+      |> Enum.map(fn {tag, key_range} ->
+        storage_team_descriptor(tag, key_range, storage_team_vacancies)
+      end)
+
+    resolver_descriptors =
+      key_ranges
+      |> Enum.with_index(1)
+      |> Enum.map(fn {{_tag, {start_key, _end_key}}, index} ->
+        resolver_descriptor(start_key, {:vacancy, index})
+      end)
+
     updated_recovery_attempt =
       recovery_attempt
       |> Map.put(:durable_version, 0)
       |> Map.put(:old_log_ids_to_copy, [])
       |> Map.put(:version_vector, {0, 0})
       |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
-      |> Map.put(:storage_teams, [
-        storage_team_descriptor(
-          0,
-          key_range(<<0xFF>>, :end),
-          storage_team_vacancies
-        ),
-        storage_team_descriptor(
-          1,
-          key_range(<<>>, <<0xFF>>),
-          storage_team_vacancies
-        )
-      ])
+      |> Map.put(:storage_teams, storage_teams)
+      |> Map.put(:resolvers, resolver_descriptors)
 
     {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
   end

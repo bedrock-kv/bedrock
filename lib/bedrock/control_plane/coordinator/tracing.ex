@@ -17,7 +17,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :director_launch],
         [:bedrock, :control_plane, :coordinator, :consensus_reached],
         [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
-        [:bedrock, :control_plane, :coordinator, :leader_ready]
+        [:bedrock, :control_plane, :coordinator, :leader_ready],
+        [:bedrock, :control_plane, :coordinator, :epoch_ended]
       ],
       &__MODULE__.handler/4,
       nil
@@ -71,6 +72,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
 
   def trace(:leader_ready, %{service_count: count}, _),
     do: info("Leader ready - starting director with #{count} services in directory")
+
+  def trace(:epoch_ended, _, %{previous_epoch: previous_epoch}),
+    do: info("Epoch #{inspect(previous_epoch)} ended, triggering consensus for director startup")
 
   @spec info(message :: String.t()) :: :ok
   def info(message) do

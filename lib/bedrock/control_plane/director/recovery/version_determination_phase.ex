@@ -44,12 +44,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
         trace_recovery_durable_version_chosen(durable_version)
         trace_recovery_team_health(healthy_teams, degraded_teams)
 
-        updated_recovery_attempt =
-          recovery_attempt
-          |> Map.put(:durable_version, durable_version)
-          |> Map.put(:degraded_teams, degraded_teams)
-
-        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
+        recovery_attempt
+        |> Map.put(:durable_version, durable_version)
+        |> Map.put(:degraded_teams, degraded_teams)
+        |> then(&{&1, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase})
     end
   end
 
@@ -86,8 +84,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   @spec smallest_version(Bedrock.version() | nil, Bedrock.version() | nil) ::
           Bedrock.version() | nil
   def smallest_version(nil, b), do: b
-
-  def smallest_version(a, b), do: min(a, b)
+  def smallest_version(a, nil), do: a
+  def smallest_version(a, b) when is_binary(a) and is_binary(b), do: min(a, b)
 
   @spec determine_durable_version_and_status_for_storage_team(
           team :: StorageTeamDescriptor.t(),

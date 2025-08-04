@@ -54,13 +54,13 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         last_version: last_version
       }) do
     info(
-      "Recover from #{inspect(source_log)} with versions #{Version.to_string(first_version)} to #{Version.to_string(last_version)}"
+      "Recover from #{inspect(source_log)} with versions #{format_version(first_version)} to #{format_version(last_version)}"
     )
   end
 
   def log_event(:push, %{n_keys: n_keys}, %{expected_version: expected_version}) do
     info(
-      "Push transaction (#{n_keys} keys) with expected version #{Version.to_string(expected_version)}"
+      "Push transaction (#{n_keys} keys) with expected version #{format_version(expected_version)}"
     )
   end
 
@@ -69,15 +69,18 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         current_version: current_version
       }) do
     info(
-      "Rejected out-of-order transaction: expected #{Version.to_string(expected_version)}, current #{Version.to_string(current_version)}"
+      "Rejected out-of-order transaction: expected #{format_version(expected_version)}, current #{format_version(current_version)}"
     )
   end
 
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),
     do:
       info(
-        "Pull transactions from version #{Version.to_string(from_version)} with options #{inspect(opts)}"
+        "Pull transactions from version #{format_version(from_version)} with options #{inspect(opts)}"
       )
+
+  @spec format_version(Version.t()) :: String.t()
+  defp format_version(version), do: version |> Version.to_integer() |> to_string()
 
   defp info(message) do
     metadata = Logger.metadata()

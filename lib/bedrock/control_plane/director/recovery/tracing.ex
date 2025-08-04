@@ -92,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   end
 
   def trace(:durable_version_chosen, _, %{durable_version: durable_version}),
-    do: info("Durable version chosen: #{Version.to_string(durable_version)}")
+    do: info("Durable version chosen: #{format_version(durable_version)}")
 
   def trace(:team_health, _, metadata) do
     case {metadata[:healthy_teams], metadata[:degraded_teams]} do
@@ -225,6 +225,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")
     debug("Full recovery state: #{inspect(full_state)}")
   end
+
+  @spec format_version(Version.t() | nil) :: String.t()
+  defp format_version(nil), do: "nil"
+  defp format_version(version), do: version |> Version.to_integer() |> to_string()
 
   @spec info(String.t()) :: :ok
   defp info(message) do

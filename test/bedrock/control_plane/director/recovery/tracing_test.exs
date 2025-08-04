@@ -129,6 +129,39 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
       assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 100"
     end
 
+    test "traces durable version chosen event with nil version" do
+      log_output =
+        capture_log(fn ->
+          Tracing.trace(:durable_version_chosen, %{}, %{
+            durable_version: nil
+          })
+        end)
+
+      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: nil"
+    end
+
+    test "traces durable version chosen event with large version" do
+      log_output =
+        capture_log(fn ->
+          Tracing.trace(:durable_version_chosen, %{}, %{
+            durable_version: Version.from_integer(999_999_999)
+          })
+        end)
+
+      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 999999999"
+    end
+
+    test "traces durable version chosen event with zero version" do
+      log_output =
+        capture_log(fn ->
+          Tracing.trace(:durable_version_chosen, %{}, %{
+            durable_version: Version.zero()
+          })
+        end)
+
+      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 0"
+    end
+
     test "traces team health with no teams" do
       log_output =
         capture_log(fn ->

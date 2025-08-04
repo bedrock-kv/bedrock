@@ -29,7 +29,14 @@ defmodule Bedrock.DataPlane.Version do
 
   @doc "Converts a version to string representation for display"
   @spec to_string(t()) :: String.t()
-  def to_string(version), do: version |> to_integer() |> Integer.to_string()
+  def to_string(version) do
+    byte_string =
+      version
+      |> :binary.bin_to_list()
+      |> Enum.map(&Kernel.to_string/1)
+
+    "<<" <> Enum.join(byte_string, ", ") <> ">>"
+  end
 
   @doc "Increments a version by 1"
   @spec increment(t()) :: t()

@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Log.EncodedTransaction do
+  alias Bedrock.DataPlane.Version
+
   @moduledoc """
   This module, `Bedrock.DataPlane.Log.EncodedTransaction`, provides functions to
   encode and decode `Bedrock.DataPlane.Log.Transaction.t()` comprised of a
@@ -38,7 +40,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   @type t :: binary()
 
   @spec version(t()) :: Bedrock.version()
-  def version(<<version::unsigned-big-64, _::binary>>), do: version
+  def version(<<version::binary-size(8), _::binary>>), do: version
 
   @spec key_count(t()) :: non_neg_integer()
   def key_count(
@@ -143,7 +145,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
     if crc32 != :erlang.crc32(payload) do
       {:error, :crc32_mismatch}
     else
-      {:ok, {version, decode_key_value_frames(payload)}}
+      {:ok, {Version.from_integer(version), decode_key_value_frames(payload)}}
     end
   end
 
@@ -211,14 +213,15 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
       # The transaction is entirely outside the range.
       {_, 0} ->
-        <<version::unsigned-big-64, 0::unsigned-big-32, 0::unsigned-big-32>>
+        [Version.from_integer(version), <<0::unsigned-big-32, 0::unsigned-big-32>>]
+        |> IO.iodata_to_binary()
 
       # The transaction is partially inside the range, slice out the relevant
       # key-value frames and reassemble the transaction.
       {start, size_in_bytes} ->
         payload
         |> binary_part(start, size_in_bytes)
-        |> wrap_with_version_and_crc32(version)
+        |> wrap_with_version_and_crc32(Version.from_integer(version))
     end
   end
 
@@ -301,7 +304,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
       ) do
     payload
     |> exclude_values_from_payload()
-    |> wrap_with_version_and_crc32(version)
+    |> wrap_with_version_and_crc32(Version.from_integer(version))
   end
 
   @spec exclude_values_from_payload(binary()) :: iodata()
@@ -320,7 +323,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   @spec wrap_with_version_and_crc32(iodata(), Bedrock.version()) :: iodata()
   defp wrap_with_version_and_crc32(kv_frames, version),
     do: [
-      <<version::unsigned-big-64, IO.iodata_length(kv_frames)::unsigned-big-32>>,
+      [version, <<IO.iodata_length(kv_frames)::unsigned-big-32>>],
       kv_frames,
       <<:erlang.crc32(kv_frames)::unsigned-big-32>>
     ]

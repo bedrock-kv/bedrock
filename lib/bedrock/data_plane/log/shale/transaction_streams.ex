@@ -32,9 +32,9 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     segment
     |> Segment.transactions()
     |> Enum.reverse()
-    |> Enum.drop_while(fn <<version::unsigned-big-64, _::binary>> -> version < target_version end)
+    |> Enum.drop_while(fn <<version::binary-size(8), _::binary>> -> version < target_version end)
     |> case do
-      [<<version::unsigned-big-64, _::binary>> | rest] when version == target_version ->
+      [<<version::binary-size(8), _::binary>> | rest] when version == target_version ->
         {:ok, from_list_of_transactions(fn -> rest end)}
 
       _ ->
@@ -112,7 +112,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
 
   def until_version(stream, last_version) do
     Stream.transform(stream, last_version, fn
-      <<version::unsigned-big-64, _::binary>> = encoded_transaction, last_version ->
+      <<version::binary-size(8), _::binary>> = encoded_transaction, last_version ->
         if version <= last_version do
           {[encoded_transaction], last_version}
         else

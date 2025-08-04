@@ -5,6 +5,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   require Logger
 
+  alias Bedrock.DataPlane.Version
+
   @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_director_recovery"
 
@@ -90,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   end
 
   def trace(:durable_version_chosen, _, %{durable_version: durable_version}),
-    do: info("Durable version chosen: #{durable_version}")
+    do: info("Durable version chosen: #{Version.to_string(durable_version)}")
 
   def trace(:team_health, _, metadata) do
     case {metadata[:healthy_teams], metadata[:degraded_teams]} do

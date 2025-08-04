@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Version
 
   import Bedrock.DataPlane.Log.Shale.ColdStarting, only: [reload_segments_at_path: 1]
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
@@ -74,8 +75,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        id: id,
        otp_name: otp_name,
        foreman: foreman,
-       oldest_version: 0,
-       last_version: 0
+       oldest_version: Version.zero(),
+       last_version: Version.zero()
      }, {:continue, :initialization}}
   end
 
@@ -105,23 +106,18 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       |> reload_segments_at_path
       |> case do
         {:error, :unable_to_list_segments} ->
-          {0, 0, nil, []}
+          {Version.zero(), Version.zero(), nil, []}
 
         {:ok, []} ->
-          {0, 0, nil, []}
+          {Version.zero(), Version.zero(), nil, []}
 
         {:ok, [active_segment | segments]} ->
           active_segment = Segment.ensure_transactions_are_loaded(active_segment)
           last_version = Segment.last_version(active_segment)
 
           oldest_version =
-            segments
-            |> Enum.reduce(
-              active_segment.min_version,
-              fn segment, last_version ->
-                min(segment.min_version, last_version)
-              end
-            )
+            [active_segment.min_version | Enum.map(segments, & &1.min_version)]
+            |> Enum.min()
 
           {oldest_version, last_version, active_segment, segments}
       end

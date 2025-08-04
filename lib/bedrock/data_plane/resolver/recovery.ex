@@ -51,7 +51,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
           {:ok, Tree.t()}
           | Log.pull_errors()
           | {:error, {:log_unavailable, Log.ref()}}
-  def pull_transactions(tree, nil, 0, 0),
+  def pull_transactions(tree, nil, _first_version, _last_version),
     do: {:ok, tree}
 
   def pull_transactions(tree, _, first_version, last_version)

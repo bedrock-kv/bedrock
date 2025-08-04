@@ -2,6 +2,8 @@ defmodule Bedrock.DataPlane.Log.Tracing do
   @moduledoc false
   require Logger
 
+  alias Bedrock.DataPlane.Version
+
   @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_data_plane_log"
 
@@ -51,11 +53,15 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         first_version: first_version,
         last_version: last_version
       }) do
-    info("Recover from #{inspect(source_log)} with versions #{first_version} to #{last_version}")
+    info(
+      "Recover from #{inspect(source_log)} with versions #{Version.to_string(first_version)} to #{Version.to_string(last_version)}"
+    )
   end
 
   def log_event(:push, %{n_keys: n_keys}, %{expected_version: expected_version}) do
-    info("Push transaction (#{n_keys} keys) with expected version #{inspect(expected_version)}")
+    info(
+      "Push transaction (#{n_keys} keys) with expected version #{Version.to_string(expected_version)}"
+    )
   end
 
   def log_event(:push_out_of_order, _, %{
@@ -63,12 +69,15 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         current_version: current_version
       }) do
     info(
-      "Rejected out-of-order transaction: expected #{inspect(expected_version)}, current #{inspect(current_version)}"
+      "Rejected out-of-order transaction: expected #{Version.to_string(expected_version)}, current #{Version.to_string(current_version)}"
     )
   end
 
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),
-    do: info("Pull transactions from version #{from_version} with options #{inspect(opts)}")
+    do:
+      info(
+        "Pull transactions from version #{Version.to_string(from_version)} with options #{inspect(opts)}"
+      )
 
   defp info(message) do
     metadata = Logger.metadata()

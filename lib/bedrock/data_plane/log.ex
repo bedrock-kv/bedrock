@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Log do
 
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
   use Bedrock.Internal.GenServerApi
@@ -126,7 +127,7 @@ defmodule Bedrock.DataPlane.Log do
   entire key range.
   """
   @spec initial_transaction :: Transaction.t()
-  def initial_transaction, do: Transaction.new(0, %{})
+  def initial_transaction, do: Transaction.new(Version.zero(), %{})
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new

@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.DataPlane.Version
 
   import RecoveryTestSupport
 
@@ -142,6 +143,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       empty_mapset = MapSet.new([])
       empty_map = %{}
+      zero_version = Version.zero()
 
       assert %State{
                epoch: 1,
@@ -173,8 +175,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                  log_recovery_info_by_id: ^empty_map,
                  storage_recovery_info_by_id: ^empty_map,
                  old_log_ids_to_copy: [],
-                 version_vector: {0, 0},
-                 durable_version: 0,
+                 version_vector: {^zero_version, ^zero_version},
+                 durable_version: ^zero_version,
                  degraded_teams: [],
                  logs: ^empty_map,
                  storage_teams: [],
@@ -586,17 +588,33 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   defp create_existing_cluster_recovery_attempt do
     existing_cluster_recovery()
     |> with_log_recovery_info(%{
-      "existing_log_1" => %{kind: :log, oldest_version: 0, last_version: 100},
-      "existing_log_2" => %{kind: :log, oldest_version: 0, last_version: 100}
+      "existing_log_1" => %{
+        kind: :log,
+        oldest_version: Version.zero(),
+        last_version: Version.from_integer(100)
+      },
+      "existing_log_2" => %{
+        kind: :log,
+        oldest_version: Version.zero(),
+        last_version: Version.from_integer(100)
+      }
     })
     |> with_storage_recovery_info(%{
       "existing_storage_1" => %{
         kind: :storage,
-        durable_version: 95,
-        oldest_durable_version: 0
+        durable_version: Version.from_integer(95),
+        oldest_durable_version: Version.zero()
       },
-      "storage_worker_2" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0},
-      "storage_worker_3" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0}
+      "storage_worker_2" => %{
+        kind: :storage,
+        durable_version: Version.from_integer(95),
+        oldest_durable_version: Version.zero()
+      },
+      "storage_worker_3" => %{
+        kind: :storage,
+        durable_version: Version.from_integer(95),
+        oldest_durable_version: Version.zero()
+      }
     })
   end
 
@@ -641,7 +659,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       pid = spawn(fn -> :ok end)
       # Handle coordinator format: {kind, {otp_name, node}}
       {kind, _location} = service
-      {:ok, pid, %{kind: kind, durable_version: 95, oldest_version: 0, last_version: 100}}
+
+      {:ok, pid,
+       %{
+         kind: kind,
+         durable_version: Version.from_integer(95),
+         oldest_version: Version.zero(),
+         last_version: Version.from_integer(100)
+       }}
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)
@@ -655,7 +680,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # The service is in coordinator format: {kind, {otp_name, node}}
       case service do
         {kind, _location} ->
-          {:ok, pid, %{kind: kind, durable_version: 95, oldest_version: 0, last_version: 100}}
+          {:ok, pid,
+           %{
+             kind: kind,
+             durable_version: Version.from_integer(95),
+             oldest_version: Version.zero(),
+             last_version: Version.from_integer(100)
+           }}
 
         _ ->
           # If we get here, the format is unexpected

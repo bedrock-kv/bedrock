@@ -4,6 +4,7 @@ defmodule RecoveryTestSupport do
   """
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.DataPlane.Version
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   # Helper for best-effort cleanup
@@ -121,12 +122,28 @@ defmodule RecoveryTestSupport do
     base = %{
       epoch: 2,
       log_recovery_info_by_id: %{
-        {:log, 1} => %{kind: :log, oldest_version: 0, last_version: 100},
-        {:log, 2} => %{kind: :log, oldest_version: 0, last_version: 100}
+        {:log, 1} => %{
+          kind: :log,
+          oldest_version: Version.zero(),
+          last_version: Version.from_integer(100)
+        },
+        {:log, 2} => %{
+          kind: :log,
+          oldest_version: Version.zero(),
+          last_version: Version.from_integer(100)
+        }
       },
       storage_recovery_info_by_id: %{
-        "storage_1" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0},
-        "storage_2" => %{kind: :storage, durable_version: 95, oldest_durable_version: 0}
+        "storage_1" => %{
+          kind: :storage,
+          durable_version: Version.from_integer(95),
+          oldest_durable_version: Version.zero()
+        },
+        "storage_2" => %{
+          kind: :storage,
+          durable_version: Version.from_integer(95),
+          oldest_durable_version: Version.zero()
+        }
       }
     }
 
@@ -454,7 +471,14 @@ defmodule RecoveryTestSupport do
   defp add_mock_function(:service_locking, context) do
     lock_service_fn = fn _service, _epoch ->
       pid = spawn(fn -> :ok end)
-      {:ok, pid, %{kind: :test, durable_version: 95, oldest_version: 0, last_version: 100}}
+
+      {:ok, pid,
+       %{
+         kind: :test,
+         durable_version: Version.from_integer(95),
+         oldest_version: Version.zero(),
+         last_version: Version.from_integer(100)
+       }}
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)
@@ -596,7 +620,12 @@ defmodule RecoveryTestSupport do
 
   defp create_successful_service_lock do
     {:ok, spawn(fn -> :ok end),
-     %{kind: :test, durable_version: 95, oldest_version: 0, last_version: 100}}
+     %{
+       kind: :test,
+       durable_version: Version.from_integer(95),
+       oldest_version: Version.zero(),
+       last_version: Version.from_integer(100)
+     }}
   end
 
   # ============================================================================

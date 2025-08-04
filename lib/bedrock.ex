@@ -14,7 +14,7 @@ defmodule Bedrock do
   @type value :: binary()
   @type key_value :: {key(), value()}
 
-  @type version :: non_neg_integer()
+  @type version :: Bedrock.DataPlane.Version.t()
   @type version_vector :: {oldest :: version(), newest :: version()}
 
   @type transaction ::

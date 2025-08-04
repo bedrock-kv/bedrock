@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Version
 
   @moduletag :tmp_dir
 
@@ -109,6 +110,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       expected_foreman = opts[:foreman]
       expected_path = opts[:path]
 
+      version_0 = Version.from_integer(0)
+
       assert %State{
                cluster: Cluster,
                id: id,
@@ -116,8 +119,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
                foreman: foreman,
                path: path,
                mode: :locked,
-               oldest_version: 0,
-               last_version: 0
+               oldest_version: ^version_0,
+               last_version: ^version_0
              } = state
 
       assert id == expected_id
@@ -325,8 +328,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
     test "handles recover_from request", %{server: pid} do
       source_log = self()
-      first_version = 1
-      last_version = 10
+      first_version = Version.from_integer(1)
+      last_version = Version.from_integer(10)
 
       # This will timeout as recovery requires specific server state and protocol
       catch_exit do
@@ -336,9 +339,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
     test "handles recover_from with invalid version range", %{server: pid} do
       source_log = self()
-      first_version = 10
+      first_version = Version.from_integer(10)
       # Invalid: first > last
-      last_version = 1
+      last_version = Version.from_integer(1)
 
       # This will also timeout as recovery requires specific server state and protocol
       catch_exit do

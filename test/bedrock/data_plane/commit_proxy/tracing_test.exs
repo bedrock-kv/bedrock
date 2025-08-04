@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.DataPlane.CommitProxy.Tracing
+  alias Bedrock.DataPlane.Version
 
   # Define a mock cluster for testing
   defmodule TestCluster do
@@ -18,7 +19,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
 
     test "traces start event" do
       measurements = %{n_transactions: 5}
-      metadata = %{cluster: TestCluster, commit_version: 123}
+      metadata = %{cluster: TestCluster, commit_version: Version.from_integer(123)}
 
       log_output =
         capture_log(fn ->
@@ -30,7 +31,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
 
     test "traces stop event" do
       measurements = %{n_aborts: 2, n_oks: 8, duration_us: 1500}
-      metadata = %{commit_version: 124}
+      metadata = %{commit_version: Version.from_integer(124)}
 
       log_output =
         capture_log(fn ->
@@ -48,7 +49,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
       # but it was actually passed in measurements
       measurements = %{
         duration_us: 437,
-        commit_version: 1,
+        commit_version: Version.from_integer(1),
         n_transactions: 1
       }
 
@@ -70,7 +71,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
     end
 
     test "traces failed event handles various failure reasons" do
-      measurements = %{duration_us: 1000, commit_version: 42}
+      measurements = %{duration_us: 1000, commit_version: Version.from_integer(42)}
 
       test_cases = [
         {:timeout, "timeout"},
@@ -107,7 +108,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
 
       measurements = %{
         duration_us: 500,
-        commit_version: 99,
+        commit_version: Version.from_integer(99),
         n_transactions: 3
       }
 

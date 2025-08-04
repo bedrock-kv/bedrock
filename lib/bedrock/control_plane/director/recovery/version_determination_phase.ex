@@ -86,6 +86,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   @spec smallest_version(Bedrock.version() | nil, Bedrock.version() | nil) ::
           Bedrock.version() | nil
   def smallest_version(nil, b), do: b
+
   def smallest_version(a, b), do: min(a, b)
 
   @spec determine_durable_version_and_status_for_storage_team(

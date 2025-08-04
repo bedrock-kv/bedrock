@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc false
 
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Version
 
   @opaque t :: :dets.tab_name()
 
@@ -32,7 +33,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   def oldest_version(pkv) do
     fetch(pkv, :oldest_version)
     |> case do
-      {:error, :not_found} -> 0
+      {:error, :not_found} -> Version.zero()
       {:ok, version} -> version
     end
   end
@@ -44,7 +45,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   def last_version(pkv) do
     fetch(pkv, :last_version)
     |> case do
-      {:error, :not_found} -> 0
+      {:error, :not_found} -> Version.zero()
       {:ok, version} -> version
     end
   end

@@ -5,6 +5,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
 
   require Logger
 
+  alias Bedrock.DataPlane.Version
+
   @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_commit_proxy"
 
@@ -35,14 +37,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
         commit_version: commit_version
       }) do
     Logger.metadata(cluster: cluster)
-    info("Transaction Batch #{commit_version} started with #{n_transactions} transactions")
+
+    info(
+      "Transaction Batch #{Version.to_string(commit_version)} started with #{n_transactions} transactions"
+    )
   end
 
   def trace(:stop, %{n_aborts: n_aborts, n_oks: n_oks, duration_us: duration_us}, %{
         commit_version: commit_version
       }) do
     info(
-      "Transaction Batch #{commit_version} completed with #{n_aborts} aborts and #{n_oks} oks in #{humanize({:microsecond, duration_us})}"
+      "Transaction Batch #{Version.to_string(commit_version)} completed with #{n_aborts} aborts and #{n_oks} oks in #{humanize({:microsecond, duration_us})}"
     )
   end
 
@@ -50,7 +55,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
         reason: reason
       }) do
     error(
-      "Transaction Batch #{commit_version} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"
+      "Transaction Batch #{Version.to_string(commit_version)} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"
     )
   end
 

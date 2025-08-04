@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
   @moduledoc false
 
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Version
 
   @spec reload_segments_at_path(segment_dir :: String.t()) ::
           {:ok, [Segment.t()]}
@@ -26,7 +27,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
         end)
         |> Enum.sort_by(&elem(&1, 0), :desc)
         |> Enum.map(fn {min_version, path} ->
-          %Segment{min_version: min_version, path: path}
+          %Segment{min_version: Version.from_integer(min_version), path: path}
         end)
         |> then(&{:ok, &1})
 

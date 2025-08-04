@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.Log.Transaction do
   Get the version from the transaction.
   """
   @spec version(t()) :: Bedrock.version()
-  def version({version, _}) when is_integer(version), do: version
+  def version({version, _}), do: version
 
   @doc """
   Get the key-values from the transaction. If they have been previously encoded,

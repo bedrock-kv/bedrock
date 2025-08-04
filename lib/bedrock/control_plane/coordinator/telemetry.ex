@@ -86,6 +86,18 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     })
   end
 
+  @spec trace_director_shutdown(director :: pid(), reason :: atom()) :: :ok
+  def trace_director_shutdown(director, reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :director_shutdown],
+      %{},
+      %{
+        director: director,
+        reason: reason
+      }
+    )
+  end
+
   @spec trace_leader_waiting_for_consensus() :: :ok
   def trace_leader_waiting_for_consensus do
     Telemetry.execute(

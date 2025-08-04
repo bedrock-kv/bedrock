@@ -51,4 +51,15 @@ defmodule Bedrock.Cluster.Gateway do
   @spec advertise_worker(gateway :: ref(), worker :: pid()) :: :ok
   def advertise_worker(gateway, worker),
     do: gateway |> cast({:advertise_worker, worker})
+
+  @doc """
+  Get the cluster descriptor from the gateway.
+  This includes the coordinator nodes and other cluster configuration.
+  """
+  @spec get_descriptor(
+          gateway :: ref(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) :: {:ok, Bedrock.Cluster.Descriptor.t()} | {:error, :unavailable | :timeout | :unknown}
+  def get_descriptor(gateway, opts \\ []),
+    do: gateway |> call(:get_descriptor, opts[:timeout_in_ms] || 1000)
 end

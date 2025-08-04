@@ -58,8 +58,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
         |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
         |> fetch_from_storage(key)
 
-      {:error, :unavailable} ->
-        {:error, :unavailable}
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -122,7 +122,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   end
 
   @doc """
-  Retrieves the set of storage servers responsible for a given key from the 
+  Retrieves the set of storage servers responsible for a given key from the
   Transaction System Layout.
   """
   @spec storage_servers_for_key(

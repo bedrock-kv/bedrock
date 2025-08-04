@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   - Transaction records: `{transaction_id, data}`
   - Chain links: `{{:chain, transaction_id}, next_transaction_id | nil}`
-  - Well-known keys: `{:tail, transaction_id}`, `{:last_commit, transaction_id}`
+  - Well-known keys: `{:tail, transaction_id}`, `{:last_commit, transaction_id}`, `{:current_term, election_term}`
 
   ## File Layout
 
@@ -34,7 +34,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   @type input_transaction :: {term :: Raft.election_term(), data :: term()}
   @type stored_transaction_record :: {Raft.transaction_id(), input_transaction()}
   @type chain_link_record :: {{:chain, Raft.transaction_id()}, Raft.transaction_id() | nil}
-  @type metadata_record :: {:tail, Raft.transaction_id()} | {:last_commit, Raft.transaction_id()}
+  @type metadata_record ::
+          {:tail, Raft.transaction_id()}
+          | {:last_commit, Raft.transaction_id()}
+          | {:current_term, Raft.election_term()}
   @type dets_record :: stored_transaction_record() | chain_link_record() | metadata_record()
   @type dets_error ::
           {:error, :file_not_found | :permission_denied | :badarg | :table_not_open | term()}
@@ -369,6 +372,31 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
         end
     end
   end
+
+  @doc """
+  Get the current election term from persistent storage.
+  Returns 0 if no term has been persisted yet (initial state).
+  """
+  @spec current_term(t()) :: Raft.election_term()
+  def current_term(t) do
+    case :dets.lookup(t.table_name, :current_term) do
+      [{:current_term, term}] -> term
+      # No term persisted yet - return initial term 0
+      [] -> 0
+    end
+  end
+
+  @doc """
+  Save the current election term to persistent storage.
+  This must be called before responding to RPCs to ensure Raft safety.
+  """
+  @spec save_current_term(t(), Raft.election_term()) :: dets_operation_result()
+  def save_current_term(t, term) do
+    with :ok <- :dets.insert(t.table_name, {:current_term, term}),
+         :ok <- sync(t) do
+      {:ok, t}
+    end
+  end
 end
 
 # Implement the Bedrock.Raft.Log protocol using delegation
@@ -384,4 +412,6 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   defdelegate has_transaction_id?(t, transaction_id), to: DiskRaftLog
   defdelegate transactions_to(t, to), to: DiskRaftLog
   defdelegate transactions_from(t, from, to), to: DiskRaftLog
+  defdelegate current_term(t), to: DiskRaftLog
+  defdelegate save_current_term(t, term), to: DiskRaftLog
 end

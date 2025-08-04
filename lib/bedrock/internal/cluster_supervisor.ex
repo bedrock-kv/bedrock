@@ -2,6 +2,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
@@ -254,6 +255,26 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec fetch_coordinator_nodes(Cluster.t()) :: {:ok, [node()]} | {:error, :unavailable}
   def fetch_coordinator_nodes(module) do
+    # Try to get descriptor from the running gateway first, since it has the
+    # canonical descriptor (which may be an in-memory default if no file exists)
+    case try_gateway_descriptor(module) do
+      {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
+      {:error, _reason} -> try_disk_descriptor(module)
+    end
+  end
+
+  @spec try_gateway_descriptor(Cluster.t()) :: {:ok, Descriptor.t()} | {:error, term()}
+  defp try_gateway_descriptor(module) do
+    with {:ok, gateway} <- module.fetch_gateway(),
+         {:ok, descriptor} <- Gateway.get_descriptor(gateway) do
+      {:ok, descriptor}
+    else
+      {:error, reason} -> {:error, {:gateway_error, reason}}
+    end
+  end
+
+  @spec try_disk_descriptor(Cluster.t()) :: {:ok, [node()]} | {:error, :unavailable}
+  defp try_disk_descriptor(module) do
     case module.path_to_descriptor() |> Descriptor.read_from_file() do
       {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
       {:error, _reason} -> {:error, :unavailable}

@@ -15,6 +15,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :election_completed],
         [:bedrock, :control_plane, :coordinator, :director_changed],
         [:bedrock, :control_plane, :coordinator, :director_launch],
+        [:bedrock, :control_plane, :coordinator, :director_shutdown],
         [:bedrock, :control_plane, :coordinator, :consensus_reached],
         [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
         [:bedrock, :control_plane, :coordinator, :leader_ready],
@@ -63,6 +64,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
       info(
         "Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count}, storage_teams: #{summary.storage_teams_count})"
       )
+
+  def trace(:director_shutdown, _, %{director: director, reason: reason}),
+    do: info("Shutting down director #{inspect(director)} (reason: #{reason})")
 
   def trace(:consensus_reached, _, %{transaction_id: tx_id}),
     do: info("Consensus reached at #{inspect(tx_id)}")

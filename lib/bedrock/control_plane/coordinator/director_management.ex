@@ -18,13 +18,14 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     only: [
       trace_director_changed: 1,
       trace_director_failure_detected: 2,
-      trace_director_launch: 2
+      trace_director_launch: 2,
+      trace_director_shutdown: 2
     ]
 
   require Logger
 
   @spec try_to_start_director(State.t()) :: State.t()
-  def try_to_start_director(t) when t.leader_node == t.my_node do
+  def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
     t = t |> maybe_put_defaults()
 
     trace_director_launch(t.epoch, t.transaction_system_layout)
@@ -101,4 +102,27 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       t
     end
   end
+
+  @doc """
+  Gracefully shut down the current director if we are the leader and a director is running.
+  This is typically called when ending an epoch via consensus.
+  """
+  @spec shutdown_director_if_running(State.t()) :: State.t()
+  def shutdown_director_if_running(t) when t.leader_node == t.my_node and is_pid(t.director) do
+    trace_director_shutdown(t.director, :epoch_end)
+
+    # Terminate the director process via the supervisor
+    case DynamicSupervisor.terminate_child(t.supervisor_otp_name, t.director) do
+      :ok ->
+        trace_director_changed(:unavailable)
+
+      {:error, :not_found} ->
+        # Director was already gone, that's fine
+        :ok
+    end
+
+    t |> put_director(:unavailable)
+  end
+
+  def shutdown_director_if_running(t), do: t
 end

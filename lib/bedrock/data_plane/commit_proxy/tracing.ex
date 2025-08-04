@@ -46,9 +46,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
     )
   end
 
-  def trace(:failed, %{duration_us: duration_us}, %{
-        reason: reason,
-        commit_version: commit_version
+  def trace(:failed, %{duration_us: duration_us, commit_version: commit_version}, %{
+        reason: reason
       }) do
     error(
       "Transaction Batch #{commit_version} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"

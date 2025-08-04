@@ -109,9 +109,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version(),
           service_pids :: %{Log.id() => pid()}
-        ) :: {:ok, pid() | :no_recovery_needed} | {:error, term()}
-  def copy_log_data(_new_log_id, :none, _first_version, _last_version, _service_pids) do
-    {:ok, :no_recovery_needed}
+        ) :: {:ok, pid()} | {:error, term()}
+  def copy_log_data(new_log_id, :none, first_version, last_version, service_pids) do
+    Log.recover_from(
+      Map.fetch!(service_pids, new_log_id),
+      nil,
+      first_version,
+      last_version
+    )
   end
 
   def copy_log_data(new_log_id, old_log_id, first_version, last_version, service_pids) do

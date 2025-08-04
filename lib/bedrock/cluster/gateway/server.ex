@@ -123,6 +123,12 @@ defmodule Bedrock.Cluster.Gateway.Server do
     end
   end
 
+  @spec handle_call(:get_descriptor, GenServer.from(), State.t()) ::
+          {:reply, {:ok, Descriptor.t()}, State.t()}
+  def handle_call(:get_descriptor, _, t) do
+    t |> reply({:ok, t.descriptor})
+  end
+
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::

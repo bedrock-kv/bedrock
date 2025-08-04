@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Coordinator.Commands
+  alias Bedrock.ControlPlane.Coordinator.DirectorManagement
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
@@ -109,7 +110,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   def process_command(t, {:end_epoch, _previous_epoch}) do
+    # End of epoch - shut down the current director if we're running one
     t
+    |> DirectorManagement.shutdown_director_if_running()
   end
 
   def process_command(

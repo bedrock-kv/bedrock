@@ -53,7 +53,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
            {:ok, expiration_interval_in_ms :: Bedrock.interval_in_ms()}
            | {:error, :lease_expired}}
   def renew_read_version_lease(t, read_version)
-      when not is_nil(t.minimum_read_version) and t.minimum_read_version > read_version,
+      when not is_nil(t.minimum_read_version) and read_version < t.minimum_read_version,
       do: {:error, :lease_expired}
 
   def renew_read_version_lease(t, read_version) do

@@ -725,15 +725,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_log_recovery(context) do
-    log_recover_fn = fn _new_log_id,
-                        _old_log_id,
-                        _first_version,
-                        _last_version,
-                        _recovery_attempt ->
+    copy_log_data_fn = fn _new_log_id,
+                          _old_log_id,
+                          _first_version,
+                          _last_version,
+                          _service_pids ->
       {:ok, spawn(fn -> :ok end)}
     end
 
-    Map.put(context, :log_recover_fn, log_recover_fn)
+    Map.put(context, :copy_log_data_fn, copy_log_data_fn)
   end
 
   defp with_mocked_worker_management(context) do

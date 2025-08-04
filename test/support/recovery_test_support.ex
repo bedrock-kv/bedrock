@@ -482,11 +482,15 @@ defmodule RecoveryTestSupport do
   end
 
   defp add_mock_function(:log_recovery, context) do
-    log_recover_from_fn = fn _log_pid, _recovery_info ->
-      {:ok, %{oldest_version: 10, last_version: 100}}
+    copy_log_data_fn = fn _new_log_id,
+                          _old_log_id,
+                          _first_version,
+                          _last_version,
+                          _service_pids ->
+      {:ok, spawn(fn -> :ok end)}
     end
 
-    Map.put(context, :log_recover_from_fn, log_recover_from_fn)
+    Map.put(context, :copy_log_data_fn, copy_log_data_fn)
   end
 
   defp add_mock_function(:service_discovery, context) do
@@ -559,13 +563,15 @@ defmodule RecoveryTestSupport do
   end
 
   defp add_failure_scenario(:log_recovery_failures, context) do
-    log_recover_from_fn = fn log_pid, _recovery_info ->
-      if is_pid(log_pid) and Process.alive?(log_pid),
-        do: {:ok, %{oldest_version: 10, last_version: 100}},
+    copy_log_data_fn = fn new_log_id, _old_log_id, _first_version, _last_version, service_pids ->
+      new_log_pid = Map.get(service_pids, new_log_id)
+
+      if is_pid(new_log_pid) and Process.alive?(new_log_pid),
+        do: {:ok, new_log_pid},
         else: {:error, :log_recovery_timeout}
     end
 
-    Map.put(context, :log_recover_from_fn, log_recover_from_fn)
+    Map.put(context, :copy_log_data_fn, copy_log_data_fn)
   end
 
   defp add_failure_scenario(:supervision_failures, context) do

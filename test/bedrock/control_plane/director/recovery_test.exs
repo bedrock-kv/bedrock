@@ -145,7 +145,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       assert %State{
                epoch: 1,
-               my_relief: nil,
                cluster: TestCluster,
                config: %{
                  coordinators: [],

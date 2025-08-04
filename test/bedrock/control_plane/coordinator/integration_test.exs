@@ -71,7 +71,6 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
         old_transaction_system_layout: %{},
         epoch: 1,
         coordinator: self(),
-        relieving: {1, :unavailable},
         services: services
       ]
 

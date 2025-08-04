@@ -106,7 +106,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     t
     |> put_transaction_system_layout(transaction_system_layout)
     |> put_epoch(transaction_system_layout.epoch)
-    |> put_director(transaction_system_layout.director)
   end
 
   def process_command(t, {:end_epoch, _previous_epoch}) do

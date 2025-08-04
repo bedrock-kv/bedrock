@@ -24,9 +24,6 @@ defmodule Bedrock.ControlPlane.DirectorTest do
                 {:ok, %{id: "test", otp_name: :test, kind: :log, pid: self()}}
               )
 
-            {:"$gen_cast", {:stand_relieved, _relief}} ->
-              :ok
-
             {:"$gen_cast", {:service_registered, _service_infos}} ->
               :ok
 
@@ -76,12 +73,6 @@ defmodule Bedrock.ControlPlane.DirectorTest do
       assert worker_info.id == "test"
       assert worker_info.otp_name == :test
       assert worker_info.kind == :log
-    end
-
-    test "stand_relieved/2 sends relief message", %{director: director} do
-      relief = {123, self()}
-      result = Director.stand_relieved(director, relief)
-      assert result == :ok
     end
 
     test "notify_services_registered/2 sends service registration notification", %{
@@ -175,7 +166,6 @@ defmodule Bedrock.ControlPlane.DirectorTest do
 
       assert :ok = Director.send_pong(pid, :test_node)
       assert :ok = Director.send_ping(pid, 100)
-      assert :ok = Director.stand_relieved(pid, {123, self()})
       assert :ok = Director.notify_services_registered(pid, [])
       assert :ok = Director.notify_capabilities_updated(pid, %{})
     end

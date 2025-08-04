@@ -21,7 +21,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
       try_to_start_director: 1,
-      handle_director_failure: 3
+      handle_director_failure: 3,
+      cleanup_director_on_leadership_loss: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -222,6 +223,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> put_leader_node(:undecided)
+    |> cleanup_director_on_leadership_loss()
     |> noreply()
   end
 
@@ -240,9 +242,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       updated_t
       |> put_leader_startup_state(:leader_waiting_consensus)
     else
-      # Someone else is leader
+      # Someone else is leader - clean up director if we have one
       updated_t
       |> put_leader_startup_state(:not_leader)
+      |> cleanup_director_on_leadership_loss()
     end
     |> noreply()
   end
@@ -270,10 +273,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
-  def handle_info({:DOWN, monitor_ref, :process, pid, reason}, t) do
+  def handle_info({:DOWN, _monitor_ref, :process, pid, reason}, t) do
     t
-    |> handle_director_failure(monitor_ref, reason)
-    # Clean up TSL subscriber if process died
+    |> handle_director_failure(pid, reason)
     |> remove_tsl_subscriber(pid)
     |> noreply()
   end

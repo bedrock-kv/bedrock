@@ -79,7 +79,6 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
           old_transaction_system_layout: %{},
           epoch: 1,
           coordinator: self(),
-          relieving: nil,
           services: services
         )
 
@@ -94,14 +93,13 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
           config: Config.new([:node1, :node2]),
           old_transaction_system_layout: %{},
           epoch: 1,
-          coordinator: self(),
-          relieving: nil
+          coordinator: self()
         )
 
       # Extract the init args and verify services default to %{}
       {_module, _func, [_server_module, init_args]} = child_spec.start
 
-      {_cluster, _config, _layout, _epoch, _coordinator, _relieving, services, _node_capabilities} =
+      {_cluster, _config, _layout, _epoch, _coordinator, services, _node_capabilities} =
         init_args
 
       assert services == %{}

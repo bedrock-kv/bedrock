@@ -5,12 +5,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Service.Worker
-
-  import Bedrock.ControlPlane.Director.State.Changes,
-    only: [put_my_relief: 2, put_state: 2]
 
   import Bedrock.ControlPlane.Director.Nodes,
     only: [
@@ -39,7 +35,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
             old_transaction_system_layout: TransactionSystemLayout.t(),
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
-            relieving: Director.ref() | nil,
             services: %{String.t() => {atom(), {atom(), node()}}} | nil,
             node_capabilities: %{Bedrock.Cluster.capability() => [node()]} | nil
           ]
@@ -53,7 +48,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
     epoch = opts[:epoch] || raise "Missing :epoch param"
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
-    relieving = opts[:relieving]
     services = opts[:services] || %{}
     node_capabilities = opts[:node_capabilities] || %{}
 
@@ -63,8 +57,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving,
-            services, node_capabilities}
+           {cluster, config, old_transaction_system_layout, epoch, coordinator, services,
+            node_capabilities}
          ]},
       restart: :temporary
     }
@@ -72,10 +66,10 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @impl true
   def init(
-        {cluster, config, old_transaction_system_layout, epoch, coordinator, relieving, services,
+        {cluster, config, old_transaction_system_layout, epoch, coordinator, services,
          node_capabilities}
       ) do
-    %State{
+    state = %State{
       epoch: epoch,
       cluster: cluster,
       config: config,
@@ -85,15 +79,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
       lock_token: :crypto.strong_rand_bytes(32),
       services: services
     }
-    |> then(&{:ok, &1, {:continue, {:start_recovery, relieving}}})
+
+    {:ok, state, {:continue, :start_recovery}}
   end
 
   @impl true
-  def handle_continue({:start_recovery, {_epoch, old_director}}, %State{} = t) do
-    if :unavailable != old_director do
-      old_director |> Director.stand_relieved({t.epoch, self()})
-    end
-
+  def handle_continue(:start_recovery, %State{} = t) do
     # Services are already provided by coordinator from service directory
     t
     |> ping_all_coordinators()
@@ -122,12 +113,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
-  # If we have been relieved by another director in a newer epoch, we should
-  # not accept any calls from the cluster. We should reply with an error
-  # informing the caller that we haven been relieved and who controls now
-  # controls the cluster (and for what epoch).
-  def handle_call(_, _from, t) when not is_nil(t.my_relief),
-    do: t |> reply({:error, {:relieved_by, t.my_relief}})
 
   def handle_call(:fetch_transaction_system_layout, _from, t) do
     case t.transaction_system_layout do
@@ -152,11 +137,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
-  # If we are relieved by another director, we should not accept any casts
-  # from the cluster. We will ignore them. We are no longer relevant and are of
-  # no further use.
-  def handle_cast({:ping, from, _}, t) when not is_nil(t.my_relief),
-    do: GenServer.cast(from, {:pong, t.my_relief})
 
   def handle_cast({:ping, from, minimum_read_version}, t) do
     GenServer.cast(from, {:pong, {t.epoch, self()}})
@@ -168,17 +148,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> noreply()
   end
 
-  def handle_cast(_, t) when not is_nil(t.my_relief),
-    do: t |> noreply()
-
   def handle_cast({:pong, _from}, t),
     do: t |> noreply()
-
-  def handle_cast({:stand_relieved, {new_epoch, _}}, t) when new_epoch <= t.epoch,
-    do: t |> noreply()
-
-  def handle_cast({:stand_relieved, {_new_epoch, _new_director} = my_relief}, t),
-    do: t |> put_my_relief(my_relief) |> put_state(:stopped) |> noreply()
 
   def handle_cast({:node_added_worker, node, worker_info}, %State{} = t) do
     t

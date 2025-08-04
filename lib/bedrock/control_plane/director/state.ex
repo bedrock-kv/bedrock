@@ -12,7 +12,6 @@ defmodule Bedrock.ControlPlane.Director.State do
   @type t :: %__MODULE__{
           state: state(),
           epoch: Bedrock.epoch(),
-          my_relief: {Bedrock.epoch(), director :: pid()} | nil,
           cluster: module(),
           config: Config.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
@@ -26,7 +25,6 @@ defmodule Bedrock.ControlPlane.Director.State do
         }
   defstruct state: :starting,
             epoch: nil,
-            my_relief: nil,
             cluster: nil,
             config: nil,
             transaction_system_layout: nil,
@@ -45,9 +43,6 @@ defmodule Bedrock.ControlPlane.Director.State do
 
     @spec put_state(State.t(), State.state()) :: State.t()
     def put_state(t, state), do: %{t | state: state}
-
-    @spec put_my_relief(State.t(), {Bedrock.epoch(), pid()}) :: State.t()
-    def put_my_relief(t, my_relief), do: %{t | my_relief: my_relief}
 
     @spec update_config(State.t(), updater :: (Config.t() -> Config.t())) :: State.t()
     def update_config(t, updater), do: %{t | config: updater.(t.config)}

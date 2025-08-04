@@ -26,7 +26,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
-    t = t |> maybe_put_defaults()
+    t =
+      t
+      |> maybe_put_default_config()
+      |> maybe_put_default_transaction_system_layout()
 
     trace_director_launch(t.epoch, t.transaction_system_layout)
 
@@ -40,26 +43,15 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   def try_to_start_director(t), do: t
 
-  @spec maybe_put_defaults(State.t()) :: State.t()
-  defp maybe_put_defaults(t) do
-    t
-    |> maybe_put_default_config()
-    |> maybe_put_default_transaction_system_layout()
-  end
-
   @spec maybe_put_default_config(State.t()) :: State.t()
-  defp maybe_put_default_config(%{config: nil} = t) do
-    t
-    |> put_config(Config.new(Bedrock.Raft.known_peers(t.raft)))
-  end
+  defp maybe_put_default_config(%{config: nil} = t),
+    do: t |> put_config(Config.new(Bedrock.Raft.known_peers(t.raft)))
 
   defp maybe_put_default_config(t), do: t
 
   @spec maybe_put_default_transaction_system_layout(State.t()) :: State.t()
-  defp maybe_put_default_transaction_system_layout(%{transaction_system_layout: nil} = t) do
-    t
-    |> put_transaction_system_layout(TransactionSystemLayout.default())
-  end
+  defp maybe_put_default_transaction_system_layout(%{transaction_system_layout: nil} = t),
+    do: t |> put_transaction_system_layout(TransactionSystemLayout.default())
 
   defp maybe_put_default_transaction_system_layout(t), do: t
 
@@ -75,7 +67,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
          old_transaction_system_layout: t.transaction_system_layout,
          epoch: t.epoch,
          coordinator: self(),
-         relieving: {t.epoch, t.director},
          services: t.service_directory,
          node_capabilities: convert_to_capability_map(t.node_capabilities)
        ]}
@@ -91,16 +82,24 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   end
 
   @spec handle_director_failure(State.t(), director_pid :: pid(), reason :: term()) :: State.t()
-  def handle_director_failure(t, director_pid, reason) do
-    if t.director == director_pid and t.leader_node == t.my_node do
-      trace_director_failure_detected(t.director, reason)
-      Logger.warning("Director #{inspect(t.director)} failed with reason: #{inspect(reason)}")
+  def handle_director_failure(t, director_pid, reason)
+      when t.director == director_pid and t.leader_node == t.my_node do
+    trace_director_failure_detected(t.director, reason)
+    Logger.warning("Director #{inspect(t.director)} failed with reason: #{inspect(reason)}")
 
-      t
-      |> put_director(:unavailable)
+    updated_t = t |> put_director(:unavailable)
+
+    # Only attempt restart if we have necessary state (not in tests)
+    if t.raft != nil and t.supervisor_otp_name != nil do
+      try_to_start_director(updated_t)
     else
-      t
+      updated_t
     end
+  end
+
+  def handle_director_failure(t, _director_pid, _reason) do
+    # If the director is not the current one or we're not the leader, we ignore the failure
+    t
   end
 
   @doc """
@@ -125,4 +124,23 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   end
 
   def shutdown_director_if_running(t), do: t
+
+  @doc """
+  Clean up director references when losing leadership, regardless of current leader status.
+  This handles cases where we have stale director references after leadership transitions.
+  """
+  @spec cleanup_director_on_leadership_loss(State.t()) :: State.t()
+  def cleanup_director_on_leadership_loss(t) when is_pid(t.director) do
+    trace_director_shutdown(t.director, :leadership_loss)
+
+    case DynamicSupervisor.terminate_child(t.supervisor_otp_name, t.director) do
+      :ok -> trace_director_changed(:unavailable)
+      {:error, :not_found} -> :ok
+      {:error, _} -> :ok
+    end
+
+    t |> put_director(:unavailable)
+  end
+
+  def cleanup_director_on_leadership_loss(t), do: t
 end

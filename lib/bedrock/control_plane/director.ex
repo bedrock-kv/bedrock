@@ -104,19 +104,6 @@ defmodule Bedrock.ControlPlane.Director do
   end
 
   @doc """
-  Relieves the cluster director of its duties. This is used when a new
-  director is elected and the old director should no longer be used. The
-  old director will ignore all messages from the cluster other than to
-  indicate that it has been relieved and by whom.
-  """
-  @spec stand_relieved(
-          director :: ref(),
-          {new_epoch :: Bedrock.epoch(), new_director :: pid()}
-        ) :: :ok
-  def stand_relieved(director, {_new_epoch, _new_director} = relief),
-    do: director |> cast({:stand_relieved, relief})
-
-  @doc """
   Notifies the director that new services have been registered in the coordinator.
   This allows the director to update its service directory and retry stalled recovery
   if the new services might resolve insufficient_nodes conditions.

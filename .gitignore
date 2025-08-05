@@ -36,3 +36,7 @@ bedrock-*.tar
 
 # Editor cruft
 .vscode/
+
+# AI tools
+.claude/
+CLAUDE.md

@@ -13,9 +13,11 @@ Storage servers inevitably operate at different versions due to network delays a
 The algorithm uses two-tier analysis:
 
 ### Storage Team Analysis
+
 For each team, recovery applies quorum mathematics to replica versions. In a three-replica team reporting versions [95, 98, 100], the durable version becomes 98—ensuring two replicas have the data even if the highest-version replica fails.
 
 ### Cluster-Wide Baseline
+
 The cluster baseline takes the minimum across all team baselines, ensuring every data piece remains available throughout the cluster.
 
 ## Team Health Classification
@@ -33,6 +35,7 @@ The conservative approach prioritizes availability over maximizing recoverable v
 ## Integration
 
 Version determination outputs enable subsequent phases:
+
 - Baseline informs [log replay](log-replay.md) boundaries
 - Team health guides [storage recruitment](storage-recruitment.md) planning
 - Durable version sets [sequencer startup](sequencer-startup.md) baseline

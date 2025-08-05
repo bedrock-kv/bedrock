@@ -11,16 +11,19 @@ The TSL maps every component relationship needed for transaction processing. Thi
 ## Essential Components
 
 ### Process References
+
 - **Sequencer**: Global transaction ordering authority
 - **Commit Proxies**: Transaction entry points and batching coordinators  
 - **Resolvers**: MVCC conflict detection by key range
 
 ### System Topology
+
 - **Logs**: Transaction persistence with shard-to-server mappings
 - **Storage Teams**: Data storage with key range assignments
 - **Services**: Complete worker registry with operational status
 
 ### Coordination Metadata
+
 - **Layout ID**: Unique identifier for this system configuration
 - **Epoch**: Recovery generation for change tracking
 - **Director**: Current cluster coordination authority
@@ -55,6 +58,6 @@ Bedrock.ControlPlane.Director.get_layout()
 
 ## See Also
 
-- [Transaction System Layout Phase](../deep-dives/recovery/transaction-system-layout.md) - Detailed creation process
+- [Transaction System Layout Phase](recovery/transaction-system-layout.md) - Detailed creation process
 - [Recovery](recovery.md) - Recovery phase context  
 - [Transactions](transactions.md) - How TSL enables transaction coordination

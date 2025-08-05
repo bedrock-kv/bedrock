@@ -11,13 +11,13 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions
-- **[Gateway](components/data-plane/gateway.md)**: Client interface that manages transaction coordination and read version leasing
-- **[Transaction Builder](components/control-plane/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
-- **[Sequencer](components/control-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
-- **[Commit Proxy](components/control-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
-- **[Resolver](components/control-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
-- **[Log System](components/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Storage (Basalt)](components/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
+- **[Gateway](../components/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
+- **[Transaction Builder](../components/control-plane/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
+- **[Sequencer](../components/control-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
+- **[Commit Proxy](../components/control-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
+- **[Resolver](../components/control-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
+- **[Log System](../components/data-plane/log.md)**: Provides durable transaction storage with strict ordering
+- **[Storage (Basalt)](../components/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -116,16 +116,16 @@ sequenceDiagram
 
 ## Component Deep Dives
 
-For detailed technical documentation on any component, see the [Components Documentation](components/) directory:
+For detailed technical documentation on any component, see the [Components Documentation](../components/) directory:
 
-- **[Gateway Deep Dive](components/data-plane/gateway.md)** - Client interface, version leasing, worker advertisement
-- **[Transaction Builder Deep Dive](components/control-plane/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
-- **[Sequencer Deep Dive](components/control-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
-- **[Commit Proxy Deep Dive](components/control-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
-- **[Resolver Deep Dive](components/control-plane/resolver.md)** - MVCC conflict detection, version history, range processing
-- **[Log System Deep Dive](components/data-plane/log.md)** - Durable storage, replication, recovery coordination
-- **[Shale Deep Dive](components/implementations/shale.md)** - Disk-based log implementation, WAL architecture
-- **[Storage Deep Dive](components/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
+- **[Gateway Deep Dive](../components/infrastructure/gateway.md)** - Client interface, version leasing, worker advertisement
+- **[Transaction Builder Deep Dive](../components/control-plane/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
+- **[Sequencer Deep Dive](../components/control-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
+- **[Commit Proxy Deep Dive](../components/control-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
+- **[Resolver Deep Dive](../components/control-plane/resolver.md)** - MVCC conflict detection, version history, range processing
+- **[Log System Deep Dive](../components/data-plane/log.md)** - Durable storage, replication, recovery coordination
+- **[Shale Deep Dive](../components/implementations/shale.md)** - Disk-based log implementation, WAL architecture
+- **[Storage Deep Dive](../components/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
 
 ## Detailed Phase Breakdown
 
@@ -134,12 +134,14 @@ For detailed technical documentation on any component, see the [Components Docum
 **Purpose**: Establish a transaction context and obtain a consistent read version.
 
 **Process**:
+
 1. Client calls `Bedrock.Repo.transaction/1`
 2. Gateway creates a new Transaction Builder process via `start_link/1`
 3. Transaction Builder initializes with gateway reference and transaction system layout
 4. Client receives transaction builder PID for subsequent operations
 
 **Key Code Locations**:
+
 - Gateway creation: `lib/bedrock/cluster/gateway.ex:19`
 - Transaction Builder startup: `lib/bedrock/cluster/gateway/transaction_builder.ex:22`
 
@@ -148,6 +150,7 @@ For detailed technical documentation on any component, see the [Components Docum
 **Purpose**: Read data at a consistent snapshot version while tracking read keys for conflict detection.
 
 **Process**:
+
 1. Client calls `fetch/2` on the transaction builder
 2. Transaction builder checks local writes first (read-your-writes consistency)
 3. If not found locally and no read version exists:
@@ -159,6 +162,7 @@ For detailed technical documentation on any component, see the [Components Docum
 7. Return value to client
 
 **Key Code Locations**:
+
 - Fetching logic: `lib/bedrock/cluster/gateway/transaction_builder/fetching.ex:10`
 - Read version management: `lib/bedrock/cluster/gateway/transaction_builder/read_versions.ex:11`
 - Storage fetch: `lib/bedrock/data_plane/storage.ex:33`
@@ -170,12 +174,14 @@ For detailed technical documentation on any component, see the [Components Docum
 **Purpose**: Accumulate write operations locally without network traffic until commit time.
 
 **Process**:
+
 1. Client calls `put/3` on the transaction builder
 2. Transaction builder accumulates writes in local memory
 3. No network operations occur during writes
 4. Writes are immediately visible to subsequent reads within the same transaction
 
 **Key Code Locations**:
+
 - Write accumulation: `lib/bedrock/cluster/gateway/transaction_builder/putting.ex`
 - Local write storage: `lib/bedrock/cluster/gateway/transaction_builder/state.ex:16`
 
@@ -188,6 +194,7 @@ This is the most complex phase involving multiple distributed components working
 #### Step 4.1: Prepare and Route to Commit Proxy
 
 **Process**:
+
 1. Transaction builder calls `do_commit/1`
 2. Prepare transaction tuple: `{read_info, writes}`
    - `read_info`: `{read_version, [read_keys]}` or `nil` for write-only transactions
@@ -196,6 +203,7 @@ This is the most complex phase involving multiple distributed components working
 4. Send transaction to selected Commit Proxy
 
 **Key Code Locations**:
+
 - Commit preparation: `lib/bedrock/cluster/gateway/transaction_builder/committing.ex:8`
 - Transaction format: `lib/bedrock/cluster/gateway/transaction_builder/committing.ex:26`
 
@@ -204,6 +212,7 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Improve throughput by batching multiple transactions and assign global commit version.
 
 **Process**:
+
 1. Commit Proxy adds transaction to current batch
 2. When batch reaches finalization criteria (size or timeout):
    - Request commit version from Sequencer via `next_commit_version/1`
@@ -211,6 +220,7 @@ This is the most complex phase involving multiple distributed components working
    - This maintains the Lamport clock version chain
 
 **Key Code Locations**:
+
 - Batching logic: `lib/bedrock/data_plane/commit_proxy/batching.ex`
 - Server handling: `lib/bedrock/data_plane/commit_proxy/server.ex:110`
 
@@ -219,6 +229,7 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Detect and resolve transaction conflicts using Multi-Version Concurrency Control (MVCC).
 
 **Process**:
+
 1. Transform transactions into conflict resolution format
 2. Distribute transactions to appropriate Resolvers based on key ranges
 3. Each Resolver checks for:
@@ -228,6 +239,7 @@ This is the most complex phase involving multiple distributed components working
 4. Return list of aborted transaction indices
 
 **Key Code Locations**:
+
 - Conflict resolution: `lib/bedrock/data_plane/commit_proxy/finalization.ex:257`
 - Resolver implementation: `lib/bedrock/data_plane/resolver.ex`
 
@@ -238,11 +250,13 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Immediately notify clients of aborted transactions to minimize latency.
 
 **Process**:
+
 1. Split transactions into aborted and successful sets
 2. Send `{:error, :aborted}` responses to aborted transaction clients
 3. Continue processing successful transactions
 
 **Key Code Locations**:
+
 - Transaction splitting: `lib/bedrock/data_plane/commit_proxy/finalization.ex:421`
 
 #### Step 4.5: Prepare for Logging
@@ -250,11 +264,13 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Organize successful transactions by storage team tags for efficient log distribution.
 
 **Process**:
+
 1. Group writes by storage team tags (key ranges)
 2. Build transaction shards for each tag
 3. Ensure all keys are covered by storage teams (coverage validation)
 
 **Key Code Locations**:
+
 - Tag grouping: `lib/bedrock/data_plane/commit_proxy/finalization.ex:522`
 - Coverage validation: `lib/bedrock/data_plane/commit_proxy/finalization.ex:602`
 
@@ -263,6 +279,7 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Achieve durability by persisting transactions to multiple log servers.
 
 **Process**:
+
 1. Build transaction for each log based on tag coverage
 2. Encode transactions for each log server
 3. Push transactions to ALL log servers in parallel
@@ -270,6 +287,7 @@ This is the most complex phase involving multiple distributed components working
 5. If any log fails, trigger recovery (fail-fast approach)
 
 **Key Code Locations**:
+
 - Log push coordination: `lib/bedrock/data_plane/commit_proxy/finalization.ex:744`
 - Individual log push: `lib/bedrock/data_plane/log.ex:56`
 
@@ -280,11 +298,13 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Update the sequencer's committed version tracking for future conflict resolution.
 
 **Process**:
+
 1. Call `report_successful_commit/2` on Sequencer
 2. Sequencer updates its internal committed version tracking
 3. This information is used for future read version assignments
 
 **Key Code Locations**:
+
 - Sequencer notification: `lib/bedrock/data_plane/commit_proxy/finalization.ex:829`
 
 #### Step 4.8: Notify Successful Clients
@@ -292,10 +312,12 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Inform clients that their transactions have been successfully committed.
 
 **Process**:
+
 1. Send `{:ok, commit_version}` to all successful transaction clients
 2. Clients can use the commit_version for debugging and monitoring
 
 **Key Code Locations**:
+
 - Success notification: `lib/bedrock/data_plane/commit_proxy/finalization.ex:856`
 
 ### Phase 5: Transaction Completion
@@ -303,6 +325,7 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Clean up transaction resources and return final result to client application.
 
 **Process**:
+
 1. Client receives final transaction result
 2. Transaction Builder process terminates
 3. Resources are cleaned up
@@ -315,29 +338,34 @@ This is the most complex phase involving multiple distributed components working
 **Purpose**: Eventually consistent application of committed transactions to storage servers.
 
 **Process**:
+
 1. Storage servers continuously pull from log servers
 2. Transactions are applied in version order
 3. Storage maintains multiple versions for MVCC reads
 4. Old versions are garbage collected based on minimum read version
 
 **Key Code Locations**:
+
 - Storage pulling: `lib/bedrock/data_plane/storage/basalt/pulling.ex`
 - Log pulling: `lib/bedrock/data_plane/log.ex:98`
 
 ## Error Handling and Recovery
 
 ### Transaction Conflicts
+
 - Clients receive `{:error, :aborted}` for conflicted transactions
 - Applications should retry with exponential backoff
 - Conflicts are natural in optimistic concurrency control
 
 ### System Failures
+
 - **Log Server Failures**: Trigger commit proxy recovery (fail-fast)
 - **Storage Server Failures**: Reads continue from replicas
 - **Commit Proxy Failures**: Director detects and starts new proxies
 - **Network Partitions**: Raft consensus ensures consistency
 
 ### Version Management
+
 - **Version Too Old**: Storage no longer has the requested version
 - **Version Too New**: Read version exceeds current committed version
 - **Lease Expiration**: Read version lease expired, transaction must abort
@@ -345,6 +373,7 @@ This is the most complex phase involving multiple distributed components working
 ## Performance Characteristics
 
 ### Optimizations
+
 1. **Batching**: Multiple transactions processed together
 2. **Pipelining**: Read versions assigned while commits process
 3. **Local Caching**: Transaction builders cache storage server choices
@@ -352,12 +381,14 @@ This is the most complex phase involving multiple distributed components working
 5. **Tag-Based Sharding**: Efficient distribution of writes across logs
 
 ### Latency Sources
+
 1. **Network Round Trips**: Client ↔ Gateway ↔ Data Plane components
 2. **Conflict Resolution**: Resolver processing time
 3. **Log Durability**: Disk I/O for transaction persistence
 4. **Version Assignment**: Sequencer coordination
 
 ### Throughput Factors
+
 1. **Batch Size**: Larger batches improve throughput but increase latency
 2. **Conflict Rate**: High conflicts reduce effective throughput
 3. **Key Distribution**: Hot keys can become bottlenecks
@@ -366,19 +397,23 @@ This is the most complex phase involving multiple distributed components working
 ## Transaction Guarantees (ACID)
 
 ### Atomicity
+
 - All writes in a transaction commit together or none do
 - Partial commits are impossible due to conflict resolution + logging
 
 ### Consistency
+
 - All transactions see a consistent view at their read version
 - Invariants are maintained through conflict detection
 
 ### Isolation
+
 - Strict serialization: transactions appear to execute sequentially
 - Read-your-writes consistency within transactions
 - No dirty reads, phantom reads, or write skew
 
 ### Durability
+
 - Committed transactions survive system failures
 - ALL log servers must acknowledge before commit confirmation
 - Storage servers eventually reflect all committed transactions
@@ -493,14 +528,18 @@ end
 ## Key Transaction Patterns
 
 ### 1. Read-Modify-Write Pattern
+
 The money transfer example demonstrates the classic read-modify-write pattern:
+
 - Read current balance (`fetch_balance`)
-- Validate business rules (`check_sufficient_balance`) 
+- Validate business rules (`check_sufficient_balance`)
 - Modify data (`adjust_balance`)
 - All within a single transaction for atomicity
 
 ### 2. Read-Your-Writes Consistency
+
 Within a transaction, all reads immediately see previous writes:
+
 ```elixir
 Repo.transaction(fn repo ->
   Repo.put(repo, "key", "value1")
@@ -511,7 +550,9 @@ end)
 ```
 
 ### 3. Structured Keys
+
 Using tuple keys for hierarchical data organization:
+
 ```elixir
 key_for_account_balance(account) -> {"balances", account}
 # This creates keys like {"balances", "123"} which can be efficiently 
@@ -519,7 +560,9 @@ key_for_account_balance(account) -> {"balances", account}
 ```
 
 ### 4. Error Handling
+
 Transactions can return errors that cause rollback:
+
 ```elixir
 case Repo.transaction(fn repo ->
   case some_operation(repo) do
@@ -538,6 +581,7 @@ end
 The Bedrock transaction system provides a sophisticated implementation of distributed ACID transactions with strong consistency guarantees. The multi-phase commit process, while complex, enables high performance through batching, pipelining, and optimistic concurrency control while maintaining strict serialization semantics.
 
 The architecture separates concerns cleanly:
+
 - **Control Plane**: Manages cluster coordination and recovery
 - **Data Plane**: Handles transaction processing and data storage
 - **Client Interface**: Provides simple transaction semantics

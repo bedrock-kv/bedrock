@@ -8,7 +8,7 @@ After establishing exclusive control through [service locking](service-locking.m
 
 Recovery examines the previous [transaction system layout](transaction-system-layout.md) to make this determination:
 
-- **No logs defined**: New cluster initialization 
+- **No logs defined**: New cluster initialization
 - **Logs present**: Data recovery path (even if logs are currently unreachable)
 
 This simple test provides foolproof protection against accidental data loss—recovery can never mistake an existing deployment for a new one.
@@ -26,6 +26,7 @@ When no previous logs exist, recovery initializes a fresh cluster by creating:
    - Storage vacancies distributed for desired replication factor
 
 The initialization phase produces a complete architectural specification with:
+
 - `durable_version`: 0 (fresh start)
 - `version_vector`: {0, 0} (transaction ordering foundation)
 - Complete vacancy mappings ready for service recruitment

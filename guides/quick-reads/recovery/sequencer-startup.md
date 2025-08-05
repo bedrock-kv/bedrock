@@ -6,7 +6,7 @@ The [Sequencer](../../components/control-plane/sequencer.md) serves as Bedrock's
 
 ## Why a Single Sequencer?
 
-Version assignment requires exactly one authority cluster-wide. Multiple sequencers would create irreconcilable conflicts—imagine two sequencers simultaneously assigning version 1001 to different transactions. This architectural constraint trades theoretical availability for practical consistency, eliminating complex consensus protocols while ensuring proper [MVCC](../../glossary.md#multi-version-concurrency-control-mvcc) semantics.
+Version assignment requires exactly one authority cluster-wide. Multiple sequencers would create irreconcilable conflicts—imagine two sequencers simultaneously assigning version 1001 to different transactions. This architectural constraint trades theoretical availability for practical consistency, eliminating complex consensus protocols while ensuring proper [MVCC](../../glossary.md#multi-version-concurrency-control) semantics.
 
 ## Startup Process
 
@@ -31,7 +31,7 @@ Rather than attempting repairs, recovery terminates immediately—better to rest
 Once operational, the sequencer coordinates with other components through its three version counters:
 
 - [Commit proxies](../../components/control-plane/commit-proxy.md) request version assignments for transaction batches
-- [Gateways](../../components/data-plane/gateway.md) obtain read versions for consistent snapshots
+- [Gateways](../../components/infrastructure/gateway.md) obtain read versions for consistent snapshots
 - [Storage servers](../../components/data-plane/storage.md) organize MVCC data structures using the version timeline
 
 This creates system-wide synchronization where all components operate from a shared understanding of transaction ordering.

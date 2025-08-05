@@ -7,18 +7,21 @@ The Coordinator maintains cluster state through Raft distributed consensus and o
 The Coordinator implements several critical functions within Bedrock's control plane:
 
 ### Distributed Consensus Management
+
 - Maintains cluster configuration through Raft consensus protocol
 - Persists transaction system layouts and service directories
 - Ensures consistent state replication across all coordinator nodes
 - Handles leader election and follower synchronization
 
-### Service Directory Authority  
+### Service Directory Authority
+
 - Receives service registrations from Gateway nodes across the cluster
 - Maintains authoritative mapping of service IDs to node locations
 - Propagates service directory updates through consensus to all coordinators
 - Provides service discovery information to Directors during recovery
 
 ### Director Lifecycle Coordination
+
 - Manages Director startup timing to prevent race conditions
 - Implements leader readiness states to ensure proper service discovery
 - Coordinates Director shutdown during leadership transitions
@@ -69,12 +72,14 @@ This design ensures that service topology information remains consistent across 
 Coordinators implement a readiness state machine to prevent race conditions during leader transitions:
 
 ### `:leader_waiting_consensus`
+
 - Initial state upon leader election
 - Coordinator waits for first consensus round to complete
 - Service directory populates from consensus log replay
 - Director startup is delayed until readiness confirmation
 
-### `:leader_ready`  
+### `:leader_ready`
+
 - Activated after successful consensus round completion
 - Service directory is populated and consistent
 - Director can be safely started with complete cluster topology
@@ -85,6 +90,7 @@ This approach eliminates timing-dependent bugs where Directors might start befor
 ## Key Operations
 
 ### Configuration Management
+
 ```elixir
 # Fetch current cluster configuration
 {:ok, config} = Coordinator.fetch_config(coordinator)
@@ -93,7 +99,8 @@ This approach eliminates timing-dependent bugs where Directors might start befor
 {:ok, txn_id} = Coordinator.update_config(coordinator, new_config)
 ```
 
-### Service Directory Operations  
+### Service Directory Operations
+
 ```elixir
 # Register multiple services from a gateway
 services = [
@@ -112,6 +119,7 @@ services = [
 ```
 
 ### Transaction System Layout Management
+
 ```elixir
 # Fetch current system layout
 {:ok, layout} = Coordinator.fetch_transaction_system_layout(coordinator)
@@ -144,6 +152,6 @@ Coordinator operations balance consistency with availability:
 ## See Also
 
 - [Director](director.md) - Recovery orchestration managed by Coordinator
-- [Gateway](../data-plane/gateway.md) - Service registration and client interface  
+- [Gateway](../infrastructure/gateway.md) - Service registration and client interface  
 - [Cluster Startup](../../deep-dives/cluster-startup.md) - Coordinator role in cluster initialization
 - [Recovery](../../deep-dives/recovery.md) - Coordinator's role in recovery coordination

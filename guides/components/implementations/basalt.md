@@ -1,8 +1,8 @@
 # Basalt: Multi-Version Storage Engine
 
-[Basalt](../glossary.md#basalt) is Bedrock's primary [storage](../glossary.md#storage) engine implementation, designed to provide efficient multi-version key-value storage with [MVCC](../glossary.md#multi-version-concurrency-control-mvcc) support. It serves as the persistent data layer that maintains versioned key-value data and continuously applies committed [transactions](../glossary.md#transaction) pulled from the [log](../glossary.md#log) servers.
+[Basalt](../../glossary.md#basalt) is Bedrock's primary [storage](../../glossary.md#storage) engine implementation, designed to provide efficient multi-version key-value storage with [MVCC](../../glossary.md#multi-version-concurrency-control) support. It serves as the persistent data layer that maintains versioned key-value data and continuously applies committed [transactions](../../glossary.md#transaction) pulled from the [log](../../glossary.md#log) servers.
 
-**Location**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../lib/bedrock/data_plane/storage/basalt.ex)
+**Location**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../../lib/bedrock/data_plane/storage/basalt.ex)
 
 ## Design Philosophy
 
@@ -147,8 +147,8 @@ Performance tuning options include transaction application batch sizes, garbage 
 
 ## Code References
 
-- **Main Implementation**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../lib/bedrock/data_plane/storage/basalt.ex)
-- **Database Engine**: [`lib/bedrock/data_plane/storage/basalt/database.ex`](../../lib/bedrock/data_plane/storage/basalt/database.ex)
-- **Server Logic**: [`lib/bedrock/data_plane/storage/basalt/server.ex`](../../lib/bedrock/data_plane/storage/basalt/server.ex)
-- **Transaction Pulling**: [`lib/bedrock/data_plane/storage/basalt/pulling.ex`](../../lib/bedrock/data_plane/storage/basalt/pulling.ex)
-- **MVCC Logic**: [`lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex`](../../lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex)
+- **Main Implementation**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../../lib/bedrock/data_plane/storage/basalt.ex)
+- **Database Engine**: [`lib/bedrock/data_plane/storage/basalt/database.ex`](../../../lib/bedrock/data_plane/storage/basalt/database.ex)
+- **Server Logic**: [`lib/bedrock/data_plane/storage/basalt/server.ex`](../../../lib/bedrock/data_plane/storage/basalt/server.ex)
+- **Transaction Pulling**: [`lib/bedrock/data_plane/storage/basalt/pulling.ex`](../../../lib/bedrock/data_plane/storage/basalt/pulling.ex)
+- **MVCC Logic**: [`lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex`](../../../lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex)

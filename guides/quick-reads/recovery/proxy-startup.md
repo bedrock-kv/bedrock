@@ -34,6 +34,6 @@ At least one proxy must start successfully or the cluster cannot accept transact
 
 ---
 
-**Implementation**: [`lib/bedrock/control_plane/director/recovery/proxy_startup_phase.ex`](../../../lib/bedrock/control_plane/director/recovery/proxy_startup_phase.ex)
+**Implementation**: [`lib/bedrock/control_plane/director/recovery/proxy_startup_phase.ex`](../../../../lib/bedrock/control_plane/director/recovery/proxy_startup_phase.ex)
 
 **Next Phase**: [Resolver Startup](resolver-startup.md) - Deploy MVCC conflict detection components

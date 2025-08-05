@@ -1,8 +1,8 @@
 # Shale: Disk-Based Log Implementation
 
-[Shale](../glossary.md#shale) is Bedrock's disk-based [log](../glossary.md#log) storage engine that provides durable [transaction](../glossary.md#transaction) persistence. It implements the Log interface using local storage with write-ahead logging, segment files for large transactions, and efficient streaming capabilities.
+[Shale](../../glossary.md#shale) is Bedrock's disk-based [log](../../glossary.md#log) storage engine that provides durable [transaction](../../glossary.md#transaction) persistence. It implements the Log interface using local storage with write-ahead logging, segment files for large transactions, and efficient streaming capabilities.
 
-**Location**: [`lib/bedrock/data_plane/log/shale.ex`](../../lib/bedrock/data_plane/log/shale.ex)
+**Location**: [`lib/bedrock/data_plane/log/shale.ex`](../../../lib/bedrock/data_plane/log/shale.ex)
 
 ## Design Principles
 
@@ -40,9 +40,9 @@ During normal operation, the manifest is updated periodically to reflect the cur
 
 When a transaction arrives for storage, Shale first validates that its version number follows the expected sequence. Out-of-order transactions are rejected immediately because they would break the version ordering that the rest of the system depends on.
 
-For transactions that fit within the WAL size limit, Shale appends them directly to the current WAL file. The transaction data is written with a header containing the version, timestamp, and checksum, followed by the encoded transaction payload. This logic is implemented in [`lib/bedrock/data_plane/log/shale/writer.ex`](../../lib/bedrock/data_plane/log/shale/writer.ex).
+For transactions that fit within the WAL size limit, Shale appends them directly to the current WAL file. The transaction data is written with a header containing the version, timestamp, and checksum, followed by the encoded transaction payload. This logic is implemented in [`lib/bedrock/data_plane/log/shale/writer.ex`](../../../lib/bedrock/data_plane/log/shale/writer.ex).
 
-Large transactions follow a different path. Shale allocates a segment file, writes the transaction data there, and then writes a reference entry in the WAL. This keeps the WAL compact while ensuring that all transactions, regardless of size, are recorded in version order. Segment management is handled in [`lib/bedrock/data_plane/log/shale/segment.ex`](../../lib/bedrock/data_plane/log/shale/segment.ex).
+Large transactions follow a different path. Shale allocates a segment file, writes the transaction data there, and then writes a reference entry in the WAL. This keeps the WAL compact while ensuring that all transactions, regardless of size, are recorded in version order. Segment management is handled in [`lib/bedrock/data_plane/log/shale/segment.ex`](../../../lib/bedrock/data_plane/log/shale/segment.ex).
 
 After writing transaction data, Shale forces a disk sync to ensure durability before acknowledging the write. This is the critical step that guarantees committed transactions survive system failures.
 
@@ -58,13 +58,13 @@ This approach balances memory usage with lookup performance. Storage servers typ
 
 When storage servers request transactions, Shale uses the version index to locate the requested data quickly. For sequential pulls, which are the common case, Shale can optimize by reading ahead and caching likely-to-be-requested transactions.
 
-The serving process handles both small WAL entries and large segment references transparently. Clients receive the same interface regardless of how transactions are physically stored. This streaming implementation is in [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../lib/bedrock/data_plane/log/shale/pulling.ex).
+The serving process handles both small WAL entries and large segment references transparently. Clients receive the same interface regardless of how transactions are physically stored. This streaming implementation is in [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../../lib/bedrock/data_plane/log/shale/pulling.ex).
 
 Long-running pull requests use streaming to avoid loading large result sets into memory. This enables storage servers to efficiently process transaction ranges without overwhelming Shale's memory usage.
 
 ## Recovery Implementation
 
-Shale recovery begins by reading the manifest to understand the last known state. Then it scans WAL files to rebuild the transaction index and verify data integrity. The recovery logic is implemented in [`lib/bedrock/data_plane/log/shale/recovery.ex`](../../lib/bedrock/data_plane/log/shale/recovery.ex).
+Shale recovery begins by reading the manifest to understand the last known state. Then it scans WAL files to rebuild the transaction index and verify data integrity. The recovery logic is implemented in [`lib/bedrock/data_plane/log/shale/recovery.ex`](../../../lib/bedrock/data_plane/log/shale/recovery.ex).
 
 During recovery, Shale can operate in several modes. Cold start recovery rebuilds state from disk files. Log-to-log recovery copies transactions from another Shale instance to restore a failed log server. The recovery mode is determined by what data is available and what the Director requests.
 
@@ -102,7 +102,7 @@ The configuration system provides reasonable defaults while allowing operators t
 
 ## Integration with Bedrock
 
-Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push transactions to Shale for durability. Storage servers pull transactions from Shale to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../lib/bedrock/data_plane/log/shale/server.ex).
+Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push transactions to Shale for durability. Storage servers pull transactions from Shale to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex).
 
 During recovery, the Director coordinates with Shale to ensure consistent state across the cluster. Shale provides recovery information about what transactions it has stored and can serve transactions to restore other failed components.
 
@@ -117,9 +117,9 @@ This integration allows Shale to focus on its core responsibility—durable tran
 
 ## Code References
 
-- **Main Implementation**: [`lib/bedrock/data_plane/log/shale.ex`](../../lib/bedrock/data_plane/log/shale.ex)
-- **Server Logic**: [`lib/bedrock/data_plane/log/shale/server.ex`](../../lib/bedrock/data_plane/log/shale/server.ex)
-- **Storage Engine**: [`lib/bedrock/data_plane/log/shale/writer.ex`](../../lib/bedrock/data_plane/log/shale/writer.ex)
-- **Recovery Logic**: [`lib/bedrock/data_plane/log/shale/recovery.ex`](../../lib/bedrock/data_plane/log/shale/recovery.ex)
-- **File Management**: [`lib/bedrock/data_plane/log/shale/segment.ex`](../../lib/bedrock/data_plane/log/shale/segment.ex)
-- **Streaming Support**: [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../lib/bedrock/data_plane/log/shale/pulling.ex)
+- **Main Implementation**: [`lib/bedrock/data_plane/log/shale.ex`](../../../lib/bedrock/data_plane/log/shale.ex)
+- **Server Logic**: [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex)
+- **Storage Engine**: [`lib/bedrock/data_plane/log/shale/writer.ex`](../../../lib/bedrock/data_plane/log/shale/writer.ex)
+- **Recovery Logic**: [`lib/bedrock/data_plane/log/shale/recovery.ex`](../../../lib/bedrock/data_plane/log/shale/recovery.ex)
+- **File Management**: [`lib/bedrock/data_plane/log/shale/segment.ex`](../../../lib/bedrock/data_plane/log/shale/segment.ex)
+- **Streaming Support**: [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../../lib/bedrock/data_plane/log/shale/pulling.ex)

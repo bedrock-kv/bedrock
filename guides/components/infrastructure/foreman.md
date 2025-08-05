@@ -7,18 +7,21 @@ The Foreman manages worker processes and service lifecycle operations across clu
 The Foreman implements several critical functions for service management:
 
 ### Worker Process Management
+
 - Creates new log and storage worker processes on demand
 - Maintains registry of all running workers with health status
 - Provides worker discovery and enumeration capabilities
 - Coordinates worker shutdown and cleanup operations
 
 ### Service Lifecycle Operations
+
 - Handles worker startup sequencing and dependency management
 - Monitors worker health and reports status to the cluster
 - Manages working directory creation and cleanup
 - Coordinates service registration with cluster coordinators
 
 ### Resource Management
+
 - Supervises worker processes through OTP supervision trees
 - Manages working directories and persistent storage locations
 - Provides batch operations for efficient worker management
@@ -77,12 +80,14 @@ This approach ensures workers are fully operational before being advertised to t
 Foremanprocesses coordinate with cluster service discovery:
 
 ### Service Information Provision
+
 - Maintains authoritative list of running services on each node
 - Provides compact service information for coordinator registration
 - Maps internal worker processes to cluster-visible service identifiers
 - Supports both individual and batch service registration operations
 
 ### Health Status Propagation
+
 - Workers report health status to their local Foreman
 - Foreman aggregates health information across all managed workers
 - Provides cluster-wide health checking capabilities
@@ -91,6 +96,7 @@ Foremanprocesses coordinate with cluster service discovery:
 ## Key Operations
 
 ### Worker Creation and Management
+
 ```elixir
 # Create a new storage worker
 {:ok, worker_ref} = Foreman.new_worker(foreman, "storage_1", :storage)
@@ -106,6 +112,7 @@ Foremanprocesses coordinate with cluster service discovery:
 ```
 
 ### Health Monitoring
+
 ```elixir
 # Wait for all workers to report healthy
 :ok = Foreman.wait_for_healthy(foreman, timeout: 30_000)
@@ -116,6 +123,7 @@ Foremanprocesses coordinate with cluster service discovery:
 ```
 
 ### Service Registration Support
+
 ```elixir
 # Get service information for coordinator registration
 {:ok, services} = Foreman.get_all_running_services(foreman)
@@ -128,6 +136,7 @@ Foremanprocesses coordinate with cluster service discovery:
 ```
 
 ### Worker Cleanup Operations
+
 ```elixir
 # Remove single worker with cleanup
 :ok = Foreman.remove_worker(foreman, "storage_1")
@@ -142,12 +151,14 @@ results = Foreman.remove_workers(foreman, ["storage_1", "storage_2", "log_1"])
 The Foreman manages persistent storage locations for workers:
 
 ### Directory Structure
+
 - Each worker receives a dedicated working directory
 - Directories persist worker configuration and data files
 - Directory cleanup occurs during worker removal
 - Failed cleanup operations are reported with detailed error information
 
 ### Cleanup Operations
+
 - Worker termination triggers working directory cleanup
 - Batch operations process multiple workers efficiently
 - Error handling preserves system state on partial failures
@@ -158,12 +169,14 @@ The Foreman manages persistent storage locations for workers:
 Foreman implements comprehensive health monitoring:
 
 ### Worker Health States
+
 - **`:ok`**: Worker is operational and ready for service
 - **`{:failed_to_start, reason}`**: Worker failed during startup
 - **`:starting`**: Worker is in startup phase
 - **`:unknown`**: Health status is not yet determined
 
 ### Aggregated Health Checking
+
 - Foreman tracks health status for all managed workers
 - `wait_for_healthy/2` blocks until all workers report healthy
 - Health transitions are logged and made available to cluster monitoring
@@ -198,5 +211,5 @@ Foreman operations balance reliability with performance:
 - [Director](../control-plane/director.md) - Orchestrates worker creation through Foreman
 - [Storage](../data-plane/storage.md) - Storage workers managed by Foreman
 - [Log](../data-plane/log.md) - Log workers managed by Foreman  
-- [Gateway](../data-plane/gateway.md) - Service registration coordination
+- [Gateway](gateway.md) - Service registration coordination
 - [Recovery](../../deep-dives/recovery.md) - Foreman role in cluster recovery

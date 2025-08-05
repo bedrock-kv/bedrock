@@ -24,7 +24,7 @@ Bedrock's recovery transforms a failed distributed system into a trusted, operat
 
 ### Phase 1: Establishing Authority Through Service Locking
 
-Recovery begins by solving a fundamental coordination problem: when multiple [directors](../glossary.md#director) might attempt recovery simultaneously after a system-wide failure, which one has authority to proceed? The [service locking phase](recovery/service-locking.md) establishes this exclusive control through epoch-based precedence and targeted component isolation.
+Recovery begins by solving a fundamental coordination problem: when multiple [directors](../glossary.md#director) might attempt recovery simultaneously after a system-wide failure, which one has authority to proceed? The [service locking phase](../quick-reads/recovery/service-locking.md) establishes this exclusive control through epoch-based precedence and targeted component isolation.
 
 The locking protocol operates like a controlled demolition site. Before rebuilding begins, you must secure the area, halt all conflicting activities, and establish clear authority over the resources involved. Recovery locks every service that was part of the previous [transaction system layout](../quick-reads/transaction-system-layout.md), instructing them to immediately cease normal operations and report exclusively to the recovery director.
 
@@ -42,7 +42,7 @@ Recovery attempts to lock all previous-generation services in parallel, graceful
 
 ### Phase 2: Determining Recovery Path
 
-With exclusive control established, recovery confronts a critical decision that shapes all subsequent phases: is this a completely new cluster being initialized, or an existing system that requires data preservation during reconstruction? The [path determination logic](recovery/path-determination.md) resolves this question through elegant analysis of the previous system configuration.
+With exclusive control established, recovery confronts a critical decision that shapes all subsequent phases: is this a completely new cluster being initialized, or an existing system that requires data preservation during reconstruction? The [path determination logic](../quick-reads/recovery/path-determination.md) resolves this question through elegant analysis of the previous system configuration.
 
 The determination mechanism is beautifully simple yet foolproof. If the previous transaction system layout contained no [log](../components/data-plane/log.md) definitions, this represents a brand-new cluster deployment. Recovery transitions to initialization mode, creating the foundational infrastructure for a fresh distributed database. This path establishes initial log placeholders, sets up the basic keyspace division between user data and system metadata, and creates the scaffolding required for normal transaction processing.
 
@@ -52,7 +52,7 @@ This automatic path selection eliminates the need for external cluster state det
 
 ### Phase 3: Transaction Data Recovery Analysis
 
-For existing clusters, recovery must solve one of distributed systems' most sophisticated challenges: determining what committed transaction data can be safely preserved from potentially compromised infrastructure. The [log recovery planning algorithm](recovery/log-recovery-planning.md) addresses this through systematic analysis of Bedrock's natural redundancy architecture.
+For existing clusters, recovery must solve one of distributed systems' most sophisticated challenges: determining what committed transaction data can be safely preserved from potentially compromised infrastructure. The [log recovery planning algorithm](../quick-reads/recovery/log-recovery-planning.md) addresses this through systematic analysis of Bedrock's natural redundancy architecture.
 
 Bedrock's transaction design creates inherent data safety through a fundamental principle: every committed [transaction](../quick-reads/transactions.md) is durably stored on every log in the system. This design means each [log](../components/data-plane/log.md) contains a complete, authoritative record of the transaction history. However, since log failures may have triggered recovery, not all logs can be assumed available or intact.
 
@@ -64,7 +64,7 @@ The final recovery decision employs cross-shard minimum calculation: recovery pr
 
 ### Phase 4: Architectural Planning Through Vacancy Abstraction
 
-Recovery must now solve a sophisticated architectural challenge: specifying the complete structure of a new distributed system without prematurely binding that structure to specific machines or processes. The solution lies in one of Bedrock's most elegant design patterns: [vacancy placeholders](recovery/vacancy-creation.md) that separate architectural planning from infrastructure assignment.
+Recovery must now solve a sophisticated architectural challenge: specifying the complete structure of a new distributed system without prematurely binding that structure to specific machines or processes. The solution lies in one of Bedrock's most elegant design patterns: [vacancy placeholders](../quick-reads/recovery/vacancy-creation.md) that separate architectural planning from infrastructure assignment.
 
 Rather than immediately mapping concrete services to specific roles, recovery creates abstract vacancy slots like `{:vacancy, 1}`, `{:vacancy, 2}`, and `{:vacancy, 3}` that represent service requirements without committing to particular infrastructure. This abstraction proves invaluable in practice—the planning phase addresses "what architecture do we need?" while subsequent recruitment phases handle "which available services can fulfill these requirements?"
 
@@ -77,11 +77,11 @@ Logs contain no persistent state beyond transaction records that exist identical
 [Storage](../components/data-plane/storage.md) services present fundamentally different challenges because they contain persistent data that would be expensive and time-consuming to recreate. Recovery implements an ultra-conservative preservation strategy, maintaining all existing storage assignments while creating additional vacancy slots only when configuration requirements exceed current replication levels. If a storage team currently operates with two replicas but configuration demands three, recovery creates exactly one storage vacancy for that team—never disturbing existing, valuable data.
 
 **Resolver Services: Computational Resource Planning**  
-[Resolvers](../components/control-plane/resolver.md) require specialized treatment as purely computational components that maintain [MVCC](../glossary.md#multi-version-concurrency-control-mvcc) conflict detection state derived from transaction logs. Recovery creates resolver descriptors that map each storage team's key range to corresponding resolver vacancies. These descriptors define computational boundaries and responsibility areas without committing to specific resolver processes, enabling the subsequent startup phase to optimize resolver placement and resource allocation.
+[Resolvers](../components/control-plane/resolver.md) require specialized treatment as purely computational components that maintain [MVCC](../glossary.md#multi-version-concurrency-control) conflict detection state derived from transaction logs. Recovery creates resolver descriptors that map each storage team's key range to corresponding resolver vacancies. These descriptors define computational boundaries and responsibility areas without committing to specific resolver processes, enabling the subsequent startup phase to optimize resolver placement and resource allocation.
 
 ### Phase 5: Establishing the Durability Baseline
 
-Before infrastructure reconstruction can begin, recovery must establish a critical mathematical foundation: the highest transaction [version](../glossary.md#version) guaranteed durable across the entire cluster. The [version determination process](recovery/version-determination.md) represents one of recovery's most sophisticated analytical challenges, requiring rigorous examination of storage team health and replica consistency.
+Before infrastructure reconstruction can begin, recovery must establish a critical mathematical foundation: the highest transaction [version](../glossary.md#version) guaranteed durable across the entire cluster. The [version determination process](../quick-reads/recovery/version-determination.md) represents one of recovery's most sophisticated analytical challenges, requiring rigorous examination of storage team health and replica consistency.
 
 The fundamental challenge arises from the reality of distributed operation: [storage](../components/data-plane/storage.md) servers inevitably operate at slightly different transaction versions due to processing delays, network latency, or partial component failures. Some replicas remain current with the latest committed transactions, while others lag behind by varying amounts. Recovery must identify a conservative durability baseline where sufficient replicas have committed the data, guaranteeing that the reconstructed system can provide consistent access to all transactions at or below this established version.
 
@@ -102,7 +102,7 @@ With architectural planning complete, recovery transitions from abstract design 
 
 #### Log Service Recruitment: Prioritizing Reliability Over Preservation
 
-[Log recruitment](recovery/log-recruitment.md) embodies Bedrock's core philosophy of choosing reliability over optimization. Since logs contain no persistent state beyond transaction records that exist identically in other logs, recovery can aggressively create entirely new log infrastructure rather than attempting to salvage potentially compromised components from the failed system.
+[Log recruitment](../quick-reads/recovery/log-recruitment.md) embodies Bedrock's core philosophy of choosing reliability over optimization. Since logs contain no persistent state beyond transaction records that exist identically in other logs, recovery can aggressively create entirely new log infrastructure rather than attempting to salvage potentially compromised components from the failed system.
 
 The recruitment strategy implements a three-tier approach designed to balance deployment efficiency with fault tolerance:
 
@@ -114,7 +114,7 @@ The recruitment strategy implements a three-tier approach designed to balance de
 
 #### Storage Service Recruitment: Ultra-Conservative Data Preservation
 
-[Storage recruitment](recovery/storage-recruitment.md) represents recovery's most cautious operational phase because storage services contain irreplaceable persistent data—user records, system state, and historical information that would be expensive or impossible to reconstruct if lost.
+[Storage recruitment](../quick-reads/recovery/storage-recruitment.md) represents recovery's most cautious operational phase because storage services contain irreplaceable persistent data—user records, system state, and historical information that would be expensive or impossible to reconstruct if lost.
 
 The recruitment algorithm implements a strict preservation hierarchy that prioritizes data safety above all other operational concerns:
 
@@ -128,7 +128,7 @@ The recruitment algorithm implements a strict preservation hierarchy that priori
 
 ### Phase 7: Transaction Data Migration Through Log Replay
 
-With infrastructure deployment complete, recovery confronts the critical challenge of transferring committed transaction data from the compromised system to the newly constructed infrastructure. The [log replay phase](recovery/log-replay.md) orchestrates this data migration while simultaneously validating the operational integrity of the new log architecture.
+With infrastructure deployment complete, recovery confronts the critical challenge of transferring committed transaction data from the compromised system to the newly constructed infrastructure. The [log replay phase](../quick-reads/recovery/log-replay.md) orchestrates this data migration while simultaneously validating the operational integrity of the new log architecture.
 
 Bedrock's approach to data migration exemplifies its fundamental reliability philosophy: choose data integrity over operational optimization. Despite old logs containing correct transaction data, recovery systematically copies this information to newly recruited logs rather than attempting to reuse potentially compromised storage. This deliberate duplication ensures all essential transaction data resides on verified, reliable infrastructure before the new system assumes operational responsibility.
 
@@ -146,7 +146,7 @@ With data migration complete, recovery initiates the sophisticated process of st
 
 #### Sequencer Deployment: Establishing Global Transaction Ordering
 
-The [sequencer startup phase](recovery/sequencer-startup.md) addresses one of distributed systems' most fundamental challenges: ensuring every transaction receives a unique, totally-ordered [version](../glossary.md#version) number that all components recognize as authoritative. Bedrock's [sequencer](../components/control-plane/sequencer.md) component—a singleton service—provides this critical global ordering authority across the entire cluster.
+The [sequencer startup phase](../quick-reads/recovery/sequencer-startup.md) addresses one of distributed systems' most fundamental challenges: ensuring every transaction receives a unique, totally-ordered [version](../glossary.md#version) number that all components recognize as authoritative. Bedrock's [sequencer](../components/control-plane/sequencer.md) component—a singleton service—provides this critical global ordering authority across the entire cluster.
 
 Reliable global ordering demands a single authoritative source to prevent version conflicts that would compromise transaction consistency. The sequencer initializes on the director's current node, using the established recovery baseline as its starting version. From this foundation, the sequencer will assign version numbers incrementally for new transactions, guaranteeing no gaps or overlaps in the global version sequence.
 
@@ -154,7 +154,7 @@ The sequencer's responsibilities extend far beyond simple number assignment. It 
 
 #### Commit Proxy Deployment: Enabling Horizontal Transaction Scalability
 
-The [proxy startup phase](recovery/proxy-startup.md) establishes [commit proxy](../components/control-plane/commit-proxy.md) components that provide horizontal scalability for transaction processing workloads. Multiple proxies can handle increasing transaction volumes without creating bottlenecks at individual components, while their distributed architecture ensures continued transaction processing even when individual proxies experience failures.
+The [proxy startup phase](../quick-reads/recovery/proxy-startup.md) establishes [commit proxy](../components/control-plane/commit-proxy.md) components that provide horizontal scalability for transaction processing workloads. Multiple proxies can handle increasing transaction volumes without creating bottlenecks at individual components, while their distributed architecture ensures continued transaction processing even when individual proxies experience failures.
 
 Recovery employs round-robin distribution to deploy the configured number of commit proxy processes across nodes with coordination capabilities. This geographical distribution strategy ensures fault tolerance by spreading critical transaction processing components across different machines rather than concentrating them in potentially vulnerable single locations.
 
@@ -162,9 +162,9 @@ Each proxy receives comprehensive configuration information including current ep
 
 #### Resolver Deployment: Implementing MVCC Conflict Detection
 
-The [resolver startup phase](recovery/resolver-startup.md) handles one of distributed transaction processing's most sophisticated challenges: preventing conflicting transactions from corrupting data when multiple clients simultaneously modify overlapping key ranges.
+The [resolver startup phase](../quick-reads/recovery/resolver-startup.md) handles one of distributed transaction processing's most sophisticated challenges: preventing conflicting transactions from corrupting data when multiple clients simultaneously modify overlapping key ranges.
 
-Bedrock's resolver components implement [Multi-Version Concurrency Control (MVCC)](../glossary.md#multi-version-concurrency-control-mvcc) conflict detection with mathematical precision. Each resolver manages specific key ranges while maintaining detailed conflict detection state that tracks which transactions have accessed which keys at which versions.
+Bedrock's resolver components implement [Multi-Version Concurrency Control (MVCC)](../glossary.md#multi-version-concurrency-control) conflict detection with mathematical precision. Each resolver manages specific key ranges while maintaining detailed conflict detection state that tracks which transactions have accessed which keys at which versions.
 
 The startup process transforms abstract resolver descriptors created during vacancy planning into operational resolver processes. This transformation requires sophisticated range-to-storage-team mapping and tag-based log assignment algorithms to ensure each resolver receives precisely the data it requires for accurate conflict detection.
 
@@ -172,7 +172,7 @@ The startup process transforms abstract resolver descriptors created during vaca
 
 ### Phase 9: System Layout Construction and Validation
 
-All transaction processing components now operate as individual services, but they exist in complete isolation—the sequencer cannot identify which logs to notify about new versions, commit proxies lack knowledge of which resolvers handle conflict detection for specific key ranges, and storage servers remain unaware of which logs contain their required transaction data. Recovery resolves this coordination challenge through construction and persistence of the authoritative [Transaction System Layout](recovery/transaction-system-layout.md).
+All transaction processing components now operate as individual services, but they exist in complete isolation—the sequencer cannot identify which logs to notify about new versions, commit proxies lack knowledge of which resolvers handle conflict detection for specific key ranges, and storage servers remain unaware of which logs contain their required transaction data. Recovery resolves this coordination challenge through construction and persistence of the authoritative [Transaction System Layout](../quick-reads/recovery/transaction-system-layout.md).
 
 The [Transaction System Layout](../quick-reads/transaction-system-layout.md) functions as the comprehensive coordination blueprint enabling distributed system components to locate and communicate with each other effectively. This critical data structure contains complete mappings of services to operational roles, assignments of key ranges to storage teams, associations between resolvers and their responsibility areas, and all coordination information essential for distributed transaction processing.
 
@@ -189,7 +189,7 @@ If this system transaction experiences any failure, recovery immediately recogni
 
 ### Phase 10: Operational Monitoring and Recovery Completion
 
-Recovery's final responsibility involves establishing [comprehensive monitoring infrastructure](recovery/monitoring.md) for all transaction system components. This monitoring framework implements Bedrock's core fail-fast philosophy—rather than attempting complex error recovery procedures when components fail during normal operation, any failure of critical transaction processing components triggers immediate director shutdown and coordinated recovery restart.
+Recovery's final responsibility involves establishing [comprehensive monitoring infrastructure](../quick-reads/recovery/monitoring.md) for all transaction system components. This monitoring framework implements Bedrock's core fail-fast philosophy—rather than attempting complex error recovery procedures when components fail during normal operation, any failure of critical transaction processing components triggers immediate director shutdown and coordinated recovery restart.
 
 **Component Coverage Strategy**  
 The monitoring infrastructure covers sequencer, commit proxies, resolvers, logs, and the director itself with continuous operational validation. Storage servers face deliberate exclusion from this monitoring framework because they handle failures independently through sophisticated data distribution and repair mechanisms built into their operational design.

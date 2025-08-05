@@ -1,6 +1,6 @@
 # Bedrock Recovery
 
-**For comprehensive details and deeper context, see the [Recovery Guide](../01-guides/recovery-guide.md).**
+**For comprehensive details and deeper context, see the [Recovery Guide](../deep-dives/recovery.md).**
 
 ## Recovery Flow
 
@@ -56,27 +56,33 @@ flowchart TD
 Recovery proceeds through a carefully orchestrated sequence of phases, each building upon the previous one:
 
 ### Foundation Phases
+
 1. **[Service Locking](recovery/service-locking.md)** - Establish exclusive control over old system services
 2. **[Path Determination](recovery/path-determination.md)** - Decide between new cluster initialization or data recovery
 
 ### Data Recovery Path
+
 3. **[Log Recovery Planning](recovery/log-recovery-planning.md)** - Determine what transaction data can be safely recovered
 4. **[Vacancy Creation](recovery/vacancy-creation.md)** - Plan the new system architecture with placeholders
 5. **[Version Determination](recovery/version-determination.md)** - Establish the recovery baseline for durable data
 
 ### Service Recruitment
+
 6. **[Log Recruitment](recovery/log-recruitment.md)** - Assign real services to log vacancy placeholders
 7. **[Storage Recruitment](recovery/storage-recruitment.md)** - Assign real services to storage vacancy placeholders
 
 ### Data Migration
+
 8. **[Log Replay](recovery/log-replay.md)** - Copy committed transactions to new log services
 
 ### Component Startup
+
 9. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the global version number authority
 10. **[Proxy Startup](recovery/proxy-startup.md)** - Start commit proxy components for scalability
 11. **[Resolver Startup](recovery/resolver-startup.md)** - Start MVCC conflict detection components
 
 ### System Finalization
+
 12. **[Transaction System Layout](recovery/transaction-system-layout.md)** - Create the coordination blueprint
 13. **[Persistence](recovery/persistence.md)** - Durably store configuration via system transaction
 14. **[Monitoring](recovery/monitoring.md)** - Establish operational monitoring and mark recovery complete

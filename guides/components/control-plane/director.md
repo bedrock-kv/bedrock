@@ -7,18 +7,21 @@ The Director orchestrates transaction system lifecycle and coordinates cluster r
 The Director implements centralized orchestration within Bedrock's control plane:
 
 ### Recovery Orchestration
+
 - Coordinates systematic recovery of transaction system components
 - Manages data plane startup sequencing and dependencies
 - Handles component failure detection and replacement
 - Orchestrates distributed consensus required for consistent operation
 
 ### Epoch-Based Generation Management
+
 - Implements epoch counters to prevent split-brain scenarios during recovery
 - Ensures only one Director instance operates per epoch
 - Coordinates epoch transitions during leadership changes
 - Manages service locking with generation precedence rules
 
 ### Service Lifecycle Management
+
 - Requests worker creation from Foreman processes on cluster nodes
 - Maintains registry of running services and their health status
 - Coordinates service replacement when failures are detected
@@ -63,18 +66,21 @@ The Director serves as the primary orchestrator, receiving service topology from
 Directors use epoch-based generation management to maintain consistency during concurrent recovery attempts:
 
 ### Generation Counter Semantics
+
 - Epochs are monotonically increasing numbers managed by Coordinators
 - Each Director instance receives a unique epoch at startup
 - Services locked with newer epochs take precedence over older ones
 - Processes from previous epochs terminate when detecting generation changes
 
 ### Split-Brain Prevention
+
 - Only one Director can successfully lock services for a given epoch
 - Concurrent Directors compete through epoch comparison
 - Higher epochs win conflicts, forcing lower epoch Directors to terminate
 - This eliminates complex coordination protocols while maintaining consistency
 
 ### Service Locking Protocol
+
 ```elixir
 # Directors lock services with their epoch
 lock_result = lock_service(service_id, epoch, director_id)
@@ -94,11 +100,13 @@ end
 The Director requires complete cluster topology to orchestrate recovery effectively:
 
 ### Coordinator-Provided Information
+
 - **Service Directory**: Complete mapping of service IDs to node locations
 - **Node Capabilities**: Capability advertisements from all cluster nodes  
 - **Configuration State**: Current transaction system layouts and parameters
 
 ### Recovery Planning Requirements
+
 - Directors analyze available nodes and capabilities
 - Plans service placement based on fault tolerance requirements
 - Creates new services when vacancies must be filled
@@ -123,6 +131,7 @@ Each phase includes rollback capabilities if failures occur, ensuring the cluste
 ## Key Operations
 
 ### Transaction System Layout Management
+
 ```elixir
 # Fetch current system layout for recovery planning
 {:ok, layout} = Director.fetch_transaction_system_layout(director)
@@ -138,6 +147,7 @@ Each phase includes rollback capabilities if failures occur, ensuring the cluste
 ```
 
 ### Worker Creation Coordination
+
 ```elixir
 # Request Foreman to create new worker on specific node
 {:ok, worker_info} = Director.request_worker_creation(
@@ -158,6 +168,7 @@ Each phase includes rollback capabilities if failures occur, ensuring the cluste
 ```
 
 ### Service Discovery Notifications
+
 ```elixir
 # Receive notification of new services from Coordinator
 :ok = Director.notify_services_registered(director, service_infos)
@@ -167,6 +178,7 @@ Each phase includes rollback capabilities if failures occur, ensuring the cluste
 ```
 
 ### Health Monitoring
+
 ```elixir
 # Send ping to Director with minimum read version
 :ok = Director.send_ping(director, minimum_read_version)
@@ -201,7 +213,6 @@ Director operations balance recovery speed with consistency:
 ## See Also
 
 - [Coordinator](coordinator.md) - Creates and manages Director lifecycle
-- [Foreman](../../service/foreman.md) - Worker creation managed by Director
 - [Recovery Deep Dive](../../deep-dives/recovery.md) - Detailed recovery process orchestration
 - [Cluster Startup](../../deep-dives/cluster-startup.md) - Director role in cluster initialization
-- [Transaction System Layout](../../quick-reads/transaction-system-layout.md) - Service assignment coordination
+- [Transaction System Layout](../../quick-reads/transaction-system-layout.md) -  Service assignment coordination

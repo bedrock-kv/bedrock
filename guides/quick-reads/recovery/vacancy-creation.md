@@ -26,7 +26,7 @@ Example: Storage team has 2 replicas but configuration requires 3. Recovery crea
 
 ### Resolver Services: Computational Boundaries
 
-[Resolvers](../../components/control-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control-mvcc) conflict detection for key ranges. Recovery creates resolver descriptors that map each storage team's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
+[Resolvers](../../components/control-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection for key ranges. Recovery creates resolver descriptors that map each storage team's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
 
 ## Output Blueprint
 

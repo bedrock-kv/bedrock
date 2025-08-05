@@ -9,6 +9,7 @@ After recovery brings components online individually, they exist in isolation—
 This phase creates the authoritative coordination map that tells every component how to find and communicate with every other component it needs to work with. Think of it as building the distributed system's phone book and organizational chart simultaneously.
 
 The TSL contains:
+
 - Process identifiers for all components
 - Key range assignments for storage teams and resolvers  
 - Log shard mappings

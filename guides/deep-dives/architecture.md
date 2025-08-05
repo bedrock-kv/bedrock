@@ -82,7 +82,7 @@ For comprehensive coverage of the recovery process, see [Recovery Deep Dive](rec
 
 The Data Plane is where Bedrock's embedded approach aims to achieve its primary performance benefits. While traditional databases must serve every read and write over network connections, Bedrock's Data Plane components can run directly within application processes, potentially changing the performance characteristics of database operations. This is where the embedded architecture hypothesis is tested—whether running database components locally can improve application responsiveness and throughput.
 
-The **Sequencer** serves as the system's temporal authority, implementing Lamport clock semantics to ensure every transaction receives globally unique, causally-ordered version numbers. When a transaction begins, it gets a read version that guarantees a consistent snapshot of the database at that point in time. When it commits, it receives a commit version that establishes its place in the global ordering of all transactions. This temporal foundation enables Bedrock's [MVCC](../glossary.md#mvcc) (Multi-Version Concurrency Control) capabilities, allowing multiple transactions to execute concurrently while maintaining the illusion that they ran in strict sequential order.
+The **Sequencer** serves as the system's temporal authority, implementing Lamport clock semantics to ensure every transaction receives globally unique, causally-ordered version numbers. When a transaction begins, it gets a read version that guarantees a consistent snapshot of the database at that point in time. When it commits, it receives a commit version that establishes its place in the global ordering of all transactions. This temporal foundation enables Bedrock's [MVCC](../glossary.md#multi-version-concurrency-control) (Multi-Version Concurrency Control) capabilities, allowing multiple transactions to execute concurrently while maintaining the illusion that they ran in strict sequential order.
 
 For detailed information about how versioning works, see [Sequencer](../components/control-plane/sequencer.md).
 
@@ -133,6 +133,7 @@ An interesting aspect of Bedrock's design is how it addresses the classic distri
 During **cold start**, Coordinators begin with minimal configuration and ephemeral Raft logs. As the Director successfully orchestrates data plane recovery, the system can start using its own transaction processing capabilities to persist its configuration. This approach serves as both practical configuration storage and an end-to-end test that validates the entire transaction pipeline works correctly.
 
 The **system transaction pattern** is straightforward:
+
 ```elixir
 system_transaction = {
   nil,  # No reads required for system writes
@@ -159,6 +160,7 @@ Unlike traditional distributed databases that treat all nodes equally, Bedrock c
 - **Application-aware replication**: The system can replicate data based on actual application usage patterns rather than generic distribution algorithms
 
 This creates a **tiered performance model** where:
+
 1. **Local reads** (same process): Microsecond memory access
 2. **Node-local reads** (same machine, different process): Sub-millisecond local network
 3. **Cluster reads** (different machines): Standard network latency, but only when necessary
@@ -176,6 +178,7 @@ The replication strategy balances the embedded model's local performance advanta
 Bedrock's performance optimizations are designed around the embedded model's unique characteristics, creating performance profiles that traditional distributed databases simply cannot achieve:
 
 **Local-First Processing**: The embedded approach enables a performance hierarchy that eliminates network latency when possible:
+
 - **Write caching**: Transaction Builders accumulate writes locally, providing instant read-your-writes consistency
 - **Local reads**: Storage Servers serve reads from memory when data is available locally
 - **Network fallback**: Only when data isn't available locally does the system use network operations
@@ -185,6 +188,7 @@ Bedrock's performance optimizations are designed around the embedded model's uni
 **Intelligent Batching**: Multiple transactions are batched together for commit processing, but the embedded deployment means coordination overhead is minimized. When Commit Proxies run on the same nodes as Transaction Builders, batching operations happen through local message passing rather than network protocols.
 
 **Adaptive Coordination**: The system pipelines operations to maximize throughput, but embedded deployment makes coordination more efficient:
+
 - Read versions assigned through local communication when Sequencers are co-located
 - Storage Servers can serve reads during write processing without network overhead  
 - Conflict resolution benefits from reduced latency between Resolvers and Commit Proxies
@@ -241,16 +245,19 @@ Bedrock's development continues to explore what's possible when databases and ap
 ## Navigation Guide
 
 ### For New Developers
+
 1. **Start Here**: [User's Perspective](../quick-reads/users-perspective.md) - How to interact with Bedrock
 2. **Core Concepts**: [Transaction Basics](../quick-reads/transactions.md) - Quick reference for MVCC and versioning
 3. **System Layout**: [Transaction System Layout](../quick-reads/transaction-system-layout.md) - Component relationships
 
 ### For Implementation Work  
+
 1. **Component References**: [Individual Components](../components/) - Detailed API and implementation docs
 2. **Transaction Flow**: [Transaction Deep Dive](transactions.md) - Complete processing lifecycle
 3. **Recovery Process**: [Recovery Deep Dive](recovery.md) - Multi-phase recovery system
 
 ### For System Understanding
+
 1. **This Document**: Comprehensive architectural patterns and design principles
 2. **Specialized Topics**: [Recovery Subsystem](recovery/) - Detailed recovery phase documentation
 3. **Reference**: [Glossary](../glossary.md) - Definitions and cross-linked concepts

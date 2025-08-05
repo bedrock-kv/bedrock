@@ -10,7 +10,7 @@ Bedrock follows a layered architecture that separates concerns between transacti
 graph TD
     subgraph INFRA["Infrastructure"]
         direction TB
-        INFRA_DESC["Cluster interface, configuration management,<br/>and foundational abstractions"]
+        INFRA_DESC["Foundational cluster interface, client gateway,<br/>and worker process management"]
     end
     
     subgraph CP["Control Plane"]
@@ -20,12 +20,12 @@ graph TD
     
     subgraph DP["Data Plane"]
         direction TB
-        DP_DESC["Persistent storage interfaces, client gateway,<br/>and distributed system coordination"]
+        DP_DESC["Persistent storage interfaces<br/>and distributed system coordination"]
     end
     
     subgraph SVC["Service Layer"]
         direction TB
-        SVC_DESC["Worker process management<br/>and service lifecycle operations"]
+        SVC_DESC["Service abstractions and lifecycle patterns"]
     end
     
     subgraph IMPL["Implementations"]
@@ -64,7 +64,6 @@ The control plane implements the core transaction processing logic that ensures 
 
 These components provide the persistent storage interfaces and client connectivity:
 
-- **[Gateway](data-plane/gateway.md)** - Client-facing interface that handles requests and routes them to appropriate components
 - **[Proxy](data-plane/proxy.md)** - Read version proxy that forwards version requests to the authoritative Sequencer
 - **[Log](data-plane/log.md)** - Persistent transaction log interface that maintains committed transaction history
 - **[Storage](data-plane/storage.md)** - Multi-version key-value storage interface that serves read operations
@@ -82,17 +81,15 @@ Implementation components can be swapped or configured based on performance requ
 
 ## Service Components
 
-These components manage worker processes and service lifecycle operations:
-
-- **[Foreman](service/foreman.md)** - Manages worker processes and service lifecycle operations across cluster nodes
-
-Service components coordinate between the control plane orchestration and the actual data plane worker processes.
+Service components provide abstractions and lifecycle patterns for the distributed system. Currently, service-level abstractions are integrated into other architectural layers.
 
 ## Infrastructure Components
 
-These components provide foundational cluster interface and configuration management:
+These components provide foundational cluster interface, client gateway, and worker process management:
 
 - **[Cluster](infrastructure/cluster.md)** - Foundational interface and configuration management for Bedrock distributed database instances
+- **[Gateway](infrastructure/gateway.md)** - Client-facing interface that handles requests and routes them to appropriate components
+- **[Foreman](infrastructure/foreman.md)** - Manages worker processes and service lifecycle operations across cluster nodes
 
 Infrastructure components provide the high-level abstractions that applications use to interact with Bedrock clusters.
 
@@ -112,9 +109,9 @@ This separation enables independent scaling, testing, and evolution of each arch
 Choose a component category to explore:
 
 - **[Control Plane Components](control-plane/)** - Transaction coordination and version management
-- **[Data Plane Components](data-plane/)** - Storage interfaces and client connectivity  
+- **[Data Plane Components](data-plane/)** - Storage interfaces and distributed system coordination  
 - **[Implementation Components](implementations/)** - Concrete storage engine implementations
-- **[Service Components](service/)** - Worker process management and lifecycle operations
-- **[Infrastructure Components](infrastructure/)** - Foundational cluster interface and configuration
+- **[Service Components](service/)** - Service abstractions and lifecycle patterns
+- **[Infrastructure Components](infrastructure/)** - Foundational cluster interface, client gateway, and worker management
 
 For system-wide concepts, see the [Deep Dives](../deep-dives/) section which covers cross-component topics like recovery, transactions, and architectural patterns.

@@ -50,11 +50,13 @@ If any shard cannot meet quorum requirements, recovery fails with `:unable_to_me
 ## Algorithm Inputs and Outputs
 
 **Inputs:**
+
 - Previous system configuration (log assignments and ranges)
 - Current log status (availability and version ranges)  
 - Target system requirements (quorum parameters)
 
 **Outputs:**
+
 - `old_log_ids_to_copy` - Which logs to preserve data from
 - `version_vector` - Transaction range bounds for recovery
 

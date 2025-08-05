@@ -10,7 +10,7 @@ The monitoring system supervises all critical transaction processing components 
 
 - **[Sequencer](../../components/control-plane/sequencer.md)** - Global version number authority
 - **[Commit Proxies](../../components/control-plane/commit-proxy.md)** - Transaction coordination
-- **[Resolvers](../../components/control-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control-mvcc) conflict detection  
+- **[Resolvers](../../components/control-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection  
 - **[Logs](../../components/data-plane/log.md)** - Transaction durability
 - **Director** - Recovery coordination and cluster health
 
@@ -47,6 +47,7 @@ At this point, the cluster has been systematically rebuilt from verified foundat
 **Source**: `lib/bedrock/control_plane/director/recovery/monitoring_phase.ex`
 
 **See Also:**
+
 - [Recovery Overview](../recovery.md) - Complete recovery phase sequence
 - [Transaction System Layout](transaction-system-layout.md) - Coordination blueprint construction  
 - [Recovery Deep Dive](../../deep-dives/recovery.md) - Comprehensive recovery architecture and philosophy

@@ -30,18 +30,21 @@ end)
 ## Key Features
 
 ### ACID Properties
+
 - **Atomic**: All writes succeed or none do
 - **Consistent**: All reads see same snapshot version
 - **Isolated**: Strict serialization prevents interference  
 - **Durable**: Universal log acknowledgment ensures persistence
 
 ### Performance Optimizations
+
 - **Lazy versioning**: No network traffic until first read
 - **Local caching**: Immediate read-your-writes visibility
 - **Batching**: Multiple transactions processed together
 - **Horse racing**: Parallel queries to storage replicas
 
 ### Nested Transactions
+
 ```elixir
 Repo.transaction(fn repo ->
   Repo.put(repo, :outer, "value")

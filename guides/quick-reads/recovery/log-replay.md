@@ -8,6 +8,7 @@ The log replay phase transfers all committed transaction data from old [logs](..
 
 **Smart Pairing Algorithm**  
 Recovery pairs each new log with old logs using round-robin distribution. When scaling from 2 to 4 logs:
+
 - New log 1 ← Old log 1  
 - New log 2 ← Old log 2
 - New log 3 ← Old log 1 (cycles back)

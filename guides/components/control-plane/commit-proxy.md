@@ -1,12 +1,12 @@
 # Commit Proxy: The Transaction Orchestrator
 
-The [Commit Proxy](../glossary.md#commit-proxy) is the central coordinator of Bedrock's [transaction](../glossary.md#transaction) commit process, responsible for [batching](../glossary.md#batching) transactions from multiple clients, orchestrating [conflict](../glossary.md#conflict) resolution, and ensuring [durable persistence](../glossary.md#durability-guarantee) across all [log](../glossary.md#log) servers. It transforms individual transaction requests into efficiently processed batches while maintaining strict consistency guarantees.
+The [Commit Proxy](../../glossary.md#commit-proxy) is the central coordinator of Bedrock's [transaction](../../glossary.md#transaction) commit process, responsible for [batching](../../glossary.md#batching) transactions from multiple clients, orchestrating [conflict](../../glossary.md#conflict) resolution, and ensuring [durable persistence](../../glossary.md#durability-guarantee) across all [log](../../glossary.md#log) servers. It transforms individual transaction requests into efficiently processed batches while maintaining strict consistency guarantees.
 
-**Location**: [`lib/bedrock/data_plane/commit_proxy.ex`](../../lib/bedrock/data_plane/commit_proxy.ex)
+**Location**: [`lib/bedrock/data_plane/commit_proxy.ex`](../../../lib/bedrock/data_plane/commit_proxy.ex)
 
 ## The Batching Strategy
 
-Individual transactions arriving from [Transaction Builders](../glossary.md#transaction-builder) could be processed one at a time, but this would be highly inefficient. Each transaction would require its own conflict resolution phase, its own interaction with log servers, and its own coordination overhead. Instead, Commit Proxy batches multiple transactions together to amortize these costs.
+Individual transactions arriving from [Transaction Builders](../../glossary.md#transaction-builder) could be processed one at a time, but this would be highly inefficient. Each transaction would require its own conflict resolution phase, its own interaction with log servers, and its own coordination overhead. Instead, Commit Proxy batches multiple transactions together to amortize these costs.
 
 Batching creates a fundamental trade-off between latency and throughput. Larger batches improve efficiency by spreading the fixed costs of conflict resolution and logging across more transactions, but they increase latency as transactions wait for batches to fill. Commit Proxy manages this trade-off through configurable policies that can commit batches based on size limits, time limits, or both.
 
@@ -16,11 +16,11 @@ Transactions within a batch maintain the same order in which they arrived at the
 
 ## The Finalization Pipeline
 
-When a batch is ready for processing, Commit Proxy executes a carefully orchestrated [finalization pipeline](../glossary.md#finalization-pipeline) that ensures atomicity across the distributed system. Each step builds on the previous ones, creating a chain of operations that either succeeds completely or fails cleanly.
+When a batch is ready for processing, Commit Proxy executes a carefully orchestrated [finalization pipeline](../../glossary.md#finalization-pipeline) that ensures atomicity across the distributed system. Each step builds on the previous ones, creating a chain of operations that either succeeds completely or fails cleanly.
 
-The pipeline begins by creating a finalization plan that captures all the information needed for the batch, including the transactions, [version](../glossary.md#version) assignments, and [storage](../glossary.md#storage) team mappings. This plan serves as the coordination document that guides the remaining steps.
+The pipeline begins by creating a finalization plan that captures all the information needed for the batch, including the transactions, [version](../../glossary.md#version) assignments, and [storage](../../glossary.md#storage) team mappings. This plan serves as the coordination document that guides the remaining steps.
 
-Next, transactions are prepared for conflict resolution by transforming them into the format that [Resolvers](../glossary.md#resolver) expect. This involves extracting read keys from Transaction Builders and write keys from the transaction payloads, creating summaries that focus on conflict detection rather than data values.
+Next, transactions are prepared for conflict resolution by transforming them into the format that [Resolvers](../../glossary.md#resolver) expect. This involves extracting read keys from Transaction Builders and write keys from the transaction payloads, creating summaries that focus on conflict detection rather than data values.
 
 The conflict resolution phase distributes transaction summaries to the appropriate Resolvers based on key ranges. Each Resolver checks for conflicts within its range and returns either approval or rejection for each transaction. Transactions that conflict with previously committed transactions or with other transactions in the same batch are marked for abortion.
 
@@ -28,9 +28,9 @@ Aborted transactions receive immediate error responses, allowing clients to retr
 
 The remaining successful transactions are then prepared for logging by organizing them according to storage team tags. This organization ensures that each log server receives only the transactions it needs to store, based on the tag coverage configuration.
 
-The logging phase pushes transactions to all required log servers in parallel. This is the critical durability step—transactions are not considered committed until every required log server acknowledges receipt. If any log server fails to acknowledge, the entire batch fails and triggers [recovery](../glossary.md#recovery).
+The logging phase pushes transactions to all required log servers in parallel. This is the critical durability step—transactions are not considered committed until every required log server acknowledges receipt. If any log server fails to acknowledge, the entire batch fails and triggers [recovery](../../glossary.md#recovery).
 
-After successful logging, the Commit Proxy notifies the [Sequencer](../glossary.md#sequencer) about the successful commit, enabling the Sequencer to update its tracking of committed versions. Finally, successful transaction clients receive their commit version responses.
+After successful logging, the Commit Proxy notifies the [Sequencer](../../glossary.md#sequencer) about the successful commit, enabling the Sequencer to update its tracking of committed versions. Finally, successful transaction clients receive their commit version responses.
 
 ## Conflict Resolution Coordination
 
@@ -50,7 +50,7 @@ The parallel logging approach minimizes durability latency by sending transactio
 
 ## Recovery and Error Handling
 
-Commit Proxy uses a fail-fast recovery model similar to other Bedrock components. When unrecoverable errors occur—such as Resolver unavailability or insufficient log acknowledgments—the Commit Proxy exits immediately, triggering [Director](../glossary.md#director)-coordinated recovery.
+Commit Proxy uses a fail-fast recovery model similar to other Bedrock components. When unrecoverable errors occur—such as Resolver unavailability or insufficient log acknowledgments—the Commit Proxy exits immediately, triggering [Director](../../glossary.md#director)-coordinated recovery.
 
 This approach simplifies error handling logic by avoiding complex partial recovery scenarios. Instead of trying to salvage partial state, the system replaces the failed Commit Proxy with a fresh instance that starts with clean state.
 

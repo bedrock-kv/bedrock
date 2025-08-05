@@ -7,12 +7,14 @@ The Proxy provides read version forwarding for Bedrock's transaction system, ser
 The Proxy implements focused functionality within Bedrock's data plane:
 
 ### Read Version Forwarding
+
 - Receives read version requests from transaction clients
 - Forwards requests to the authoritative Sequencer process
 - Maintains connection to current Sequencer for efficient routing
 - Provides transparent proxy interface for version allocation
 
 ### Transaction System Integration
+
 - Integrates with transaction system layout for Sequencer discovery
 - Adapts to layout changes during recovery and reconfiguration
 - Maintains Director reference for system-wide coordination
@@ -66,12 +68,14 @@ This design maintains Sequencer authority while providing distributed access poi
 The Proxy maintains awareness of transaction system topology:
 
 ### Layout Configuration
+
 - Receives transaction system layout during initialization
 - Maintains reference to current Sequencer process
 - Adapts to layout changes during recovery operations
 - Supports dynamic reconfiguration without service interruption
 
 ### Director Coordination
+
 - Maintains reference to controlling Director process
 - Receives layout updates through Director communication
 - Participates in system-wide coordination during recovery
@@ -80,6 +84,7 @@ The Proxy maintains awareness of transaction system topology:
 ## Key Operations
 
 ### Read Version Allocation
+
 ```elixir
 # Request read version through proxy
 read_version = Proxy.next_read_version(proxy)
@@ -90,6 +95,7 @@ read_version = Proxy.next_read_version(proxy)
 ```
 
 ### Process Configuration
+
 ```elixir
 # Proxy initialization with system layout
 proxy_spec = Proxy.child_spec([
@@ -110,12 +116,14 @@ proxy_spec = Proxy.child_spec([
 The Proxy provides specific performance trade-offs:
 
 ### Forwarding Efficiency
+
 - **Message Routing**: Single additional hop for read version requests
 - **Connection Reuse**: Maintains persistent connection to Sequencer
 - **Request Batching**: Individual requests maintain transaction semantics
 - **Network Locality**: Can be deployed closer to clients for reduced latency
 
 ### Scalability Considerations
+
 - **Stateless Design**: Proxy processes can be replicated across nodes
 - **Load Distribution**: Multiple proxies can serve read version requests
 - **Sequencer Bottleneck**: Ultimate throughput limited by Sequencer capacity
@@ -138,16 +146,19 @@ The Proxy provides lightweight fault tolerance:
 The Proxy supports various deployment configurations:
 
 ### Co-located Deployment  
+
 - Proxy processes run alongside Transaction Builder components
 - Minimizes network hops for read version requests
 - Provides node-local access to centralized version service
 
 ### Dedicated Proxy Nodes
+
 - Proxy processes run on specialized forwarding nodes
 - Enables separation of concerns between transaction processing and version allocation
 - Supports high-throughput scenarios with dedicated proxy capacity
 
 ### Load Balancing
+
 - Multiple proxy processes can serve read version requests
 - Client connection balancing across available proxy instances
 - Horizontal scaling of read version access points

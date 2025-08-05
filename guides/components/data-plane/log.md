@@ -1,8 +1,8 @@
 # The Log System: Bedrock's Durability Foundation
 
-The [Log](../glossary.md#log) system is the [durability](../glossary.md#durability-guarantee) backbone of Bedrock, serving as the authoritative record of every [committed](../glossary.md#commit) [transaction](../glossary.md#transaction) in the cluster. It bridges the gap between the fast, in-memory transaction processing pipeline and the permanent storage that enables [recovery](../glossary.md#recovery) after failures. This makes Bedrock's strong consistency and durability guarantees possible. By providing a reliable, ordered, and durable record of all committed transactions, it enables the rest of the system to focus on performance and scalability while maintaining strict [ACID](../glossary.md#acid) properties. The careful design of the log interface, replication model, and recovery protocols creates a robust foundation that can handle the inevitable failures that occur in distributed systems.
+The [Log](../../glossary.md#log) system is the [durability](../../glossary.md#durability-guarantee) backbone of Bedrock, serving as the authoritative record of every [committed](../../glossary.md#commit) [transaction](../../glossary.md#transaction) in the cluster. It bridges the gap between the fast, in-memory transaction processing pipeline and the permanent storage that enables [recovery](../../glossary.md#recovery) after failures. This makes Bedrock's strong consistency and durability guarantees possible. By providing a reliable, ordered, and durable record of all committed transactions, it enables the rest of the system to focus on performance and scalability while maintaining strict [ACID](../../glossary.md#acid) properties. The careful design of the log interface, replication model, and recovery protocols creates a robust foundation that can handle the inevitable failures that occur in distributed systems.
 
-**Location**: [`lib/bedrock/data_plane/log.ex`](../../lib/bedrock/data_plane/log.ex)
+**Location**: [`lib/bedrock/data_plane/log.ex`](../../../lib/bedrock/data_plane/log.ex)
 
 ## The Write-Ahead Log Pattern
 

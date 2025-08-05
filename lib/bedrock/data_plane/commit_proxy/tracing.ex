@@ -39,7 +39,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
     Logger.metadata(cluster: cluster)
 
     info(
-      "Transaction Batch #{format_version(commit_version)} started with #{n_transactions} transactions"
+      "Transaction Batch #{Version.to_string(commit_version)} started with #{n_transactions} transactions"
     )
   end
 
@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
         commit_version: commit_version
       }) do
     info(
-      "Transaction Batch #{format_version(commit_version)} completed with #{n_aborts} aborts and #{n_oks} oks in #{humanize({:microsecond, duration_us})}"
+      "Transaction Batch #{Version.to_string(commit_version)} completed with #{n_aborts} aborts and #{n_oks} oks in #{humanize({:microsecond, duration_us})}"
     )
   end
 
@@ -55,12 +55,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
         reason: reason
       }) do
     error(
-      "Transaction Batch #{format_version(commit_version)} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"
+      "Transaction Batch #{Version.to_string(commit_version)} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"
     )
   end
-
-  @spec format_version(Version.t()) :: String.t()
-  defp format_version(version), do: version |> Version.to_integer() |> to_string()
 
   @spec info(String.t()) :: :ok
   defp info(message) do

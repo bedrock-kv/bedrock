@@ -32,7 +32,10 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
 
   @spec log_event(atom(), map(), map()) :: :ok
   def log_event(:pull_start, _, %{timestamp: timestamp, next_version: next_version}),
-    do: debug("Log pull started at #{timestamp} for version #{next_version}")
+    do:
+      debug(
+        "Log pull started at #{timestamp} for version #{Bedrock.DataPlane.Version.to_string(next_version)}"
+      )
 
   def log_event(:pull_succeeded, _, %{timestamp: timestamp, n_transactions: n_transactions}),
     do: debug("Log pull succeeded at #{timestamp} with #{n_transactions} transactions")

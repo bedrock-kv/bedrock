@@ -28,14 +28,11 @@ defmodule Bedrock.DataPlane.Version do
   def to_integer(<<version::unsigned-big-64>>), do: version
 
   @doc "Converts a version to string representation for display"
-  @spec to_string(t()) :: String.t()
-  def to_string(version) do
-    byte_string =
-      version
-      |> :binary.bin_to_list()
-      |> Enum.map(&Kernel.to_string/1)
+  @spec to_string(t() | nil) :: String.t()
+  def to_string(nil), do: "nil"
 
-    "<<" <> Enum.join(byte_string, ", ") <> ">>"
+  def to_string(version) do
+    "<#{version |> :erlang.binary_to_list() |> Enum.map(&Integer.to_string/1) |> Enum.join(",")}>"
   end
 
   @doc "Increments a version by 1"

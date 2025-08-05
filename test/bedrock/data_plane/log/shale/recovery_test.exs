@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   alias Bedrock.DataPlane.Log.Shale.Recovery
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Version
 
   @moduletag :tmp_dir
 
@@ -22,8 +23,8 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       active_segment: nil,
       segments: [],
       writer: nil,
-      oldest_version: 0,
-      last_version: 0
+      oldest_version: Version.from_integer(0),
+      last_version: Version.from_integer(0)
     }
 
     {:ok, state: state, tmp_dir: tmp_dir}
@@ -32,50 +33,89 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   describe "recover_from/4" do
     test "returns error when not in locked mode", %{state: state} do
       unlocked_state = %{state | mode: :running}
-      assert {:error, :lock_required} = Recovery.recover_from(unlocked_state, :source, 1, 2)
+
+      assert {:error, :lock_required} =
+               Recovery.recover_from(
+                 unlocked_state,
+                 :source,
+                 Version.from_integer(1),
+                 Version.from_integer(2)
+               )
     end
 
     test "successfully recovers with no transactions", %{state: state} do
       source_log = setup_mock_log([])
-      assert {:ok, recovered} = Recovery.recover_from(state, source_log, 1, 1)
+
+      assert {:ok, recovered} =
+               Recovery.recover_from(
+                 state,
+                 source_log,
+                 Version.from_integer(1),
+                 Version.from_integer(1)
+               )
+
       assert recovered.mode == :running
-      assert recovered.oldest_version == 1
-      assert recovered.last_version == 1
+      assert recovered.oldest_version == Version.from_integer(1)
+      assert recovered.last_version == Version.from_integer(1)
     end
 
     test "successfully recovers with valid transactions", %{state: state} do
       transactions = [
-        create_encoded_tx(1, %{"data" => "test1"}),
-        create_encoded_tx(2, %{"data" => "test2"})
+        create_encoded_tx(Version.from_integer(1), %{"data" => "test1"}),
+        create_encoded_tx(Version.from_integer(2), %{"data" => "test2"})
       ]
 
       source_log = setup_mock_log(transactions)
 
-      assert {:ok, recovered} = Recovery.recover_from(state, source_log, 1, 2)
+      assert {:ok, recovered} =
+               Recovery.recover_from(
+                 state,
+                 source_log,
+                 Version.from_integer(1),
+                 Version.from_integer(2)
+               )
+
       assert recovered.mode == :running
-      assert recovered.oldest_version == 1
-      assert recovered.last_version == 2
+      assert recovered.oldest_version == Version.from_integer(1)
+      assert recovered.last_version == Version.from_integer(2)
     end
 
     test "handles unavailable source log", %{state: state} do
       source_log = setup_failing_mock_log(:unavailable)
 
       assert {:error, {:source_log_unavailable, ^source_log}} =
-               Recovery.recover_from(state, source_log, 1, 2)
+               Recovery.recover_from(
+                 state,
+                 source_log,
+                 Version.from_integer(1),
+                 Version.from_integer(2)
+               )
     end
   end
 
   describe "pull_transactions/4" do
     test "handles empty transaction list", %{state: state} do
       source_log = setup_mock_log([])
-      assert {:ok, ^state} = Recovery.pull_transactions(state, source_log, 1, 1)
+
+      assert {:ok, ^state} =
+               Recovery.pull_transactions(
+                 state,
+                 source_log,
+                 Version.from_integer(1),
+                 Version.from_integer(1)
+               )
     end
 
     test "handles invalid transaction data", %{state: state} do
       source_log = setup_mock_log(["invalid"])
 
       assert {:error, :invalid_transaction} =
-               Recovery.pull_transactions(state, source_log, 1, 2)
+               Recovery.pull_transactions(
+                 state,
+                 source_log,
+                 Version.from_integer(1),
+                 Version.from_integer(2)
+               )
     end
   end
 

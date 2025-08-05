@@ -7,6 +7,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
   @type reason_for_stall ::
@@ -97,8 +98,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       log_recovery_info_by_id: %{},
       storage_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
-      version_vector: {0, 0},
-      durable_version: 0,
+      version_vector: {Version.zero(), Version.zero()},
+      durable_version: Version.zero(),
       degraded_teams: [],
       logs: %{},
       storage_teams: [],

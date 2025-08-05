@@ -9,6 +9,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   """
 
   alias Bedrock.DataPlane.Sequencer.State
+  alias Bedrock.DataPlane.Version
 
   use GenServer
 
@@ -43,7 +44,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     %State{
       director: director,
       epoch: epoch,
-      next_commit_version: known_committed_version + 1,
+      next_commit_version: Version.increment(known_committed_version),
       last_commit_version: known_committed_version,
       known_committed_version: known_committed_version
     }
@@ -61,7 +62,11 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   def handle_call(:next_commit_version, _from, t) do
     commit_version = t.next_commit_version
 
-    %{t | next_commit_version: commit_version + 1, last_commit_version: commit_version}
+    %{
+      t
+      | next_commit_version: Version.increment(commit_version),
+        last_commit_version: commit_version
+    }
     |> reply({:ok, t.last_commit_version, commit_version})
   end
 

@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Version
 
   @type t :: %__MODULE__{
           path: String.t(),
@@ -32,7 +33,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @spec allocate_from_recycler(SegmentRecycler.server(), String.t(), Bedrock.version()) ::
           {:ok, t()} | {:error, :allocation_failed}
   def allocate_from_recycler(segment_recycler, path, version) do
-    with path_to_file <- Path.join(path, encode_file_name(version)),
+    with path_to_file <- Path.join(path, encode_file_name(Version.to_integer(version))),
          :ok <- SegmentRecycler.check_out(segment_recycler, path_to_file) do
       {:ok,
        %__MODULE__{
@@ -58,7 +59,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
       {:ok,
        %__MODULE__{
          path: path_to_file,
-         min_version: path_to_file |> Path.basename() |> decode_file_name()
+         min_version:
+           path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
        }}
     end
   end
@@ -93,6 +95,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def transactions(segment), do: segment.transactions
 
   @spec last_version(t()) :: Bedrock.version()
-  def last_version(%{transactions: [<<version::unsigned-big-64, _::binary>> | _]}), do: version
+  def last_version(%{transactions: [<<version::binary-size(8), _::binary>> | _]}),
+    do: version
+
   def last_version(%{min_version: min_version}), do: min_version
 end

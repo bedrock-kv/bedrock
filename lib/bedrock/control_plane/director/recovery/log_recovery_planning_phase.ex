@@ -1,4 +1,6 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
+  alias Bedrock.DataPlane.Version
+
   @moduledoc """
   Determines which logs from the previous layout should be copied to preserve committed transactions.
 
@@ -129,9 +131,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   end
 
   @spec valid_range?({[Log.id()], Bedrock.version_vector()}) :: boolean()
-  def valid_range?({_, {0, _newest}}), do: true
-  def valid_range?({_, {_oldest, 0}}), do: false
-  def valid_range?({_, {oldest, newest}}), do: newest >= oldest
+  def valid_range?({_, {oldest, newest}}) do
+    zero_version = Version.zero()
+
+    cond do
+      oldest == zero_version -> true
+      newest == zero_version -> false
+      true -> newest >= oldest
+    end
+  end
 
   @spec rank_log_groups([{[Log.id()], Bedrock.version_vector()}]) :: [
           {[Log.id()], Bedrock.version_vector()}
@@ -139,7 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   def rank_log_groups(groups) do
     groups
     |> Enum.sort_by(
-      fn {_, {oldest, newest}} -> newest - oldest end,
+      fn {_, {oldest, newest}} -> Version.distance(newest, oldest) end,
       :desc
     )
   end

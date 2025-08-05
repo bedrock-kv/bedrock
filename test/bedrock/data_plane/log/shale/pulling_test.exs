@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.{Pulling, Segment, State}
+  alias Bedrock.DataPlane.Version
 
   @default_params %{default_pull_limit: 1000, max_pull_limit: 2000}
 
@@ -9,24 +10,24 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     setup do
       transactions =
         [
-          {0, %{}},
-          {1, %{"a" => "1"}},
-          {2, %{"b" => "2"}},
-          {3, %{"c" => "3"}}
+          {Version.from_integer(0), %{}},
+          {Version.from_integer(1), %{"a" => "1"}},
+          {Version.from_integer(2), %{"b" => "2"}},
+          {Version.from_integer(3), %{"c" => "3"}}
         ]
         |> Enum.map(&EncodedTransaction.encode/1)
         |> Enum.reverse()
 
       segment = %Segment{
-        min_version: 0,
+        min_version: Version.from_integer(0),
         transactions: transactions
       }
 
       state = %State{
         active_segment: segment,
         segments: [],
-        oldest_version: 0,
-        last_version: 3,
+        oldest_version: Version.from_integer(0),
+        last_version: Version.from_integer(3),
         mode: :ready,
         params: @default_params
       }
@@ -35,39 +36,48 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     end
 
     test "returns waiting_for when from_version >= last_version", %{state: state} do
-      assert {:waiting_for, 3} = Pulling.pull(state, 3)
-      assert {:waiting_for, 4} = Pulling.pull(state, 4)
+      version_3 = Version.from_integer(3)
+      version_4 = Version.from_integer(4)
+      assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
+      assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
     end
 
     test "returns error when from_version is too old", %{state: state} do
-      assert {:error, :version_too_old} = Pulling.pull(state, -1)
+      # Test with a version that's older than oldest_version in the state
+      # The state has oldest_version = 0, so we'll create a state with older version = 1 to test this properly
+      older_state = %{state | oldest_version: Version.from_integer(1)}
+      assert {:error, :version_too_old} = Pulling.pull(older_state, Version.from_integer(0))
     end
 
     test "returns transactions within version range", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, 1)
+      {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1))
       assert length(transactions) == 2
-      assert Enum.map(transactions, &EncodedTransaction.version(&1)) == [2, 3]
+      expected_versions = [Version.from_integer(2), Version.from_integer(3)]
+      assert Enum.map(transactions, &EncodedTransaction.version(&1)) == expected_versions
     end
 
     test "respects last_version parameter", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, 1, last_version: 2)
+      {:ok, _state, transactions} =
+        Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
+
       assert length(transactions) == 1
-      assert EncodedTransaction.version(hd(transactions)) == 2
+      assert EncodedTransaction.version(hd(transactions)) == Version.from_integer(2)
     end
 
     test "handles recovery mode correctly", %{state: state} do
       locked_state = %{state | mode: :locked}
-      assert {:error, :not_ready} = Pulling.pull(locked_state, 1)
-      assert {:ok, _, _} = Pulling.pull(locked_state, 1, recovery: true)
+      assert {:error, :not_ready} = Pulling.pull(locked_state, Version.from_integer(1))
+      assert {:ok, _, _} = Pulling.pull(locked_state, Version.from_integer(1), recovery: true)
     end
 
     test "respects pull limits", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, 1, limit: 1)
+      {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1), limit: 1)
       assert length(transactions) == 1
     end
 
     test "filters by key range", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, 0, key_range: {"a", "c"})
+      {:ok, _state, transactions} =
+        Pulling.pull(state, Version.from_integer(0), key_range: {"a", "c"})
 
       assert transactions
              |> Enum.map(&EncodedTransaction.decode!/1)
@@ -78,7 +88,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     end
 
     test "can exclude values", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, 1, exclude_values: true)
+      {:ok, _state, transactions} =
+        Pulling.pull(state, Version.from_integer(1), exclude_values: true)
 
       assert transactions
              |> Enum.map(&EncodedTransaction.decode!/1)

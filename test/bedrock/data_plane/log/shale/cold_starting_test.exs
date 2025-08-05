@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
   use ExUnit.Case, async: true
   alias Bedrock.DataPlane.Log.Shale.ColdStarting
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Version
 
   @segment_dir "test/fixtures/segments"
 
@@ -18,7 +19,15 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
     {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
 
-    assert [%Segment{min_version: 10}, %Segment{min_version: 2}, %Segment{min_version: 1}] =
+    version_10 = Version.from_integer(10)
+    version_2 = Version.from_integer(2)
+    version_1 = Version.from_integer(1)
+
+    assert [
+             %Segment{min_version: ^version_10},
+             %Segment{min_version: ^version_2},
+             %Segment{min_version: ^version_1}
+           ] =
              segments
   end
 
@@ -28,6 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
     {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
 
-    assert [%Segment{min_version: 1}] = segments
+    version_1 = Version.from_integer(1)
+    assert [%Segment{min_version: ^version_1}] = segments
   end
 end

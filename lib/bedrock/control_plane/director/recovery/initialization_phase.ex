@@ -30,6 +30,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.DataPlane.Version
+
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     trace_recovery_first_time_initialization()
@@ -60,10 +62,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
     updated_recovery_attempt =
       recovery_attempt
-      |> Map.put(:durable_version, 0)
+      |> Map.put(:durable_version, Version.zero())
       |> Map.put(:old_log_ids_to_copy, [])
-      |> Map.put(:version_vector, {0, 0})
-      |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
+      |> Map.put(:version_vector, {Version.zero(), Version.zero()})
+      |> Map.put(
+        :logs,
+        log_vacancies |> Map.new(&{&1, [Version.zero(), Version.from_integer(1)]})
+      )
       |> Map.put(:storage_teams, storage_teams)
       |> Map.put(:resolvers, resolver_descriptors)
 

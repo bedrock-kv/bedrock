@@ -5,25 +5,28 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
   alias Bedrock.DataPlane.Resolver.Recovery
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree
+  alias Bedrock.DataPlane.Version
 
   describe "apply_transaction/2" do
     test "applies a decoded transaction to a tree" do
       tree = %Tree{}
-      transaction = {1, %{"key1" => "value1", "key2" => "value2"}}
+      version = Version.from_integer(1)
+      transaction = {version, %{"key1" => "value1", "key2" => "value2"}}
 
-      {updated_tree, version} = Recovery.apply_transaction(tree, transaction)
+      {updated_tree, returned_version} = Recovery.apply_transaction(tree, transaction)
 
-      assert version == 1
+      assert returned_version == version
       assert %Tree{} = updated_tree
     end
 
     test "handles empty writes" do
       tree = %Tree{}
-      transaction = {1, %{}}
+      version = Version.from_integer(1)
+      transaction = {version, %{}}
 
-      {updated_tree, version} = Recovery.apply_transaction(tree, transaction)
+      {updated_tree, returned_version} = Recovery.apply_transaction(tree, transaction)
 
-      assert version == 1
+      assert returned_version == version
       assert updated_tree == tree
     end
   end
@@ -33,8 +36,10 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
       tree = %Tree{}
 
       # Create encoded transactions (as returned by Log.pull)
-      transaction1 = {1, %{"key1" => "value1"}}
-      transaction2 = {2, %{"key2" => "value2"}}
+      version1 = Version.from_integer(1)
+      version2 = Version.from_integer(2)
+      transaction1 = {version1, %{"key1" => "value1"}}
+      transaction2 = {version2, %{"key2" => "value2"}}
       encoded1 = EncodedTransaction.encode(transaction1)
       encoded2 = EncodedTransaction.encode(transaction2)
 
@@ -42,7 +47,7 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
 
       {updated_tree, last_version} = Recovery.apply_batch_of_transactions(tree, transactions)
 
-      assert last_version == 2
+      assert last_version == version2
       assert %Tree{} = updated_tree
     end
 
@@ -70,7 +75,7 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
       tree = %Tree{}
 
       # Create a transaction and corrupt the CRC
-      valid_transaction = {1, %{"key1" => "value1"}}
+      valid_transaction = {Version.from_integer(1), %{"key1" => "value1"}}
       encoded = EncodedTransaction.encode(valid_transaction)
 
       # Corrupt the last 4 bytes (CRC32)
@@ -82,12 +87,13 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
     end
 
     test "handles nil tree" do
-      transaction = {1, %{"key1" => "value1"}}
+      version = Version.from_integer(1)
+      transaction = {version, %{"key1" => "value1"}}
       encoded = EncodedTransaction.encode(transaction)
 
       {updated_tree, last_version} = Recovery.apply_batch_of_transactions(nil, [encoded])
 
-      assert last_version == 1
+      assert last_version == version
       assert %Tree{} = updated_tree
     end
   end
@@ -96,16 +102,18 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
     test "returns early when first_version equals last_version" do
       tree = %Tree{}
       log_ref = :some_log_ref
+      version = Version.from_integer(5)
 
-      result = Recovery.pull_transactions(tree, log_ref, 5, 5)
+      result = Recovery.pull_transactions(tree, log_ref, version, version)
 
       assert {:ok, tree} == result
     end
 
     test "returns early for nil log with versions 0" do
       tree = %Tree{}
+      zero_version = Version.zero()
 
-      result = Recovery.pull_transactions(tree, nil, 0, 0)
+      result = Recovery.pull_transactions(tree, nil, zero_version, zero_version)
 
       assert {:ok, tree} == result
     end
@@ -113,11 +121,13 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
 
   describe "recover_from/4" do
     setup do
+      zero_version = Version.zero()
+
       state = %State{
         mode: :locked,
         tree: %Tree{},
-        last_version: 0,
-        oldest_version: 0
+        last_version: zero_version,
+        oldest_version: zero_version
       }
 
       %{state: state}
@@ -126,7 +136,7 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
     test "requires locked mode", %{state: state} do
       unlocked_state = %{state | mode: :running}
 
-      result = Recovery.recover_from(unlocked_state, [], 0, 1)
+      result = Recovery.recover_from(unlocked_state, [], Version.zero(), Version.from_integer(1))
 
       assert {:error, :lock_required} == result
     end
@@ -134,15 +144,18 @@ defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
     test "returns state with updated mode and versions on success", %{state: state} do
       # Mock empty log source
       source_logs = []
+      target_version = Version.from_integer(5)
 
-      result = Recovery.recover_from(state, source_logs, 0, 5)
+      result = Recovery.recover_from(state, source_logs, Version.zero(), target_version)
 
       assert {:ok,
               %State{
                 mode: :running,
-                last_version: 5,
-                oldest_version: 0
+                last_version: ^target_version,
+                oldest_version: oldest_version
               }} = result
+
+      assert oldest_version == Version.zero()
     end
   end
 end

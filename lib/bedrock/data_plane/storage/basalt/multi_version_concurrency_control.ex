@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
 
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Version
 
   @opaque t :: :ets.table()
 
@@ -54,7 +55,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     |> Enum.reduce(latest_version, fn
       {version, _kv_pairs}, latest_version
       when version < latest_version ->
-        raise "Transactions must be applied in order (new #{version}, old #{latest_version})"
+        raise "Transactions must be applied in order (new #{Version.to_string(version)}, old #{Version.to_string(latest_version)})"
 
       {version, _kv_pairs}, latest_version
       when version == latest_version ->

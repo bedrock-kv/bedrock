@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.DataPlane.Log.Tracing
+  alias Bedrock.DataPlane.Version
 
   # Mock cluster module for testing
   defmodule MockCluster do
@@ -97,8 +98,8 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
 
       metadata = %{
         source_log: :log_server_2,
-        first_version: 100,
-        last_version: 150
+        first_version: Version.from_integer(100),
+        last_version: Version.from_integer(150)
       }
 
       log =
@@ -112,7 +113,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
 
     test "handles :push event" do
       measurements = %{n_keys: 3}
-      metadata = %{expected_version: 200}
+      metadata = %{expected_version: Version.from_integer(200)}
 
       log =
         capture_log(fn ->
@@ -127,8 +128,8 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       measurements = %{}
 
       metadata = %{
-        expected_version: 205,
-        current_version: 200
+        expected_version: Version.from_integer(205),
+        current_version: Version.from_integer(200)
       }
 
       log =
@@ -144,7 +145,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       measurements = %{}
 
       metadata = %{
-        from_version: 100,
+        from_version: Version.from_integer(100),
         opts: [timeout: 5000]
       }
 

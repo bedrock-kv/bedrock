@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.LogTest do
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Version
 
   describe "recovery_info/0" do
     test "returns list of fact names for recovery" do
@@ -18,13 +19,14 @@ defmodule Bedrock.DataPlane.LogTest do
   describe "initial_transaction/0" do
     test "creates transaction with version 0 and empty key map" do
       transaction = Log.initial_transaction()
+      zero_version = Version.zero()
 
       # Transaction is a tuple {version, key_values_map}
-      expected_transaction = Transaction.new(0, %{})
+      expected_transaction = Transaction.new(zero_version, %{})
       assert transaction == expected_transaction
 
       # Verify it's the expected structure
-      assert {0, %{}} = transaction
+      assert {^zero_version, %{}} = transaction
     end
   end
 
@@ -81,7 +83,7 @@ defmodule Bedrock.DataPlane.LogTest do
                :minimum_durable_version
              ]
 
-      assert Log.initial_transaction() == {0, %{}}
+      assert Log.initial_transaction() == {Version.zero(), %{}}
 
       # recover_from would need a real GenServer process to test fully
       # but we already tested it in the dedicated test above

@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
+  alias Bedrock.DataPlane.Version
 
   describe "start_pulling/4" do
     test "creates a task with proper initial state" do
@@ -267,8 +268,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       end
 
       # Create valid encoded transactions
-      transaction1 = {1, %{"key1" => "value1"}}
-      transaction2 = {2, %{"key2" => "value2"}}
+      transaction1 = {Version.from_integer(1), %{"key1" => "value1"}}
+      transaction2 = {Version.from_integer(2), %{"key2" => "value2"}}
 
       encoded_txns = [
         EncodedTransaction.encode(transaction1),
@@ -307,8 +308,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
       # Verify the transactions were decoded correctly
       assert length(transactions) == 2
-      assert {1, %{"key1" => "value1"}} in transactions
-      assert {2, %{"key2" => "value2"}} in transactions
+      assert {Version.from_integer(1), %{"key1" => "value1"}} in transactions
+      assert {Version.from_integer(2), %{"key2" => "value2"}} in transactions
 
       # Clean up
       Process.exit(loop_pid, :kill)

@@ -9,10 +9,11 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.Version
 
   describe "Lamport clock chain semantics" do
     test "consecutive version assignments form proper chains" do
-      commit0 = 100
+      commit0 = Version.from_integer(100)
 
       {:ok, sequencer} = start_sequencer(commit0)
 
@@ -28,7 +29,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
     end
 
     test "version gaps don't break causality chains" do
-      commit0 = 200
+      commit0 = Version.from_integer(200)
       {:ok, sequencer} = start_sequencer(commit0)
 
       # Assign versions 201, 202, 203 forming proper chains
@@ -42,22 +43,22 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
       # Readable horizon should advance to highest committed version
       {:ok, read_version} = Sequencer.next_read_version(sequencer)
-      assert read_version == 203
+      assert read_version == Version.from_integer(203)
 
       # New assignment should still maintain proper chain from last assigned
       {:ok, ^v3, next_commit} = Sequencer.next_commit_version(sequencer)
       # next in sequence should follow v3
-      assert next_commit == v3 + 1
+      assert next_commit == Version.increment(v3)
 
       # Late-arriving commit for gap shouldn't affect read version (monotonic)
       :ok = Sequencer.report_successful_commit(sequencer, v2)
       {:ok, final_read} = Sequencer.next_read_version(sequencer)
       # unchanged due to monotonic property
-      assert final_read == 203
+      assert final_read == Version.from_integer(203)
     end
 
     test "read version isolation from assignment counters" do
-      commit0 = 300
+      commit0 = Version.from_integer(300)
       {:ok, sequencer} = start_sequencer(commit0)
 
       # Initial read version matches initialization
@@ -70,16 +71,17 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
           commit
         end
 
-      assert versions == Enum.to_list((commit0 + 1)..(commit0 + 10))
+      expected_versions = Version.sequence(commit0, 10)
+      assert versions == expected_versions
 
       # Read version should be unchanged (no commits reported)
       {:ok, ^commit0} = Sequencer.next_read_version(sequencer)
 
       # Report only some commits
       # 305
-      reported_version1 = commit0 + 5
+      reported_version1 = Version.add(commit0, 5)
       # 307
-      reported_version2 = commit0 + 7
+      reported_version2 = Version.add(commit0, 7)
       :ok = Sequencer.report_successful_commit(sequencer, reported_version1)
       :ok = Sequencer.report_successful_commit(sequencer, reported_version2)
 
@@ -88,14 +90,14 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
       # But assignment counter continues from where it left off
       # 310
-      last_assigned = commit0 + 10
+      last_assigned = Version.add(commit0, 10)
       {:ok, ^last_assigned, next_commit} = Sequencer.next_commit_version(sequencer)
       # continues sequence
-      assert next_commit == last_assigned + 1
+      assert next_commit == Version.increment(last_assigned)
     end
 
     test "concurrent assignment preserves causality ordering" do
-      commit0 = 400
+      commit0 = Version.from_integer(400)
       {:ok, sequencer} = start_sequencer(commit0)
 
       # Simulate high concurrency - many tasks getting versions simultaneously
@@ -117,7 +119,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
       commit_versions = Enum.map(version_pairs, &elem(&1, 1))
 
       # All commit versions should be unique and in expected range
-      expected_range = Enum.to_list((commit0 + 1)..(commit0 + num_tasks))
+      expected_range = Version.sequence(commit0, num_tasks)
       assert length(commit_versions) == num_tasks
       assert Enum.sort(commit_versions) == expected_range
 
@@ -139,13 +141,13 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
   describe "edge cases and error conditions" do
     test "massive version numbers don't break invariants" do
       # Test with very large version numbers (near integer limits)
-      commit0 = 999_999_999_999
+      commit0 = Version.from_integer(999_999_999_999)
       {:ok, sequencer} = start_sequencer(commit0)
 
       {:ok, ^commit0} = Sequencer.next_read_version(sequencer)
 
       {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer)
-      assert commit1 == commit0 + 1
+      assert commit1 == Version.increment(commit0)
 
       # Report commit and verify monotonic advancement
       :ok = Sequencer.report_successful_commit(sequencer, commit1)
@@ -153,7 +155,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
     end
 
     test "duplicate commit reports are idempotent" do
-      commit0 = 500
+      commit0 = Version.from_integer(500)
       {:ok, sequencer} = start_sequencer(commit0)
 
       {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer)
@@ -168,7 +170,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
       # Next assignment should be unaffected
       {:ok, ^commit1, commit2} = Sequencer.next_commit_version(sequencer)
-      assert commit2 == commit1 + 1
+      assert commit2 == Version.increment(commit1)
     end
   end
 

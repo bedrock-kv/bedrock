@@ -3,13 +3,14 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
 
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Version
 
   describe "from_segments/2 with unloaded transactions" do
     test "demonstrates the fix - no longer crashes with enumerable error" do
       # Create a segment with nil transactions (simulating unloaded state)
       segment = %Segment{
         path: "nonexistent_path_for_test",
-        min_version: 1,
+        min_version: Version.from_integer(1),
         transactions: nil
       }
 
@@ -20,7 +21,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       # The file doesn't exist, so we expect a File.Error, not an Enumerable error
 
       assert_raise File.Error, fn ->
-        TransactionStreams.from_segments([segment], 1)
+        TransactionStreams.from_segments([segment], Version.from_integer(1))
       end
 
       # The key point is that we get a File.Error (expected) rather than:
@@ -31,7 +32,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       # Create a segment with pre-loaded transactions (reversed order as stored)
       segment = %Segment{
         path: "test_path",
-        min_version: 1,
+        min_version: Version.from_integer(1),
         transactions: [
           <<2::unsigned-big-64, "transaction_2"::binary>>,
           <<1::unsigned-big-64, "transaction_1"::binary>>
@@ -39,7 +40,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       }
 
       # This should work normally
-      result = TransactionStreams.from_segments([segment], 1)
+      result = TransactionStreams.from_segments([segment], Version.from_integer(1))
 
       assert {:ok, stream} = result
 

@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Shale.Writer
+  alias Bedrock.DataPlane.Version
 
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
 
@@ -77,7 +78,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
          <<version::binary-size(8), _::binary>> = bytes,
          {last_version, t}
        ) do
-    handle_valid_transaction_bytes(bytes, version, last_version, t)
+    handle_valid_transaction_bytes(bytes, Version.from_bytes(version), last_version, t)
   end
 
   defp process_transaction_bytes(_, _) do

@@ -188,12 +188,16 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       # Should update the deadline
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
       assert new_deadline > now
+
       # New deadline should be roughly now + 10 + renewal_interval_in_ms
-      expected_min = now + 5_010
-      # Allow small timing variance
-      expected_max = now + 5_020
-      assert new_deadline >= expected_min
-      assert new_deadline <= expected_max
+      # Calculate the actual interval and verify it's within expected range
+      actual_interval = new_deadline - now
+      # 10ms + renewal_interval_in_ms
+      expected_interval = 10 + 5_000
+
+      # Allow small timing variance (±10ms)
+      assert actual_interval >= expected_interval
+      assert actual_interval <= expected_interval + 10
     end
 
     test "handles version not in deadline_by_version map", %{base_state: base_state} do
@@ -263,12 +267,15 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
 
       # Verify the calculation: new_lease_deadline_in_ms = now + 10 + renewal_deadline_in_ms
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-      # Allow for small timing differences since we can't control exact timing
-      expected_min = now + 10 + custom_renewal_interval - 5
-      expected_max = now + 10 + custom_renewal_interval + 5
 
-      assert new_deadline >= expected_min
-      assert new_deadline <= expected_max
+      # Calculate the actual interval between now and new_deadline
+      actual_interval = new_deadline - now
+      expected_interval = 10 + custom_renewal_interval
+
+      # Allow for small timing differences since we can't control exact timing
+      # The interval should be roughly expected_interval ± 5ms
+      assert actual_interval >= expected_interval - 5
+      assert actual_interval <= expected_interval + 5
     end
 
     test "handles boundary case when deadline exactly equals current time", %{
@@ -305,9 +312,15 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
 
       # With minimum renewal interval, new deadline should be now + 10 + 1
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-      assert new_deadline >= now + 10
-      # Allow for timing variance
-      assert new_deadline <= now + 15
+
+      # Calculate the actual interval and verify it's within expected range
+      actual_interval = new_deadline - now
+      # 10ms + renewal_interval_in_ms
+      expected_interval = 10 + 1
+
+      # Allow for timing variance (minimum should be expected, max should be expected + 5ms)
+      assert actual_interval >= expected_interval
+      assert actual_interval <= expected_interval + 5
     end
 
     test "handles large renewal intervals", %{base_state: base_state} do
@@ -327,11 +340,14 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       assert {:ok, ^large_interval} = result
 
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-      expected_min = now + 10 + large_interval - 10
-      expected_max = now + 10 + large_interval + 10
 
-      assert new_deadline >= expected_min
-      assert new_deadline <= expected_max
+      # Calculate the actual interval and verify it's within expected range
+      actual_interval = new_deadline - now
+      expected_interval = 10 + large_interval
+
+      # Allow timing variance (±10ms)
+      assert actual_interval >= expected_interval - 10
+      assert actual_interval <= expected_interval + 10
     end
   end
 

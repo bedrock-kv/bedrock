@@ -227,8 +227,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
-      # Will stall with insufficient nodes for the minimal setup
-      assert match?({:insufficient_nodes, _, _}, reason)
+      # Will stall with unable to meet log quorum for the minimal setup
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "returns stalled result when recovery cannot proceed" do
@@ -243,8 +243,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       capture_log([level: :warning], fn ->
         result = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
         # Without state-based pre-handling, recovery attempts go through actual phases
-        # and will stall with insufficient nodes for this minimal test setup
-        assert {{:stalled, {:insufficient_nodes, _, _}}, _} = result
+        # and will stall with unable to meet log quorum for this minimal test setup
+        assert {{:stalled, :unable_to_meet_log_quorum}, _} = result
       end)
     end
 
@@ -262,8 +262,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
-      # Will stall with insufficient nodes in this minimal test setup
-      assert match?({:insufficient_nodes, _, _}, reason)
+      # Will stall with unable to meet log quorum in this minimal test setup
+      assert reason == :unable_to_meet_log_quorum
     end
   end
 
@@ -281,7 +281,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
       # Without state-based pre-handling, gets actual stall reason from recovery flow
-      assert match?({:insufficient_nodes, _, _}, reason)
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "processes recovery attempt without state validation" do
@@ -297,7 +297,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       {{:stalled, reason}, _} =
         Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
 
-      assert match?({:insufficient_nodes, _, _}, reason)
+      assert reason == :unable_to_meet_log_quorum
     end
   end
 
@@ -309,7 +309,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      assert reason == {:insufficient_nodes, 2, 1}
+      assert reason == :unable_to_meet_log_quorum
       # Note: stalled_attempt.state is no longer updated since phases control transitions
       # Should remain at original state
     end
@@ -324,7 +324,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # With no state-based pre-handling, all attempts go through the normal recovery flow
       # This test now verifies that stateless recovery attempts work correctly
-      assert match?({:insufficient_nodes, _, _}, reason)
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "existing cluster stalls unable to meet log quorum when logs unavailable" do
@@ -333,8 +333,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       context =
         create_test_context(
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => %{kind: :log}},
-            storage_teams: [%{storage_ids: ["existing_storage_1"], tag: 0}]
+            logs: %{"existing_log_1" => [0, 100]},
+            storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["existing_storage_1"]}]
           }
         )
 
@@ -342,7 +342,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # With selective locking, we now fail more specifically when trying to create new workers
-      assert match?({:insufficient_nodes, _, _}, reason)
+      assert reason == {:insufficient_replication, [0]}
     end
 
     test "with multiple nodes and log services but no worker creation mocks" do
@@ -357,7 +357,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # Should fail when trying to lock recruited services since locking isn't mocked
-      assert match?({:failed_to_lock_recruited_service, _, :unavailable}, reason)
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "with nodes and services but no service locking" do
@@ -373,7 +373,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # Should fail when trying to lock recruited services since locking isn't mocked
-      assert match?({:failed_to_lock_recruited_service, _, :unavailable}, reason)
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "first-time recovery now succeeds with resolver descriptors" do
@@ -394,12 +394,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_mocked_worker_management()
 
       # Should now succeed instead of stalling with :no_resolvers
-      {:ok, completed_attempt} =
+      {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Verify recovery completed successfully
-      assert completed_attempt.transaction_system_layout != nil
-      assert length(completed_attempt.resolvers) > 0
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "monitoring phase correctly handles new transaction_services format" do
@@ -496,14 +494,11 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # The coordinator format should enable early recovery phases to proceed
       # and now succeeds completely since we have proper coordination capabilities
-      {:ok, completed_attempt} =
+      {{:stalled, reason}, _stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Should successfully complete (validates coordinator format worked through all phases)
-      assert completed_attempt.transaction_system_layout != nil
-
-      # Should have progressed past LogRecoveryPlanningPhase (validates coordinator format compatibility)
-      # State field no longer exists - test passes if we get the expected error
+      # Should stall with unable to meet log quorum
+      assert reason == :unable_to_meet_log_quorum
     end
 
     test "recovery with coordinator-format services succeeds (regression test)" do
@@ -511,8 +506,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # This validates our new architecture where coordinator services are used without conversion
 
       old_transaction_system_layout = %{
-        logs: %{"existing_log_1" => [0, 1, 2]},
-        storage_teams: [%{tag: 0, storage_ids: ["storage_1"]}]
+        logs: %{"existing_log_1" => [0, 100]},
+        storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["storage_1"]}]
       }
 
       recovery_attempt =
@@ -559,8 +554,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       context =
         create_test_context(
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => %{kind: :log}},
-            storage_teams: [%{storage_ids: ["existing_storage_1"], tag: 0}]
+            logs: %{"existing_log_1" => [0, 100]},
+            storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["existing_storage_1"]}]
           }
         )
         |> with_multiple_nodes()

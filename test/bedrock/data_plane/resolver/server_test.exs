@@ -175,6 +175,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
   describe "private functions" do
     test "module compiles and has expected structure" do
+      # Ensure module is loaded before checking exports
+      Code.ensure_loaded!(Server)
+
       # We can't directly test private functions like reply_fn/1
       # but we can verify the module structure
       assert is_atom(Server)

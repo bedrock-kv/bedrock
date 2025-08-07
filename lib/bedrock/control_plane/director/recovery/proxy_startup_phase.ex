@@ -87,30 +87,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
 
       available_nodes
       |> distribute_proxies_round_robin(n_proxies)
-      |> Task.async_stream(
-        fn node ->
-          start_supervised.(child_spec, node)
-          |> case do
-            {:ok, pid} -> {node, pid}
-            {:error, reason} -> {node, {:error, reason}}
-          end
-        end,
-        ordered: false
-      )
-      |> Enum.reduce_while([], fn
-        {:ok, {_node, pid}}, pids when is_pid(pid) ->
-          {:cont, [pid | pids]}
+      |> start_proxies_on_nodes(child_spec, start_supervised)
+    end
+  end
 
-        {:ok, {node, {:error, reason}}}, _ ->
-          {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
+  @spec start_proxies_on_nodes(
+          [node()],
+          Supervisor.child_spec(),
+          (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
+        ) ::
+          {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), term()}}
+  defp start_proxies_on_nodes(nodes, child_spec, start_supervised) do
+    nodes
+    |> Task.async_stream(
+      fn node ->
+        start_supervised.(child_spec, node)
+        |> case do
+          {:ok, pid} -> {node, pid}
+          {:error, reason} -> {node, {:error, reason}}
+        end
+      end,
+      ordered: false
+    )
+    |> Enum.reduce_while([], fn
+      {:ok, {_node, pid}}, pids when is_pid(pid) ->
+        {:cont, [pid | pids]}
 
-        {:exit, {node, reason}}, _ ->
-          {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
-      end)
-      |> case do
-        {:error, reason} -> {:error, reason}
-        pids -> {:ok, pids}
-      end
+      {:ok, {node, {:error, reason}}}, _ ->
+        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
+
+      {:exit, {node, reason}}, _ ->
+        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
+    end)
+    |> case do
+      {:error, reason} -> {:error, reason}
+      pids -> {:ok, pids}
     end
   end
 

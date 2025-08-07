@@ -36,9 +36,16 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     do: {:ok, args, {:continue, :finish_startup}}
 
   @impl true
-  def terminate(_, %State{} = t) do
-    Logic.shutdown(t)
-    :normal
+  def terminate(_reason, %State{} = state) do
+    Logic.shutdown(state)
+    :ok
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    # Handle termination when server hasn't fully initialized yet
+    # or is in any other state (e.g., during startup)
+    :ok
   end
 
   @impl true

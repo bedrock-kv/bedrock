@@ -19,9 +19,12 @@ defmodule Bedrock.DataPlane.Version do
 
   @doc "Creates a version from a non-negative integer"
   @spec from_integer(non_neg_integer()) :: t()
-  def from_integer(int) when is_integer(int) and int >= 0 and int <= 0xFFFFFFFFFFFFFFFF do
-    <<int::unsigned-big-64>>
-  end
+  def from_integer(int) when is_integer(int) and int >= 0 and int <= 0xFFFFFFFFFFFFFFFF,
+    do: <<int::unsigned-big-64>>
+
+  @doc "Creates a version from a binary representation"
+  @spec from_bytes(binary()) :: t()
+  def from_bytes(version) when byte_size(version) == 8, do: version
 
   @doc "Converts a version to integer representation"
   @spec to_integer(t()) :: non_neg_integer()
@@ -32,7 +35,7 @@ defmodule Bedrock.DataPlane.Version do
   def to_string(nil), do: "nil"
 
   def to_string(version) do
-    "<#{version |> :erlang.binary_to_list() |> Enum.map(&Integer.to_string/1) |> Enum.join(",")}>"
+    "<#{version |> :erlang.binary_to_list() |> Enum.map_join(",", &Integer.to_string/1)}>"
   end
 
   @doc "Increments a version by 1"

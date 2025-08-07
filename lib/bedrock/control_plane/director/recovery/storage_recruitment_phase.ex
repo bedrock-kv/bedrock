@@ -1,6 +1,6 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   @moduledoc """
-  Transforms storage team vacancy placeholders into concrete service assignments using 
+  Transforms storage team vacancy placeholders into concrete service assignments using
   ultra-conservative data preservation approach.
 
   Solves the challenge of filling storage positions without accidentally destroying valuable
@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   Stalls if insufficient nodes exist for worker creation or if recruited services fail
   to lock. However, immediately halts with error if any service is locked by a newer
-  epoch (this director has been superseded). Transitions to log replay with complete 
+  epoch (this director has been superseded). Transitions to log replay with complete
   storage service assignments.
 
   See the Storage Recruitment section in `docs/knowlege_base/02-deep/recovery-narrative.md`
@@ -39,11 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       recovery_attempt.storage_teams
       |> Enum.reduce(MapSet.new(), &Enum.into(&1.storage_ids, &2))
 
-    old_system_storage_ids =
-      context.old_transaction_system_layout
-      |> Map.get(:storage_teams, [])
-      |> Enum.flat_map(& &1.storage_ids)
-      |> MapSet.new()
+    old_system_storage_ids = get_old_storage_ids(context)
 
     available_storage_ids =
       context.available_services
@@ -74,6 +70,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
         )
     end
   end
+
+  defp get_old_storage_ids(%{old_transaction_system_layout: %{storage_teams: storage_teams}}) do
+    storage_teams
+    |> Enum.flat_map(& &1.storage_ids)
+    |> MapSet.new()
+  end
+
+  defp get_old_storage_ids(_), do: MapSet.new()
 
   @spec handle_successful_vacancy_filling([map()], [String.t()], [node()], map(), map()) ::
           {map(), module()} | {map(), {:stalled, term()}} | {map(), {:error, :newer_epoch_exists}}

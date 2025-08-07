@@ -58,6 +58,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
         |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
         |> fetch_from_storage(key)
 
+      {:error, :unavailable} ->
+        raise "No read version available for fetching key: #{inspect(key)}"
+
       {:error, _reason} = error ->
         error
     end

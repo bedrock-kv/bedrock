@@ -85,8 +85,9 @@ defmodule RecoveryTestSupport do
       log_recovery_info_by_id: %{},
       storage_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
-      version_vector: {0, 0},
-      durable_version: 0,
+      version_vector:
+        {Bedrock.DataPlane.Version.from_integer(0), Bedrock.DataPlane.Version.from_integer(0)},
+      durable_version: Bedrock.DataPlane.Version.from_integer(0),
       degraded_teams: [],
       logs: %{},
       storage_teams: [],

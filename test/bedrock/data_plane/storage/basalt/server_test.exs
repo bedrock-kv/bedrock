@@ -148,6 +148,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.ServerTest do
 
   describe "terminate/2" do
     test "has terminate callback defined for proper cleanup" do
+      # Ensure module is loaded before checking exports
+      Code.ensure_loaded!(Server)
+
       # Test that the terminate function exists and has the right arity
       # Testing the actual termination requires a real database setup
       assert function_exported?(Server, :terminate, 2)
@@ -156,6 +159,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.ServerTest do
 
   describe "module structure" do
     test "exports expected GenServer functions" do
+      # Ensure module is loaded before checking exports
+      Code.ensure_loaded!(Server)
+
       # Verify the module has the expected GenServer callbacks
       assert function_exported?(Server, :init, 1)
       assert function_exported?(Server, :handle_call, 3)

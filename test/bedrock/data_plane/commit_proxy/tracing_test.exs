@@ -26,7 +26,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
           Tracing.trace(:start, measurements, metadata)
         end)
 
-      assert log_output =~ "Transaction Batch 123 started with 5 transactions"
+      assert log_output =~ "Transaction Batch <0,0,0,0,0,0,0,123> started with 5 transactions"
     end
 
     test "traces stop event" do
@@ -38,7 +38,9 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
           Tracing.trace(:stop, measurements, metadata)
         end)
 
-      assert log_output =~ "Transaction Batch 124 completed with 2 aborts and 8 oks"
+      assert log_output =~
+               "Transaction Batch <0,0,0,0,0,0,0,124> completed with 2 aborts and 8 oks"
+
       # The function rounds microseconds
       assert log_output =~ "1ms"
     end
@@ -65,7 +67,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
           Tracing.trace(:failed, measurements, metadata)
         end)
 
-      assert log_output =~ "Transaction Batch 1 failed"
+      assert log_output =~ "Transaction Batch <0,0,0,0,0,0,0,1> failed"
       assert log_output =~ "{:log_failures, [{\"byj7vnbf\", :tx_out_of_order}]}"
       assert log_output =~ "437μs"
     end
@@ -88,7 +90,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
             Tracing.trace(:failed, measurements, metadata)
           end)
 
-        assert log_output =~ "Transaction Batch 42 failed"
+        assert log_output =~ "Transaction Batch <0,0,0,0,0,0,0,42> failed"
         assert log_output =~ expected_text
         assert log_output =~ "1ms"
       end)
@@ -124,7 +126,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
           Tracing.handler(event_name, measurements, metadata, nil)
         end)
 
-      assert log_output =~ "Transaction Batch 99 failed"
+      assert log_output =~ "Transaction Batch <0,0,0,0,0,0,0,99> failed"
       assert log_output =~ "storage_failures"
     end
   end

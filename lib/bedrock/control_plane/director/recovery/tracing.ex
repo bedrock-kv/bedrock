@@ -31,11 +31,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :log_recruitment_completed],
         [:bedrock, :recovery, :log_validation_started],
         [:bedrock, :recovery, :log_service_status],
-        [:bedrock, :recovery, :service_availability],
         [:bedrock, :recovery, :attempt_persisted],
         [:bedrock, :recovery, :attempt_persist_failed],
         [:bedrock, :recovery, :layout_persisted],
         [:bedrock, :recovery, :layout_persist_failed],
+        [:bedrock, :recovery, :tsl_validation_success],
+        [:bedrock, :recovery, :tsl_validation_failed],
         [:bedrock, :recovery, :unexpected_state]
       ],
       &__MODULE__.handler/4,
@@ -185,30 +186,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     end
   end
 
-  def trace(:service_availability, _, %{
-        old_logs: old_logs,
-        available_service_ids: available_service_ids,
-        service_details: service_details
-      }) do
-    info("Service availability check:")
-    info("  Old logs requiring recovery: #{inspect(old_logs)}")
-    info("  Available services: #{inspect(available_service_ids)}")
-
-    # Check which old logs have matching services
-    missing_services = old_logs |> Enum.reject(&(&1 in available_service_ids))
-    available_for_recovery = old_logs |> Enum.filter(&(&1 in available_service_ids))
-
-    if missing_services != [] do
-      error("  Missing services for old logs: #{inspect(missing_services)}")
-    end
-
-    if available_for_recovery != [] do
-      info("  Services available for recovery: #{inspect(available_for_recovery)}")
-    end
-
-    debug("  Service details: #{inspect(service_details)}")
-  end
-
   def trace(:attempt_persisted, _, %{txn_id: txn_id}),
     do: info("Recovery attempt persisted with txn ID: #{inspect(txn_id)}")
 
@@ -220,6 +197,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   def trace(:layout_persist_failed, _, %{reason: reason}),
     do: error("Failed to persist new transaction system layout: #{inspect(reason)}")
+
+  def trace(:tsl_validation_success, _, _),
+    do: info("TSL type safety validation passed")
+
+  def trace(:tsl_validation_failed, _, %{
+        transaction_system_layout: tsl,
+        validation_error: validation_error
+      }) do
+    error("""
+    TSL type safety validation failed during recovery - this indicates data corruption.
+
+    Validation Error: #{inspect(validation_error, limit: :infinity)}
+
+    TSL Components being validated:
+      - Logs: #{inspect(Map.get(tsl, :logs), limit: 10)}
+      - Storage Teams: #{inspect(Map.get(tsl, :storage_teams), limit: 5)}
+      - Resolvers: #{inspect(Map.get(tsl, :resolvers), limit: 5)}
+
+    This indicates the TSL data was corrupted, likely due to improper integer-to-binary
+    version conversion. Manual intervention may be required to fix the underlying data.
+    """)
+  end
 
   def trace(:unexpected_state, _, %{unexpected_state: unexpected_state, full_state: full_state}) do
     error("Recovery attempt in unexpected state: #{inspect(unexpected_state)}")

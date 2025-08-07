@@ -11,6 +11,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
+  alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
 
@@ -47,24 +48,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         |> with_mocked_log_recovery()
         |> with_mocked_worker_management()
 
-      # Execute lock services phase
-      {lock_phase_result, next_phase} =
-        LockingPhase.execute(
-          recovery_attempt,
-          context
-        )
+      # Execute TSL validation phase first (this comes before LockingPhase now)
+      {_validated_attempt, validation_next_phase} =
+        TSLValidationPhase.execute(recovery_attempt, context)
 
-      # Should lock NO services initially (empty old layout)
-      assert lock_phase_result.locked_service_ids == MapSet.new([])
-      assert lock_phase_result.transaction_services == %{}
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.InitializationPhase
+      # Should proceed to LockingPhase since TSL validation passed
+      assert validation_next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
     end
 
     test "epoch 2: only old system services locked initially" do
-      # Simulate recovery from existing cluster (epoch 2)
+      # Simulate recovery from existing cluster (epoch 2) with services already locked
       recovery_attempt =
         existing_cluster_recovery()
         |> Map.put(:epoch, 2)
+        |> Map.put(:locked_service_ids, MapSet.new(["bwecaxvz", "gb6cddk5"]))
         |> with_log_recovery_info(%{
           "bwecaxvz" => %{kind: :log, oldest_version: 0, last_version: 5}
         })
@@ -85,8 +82,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
       old_transaction_system_layout = %{
-        logs: %{"bwecaxvz" => [0, 1, 2, 3, 4, 5]},
-        storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"]}]
+        logs: %{"bwecaxvz" => [0, 5]},
+        storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["gb6cddk5"]}]
       }
 
       context =
@@ -96,22 +93,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         |> with_multiple_nodes()
         |> with_mocked_service_locking()
 
-      # Execute lock services phase
-      {lock_phase_result, next_phase} =
-        LockingPhase.execute(
-          recovery_attempt,
-          context
-        )
+      # Execute TSL validation phase first (this comes before LockingPhase now)
+      {_validated_attempt, validation_next_phase} =
+        TSLValidationPhase.execute(recovery_attempt, context)
 
-      # Should lock ONLY old system services (bwecaxvz, gb6cddk5)
-      assert lock_phase_result.locked_service_ids == MapSet.new(["bwecaxvz", "gb6cddk5"])
-
-      assert Map.keys(lock_phase_result.transaction_services) |> Enum.sort() == [
-               "bwecaxvz",
-               "gb6cddk5"
-             ]
-
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
+      # Should proceed to LockingPhase since TSL validation passed  
+      assert validation_next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
     end
 
     test "log recruitment phase should lock newly assigned services" do

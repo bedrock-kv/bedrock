@@ -22,12 +22,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
             |> String.replace_prefix(Segment.file_prefix(), "")
             |> String.replace_suffix(".log", "")
             |> String.to_integer(32)
+            |> Version.from_integer()
 
           {min_version, path}
         end)
         |> Enum.sort_by(&elem(&1, 0), :desc)
         |> Enum.map(fn {min_version, path} ->
-          %Segment{min_version: Version.from_integer(min_version), path: path}
+          %Segment{min_version: min_version, path: path}
         end)
         |> then(&{:ok, &1})
 

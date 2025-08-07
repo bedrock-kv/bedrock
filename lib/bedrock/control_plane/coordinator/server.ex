@@ -104,25 +104,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       log = Raft.log(t.raft)
       newest_safe_txn_id = Log.newest_safe_transaction_id(log)
 
-      # Find any pending transactions that are actually already committed
-      already_committed_txns =
-        Map.keys(t.waiting_list)
-        |> Enum.filter(fn txn_id ->
-          # Transaction is committed if it's <= newest_safe_transaction_id
-          txn_id <= newest_safe_txn_id
-        end)
-        |> Enum.sort()
-
-      if length(already_committed_txns) > 0 do
-        Logger.info(
-          "Bedrock [#{t.cluster}]: Sending recovery consensus for #{length(already_committed_txns)} already-committed transactions: #{inspect(already_committed_txns)}"
-        )
-
-        # Send consensus_reached messages for each already-committed transaction
-        Enum.each(already_committed_txns, fn txn_id ->
-          send(self(), {:raft, :consensus_reached, log, txn_id, :latest})
-        end)
-      end
+      # Find and send consensus for already-committed transactions
+      send_recovery_consensus_for_committed_transactions(t, log, newest_safe_txn_id)
     end
 
     {:noreply, t}
@@ -340,6 +323,30 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   # Private helper functions
+
+  @spec send_recovery_consensus_for_committed_transactions(State.t(), Log.t(), non_neg_integer()) ::
+          :ok
+  defp send_recovery_consensus_for_committed_transactions(t, log, newest_safe_txn_id) do
+    # Find any pending transactions that are actually already committed
+    already_committed_txns =
+      Map.keys(t.waiting_list)
+      |> Enum.filter(fn txn_id ->
+        # Transaction is committed if it's <= newest_safe_transaction_id
+        txn_id <= newest_safe_txn_id
+      end)
+      |> Enum.sort()
+
+    if length(already_committed_txns) > 0 do
+      Logger.info(
+        "Bedrock [#{t.cluster}]: Sending recovery consensus for #{length(already_committed_txns)} already-committed transactions: #{inspect(already_committed_txns)}"
+      )
+
+      # Send consensus_reached messages for each already-committed transaction
+      Enum.each(already_committed_txns, fn txn_id ->
+        send(self(), {:raft, :consensus_reached, log, txn_id, :latest})
+      end)
+    end
+  end
 
   @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
   defp try_to_start_director_after_first_consensus(

@@ -40,7 +40,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   @type t :: binary()
 
   @spec version(t()) :: Bedrock.version()
-  def version(<<version::binary-size(8), _::binary>>), do: version
+  def version(<<version::binary-size(8), _::binary>>), do: Version.from_bytes(version)
 
   @spec key_count(t()) :: non_neg_integer()
   def key_count(
@@ -139,13 +139,13 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
   """
   @spec decode(t()) :: {:ok, Transaction.t()} | {:error, :crc32_mismatch}
   def decode(
-        <<version::unsigned-big-64, size_in_bytes::unsigned-big-32,
+        <<version::binary-size(8), size_in_bytes::unsigned-big-32,
           payload::binary-size(size_in_bytes), crc32::unsigned-big-32>>
       ) do
     if crc32 != :erlang.crc32(payload) do
       {:error, :crc32_mismatch}
     else
-      {:ok, {Version.from_integer(version), decode_key_value_frames(payload)}}
+      {:ok, {version, decode_key_value_frames(payload)}}
     end
   end
 
@@ -193,7 +193,7 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
   @spec iodata_transform_by_removing_keys_outside_of_range(t(), Bedrock.key_range()) :: iodata()
   def iodata_transform_by_removing_keys_outside_of_range(
-        <<version::unsigned-big-64, n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
+        <<version::binary-size(8), n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
           _::unsigned-big-32>> =
           original_transaction,
         {min_key, max_key_ex}
@@ -213,15 +213,14 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
       # The transaction is entirely outside the range.
       {_, 0} ->
-        [Version.from_integer(version), <<0::unsigned-big-32, 0::unsigned-big-32>>]
-        |> IO.iodata_to_binary()
+        <<version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
 
       # The transaction is partially inside the range, slice out the relevant
       # key-value frames and reassemble the transaction.
       {start, size_in_bytes} ->
         payload
         |> binary_part(start, size_in_bytes)
-        |> wrap_with_version_and_crc32(Version.from_integer(version))
+        |> wrap_with_version_and_crc32(Version.from_bytes(version))
     end
   end
 
@@ -299,12 +298,12 @@ defmodule Bedrock.DataPlane.Log.EncodedTransaction do
 
   @spec iodata_transform_by_excluding_values(t()) :: iodata()
   def iodata_transform_by_excluding_values(
-        <<version::unsigned-big-64, n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
+        <<version::binary-size(8), n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
           _::unsigned-big-32>>
       ) do
     payload
     |> exclude_values_from_payload()
-    |> wrap_with_version_and_crc32(Version.from_integer(version))
+    |> wrap_with_version_and_crc32(Version.from_bytes(version))
   end
 
   @spec exclude_values_from_payload(binary()) :: iodata()

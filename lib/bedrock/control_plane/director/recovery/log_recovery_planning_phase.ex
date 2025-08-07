@@ -196,29 +196,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   def evaluate_shard_combinations(logs_by_shard, all_logs_by_shard) do
     logs_by_shard
     |> Enum.map(fn {range_tag, shard_logs_with_recovery} ->
-      # Get total logs in this shard and calculate required quorum
-      total_logs_in_shard = length(Map.get(all_logs_by_shard, range_tag, []))
-      shard_quorum = determine_quorum(total_logs_in_shard)
-
-      # Check if we have enough logs with recovery info to meet quorum
-      if length(shard_logs_with_recovery) < shard_quorum do
-        # Cannot meet quorum in this shard
-        nil
-      else
-        # Apply existing algorithm within each shard using shard-specific quorum
-        shard_logs_with_recovery
-        |> Enum.map(fn {log_id, recovery_info} ->
-          {log_id, {recovery_info[:oldest_version], recovery_info[:last_version]}}
-        end)
-        |> combinations(shard_quorum)
-        |> build_log_groups_and_vectors_from_combinations()
-        |> rank_log_groups()
-        |> List.first()
-        |> case do
-          nil -> nil
-          {log_ids, version_vector} -> {range_tag, {log_ids, version_vector}}
-        end
-      end
+      evaluate_single_shard_combination(range_tag, shard_logs_with_recovery, all_logs_by_shard)
     end)
     |> Enum.reject(&is_nil/1)
     |> case do
@@ -231,6 +209,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
       # Not all shards met quorum
       _ ->
         nil
+    end
+  end
+
+  @spec evaluate_single_shard_combination(
+          Bedrock.range_tag(),
+          [{Log.id(), Log.recovery_info()}],
+          %{Bedrock.range_tag() => [Log.id()]}
+        ) :: {Bedrock.range_tag(), {[Log.id()], Bedrock.version_vector()}} | nil
+  defp evaluate_single_shard_combination(range_tag, shard_logs_with_recovery, all_logs_by_shard) do
+    # Get total logs in this shard and calculate required quorum
+    total_logs_in_shard = length(Map.get(all_logs_by_shard, range_tag, []))
+    shard_quorum = determine_quorum(total_logs_in_shard)
+
+    # Check if we have enough logs with recovery info to meet quorum
+    if length(shard_logs_with_recovery) < shard_quorum do
+      # Cannot meet quorum in this shard
+      nil
+    else
+      # Apply existing algorithm within each shard using shard-specific quorum
+      shard_logs_with_recovery
+      |> Enum.map(fn {log_id, recovery_info} ->
+        {log_id, {recovery_info[:oldest_version], recovery_info[:last_version]}}
+      end)
+      |> combinations(shard_quorum)
+      |> build_log_groups_and_vectors_from_combinations()
+      |> rank_log_groups()
+      |> List.first()
+      |> case do
+        nil -> nil
+        {log_ids, version_vector} -> {range_tag, {log_ids, version_vector}}
+      end
     end
   end
 

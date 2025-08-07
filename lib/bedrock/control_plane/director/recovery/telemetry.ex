@@ -1,6 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Telemetry
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @doc """
   Emits a telemetry event indicating that the cluster director has started
@@ -180,16 +181,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_service_availability([String.t()], [String.t()], %{String.t() => term()}) ::
-          :ok
-  def trace_recovery_service_availability(old_logs, available_service_ids, service_details) do
-    Telemetry.execute([:bedrock, :recovery, :service_availability], %{}, %{
-      old_logs: old_logs,
-      available_service_ids: available_service_ids,
-      service_details: service_details
-    })
-  end
-
   @spec trace_recovery_attempt_persisted(any()) :: :ok
   def trace_recovery_attempt_persisted(txn_id) do
     Telemetry.execute([:bedrock, :recovery, :attempt_persisted], %{}, %{
@@ -223,6 +214,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     Telemetry.execute([:bedrock, :recovery, :unexpected_state], %{}, %{
       unexpected_state: unexpected_state,
       full_state: full_state
+    })
+  end
+
+  @spec trace_recovery_tsl_validation_success() :: :ok
+  def trace_recovery_tsl_validation_success do
+    Telemetry.execute([:bedrock, :recovery, :tsl_validation_success], %{}, %{})
+  end
+
+  @spec trace_recovery_tsl_validation_failed(
+          TransactionSystemLayout.t(),
+          validation_error :: term()
+        ) :: :ok
+  def trace_recovery_tsl_validation_failed(transaction_system_layout, validation_error) do
+    Telemetry.execute([:bedrock, :recovery, :tsl_validation_failed], %{}, %{
+      transaction_system_layout: transaction_system_layout,
+      validation_error: validation_error
     })
   end
 end

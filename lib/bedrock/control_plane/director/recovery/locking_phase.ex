@@ -43,13 +43,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
       {:ok, locked_service_ids, log_recovery_info_by_id, storage_recovery_info_by_id,
        transaction_services, service_pids} ->
-        next_phase_module =
-          if MapSet.size(locked_service_ids) == 0 do
-            Bedrock.ControlPlane.Director.Recovery.InitializationPhase
-          else
-            Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
-          end
-
         updated_recovery_attempt =
           recovery_attempt
           |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
@@ -61,7 +54,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           |> Map.update!(:transaction_services, &Map.merge(transaction_services, &1))
           |> Map.update!(:service_pids, &Map.merge(service_pids, &1))
 
-        {updated_recovery_attempt, next_phase_module}
+        {updated_recovery_attempt,
+         Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase}
     end
   end
 

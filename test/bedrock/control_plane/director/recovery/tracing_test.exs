@@ -126,7 +126,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
           })
         end)
 
-      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 100"
+      assert log_output =~
+               "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,0,0,0,100>"
     end
 
     test "traces durable version chosen event with nil version" do
@@ -148,7 +149,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
           })
         end)
 
-      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 999999999"
+      assert log_output =~
+               "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,59,154,201,255>"
     end
 
     test "traces durable version chosen event with zero version" do
@@ -159,7 +161,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
           })
         end)
 
-      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: 0"
+      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,0,0,0,0>"
     end
 
     test "traces team health with no teams" do

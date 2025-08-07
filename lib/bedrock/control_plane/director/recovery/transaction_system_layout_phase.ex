@@ -61,6 +61,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.TSLTypeValidator
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
@@ -109,6 +110,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
              context.lock_token,
              context
            ) do
+      # Validate the constructed TSL for type safety
+      TSLTypeValidator.assert_type_safety!(transaction_system_layout)
+
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
 

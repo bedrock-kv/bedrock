@@ -73,7 +73,7 @@ defmodule Bedrock.Cluster.GatewayTest do
   describe "renew_read_version_lease/3" do
     test "renews lease with read version and default options" do
       test_pid = self()
-      read_version = 12345
+      read_version = 12_345
 
       spawn(fn ->
         Gateway.renew_read_version_lease(test_pid, read_version, [])
@@ -86,8 +86,8 @@ defmodule Bedrock.Cluster.GatewayTest do
 
     test "renews lease with custom timeout options" do
       test_pid = self()
-      read_version = 54321
-      opts = [timeout_in_ms: 3000]
+      read_version = 54_321
+      opts = [timeout_in_ms: 3_000]
 
       spawn(fn ->
         Gateway.renew_read_version_lease(test_pid, read_version, opts)
@@ -232,7 +232,7 @@ defmodule Bedrock.Cluster.GatewayTest do
         Gateway.get_descriptor(test_pid)
       end)
 
-      # Verify the call was made 
+      # Verify the call was made
       assert_call_received(:get_descriptor)
     end
 

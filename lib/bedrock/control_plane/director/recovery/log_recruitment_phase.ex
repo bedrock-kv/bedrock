@@ -8,11 +8,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   **Three-Phase Assignment Strategy**:
   1. Prefer existing log services that weren't part of the old transaction system
-  2. Create new log workers using round-robin distribution across nodes when needed  
+  2. Create new log workers using round-robin distribution across nodes when needed
   3. Lock all recruited services (existing and new) to establish exclusive control
 
   **Constraints**: Old system services are excluded to preserve committed transaction data
-  in case this recovery fails and another one starts. All recruited services must be 
+  in case this recovery fails and another one starts. All recruited services must be
   successfully locked before proceeding to ensure readiness for transaction processing.
 
   Stalls if insufficient nodes exist for worker creation or if recruited services fail
@@ -33,19 +33,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   @impl true
   def execute(recovery_attempt, context) do
-    old_system_log_ids =
-      context.old_transaction_system_layout
-      |> Map.get(:logs)
-      |> Map.keys()
-      |> MapSet.new()
-
-    available_log_ids =
-      context.available_services
-      |> Enum.filter(fn {_id, {kind, _}} -> kind == :log end)
-      |> Enum.map(&elem(&1, 0))
-      |> MapSet.new()
-
-    available_log_nodes = Map.get(context.node_capabilities, :log, [])
+    old_system_log_ids = get_old_system_log_ids(context)
+    available_log_ids = get_available_log_ids(context)
+    available_log_nodes = get_available_log_nodes(context)
 
     with {:ok, logs, new_worker_ids} <-
            fill_log_vacancies(
@@ -90,6 +80,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         {recovery_attempt, {:stalled, reason}}
     end
   end
+
+  defp get_old_system_log_ids(%{old_transaction_system_layout: %{logs: old_logs}}),
+    do: old_logs |> Map.keys() |> MapSet.new()
+
+  defp get_old_system_log_ids(_), do: MapSet.new()
+
+  defp get_available_log_ids(%{available_services: available_services}) do
+    available_services
+    |> Enum.filter(fn {_id, {kind, _}} -> kind == :log end)
+    |> Enum.map(&elem(&1, 0))
+    |> MapSet.new()
+  end
+
+  defp get_available_log_nodes(%{node_capabilities: node_capabilities}),
+    do: Map.get(node_capabilities, :log, [])
 
   @spec fill_log_vacancies(
           logs :: %{Log.id() => any()},

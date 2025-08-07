@@ -50,6 +50,11 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
+  def terminate(_reason, _state) do
+    :ok
+  end
+
+  @impl true
   def handle_call({:recover_from, lock_token, source_log, first_version, last_version}, _from, t) do
     if lock_token == t.lock_token do
       case recover_from(t, source_log, first_version, last_version) do

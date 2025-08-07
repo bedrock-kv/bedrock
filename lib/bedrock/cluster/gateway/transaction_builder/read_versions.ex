@@ -11,7 +11,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
   def next_read_version(t) do
     with {:ok, read_version} <-
            Sequencer.next_read_version(t.transaction_system_layout.sequencer),
-         {:ok, lease_deadline_ms} <- Gateway.renew_read_version_lease(t.gateway, read_version) do
+         {:ok, lease_deadline_ms} <-
+           Gateway.renew_read_version_lease(t.gateway, read_version) do
       {:ok, read_version, lease_deadline_ms}
     end
   end

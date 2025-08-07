@@ -106,11 +106,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       coordinator: t.coordinator
     }
 
-    old_logs = t.old_transaction_system_layout |> Map.get(:logs, %{}) |> Map.keys()
-    available_service_ids = t.services |> Map.keys()
-
-    trace_recovery_service_availability(old_logs, available_service_ids, t.services)
-
     t.recovery_attempt
     |> run_recovery_attempt(context)
     |> case do
@@ -141,7 +136,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         # Errors are fatal - this director should stop trying to recover
         trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
 
-        # TODO: implement graceful director shutdown for fatal errors
+        # TODO: Implement graceful shutdown mechanism for fatal recovery errors.
+        # Should notify coordinator about failure and initiate controlled termination
+        # to prevent split-brain scenarios. Consider adding retry backoff or
+        # switching to standby director if available.
         t
     end
   end
@@ -176,7 +174,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
           | {{:error, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.LockingPhase) do
+  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.TSLValidationPhase) do
     case next_phase_module.execute(t, context) do
       {completed_attempt, :completed} ->
         {:ok, completed_attempt}

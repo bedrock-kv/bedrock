@@ -107,7 +107,9 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
           Tracing.handler([:bedrock, :log, :recover_from], measurements, metadata, nil)
         end)
 
-      assert log =~ "Recover from :log_server_2 with versions 100 to 150"
+      assert log =~
+               "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
+
       assert log =~ "Bedrock [test_cluster/test_log_1]"
     end
 
@@ -120,7 +122,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
           Tracing.handler([:bedrock, :log, :push], measurements, metadata, nil)
         end)
 
-      assert log =~ "Push transaction (3 keys) with expected version 200"
+      assert log =~ "Push transaction (3 keys) with expected version <0,0,0,0,0,0,0,200>"
       assert log =~ "Bedrock [test_cluster/test_log_1]"
     end
 
@@ -137,7 +139,9 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
           Tracing.handler([:bedrock, :log, :push_out_of_order], measurements, metadata, nil)
         end)
 
-      assert log =~ "Rejected out-of-order transaction: expected 205, current 200"
+      assert log =~
+               "Rejected out-of-order transaction: expected <0,0,0,0,0,0,0,205>, current <0,0,0,0,0,0,0,200>"
+
       assert log =~ "Bedrock [test_cluster/test_log_1]"
     end
 
@@ -154,7 +158,9 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
           Tracing.handler([:bedrock, :log, :pull], measurements, metadata, nil)
         end)
 
-      assert log =~ "Pull transactions from version 100 with options [timeout: 5000]"
+      assert log =~
+               "Pull transactions from version <0,0,0,0,0,0,0,100> with options [timeout: 5000]"
+
       assert log =~ "Bedrock [test_cluster/test_log_1]"
     end
   end

@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
           opts :: [
             cluster: module(),
             config: Config.t(),
-            old_transaction_system_layout: TransactionSystemLayout.t(),
+            old_transaction_system_layout: TransactionSystemLayout.t() | nil,
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             services: %{String.t() => {atom(), {atom(), node()}}} | nil,
@@ -42,14 +42,11 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster param"
     config = opts[:config] || raise "Missing :config param"
-
-    old_transaction_system_layout =
-      opts[:old_transaction_system_layout] || raise "Missing :old_transaction_system_layout param"
-
     epoch = opts[:epoch] || raise "Missing :epoch param"
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     services = opts[:services] || %{}
     node_capabilities = opts[:node_capabilities] || %{}
+    old_transaction_system_layout = opts[:old_transaction_system_layout] || nil
 
     %{
       id: __MODULE__,

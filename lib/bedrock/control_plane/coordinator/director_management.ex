@@ -2,7 +2,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
 
@@ -10,7 +9,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     only: [
       put_director: 2,
       put_config: 2,
-      put_transaction_system_layout: 2,
       convert_to_capability_map: 1
     ]
 
@@ -26,10 +24,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
-    t =
-      t
-      |> maybe_put_default_config()
-      |> maybe_put_default_transaction_system_layout()
+    t = t |> maybe_put_default_config()
 
     trace_director_launch(t.epoch, t.transaction_system_layout)
 
@@ -48,12 +43,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     do: t |> put_config(Config.new(Bedrock.Raft.known_peers(t.raft)))
 
   defp maybe_put_default_config(t), do: t
-
-  @spec maybe_put_default_transaction_system_layout(State.t()) :: State.t()
-  defp maybe_put_default_transaction_system_layout(%{transaction_system_layout: nil} = t),
-    do: t |> put_transaction_system_layout(TransactionSystemLayout.default())
-
-  defp maybe_put_default_transaction_system_layout(t), do: t
 
   @spec start_director_with_monitoring!(State.t()) ::
           {:ok, pid()} | no_return()
@@ -135,8 +124,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
     case DynamicSupervisor.terminate_child(t.supervisor_otp_name, t.director) do
       :ok -> trace_director_changed(:unavailable)
-      {:error, :not_found} -> :ok
-      {:error, _} -> :ok
+      {:error, _reason} -> :ok
     end
 
     t |> put_director(:unavailable)

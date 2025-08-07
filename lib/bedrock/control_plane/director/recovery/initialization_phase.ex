@@ -2,13 +2,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   @moduledoc """
   Creates the initial transaction system layout for a new cluster.
 
-  Runs only when no logs existed in the previous layout. Creates log vacancy placeholders 
-  for the desired number of logs and exactly two storage teams with fixed key range 
+  Runs only when no logs existed in the previous layout. Creates log vacancy placeholders
+  for the desired number of logs and exactly two storage teams with fixed key range
   boundaries. Uses vacancy placeholders instead of assigning specific services immediately.
 
-  Log vacancies are assigned initial version ranges [0, 1] to establish the starting point 
-  for transaction processing. Storage teams divide the keyspace with a fundamental user/system 
-  boundary - one team handles user data (empty string to 0xFF), the other handles system data 
+  Log vacancies are assigned initial version ranges [0, 1] to establish the starting point
+  for transaction processing. Storage teams divide the keyspace with a fundamental user/system
+  boundary - one team handles user data (empty string to 0xFF), the other handles system data
   (0xFF to end-of-keyspace), with keys above the user space reserved for system metadata.
 
   Creating vacancies rather than immediate service assignment allows later phases
@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   Always succeeds since it only creates in-memory structures. Transitions to
   log recruitment to begin service assignment.
 
-  See the New Cluster Initialization section in `docs/knowlege_base/02-deep/recovery-narrative.md` 
+  See the New Cluster Initialization section in `docs/knowlege_base/02-deep/recovery-narrative.md`
   for detailed explanation of the initialization flow and rationale.
   """
 
@@ -60,15 +60,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
         resolver_descriptor(start_key, {:vacancy, index})
       end)
 
+    log_tags = key_ranges |> Enum.map(&elem(&1, 0))
+    logs = log_vacancies |> Map.new(&{&1, log_tags})
+
     updated_recovery_attempt =
       recovery_attempt
       |> Map.put(:durable_version, Version.zero())
       |> Map.put(:old_log_ids_to_copy, [])
       |> Map.put(:version_vector, {Version.zero(), Version.zero()})
-      |> Map.put(
-        :logs,
-        log_vacancies |> Map.new(&{&1, [Version.zero(), Version.from_integer(1)]})
-      )
+      |> Map.put(:logs, logs)
       |> Map.put(:storage_teams, storage_teams)
       |> Map.put(:resolvers, resolver_descriptors)
 

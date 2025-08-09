@@ -41,12 +41,17 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @impl true
   @spec init({pid(), Bedrock.epoch(), Bedrock.version()}) :: {:ok, State.t()}
   def init({director, epoch, known_committed_version}) do
+    epoch_start_monotonic_us = System.monotonic_time(:microsecond)
+    epoch_baseline_version_int = Version.to_integer(known_committed_version)
+
     %State{
       director: director,
       epoch: epoch,
-      next_commit_version: Version.increment(known_committed_version),
-      last_commit_version: known_committed_version,
-      known_committed_version: known_committed_version
+      next_commit_version_int: epoch_baseline_version_int + 1,
+      last_commit_version_int: epoch_baseline_version_int,
+      known_committed_version_int: epoch_baseline_version_int,
+      epoch_baseline_version_int: epoch_baseline_version_int,
+      epoch_start_monotonic_us: epoch_start_monotonic_us
     }
     |> then(&{:ok, &1})
   end
@@ -55,28 +60,48 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @spec handle_call(:next_read_version | :next_commit_version, GenServer.from(), State.t()) ::
           {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
            State.t()}
-  def handle_call(:next_read_version, _from, t),
-    do: t |> reply({:ok, t.known_committed_version})
+  def handle_call(:next_read_version, _from, t) do
+    # Convert to Version.t() only at return
+    read_version = Version.from_integer(t.known_committed_version_int)
+    t |> reply({:ok, read_version})
+  end
 
   @impl true
   def handle_call(:next_commit_version, _from, t) do
-    commit_version = t.next_commit_version
+    current_monotonic_us = System.monotonic_time(:microsecond)
 
-    %{
+    # Calculate microseconds elapsed since epoch start
+    elapsed_us = current_monotonic_us - t.epoch_start_monotonic_us
+
+    # Proposed version = baseline + elapsed microseconds  
+    proposed_version_int = t.epoch_baseline_version_int + elapsed_us
+
+    # Ensure we always advance by at least 1 from the last assigned version
+    commit_version_int = max(proposed_version_int, t.next_commit_version_int)
+    next_commit_version_int = commit_version_int + 1
+
+    updated_state = %{
       t
-      | next_commit_version: Version.increment(commit_version),
-        last_commit_version: commit_version
+      | next_commit_version_int: next_commit_version_int,
+        last_commit_version_int: commit_version_int
     }
-    |> reply({:ok, t.last_commit_version, commit_version})
+
+    # Convert to Version.t() for return
+    last_commit_version = Version.from_integer(t.last_commit_version_int)
+    commit_version = Version.from_integer(commit_version_int)
+
+    updated_state |> reply({:ok, last_commit_version, commit_version})
   end
 
   @impl true
   @spec handle_cast({:report_successful_commit, Bedrock.version()}, State.t()) ::
           {:noreply, State.t()}
   def handle_cast({:report_successful_commit, commit_version}, t) do
-    updated_known_committed_version = max(t.known_committed_version, commit_version)
+    # Convert incoming Version.t() to integer for comparison
+    commit_version_int = Version.to_integer(commit_version)
+    updated_known_committed_int = max(t.known_committed_version_int, commit_version_int)
 
-    %{t | known_committed_version: updated_known_committed_version}
+    %{t | known_committed_version_int: updated_known_committed_int}
     |> noreply([])
   end
 end

@@ -43,18 +43,18 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
       # Readable horizon should advance to highest committed version
       {:ok, read_version} = Sequencer.next_read_version(sequencer)
-      assert read_version == Version.from_integer(203)
+      assert read_version == v3
 
       # New assignment should still maintain proper chain from last assigned
       {:ok, ^v3, next_commit} = Sequencer.next_commit_version(sequencer)
-      # next in sequence should follow v3
-      assert next_commit == Version.increment(v3)
+      # next in sequence should be > v3
+      assert Version.to_integer(next_commit) > Version.to_integer(v3)
 
       # Late-arriving commit for gap shouldn't affect read version (monotonic)
       :ok = Sequencer.report_successful_commit(sequencer, v2)
       {:ok, final_read} = Sequencer.next_read_version(sequencer)
-      # unchanged due to monotonic property
-      assert final_read == Version.from_integer(203)
+      # unchanged due to monotonic property (v3 is still highest)
+      assert final_read == v3
     end
 
     test "read version isolation from assignment counters" do
@@ -71,17 +71,22 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
           commit
         end
 
-      expected_versions = Version.sequence(commit0, 10)
-      assert versions == expected_versions
+      # All versions should be unique and > commit0
+      version_ints = Enum.map(versions, &Version.to_integer/1)
+      assert length(Enum.uniq(version_ints)) == length(version_ints)
+      assert Enum.all?(version_ints, &(&1 > Version.to_integer(commit0)))
+
+      # Should be in increasing order
+      assert version_ints == Enum.sort(version_ints)
 
       # Read version should be unchanged (no commits reported)
       {:ok, ^commit0} = Sequencer.next_read_version(sequencer)
 
-      # Report only some commits
-      # 305
-      reported_version1 = Version.add(commit0, 5)
-      # 307
-      reported_version2 = Version.add(commit0, 7)
+      # Report only some of the actually assigned commits
+      # 5th version assigned
+      reported_version1 = Enum.at(versions, 4)
+      # 7th version assigned
+      reported_version2 = Enum.at(versions, 6)
       :ok = Sequencer.report_successful_commit(sequencer, reported_version1)
       :ok = Sequencer.report_successful_commit(sequencer, reported_version2)
 
@@ -89,11 +94,12 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
       {:ok, ^reported_version2} = Sequencer.next_read_version(sequencer)
 
       # But assignment counter continues from where it left off
-      # 310
-      last_assigned = Version.add(commit0, 10)
-      {:ok, ^last_assigned, next_commit} = Sequencer.next_commit_version(sequencer)
-      # continues sequence
-      assert next_commit == Version.increment(last_assigned)
+      {:ok, read_before_next, next_commit} = Sequencer.next_commit_version(sequencer)
+      # Should reflect the latest reported version (or higher due to microsecond progression)
+      assert Version.to_integer(read_before_next) >= Version.to_integer(reported_version2)
+      # Next version should be > any previously assigned versions
+      last_version_int = Enum.max(Enum.map(versions, &Version.to_integer/1))
+      assert Version.to_integer(next_commit) > last_version_int
     end
 
     test "concurrent assignment preserves causality ordering" do
@@ -118,10 +124,11 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
       version_pairs = Enum.map(results, fn {_task, last, commit} -> {last, commit} end)
       commit_versions = Enum.map(version_pairs, &elem(&1, 1))
 
-      # All commit versions should be unique and in expected range
-      expected_range = Version.sequence(commit0, num_tasks)
+      # All commit versions should be unique and > commit0
+      commit_ints = Enum.map(commit_versions, &Version.to_integer/1)
       assert length(commit_versions) == num_tasks
-      assert Enum.sort(commit_versions) == expected_range
+      assert length(Enum.uniq(commit_ints)) == num_tasks
+      assert Enum.all?(commit_ints, &(&1 > Version.to_integer(commit0)))
 
       # Verify causality chain properties
       sorted_pairs = Enum.sort_by(version_pairs, &elem(&1, 1))
@@ -147,7 +154,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
       {:ok, ^commit0} = Sequencer.next_read_version(sequencer)
 
       {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer)
-      assert commit1 == Version.increment(commit0)
+      assert Version.to_integer(commit1) > Version.to_integer(commit0)
 
       # Report commit and verify monotonic advancement
       :ok = Sequencer.report_successful_commit(sequencer, commit1)
@@ -170,7 +177,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
       # Next assignment should be unaffected
       {:ok, ^commit1, commit2} = Sequencer.next_commit_version(sequencer)
-      assert commit2 == Version.increment(commit1)
+      assert Version.to_integer(commit2) > Version.to_integer(commit1)
     end
   end
 

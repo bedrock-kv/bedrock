@@ -19,6 +19,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
         ) ::
           {:ok, Batch.t()}
           | {:error, :sequencer_unavailable}
+  def single_transaction_batch(t, transaction, reply_fn \\ fn _result -> :ok end)
+
   def single_transaction_batch(
         %{transaction_system_layout: %{sequencer: nil}},
         _transaction,

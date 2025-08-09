@@ -54,6 +54,11 @@ defmodule Bedrock.SystemKeys do
   def cluster_parameters_desired_read_version_proxies,
     do: "#{@system_prefix}/cluster/parameters/desired_read_version_proxies"
 
+  @doc "Cluster parameter: empty transaction timeout in milliseconds"
+  @spec cluster_parameters_empty_transaction_timeout_ms() :: Bedrock.key()
+  def cluster_parameters_empty_transaction_timeout_ms,
+    do: "#{@system_prefix}/cluster/parameters/empty_transaction_timeout_ms"
+
   @doc "Cluster parameter: ping rate in Hz"
   @spec cluster_parameters_ping_rate_in_hz() :: Bedrock.key()
   def cluster_parameters_ping_rate_in_hz,
@@ -167,6 +172,7 @@ defmodule Bedrock.SystemKeys do
       cluster_parameters_desired_commit_proxies(),
       cluster_parameters_desired_coordinators(),
       cluster_parameters_desired_read_version_proxies(),
+      cluster_parameters_empty_transaction_timeout_ms(),
       cluster_parameters_ping_rate_in_hz(),
       cluster_parameters_retransmission_rate_in_hz(),
       cluster_parameters_transaction_window_in_ms()

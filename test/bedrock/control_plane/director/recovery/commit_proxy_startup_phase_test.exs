@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
@@ -101,7 +101,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhaseTest do
           self(),
           available_nodes,
           start_supervised_fn,
-          "test_token"
+          "test_token",
+          %{parameters: %{}}
         )
 
       assert length(pids) == 5
@@ -122,7 +123,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhaseTest do
           # No available nodes
           [],
           fn _, _ -> {:ok, spawn(fn -> :ok end)} end,
-          "test_token"
+          "test_token",
+          %{parameters: %{}}
         )
 
       assert {:error, {:insufficient_nodes, :no_coordination_capable_nodes, 2, 0}} = result
@@ -141,7 +143,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhaseTest do
           self(),
           [:failing_node],
           start_supervised_fn,
-          "test_token"
+          "test_token",
+          %{parameters: %{}}
         )
 
       assert {:error, {:failed_to_start, :commit_proxy, :failing_node, :node_failure}} = result
@@ -169,7 +172,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhaseTest do
           self(),
           available_nodes,
           start_supervised_fn,
-          "test_token"
+          "test_token",
+          %{parameters: %{}}
         )
 
       assert length(pids) == 5

@@ -105,6 +105,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         :erlang.term_to_binary(cluster_config.parameters.desired_coordinators),
       SystemKeys.cluster_parameters_desired_read_version_proxies() =>
         :erlang.term_to_binary(cluster_config.parameters.desired_read_version_proxies),
+      SystemKeys.cluster_parameters_empty_transaction_timeout_ms() =>
+        :erlang.term_to_binary(
+          Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000)
+        ),
       SystemKeys.cluster_parameters_ping_rate_in_hz() =>
         :erlang.term_to_binary(cluster_config.parameters.ping_rate_in_hz),
       SystemKeys.cluster_parameters_retransmission_rate_in_hz() =>

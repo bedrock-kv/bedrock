@@ -19,6 +19,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         epoch: 1,
         max_latency_in_ms: 10,
         max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
         transaction_system_layout: nil,
         batch: nil
       }
@@ -39,6 +40,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         epoch: 1,
         max_latency_in_ms: 10,
         max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
         transaction_system_layout: nil,
         batch: nil
       }
@@ -56,6 +58,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         epoch: 1,
         max_latency_in_ms: 10,
         max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
         transaction_system_layout: nil,
         batch: nil
       }
@@ -96,6 +99,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         epoch: 1,
         max_latency_in_ms: 10,
         max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
         transaction_system_layout: nil,
         batch: nil
       }
@@ -122,7 +126,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         epoch: 1,
         max_latency_in_ms: 10,
         max_per_batch: 5,
-        transaction_system_layout: %{sequencer: self()},
+        empty_transaction_timeout_ms: 1000,
+        transaction_system_layout: %{sequencer: nil},
         batch: nil
       }
 
@@ -137,6 +142,87 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       refute is_map(error_state)
       # Error states are tuples, not State structs
       assert is_tuple(error_state)
+    end
+  end
+
+  describe "empty transaction timeout" do
+    test "handle_info(:timeout, %{batch: nil, mode: :running}) triggers empty transaction creation" do
+      # Test that timeout with no batch and running mode calls single_transaction_batch
+      # Since we can't easily mock the sequencer call, we test for the expected exit
+      # when sequencer is unavailable (which it will be in unit tests)
+
+      state = %State{
+        cluster: TestCluster,
+        director: self(),
+        epoch: 1,
+        max_latency_in_ms: 10,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        # No sequencer = unavailable
+        transaction_system_layout: %{sequencer: nil},
+        batch: nil,
+        mode: :running,
+        lock_token: "test_token"
+      }
+
+      # This should exit with sequencer unavailable
+      assert catch_exit(Server.handle_info(:timeout, state)) ==
+               {:sequencer_unavailable, :timeout_empty_transaction}
+    end
+
+    test "handle_info(:timeout, %{batch: nil, mode: :locked}) resets timeout without creating transaction" do
+      # Create a mock state in locked mode with no active batch
+      state = %State{
+        cluster: TestCluster,
+        director: self(),
+        epoch: 1,
+        max_latency_in_ms: 10,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        transaction_system_layout: %{sequencer: nil},
+        batch: nil,
+        mode: :locked,
+        lock_token: "test_token"
+      }
+
+      # Test the timeout handler when locked - should reset empty transaction timeout
+      result = Server.handle_info(:timeout, state)
+
+      # Should return noreply with timeout reset
+      assert {:noreply, ^state, 1000} = result
+    end
+
+    test "handle_info(:timeout, %{batch: batch}) processes existing batch normally" do
+      # Create a mock state with an active batch
+      state = %State{
+        cluster: TestCluster,
+        director: self(),
+        epoch: 1,
+        max_latency_in_ms: 10,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        transaction_system_layout: %{sequencer: nil},
+        # Mock batch
+        batch: %{},
+        mode: :running,
+        lock_token: "test_token"
+      }
+
+      # Test the timeout handler - should process existing batch
+      result = Server.handle_info(:timeout, state)
+
+      # Should clear batch and continue with finalization
+      assert {:noreply, new_state, {:continue, {:finalize, %{}}}} = result
+      assert new_state.batch == nil
+    end
+
+    test "init sets empty_transaction_timeout_ms in state and initial timeout" do
+      init_args = {TestCluster, self(), 1, 10, 5, 1000, "test_token"}
+
+      {:ok, state, timeout} = Server.init(init_args)
+
+      assert state.empty_transaction_timeout_ms == 1000
+      assert timeout == 1000
     end
   end
 end

@@ -60,9 +60,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
 
       {:error, :unavailable} ->
         raise "No read version available for fetching key: #{inspect(key)}"
-
-      {:error, _reason} = error ->
-        error
     end
   end
 

@@ -33,6 +33,9 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.cluster_parameters_desired_read_version_proxies() ==
                "\xff/system/cluster/parameters/desired_read_version_proxies"
 
+      assert SystemKeys.cluster_parameters_empty_transaction_timeout_ms() ==
+               "\xff/system/cluster/parameters/empty_transaction_timeout_ms"
+
       assert SystemKeys.cluster_parameters_ping_rate_in_hz() ==
                "\xff/system/cluster/parameters/ping_rate_in_hz"
 
@@ -110,12 +113,14 @@ defmodule Bedrock.SystemKeysTest do
                SystemKeys.cluster_parameters_desired_read_version_proxies()
              )
 
+      assert Enum.member?(keys, SystemKeys.cluster_parameters_empty_transaction_timeout_ms())
+
       assert Enum.member?(keys, SystemKeys.cluster_parameters_ping_rate_in_hz())
       assert Enum.member?(keys, SystemKeys.cluster_parameters_retransmission_rate_in_hz())
       assert Enum.member?(keys, SystemKeys.cluster_parameters_transaction_window_in_ms())
 
-      # Should have exactly 11 keys
-      assert length(keys) == 11
+      # Should have exactly 12 keys
+      assert length(keys) == 12
     end
 
     test "all_layout_keys/0 returns all transaction layout keys" do

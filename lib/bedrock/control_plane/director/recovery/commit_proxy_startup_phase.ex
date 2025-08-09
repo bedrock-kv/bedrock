@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
   @moduledoc """
   Solves the scalability challenge by starting commit proxy components that coordinate
   transaction processing across multiple distributed processes.
@@ -45,7 +45,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
       self(),
       available_commit_proxy_nodes,
       start_supervised_fn,
-      context.lock_token
+      context.lock_token,
+      context.cluster_config
     )
     |> case do
       {:error, reason} ->
@@ -64,7 +65,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
           director :: pid(),
           available_nodes :: [node()],
           start_supervised :: (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()}),
-          lock_token :: binary()
+          lock_token :: binary(),
+          cluster_config :: map()
         ) ::
           {:ok, [pid()]}
           | {:error, {:failed_to_start, :commit_proxy, node(), reason :: term()}}
@@ -78,12 +80,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
         director,
         available_nodes,
         start_supervised,
-        lock_token
+        lock_token,
+        cluster_config
       ) do
     if Enum.empty?(available_nodes) do
       {:error, {:insufficient_nodes, :no_coordination_capable_nodes, n_proxies, 0}}
     else
-      child_spec = child_spec_for_commit_proxy(cluster, epoch, director, lock_token)
+      child_spec =
+        child_spec_for_commit_proxy(cluster, epoch, director, lock_token, cluster_config)
 
       available_nodes
       |> distribute_proxies_round_robin(n_proxies)
@@ -138,15 +142,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase do
           cluster :: Cluster.t(),
           epoch :: Bedrock.epoch(),
           director :: pid(),
-          lock_token :: Bedrock.lock_token()
+          lock_token :: Bedrock.lock_token(),
+          cluster_config :: map()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_commit_proxy(cluster, epoch, director, lock_token) do
+  def child_spec_for_commit_proxy(cluster, epoch, director, lock_token, cluster_config) do
+    empty_transaction_timeout_ms =
+      Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000)
+
     CommitProxy.child_spec(
       cluster: cluster,
       epoch: epoch,
       director: director,
-      lock_token: lock_token
+      lock_token: lock_token,
+      empty_transaction_timeout_ms: empty_transaction_timeout_ms
     )
   end
 end

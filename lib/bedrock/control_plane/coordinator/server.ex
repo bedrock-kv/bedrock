@@ -324,7 +324,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   # Private helper functions
 
-  @spec send_recovery_consensus_for_committed_transactions(State.t(), Log.t(), non_neg_integer()) ::
+  @spec send_recovery_consensus_for_committed_transactions(
+          State.t(),
+          Log.t(),
+          {non_neg_integer(), non_neg_integer()}
+        ) ::
           :ok
   defp send_recovery_consensus_for_committed_transactions(t, log, newest_safe_txn_id) do
     # Find any pending transactions that are actually already committed

@@ -12,6 +12,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @type puller_state :: %{
           start_after: Bedrock.version(),
           apply_transactions_fn: ([Transaction.t()] -> Bedrock.version()),
+          get_durable_version_fn: (-> Bedrock.version()),
+          flush_window_fn: (-> :ok),
           logs: %{Log.id() => LogDescriptor.t()},
           services: %{Worker.id() => ServiceDescriptor.t()},
           failed_logs: %{Log.id() => any()}
@@ -21,12 +23,23 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
           start_after :: Bedrock.version(),
           logs :: %{Log.id() => LogDescriptor.t()},
           services :: %{Worker.id() => ServiceDescriptor.t()},
-          apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version())
+          apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version()),
+          get_durable_version_fn :: (-> Bedrock.version()),
+          flush_window_fn :: (-> :ok)
         ) :: Task.t()
-  def start_pulling(start_after, logs, services, apply_transactions_fn) do
+  def start_pulling(
+        start_after,
+        logs,
+        services,
+        apply_transactions_fn,
+        get_durable_version_fn,
+        flush_window_fn
+      ) do
     state = %{
       start_after: start_after,
       apply_transactions_fn: apply_transactions_fn,
+      get_durable_version_fn: get_durable_version_fn,
+      flush_window_fn: flush_window_fn,
       logs: logs,
       services: services,
       failed_logs: %{}
@@ -58,7 +71,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
 
         case Log.pull(worker_pid, state.start_after,
                limit: 100,
-               willing_to_wait_in_ms: call_timeout()
+               willing_to_wait_in_ms: call_timeout(),
+               subscriber: {"storage_server", state.get_durable_version_fn.()}
              ) do
           {:ok, encoded_transactions} ->
             trace_log_pull_succeeded(timestamp, length(encoded_transactions))
@@ -67,6 +81,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
               encoded_transactions
               |> Enum.map(&EncodedTransaction.decode!/1)
               |> apply_transactions_fn.()
+
+            # Flush window once per pull batch
+            :ok = state.flush_window_fn.()
 
             %{state | start_after: next_version}
             |> long_pull_loop()

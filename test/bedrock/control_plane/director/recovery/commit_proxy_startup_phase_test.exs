@@ -2,7 +2,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
   use ExUnit.Case, async: true
   import RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.ProxyStartupPhase
+  alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
         start_supervised_fn: start_supervised_fn
       }
 
-      {result, next_phase} = ProxyStartupPhase.execute(recovery_attempt, context)
+      {result, next_phase} = CommitProxyStartupPhase.execute(recovery_attempt, context)
 
       assert next_phase == Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase
       assert length(result.proxies) == 2
@@ -49,7 +49,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
         lock_token: "test_token"
       }
 
-      {result, stall_reason} = ProxyStartupPhase.execute(recovery_attempt, context)
+      {result, stall_reason} = CommitProxyStartupPhase.execute(recovery_attempt, context)
 
       assert {:stalled, {:insufficient_nodes, :no_coordination_capable_nodes, 2, 0}} =
                stall_reason
@@ -76,7 +76,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
         start_supervised_fn: start_supervised_fn
       }
 
-      {result, stall_reason} = ProxyStartupPhase.execute(recovery_attempt, context)
+      {result, stall_reason} = CommitProxyStartupPhase.execute(recovery_attempt, context)
 
       assert {:stalled, {:failed_to_start, :commit_proxy, _, :startup_failed}} = stall_reason
       assert result.proxies == []
@@ -92,7 +92,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
       available_nodes = [:node1, :node2, :node3]
 
       {:ok, pids} =
-        ProxyStartupPhase.define_commit_proxies(
+        CommitProxyStartupPhase.define_commit_proxies(
           # Want 5 proxies
           5,
           TestCluster,
@@ -115,7 +115,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
 
     test "handles empty available nodes list" do
       result =
-        ProxyStartupPhase.define_commit_proxies(
+        CommitProxyStartupPhase.define_commit_proxies(
           2,
           TestCluster,
           1,
@@ -136,7 +136,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
       end
 
       result =
-        ProxyStartupPhase.define_commit_proxies(
+        CommitProxyStartupPhase.define_commit_proxies(
           1,
           TestCluster,
           1,
@@ -164,7 +164,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
       available_nodes = [:node1, :node2]
 
       {:ok, pids} =
-        ProxyStartupPhase.define_commit_proxies(
+        CommitProxyStartupPhase.define_commit_proxies(
           # Want 5 proxies across 2 nodes
           5,
           TestCluster,

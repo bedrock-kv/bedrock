@@ -74,7 +74,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
              durable_version,
              logs,
              services,
-             &Database.apply_transactions(t.database, &1)
+             &Database.apply_transactions(t.database, &1),
+             fn -> Database.last_durable_version(t.database) end,
+             fn -> Database.ensure_durability_within_window(t.database) end
            ) do
       t
       |> update_mode(:running)

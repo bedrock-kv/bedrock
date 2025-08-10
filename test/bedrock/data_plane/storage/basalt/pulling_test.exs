@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
   alias Bedrock.DataPlane.Version
 
-  describe "start_pulling/4" do
+  describe "start_pulling/6" do
     test "creates a task with proper initial state" do
       start_after = 0
       # LogDescriptor is a list of range_tags
@@ -13,7 +13,18 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       services = %{"log1" => %{kind: :log, status: {:up, self()}, last_seen: nil}}
       apply_fn = fn txns -> length(txns) end
 
-      task = Pulling.start_pulling(start_after, logs, services, apply_fn)
+      durable_version_fn = fn -> 0 end
+      flush_window_fn = fn -> :ok end
+
+      task =
+        Pulling.start_pulling(
+          start_after,
+          logs,
+          services,
+          apply_fn,
+          durable_version_fn,
+          flush_window_fn
+        )
 
       assert %Task{} = task
       assert Process.alive?(task.pid)
@@ -34,7 +45,18 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
       apply_fn = fn txns -> length(txns) + 10 end
 
-      task = Pulling.start_pulling(start_after, logs, services, apply_fn)
+      durable_version_fn = fn -> 0 end
+      flush_window_fn = fn -> :ok end
+
+      task =
+        Pulling.start_pulling(
+          start_after,
+          logs,
+          services,
+          apply_fn,
+          durable_version_fn,
+          flush_window_fn
+        )
 
       assert %Task{} = task
       assert Process.alive?(task.pid)
@@ -51,7 +73,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       services = %{"log1" => %{kind: :log, status: {:up, self()}, last_seen: nil}}
       apply_fn = fn _txns -> 1 end
 
-      task = Pulling.start_pulling(start_after, logs, services, apply_fn)
+      durable_version_fn = fn -> 0 end
+      flush_window_fn = fn -> :ok end
+
+      task =
+        Pulling.start_pulling(
+          start_after,
+          logs,
+          services,
+          apply_fn,
+          durable_version_fn,
+          flush_window_fn
+        )
+
       assert Process.alive?(task.pid)
 
       assert :ok = Pulling.stop(task)
@@ -67,7 +101,18 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       services = %{"log1" => %{kind: :log, status: {:up, self()}, last_seen: nil}}
       apply_fn = fn _txns -> 1 end
 
-      task = Pulling.start_pulling(start_after, logs, services, apply_fn)
+      durable_version_fn = fn -> 0 end
+      flush_window_fn = fn -> :ok end
+
+      task =
+        Pulling.start_pulling(
+          start_after,
+          logs,
+          services,
+          apply_fn,
+          durable_version_fn,
+          flush_window_fn
+        )
 
       # Stop it first
       Pulling.stop(task)
@@ -100,7 +145,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
           "log1" => %{kind: :log, status: {:up, self()}, last_seen: nil},
           "log2" => %{kind: :log, status: {:up, self()}, last_seen: nil}
         },
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       assert {:ok, {log_id, service}} = Pulling.select_log(state)
@@ -170,7 +217,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
           "log1" => %{kind: :log, status: {:up, self()}, last_seen: nil}
           # log2 has no service
         },
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       assert {:ok, {"log1", service}} = Pulling.select_log(state)
@@ -182,7 +231,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         logs: %{"log1" => [], "log2" => []},
         # No services
         services: %{},
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       assert :no_available_logs = Pulling.select_log(state)
@@ -290,7 +341,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         apply_transactions_fn: apply_fn,
         logs: %{"test_log" => []},
         services: %{"test_log" => %{kind: :log, status: {:up, log_server}, last_seen: nil}},
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       # Start the loop in a separate process to avoid blocking
@@ -334,7 +387,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         apply_transactions_fn: apply_fn,
         logs: %{"test_log" => []},
         services: %{"test_log" => %{kind: :log, status: {:up, log_server}, last_seen: nil}},
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       # Start the loop with a timeout to prevent infinite loop
@@ -367,7 +422,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         # No logs available
         logs: %{},
         services: %{},
-        failed_logs: %{}
+        failed_logs: %{},
+        get_durable_version_fn: fn -> 0 end,
+        flush_window_fn: fn -> :ok end
       }
 
       # This should handle the no available logs case

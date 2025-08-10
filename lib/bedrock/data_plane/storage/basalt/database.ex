@@ -10,15 +10,20 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
   @opaque t :: %__MODULE__{
             mvcc: MVCC.t(),
             keyspace: Keyspace.t(),
-            pkv: PersistentKeyValues.t()
+            pkv: PersistentKeyValues.t(),
+            window_size_in_microseconds: pos_integer()
           }
   defstruct mvcc: nil,
             keyspace: nil,
-            pkv: nil
+            pkv: nil,
+            # 5000ms * 1000
+            window_size_in_microseconds: 5_000_000
 
   @spec open(otp_name :: atom(), file_path :: String.t()) ::
           {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
-  def open(otp_name, file_path) when is_atom(otp_name) do
+  @spec open(otp_name :: atom(), file_path :: String.t(), window_in_ms :: pos_integer()) ::
+          {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
+  def open(otp_name, file_path, window_in_ms \\ 5_000) when is_atom(otp_name) do
     with {:ok, pkv} <- PersistentKeyValues.open(:"#{otp_name}_pkv", file_path),
          last_durable_version <- PersistentKeyValues.last_version(pkv),
          mvcc <- MVCC.new(:"#{otp_name}_mvcc", last_durable_version),
@@ -28,7 +33,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
        %__MODULE__{
          mvcc: mvcc,
          keyspace: keyspace,
-         pkv: pkv
+         pkv: pkv,
+         window_size_in_microseconds: window_in_ms * 1_000
        }}
     else
       {:error, _reason} = error -> error
@@ -62,7 +68,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
 
   @spec apply_transactions(database :: t(), transactions :: [Transaction.t()]) ::
           Bedrock.version()
-  @spec apply_transactions(t(), [Transaction.t()]) :: Bedrock.version()
   def apply_transactions(database, transactions),
     do: MVCC.apply_transactions!(database.mvcc, transactions)
 
@@ -143,6 +148,28 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     do: ensure_durability_to_version(db, MVCC.newest_version(db.mvcc))
 
   @doc """
+  Ensures durability for versions outside the time-based window. Flushes
+  transactions older than the trailing edge (latest - window_size) to disk.
+  """
+  @spec ensure_durability_within_window(database :: t()) :: :ok
+  def ensure_durability_within_window(database) do
+    newest_version_int =
+      database.mvcc
+      |> MVCC.newest_version()
+      |> Version.to_integer()
+
+    trailing_edge =
+      max(0, newest_version_int - database.window_size_in_microseconds)
+      |> Version.from_integer()
+
+    if Version.older?(database.mvcc |> MVCC.oldest_version(), trailing_edge) do
+      ensure_durability_to_version(database, trailing_edge)
+    else
+      :ok
+    end
+  end
+
+  @doc """
   Ensures that the database is durable up to the given version. This is done by
   applying all transactions up to the given version to the the underlying
   persistent key value store. Versions of values older than the given version
@@ -153,19 +180,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Database do
     if Version.first?(version) do
       :ok
     else
-      ensure_durability_to_version_impl(db, version)
+      MVCC.transaction_at_version(db.mvcc, version)
+      |> then(fn transaction ->
+        :ok = PersistentKeyValues.apply_transaction(db.pkv, transaction)
+        :ok = Keyspace.apply_transaction(db.keyspace, transaction)
+        {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
+        :ok
+      end)
     end
-  end
-
-  defp ensure_durability_to_version_impl(db, version) do
-    MVCC.transaction_at_version(db.mvcc, version)
-    |> then(fn transaction ->
-      :ok = PersistentKeyValues.apply_transaction(db.pkv, transaction)
-      :ok = Keyspace.apply_transaction(db.keyspace, transaction)
-
-      {:ok, _n_purged} = MVCC.purge_keys_older_than_version(db.mvcc, version)
-    end)
-
-    :ok
   end
 end

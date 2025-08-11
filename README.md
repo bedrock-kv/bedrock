@@ -2,8 +2,7 @@
 
 Bedrock is an embedded, distributed key-value store with guarantees beyond ACID.
 It features consistent reads, strict serialization, transactions across the
-key-space and a simple API. It is designed to store your data without cluttering
-up _your_ code with storage concerns.
+key-space and a simple API.
 
 ## Installation
 

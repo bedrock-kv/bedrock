@@ -6,12 +6,13 @@
 
 ```mermaid
 flowchart TD
-    Start[Recovery Start] --> Locking[Service Locking]
+    Start[Recovery Start] --> TSL[TSL Validation]
+    TSL --> Decision{Old TSL Exists?}
+    Decision -->|No| Init[Initialization Phase]
+    Decision -->|Yes| Locking[Service Locking]
     
-    %% Main branching point at Locking Phase
-    Locking --> Decision{Services Locked?}
-    Decision -->|No services| Init[Initialization Phase]
-    Decision -->|Services exist| LogPlan[Log Recovery Planning]
+    %% Service locking leads to log planning
+    Locking --> LogPlan[Log Recovery Planning]
     
     %% New cluster path (shorter)
     Init --> LogRecruit[Log Recruitment]
@@ -34,6 +35,7 @@ flowchart TD
     
     %% Styling
     style Start fill:#e1f5fe
+    style TSL fill:#f3e5f5
     style Complete fill:#e8f5e8
     style Decision fill:#fff3e0
     style Init fill:#f3e5f5
@@ -57,45 +59,45 @@ Recovery proceeds through a carefully orchestrated sequence of phases, each buil
 
 ### Foundation Phases
 
-1. **[Service Locking](recovery/service-locking.md)** - Establish exclusive control over old system services
-2. **[Path Determination](recovery/path-determination.md)** - Decide between new cluster initialization or data recovery
+0. **[TSL Validation](recovery/tsl-validation.md)** - Validate type safety of recovered TSL data structure
+1. **[Service Locking](recovery/service-locking.md)** - Establish exclusive control over old system services (includes path determination logic)
 
 ### Data Recovery Path
 
-3. **[Log Recovery Planning](recovery/log-recovery-planning.md)** - Determine what transaction data can be safely recovered
-4. **[Vacancy Creation](recovery/vacancy-creation.md)** - Plan the new system architecture with placeholders
-5. **[Version Determination](recovery/version-determination.md)** - Establish the recovery baseline for durable data
+2. **[Log Recovery Planning](recovery/log-recovery-planning.md)** - Determine what transaction data can be safely recovered
+3. **[Vacancy Creation](recovery/vacancy-creation.md)** - Plan the new system architecture with placeholders
+4. **[Version Determination](recovery/version-determination.md)** - Establish the recovery baseline for durable data
 
 ### Service Recruitment
 
-6. **[Log Recruitment](recovery/log-recruitment.md)** - Assign real services to log vacancy placeholders
-7. **[Storage Recruitment](recovery/storage-recruitment.md)** - Assign real services to storage vacancy placeholders
+5. **[Log Recruitment](recovery/log-recruitment.md)** - Assign real services to log vacancy placeholders
+6. **[Storage Recruitment](recovery/storage-recruitment.md)** - Assign real services to storage vacancy placeholders
 
 ### Data Migration
 
-8. **[Log Replay](recovery/log-replay.md)** - Copy committed transactions to new log services
+7. **[Log Replay](recovery/log-replay.md)** - Copy committed transactions to new log services
 
 ### Component Startup
 
-9. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the global version number authority
-10. **[Proxy Startup](recovery/proxy-startup.md)** - Start commit proxy components for scalability
-11. **[Resolver Startup](recovery/resolver-startup.md)** - Start MVCC conflict detection components
+8. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the global version number authority
+9. **[Proxy Startup](recovery/proxy-startup.md)** - Start commit proxy components for scalability
+10. **[Resolver Startup](recovery/resolver-startup.md)** - Start MVCC conflict detection components
 
 ### System Finalization
 
-12. **[Transaction System Layout](recovery/transaction-system-layout.md)** - Create the coordination blueprint
-13. **[Persistence](recovery/persistence.md)** - Durably store configuration via system transaction
-14. **[Monitoring](recovery/monitoring.md)** - Establish operational monitoring and mark recovery complete
+11. **[Transaction System Layout](recovery/transaction-system-layout.md)** - Create the coordination blueprint
+12. **[Persistence](recovery/persistence.md)** - Durably store configuration via system transaction
+13. **[Monitoring](recovery/monitoring.md)** - Establish operational monitoring and mark recovery complete
 
 ## Recovery Entry Point
 
-Recovery begins when the Director creates a `RecoveryAttempt` with the current timestamp, cluster configuration, and epoch. This initialization occurs in `RecoveryAttempt.new/3` and establishes the timing baseline for the entire recovery process. The recovery attempt tracks all state changes as recovery progresses through its phases.
+Recovery begins when the Director creates a `RecoveryAttempt` with the current timestamp, cluster configuration, and epoch. This initialization occurs in `RecoveryAttempt.new/3` and establishes the timing baseline for the entire recovery process. The recovery attempt tracks all state changes as recovery progresses through its phases, starting with TSL validation to ensure type safety before proceeding to service coordination.
 
 ## Implementation References
 
 - **Main Recovery Module**: `lib/bedrock/control_plane/director/recovery.ex`
 - **Phase Implementations**: `lib/bedrock/control_plane/director/recovery/*_phase.ex`
-- **Recovery Attempt State**: `lib/bedrock/control_plane/director/recovery_attempt.ex`
+- **Recovery Attempt State**: `lib/bedrock/control_plane/config/recovery_attempt.ex`
 
 ## See Also
 

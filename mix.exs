@@ -39,7 +39,7 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:bedrock_raft, path: "../bedrock_raft"},
+      {:bedrock_raft, git: "https://github.com/jallum/bedrock.git", tag: "0.9.5"},
       {:gearbox, "~> 0.3"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"}

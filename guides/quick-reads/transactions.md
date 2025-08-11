@@ -2,9 +2,9 @@
 
 **Distributed ACID transactions with optimistic concurrency control.**
 
-Bedrock provides strict ACID guarantees using MVCC¹ with per-transaction processes that enable read-your-writes consistency and sophisticated conflict detection.
+Bedrock provides strict ACID guarantees using MVCC[^1] with per-transaction processes that enable read-your-writes consistency and sophisticated conflict detection.
 
-## How Transactions Work
+## How Transactions Are Used
 
 ```elixir
 # Basic transaction
@@ -21,10 +21,10 @@ end)
 
 ## Transaction Flow
 
-1. **Start**: Gateway creates dedicated Transaction Builder process²
-2. **Read**: First read gets consistent version from Sequencer³
+1. **Start**: Gateway creates dedicated Transaction Builder process[^2]
+2. **Read**: First read gets consistent version from Sequencer[^3]
 3. **Write**: Changes accumulate locally (immediate visibility within transaction)
-4. **Commit**: Distributed coordination checks conflicts⁴ and ensures durability⁵
+4. **Commit**: Distributed coordination checks conflicts[^4] and ensures durability[^5]
 5. **Complete**: Client gets result, transaction process terminates
 
 ## Key Features
@@ -33,14 +33,15 @@ end)
 
 - **Atomic**: All writes succeed or none do
 - **Consistent**: All reads see same snapshot version
-- **Isolated**: Strict serialization prevents interference  
+- **Isolated**: Serializable isolation through MVCC prevents interference  
 - **Durable**: Universal log acknowledgment ensures persistence
 
 ### Performance Optimizations
 
 - **Lazy versioning**: No network traffic until first read
+- **Version leasing**: Read versions have expiration to prevent indefinite holds
 - **Local caching**: Immediate read-your-writes visibility
-- **Batching**: Multiple transactions processed together
+- **Batching**: Multiple transactions processed together with intra-batch conflict detection
 - **Horse racing**: Parallel queries to storage replicas
 
 ### Nested Transactions
@@ -67,11 +68,11 @@ case Repo.transaction(fn repo -> operations end) do
 end
 ```
 
-**Conflict types**: Read-write, write-write, and intra-batch conflicts detected by Resolvers using interval trees⁶.
+**Conflict types**: Read-write, write-write, and intra-batch conflicts detected by Resolvers using interval trees[^6].
 
 ## Components
 
-- **Transaction Builder**: Per-transaction process managing state
+- **Transaction Builder**: Per-transaction process in Gateway layer managing state
 - **Sequencer**: Global version authority (Lamport clock)
 - **Commit Proxy**: Batching and orchestration  
 - **Resolver**: MVCC conflict detection
@@ -80,5 +81,9 @@ end
 ---
 
 **Footnotes:**  
-² [Transaction Builder Component](../components/control-plane/transaction-builder.md)  
-⁵ [Transaction Processing Deep Dive](../deep-dives/transactions.md)  
+[^1]: Multi-Version Concurrency Control - see [Glossary](../glossary.md#multi-version-concurrency-control)  
+[^2]: [Transaction Builder Component](../components/infrastructure/gateway.md)  
+[^3]: [Sequencer Component](../components/control-plane/sequencer.md)  
+[^4]: [Conflict Resolution](../deep-dives/transactions.md)  
+[^5]: [Transaction Processing Deep Dive](../deep-dives/transactions.md)  
+[^6]: [Resolver and Interval Trees](../components/control-plane/resolver.md)  

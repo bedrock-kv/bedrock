@@ -2,19 +2,14 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.1"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.1.1"},
   {:kino, "~> 0.16.0"},
   {:tidewave, "~> 0.2", only: :dev},
   {:bandit, "~> 1.7.0"}
 ])
 ```
 
-## Section
-
-```elixir
-port = 4000
-Kino.start_child!({Bandit, [plug: Tidewave, ip: {127, 0, 0, 1}, port: port]})
-```
+## Setup
 
 ```elixir
 require Logger

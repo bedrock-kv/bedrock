@@ -1,0 +1,181 @@
+# Bedrock Example
+
+```elixir
+Mix.install([
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.1"},
+  {:kino, "~> 0.16.0"},
+  {:tidewave, "~> 0.2", only: :dev},
+  {:bandit, "~> 1.7.0"}
+])
+```
+
+## Section
+
+```elixir
+port = 4000
+Kino.start_child!({Bandit, [plug: Tidewave, ip: {127, 0, 0, 1}, port: port]})
+```
+
+```elixir
+require Logger
+working_dir = Path.join(System.tmp_dir!(), "bedrock_#{:rand.uniform(99999)}")
+Logger.info("Working directory: #{working_dir}")
+File.mkdir_p!(working_dir)
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+defmodule Example.Cluster do
+  use Bedrock.Cluster,
+    otp_app: :example_app,
+    name: "test",
+    config: [
+      capabilities: [:coordination, :log, :storage],
+      trace: [:coordinator, :recovery],
+      coordinator: [
+        path: working_dir
+      ],
+      storage: [
+        path: working_dir
+      ],
+      log: [
+        path: working_dir
+      ]
+    ]
+end
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+Kino.start_child!({Example.Cluster, []})
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+Example.Cluster.transaction_system_layout!()
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+defmodule Example.Repo do
+  use Bedrock.Repo,
+    cluster: Example.Cluster,
+    key_codecs: [
+      default: Bedrock.KeyCodec.TupleKeyCodec
+    ],
+    value_codecs: [
+      default: Bedrock.ValueCodec.BertValueCodec
+    ]
+end
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+defmodule Example.Bank do
+  alias Example.Repo
+
+  @doc """
+  Create an account, given an account number and a balance. Optionally, raise an 
+  exception if the account already exists.
+
+  Demonstrates:
+  - Transactions that produce no writes will not generate a commit.
+  - exceptions will properly rollback the transaction.
+  """
+  def create_account(account, balance, opts \\ []) when is_binary(account) and is_integer(balance) do
+    Repo.transaction(fn repo ->
+      repo
+      |> fetch_balance(account)
+      |> case do
+        {:error, :account_not_found} ->
+          set_balance(repo, account, balance)
+          {:ok, balance}
+        {:ok, balance} ->
+          if opts[:on_exists] == :raise do
+            raise "Account #{account} already exists"
+          end
+          {:ok, balance}
+      end
+    end)
+  end
+
+  @doc """
+  Move an amount of money from one account to another.
+
+  Demonstrates:
+  - Repeatable point reads over the same keys do not cause multiple storage reads.
+  - Errors returned from a transaction function will automatically roll back the transaction.
+  """
+  def move_money(amount, account1, account2) when is_integer(amount) and amount > 0 do
+    Repo.transaction(fn repo ->
+      with :ok <- check_sufficient_balance_for_transfer(repo, account1, amount),
+           {:ok, new_balance1} <- adjust_balance(repo, account1, -amount),
+           {:ok, new_balance2} <- adjust_balance(repo, account2, amount) do
+        {:ok, new_balance1, new_balance2}
+      end
+    end)
+  end
+
+  def account_exists?(account) do
+    Repo.transaction(fn repo ->
+      case fetch_balance(repo, account) do
+        {:ok, _} -> true
+        _ -> false
+      end
+    end)
+  end
+
+  defp check_sufficient_balance_for_transfer(repo, account, amount) do
+    with {:ok, balance} <- fetch_balance(repo, account) do
+      if can_withdraw?(amount, balance) do
+        :ok
+      else
+        {:error, :insufficient_funds}
+      end
+    end
+  end
+
+  defp fetch_balance(repo, account) do
+    case Repo.fetch(repo, key_for_account_balance(account)) do
+      {:ok, balance} -> {:ok, balance}
+      :error -> {:error, :account_not_found}
+    end
+  end
+
+  defp adjust_balance(repo, account, amount) do
+    with {:ok, balance} <- fetch_balance(repo, account) do
+      new_balance = balance + amount
+      set_balance(repo, account, new_balance)
+      {:ok, new_balance}
+    end
+  end
+
+  defp set_balance(repo, account, amount), 
+    do: Repo.put(repo, key_for_account_balance(account), amount)
+
+  defp can_withdraw?(amount, balance), do: balance >= amount
+
+  defp key_for_account_balance(account), do: {"balances", account}
+end
+
+alias Example.Bank
+```
+
+```elixir
+Bank.create_account("1", 100)
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+Bank.create_account("2", 500, on_exists: :raise)
+```
+
+```elixir
+Bank.move_money(84, "2", "1")
+```

@@ -2,7 +2,7 @@
 
 **Starting the global version authority that ensures transaction ordering consistency.**
 
-The [Sequencer](../../components/data-plane/sequencer.md) serves as Bedrock's singular source of truth for [version](../../glossary.md#version) assignment across the entire cluster. During recovery, establishing this global version authority is critical because all transaction processing depends on having unique, monotonically increasing version numbers.
+The [Sequencer](../../deep-dives/architecture/data-plane/sequencer.md) serves as Bedrock's singular source of truth for [version](../../glossary.md#version) assignment across the entire cluster. During recovery, establishing this global version authority is critical because all transaction processing depends on having unique, monotonically increasing version numbers.
 
 ## Why a Single Sequencer?
 
@@ -30,9 +30,9 @@ Rather than attempting repairs, recovery terminates immediately—better to rest
 
 Once operational, the sequencer coordinates with other components through its three version counters:
 
-- [Commit proxies](../../components/data-plane/commit-proxy.md) request version assignments for transaction batches
-- [Gateways](../../components/infrastructure/gateway.md) obtain read versions for consistent snapshots
-- [Storage servers](../../components/data-plane/storage.md) organize MVCC data structures using the version timeline
+- [Commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) request version assignments for transaction batches
+- [Gateways](../../deep-dives/architecture/infrastructure/gateway.md) obtain read versions for consistent snapshots
+- [Storage servers](../../deep-dives/architecture/data-plane/storage.md) organize MVCC data structures using the version timeline
 
 This creates system-wide synchronization where all components operate from a shared understanding of transaction ordering.
 

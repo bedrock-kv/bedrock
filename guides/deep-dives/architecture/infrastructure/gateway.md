@@ -8,6 +8,34 @@ The Gateway acts as the intermediary between client applications and the distrib
 
 **Location**: `lib/bedrock/cluster/gateway.ex`
 
+## Embedded Distributed Architecture
+
+The Gateway represents a fundamental shift in how distributed databases interface with applications. Rather than acting as a network service that clients connect to remotely, the Gateway embeds directly within application processes, providing local transaction coordination while participating in global distributed protocols.
+
+### Local-First Transaction Processing
+
+The Gateway implements Bedrock's core embedded distributed principle: processing within application boundaries rather than across network boundaries. When applications initiate transactions, they're not making network calls to remote database servers—instead, they're invoking local Gateway processes that coordinate distributed operations on their behalf.
+
+This local-first approach transforms transaction semantics. Applications experience sub-microsecond transaction initiation times because Gateway processes are co-located within the same memory space. [Read version](../../glossary.md#read-version) [leasing](../../glossary.md#lease) and resource coordination happen locally, eliminating the network latency that dominates traditional distributed database operations.
+
+The Gateway's transaction management also enables new programming patterns. Because transaction coordination is local, applications can initiate hundreds or thousands of concurrent transactions with minimal overhead, supporting fine-grained transactional workflows that would be prohibitively expensive in client-server architectures.
+
+### Unified Failure Domain Coordination
+
+One of the Gateway's most important architectural contributions is how it leverages embedded distributed systems' simplified failure scenarios. In traditional distributed databases, applications must handle complex failure modes: what happens when the application is healthy but the database is unavailable? Or when network partitions isolate clients from servers?
+
+The Gateway eliminates these scenarios by creating unified failure domains. When an application fails, its embedded Gateway fails with it, ensuring there are no orphaned transactions or leaked resources. This unified failure approach dramatically simplifies both application error handling and distributed system recovery protocols.
+
+The Gateway's [worker advertisement](../../glossary.md#worker-advertisement) functionality exemplifies this design. Rather than maintaining separate service discovery systems, the Gateway leverages the fact that it knows directly when local workers start or stop—because they're all part of the same failure domain. This knowledge enables more efficient and reliable cluster coordination than traditional service discovery mechanisms.
+
+### Embedded Distributed Advantages
+
+The Gateway's embedded architecture enables capabilities impossible in client-server systems. Because Gateway processes share memory space with applications, they can implement zero-copy transaction builders, eliminating serialization overhead for transaction state management. They can also provide application-aware optimizations, such as transaction batching based on application request patterns.
+
+The embedded approach also transforms operational characteristics. The Gateway ensures that transaction capabilities are always available when applications start—there's no separate database service to connect to or dependency to manage. Applications and their transaction coordination deploy and scale together as single units, eliminating the operational complexity of coordinating application and database infrastructure.
+
+This design also enables sophisticated performance optimizations. The Gateway can learn from application transaction patterns, pre-warm [transaction system layouts](../../glossary.md#transaction-system-layout) for frequently used data ranges, and coordinate with local storage workers to optimize data placement for application access patterns.
+
 ## Core Responsibilities
 
 ### 1. Transaction Lifecycle Management
@@ -225,12 +253,48 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 2. **Performance Metrics**: Detailed latency and throughput tracking
 3. **Alert Integration**: Proactive alerting on lease expiration or creation failures
 
+## Cross-Component Workflow Integration
+
+### Transaction Processing Flow Role
+
+The Gateway serves as the **entry point** in Bedrock's core transaction processing workflow:
+
+**Gateway → Transaction Builder → Commit Proxy → Resolver → Sequencer → Storage**
+
+**Workflow Context**:
+
+1. **Transaction Initiation**: Client requests arrive at Gateway, which creates dedicated Transaction Builder processes
+2. **Version Coordination**: Gateway leases read versions from Sequencer through Transaction Builders
+3. **Resource Management**: Gateway manages transaction lifecycle and ensures clean resource cleanup
+4. **Error Propagation**: Transaction failures propagate back through Gateway to clients
+
+For the complete transaction flow, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+
+### Service Registration Workflow Role
+
+The Gateway participates in the **service discovery and registration** workflow:
+
+**Foreman → Gateway → Coordinator → Director**
+
+**Workflow Context**:
+
+1. **Worker Advertisement**: Gateway receives worker advertisements from local processes
+2. **Service Discovery**: Gateway forwards worker information to Coordinator for cluster-wide registration
+3. **Directory Integration**: Coordinator maintains authoritative service directory for Director recovery coordination
+
+**Handoff Points**:
+
+- **From Foreman**: Receives worker advertisements via `advertise_worker/2`
+- **To Coordinator**: Forwards service information for consensus-based registration
+- **Error Handling**: Advertisement failures are asynchronous and don't block client operations
+
 ## Related Components
 
-- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Process created by Gateway for each transaction
+- **[Transaction Builder](transaction-builder.md)**: Process created by Gateway for each transaction
 - **[Sequencer](../data-plane/sequencer.md)**: Coordinates with Gateway for read version management
-- **Director**: Control plane component that receives worker advertisements from Gateway
-- **Coordinator**: Control plane component that provides transaction system layout to Gateway
+- **[Director](../control-plane/director.md)**: Control plane component that receives worker advertisements from Gateway
+- **[Coordinator](../control-plane/coordinator.md)**: Control plane component that provides transaction system layout to Gateway
+- **[Foreman](foreman.md)**: Infrastructure component that advertises workers to Gateway
 
 ## Code References
 

@@ -8,13 +8,13 @@ Recovery monitoring is the last phase in Bedrock's systematic recovery process. 
 
 The monitoring system supervises all critical transaction processing components that require [fail-fast recovery](../../glossary.md#fail-fast-recovery):
 
-- **[Sequencer](../../components/data-plane/sequencer.md)** - Global version number authority
-- **[Commit Proxies](../../components/data-plane/commit-proxy.md)** - Transaction coordination
-- **[Resolvers](../../components/data-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection  
-- **[Logs](../../components/data-plane/log.md)** - Transaction durability
+- **[Sequencer](../../deep-dives/architecture/data-plane/sequencer.md)** - Global version number authority
+- **[Commit Proxies](../../deep-dives/architecture/data-plane/commit-proxy.md)** - Transaction coordination
+- **[Resolvers](../../deep-dives/architecture/data-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection  
+- **[Logs](../../deep-dives/architecture/data-plane/log.md)** - Transaction durability
 - **Director** - Recovery coordination and cluster health
 
-[Storage](../../components/data-plane/storage.md) servers are deliberately excluded because they have independent failure handling through replication and automatic recovery mechanisms.
+[Storage](../../deep-dives/architecture/data-plane/storage.md) servers are deliberately excluded because they have independent failure handling through replication and automatic recovery mechanisms.
 
 ## Fail-Fast Philosophy
 

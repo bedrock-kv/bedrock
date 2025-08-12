@@ -1,23 +1,25 @@
 # Transaction Building and Committing Process in Bedrock
 
-This document explains the complete process of building and committing a transaction in the Bedrock distributed key-value store, from reading a key to committing a modification of that key.
+This document explains the complete process of building and committing a transaction in the Bedrock distributed key-value store, from reading a key to committing a modification of that key. **This is the definitive technical reference for transaction processing in Bedrock**.
 
 ## Overview
 
 Bedrock implements a distributed ACID transaction system based on FoundationDB's architecture. The transaction process involves multiple specialized components working together to provide strict serialization while maintaining high performance through optimistic concurrency control (MVCC).
 
-> 📖 **Terminology**: Unfamiliar with any terms? Check the **[Glossary](glossary.md)** for definitions of key concepts, components, and technical terms used throughout this documentation.
+> **Navigation**: This document provides the complete technical implementation details. For quick reference, start with [Transaction Overview](../quick-reads/transactions.md). For architectural context, see [Architecture Deep Dive](architecture.md). For component-specific details, see individual [Component Documentation](./architecture.md).
+
+> 📖 **Terminology**: Unfamiliar with any terms? Check the **[Glossary](../glossary.md)** for definitions of key concepts, components, and technical terms used throughout this documentation.
 
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions
-- **[Gateway](../components/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
-- **[Transaction Builder](../components/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
-- **[Sequencer](../components/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
-- **[Commit Proxy](../components/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
-- **[Resolver](../components/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
-- **[Log System](../components/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Storage (Basalt)](../components/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
+- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
+- **[Transaction Builder](architecture/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
+- **[Sequencer](architecture/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
+- **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
+- **[Resolver](architecture/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
+- **[Log System](architecture/data-plane/log.md)**: Provides durable transaction storage with strict ordering
+- **[Storage (Basalt)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -116,16 +118,16 @@ sequenceDiagram
 
 ## Component Deep Dives
 
-For detailed technical documentation on any component, see the [Components Documentation](../components/README.md) directory:
+For detailed technical documentation on any component, see the [Components Documentation](./architecture.md) directory:
 
-- **[Gateway Deep Dive](../components/infrastructure/gateway.md)** - Client interface, version leasing, worker advertisement
-- **[Transaction Builder Deep Dive](../components/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
-- **[Sequencer Deep Dive](../components/data-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
-- **[Commit Proxy Deep Dive](../components/data-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
-- **[Resolver Deep Dive](../components/data-plane/resolver.md)** - MVCC conflict detection, version history, range processing
-- **[Log System Deep Dive](../components/data-plane/log.md)** - Durable storage, replication, recovery coordination
-- **[Shale Deep Dive](../components/implementations/shale.md)** - Disk-based log implementation, WAL architecture
-- **[Storage Deep Dive](../components/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
+- **[Gateway Deep Dive](architecture/infrastructure/gateway.md)** - Client interface, version leasing, worker advertisement
+- **[Transaction Builder Deep Dive](architecture/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
+- **[Sequencer Deep Dive](architecture/data-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
+- **[Commit Proxy Deep Dive](architecture/data-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
+- **[Resolver Deep Dive](architecture/data-plane/resolver.md)** - MVCC conflict detection, version history, range processing
+- **[Log System Deep Dive](architecture/data-plane/log.md)** - Durable storage, replication, recovery coordination
+- **[Shale Deep Dive](architecture/implementations/shale.md)** - Disk-based log implementation, WAL architecture
+- **[Storage Deep Dive](architecture/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
 
 ## Detailed Phase Breakdown
 
@@ -187,7 +189,7 @@ For detailed technical documentation on any component, see the [Components Docum
 
 **Optimization**: This batching approach minimizes network traffic and allows for optimistic concurrency control.
 
-### Phase 4: Commit Phase (Complex Multi-Step Process)
+### Phase 4: Commit Phase
 
 This is the most complex phase involving multiple distributed components working together.
 

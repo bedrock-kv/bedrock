@@ -1,4 +1,4 @@
-# Control Plane Components
+# Control Plane
 
 The Control Plane handles the distributed coordination challenges that make Bedrock a fault-tolerant, consistent distributed database. These components manage cluster state, coordinate recovery operations, and ensure leadership consensus across the distributed system.
 
@@ -15,9 +15,9 @@ Control Plane components deal with:
 
 This contrasts with the Data Plane, which handles transaction processing, conflict resolution, and data persistence, and the Gateway layer, which manages client interfaces and request routing.
 
-## True Control Plane Components
+## Components
 
-### [Coordinator](../components/control-plane/coordinator.md)
+### [Coordinator](../deep-dives/architecture/control-plane/coordinator.md)
 
 The foundational authority for cluster state management through Raft distributed consensus. The Coordinator maintains the authoritative service directory, handles service registrations from Gateway nodes, and coordinates Director lifecycle during leadership changes.
 
@@ -28,7 +28,7 @@ The foundational authority for cluster state management through Raft distributed
 - Director startup/shutdown coordination
 - Cluster configuration persistence
 
-### [Director](../components/control-plane/director.md)
+### [Director](../deep-dives/architecture/control-plane/director.md)
 
 The recovery orchestrator that brings the cluster back to operational state after failures. Created by the elected Coordinator leader, the Director coordinates the complex multi-phase recovery process using epoch-based generation management to prevent split-brain scenarios.
 
@@ -38,58 +38,6 @@ The recovery orchestrator that brings the cluster back to operational state afte
 - Epoch-based generation management
 - Service lifecycle coordination
 - Worker creation requests to Foreman processes
-
-## Architecture Integration
-
-The Control Plane sits above the Data Plane and coordinates with Infrastructure components:
-
-```mermaid
-graph TD
-    subgraph CP[Control Plane]
-        C[Coordinator]
-        D[Director]
-        C --> D
-    end
-    
-    subgraph SM[Service Management]
-        F[Foreman]
-    end
-    
-    subgraph GW[Gateway Layer]
-        G[Gateway]
-        TB[Transaction Builder]
-        G --> TB
-    end
-    
-    subgraph DP[Data Plane]
-        S[Sequencer]
-        CP[Commit Proxy]
-        R[Resolver]
-        L[Log]
-        ST[Storage]
-        
-        S --> CP
-        CP --> R
-        CP --> L
-        L --> ST
-    end
-    
-    G --> C
-    D --> F
-    F --> DP
-    TB --> CP
-    
-    style C fill:#e3f2fd
-    style D fill:#e3f2fd
-    style F fill:#fff8e1
-    style G fill:#e8f5e8
-    style TB fill:#e8f5e8
-    style S fill:#f3e5f5
-    style CP fill:#f3e5f5
-    style R fill:#f3e5f5
-    style L fill:#f3e5f5
-    style ST fill:#f3e5f5
-```
 
 The Control Plane provides the coordination foundation that enables the Data Plane to operate consistently and recover from failures while maintaining ACID transaction guarantees.
 
@@ -124,8 +72,8 @@ The Control Plane follows these design principles to maintain system reliability
 
 ## See Also
 
-- [Data Plane Overview](data-plane-overview.md) - Transaction processing and conflict resolution components coordinated by the Control Plane
-- [Infrastructure Components](../components/infrastructure/) - Foundational cluster interface and client gateway components  
+- [Data Plane Overview](data-plane.md) - Transaction processing and conflict resolution components coordinated by the Control Plane
+- [Infrastructure Components](../deep-dives/architecture/infrastructure) - Foundational cluster interface and client gateway components  
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Detailed examination of Control Plane recovery coordination
 - [Cluster Startup](../deep-dives/cluster-startup.md) - Control Plane role in cluster initialization
 - [Architecture Overview](../deep-dives/architecture.md) - System-wide architectural context and component relationships

@@ -103,5 +103,5 @@ Recovery begins when the Director creates a `RecoveryAttempt` with the current t
 
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Comprehensive recovery system analysis
 - [Bedrock Architecture](../deep-dives/architecture.md) - Overall system architecture
-- [Components Documentation](../components/README.md) - Individual component details
+- [Components Documentation](../deep-dives/architecture/README.md) - Individual component details
 - [Transaction System Layout](transaction-system-layout.md) - System coordination blueprint

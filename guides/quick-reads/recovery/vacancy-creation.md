@@ -14,19 +14,19 @@ Recovery uses different strategies for each service type based on their data pre
 
 ### Log Services: Clean Slate
 
-[Log services](../../components/data-plane/log.md) contain no irreplaceable data—their [transaction](../../quick-reads/transactions.md) records exist identically in other logs. Recovery creates exactly the configured number of log vacancies for each shard, ignoring existing logs entirely.
+[Log services](../../deep-dives/architecture/data-plane/log.md) contain no irreplaceable data—their [transaction](../../quick-reads/transactions.md) records exist identically in other logs. Recovery creates exactly the configured number of log vacancies for each shard, ignoring existing logs entirely.
 
 Example: Previous system had logs for `["shard_a"]` and `["shard_b"]`. Configuration specifies 3 logs per shard. Recovery creates exactly 6 new log vacancies. Old logs become recruitment candidates but get no preservation guarantee.
 
 ### Storage Services: Preservation First
 
-[Storage services](../../components/data-plane/storage.md) contain irreplaceable persistent data. Recovery preserves all existing storage assignments and creates additional vacancies only when configuration requires higher replication.
+[Storage services](../../deep-dives/architecture/data-plane/storage.md) contain irreplaceable persistent data. Recovery preserves all existing storage assignments and creates additional vacancies only when configuration requires higher replication.
 
 Example: Storage team has 2 replicas but configuration requires 3. Recovery creates exactly 1 storage vacancy for that team. No existing assignments change.
 
 ### Resolver Services: Computational Boundaries
 
-[Resolvers](../../components/data-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection for key ranges. Recovery creates resolver descriptors that map each storage team's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
+[Resolvers](../../deep-dives/architecture/data-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection for key ranges. Recovery creates resolver descriptors that map each storage team's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
 
 ## Output Blueprint
 

@@ -1,4 +1,4 @@
-# Resolver: The Conflict Detection Engine
+# Resolver
 
 The [Resolver](../../glossary.md#resolver) implements Bedrock's [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) [conflict](../../glossary.md#conflict) detection, serving as the arbiter that determines which [transactions](../../glossary.md#transaction) can safely [commit](../../glossary.md#commit) together. Each Resolver covers a specific [key range](../../glossary.md#key-range) and maintains [version](../../glossary.md#version) history to detect when transactions would violate serialization if allowed to proceed.
 
@@ -36,11 +36,24 @@ The AVL tree-based interval structure provides logarithmic lookup times for conf
 
 Resolvers integrate closely with the Commit Proxy, which coordinates the overall transaction commit process. The Commit Proxy sends batches of transactions to the appropriate Resolvers based on key ranges, then aggregates their responses to determine which transactions can proceed.
 
-The component also coordinates with the Sequencer to understand version ordering and with Storage servers to ensure that conflict resolution decisions are reflected in the final committed state. This integration ensures that the optimistic concurrency control system maintains strict serializability despite its distributed nature.
+The Resolver's conflict detection algorithms ensure strict serializability in Bedrock's optimistic concurrency control system. By maintaining precise version history through interval trees, Resolvers can efficiently determine when transaction conflicts would violate the required serialization order.
+
+## Component-Specific Responsibilities
+
+Resolver serves as the **MVCC conflict detection authority** with these specific responsibilities:
+
+- **Interval Tree Management**: Maintains AVL tree-based interval structures tracking key range write history
+- **Conflict Detection**: Identifies read-write and write-write conflicts using version history analysis
+- **Range-Based Processing**: Handles specific key ranges for distributed, scalable conflict detection
+- **Batch Processing**: Processes multiple transactions together to detect intra-batch conflicts
+- **Memory Management**: Prunes old version history based on minimum read version to prevent unbounded growth
+- **Recovery State Reconstruction**: Rebuilds conflict detection state from committed transaction logs during recovery
+
+> **Complete Flow**: For the full transaction processing sequence showing Resolver's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
 
 ## Related Components
 
-- **[Commit Proxy](commit-proxy.md)**
-- **[Sequencer](sequencer.md)**
-- **[Storage](../data-plane/storage.md)**
-- **Director**: Control plane component that manages recovery
+- **[Commit Proxy](commit-proxy.md)**: Coordinates conflict resolution and provides transaction data to Resolvers
+- **[Sequencer](sequencer.md)**: Provides version ordering that enables consistent conflict detection
+- **[Storage](storage.md)**: Provides key range assignments and transaction data for state recovery
+- **[Director](../control-plane/director.md)**: Control plane component that manages Resolver recovery and range assignment

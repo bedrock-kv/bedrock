@@ -10,7 +10,7 @@ The locking phase secures control over services from the previous [transaction s
 
 **Epoch Ordering**: Each recovery attempt carries a unique epoch identifier. Services accept locks only from the director with the highest epoch number, rejecting others with `:newer_epoch_exists` responses.
 
-**Selective Targeting**: Only services containing persistent data require locking—specifically [log](../../components/data-plane/log.md) and [storage](../../components/data-plane/storage.md) components that must be protected during reconstruction.
+**Selective Targeting**: Only services containing persistent data require locking—specifically [log](../../deep-dives/architecture/data-plane/log.md) and [storage](../../deep-dives/architecture/data-plane/storage.md) components that must be protected during reconstruction.
 
 **Parallel Operations**: Recovery attempts to lock all previous-generation services simultaneously, tolerating individual failures since cluster failures often involve partial component degradation.
 

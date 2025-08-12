@@ -1,4 +1,4 @@
-# Shale: Disk-Based Log Implementation
+# Shale
 
 [Shale](../../glossary.md#shale) is Bedrock's disk-based [log](../../glossary.md#log) storage engine that provides durable [transaction](../../glossary.md#transaction) persistence. It implements the Log interface using local storage with write-ahead logging, segment files for large transactions, and efficient streaming capabilities.
 

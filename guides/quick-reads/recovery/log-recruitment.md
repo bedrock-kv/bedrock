@@ -2,7 +2,7 @@
 
 **Building reliable log infrastructure by replacing potentially compromised services with verified ones.**
 
-During recovery, Bedrock must fill [vacancy placeholders](vacancy-creation.md) in the new system architecture with actual [log services](../../components/data-plane/log.md). Unlike other recovery phases that attempt to preserve existing components, log recruitment takes an aggressive replacement approach: prioritize reliability over efficiency by using fresh services instead of salvaging potentially compromised ones.
+During recovery, Bedrock must fill [vacancy placeholders](vacancy-creation.md) in the new system architecture with actual [log services](../../deep-dives/architecture/data-plane/log.md). Unlike other recovery phases that attempt to preserve existing components, log recruitment takes an aggressive replacement approach: prioritize reliability over efficiency by using fresh services instead of salvaging potentially compromised ones.
 
 This "clean slate" strategy works because logs contain no unique persistent state—every committed transaction exists identically across all logs in the system. The old logs contain transaction history that will be copied to newly recruited logs during the subsequent [log replay](log-replay.md) phase, but their infrastructure cannot be trusted for continued operational use.
 

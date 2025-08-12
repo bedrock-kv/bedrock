@@ -18,7 +18,7 @@ This contrasts with the Control Plane, which handles cluster coordination and re
 
 ## Transaction Processing Components
 
-### [Sequencer](../components/data-plane/sequencer.md)
+### [Sequencer](../deep-dives/architecture/data-plane/sequencer.md)
 
 The singular version authority that assigns globally unique, monotonically increasing version numbers for MVCC. The Sequencer ensures every transaction receives a unique position in the global transaction ordering, enabling consistent snapshot isolation.
 
@@ -29,7 +29,7 @@ The singular version authority that assigns globally unique, monotonically incre
 - Commit version assignment for durability ordering
 - Version counter management across the distributed system
 
-### [Commit Proxy](../components/data-plane/commit-proxy.md)
+### [Commit Proxy](../deep-dives/architecture/data-plane/commit-proxy.md)
 
 The transaction orchestrator that batches transactions from multiple clients and coordinates the distributed commit process. Commit Proxies implement the critical two-phase commit protocol that ensures atomicity across log servers while providing horizontal scaling for transaction processing.
 
@@ -42,7 +42,7 @@ The transaction orchestrator that batches transactions from multiple clients and
 - Distributed commit protocol orchestration
 - Durability guarantee enforcement across log replicas
 
-### [Resolver](../components/data-plane/resolver.md)
+### [Resolver](../deep-dives/architecture/data-plane/resolver.md)
 
 The conflict detection engine that implements MVCC conflict detection for specific key ranges. Resolvers maintain version history and detect when concurrent transactions would violate isolation guarantees.
 
@@ -55,7 +55,7 @@ The conflict detection engine that implements MVCC conflict detection for specif
 
 ## Data Access Components
 
-### [Log](../components/data-plane/log.md)
+### [Log](../deep-dives/architecture/data-plane/log.md)
 
 The persistent transaction log interface that maintains the complete history of committed transactions. Log servers provide the durability foundation that enables recovery and ensures transactions survive system failures.
 
@@ -66,7 +66,7 @@ The persistent transaction log interface that maintains the complete history of 
 - Recovery replay capability provision
 - Tag-based transaction filtering for efficient storage coordination
 
-### [Storage](../components/data-plane/storage.md)
+### [Storage](../deep-dives/architecture/data-plane/storage.md)
 
 The multi-version key-value storage interface that serves read operations across different transaction versions. Storage servers enable consistent snapshot reads while maintaining local state derived from transaction logs.
 
@@ -76,46 +76,6 @@ The multi-version key-value storage interface that serves read operations across
 - Transaction log following and state maintenance
 - Key-value data organization and retrieval
 - Version-specific snapshot consistency provision
-
-## Architecture Integration
-
-The Data Plane operates within the broader Bedrock architecture:
-
-```mermaid
-graph TD
-    subgraph APP[Client Applications]
-        A[Application Code]
-    end
-    
-    subgraph GW[Gateway Layer]
-        TB[Transaction Builder]
-    end
-    
-    subgraph DP[Data Plane]
-        S[Sequencer]
-        CP[Commit Proxy]
-        R[Resolver]
-        L[Log]
-        ST[Storage]
-        
-        S --> CP
-        CP --> R
-        CP --> L
-        L --> ST
-    end
-    
-    A --> TB
-    TB --> S
-    TB --> CP
-    
-    style A fill:#e8f5e8
-    style TB fill:#e3f2fd
-    style S fill:#f3e5f5
-    style CP fill:#f3e5f5
-    style R fill:#f3e5f5
-    style L fill:#f3e5f5
-    style ST fill:#f3e5f5
-```
 
 The Data Plane receives coordination from the Control Plane during recovery and normal operations, while serving requests initiated through Infrastructure components.
 
@@ -162,8 +122,8 @@ The Data Plane follows these design principles:
 
 ## See Also
 
-- [Control Plane Overview](control-plane-overview.md) - Cluster coordination components that orchestrate Data Plane recovery
-- [Infrastructure Components](../components/infrastructure/) - Client interface and worker management components that initiate Data Plane operations
-- [Implementation Components](../components/implementations/) - Concrete storage engines that implement Data Plane interfaces
+- [Control Plane Overview](control-plane.md) - Cluster coordination components that orchestrate Data Plane recovery
+- [Infrastructure Components](../deep-dives/architecture/infrastructure/) - Client interface and worker management components that initiate Data Plane operations
+- [Implementation Components](../deep-dives/architecture/implementations/) - Concrete storage engines that implement Data Plane interfaces
 - [Transactions Deep Dive](../deep-dives/transactions.md) - Detailed examination of transaction processing across Data Plane components
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Data Plane component recovery and coordination processes

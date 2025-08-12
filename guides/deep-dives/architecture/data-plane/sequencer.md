@@ -1,4 +1,4 @@
-# Sequencer: The Version Authority
+# Sequencer
 
 The Sequencer serves as the authoritative source of version numbers in Bedrock, implementing a logical clock that enables MVCC conflict detection and maintains strict transaction ordering. It assigns globally unique, monotonically increasing version numbers that form the backbone of Bedrock's optimistic concurrency control system.
 
@@ -32,13 +32,24 @@ The Sequencer's performance profile reflects its role as a lightweight coordinat
 
 ## Integration with Transaction Processing
 
-The Sequencer integrates closely with the Commit Proxy, which coordinates transaction commits and requests both read and commit versions. Transaction Builders obtain read versions through the Gateway to establish consistent snapshots for their operations. Resolvers rely on the version chain information provided by commit version assignment to detect conflicts accurately.
+The Sequencer's version assignment creates the foundation for all transaction ordering and conflict detection across the distributed system. Its lightweight, memory-only operations ensure that version assignment doesn't become a bottleneck while maintaining the strict consistency required for MVCC correctness.
 
-This integration creates a version lifecycle that spans the entire transaction processing pipeline. Read versions flow from the Sequencer through the Gateway to Transaction Builders, establishing the snapshot point for transaction reads. Commit versions flow from the Sequencer through Commit Proxies to Resolvers, where they enable conflict detection. Success notifications flow back from Commit Proxies to the Sequencer, completing the cycle and maintaining version state consistency.
+## Component-Specific Responsibilities
+
+Sequencer serves as the **global version authority** with these specific responsibilities:
+
+- **Read Version Assignment**: Provides consistent snapshot points using the known committed version
+- **Commit Version Assignment**: Issues globally unique, monotonically increasing commit versions with Lamport clock chains
+- **Version State Tracking**: Maintains known committed, last commit, and next commit version counters
+- **Consistency Coordination**: Ensures read versions only reflect durably committed transactions through feedback loops
+- **Recovery Integration**: Accepts initial version state from Director to maintain correct version progression
+
+> **Complete Flow**: For the full transaction processing sequence showing Sequencer's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
 
 ## Related Components
 
-- **[Commit Proxy](commit-proxy.md)**
-- **[Transaction Builder](transaction-builder.md)**
-- **[Resolver](resolver.md)**
-- **Director**: Control plane component that manages recovery
+- **[Gateway](../infrastructure/gateway.md)**: Requests read versions from Sequencer for Transaction Builder processes
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Obtains read versions through Gateway for transaction consistency
+- **[Commit Proxy](commit-proxy.md)**: Requests commit versions and reports successful commits to Sequencer
+- **[Resolver](resolver.md)**: Uses Sequencer version chains for conflict detection analysis
+- **[Director](../control-plane/director.md)**: Control plane component that provides initial version state during recovery

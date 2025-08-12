@@ -2,7 +2,7 @@
 
 **Deploys commit proxies for horizontal transaction scalability.**
 
-The Commit Proxy Startup phase deploys multiple [commit proxies](../../components/data-plane/commit-proxy.md) across cluster nodes to enable horizontal transaction processing. Unlike the singleton [sequencer](../../components/data-plane/sequencer.md), commit proxies can run in parallel to handle increased transaction volume.
+The Commit Proxy Startup phase deploys multiple [commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) across cluster nodes to enable horizontal transaction processing. Unlike the singleton [sequencer](../../deep-dives/architecture/data-plane/sequencer.md), commit proxies can run in parallel to handle increased transaction volume.
 
 ## Scalability Through Distribution
 
@@ -10,7 +10,7 @@ Multiple commit proxies work together to process transactions efficiently:
 
 - **Parallel Processing**: Each commit proxy handles transaction batches independently
 - **Load Distribution**: Incoming transactions spread across available commit proxies  
-- **Independent Operations**: Commit proxies coordinate with [resolvers](../../components/data-plane/resolver.md) and [log servers](../../components/data-plane/log.md) separately
+- **Independent Operations**: Commit proxies coordinate with [resolvers](../../deep-dives/architecture/data-plane/resolver.md) and [log servers](../../deep-dives/architecture/data-plane/log.md) separately
 
 ## Fault-Tolerant Deployment
 

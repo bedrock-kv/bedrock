@@ -20,7 +20,7 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 
 ### **Basalt**
 
-A storage engine implementation that provides multi-version key-value storage with MVCC support and transaction log integration. This is one kind of [Storage](components/data-plane/storage.md) server implementation. See also: [Basalt implementation details](components/implementations/basalt.md).
+A storage engine implementation that provides multi-version key-value storage with MVCC support and transaction log integration. This is one kind of [Storage](deep-dives/architecture/data-plane/storage.md) server implementation. See also: [Basalt implementation details](deep-dives/architecture/implementations/basalt.md).
 
 ### **Batch**
 
@@ -48,7 +48,7 @@ The process of making a transaction's changes permanent and visible to other tra
 
 ### **Commit Proxy**
 
-The component responsible for batching transactions, coordinating conflict resolution, and ensuring durable persistence through log servers. See also: [Commit Proxy implementation](components/data-plane/commit-proxy.md).
+The component responsible for batching transactions, coordinating conflict resolution, and ensuring durable persistence through log servers. See also: [Commit Proxy implementation](deep-dives/architecture/data-plane/commit-proxy.md).
 
 ### **Commit Version**
 
@@ -72,7 +72,7 @@ The transaction processing layer consisting of Sequencers, Commit Proxies, Resol
 
 ### **Director**
 
-The control plane component responsible for recovery coordination, health monitoring, and data plane component management. See also: [Director implementation](components/control-plane/director.md).
+The control plane component responsible for recovery coordination, health monitoring, and data plane component management. See also: [Director implementation](deep-dives/architecture/control-plane/director.md).
 
 ### **Distributed Key-Value Store**
 
@@ -116,7 +116,7 @@ The distributed database architecture that Bedrock follows, separating control p
 
 ### **Gateway**
 
-The client-facing interface that manages transaction coordination, read version leasing, and serves as the entry point for all client operations. See also: [Gateway implementation](components/infrastructure/gateway.md).
+The client-facing interface that manages transaction coordination, read version leasing, and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
 
 ---
 
@@ -124,7 +124,7 @@ The client-facing interface that manages transaction coordination, read version 
 
 ### **Horse Racing**
 
-A distributed systems performance optimization technique where multiple equivalent service endpoints are queried simultaneously, using the first successful response while canceling remaining requests. This approach automatically adapts to varying network conditions, server load, and geographic latency without requiring complex load balancing logic. See [Transaction Builder implementation](components/infrastructure/transaction-builder.md#storage-server-selection-and-performance-optimization) for Bedrock's specific use of horse racing in storage server selection.
+A distributed systems performance optimization technique where multiple equivalent service endpoints are queried simultaneously, using the first successful response while canceling remaining requests. This approach automatically adapts to varying network conditions, server load, and geographic latency without requiring complex load balancing logic. See [Transaction Builder implementation](deep-dives/architecture/infrastructure/transaction-builder.md#storage-server-selection-and-performance-optimization) for Bedrock's specific use of horse racing in storage server selection.
 
 ### **Hot Key**
 
@@ -172,7 +172,7 @@ A unique identifier used during recovery to ensure only authorized recovery oper
 
 ### **Log**
 
-The component that provides durable, ordered transaction storage and serves as the authoritative record of committed transactions. See also: [Log implementation](components/data-plane/log.md).
+The component that provides durable, ordered transaction storage and serves as the authoritative record of committed transactions. See also: [Log implementation](deep-dives/architecture/data-plane/log.md).
 
 ---
 
@@ -238,7 +238,7 @@ State information provided by components during recovery, including version numb
 
 ### **Resolver**
 
-The component that implements MVCC conflict detection for specific key ranges, maintaining version history and detecting transaction conflicts. See also: [Resolver implementation](components/data-plane/resolver.md).
+The component that implements MVCC conflict detection for specific key ranges, maintaining version history and detecting transaction conflicts. See also: [Resolver implementation](deep-dives/architecture/data-plane/resolver.md).
 
 ---
 
@@ -246,7 +246,7 @@ The component that implements MVCC conflict detection for specific key ranges, m
 
 ### **Sequencer**
 
-The component responsible for assigning globally unique, monotonically increasing version numbers to transactions (Lamport clock implementation). See also: [Sequencer implementation](components/data-plane/sequencer.md).
+The component responsible for assigning globally unique, monotonically increasing version numbers to transactions (Lamport clock implementation). See also: [Sequencer implementation](deep-dives/architecture/data-plane/sequencer.md).
 
 ### **Service Descriptor**
 
@@ -258,11 +258,11 @@ An independent partition of data identified by range tags, enabling parallel pro
 
 ### **Shale**
 
-The log storage engine implementation that provides durable, append-only transaction logging with strict version ordering. This is one kind of [Log](components/data-plane/log.md) server implementation. See also: [Shale implementation details](components/implementations/shale.md).
+The log storage engine implementation that provides durable, append-only transaction logging with strict version ordering. This is one kind of [Log](deep-dives/architecture/data-plane/log.md) server implementation. See also: [Shale implementation details](deep-dives/architecture/implementations/shale.md).
 
 ### **Storage**
 
-The component that serves read requests and maintains versioned key-value data by pulling committed transactions from logs. See also: [Storage implementation](components/data-plane/storage.md).
+The component that serves read requests and maintains versioned key-value data by pulling committed transactions from logs. See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
 
 ### **Storage Team**
 
@@ -290,7 +290,7 @@ A unit of work that groups multiple read and write operations together with ACID
 
 ### **Transaction Builder**
 
-A per-transaction process that manages the complete lifecycle of a single transaction, from read version acquisition through commit coordination. See also: [Transaction Builder implementation](components/infrastructure/transaction-builder.md).
+A per-transaction process that manages the complete lifecycle of a single transaction, from read version acquisition through commit coordination. See also: [Transaction Builder implementation](deep-dives/architecture/infrastructure/transaction-builder.md).
 
 ### **Transaction System Layout**
 

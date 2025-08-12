@@ -6,7 +6,7 @@ Log recovery planning analyzes surviving logs to identify which [transactions](.
 
 ## Core Strategy
 
-Bedrock stores every committed transaction on every [log](../../components/data-plane/log.md), creating natural redundancy. During recovery, some logs may be unavailable or contain different data ranges due to failures.
+Bedrock stores every committed transaction on every [log](../../deep-dives/architecture/data-plane/log.md), creating natural redundancy. During recovery, some logs may be unavailable or contain different data ranges due to failures.
 
 The planning algorithm:
 
@@ -19,7 +19,7 @@ The planning algorithm:
 
 For each shard, recovery examines all possible combinations of available logs meeting quorum requirements:
 
-```
+```text
 Shard Alpha: Logs 1, 2, 3 (requires 2 for quorum)
 - Logs 1 & 2 available with data through version 100
 - Log 3 unreachable
@@ -30,7 +30,7 @@ Shard Alpha: Logs 1, 2, 3 (requires 2 for quorum)
 
 Individual shard analysis isn't enough. Recovery uses the **minimum version across all shards** as the global recovery baseline:
 
-```
+```text
 Shard Alpha: Max recoverable version 100
 Shard Beta:  Max recoverable version 85  
 Shard Gamma: Max recoverable version 95
@@ -41,7 +41,7 @@ This conservative approach ensures every recovered transaction achieved full cro
 
 ## Data Maximization
 
-Recovery attempts to copy from all available logs within each shard, not just the minimum required. This provides more transaction history for [storage servers](../../components/data-plane/storage.md) that need to catch up during their own recovery.
+Recovery attempts to copy from all available logs within each shard, not just the minimum required. This provides more transaction history for [storage servers](../../deep-dives/architecture/data-plane/storage.md) that need to catch up during their own recovery.
 
 ## Failure Handling
 

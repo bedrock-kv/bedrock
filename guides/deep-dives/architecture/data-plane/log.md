@@ -1,4 +1,4 @@
-# The Log System: Bedrock's Durability Foundation
+# The Log System
 
 The [Log](../../glossary.md#log) system is the [durability](../../glossary.md#durability-guarantee) backbone of Bedrock, serving as the authoritative record of every [committed](../../glossary.md#commit) [transaction](../../glossary.md#transaction) in the cluster. It bridges the gap between the fast, in-memory transaction processing pipeline and the permanent storage that enables [recovery](../../glossary.md#recovery) after failures. This makes Bedrock's strong consistency and durability guarantees possible. By providing a reliable, ordered, and durable record of all committed transactions, it enables the rest of the system to focus on performance and scalability while maintaining strict [ACID](../../glossary.md#acid) properties. The careful design of the log interface, replication model, and recovery protocols creates a robust foundation that can handle the inevitable failures that occur in distributed systems.
 
@@ -46,9 +46,15 @@ The Log system is designed as an abstract interface that can be implemented by d
 
 The minimal contract means that different log servers can coexist in the same cluster, allowing operators to match log characteristics to specific workload requirements. For instance, critical transactions could be routed to high-performance log servers while bulk operations use cost-optimized implementations. The abstraction also enables seamless experimentation with new storage technologies without disrupting the core transaction processing logic.
 
+## See Also
+
+- **[Transaction Processing](../../deep-dives/transactions.md)**
+- **[Recovery](../../deep-dives/recovery.md)**
+
 ## Related Components
 
-- **[Shale](../implementations/shale.md)**
-- **[Commit Proxy](../data-plane/commit-proxy.md)**
-- **[Storage](storage.md)**
-- **Director**: Control plane component that manages recovery
+- **[Shale](../implementations/shale.md)**: Primary disk-based implementation of the Log interface
+- **[Commit Proxy](commit-proxy.md)**: Orchestrates transaction durability through Log persistence coordination
+- **[Storage](storage.md)**: Continuously pulls committed transactions from Log servers for local state updates
+- **[Director](../control-plane/director.md)**: Control plane component that manages Log recovery and infrastructure planning
+- **[Foreman](../infrastructure/foreman.md)**: Infrastructure component that creates and manages Log worker processes

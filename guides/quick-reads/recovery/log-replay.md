@@ -2,7 +2,7 @@
 
 **Copying committed transactions from potentially compromised logs to verified new infrastructure.**
 
-The log replay phase transfers all committed transaction data from old [logs](../../components/data-plane/log.md) to newly recruited log services. Rather than attempting to salvage potentially compromised infrastructure, Bedrock systematically copies transaction data to verified, reliable storage before the new system begins operation.
+The log replay phase transfers all committed transaction data from old [logs](../../deep-dives/architecture/data-plane/log.md) to newly recruited log services. Rather than attempting to salvage potentially compromised infrastructure, Bedrock systematically copies transaction data to verified, reliable storage before the new system begins operation.
 
 ## Core Process
 

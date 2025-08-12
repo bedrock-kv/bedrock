@@ -1,4 +1,4 @@
-# Commit Proxy: The Transaction Orchestrator
+# Commit Proxy
 
 The [Commit Proxy](../../glossary.md#commit-proxy) is the central coordinator of Bedrock's [transaction](../../glossary.md#transaction) commit process, responsible for [batching](../../glossary.md#batching) transactions from multiple clients, orchestrating [conflict](../../glossary.md#conflict) resolution, and ensuring [durable persistence](../../glossary.md#durability-guarantee) across all [log](../../glossary.md#log) servers. It transforms individual transaction requests into efficiently processed batches while maintaining strict consistency guarantees.
 
@@ -72,12 +72,22 @@ These integration points are designed to be resilient and performant. Commit Pro
 
 The component also coordinates with the Director during recovery, accepting new transaction system layouts and transitioning from locked to running mode when recovery completes.
 
-For a detailed walkthrough of the complete transaction flow including the Commit Proxy's role, see **[Transaction Processing Deep Dive](../deep-dives/transactions.md)**.
+## Component-Specific Responsibilities
+
+Commit Proxy serves as the **transaction orchestrator** with these specific responsibilities:
+
+- **Batching Strategy**: Aggregates individual transactions for efficient processing, balancing latency vs throughput
+- **Finalization Pipeline**: Executes the multi-step commit coordination process ensuring atomicity
+- **Conflict Resolution Coordination**: Transforms transaction data and coordinates with Resolvers
+- **Durability Orchestration**: Ensures universal acknowledgment from all required log servers
+- **Client Response Management**: Handles success/failure notifications and immediate abort responses
+
+> **Complete Flow**: For the full transaction processing sequence showing Commit Proxy's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
 
 ## Related Components
 
-- **[Transaction Builder](transaction-builder.md)**
-- **[Sequencer](sequencer.md)**
-- **[Resolver](resolver.md)**
-- **[Log](../data-plane/log.md)**
-- **Director**: Control plane component that manages recovery
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Sends prepared transaction data to Commit Proxy
+- **[Sequencer](sequencer.md)**: Provides commit version assignment for transaction ordering
+- **[Resolver](resolver.md)**: Performs MVCC conflict detection for transaction batches
+- **[Log](log.md)**: Receives transactions for durable persistence
+- **[Director](../control-plane/director.md)**: Control plane component that manages recovery

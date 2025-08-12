@@ -1,7 +1,7 @@
 
 # Bedrock Documentation
 
-The Bedrock distributed key-value store employs a carefully structured documentation system that serves both human developers and AI-assisted workflows. Our progressive disclosure approach ensures you receive the right depth of information for your current task without cognitive overload.
+The Bedrock distributed key-value store employs a carefully structured documentation system that serves both human developers and AI-assisted workflows. The progressive disclosure approach ensures you receive the right depth of information for your current task without cognitive overload.
 
 ## Documentation Architecture
 
@@ -58,10 +58,10 @@ Essential concepts delivered with precision and clarity. Each article provides c
 
 Structured technical guidance for development tasks and system integration. These guides provide actionable workflows within 2000 tokens:
 
-- **[Component Reference](components/README.md)** - Complete component architecture with interfaces and interaction patterns
-- **[Control Plane Overview](quick-reads/control-plane-overview.md)** - Cluster coordination, recovery orchestration, and distributed consensus
-- **[Data Plane Overview](quick-reads/data-plane-overview.md)** - Transaction processing, conflict resolution, and data persistence
-- **[Implementation Components](components/implementations/)** - Concrete storage engines with performance characteristics
+- **[Component Reference](deep-dives/architecture.md)** - Complete component architecture with interfaces and interaction patterns
+- **[Control Plane Overview](quick-reads/control-plane.md)** - Cluster coordination, recovery orchestration, and distributed consensus
+- **[Data Plane Overview](quick-reads/data-plane.md)** - Transaction processing, conflict resolution, and data persistence
+- **[Implementation Components](deep-dives/architecture/implementations)** - Concrete storage engines with performance characteristics
 
 ## Deep Dives (Tier 3)
 

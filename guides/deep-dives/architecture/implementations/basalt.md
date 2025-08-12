@@ -1,4 +1,4 @@
-# Basalt: Multi-Version Storage Engine
+# Basalt
 
 [Basalt](../../glossary.md#basalt) is Bedrock's primary [storage](../../glossary.md#storage) engine implementation, designed to provide efficient multi-version key-value storage with [MVCC](../../glossary.md#multi-version-concurrency-control) support. It serves as the persistent data layer that maintains versioned key-value data and continuously applies committed [transactions](../../glossary.md#transaction) pulled from the [log](../../glossary.md#log) servers.
 

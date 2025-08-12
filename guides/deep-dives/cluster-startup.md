@@ -26,7 +26,7 @@ Bedrock's startup coordination operates through a robust Raft-based consensus sy
 
 The pattern centers on the Coordinator processes, which implement comprehensive Raft consensus with persistent state storage via DETS. Once a Coordinator is elected leader, it actively manages cluster startup by accepting service registrations, coordinating timing through leader readiness states, and directly starting and supervising the Director process.
 
-[Gateway](../components/infrastructure/gateway.md) components serve as reactive discovery clients that find the elected Coordinator leader and register their local services. Rather than driving the process, Gateways respond to the coordinator-established infrastructure by discovering leadership and connecting to the centrally managed cluster state.
+[Gateway](architecture/infrastructure/gateway.md) components serve as reactive discovery clients that find the elected Coordinator leader and register their local services. Rather than driving the process, Gateways respond to the coordinator-established infrastructure by discovering leadership and connecting to the centrally managed cluster state.
 
 This approach provides several critical advantages: it ensures deterministic startup ordering through Raft consensus, provides persistent leadership state across failures, and centralizes coordination logic in the well-understood Coordinator processes. The system handles network partitions, variable startup timing, and partial component failures through proven distributed consensus mechanisms.
 
@@ -38,7 +38,7 @@ The most straightforward startup scenario occurs when nodes join a cluster with 
 
 ## Leader Discovery Through Coordinator Polling
 
-The [Gateway](../components/infrastructure/gateway.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Gateway selects the coordinator reporting the highest [epoch](../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
+The [Gateway](architecture/infrastructure/gateway.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Gateway selects the coordinator reporting the highest [epoch](../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
 
 ## Service Registration with Coordinator
 
@@ -126,7 +126,7 @@ Distributed systems rarely achieve perfect timing synchronization—services may
 
 ## Post-Coordination Service Discovery
 
-After Coordinator leadership stabilizes and initial [recovery](recovery.md) begins, late-starting services can still join the cluster seamlessly. When the local Foreman detects new services becoming operational, it advertises them to the local [Gateway](../components/infrastructure/gateway.md). The Gateway registers these services with the Coordinator leader, which updates the service directory through Raft consensus and actively notifies the [Director](../glossary.md#director).
+After Coordinator leadership stabilizes and initial [recovery](recovery.md) begins, late-starting services can still join the cluster seamlessly. When the local Foreman detects new services becoming operational, it advertises them to the local [Gateway](architecture/infrastructure/gateway.md). The Gateway registers these services with the Coordinator leader, which updates the service directory through Raft consensus and actively notifies the [Director](../glossary.md#director).
 
 This dynamic registration enables the Director to incorporate newly available resources into ongoing [recovery](recovery.md) operations or future [transaction system layouts](../quick-reads/transaction-system-layout.md), ensuring that all available resources contribute to system capacity and fault tolerance.
 
@@ -205,7 +205,7 @@ The most sophisticated challenge in distributed cluster startup occurs when lead
 
 Without proper coordination, a newly elected Coordinator leader might immediately start the [Director](../glossary.md#director) upon winning the Raft election, before service registrations from other nodes complete their propagation through Raft consensus. This timing creates a dangerous race condition where the Coordinator starts [recovery](recovery.md) with incomplete service topology information, potentially missing available resources that are still in transit through the consensus protocol.
 
-The hazard becomes particularly acute during system-wide failures where multiple nodes restart simultaneously—each node's [Gateway](../components/infrastructure/gateway.md) attempts service registration with the new Coordinator leader at roughly the same time, creating a burst of concurrent Raft operations that must complete before [recovery](recovery.md) can safely begin.
+The hazard becomes particularly acute during system-wide failures where multiple nodes restart simultaneously—each node's [Gateway](architecture/infrastructure/gateway.md) attempts service registration with the new Coordinator leader at roughly the same time, creating a burst of concurrent Raft operations that must complete before [recovery](recovery.md) can safely begin.
 
 ## Bedrock's Coordinator Solution
 
@@ -266,7 +266,7 @@ This clear separation of concerns allows each component to focus on its essentia
 ## Related Components and Processes
 
 - **[Recovery Architecture](recovery.md)**: The comprehensive reconstruction process that follows successful cluster startup
-- **[Gateway Component](../components/infrastructure/gateway.md)**: Node-level coordination and service registration
+- **[Gateway Component](architecture/infrastructure/gateway.md)**: Node-level coordination and service registration
 - **[Transaction System Layout](../quick-reads/transaction-system-layout.md)**: The coordination blueprint created during recovery
 - **[Architecture Overview](architecture.md)**: System-wide architectural context for startup coordination
 

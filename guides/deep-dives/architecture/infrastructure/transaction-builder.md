@@ -1,8 +1,36 @@
-# Transaction Builder: The Client's Transaction Manager
+# Transaction Builder
 
 The [Transaction Builder](../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../glossary.md#read-version) acquisition to final [commit](../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [storage](../../glossary.md#storage) server selection.
 
 **Location**: [`lib/bedrock/cluster/gateway/transaction_builder.ex`](../../../lib/bedrock/cluster/gateway/transaction_builder.ex)
+
+## Embedded Distributed Architecture Role
+
+Transaction Builder exemplifies Bedrock's embedded distributed approach by bringing sophisticated transaction coordination directly into application processes. Rather than requiring applications to coordinate with remote transaction managers, each transaction gets its own embedded coordinator that operates within application boundaries while participating in distributed protocols.
+
+### Local-First Transaction Coordination
+
+The Transaction Builder represents a fundamental departure from traditional distributed database architectures. Instead of applications sending transaction requests to remote database servers, the Transaction Builder embeds transaction management logic directly within application processes. This local-first approach means transaction state, caching, and coordination logic run co-located with application code.
+
+This embedded design enables transaction performance characteristics impossible in client-server architectures. [Read-your-writes consistency](../../glossary.md#read-your-writes-consistency) requires no network round-trips because the write cache operates in local memory. Transaction state management happens at memory speeds rather than network speeds. Performance optimizations like [storage server](../../glossary.md#storage-server) selection and caching develop organically within each transaction's local context.
+
+The per-process model also enables sophisticated local optimizations. Each Transaction Builder can maintain its own performance characteristics, learning which storage servers respond fastest for its particular access patterns. This localized learning creates transaction coordination that adapts to application-specific usage patterns rather than relying on global optimization heuristics.
+
+### Unified Failure Domain Benefits
+
+Transaction Builder leverages one of embedded distributed systems' key advantages: simplified failure scenarios. In traditional client-server databases, applications must handle complex failure modes—what happens when the application is healthy but cannot reach the transaction coordinator? Or when network partitions isolate active transactions?
+
+The embedded Transaction Builder eliminates these scenarios entirely. Application failure and transaction coordinator failure become the same event, creating unified failure domains that dramatically simplify both application error handling and distributed system recovery logic. When an application process fails, all its Transaction Builders fail with it, ensuring clean transaction cleanup without orphaned resources or ambiguous transaction states.
+
+This unified approach also enables more sophisticated transaction semantics. Nested transactions can be implemented as pure local operations because they share the same failure domain as their parent transaction. Complex transaction state management becomes simple process-local operations rather than distributed coordination problems.
+
+### Embedded Integration Advantages
+
+The Transaction Builder's embedded architecture enables capabilities unique to this design approach. Because Transaction Builders share memory space with applications, they can implement zero-copy data structures for read and write sets, eliminating serialization overhead that dominates remote transaction systems. They can also provide application-aware optimizations, pre-loading data based on observed application patterns or batching operations for efficiency.
+
+The embedded approach transforms operational characteristics as well. Transaction coordination capabilities are always available when applications start—there's no separate transaction manager to connect to or coordinate with. Applications and their transaction management deploy together as single units, eliminating version skew and dependency coordination issues that plague client-server architectures.
+
+This design also enables new programming paradigms. Applications can create hundreds or thousands of concurrent transactions with minimal overhead because Transaction Builders are lightweight local processes rather than remote resources. Complex workflows with fine-grained transactional boundaries become practical in ways that would be prohibitively expensive in client-server systems.
 
 ## Why Per-Transaction Processes?
 
@@ -64,13 +92,24 @@ This coordination includes handling various commit outcomes: successful commits 
 
 ## Integration with the Transaction System
 
-Transaction Builder sits at the center of many interactions within Bedrock's transaction system. It coordinates with the Gateway for process management and version leasing, communicates with storage servers for reads, works with Commit Proxies for transaction commits, and interfaces with the Sequencer for version information.
+Transaction Builder's embedded architecture enables sophisticated per-transaction optimization while participating in distributed coordination protocols. Its process-per-transaction model ensures perfect isolation between transactions while enabling complex nested transaction semantics and local performance optimizations.
 
-These integration points are designed to be resilient and performant. Transaction Builder handles failures gracefully, implements appropriate timeouts, and provides telemetry that helps operators understand transaction behavior and performance characteristics.
+## Component-Specific Responsibilities
+
+Transaction Builder serves as the **per-transaction coordinator** with these specific responsibilities:
+
+- **Process-Per-Transaction**: Dedicated process lifecycle management for individual transactions
+- **Read-Your-Writes Cache**: Local write cache providing immediate consistency within transactions  
+- **Storage Server Selection**: Intelligent routing and "horse racing" across storage replicas for optimal read performance
+- **Version Management**: Lazy read version acquisition and lease coordination through Gateway
+- **Nested Transaction Support**: Local state stacking for nested transaction semantics without distributed overhead
+- **Commit Coordination**: Transaction preparation and handoff to Commit Proxy for distributed processing
+
+> **Complete Flow**: For the full transaction processing sequence showing Transaction Builder's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
 
 ## Related Components
 
-- **[Gateway](../infrastructure/gateway.md)**
-- **[Commit Proxy](commit-proxy.md)**
-- **[Storage](../data-plane/storage.md)**
-- **[Sequencer](sequencer.md)**
+- **[Gateway](gateway.md)**: Creates and manages Transaction Builder lifecycle
+- **[Commit Proxy](../data-plane/commit-proxy.md)**: Receives transaction data for batch processing and durability
+- **[Storage](../data-plane/storage.md)**: Serves versioned reads to Transaction Builder processes
+- **[Sequencer](../data-plane/sequencer.md)**: Provides read versions for transaction consistency

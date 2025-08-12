@@ -8,11 +8,11 @@ The [Transaction System Layout](transaction-system-layout.md) provides the bluep
 
 Instead of running separate tests, Bedrock uses an elegant approach: the new system stores its own configuration. This system transaction exercises every component in the transaction pipeline:
 
-- **[Sequencer](../../components/data-plane/sequencer.md)** assigns the transaction a [version](../../glossary.md#version) number
-- **[Commit proxies](../../components/data-plane/commit-proxy.md)** coordinate submission
-- **[Resolvers](../../components/data-plane/resolver.md)** perform conflict detection
-- **[Logs](../../components/data-plane/log.md)** ensure durable persistence
-- **[Storage](../../components/data-plane/storage.md)** servers commit the data
+- **[Sequencer](../../deep-dives/architecture/data-plane/sequencer.md)** assigns the transaction a [version](../../glossary.md#version) number
+- **[Commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md)** coordinate submission
+- **[Resolvers](../../deep-dives/architecture/data-plane/resolver.md)** perform conflict detection
+- **[Logs](../../deep-dives/architecture/data-plane/log.md)** ensure durable persistence
+- **[Storage](../../deep-dives/architecture/data-plane/storage.md)** servers commit the data
 
 Successful completion proves the system can process real transactions with full [ACID](../../glossary.md#acid) guarantees, not just exist as isolated components.
 

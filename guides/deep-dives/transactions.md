@@ -8,8 +8,6 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 
 > **Navigation**: This document provides the complete technical implementation details. For quick reference, start with [Transaction Overview](../quick-reads/transactions.md). For architectural context, see [Architecture Deep Dive](architecture.md). For component-specific details, see individual [Component Documentation](./architecture.md).
 
-> 📖 **Terminology**: Unfamiliar with any terms? Check the **[Glossary](../glossary.md)** for definitions of key concepts, components, and technical terms used throughout this documentation.
-
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions

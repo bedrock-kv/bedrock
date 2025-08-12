@@ -1,0 +1,85 @@
+name: Elixir CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  MIX_ENV: test
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    name: Test on OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
+    strategy:
+      matrix:
+        include:
+          - elixir: "1.18.4"
+            otp: "27.2"
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Elixir and Erlang
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: ${{ matrix.elixir }}
+        otp-version: ${{ matrix.otp }}
+        install-hex: true
+        install-rebar: true
+
+    - name: Restore deps and _build cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+    - name: Clean to rule out incremental build as a source of flakiness
+      if: github.run_attempt != '1'
+      run: |
+        mix deps.clean --all
+        mix clean
+      shell: sh
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compiles without warnings
+      run: mix compile --warnings-as-errors
+
+    - name: Check Formatting
+      run: mix format --check-formatted
+
+    - name: Credo
+      run: mix credo --strict
+
+    # Define how to cache the `priv/plts` directory. After the first run,
+    # this speeds up dialyzer runs a lot.
+    - name: Cache PLTs
+      id: cache-plts
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-plts
+      with:
+        path: priv/plts
+        key: ${{ runner.os }}-mix-${{ env.cache-name }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.cache-name }}-
+          ${{ runner.os }}-mix-
+
+    - name: Dialyzer
+      run: mix dialyzer --halt-exit-status
+
+    - name: Run tests
+      run: mix coveralls.github

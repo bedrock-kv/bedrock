@@ -2,7 +2,7 @@
 
 **Starting MVCC conflict detection components to prevent transaction conflicts.**
 
-The resolver startup phase converts abstract [resolver](../../components/control-plane/resolver.md) descriptors from [vacancy creation](vacancy-creation.md) into operational processes that implement [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) conflict detection across the distributed system.
+The resolver startup phase converts abstract [resolver](../../components/data-plane/resolver.md) descriptors from [vacancy creation](vacancy-creation.md) into operational processes that implement [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) conflict detection across the distributed system.
 
 ## What Happens
 

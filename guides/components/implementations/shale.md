@@ -111,7 +111,7 @@ This integration allows Shale to focus on its core responsibility—durable tran
 ## Related Components
 
 - **[Log System](../data-plane/log.md)**: General log system concepts and interface
-- **[Commit Proxy](../control-plane/commit-proxy.md)**: Pushes committed transactions to Shale
+- **[Commit Proxy](../data-plane/commit-proxy.md)**: Pushes committed transactions to Shale
 - **[Storage](../data-plane/storage.md)**: Pulls transactions from Shale for local updates
 - **Director**: Control plane component that coordinates Shale recovery processes
 

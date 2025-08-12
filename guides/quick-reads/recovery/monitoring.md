@@ -8,9 +8,9 @@ Recovery monitoring is the last phase in Bedrock's systematic recovery process. 
 
 The monitoring system supervises all critical transaction processing components that require [fail-fast recovery](../../glossary.md#fail-fast-recovery):
 
-- **[Sequencer](../../components/control-plane/sequencer.md)** - Global version number authority
-- **[Commit Proxies](../../components/control-plane/commit-proxy.md)** - Transaction coordination
-- **[Resolvers](../../components/control-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection  
+- **[Sequencer](../../components/data-plane/sequencer.md)** - Global version number authority
+- **[Commit Proxies](../../components/data-plane/commit-proxy.md)** - Transaction coordination
+- **[Resolvers](../../components/data-plane/resolver.md)** - [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection  
 - **[Logs](../../components/data-plane/log.md)** - Transaction durability
 - **Director** - Recovery coordination and cluster health
 

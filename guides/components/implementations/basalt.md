@@ -2,7 +2,7 @@
 
 [Basalt](../../glossary.md#basalt) is Bedrock's primary [storage](../../glossary.md#storage) engine implementation, designed to provide efficient multi-version key-value storage with [MVCC](../../glossary.md#multi-version-concurrency-control) support. It serves as the persistent data layer that maintains versioned key-value data and continuously applies committed [transactions](../../glossary.md#transaction) pulled from the [log](../../glossary.md#log) servers.
 
-**Location**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../../lib/bedrock/data_plane/storage/basalt.ex)
+**Location**: [`lib/bedrock/data_plane/storage/basalt/`](../../../lib/bedrock/data_plane/storage/basalt/)
 
 ## Design Philosophy
 
@@ -12,108 +12,89 @@ The storage engine is designed to handle the eventual consistency model where co
 
 ## Database Architecture
 
-Basalt organizes data using a layered approach that separates fast lookups from durable persistence. The primary storage uses DETS tables for persistence with ETS tables for performance-critical caching.
+Basalt organizes data using three primary components that work together to provide MVCC storage with efficient persistence and performance:
 
-The multi-version storage maintains a version index that maps each key to an ordered list of versions and their corresponding values. This structure enables efficient version resolution for read operations while supporting garbage collection of old versions.
+### Core Components
 
-```elixir
-%Database{
-  # Primary key-value storage (DETS for persistence)
-  storage: :dets_table,
-  
-  # Version tracking for MVCC
-  version_index: %{
-    key => [%{version: Bedrock.version(), value: term()}]
-  },
-  
-  # Durability tracking
-  durable_version: Bedrock.version(),
-  oldest_durable_version: Bedrock.version(),
-  
-  # Performance optimization
-  bloom_filters: %{version => BloomFilter.t()},
-  cached_versions: %{key => {version, value}}
-}
-```
+The **MVCC component** uses an ETS ordered_set table to store versioned key-value pairs as tuples in the format `{versioned_key(key, version), value}`. This structure enables efficient version-based lookups by leveraging ETS's ordered set properties to find the latest version at or before a requested read version.
+
+**Keyspace management** tracks which keys exist in the system to optimize negative lookups. When a key doesn't exist in the in-memory MVCC data, the keyspace component can quickly determine whether the key exists at all before attempting expensive persistence lookups.
+
+**PersistentKeyValues** provides durable storage using DETS tables for crash recovery and long-term data retention. This component stores older versions that have been aged out of memory but are still within the durability retention window.
+
+The system uses a configurable **window_size_in_microseconds** parameter for batching durability operations, balancing write performance with data safety guarantees.
 
 ## Transaction Application Process
 
-When Basalt pulls transactions from log servers, it applies them in strict version order to maintain consistency. The application process handles multiple transactions in batches for efficiency while ensuring that version ordering is preserved.
+Basalt continuously pulls transactions from log servers through its pulling mechanism and applies them in strict version order to maintain consistency. The application process uses the MVCC component to store versioned data efficiently.
 
-The engine tracks the last applied version and continuously pulls new transactions from assigned log servers. Each transaction contains a set of key-value pairs that are applied atomically at the transaction's version number.
+### Transaction Ordering and Application
 
-```elixir
-def apply_transaction(transaction, database) do
-  transaction
-  |> Transaction.key_values()
-  |> Enum.reduce(database, fn {key, value}, db ->
-    Basalt.Database.put(db, key, value, transaction.version)
-  end)
-end
-```
+Transactions must be applied in strict version order to maintain system-wide consistency. The system enforces this by checking that each incoming transaction has a version greater than the current newest version before application. Any attempt to apply transactions out of order results in an immediate failure to prevent data corruption.
 
-The putting process updates the version index for each affected key, maintaining the ordered list of versions for efficient MVCC reads.
+Each transaction consists of a version number and a set of key-value pairs. During application, the system creates versioned keys using a tuple structure that combines the original key with its version, enabling efficient MVCC lookups. The newest version marker is updated atomically with the transaction data to maintain consistency.
+
+The pulling process runs in a separate task, continuously fetching transaction batches from available log servers. This design ensures that storage servers remain synchronized with the authoritative transaction log while allowing for efficient batch processing to improve performance.
 
 ## MVCC Read Implementation
 
-Read operations in Basalt implement true MVCC by finding the latest version of a key that is at or before the requested read version. This ensures that transactions see a consistent snapshot of the data as it existed at their read version.
+Read operations in Basalt implement true MVCC by finding the latest version of a key at or before the requested read version. The implementation uses ETS select operations for efficient version resolution.
 
-The version resolution process searches through the version history for each key to find the appropriate version to return. If no version exists at or before the read version, the key is considered not found for that snapshot.
+### Three-Tier Lookup Strategy
 
-```elixir
-def resolve_read_version(key_versions, read_version) do
-  key_versions
-  |> Enum.filter(fn {version, _value} -> version <= read_version end)
-  |> Enum.max_by(fn {version, _value} -> version end, fn -> nil end)
-  |> case do
-    nil -> {:error, :not_found}
-    {version, value} -> {:ok, {version, value}}
-  end
-end
-```
+Basalt employs a sophisticated three-tier lookup strategy to optimize read performance while maintaining data consistency:
 
-This approach ensures that read operations never see inconsistent or partially committed data, maintaining the isolation guarantees required by the transaction system.
+**Tier 1 - MVCC Memory Lookup**: The system first searches the in-memory MVCC table using ETS select_reverse operations. This leverages the ordered set structure to efficiently find the latest version of a key that is less than or equal to the requested read version. The versioned key tuple structure enables this lookup to be performed with a single ETS operation.
+
+**Tier 2 - Keyspace Verification**: If the key is not found in memory, the system checks the Keyspace component to determine if the key exists at all in the system. This prevents expensive persistence lookups for keys that have never been written.
+
+**Tier 3 - Persistence Fallback**: For keys that exist but aren't in memory, the system performs a persistence lookup and writes the result back to the MVCC cache for future access. This tier also handles the `:version_too_old` error case when the requested version is older than the system's current retention window.
+
+This approach minimizes expensive disk operations while ensuring that all valid data remains accessible even when memory constraints require aging out older versions.
 
 ## Performance Optimizations
 
-Basalt includes several performance optimizations designed for the read-heavy workload typical of storage servers. Version caching keeps frequently accessed versions in memory, while bloom filters help quickly eliminate negative lookups.
+Basalt includes several performance optimizations designed for the read-heavy workload typical of storage servers.
 
-The storage engine batches transaction applications to amortize the overhead of disk writes and index updates. Range queries are optimized to take advantage of key locality when possible.
+### ETS-Based Optimizations
 
-For high-traffic keys, Basalt maintains hot caches that bypass the full version resolution process for the most commonly requested versions. This optimization is particularly effective for workloads with temporal locality in read patterns.
+The storage engine leverages ETS (Erlang Term Storage) ordered sets to provide highly efficient key-value operations. The versioned key tuple structure allows for rapid version resolution using ETS's built-in ordering capabilities, eliminating the need for complex indexing structures.
 
-## Garbage Collection
+Version caching keeps frequently accessed versions in memory, reducing the need for persistence lookups. The system uses intelligent cache eviction policies that consider both access frequency and version age to maintain optimal memory utilization.
 
-Old versions of keys are periodically cleaned up based on the minimum read version tracked by the system. Basalt retains at least one version of each key (the latest) plus any versions that might still be needed by active transactions.
+### Batch Processing
 
-The garbage collection process is designed to be incremental and non-blocking, running in the background while read and write operations continue. It uses the minimum read version information provided by the Director to determine which versions can be safely removed.
+The storage engine batches transaction applications to amortize the overhead of disk writes and index updates. This approach significantly improves throughput for high-volume transaction streams while maintaining the strict ordering requirements of MVCC.
 
-```elixir
-def garbage_collect_versions(database, minimum_read_version) do
-  database.version_index
-  |> Enum.map(fn {key, versions} ->
-    retained_versions = 
-      versions
-      |> Enum.filter(fn %{version: v} -> 
-        v >= minimum_read_version or is_latest_version?(v, versions)
-      end)
-    {key, retained_versions}
-  end)
-  |> Map.new()
-end
-```
+For high-traffic keys, Basalt maintains optimized access patterns that take advantage of temporal locality in read patterns, ensuring that recently accessed data remains readily available in the fastest storage tiers.
 
-## Key Range Management
+## Durability and Version Management
 
-Basalt storage servers are assigned specific key ranges and only store data for keys within those ranges. The range assignment is managed by the Director and can change during recovery or load balancing operations.
+Basalt manages durability through a time-windowed approach that balances performance with data safety. The system maintains both in-memory MVCC data and persistent storage, with periodic flushing based on configurable time windows.
 
-Range boundaries are checked on every read and write operation to ensure that servers only handle data they're responsible for. This partitioning enables horizontal scaling and load distribution across multiple storage servers.
+### Time-Based Durability Windows
 
-The engine supports dynamic range splitting, where a busy key range can be divided between multiple storage servers to improve performance and distribute load more evenly.
+The durability system operates on the principle of time-based version windows measured in microseconds. The system calculates a "trailing edge" version by subtracting the configured window size from the newest version timestamp. Any versions older than this trailing edge are candidates for persistence and potential memory cleanup.
 
-## Error Handling and Recovery
+Durability operations are triggered when the oldest version in memory falls behind the calculated trailing edge. This ensures that recent data remains in fast memory while older data is safely persisted to durable storage.
 
-Basalt uses a fail-fast approach for unrecoverable errors, relying on the Director to coordinate recovery when needed. Recoverable errors like temporary disk issues are handled with retry logic and graceful degradation.
+### Version Cleanup Process
+
+Old versions are automatically pruned when they fall outside the durability window, ensuring efficient memory usage while maintaining transaction isolation guarantees. The cleanup process uses ETS select_delete operations to efficiently remove multiple versions in a single operation, minimizing the performance impact of version management.
+
+The system maintains explicit tracking of the oldest and newest versions in memory, enabling efficient boundary checking for both durability operations and version cleanup processes.
+
+## Error Handling and Circuit Breaker
+
+Basalt uses a fail-fast approach for unrecoverable errors, relying on the Director to coordinate recovery when needed. The system includes sophisticated circuit breaker mechanisms for handling temporary failures in log server connectivity.
+
+### Circuit Breaker Behavior
+
+When log pull operations fail, Basalt employs a circuit breaker pattern to prevent overwhelming failed log servers with retry attempts. The circuit breaker tracks failure rates and implements exponential backoff with configurable wait times.
+
+Once a log server is marked as failed, the circuit breaker prevents further attempts for a cooling-off period. The system automatically resets the circuit breaker and resumes pull attempts when the wait period expires, enabling automatic recovery from transient network or server issues.
+
+### Recovery Process
 
 During recovery, Basalt can rebuild its state from the transaction logs, ensuring that no committed data is lost even after complete storage server failures. The recovery process verifies data consistency and reports any inconsistencies to the Director.
 
@@ -121,16 +102,25 @@ The engine includes continuous data validation to detect corruption early and pr
 
 ## Monitoring and Telemetry
 
-Basalt provides extensive telemetry about its operation, including read throughput, storage utilization, version distribution, and cache performance. This information helps operators understand system health and performance characteristics.
+Basalt provides comprehensive telemetry focused on the transaction pulling process, which is critical for maintaining consistency with the authoritative log servers. The telemetry events track pull operations, failures, and circuit breaker behavior.
 
-The engine tracks key metrics like read latency percentiles, cache hit rates, and garbage collection efficiency. It also monitors the transaction pulling process to ensure storage servers stay current with the log servers.
+### Telemetry Events
 
-```elixir
-[:bedrock, :storage, :fetch_completed]       # Read operation completed
-[:bedrock, :storage, :transaction_applied]   # Transaction applied from log
-[:bedrock, :storage, :garbage_collection]    # Version cleanup performed
-[:bedrock, :storage, :recovery_completed]    # Recovery process finished
-```
+The system emits the following telemetry events to enable comprehensive monitoring:
+
+**Pull Operation Events**:
+
+- `[:bedrock, :storage, :pull_start]` - Log pull operation started
+- `[:bedrock, :storage, :pull_succeeded]` - Log pull completed successfully  
+- `[:bedrock, :storage, :pull_failed]` - Log pull encountered error
+
+**Circuit Breaker Events**:
+
+- `[:bedrock, :storage, :log_marked_as_failed]` - Log server marked as unavailable
+- `[:bedrock, :storage, :log_pull_circuit_breaker_tripped]` - Circuit breaker activated
+- `[:bedrock, :storage, :log_pull_circuit_breaker_reset]` - Circuit breaker reset
+
+These events include metadata such as transaction counts, timestamps, failure reasons, and circuit breaker wait times, enabling operators to monitor the health of the storage system's integration with the log infrastructure.
 
 ## Configuration and Tuning
 
@@ -138,17 +128,32 @@ Basalt's configuration focuses on balancing read performance, storage efficiency
 
 Performance tuning options include transaction application batch sizes, garbage collection frequency, and caching strategies. The engine provides reasonable defaults while allowing operators to optimize for their specific deployment requirements.
 
+## Key Components
+
+Basalt consists of several specialized modules that work together to provide MVCC storage:
+
+- **Database**: Coordinates MVCC, Keyspace, and PersistentKeyValues components
+- **MVCC**: Manages versioned data in ETS tables with efficient lookups
+- **Keyspace**: Tracks key existence to optimize negative lookups
+- **PersistentKeyValues**: Provides DETS-based durable storage
+- **Pulling**: Continuously fetches transactions from log servers
+- **Server**: GenServer implementation handling client requests and recovery
+- **Telemetry**: Monitoring and observability for pull operations
+
 ## Related Components
 
 - **[Storage System](../data-plane/storage.md)**: General storage system concepts and interface
 - **[Log System](../data-plane/log.md)**: Source of committed transactions for Basalt
-- **[Transaction Builder](../control-plane/transaction-builder.md)**: Primary consumer of Basalt read operations
-- **Director**: Control plane component that manages Basalt recovery and key range assignment
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of Basalt read operations
+- **[Director](../control-plane/director.md)**: Control plane component that manages Basalt recovery and key range assignment
 
 ## Code References
 
-- **Main Implementation**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../../lib/bedrock/data_plane/storage/basalt.ex)
+- **Main Module**: [`lib/bedrock/data_plane/storage/basalt.ex`](../../../lib/bedrock/data_plane/storage/basalt.ex)
 - **Database Engine**: [`lib/bedrock/data_plane/storage/basalt/database.ex`](../../../lib/bedrock/data_plane/storage/basalt/database.ex)
-- **Server Logic**: [`lib/bedrock/data_plane/storage/basalt/server.ex`](../../../lib/bedrock/data_plane/storage/basalt/server.ex)
+- **MVCC Implementation**: [`lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex`](../../../lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex)
+- **Keyspace Management**: [`lib/bedrock/data_plane/storage/basalt/keyspace.ex`](../../../lib/bedrock/data_plane/storage/basalt/keyspace.ex)
+- **Persistent Storage**: [`lib/bedrock/data_plane/storage/basalt/persistent_key_values.ex`](../../../lib/bedrock/data_plane/storage/basalt/persistent_key_values.ex)
 - **Transaction Pulling**: [`lib/bedrock/data_plane/storage/basalt/pulling.ex`](../../../lib/bedrock/data_plane/storage/basalt/pulling.ex)
-- **MVCC Logic**: [`lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex`](../../../lib/bedrock/data_plane/storage/basalt/multi_version_concurrency_control.ex)
+- **Server Logic**: [`lib/bedrock/data_plane/storage/basalt/server.ex`](../../../lib/bedrock/data_plane/storage/basalt/server.ex)
+- **Telemetry**: [`lib/bedrock/data_plane/storage/basalt/telemetry.ex`](../../../lib/bedrock/data_plane/storage/basalt/telemetry.ex)

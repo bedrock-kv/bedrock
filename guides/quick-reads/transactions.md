@@ -82,8 +82,8 @@ end
 
 **Footnotes:**  
 [^1]: Multi-Version Concurrency Control - see [Glossary](../glossary.md#multi-version-concurrency-control)  
-[^2]: [Transaction Builder Component](../components/infrastructure/gateway.md)  
-[^3]: [Sequencer Component](../components/control-plane/sequencer.md)  
+[^2]: [Transaction Builder Component](../components/infrastructure/transaction-builder.md)  
+[^3]: [Sequencer Component](../components/data-plane/sequencer.md)  
 [^4]: [Conflict Resolution](../deep-dives/transactions.md)  
 [^5]: [Transaction Processing Deep Dive](../deep-dives/transactions.md)  
-[^6]: [Resolver and Interval Trees](../components/control-plane/resolver.md)  
+[^6]: [Resolver and Interval Trees](../components/data-plane/resolver.md)  

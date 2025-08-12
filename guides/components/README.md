@@ -4,71 +4,28 @@ This directory organizes Bedrock's components by their architectural role within
 
 ## Architecture Overview
 
-Bedrock follows a layered architecture that separates concerns between transaction coordination, data persistence, and storage engine implementations:
-
-```mermaid
-graph TD
-    subgraph INFRA["Infrastructure"]
-        direction TB
-        INFRA_DESC["Foundational cluster interface, client gateway,<br/>and worker process management"]
-    end
-    
-    subgraph CP["Control Plane"]
-        direction TB
-        CP_DESC["Transaction coordination, version management,<br/>conflict detection, and commit orchestration"]
-    end
-    
-    subgraph DP["Data Plane"]
-        direction TB
-        DP_DESC["Persistent storage interfaces<br/>and distributed system coordination"]
-    end
-    
-    subgraph SVC["Service Layer"]
-        direction TB
-        SVC_DESC["Service abstractions and lifecycle patterns"]
-    end
-    
-    subgraph IMPL["Implementations"]
-        direction TB
-        IMPL_DESC["Concrete storage engines that implement data plane<br/>interfaces with specific performance characteristics"]
-    end
-    
-    INFRA --> CP
-    INFRA --> DP
-    CP --> DP
-    CP --> SVC
-    DP --> SVC
-    SVC --> IMPL
-    
-    style INFRA fill:#e0e0e0
-    style CP fill:#e1f5fe
-    style DP fill:#f3e5f5
-    style SVC fill:#fff3e0
-    style IMPL fill:#e8f5e8
-```
+Bedrock follows a layered architecture that separates concerns between transaction coordination, data persistence, and storage engine implementations. The **Infrastructure** layer provides foundational cluster interface, client gateway, and worker process management. The **Control Plane** handles transaction coordination, version management, conflict detection, and commit orchestration. The **Data Plane** manages persistent storage interfaces and distributed system coordination. The **Service Layer** provides service abstractions and lifecycle patterns. Finally, **Implementations** are concrete storage engines that implement data plane interfaces with specific performance characteristics. These layers interact with Infrastructure feeding into both Control Plane and Data Plane, Control Plane coordinating with Data Plane, and both feeding through the Service Layer to the concrete Implementations.
 
 ## Control Plane Components
 
-These components handle transaction lifecycle management, version assignment, and conflict resolution:
+These components handle cluster coordination, recovery orchestration, and distributed consensus:
 
 - **[Coordinator](control-plane/coordinator.md)** - Manages cluster state through Raft consensus and coordinates Director lifecycle
 - **[Director](control-plane/director.md)** - Orchestrates recovery and epoch-based generation management for the transaction system
-- **[Sequencer](control-plane/sequencer.md)** - The version authority that assigns globally unique, monotonically increasing version numbers for MVCC
-- **[Transaction Builder](control-plane/transaction-builder.md)** - Constructs and validates transactions from client operations
-- **[Commit Proxy](control-plane/commit-proxy.md)** - Orchestrates the two-phase commit protocol across log servers
-- **[Resolver](control-plane/resolver.md)** - Detects conflicts between concurrent transactions using version analysis
 
-The control plane implements the core transaction processing logic that ensures ACID properties and maintains consistency across the distributed system.
+For a comprehensive overview, see [Control Plane Overview](../quick-reads/control-plane-overview.md).
 
 ## Data Plane Components
 
-These components provide the persistent storage interfaces and client connectivity:
+These components handle transaction processing, conflict resolution, and persistent storage interfaces:
 
-- **[Proxy](data-plane/proxy.md)** - Read version proxy that forwards version requests to the authoritative Sequencer
+- **[Sequencer](data-plane/sequencer.md)** - The version authority that assigns globally unique, monotonically increasing version numbers for MVCC
+- **[Commit Proxy](data-plane/commit-proxy.md)** - Orchestrates the two-phase commit protocol across log servers and provides horizontal scaling for transaction processing
+- **[Resolver](data-plane/resolver.md)** - Detects conflicts between concurrent transactions using version analysis
 - **[Log](data-plane/log.md)** - Persistent transaction log interface that maintains committed transaction history
 - **[Storage](data-plane/storage.md)** - Multi-version key-value storage interface that serves read operations
 
-The data plane defines the contracts between transaction processing and persistent storage, enabling different storage engine implementations while maintaining consistent behavior.
+For a comprehensive overview, see [Data Plane Overview](../quick-reads/data-plane-overview.md).
 
 ## Implementation Components
 
@@ -89,9 +46,10 @@ These components provide foundational cluster interface, client gateway, and wor
 
 - **[Cluster](infrastructure/cluster.md)** - Foundational interface and configuration management for Bedrock distributed database instances
 - **[Gateway](infrastructure/gateway.md)** - Client-facing interface that handles requests and routes them to appropriate components
+- **[Transaction Builder](infrastructure/transaction-builder.md)** - Constructs and validates transactions from client operations
 - **[Foreman](infrastructure/foreman.md)** - Manages worker processes and service lifecycle operations across cluster nodes
 
-Infrastructure components provide the high-level abstractions that applications use to interact with Bedrock clusters.
+Infrastructure components provide the high-level abstractions and client interfaces that applications use to interact with Bedrock clusters.
 
 ## Component Interactions
 
@@ -101,6 +59,7 @@ The components interact through well-defined interfaces that maintain architectu
 2. **Version Management**: Sequencer provides versions to Transaction Builder and Commit Proxy
 3. **Conflict Detection**: Resolver analyzes transactions using version information from Sequencer
 4. **Data Persistence**: Commit Proxy writes to Log, Storage reads from Log to maintain local state
+5. **Cluster Coordination**: Coordinator manages service discovery, Director orchestrates recovery operations
 
 This separation enables independent scaling, testing, and evolution of each architectural layer while maintaining system-wide consistency and reliability.
 
@@ -108,8 +67,8 @@ This separation enables independent scaling, testing, and evolution of each arch
 
 Choose a component category to explore:
 
-- **[Control Plane Components](control-plane/)** - Transaction coordination and version management
-- **[Data Plane Components](data-plane/)** - Storage interfaces and distributed system coordination  
+- **[Control Plane Components](control-plane/)** - Cluster coordination and recovery orchestration
+- **[Data Plane Components](data-plane/)** - Transaction processing and storage interfaces
 - **[Implementation Components](implementations/)** - Concrete storage engine implementations
 - **[Service Components](service/)** - Service abstractions and lifecycle patterns
 - **[Infrastructure Components](infrastructure/)** - Foundational cluster interface, client gateway, and worker management

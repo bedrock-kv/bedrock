@@ -52,5 +52,5 @@ Storage servers integrate with the transaction system at several key points. [Tr
 
 - **[Basalt](../implementations/basalt.md)**: The primary multi-version storage engine implementation
 - **[Log System](log.md)**: Source of committed transactions for storage updates
-- **[Transaction Builder](../control-plane/transaction-builder.md)**: Primary consumer of storage read operations
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of storage read operations
 - **Director**: Control plane component that manages storage recovery and key range assignment

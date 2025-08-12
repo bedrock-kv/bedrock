@@ -29,37 +29,7 @@ The Cluster implements several fundamental functions for distributed database op
 
 ## Architecture Integration
 
-The Cluster operates as the top-level abstraction across all Bedrock components:
-
-```mermaid
-graph TD
-    subgraph "Application Layer"
-        A[Applications] --> CL[Cluster Interface]
-    end
-    
-    subgraph "Cluster Services"
-        CL --> C[Coordinator]
-        CL --> G[Gateway]
-        CL --> D[Director]
-        CL --> CS[Cluster Supervisor]
-    end
-    
-    subgraph "Configuration Sources"
-        AC[App Config] --> CL
-        SC[Static Config] --> CL  
-        DF[Descriptor Files] --> CL
-    end
-    
-    subgraph "Service Discovery"
-        CL -.->|Service Refs| SDR[Service Directory]
-        CL -.->|Node Discovery| NC[Node Capabilities]
-    end
-    
-    style CL fill:#e8f5e8
-    style CS fill:#e8f5e8
-```
-
-The Cluster interface sits at the top of the architecture, providing a single entry point for all cluster operations while hiding distributed system complexity.
+The Cluster interface sits at the top of the architecture, providing a single entry point for all cluster operations while hiding distributed system complexity. Applications interact with Bedrock through the Cluster interface, which manages access to Coordinators, Gateways, Directors, and other cluster services. The Cluster integrates multiple configuration sources including application config, static config, and descriptor files, while providing service discovery capabilities through service directory and node capability management.
 
 ## Cluster Definition and Usage
 

@@ -1,4 +1,4 @@
-# Bedrock's Recovery Architecture: Building Reliability Through Simplicity
+# Bedrock's Recovery System: Building Reliability Through Simplicity
 
 **How a distributed key-value store achieves bulletproof recovery by rebuilding rather than repairing.**
 
@@ -77,7 +77,7 @@ Logs contain no persistent state beyond transaction records that exist identical
 [Storage](../components/data-plane/storage.md) services present fundamentally different challenges because they contain persistent data that would be expensive and time-consuming to recreate. Recovery implements an ultra-conservative preservation strategy, maintaining all existing storage assignments while creating additional vacancy slots only when configuration requirements exceed current replication levels. If a storage team currently operates with two replicas but configuration demands three, recovery creates exactly one storage vacancy for that team—never disturbing existing, valuable data.
 
 **Resolver Services: Computational Resource Planning**  
-[Resolvers](../components/control-plane/resolver.md) require specialized treatment as purely computational components that maintain [MVCC](../glossary.md#multi-version-concurrency-control) conflict detection state derived from transaction logs. Recovery creates resolver descriptors that map each storage team's key range to corresponding resolver vacancies. These descriptors define computational boundaries and responsibility areas without committing to specific resolver processes, enabling the subsequent startup phase to optimize resolver placement and resource allocation.
+[Resolvers](../components/data-plane/resolver.md) require specialized treatment as purely computational components that maintain [MVCC](../glossary.md#multi-version-concurrency-control) conflict detection state derived from transaction logs. Recovery creates resolver descriptors that map each storage team's key range to corresponding resolver vacancies. These descriptors define computational boundaries and responsibility areas without committing to specific resolver processes, enabling the subsequent startup phase to optimize resolver placement and resource allocation.
 
 ### Phase 4: Establishing the Durability Baseline
 
@@ -146,19 +146,19 @@ With data migration complete, recovery initiates the sophisticated process of st
 
 #### Sequencer Deployment: Establishing Global Transaction Ordering
 
-The [sequencer startup phase](../quick-reads/recovery/sequencer-startup.md) addresses one of distributed systems' most fundamental challenges: ensuring every transaction receives a unique, totally-ordered [version](../glossary.md#version) number that all components recognize as authoritative. Bedrock's [sequencer](../components/control-plane/sequencer.md) component—a singleton service—provides this critical global ordering authority across the entire cluster.
+The [sequencer startup phase](../quick-reads/recovery/sequencer-startup.md) addresses one of distributed systems' most fundamental challenges: ensuring every transaction receives a unique, totally-ordered [version](../glossary.md#version) number that all components recognize as authoritative. Bedrock's [sequencer](../components/data-plane/sequencer.md) component—a singleton service—provides this critical global ordering authority across the entire cluster.
 
 Reliable global ordering demands a single authoritative source to prevent version conflicts that would compromise transaction consistency. The sequencer initializes on the director's current node, using the established recovery baseline as its starting version. From this foundation, the sequencer will assign version numbers incrementally for new transactions, guaranteeing no gaps or overlaps in the global version sequence.
 
-The sequencer's responsibilities extend far beyond simple number assignment. It coordinates extensively with [commit proxies](../components/control-plane/commit-proxy.md) to ensure consistent version assignment across the distributed system while providing the timing foundation that enables other components to maintain accurate state information.
+The sequencer's responsibilities extend far beyond simple number assignment. It coordinates extensively with [commit proxies](../components/data-plane/commit-proxy.md) to ensure consistent version assignment across the distributed system while providing the timing foundation that enables other components to maintain accurate state information.
 
 #### Commit Proxy Deployment: Enabling Horizontal Transaction Scalability
 
-The [proxy startup phase](../quick-reads/recovery/proxy-startup.md) establishes [commit proxy](../components/control-plane/commit-proxy.md) components that provide horizontal scalability for transaction processing workloads. Multiple proxies can handle increasing transaction volumes without creating bottlenecks at individual components, while their distributed architecture ensures continued transaction processing even when individual proxies experience failures.
+The [proxy startup phase](../quick-reads/recovery/proxy-startup.md) establishes [commit proxy](../components/data-plane/commit-proxy.md) components that provide horizontal scalability for transaction processing workloads. Multiple commit proxies can handle increasing transaction volumes without creating bottlenecks at individual components, while their distributed architecture ensures continued transaction processing even when individual commit proxies experience failures.
 
 Recovery employs round-robin distribution to deploy the configured number of commit proxy processes across nodes with coordination capabilities. This geographical distribution strategy ensures fault tolerance by spreading critical transaction processing components across different machines rather than concentrating them in potentially vulnerable single locations.
 
-Each proxy receives comprehensive configuration information including current epoch details and director coordinates, enabling them to detect epoch changes and coordinate appropriately with the recovery system. Proxies remain locked during startup until the system layout phase transitions them to operational mode, preventing premature transaction processing before complete system readiness.
+Each commit proxy receives comprehensive configuration information including current epoch details and director coordinates, enabling them to detect epoch changes and coordinate appropriately with the recovery system. Commit proxies remain locked during startup until the system layout phase transitions them to operational mode, preventing premature transaction processing before complete system readiness.
 
 #### Resolver Deployment: Implementing MVCC Conflict Detection
 
@@ -182,7 +182,7 @@ Recovery performs final validation that all core transaction components remain o
 **Transactional Persistence and Pipeline Validation**  
 The layout construction process culminates in a comprehensive system transaction that stores the new configuration directly within the distributed database itself. This persistence step serves dual critical purposes: it durably stores the new system configuration for future operational reference, while simultaneously validating that the entire transaction processing pipeline functions correctly end-to-end.
 
-The system transaction exercises the complete transactional data path: client request initiation, proxy coordination handling, resolver conflict detection analysis, sequencer version assignment processing, log persistence operations, and storage commitment finalization. This comprehensive pipeline validation ensures every critical component can coordinate effectively within the new system architecture.
+The system transaction exercises the complete transactional data path: client request initiation, commit proxy coordination handling, resolver conflict detection analysis, sequencer version assignment processing, log persistence operations, and storage commitment finalization. This comprehensive pipeline validation ensures every critical component can coordinate effectively within the new system architecture.
 
 **Fail-Fast Error Handling**  
 If this system transaction experiences any failure, recovery immediately recognizes that something is fundamentally compromised within the new system configuration. Rather than attempting complex diagnostic repairs, recovery terminates immediately, enabling the coordinator to restart recovery with a fresh [epoch](../glossary.md#epoch). This fail-fast approach prevents deployment of potentially compromised system configurations that could introduce subtle consistency violations or operational instabilities.
@@ -203,7 +203,7 @@ Once monitoring becomes fully active and operational, the director executes its 
 
 What commenced as a system in complete crisis—crashed components, uncertain data integrity, unclear operational state—has been systematically transformed into infrastructure that operators can trust completely. Recovery avoided attempting targeted repairs for immediate problems; instead, it methodically rebuilt everything from verified foundations, creating a system where every component has undergone validation, every piece of data has been accounted for, and every coordination relationship has been established cleanly.
 
-This comprehensive reconstruction delivers something that targeted repair approaches struggle to provide: absolute confidence in system state integrity. When monitoring dashboards display green status indicators and transaction processing resumes normal operation, the objective is eliminating lingering questions about hidden corruption, incomplete fixes, or subtle consistency violations. The successful system transaction that stored the new configuration provides definitive proof that every component in the pipeline can coordinate correctly—sequencer, proxies, resolvers, logs, and storage all operating in designed harmony.
+This comprehensive reconstruction delivers something that targeted repair approaches struggle to provide: absolute confidence in system state integrity. When monitoring dashboards display green status indicators and transaction processing resumes normal operation, the objective is eliminating lingering questions about hidden corruption, incomplete fixes, or subtle consistency violations. The successful system transaction that stored the new configuration provides definitive proof that every component in the pipeline can coordinate correctly—sequencer, commit proxies, resolvers, logs, and storage all operating in designed harmony.
 
 **Data Preservation Guarantee**  
 Crucially, all recoverable data survived the reconstruction process intact. The conservative approach to version determination combined with careful preservation of committed transactions ensures that despite infrastructure failures, no committed application work faces loss. Applications can resume operation from precisely where the system maintained high confidence in data durability, with no gaps in their transactional history.

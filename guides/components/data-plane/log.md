@@ -49,6 +49,6 @@ The minimal contract means that different log servers can coexist in the same cl
 ## Related Components
 
 - **[Shale](../implementations/shale.md)**
-- **[Commit Proxy](../control-plane/commit-proxy.md)**
+- **[Commit Proxy](../data-plane/commit-proxy.md)**
 - **[Storage](storage.md)**
 - **Director**: Control plane component that manages recovery

@@ -4,7 +4,7 @@ Bedrock is an **embedded distributed database** that takes a different approach 
 
 This approach builds on established concepts from existing systems. SQLite shows that embedded databases can be reliable and simple for single-machine use cases. DuckDB demonstrates how embedded analytical databases can perform well by eliminating network overhead. FoundationDB established distributed database architecture patterns through separation of concerns. Bedrock combines these approaches in a new configuration.
 
-> **Navigation**: Start with [Transaction Overview](../quick-reads/transactions.md) for core concepts, or [Component Overview](../components/) for individual component details.
+> **Navigation**: Start with [Transaction Overview](../quick-reads/transactions.md) for core concepts, or [Component Overview](../components/README.md) for individual component details.
 
 ## Table of Contents
 
@@ -71,6 +71,8 @@ FoundationDB established principles for distributed database design, particularl
 - **Service Management**: Handles component lifecycle and infrastructure coordination
 
 This separation enables FoundationDB to build a distributed database with clear operational characteristics. Each component has defined responsibilities, making the system more predictable and debuggable.
+
+For details on Bedrock's implementation of this separation, see [Control Plane Overview](../quick-reads/control-plane-overview.md) and [Data Plane Overview](../quick-reads/data-plane-overview.md).
 
 ### Bedrock's Embedded Adaptation
 
@@ -140,9 +142,9 @@ The Data Plane is where Bedrock's embedded approach aims to achieve performance 
 
 The **Sequencer** serves as the system's temporal authority, implementing Lamport clock semantics to ensure every transaction receives globally unique, causally-ordered version numbers. When a transaction begins, it gets a read version that guarantees a consistent snapshot of the database at that point in time. When it commits, it receives a commit version that establishes its place in the global ordering of all transactions. This temporal foundation enables Bedrock's [MVCC](../glossary.md#multi-version-concurrency-control) (Multi-Version Concurrency Control) capabilities, allowing multiple transactions to execute concurrently while maintaining the illusion that they ran in strict sequential order.
 
-For detailed information about how versioning works, see [Sequencer](../components/control-plane/sequencer.md).
+For detailed information about how versioning works, see [Sequencer](../components/data-plane/sequencer.md).
 
-**Commit Proxies** orchestrate the distributed transaction commit process, batching multiple transactions together to improve throughput while maintaining correctness guarantees. Each proxy coordinates with Resolvers to detect conflicts, ensures that all Log servers acknowledge the transaction batch, and only then notifies clients that their transactions have committed. When these proxies run embedded within application nodes, the coordination overhead is reduced while still providing the guarantee that committed transactions are durably persisted across the cluster.
+**Commit Proxies** orchestrate the distributed transaction commit process, batching multiple transactions together to improve throughput while maintaining correctness guarantees. Each commit proxy coordinates with Resolvers to detect conflicts, ensures that all Log servers acknowledge the transaction batch, and only then notifies clients that their transactions have committed. When these commit proxies run embedded within application nodes, the coordination overhead is reduced while still providing the guarantee that committed transactions are durably persisted across the cluster.
 
 **Resolvers** implement the conflict detection logic that enables optimistic concurrency control. Using interval tree data structures, they detect when transactions have conflicting read and write operations across version ranges. This design allows transactions to execute without acquiring locks—they track what they've read and written, with conflict detection happening at commit time. This approach aims to reduce the complexity and deadlock risks of traditional locking schemes while providing strong consistency guarantees.
 
@@ -164,7 +166,7 @@ The **read phase** demonstrates the embedded approach. The first read operation 
 
 The **write phase** demonstrates Bedrock's optimistic concurrency control in an embedded context. Instead of acquiring distributed locks or sending writes across the network immediately, the transaction accumulates its writes in local memory. This provides immediate read-your-writes semantics within the transaction while avoiding the complexity and latency of distributed coordination. Multiple transactions execute concurrently without blocking each other, improving throughput for applications with concurrent workflows.
 
-The **commit phase** is where the embedded architecture handles its distributed system requirements. The transaction is handed off to a Commit Proxy, which batches it with other transactions for efficiency. Resolvers check for conflicts using interval tree algorithms, while Log Servers prepare to durably persist the transaction. Only when all components have confirmed their readiness does the proxy commit the entire batch, ensuring ACID guarantees while processing multiple transactions efficiently.
+The **commit phase** is where the embedded architecture handles its distributed system requirements. The transaction is handed off to a Commit Proxy, which batches it with other transactions for efficiency. Resolvers check for conflicts using interval tree algorithms, while Log Servers prepare to durably persist the transaction. Only when all components have confirmed their readiness does the commit proxy commit the entire batch, ensuring ACID guarantees while processing multiple transactions efficiently.
 
 **Completion** brings the benefits back to the local application. Clients receive their commit notifications through local message passing rather than network protocols, and transaction resources are cleaned up within the same supervision tree that hosts your application logic. This linear flow provides three properties: strict serialization (all transactions appear to execute in version order), optimistic concurrency (conflicts are detected at commit time rather than during reads), and universal durability (all replica Log servers acknowledge before success is reported).
 
@@ -256,7 +258,7 @@ Bedrock's development continues to test what's possible when databases and appli
 
 ### For Implementation Work  
 
-1. **Component References**: [Individual Components](../components/) - Detailed API and implementation docs
+1. **Component References**: [Individual Components](../components/README.md) - Detailed API and implementation docs
 2. **Transaction Flow**: [Transaction Deep Dive](transactions.md) - Complete processing lifecycle
 3. **Recovery Process**: [Recovery Deep Dive](recovery.md) - Multi-phase recovery system
 

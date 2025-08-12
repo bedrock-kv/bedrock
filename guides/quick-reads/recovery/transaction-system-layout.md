@@ -2,7 +2,7 @@
 
 **Recovery phase 12: Creating the coordination blueprint that enables distributed transaction processing.**
 
-After recovery brings components online individually, they exist in isolation—the [sequencer](../../components/control-plane/sequencer.md) can't notify [logs](../../components/data-plane/log.md), [proxies](../../components/control-plane/commit-proxy.md) can't route to [resolvers](../../components/control-plane/resolver.md), and [storage teams](../../components/data-plane/storage.md) operate independently. The Transaction System Layout (TSL) phase solves this coordination problem.
+After recovery brings components online individually, they exist in isolation—the [sequencer](../../components/data-plane/sequencer.md) can't notify [logs](../../components/data-plane/log.md), [proxies](../../components/data-plane/commit-proxy.md) can't route to [resolvers](../../components/data-plane/resolver.md), and [storage teams](../../components/data-plane/storage.md) operate independently. The Transaction System Layout (TSL) phase solves this coordination problem.
 
 ## What It Does
 

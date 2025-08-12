@@ -59,8 +59,8 @@ Essential concepts delivered with precision and clarity. Each article provides c
 Structured technical guidance for development tasks and system integration. These guides provide actionable workflows within 2000 tokens:
 
 - **[Component Reference](components/README.md)** - Complete component architecture with interfaces and interaction patterns
-- **[Control Plane Components](components/control-plane/)** - Transaction coordination, version management, and conflict resolution
-- **[Data Plane Components](components/data-plane/)** - Storage interfaces, client gateway, and persistence contracts
+- **[Control Plane Overview](quick-reads/control-plane-overview.md)** - Cluster coordination, recovery orchestration, and distributed consensus
+- **[Data Plane Overview](quick-reads/data-plane-overview.md)** - Transaction processing, conflict resolution, and data persistence
 - **[Implementation Components](components/implementations/)** - Concrete storage engines with performance characteristics
 
 ## Deep Dives (Tier 3)

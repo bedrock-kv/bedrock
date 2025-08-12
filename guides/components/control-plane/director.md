@@ -29,37 +29,7 @@ The Director implements centralized orchestration within Bedrock's control plane
 
 ## Architecture Integration
 
-The Director operates as the central coordinator within Bedrock's control plane:
-
-```mermaid
-graph TD
-    subgraph "Control Plane"
-        C[Coordinator] --> D[Director]
-        D --> TB[Transaction Builder]
-        D --> CP[Commit Proxy]
-        D --> R[Resolver] 
-        D --> S[Sequencer]
-        D --> P[Proxy]
-    end
-    
-    subgraph "Data Plane"
-        D -.->|Worker Requests| F[Foreman]
-        F --> L[Log Workers]
-        F --> ST[Storage Workers]
-    end
-    
-    subgraph "Recovery Phases"
-        D --> RP[Recovery Planning]
-        D --> LR[Log Recovery]
-        D --> SR[Storage Recruitment]
-        D --> VS[Version Synchronization]
-    end
-    
-    style D fill:#e1f5fe
-    style C fill:#e1f5fe
-```
-
-The Director serves as the primary orchestrator, receiving service topology from the Coordinator and managing the complex recovery process across distributed components.
+The Director operates as the central coordinator within Bedrock's control plane, serving as the primary orchestrator that receives service topology from the Coordinator and manages the complex recovery process across distributed components. The Director coordinates with Transaction Builders, Commit Proxies, Resolvers, and Sequencers in the control plane, while managing worker creation through Foreman processes in the data plane. The recovery process involves multiple phases including recovery planning, log recovery, storage recruitment, and version synchronization.
 
 ## Epoch Management System
 
@@ -139,7 +109,7 @@ Each phase includes rollback capabilities if failures occur, ensuring the cluste
 # Layout contains service assignments and configuration
 %TransactionSystemLayout{
   sequencer: sequencer_service_id,
-  commit_proxy: proxy_service_id,
+  commit_proxy: commit_proxy_service_id,
   resolver: resolver_service_id,
   logs: [log_service_ids],
   storage_teams: [storage_team_configs]

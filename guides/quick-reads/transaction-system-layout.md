@@ -13,6 +13,7 @@ The TSL maps every component relationship needed for transaction processing. Thi
 ### Process References
 
 - **Sequencer**: Global transaction ordering authority
+- **Rate Keeper**: System-wide rate limiting and flow control
 - **Commit Proxies**: Transaction entry points and batching coordinators  
 - **Resolvers**: MVCC conflict detection by key range
 
@@ -36,18 +37,22 @@ TSL construction happens during recovery phase 12—after all components are ope
 
 ```elixir
 # View current layout
-Bedrock.ControlPlane.Director.get_layout()
+{:ok, layout} = Bedrock.ControlPlane.Director.fetch_transaction_system_layout(director_pid)
 
 # Layout structure
 %TransactionSystemLayout{
-  id: uuid,
+  id: 42,
   epoch: 5,
   director: #PID<0.123.45>,
   sequencer: #PID<0.124.46>,
-  proxies: [#PID<0.125.47>, ...],
-  resolvers: %{key_range => #PID<...>},
-  logs: %{shard => #PID<...>}, 
-  storage_teams: %{key_range => [#PID<...>]}
+  rate_keeper: #PID<0.126.48>,
+  proxies: [#PID<0.125.47>, #PID<0.127.49>],
+  resolvers: [
+    %{start_key: "", resolver: #PID<0.128.50>},
+    %{start_key: "m", resolver: #PID<0.129.51>}
+  ],
+  logs: %{0 => log_descriptor, 1 => log_descriptor},
+  storage_teams: [storage_team_descriptor, ...]
 }
 ```
 

@@ -29,31 +29,7 @@ The Coordinator implements several critical functions within Bedrock's control p
 
 ## Architecture Integration
 
-The Coordinator operates as part of Bedrock's control plane, working closely with other components:
-
-```mermaid
-graph TD
-    subgraph "Control Plane"
-        C[Coordinator] --> D[Director]
-        D --> TB[Transaction Builder]
-        D --> CP[Commit Proxy] 
-        D --> R[Resolver]
-        D --> S[Sequencer]
-    end
-    
-    subgraph "Data Plane"
-        G[Gateway] --> C
-        G --> TB
-    end
-    
-    C -.->|Service Directory| D
-    C -.->|Config Updates| D
-    
-    style C fill:#e1f5fe
-    style D fill:#e1f5fe
-```
-
-The Coordinator sits at the top of the control plane hierarchy, providing foundational services that enable other components to discover and coordinate with each other effectively.
+The Coordinator sits at the top of the control plane hierarchy, providing foundational services that enable other components to discover and coordinate with each other effectively. The Coordinator works closely with the Director, providing service directory information and configuration updates. Gateways register services with the Coordinator, while Directors coordinate with Transaction Builders, Commit Proxies, Resolvers, and Sequencers throughout the control plane.
 
 ## Service Registration Flow
 
@@ -65,7 +41,7 @@ Bedrock's distributed service discovery follows a structured registration proces
 4. **Cluster Propagation**: Service directory updates replicate to all Coordinator followers
 5. **Director Notification**: Directors receive populated service directories for recovery orchestration
 
-This design ensures that service topology information remains consistent across the cluster and survives coordinator failovers without data loss.
+This design ensures that service topology information remains consistent across the cluster and survives coordinator failover without data loss.
 
 ## Leader Readiness States
 

@@ -29,38 +29,7 @@ The Foreman implements several critical functions for service management:
 
 ## Architecture Integration
 
-The Foreman operates as a bridge between the control plane and data plane:
-
-```mermaid
-graph TD
-    subgraph "Control Plane"
-        D[Director] -.->|Worker Requests| F[Foreman]
-        C[Coordinator] -.->|Service Directory| F
-    end
-    
-    subgraph "Service Layer"
-        F --> WS[Worker Supervisor]
-        F --> WD[Working Directory]
-        F --> HC[Health Checking]
-    end
-    
-    subgraph "Data Plane Workers"
-        WS --> LW[Log Workers]
-        WS --> SW[Storage Workers]
-        LW --> L[Log Interface]
-        SW --> S[Storage Interface]
-    end
-    
-    subgraph "Service Registration"
-        F -.->|Service Info| G[Gateway]
-        G -.->|Register Services| C
-    end
-    
-    style F fill:#f3e5f5
-    style WS fill:#f3e5f5
-```
-
-The Foreman sits between cluster orchestration and actual data services, translating high-level service requests into concrete worker processes.
+The Foreman operates as a bridge between the control plane and data plane, sitting between cluster orchestration and actual data services to translate high-level service requests into concrete worker processes. The Foreman receives worker requests from Directors and service directory information from Coordinators. It manages the service layer through worker supervisors, working directory management, and health checking. The Foreman creates and supervises both log workers and storage workers that implement the data plane interfaces, and coordinates with Gateways to register service information with Coordinators.
 
 ## Worker Management Flow
 

@@ -2,7 +2,7 @@
 
 **Starting the global version authority that ensures transaction ordering consistency.**
 
-The [Sequencer](../../components/control-plane/sequencer.md) serves as Bedrock's singular source of truth for [version](../../glossary.md#version) assignment across the entire cluster. During recovery, establishing this global version authority is critical because all transaction processing depends on having unique, monotonically increasing version numbers.
+The [Sequencer](../../components/data-plane/sequencer.md) serves as Bedrock's singular source of truth for [version](../../glossary.md#version) assignment across the entire cluster. During recovery, establishing this global version authority is critical because all transaction processing depends on having unique, monotonically increasing version numbers.
 
 ## Why a Single Sequencer?
 
@@ -30,7 +30,7 @@ Rather than attempting repairs, recovery terminates immediately—better to rest
 
 Once operational, the sequencer coordinates with other components through its three version counters:
 
-- [Commit proxies](../../components/control-plane/commit-proxy.md) request version assignments for transaction batches
+- [Commit proxies](../../components/data-plane/commit-proxy.md) request version assignments for transaction batches
 - [Gateways](../../components/infrastructure/gateway.md) obtain read versions for consistent snapshots
 - [Storage servers](../../components/data-plane/storage.md) organize MVCC data structures using the version timeline
 
@@ -38,7 +38,7 @@ This creates system-wide synchronization where all components operate from a sha
 
 ## Next Phase
 
-With version authority established, recovery continues to [Proxy Startup](proxy-startup.md) to deploy the horizontally scalable commit processing components.
+With version authority established, recovery continues to [Commit Proxy Startup](proxy-startup.md) to deploy the horizontally scalable commit processing components.
 
 ---
 *Implementation: `lib/bedrock/control_plane/director/recovery/sequencer_startup_phase.ex`*

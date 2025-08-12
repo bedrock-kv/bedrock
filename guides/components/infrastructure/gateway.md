@@ -227,8 +227,8 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 
 ## Related Components
 
-- **[Transaction Builder](../control-plane/transaction-builder.md)**: Process created by Gateway for each transaction
-- **[Sequencer](../control-plane/sequencer.md)**: Coordinates with Gateway for read version management
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Process created by Gateway for each transaction
+- **[Sequencer](../data-plane/sequencer.md)**: Coordinates with Gateway for read version management
 - **Director**: Control plane component that receives worker advertisements from Gateway
 - **Coordinator**: Control plane component that provides transaction system layout to Gateway
 

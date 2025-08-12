@@ -26,8 +26,8 @@ flowchart TD
     LogRecruit --> Storage[Storage Recruitment]
     Storage --> Replay[Log Replay]
     Replay --> Sequencer[Sequencer Startup]
-    Sequencer --> Proxy[Proxy Startup]
-    Proxy --> Resolver[Resolver Startup]
+    Sequencer --> CommitProxy[Commit Proxy Startup]
+    CommitProxy --> Resolver[Resolver Startup]
     Resolver --> Layout[Transaction System Layout]
     Layout --> Persist[Persistence]
     Persist --> Monitor[Monitoring]
@@ -46,7 +46,7 @@ flowchart TD
     style Storage fill:#e8eaf6
     style Replay fill:#f1f8e9
     style Sequencer fill:#fff8e1
-    style Proxy fill:#fff8e1
+    style CommitProxy fill:#fff8e1
     style Resolver fill:#fff8e1
     style Layout fill:#e0f2f1
     style Persist fill:#e0f2f1
@@ -80,7 +80,7 @@ Recovery proceeds through a carefully orchestrated sequence of phases, each buil
 ### Component Startup
 
 8. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the global version number authority
-9. **[Proxy Startup](recovery/proxy-startup.md)** - Start commit proxy components for scalability
+9. **[Commit Proxy Startup](recovery/proxy-startup.md)** - Deploy commit proxy components for horizontal transaction scalability
 10. **[Resolver Startup](recovery/resolver-startup.md)** - Start MVCC conflict detection components
 
 ### System Finalization
@@ -103,5 +103,5 @@ Recovery begins when the Director creates a `RecoveryAttempt` with the current t
 
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Comprehensive recovery system analysis
 - [Bedrock Architecture](../deep-dives/architecture.md) - Overall system architecture
-- [Components Documentation](../components/) - Individual component details
+- [Components Documentation](../components/README.md) - Individual component details
 - [Transaction System Layout](transaction-system-layout.md) - System coordination blueprint

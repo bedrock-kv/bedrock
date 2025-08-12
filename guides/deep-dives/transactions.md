@@ -12,10 +12,10 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 
 - **Client**: Application code that initiates and executes transactions
 - **[Gateway](../components/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
-- **[Transaction Builder](../components/control-plane/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
-- **[Sequencer](../components/control-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
-- **[Commit Proxy](../components/control-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
-- **[Resolver](../components/control-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
+- **[Transaction Builder](../components/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
+- **[Sequencer](../components/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
+- **[Commit Proxy](../components/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
+- **[Resolver](../components/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
 - **[Log System](../components/data-plane/log.md)**: Provides durable transaction storage with strict ordering
 - **[Storage (Basalt)](../components/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
@@ -116,13 +116,13 @@ sequenceDiagram
 
 ## Component Deep Dives
 
-For detailed technical documentation on any component, see the [Components Documentation](../components/) directory:
+For detailed technical documentation on any component, see the [Components Documentation](../components/README.md) directory:
 
 - **[Gateway Deep Dive](../components/infrastructure/gateway.md)** - Client interface, version leasing, worker advertisement
-- **[Transaction Builder Deep Dive](../components/control-plane/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
-- **[Sequencer Deep Dive](../components/control-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
-- **[Commit Proxy Deep Dive](../components/control-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
-- **[Resolver Deep Dive](../components/control-plane/resolver.md)** - MVCC conflict detection, version history, range processing
+- **[Transaction Builder Deep Dive](../components/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
+- **[Sequencer Deep Dive](../components/data-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
+- **[Commit Proxy Deep Dive](../components/data-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
+- **[Resolver Deep Dive](../components/data-plane/resolver.md)** - MVCC conflict detection, version history, range processing
 - **[Log System Deep Dive](../components/data-plane/log.md)** - Durable storage, replication, recovery coordination
 - **[Shale Deep Dive](../components/implementations/shale.md)** - Disk-based log implementation, WAL architecture
 - **[Storage Deep Dive](../components/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
@@ -199,7 +199,7 @@ This is the most complex phase involving multiple distributed components working
 2. Prepare transaction tuple: `{read_info, writes}`
    - `read_info`: `{read_version, [read_keys]}` or `nil` for write-only transactions
    - `writes`: `%{key => value}` map of accumulated writes
-3. Select a Commit Proxy randomly from available proxies
+3. Select a Commit Proxy randomly from available commit proxies
 4. Send transaction to selected Commit Proxy
 
 **Key Code Locations**:
@@ -361,7 +361,7 @@ This is the most complex phase involving multiple distributed components working
 
 - **Log Server Failures**: Trigger commit proxy recovery (fail-fast)
 - **Storage Server Failures**: Reads continue from replicas
-- **Commit Proxy Failures**: Director detects and starts new proxies
+- **Commit Proxy Failures**: Director detects and starts new commit proxies
 - **Network Partitions**: Raft consensus ensures consistency
 
 ### Version Management

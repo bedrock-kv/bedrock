@@ -31,9 +31,8 @@ For comprehensive technical coverage:
 - **[Storage Implementations](deep-dives/architecture/implementations)** - Available storage engines and their
 - **[Transaction System Layout](quick-reads/transaction-system-layout.md)** - The big picture of how components work together
 - **[Transaction Processing](deep-dives/transactions.md)** - Full details of MVCC implementation and commit protocols
-- **[Recovery System](deep-dives/recovery.md)** - How Bedrock handles failures and maintains consistency
 - **[Cluster Startup](deep-dives/cluster-startup.md)** - Bootstrap processes and system initialization
-- **[Recovery Overview](quick-reads/recovery.md)** - High-level understanding of system resilience
+- **[Recovery](quick-reads/recovery.md)** - High-level understanding of system resilience ([More Detail](deep-dives/recovery.md))
 
 ## Reference
 

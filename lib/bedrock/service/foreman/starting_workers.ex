@@ -1,4 +1,6 @@
 defmodule Bedrock.Service.Foreman.StartingWorkers do
+  @moduledoc false
+  alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
@@ -24,6 +26,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> Path.wildcard()
   end
 
+  @spec worker_info_for_id(Worker.id(), Path.t(), (Worker.id() -> Worker.otp_name())) ::
+          WorkerInfo.t()
   def worker_info_for_id(id, path, otp_namer),
     do: %WorkerInfo{
       id: id,
@@ -32,7 +36,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       health: :stopped
     }
 
-  @spec try_to_start_workers([WorkerInfo.t()], cluster :: module()) :: [WorkerInfo.t()]
+  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t()) :: [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster) do
     worker_info
     |> Task.async_stream(&try_to_start_worker(&1, cluster))
@@ -44,11 +48,13 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   end
 
   defmodule(StartWorkerOp) do
+    @moduledoc false
+
     @type t :: %__MODULE__{}
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error]
   end
 
-  @spec try_to_start_worker(WorkerInfo.t(), cluster :: module()) :: WorkerInfo.t()
+  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t()) :: WorkerInfo.t()
   def try_to_start_worker(worker_info, cluster) do
     %StartWorkerOp{
       id: worker_info.id,
@@ -95,6 +101,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> then(&%{op | child_spec: &1})
   end
 
+  defp build_child_spec(op), do: op
+
   @spec start_supervised_child(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp start_supervised_child(%{error: nil} = op) do
     case DynamicSupervisor.start_child(op.cluster.otp_name(:worker_supervisor), op.child_spec) do
@@ -103,6 +111,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       error -> %{op | error: error}
     end
   end
+
+  defp start_supervised_child(op), do: op
 
   @spec find_worker(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp find_worker(%{error: nil} = op) do
@@ -119,11 +129,13 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
           worker :: module(),
           params :: map(),
           Path.t(),
-          cluster :: module()
+          cluster :: Cluster.t()
         ) :: WorkerInfo.t()
+  @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Cluster.t()) ::
+          WorkerInfo.t()
   def initialize_new_worker(id, worker, params, path, cluster) do
     working_directory = Path.join(path, id)
-    worker_info = worker_info_for_id(id, working_directory, cluster.otp_name_for_worker(id))
+    worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)
     manifest = Manifest.new(cluster.name(), id, worker, params)
 
     case initialize_working_directory(working_directory, manifest) do
@@ -131,7 +143,4 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       {:error, reason} -> worker_info |> put_health({:failed_to_start, reason})
     end
   end
-
-  @spec random_worker_id() :: binary()
-  def random_worker_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
 end

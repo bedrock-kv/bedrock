@@ -1,9 +1,13 @@
 defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
-  alias Bedrock.Telemetry
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.Telemetry
 
+  @type telemetry_metadata :: %{optional(atom()) => term()}
+
+  @spec trace_metadata() :: telemetry_metadata()
   def trace_metadata, do: Process.get(:trace_metadata, %{})
 
+  @spec trace_metadata(metadata :: telemetry_metadata()) :: telemetry_metadata()
   def trace_metadata(metadata),
     do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 
@@ -42,7 +46,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   def trace_commit_proxy_batch_failed(batch, reason, duration_us) do
     Telemetry.execute(
       [:bedrock, :data_plane, :commit_proxy, :failed],
-      %{n_transactions: length(batch.buffer), duration_us: duration_us},
+      %{
+        n_transactions: length(batch.buffer),
+        duration_us: duration_us,
+        commit_version: batch.commit_version
+      },
       Map.merge(trace_metadata(), %{reason: reason})
     )
   end

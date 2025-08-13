@@ -1,4 +1,6 @@
 defmodule Bedrock.Internal.GenServerApi do
+  @moduledoc false
+
   defmacro __using__(opts) do
     module = Keyword.get(opts, :for)
 
@@ -7,13 +9,14 @@ defmodule Bedrock.Internal.GenServerApi do
         if module do
           quote do
             @doc false
-            @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
             defdelegate child_spec(opts), to: unquote(module)
+
+            def start_link(opts) do
+              GenServer.start_link(unquote(module), opts)
+            end
           end
         end
       end
-
-      @type call_errors :: :unavailable | :timeout
 
       import Bedrock.Internal.GenServer.Calls
     end

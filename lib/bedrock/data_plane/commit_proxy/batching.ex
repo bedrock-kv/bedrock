@@ -1,20 +1,56 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batching do
-  alias Bedrock.DataPlane.CommitProxy.State
+  @moduledoc false
+
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.State
 
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 1]
 
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [new_batch: 3, add_transaction: 3, set_finalized_at: 2]
 
+  @spec timestamp() :: Bedrock.timestamp_in_ms()
   defp timestamp, do: :erlang.monotonic_time(:millisecond)
 
-  @spec start_batch_if_needed(State.t()) :: State.t()
-  def start_batch_if_needed(%{batch: nil} = t) do
-    {:ok, last_commit_version, commit_version} =
-      next_commit_version(t.transaction_system_layout.sequencer)
+  @spec single_transaction_batch(
+          state :: State.t(),
+          transaction :: Bedrock.transaction(),
+          reply_fn :: Batch.reply_fn()
+        ) ::
+          {:ok, Batch.t()}
+          | {:error, :sequencer_unavailable}
+  def single_transaction_batch(t, transaction, reply_fn \\ fn _result -> :ok end)
 
-    %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
+  def single_transaction_batch(
+        %{transaction_system_layout: %{sequencer: nil}},
+        _transaction,
+        _reply_fn
+      ),
+      do: {:error, :sequencer_unavailable}
+
+  def single_transaction_batch(state, transaction, reply_fn) do
+    case next_commit_version(state.transaction_system_layout.sequencer) do
+      {:ok, last_commit_version, commit_version} ->
+        {:ok,
+         new_batch(timestamp(), last_commit_version, commit_version)
+         |> add_transaction(transaction, reply_fn)
+         |> set_finalized_at(timestamp())}
+
+      {:error, :unavailable} ->
+        {:error, :sequencer_unavailable}
+    end
+  end
+
+  @spec start_batch_if_needed(State.t()) :: State.t() | no_return()
+  def start_batch_if_needed(%{batch: nil} = t) do
+    case next_commit_version(t.transaction_system_layout.sequencer) do
+      {:ok, last_commit_version, commit_version} ->
+        %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
+
+      {:error, reason} ->
+        # Sequencer not available - this is a system error that should propagate
+        exit({:sequencer_unavailable, reason})
+    end
   end
 
   def start_batch_if_needed(t), do: t

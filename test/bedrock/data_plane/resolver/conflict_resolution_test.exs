@@ -10,13 +10,13 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
     ]
 
   # Generate a random alphanumeric string of length 5 or less.
-  def key_generator() do
+  def key_generator do
     string(:alphanumeric, min_length: 1, max_length: 5)
   end
 
   # Generate a range where the start is always less than the end. If we happen
   # to generate the same value, we just return the value.
-  def range_generator() do
+  def range_generator do
     key_generator()
     |> StreamData.bind(fn v1 ->
       key_generator()
@@ -29,11 +29,11 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
   end
 
   # Produce a key about 99% of the time, and a range about 1% of the time.
-  def key_or_range_generator() do
+  def key_or_range_generator do
     one_of([range_generator() | 1..99 |> Enum.map(fn _ -> key_generator() end) |> Enum.to_list()])
   end
 
-  def reads_and_writes_generator() do
+  def reads_and_writes_generator do
     gen all(
           reads <- list_of(key_or_range_generator(), min_length: 1, max_length: 10),
           writes <- list_of(key_or_range_generator(), min_length: 1, max_length: 5)

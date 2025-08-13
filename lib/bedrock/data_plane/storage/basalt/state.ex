@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.State do
-  alias Bedrock.DataPlane.Storage.Basalt.Database
-  alias Bedrock.Service.Worker
-  alias Bedrock.Service.Foreman
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Storage.Basalt.Database
+  alias Bedrock.Service.Foreman
+  alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
           otp_name: atom(),
@@ -25,15 +27,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.State do
             director: nil,
             mode: :locked
 
+  @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode),
     do: %{t | mode: mode}
 
+  @spec update_director_and_epoch(t(), Director.ref() | nil, Bedrock.epoch() | nil) :: t()
   def update_director_and_epoch(t, director, epoch),
     do: %{t | director: director, epoch: epoch}
 
+  @spec reset_puller(t()) :: t()
   def reset_puller(t),
     do: %{t | pull_task: nil}
 
+  @spec put_puller(t(), Task.t()) :: t()
   def put_puller(t, pull_task),
     do: %{t | pull_task: pull_task}
 end

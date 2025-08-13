@@ -4,12 +4,12 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   the transaction system within the cluster.
   """
 
-  alias Bedrock.DataPlane.Log
-  alias Bedrock.Service.Worker
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
 
   @typedoc """
   Struct representing the layout of the transaction system within the cluster.
@@ -32,24 +32,33 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `services` - A list of all of the workers within the system, their types, ids and
        the otp names used to communicate with them.
   """
+  @type process_ref :: pid() | nil
+  @type proxy_list :: [pid()]
+  @type resolver_list :: [ResolverDescriptor.t()]
+  @type log_map :: %{Log.id() => LogDescriptor.t()}
+  @type storage_team_list :: [StorageTeamDescriptor.t()]
+  @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
+
   @type t :: %{
           id: id(),
-          director: pid() | nil,
-          sequencer: pid() | nil,
-          rate_keeper: pid() | nil,
-          proxies: [pid()],
-          resolvers: [ResolverDescriptor.t()],
-          logs: %{Log.id() => LogDescriptor.t()},
-          storage_teams: [StorageTeamDescriptor.t()],
-          services: %{Worker.id() => ServiceDescriptor.t()}
+          epoch: non_neg_integer(),
+          director: process_ref() | :unavailable,
+          sequencer: process_ref(),
+          rate_keeper: process_ref(),
+          proxies: proxy_list(),
+          resolvers: resolver_list(),
+          logs: log_map(),
+          storage_teams: storage_team_list(),
+          services: service_map()
         }
 
   @type id :: non_neg_integer()
 
-  @spec transaction_system_layout() :: t()
-  def transaction_system_layout(),
+  @spec default() :: t()
+  def default,
     do: %{
       id: 0,
+      epoch: 0,
       director: nil,
       sequencer: nil,
       rate_keeper: nil,
@@ -60,5 +69,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
       services: %{}
     }
 
+  @spec random_id() :: id()
   def random_id, do: :rand.uniform(1_000_000)
 end

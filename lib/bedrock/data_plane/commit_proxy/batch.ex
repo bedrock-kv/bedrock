@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batch do
+  @moduledoc false
   @type reply_fn :: ({:ok, Bedrock.version()} | {:error, :abort} -> :ok)
 
   @type t :: %__MODULE__{
@@ -31,10 +32,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
     }
   end
 
-  @spec transactions_in_order(t()) :: [{GenServer.from(), Bedrock.transaction()}]
+  @spec transactions_in_order(t()) :: [{reply_fn(), Bedrock.transaction()}]
   def transactions_in_order(t),
     do: t.buffer |> Enum.reverse()
 
+  @spec all_callers(t()) :: [reply_fn()]
   def all_callers(t),
     do: t.buffer |> Enum.map(&elem(&1, 0))
 

@@ -1,10 +1,11 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
-  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
 
-  defp random_file_name() do
+  defp random_file_name do
     random_chars =
       :crypto.strong_rand_bytes(16)
       |> Base.encode16()
@@ -16,7 +17,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
   defp with_empty_pkv(context) do
     file_name = random_file_name()
     {:ok, pkv} = PersistentKeyValues.open(file_name |> String.to_atom(), file_name)
-    :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, []))
+    :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(Version.zero(), []))
 
     on_exit(fn ->
       File.rm!(file_name)
@@ -42,20 +43,28 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
     setup :with_empty_pkv
 
     test "returns 0 on a newly created key-value store", %{pkv: pkv} do
-      assert 0 = PersistentKeyValues.last_version(pkv)
+      zero_version = Version.zero()
+      assert ^zero_version = PersistentKeyValues.last_version(pkv)
     end
 
     test "returns the correct version after storing one transaction", %{pkv: pkv} do
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, foo: :bar))
+      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(Version.zero(), foo: :bar))
 
-      assert 0 = PersistentKeyValues.last_version(pkv)
+      zero_version = Version.zero()
+      assert ^zero_version = PersistentKeyValues.last_version(pkv)
     end
 
     test "returns the correct version after storing two transactions", %{pkv: pkv} do
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, foo: :bar))
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :baz))
+      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(Version.zero(), foo: :bar))
 
-      assert 1 = PersistentKeyValues.last_version(pkv)
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(Version.from_integer(1), foo: :baz)
+        )
+
+      version_one = Version.from_integer(1)
+      assert ^version_one = PersistentKeyValues.last_version(pkv)
     end
   end
 
@@ -63,25 +72,47 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
     setup :with_empty_pkv
 
     test "stores the given key-values correctly", %{pkv: pkv} do
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, foo: :bar))
+      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(Version.zero(), foo: :bar))
 
       assert {:ok, :bar} = PersistentKeyValues.fetch(pkv, :foo)
     end
 
     test "correctly overwrites a previous value for a key", %{pkv: pkv} do
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, foo: :bar))
-      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :baz))
+      :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(Version.zero(), foo: :bar))
+
+      :ok =
+        PersistentKeyValues.apply_transaction(
+          pkv,
+          Transaction.new(Version.from_integer(1), foo: :baz)
+        )
 
       assert {:ok, :baz} = PersistentKeyValues.fetch(pkv, :foo)
     end
 
     test "does not allow older transactions to be written after newer ones", %{pkv: pkv} do
-      assert :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(0, foo: :baz))
-      assert :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :baz))
-      assert :ok = PersistentKeyValues.apply_transaction(pkv, Transaction.new(2, foo: :baz))
+      assert :ok =
+               PersistentKeyValues.apply_transaction(
+                 pkv,
+                 Transaction.new(Version.zero(), foo: :baz)
+               )
+
+      assert :ok =
+               PersistentKeyValues.apply_transaction(
+                 pkv,
+                 Transaction.new(Version.from_integer(1), foo: :baz)
+               )
+
+      assert :ok =
+               PersistentKeyValues.apply_transaction(
+                 pkv,
+                 Transaction.new(Version.from_integer(2), foo: :baz)
+               )
 
       assert {:error, :version_too_old} ==
-               PersistentKeyValues.apply_transaction(pkv, Transaction.new(1, foo: :bar))
+               PersistentKeyValues.apply_transaction(
+                 pkv,
+                 Transaction.new(Version.from_integer(1), foo: :bar)
+               )
 
       assert {:ok, :baz} == PersistentKeyValues.fetch(pkv, :foo)
     end
@@ -94,31 +125,31 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          Transaction.new(1, [{"foo", :bar}, {"a", 1}])
+          Transaction.new(Version.from_integer(1), [{"foo", :bar}, {"a", 1}])
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          Transaction.new(2, [{"foo", :baz}, {"l", 3}])
+          Transaction.new(Version.from_integer(2), [{"foo", :baz}, {"l", 3}])
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          Transaction.new(3, [{"foo", :biz}, {"j", 2}])
+          Transaction.new(Version.from_integer(3), [{"foo", :biz}, {"j", 2}])
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          Transaction.new(4, [{"foo", :buz}])
+          Transaction.new(Version.from_integer(4), [{"foo", :buz}])
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          Transaction.new(5, [{<<0xFF, 0xFF>>, :system_key}])
+          Transaction.new(Version.from_integer(5), [{<<0xFF, 0xFF>>, :system_key}])
         )
 
       assert ["a", "foo", "j", "l", <<0xFF, 0xFF>>] ==

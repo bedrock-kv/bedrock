@@ -1,6 +1,8 @@
 defmodule Mix.Tasks.Bedrock do
   use Mix.Task
 
+  alias Mix.Tasks.Help
+
   @shortdoc "Prints Bedrock help information"
 
   @moduledoc """
@@ -10,6 +12,7 @@ defmodule Mix.Tasks.Bedrock do
 
   """
 
+  @spec run([String.t()]) :: :ok
   def run(argv) do
     {_opts, args} = OptionParser.parse!(argv, strict: [])
 
@@ -24,6 +27,6 @@ defmodule Mix.Tasks.Bedrock do
     Mix.shell().info("Bedrock v#{Application.spec(:bedrock, :vsn)}")
     Mix.shell().info("A distributed ACID compliant key-value storage system for Elixir.")
     Mix.shell().info("\nAvailable tasks:\n")
-    Mix.Tasks.Help.run(["--search", "bedrock."])
+    Help.run(["--search", "bedrock."])
   end
 end

@@ -1,8 +1,12 @@
 defmodule Bedrock.Cluster.Gateway.MinimumReadVersions do
+  @moduledoc false
+
   @type deadline_by_version :: %{Bedrock.version() => Bedrock.timestamp_in_ms()}
 
+  alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Internal.Time
 
+  @spec recalculate_minimum_read_version(State.t()) :: State.t()
   def recalculate_minimum_read_version(t) do
     {minimum_read_version, deadline_by_version} =
       find_minimum_active_version(

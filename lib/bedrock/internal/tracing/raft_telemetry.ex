@@ -1,8 +1,11 @@
 defmodule Bedrock.Internal.Tracing.RaftTelemetry do
+  @moduledoc false
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_raft_telemetry"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -26,6 +29,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
   def to_hh_mm_ss_ms(0), do: "0:00.000"
@@ -52,6 +56,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
 
   defp info(elapsed, message), do: Logger.info("#{to_hh_mm_ss_ms(elapsed)}: #{message}")
 
+  @spec log_event(list(atom()), map(), map(), integer()) :: :ok
   def log_event(
         [:bedrock, :raft, :mode_change],
         %{at: at},

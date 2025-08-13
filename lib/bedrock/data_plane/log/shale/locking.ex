@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Log.Shale.Locking do
-  alias Bedrock.DataPlane.Log.Shale.State
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Log.Shale.State
 
   @spec lock_for_recovery(
           t :: State.t(),

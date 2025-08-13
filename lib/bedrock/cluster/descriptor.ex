@@ -17,12 +17,12 @@ defmodule Bedrock.Cluster.Descriptor do
   """
   @type t :: %__MODULE__{
           cluster_name: String.t(),
-          coordinator_nodes: [atom()]
+          coordinator_nodes: [node()]
         }
   defstruct cluster_name: nil,
             coordinator_nodes: []
 
-  @spec new(String.t(), [atom()]) :: t()
+  @spec new(String.t(), [node()]) :: t()
   def new(cluster_name, coordinator_nodes),
     do: %__MODULE__{cluster_name: cluster_name, coordinator_nodes: coordinator_nodes}
 
@@ -74,6 +74,8 @@ defmodule Bedrock.Cluster.Descriptor do
   def parse_cluster_file_contents(contents),
     do: contents |> String.split(":", trim: true, parts: 2) |> parse_cluster_name_and_rest()
 
+  @spec parse_cluster_name_and_rest([String.t()]) ::
+          {:ok, t()} | {:error, :invalid_cluster_descriptor}
   defp parse_cluster_name_and_rest([cluster_name, joined_coordinator_nodes]),
     do:
       parse_joined_cluster_nodes(
@@ -84,6 +86,7 @@ defmodule Bedrock.Cluster.Descriptor do
   defp parse_cluster_name_and_rest(_),
     do: {:error, :invalid_cluster_descriptor}
 
+  @spec parse_joined_cluster_nodes(String.t(), [String.t()]) :: {:ok, t()}
   defp parse_joined_cluster_nodes(cluster_name, joined_coordinator_nodes),
     do: {:ok, new(cluster_name, joined_coordinator_nodes |> Enum.map(&String.to_atom/1))}
 end

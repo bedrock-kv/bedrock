@@ -1,4 +1,8 @@
 defmodule Bedrock.Internal.TimerManagement do
+  @moduledoc """
+  Utilities for managing GenServer timers in a structured way.
+  """
+  @type timer_container :: %{:timers => %{atom() => reference()} | nil, optional(atom()) => any()}
   defmacro __using__(_opts) do
     quote do
       import Bedrock.Internal.TimerManagement,
@@ -8,6 +12,7 @@ defmodule Bedrock.Internal.TimerManagement do
 
   # Timer Management
 
+  @spec cancel_all_timers(timer_container()) :: timer_container()
   def cancel_all_timers(%{timers: nil} = t), do: t
 
   def cancel_all_timers(%{} = t) do
@@ -17,6 +22,7 @@ defmodule Bedrock.Internal.TimerManagement do
     end)
   end
 
+  @spec cancel_timer(timer_container(), timer_name :: atom()) :: timer_container()
   def cancel_timer(%{timers: nil} = t, _name), do: t
 
   def cancel_timer(%{} = t, name) do
@@ -32,6 +38,8 @@ defmodule Bedrock.Internal.TimerManagement do
     end
   end
 
+  @spec set_timer(timer_container(), timer_name :: atom(), timeout_ms :: pos_integer()) ::
+          timer_container()
   def set_timer(%{} = t, name, timeout_in_ms) do
     update_in(
       t.timers,

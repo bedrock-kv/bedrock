@@ -1,8 +1,12 @@
 defmodule Bedrock.ControlPlane.Coordinator.Tracing do
+  @moduledoc false
+
   require Logger
 
+  @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_controlplane_coordinator"
 
+  @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
@@ -10,18 +14,31 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
         [:bedrock, :control_plane, :coordinator, :started],
         [:bedrock, :control_plane, :coordinator, :election_completed],
         [:bedrock, :control_plane, :coordinator, :director_changed],
-        [:bedrock, :control_plane, :coordinator, :consensus_reached]
+        [:bedrock, :control_plane, :coordinator, :director_launch],
+        [:bedrock, :control_plane, :coordinator, :director_shutdown],
+        [:bedrock, :control_plane, :coordinator, :consensus_reached],
+        [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
+        [:bedrock, :control_plane, :coordinator, :leader_ready],
+        [:bedrock, :control_plane, :coordinator, :epoch_ended]
       ],
       &__MODULE__.handler/4,
       nil
     )
   end
 
+  @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec handler(
+          :telemetry.event_name(),
+          :telemetry.event_measurements(),
+          :telemetry.event_metadata(),
+          any()
+        ) :: any()
   def handler([:bedrock, :control_plane, :coordinator, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
 
+  @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster}) do
     Logger.metadata(cluster: cluster)
     info("Coordinator started")
@@ -39,13 +56,36 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
   def trace(:director_changed, _, %{director: director}),
     do: info("Director changed to #{inspect(director)}")
 
+  def trace(:director_launch, _, %{epoch: epoch, config_summary: nil}),
+    do: info("Starting director for epoch #{epoch} with NO CONFIG")
+
+  def trace(:director_launch, _, %{epoch: epoch, config_summary: summary}),
+    do:
+      info(
+        "Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count}, storage_teams: #{summary.storage_teams_count})"
+      )
+
+  def trace(:director_shutdown, _, %{director: director, reason: reason}),
+    do: info("Shutting down director #{inspect(director)} (reason: #{reason})")
+
   def trace(:consensus_reached, _, %{transaction_id: tx_id}),
     do: info("Consensus reached at #{inspect(tx_id)}")
 
+  def trace(:leader_waiting_consensus, _, _),
+    do: info("New leader waiting for first consensus before starting director")
+
+  def trace(:leader_ready, %{service_count: count}, _),
+    do: info("Leader ready - starting director with #{count} services in directory")
+
+  def trace(:epoch_ended, _, %{previous_epoch: previous_epoch}),
+    do: info("Epoch #{inspect(previous_epoch)} ended, triggering consensus for director startup")
+
+  @spec info(message :: String.t()) :: :ok
   def info(message) do
     metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
 
-    Logger.info("Bedrock [#{metadata[:cluster].name()}]: #{message}",
+    Logger.info("Bedrock [#{cluster.name()}]: #{message}",
       ansi_color: :green
     )
   end

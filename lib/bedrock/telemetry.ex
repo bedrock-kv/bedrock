@@ -1,6 +1,10 @@
 defmodule Bedrock.Telemetry do
-  @spec execute(event_name :: [atom()], metadata :: map(), tags :: map()) :: :ok
-  def execute(event_name, metadata, tags) do
-    :telemetry.execute(event_name, metadata, tags)
+  @spec execute(
+          event_name :: [:bedrock | :storage | :log | :coordinator | atom()],
+          measurements :: %{atom() => number()},
+          metadata :: %{atom() => term()}
+        ) :: :ok
+  def execute(event_name, measurements, metadata) do
+    :telemetry.execute(event_name, measurements, metadata)
   end
 end

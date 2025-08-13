@@ -1,21 +1,50 @@
 defmodule Bedrock.Cluster.Gateway.Calls do
+  @moduledoc false
+
   alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Cluster.TransactionBuilder
-  alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.Cluster.Gateway.TransactionBuilder
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator
 
-  @spec begin_transaction(State.t(), opts :: keyword()) :: {:ok, pid()}
-  def begin_transaction(t, _opts \\ []),
-    do: TransactionBuilder.start_link(gateway: self(), storage_table: t.storage_table)
+  @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
+          {State.t(), {:ok, pid()} | {:error, :unavailable}}
+  def begin_transaction(t, opts \\ []) do
+    t
+    |> ensure_current_tsl()
+    |> case do
+      {:ok, tsl, updated_state} ->
+        TransactionBuilder.start_link(
+          gateway: self(),
+          transaction_system_layout: tsl,
+          key_codec: Keyword.fetch!(opts, :key_codec),
+          value_codec: Keyword.fetch!(opts, :value_codec)
+        )
+        |> case do
+          {:ok, pid} -> {updated_state, {:ok, pid}}
+          {:error, reason} -> {updated_state, {:error, reason}}
+        end
 
-  @spec next_read_version(State.t()) ::
-          {:ok, {Bedrock.version(), Bedrock.interval_in_ms()}}
+      {:error, reason} ->
+        {t, {:error, reason}}
+    end
+  end
+
+  @spec ensure_current_tsl(State.t()) ::
+          {:ok, TransactionSystemLayout.t(), State.t()}
           | {:error, :unavailable}
-  def next_read_version(t) when is_nil(t.transaction_system_layout), do: {:error, :unavailable}
+  defp ensure_current_tsl(%{known_coordinator: :unavailable}), do: {:error, :unavailable}
 
-  def next_read_version(t) do
-    case Sequencer.next_read_version(t.transaction_system_layout.sequencer) do
-      {:ok, version} -> {:ok, version, t.lease_renewal_interval_in_ms}
-      {:error, _} -> {:error, :unavailable}
+  defp ensure_current_tsl(%{known_coordinator: _coordinator, transaction_system_layout: tsl} = t)
+       when not is_nil(tsl) do
+    # Use cached TSL (updated via push notifications)
+    {:ok, tsl, t}
+  end
+
+  defp ensure_current_tsl(%{known_coordinator: coordinator} = t) do
+    # No cached TSL - fetch from coordinator
+    case Coordinator.fetch_transaction_system_layout(coordinator) do
+      {:ok, tsl} -> {:ok, tsl, %{t | transaction_system_layout: tsl}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -24,7 +53,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
            {:ok, expiration_interval_in_ms :: Bedrock.interval_in_ms()}
            | {:error, :lease_expired}}
   def renew_read_version_lease(t, read_version)
-      when not is_nil(t.minimum_read_version) and t.minimum_read_version > read_version,
+      when not is_nil(t.minimum_read_version) and read_version < t.minimum_read_version,
       do: {:error, :lease_expired}
 
   def renew_read_version_lease(t, read_version) do
@@ -46,20 +75,4 @@ defmodule Bedrock.Cluster.Gateway.Calls do
       {t |> Map.put(:deadline_by_version, updated_deadline_by_version), result}
     end)
   end
-
-  def fetch_coordinator(%{coordinator: :unavailable}), do: {:error, :unavailable}
-  def fetch_coordinator(t), do: {:ok, t.coordinator}
-
-  def fetch_director(%{director: :unavailable}), do: {:error, :unavailable}
-  def fetch_director(t), do: {:ok, t.director}
-
-  def fetch_commit_proxy(%{director: :unavailable}), do: {:error, :unavailable}
-
-  def fetch_commit_proxy(%{transaction_system_layout: nil}), do: {:error, :unavailable}
-
-  def fetch_commit_proxy(%{transaction_system_layout: %{proxies: []}}), do: {:error, :unavailable}
-
-  def fetch_commit_proxy(t), do: {:ok, t.transaction_system_layout.proxies |> Enum.random()}
-
-  def fetch_coordinator_nodes(t), do: {:ok, t.descriptor.coordinator_nodes}
 end

@@ -1,4 +1,6 @@
 defmodule Bedrock.DataPlane.Storage do
+  @moduledoc false
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
 
@@ -9,8 +11,8 @@ defmodule Bedrock.DataPlane.Storage do
   @type key_range :: Bedrock.key_range()
   @type fact_name ::
           Worker.fact_name()
+          | :key_ranges
           | :durable_version
-          | :key_range
           | :n_objects
           | :path
           | :size_in_bytes
@@ -29,12 +31,12 @@ defmodule Bedrock.DataPlane.Storage do
   Returns the value for the given key/version.
   """
   @spec fetch(
-          storage :: ref(),
-          Bedrock.key(),
-          Bedrock.version(),
-          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+          storage_ref :: ref(),
+          key :: Bedrock.key(),
+          version :: Bedrock.version(),
+          opts :: [timeout: timeout()]
         ) ::
-          {:ok, Bedrock.value()}
+          {:ok, value :: Bedrock.value()}
           | {:error,
              :timeout
              | :not_found
@@ -42,7 +44,7 @@ defmodule Bedrock.DataPlane.Storage do
              | :version_too_new
              | :unavailable}
   def fetch(storage, key, version, opts \\ []) when is_binary(key),
-    do: call(storage, {:fetch, key, version, opts}, opts[:timeout_in_ms] || :infinity)
+    do: call(storage, {:fetch, key, version, opts}, opts[:timeout] || :infinity)
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions
@@ -53,8 +55,14 @@ defmodule Bedrock.DataPlane.Storage do
   In order for the lock to succeed, the given epoch needs to be greater than
   the current epoch.
   """
-  @spec lock_for_recovery(storage :: ref(), Bedrock.epoch()) ::
-          {:ok, pid(), recovery_info :: keyword()} | {:error, :newer_epoch_exists}
+  @spec lock_for_recovery(storage_ref :: ref(), recovery_epoch :: Bedrock.epoch()) ::
+          {:ok, storage_pid :: pid(),
+           recovery_info :: [
+             {:kind, :storage}
+             | {:durable_version, Bedrock.version()}
+             | {:oldest_durable_version, Bedrock.version()}
+           ]}
+          | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
@@ -69,7 +77,7 @@ defmodule Bedrock.DataPlane.Storage do
           durable_version :: Bedrock.version(),
           TransactionSystemLayout.t(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:error, :timeout | :unavailable}
   def unlock_after_recovery(storage, durable_version, transaction_system_layout, opts \\ []) do
     call(
       storage,
@@ -81,7 +89,12 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Ask the storage storage for various facts about itself.
   """
-  @spec info(storage :: ref(), [fact_name()], opts :: keyword()) ::
-          {:ok, keyword()} | {:error, term()}
+  @spec info(storage :: ref(), [fact_name()], opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok,
+           %{
+             fact_name() =>
+               Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
+           }}
+          | {:error, :unavailable}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker
 end

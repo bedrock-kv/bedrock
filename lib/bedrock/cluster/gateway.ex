@@ -5,89 +5,33 @@ defmodule Bedrock.Cluster.Gateway do
   a cluster.
   """
 
-  alias Bedrock.ControlPlane.Director
-  alias Bedrock.ControlPlane.Coordinator
-
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  @type ref :: GenServer.server()
+  @type ref :: pid() | atom() | {atom(), node()}
 
   @spec begin_transaction(
-          ref(),
+          gateway_ref :: ref(),
           opts :: [
             retry_count: pos_integer(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, pid()} | call_errors()
+        ) :: {:ok, transaction_pid :: pid()} | {:error, :timeout}
   def begin_transaction(gateway, opts \\ []),
     do: gateway |> call({:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
-
-  @spec next_read_version(
-          ref(),
-          opts :: [
-            timeout_in_ms: Bedrock.timeout_in_ms()
-          ]
-        ) ::
-          {:ok, Bedrock.version(), new_lease_deadline_in_ms :: Bedrock.interval_in_ms()}
-          | {:error, term()}
-  def next_read_version(gateway, opts \\ []),
-    do: gateway |> call(:next_read_version, opts[:timeout_in_ms] || :infinity)
 
   @doc """
   Renew the lease for a transaction based on the read version.
   """
   @spec renew_read_version_lease(
-          ref(),
+          gateway_ref :: ref(),
           read_version :: Bedrock.version(),
           opts :: [
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
-        ) :: {:ok, new_lease_deadline_in_ms :: Bedrock.interval_in_ms()} | {:error, term()}
+        ) ::
+          {:ok, lease_deadline_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
   def renew_read_version_lease(t, read_version, opts \\ []),
     do: t |> call({:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
-
-  @doc """
-  Get a coordinator for the cluster. We ask the running instance of the cluster
-  gateway to find one for us.
-  """
-  @spec fetch_coordinator(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Coordinator.ref()} | {:error, :unavailable}
-  def fetch_coordinator(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_coordinator, timeout_in_ms)
-
-  @doc """
-  Get the current director for the cluster.
-  """
-  @spec fetch_director(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Director.ref()} | {:error, :unavailable}
-  def fetch_director(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_director, timeout_in_ms)
-
-  @doc """
-  Get one of the current commit proxies
-  """
-  @spec fetch_commit_proxy(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, Director.ref()} | {:error, :unavailable}
-  def fetch_commit_proxy(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_commit_proxy, timeout_in_ms)
-
-  @doc """
-  Retrieve the list of nodes currently running the coordinator process for the
-  cluster. If successful, it returns a tuple with `:ok` and the list of nodes;
-  otherwise, it returns `{:error, :unavailable}` if unable to retrieve the
-  information.
-
-  ## Parameters
-    - `gateway`: The reference to the GenServer instance of the cluster gateway.
-
-  ## Returns
-    - `{:ok, [node()]}`: A tuple containing `:ok` and a list of nodes running the coordinators.
-    - `{:error, :unavailable}`: An error tuple indicating the information is not accessible at the moment.
-  """
-  @spec fetch_coordinator_nodes(gateway :: ref(), Bedrock.timeout_in_ms()) ::
-          {:ok, [node()]} | {:error, :unavailable}
-  def fetch_coordinator_nodes(gateway, timeout_in_ms \\ 5_000),
-    do: gateway |> call(:fetch_coordinator_nodes, timeout_in_ms)
 
   @doc """
   Report the addition of a new worker to the cluster director. It does so by
@@ -107,4 +51,15 @@ defmodule Bedrock.Cluster.Gateway do
   @spec advertise_worker(gateway :: ref(), worker :: pid()) :: :ok
   def advertise_worker(gateway, worker),
     do: gateway |> cast({:advertise_worker, worker})
+
+  @doc """
+  Get the cluster descriptor from the gateway.
+  This includes the coordinator nodes and other cluster configuration.
+  """
+  @spec get_descriptor(
+          gateway :: ref(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) :: {:ok, Bedrock.Cluster.Descriptor.t()} | {:error, :unavailable | :timeout | :unknown}
+  def get_descriptor(gateway, opts \\ []),
+    do: gateway |> call(:get_descriptor, opts[:timeout_in_ms] || 1000)
 end

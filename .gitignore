@@ -28,8 +28,15 @@ bedrock-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
+# Dialyzer PLT files.
+/priv/plts
+
 # MacOS cruft
 .DS_Store
 
 # Editor cruft
 .vscode/
+
+# AI tools
+# .claude/
+# CLAUDE.md

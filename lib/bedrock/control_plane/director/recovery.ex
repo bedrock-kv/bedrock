@@ -1,34 +1,50 @@
 defmodule Bedrock.ControlPlane.Director.Recovery do
-  @moduledoc false
+  @moduledoc """
+  Orchestrates distributed system recovery through a coordinated phase sequence.
 
-  alias Bedrock.ControlPlane.Director.State
+  This module implements Bedrock's recovery orchestration, which rebuilds the
+  transaction system after critical component failures. Recovery follows a
+  linear state machine where each phase either transitions to the next phase
+  or stalls pending resource availability.
+
+  The process begins by attempting to lock services from the previous transaction
+  system layout, then branches into either first-time initialization or recovery
+  from existing persistent state. Each phase validates its prerequisites and
+  may stall if conditions are not met, with retry logic triggered when the
+  environment changes.
+
+  Recovery attempts are persisted at major milestones, allowing resumption from
+  consistent checkpoints if interrupted. The orchestrator coordinates between
+  phases but delegates specific recovery logic to individual phase modules.
+
+  Critical components that trigger recovery include coordinators, directors,
+  sequencers, commit proxies, resolvers, and transaction logs. Storage servers
+  and gateways handle failures independently without triggering full recovery.
+
+  See `Bedrock.ControlPlane.Director` for epoch management and
+  `Bedrock.ControlPlane.Director.Nodes` for service discovery integration.
+  """
+
+  alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Internal.Time.Interval
+  alias Bedrock.Service.Worker
 
-  import Bedrock, only: [key_range: 2]
   import Bedrock.Internal.Time, only: [now: 0]
-
-  import __MODULE__.LockingAvailableServices, only: [lock_available_services: 3]
-  import __MODULE__.DeterminingOldLogsToCopy, only: [determine_old_logs_to_copy: 3]
-  import __MODULE__.DeterminingDurableVersion, only: [determine_durable_version: 3]
-
-  import __MODULE__.CreatingVacancies,
-    only: [create_vacancies_for_logs: 2, create_vacancies_for_storage_teams: 2]
-
-  import __MODULE__.FillingVacancies,
-    only: [fill_log_vacancies: 3, fill_storage_team_vacancies: 2]
-
-  import __MODULE__.ReplayingOldLogs, only: [replay_old_logs_into_new_logs: 4]
-  import __MODULE__.DefiningCommitProxies, only: [define_commit_proxies: 6]
-  import __MODULE__.DefiningResolvers, only: [define_resolvers: 8]
-  import __MODULE__.DefiningSequencer, only: [define_sequencer: 4]
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
-  import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
+  @type recovery_context :: %{
+          cluster_config: Config.t(),
+          old_transaction_system_layout: TransactionSystemLayout.t(),
+          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
+          lock_token: binary(),
+          available_services: %{Worker.id() => {atom(), {atom(), node()}}},
+          coordinator: pid()
+        }
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
@@ -37,68 +53,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :recovery} = t) do
     t
     |> setup_for_subsequent_recovery()
     |> do_recovery()
   end
 
+  @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(t), do: t
 
+  @spec setup_for_initial_recovery(State.t()) :: State.t()
   def setup_for_initial_recovery(t) do
     t
     |> Map.put(:state, :recovery)
-    |> Map.update!(:config, fn config ->
-      config
-      |> Map.put(:recovery_attempt, %{
-        cluster: t.cluster,
-        attempt: 1,
-        epoch: t.epoch,
-        state: :start,
-        started_at: now(),
-        parameters:
-          Map.take(config.parameters, [
-            :desired_logs,
-            :desired_replication_factor,
-            :desired_commit_proxies
-          ]),
-        last_transaction_system_layout: config.transaction_system_layout,
-        available_services: t.services,
-        #
-        locked_service_ids: MapSet.new(),
-        log_recovery_info_by_id: %{},
-        storage_recovery_info_by_id: %{},
-        old_log_ids_to_copy: [],
-        version_vector: {0, 0},
-        durable_version: 0,
-        degraded_teams: [],
-        logs: %{},
-        storage_teams: [],
-        resolvers: [],
-        proxies: [],
-        sequencer: nil
-      })
-      |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
-        transaction_system_layout
-        |> Map.put(:director, self())
-        |> Map.put(:sequencer, nil)
-        |> Map.put(:rate_keeper, nil)
-        |> Map.put(:proxies, [])
-        |> Map.put(:resolvers, [])
-      end)
-    end)
+    |> Map.put(
+      :recovery_attempt,
+      RecoveryAttempt.new(
+        t.cluster,
+        t.epoch,
+        now()
+      )
+    )
   end
 
+  @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     t
-    |> Map.update!(:config, fn config ->
-      config
-      |> Map.update!(:recovery_attempt, fn recovery_attempt ->
+    |> Map.update!(:recovery_attempt, fn recovery_attempt ->
+      %{
         recovery_attempt
-        |> Map.update(:attempt, 0, &(&1 + 1))
-        |> Map.put(:state, :start)
-        |> Map.put(:available_services, t.services)
-      end)
+        | attempt: recovery_attempt.attempt + 1
+      }
     end)
   end
 
@@ -107,33 +93,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     trace_recovery_attempt_started(
       t.cluster,
       t.epoch,
-      t.config.recovery_attempt.attempt,
-      t.config.recovery_attempt.started_at
+      t.recovery_attempt.attempt,
+      t.recovery_attempt.started_at
     )
 
-    t.config.recovery_attempt
-    |> run_recovery_attempt()
+    context = %{
+      cluster_config: t.config,
+      old_transaction_system_layout: t.old_transaction_system_layout,
+      node_capabilities: t.node_capabilities,
+      lock_token: t.lock_token,
+      available_services: t.services,
+      coordinator: t.coordinator
+    }
+
+    t.recovery_attempt
+    |> run_recovery_attempt(context)
     |> case do
       {:ok, completed} ->
-        trace_recovery_completed(Interval.between(completed.started_at, now()))
+        trace_recovery_completed(Interval.between(completed.started_at, now(), :microsecond))
 
         t
         |> Map.put(:state, :running)
         |> Map.update!(:config, fn config ->
           config
           |> Map.delete(:recovery_attempt)
-          |> Map.update!(:transaction_system_layout, fn transaction_system_layout ->
-            transaction_system_layout
-            |> Map.put(:id, TransactionSystemLayout.random_id())
-            |> Map.put(:sequencer, completed.sequencer)
-            |> Map.put(:resolvers, completed.resolvers)
-            |> Map.put(:proxies, completed.proxies)
-            |> Map.put(:logs, completed.logs)
-            |> Map.put(:storage_teams, completed.storage_teams)
-            |> Map.put(:services, completed.required_services)
-          end)
         end)
-        |> unlock_storage_after_recovery(completed.durable_version)
+        |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
+        |> persist_config()
+        |> persist_new_transaction_system_layout()
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -143,378 +130,58 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           config
           |> Map.put(:recovery_attempt, stalled)
         end)
+        |> persist_config()
+
+      {{:error, reason}, _failed_attempt} ->
+        # Errors are fatal - this director should stop trying to recover
+        trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
+        t
     end
   end
 
-  def unlock_storage_after_recovery(t, durable_version) do
-    t.config.transaction_system_layout.services
-    |> Enum.each(fn
-      {id, %{kind: :storage, status: {:up, worker}}} ->
-        trace_recovery_storage_unlocking(id)
+  @spec persist_config(State.t()) :: State.t()
+  def persist_config(t) do
+    case Coordinator.update_config(t.coordinator, t.config) do
+      {:ok, txn_id} ->
+        trace_recovery_attempt_persisted(txn_id)
+        t
 
-        Storage.unlock_after_recovery(worker, durable_version, t.config.transaction_system_layout,
-          timeout_in_ms: 1_000
-        )
-
-      _ ->
-        :ok
-    end)
-
-    t
+      {:error, reason} ->
+        trace_recovery_attempt_persist_failed(reason)
+        t
+    end
   end
 
-  @spec run_recovery_attempt(RecoveryAttempt.t()) ::
+  @spec persist_new_transaction_system_layout(State.t()) :: State.t()
+  def persist_new_transaction_system_layout(t) do
+    case Coordinator.update_transaction_system_layout(t.coordinator, t.transaction_system_layout) do
+      {:ok, txn_id} ->
+        trace_recovery_layout_persisted(txn_id)
+        t
+
+      {:error, reason} ->
+        trace_recovery_layout_persist_failed(reason)
+        t
+    end
+  end
+
+  @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-          | {:error, term()}
-  def run_recovery_attempt(t) do
-    case recovery(t) do
-      %{state: :completed} = t ->
-        {:ok, t}
+          | {{:error, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
+  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.TSLValidationPhase) do
+    case next_phase_module.execute(t, context) do
+      {completed_attempt, :completed} ->
+        {:ok, completed_attempt}
 
-      %{state: {:stalled, _reason} = stalled} = t ->
-        {stalled, t}
+      {stalled_attempt, {:error, _reason} = error} ->
+        {error, stalled_attempt}
 
-      %{state: new_state} = new_t when t.state != new_state ->
-        new_t |> run_recovery_attempt()
-    end
-  end
+      {stalled_attempt, {:stalled, _reason} = stalled} ->
+        {stalled, stalled_attempt}
 
-  @spec recovery(RecoveryAttempt.t()) :: RecoveryAttempt.t()
-  def recovery(recovery_attempt)
-
-  #
-  #
-  def recovery(%{state: :start} = t) do
-    t
-    |> Map.put(:started_at, now())
-    |> Map.put(:state, :lock_available_services)
-  end
-
-  #
-  #
-  def recovery(%{state: {:stalled, _}} = t),
-    do: t |> Map.put(:state, :start)
-
-  #
-  #
-  def recovery(%{state: :lock_available_services} = t) do
-    lock_available_services(t.available_services, t.epoch, 200)
-    |> case do
-      {:error, :newer_epoch_exists = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, locked_service_ids, updated_services, log_recovery_info_by_id,
-       storage_recovery_info_by_id} ->
-        t
-        |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
-        |> Map.update!(:storage_recovery_info_by_id, &Map.merge(storage_recovery_info_by_id, &1))
-        |> Map.update!(:available_services, &Map.merge(&1, updated_services))
-        |> Map.put(:locked_service_ids, locked_service_ids)
-        |> case do
-          %{last_transaction_system_layout: %{logs: %{}, storage_teams: []}} = t ->
-            t |> Map.put(:state, :first_time_initialization)
-
-          t ->
-            t |> Map.put(:state, :determine_old_logs_to_copy)
-        end
-    end
-  end
-
-  # Initialize a new system with empty logs and storage teams by creating
-  # placeholders based on desired logs and replication factor, then proceed
-  # to fill log vacancies.
-  def recovery(%{state: :first_time_initialization} = t) do
-    trace_recovery_first_time_initialization()
-
-    log_vacancies =
-      1..t.parameters.desired_logs |> Enum.map(&{:vacancy, &1})
-
-    storage_team_vacancies =
-      1..t.parameters.desired_replication_factor |> Enum.map(&{:vacancy, &1})
-
-    t
-    |> Map.put(:durable_version, 0)
-    |> Map.put(:old_log_ids_to_copy, [])
-    |> Map.put(:version_vector, {0, 0})
-    |> Map.put(:resolvers, [
-      resolver_descriptor(<<>>, nil),
-      resolver_descriptor(<<0xFF>>, nil)
-    ])
-    |> Map.put(:logs, log_vacancies |> Map.new(&{&1, [0, 1]}))
-    |> Map.put(:storage_teams, [
-      storage_team_descriptor(
-        0,
-        key_range(<<0xFF>>, :end),
-        storage_team_vacancies
-      ),
-      storage_team_descriptor(
-        1,
-        key_range(<<>>, <<0xFF>>),
-        storage_team_vacancies
-      )
-    ])
-    |> Map.put(:state, :recruit_logs_to_fill_vacancies)
-  end
-
-  #
-  #
-  def recovery(%{state: :determine_old_logs_to_copy} = t) do
-    determine_old_logs_to_copy(
-      t.last_transaction_system_layout.logs,
-      t.log_recovery_info_by_id,
-      t.parameters.desired_logs |> determine_quorum()
-    )
-    |> case do
-      {:error, :unable_to_meet_log_quorum = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, log_ids, version_vector} ->
-        trace_recovery_suitable_logs_chosen(log_ids, version_vector)
-
-        t
-        |> Map.put(:old_log_ids_to_copy, log_ids)
-        |> Map.put(:version_vector, version_vector)
-        |> Map.put(:state, :create_vacancies)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :create_vacancies} = t) do
-    with {:ok, logs, n_log_vacancies} <-
-           create_vacancies_for_logs(
-             t.last_transaction_system_layout.logs,
-             t.parameters.desired_logs
-           ),
-         {:ok, storage_teams, n_storage_team_vacancies} <-
-           create_vacancies_for_storage_teams(
-             t.last_transaction_system_layout.storage_teams,
-             t.parameters.desired_replication_factor
-           ) do
-      trace_recovery_creating_vacancies(n_log_vacancies, n_storage_team_vacancies)
-
-      t
-      |> Map.put(:logs, logs)
-      |> Map.put(:storage_teams, storage_teams)
-      |> Map.put(:state, :determine_durable_version)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :determine_durable_version} = t) do
-    determine_durable_version(
-      t.last_transaction_system_layout.storage_teams,
-      t.storage_recovery_info_by_id,
-      t.parameters.desired_replication_factor |> determine_quorum()
-    )
-    |> case do
-      {:error, {:insufficient_replication, _failed_tags} = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, durable_version, healthy_teams, degraded_teams} ->
-        trace_recovery_durable_version_chosen(durable_version)
-        trace_recovery_team_health(healthy_teams, degraded_teams)
-
-        t
-        |> Map.put(:durable_version, durable_version)
-        |> Map.put(:degraded_teams, degraded_teams)
-        |> Map.put(:state, :recruit_logs_to_fill_vacancies)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :recruit_logs_to_fill_vacancies} = t) do
-    fill_log_vacancies(
-      t.logs,
-      t.last_transaction_system_layout.logs |> Map.keys() |> MapSet.new(),
-      t.log_recovery_info_by_id |> Map.keys() |> MapSet.new()
-    )
-    |> case do
-      {:error, {:need_log_workers, _} = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, logs} ->
-        trace_recovery_all_log_vacancies_filled()
-
-        t
-        |> Map.put(:logs, logs)
-        |> Map.put(:state, :recruit_storage_to_fill_vacancies)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :recruit_storage_to_fill_vacancies} = t) do
-    fill_storage_team_vacancies(
-      t.storage_teams,
-      t.storage_recovery_info_by_id |> Map.keys() |> MapSet.new()
-    )
-    |> case do
-      {:error, {:need_storage_workers, _} = reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, storage_teams} ->
-        trace_recovery_all_storage_team_vacancies_filled()
-
-        t
-        |> Map.put(:storage_teams, storage_teams)
-        |> Map.put(:state, :replay_old_logs)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :replay_old_logs} = t) do
-    new_log_ids = t.logs |> Map.keys()
-    trace_recovery_replaying_old_logs(t.old_log_ids_to_copy, new_log_ids, t.version_vector)
-
-    replay_old_logs_into_new_logs(
-      t.old_log_ids_to_copy,
-      new_log_ids,
-      t.version_vector,
-      fn log_id ->
-        case Map.get(t.available_services, log_id) do
-          %{status: {:up, pid}} -> pid
-          _ -> :none
-        end
-      end
-    )
-    |> case do
-      {:error, reason} -> t |> Map.put(:state, {:stalled, reason})
-      :ok -> t |> Map.put(:state, :repair_data_distribution)
-    end
-  end
-
-  #
-  #
-  def recovery(%{state: :repair_data_distribution} = t) do
-    t |> Map.put(:state, :define_sequencer)
-  end
-
-  #
-  #
-  def recovery(%{state: :define_sequencer} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    define_sequencer(
-      self(),
-      t.epoch,
-      t.version_vector,
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, sequencer} ->
-        t
-        |> Map.put(:sequencer, sequencer)
-        |> Map.put(:state, :define_commit_proxies)
-    end
-  end
-
-  def recovery(%{state: :define_commit_proxies} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    define_commit_proxies(
-      t.parameters.desired_commit_proxies,
-      t.cluster,
-      t.epoch,
-      self(),
-      Node.list(),
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, commit_proxies} ->
-        t
-        |> Map.put(:proxies, commit_proxies)
-        |> Map.put(:state, :define_resolvers)
-    end
-  end
-
-  import __MODULE__.DefiningResolvers
-
-  def recovery(%{state: :define_resolvers} = t) do
-    sup_otp_name = t.cluster.otp_name(:sup)
-    starter_fn = starter_for(sup_otp_name)
-
-    running_logs_by_id =
-      t.available_services
-      |> Map.take(t.logs |> Map.keys())
-      |> Enum.map(fn
-        {id, %{status: {:up, pid}}} -> {id, pid}
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Map.new()
-
-    define_resolvers(
-      t.resolvers,
-      t.storage_teams,
-      t.logs,
-      running_logs_by_id,
-      t.epoch,
-      Node.list(),
-      t.version_vector,
-      starter_fn
-    )
-    |> case do
-      {:error, reason} ->
-        t |> Map.put(:state, {:stalled, reason})
-
-      {:ok, resolvers} ->
-        t
-        |> Map.put(:resolvers, resolvers)
-        |> Map.put(:state, :define_required_services)
-    end
-  end
-
-  def recovery(%{state: :define_required_services} = t) do
-    required_service_ids =
-      Enum.concat(
-        t.logs |> Map.keys(),
-        t.storage_teams |> Enum.flat_map(& &1.storage_ids)
-      )
-      |> Enum.uniq()
-
-    required_services =
-      t.available_services
-      |> Map.take(required_service_ids)
-
-    t
-    |> Map.put(:required_services, required_services)
-    |> Map.put(:state, :final_checks)
-  end
-
-  #
-  #
-  def recovery(%{state: :final_checks} = t) do
-    t |> Map.put(:state, :completed)
-  end
-
-  #
-  #
-  def recovery(t), do: raise("Invalid state: #{inspect(t)}")
-
-  defp determine_quorum(n) when is_integer(n), do: 1 + div(n, 2)
-
-  defp starter_for(supervisor_otp_name) do
-    fn child_spec, node ->
-      {supervisor_otp_name, node}
-      |> DynamicSupervisor.start_child(child_spec)
-      |> case do
-        {:ok, pid} -> {:ok, pid}
-        {:ok, pid, _} -> {:ok, pid}
-        {:error, reason} -> {:error, reason}
-      end
+      {updated_attempt, next_next_phase_module} ->
+        updated_attempt |> run_recovery_attempt(context, next_next_phase_module)
     end
   end
 end

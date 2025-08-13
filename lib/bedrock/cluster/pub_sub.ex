@@ -4,8 +4,10 @@ defmodule Bedrock.Cluster.PubSub do
   messages within a single cluster node.
   """
 
+  alias Bedrock.Cluster
+
   @doc false
-  @spec child_spec(opts :: Keyword.t()) :: Supervisor.child_spec()
+  @spec child_spec(opts :: [otp_name: atom()]) :: Supervisor.child_spec()
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
 
@@ -20,7 +22,7 @@ defmodule Bedrock.Cluster.PubSub do
   Publish a message to a topic. This will send the message to all subscribing
   processes.
   """
-  @spec publish(cluster :: module(), topic :: any(), message :: any()) :: :ok
+  @spec publish(cluster :: Cluster.t(), topic :: atom(), message :: term()) :: :ok
   def publish(cluster, topic, message) do
     cluster.otp_name(:pub_sub)
     |> Registry.dispatch(topic, fn
@@ -38,7 +40,7 @@ defmodule Bedrock.Cluster.PubSub do
   to the given topic. The current process will receive future messages published
   for the given topic.
   """
-  @spec subscribe(cluster :: module(), topic :: any()) :: :ok
+  @spec subscribe(cluster :: Cluster.t(), topic :: atom()) :: :ok
   def subscribe(cluster, topic) do
     cluster.otp_name(:pub_sub)
     |> Registry.register(topic, self())
@@ -51,7 +53,7 @@ defmodule Bedrock.Cluster.PubSub do
   subscriber to the given topic. The current process will no longer receive
   messages for the given topic.
   """
-  @spec unsubscribe(cluster :: module(), topic :: any()) :: :ok
+  @spec unsubscribe(cluster :: Cluster.t(), topic :: atom()) :: :ok
   def unsubscribe(cluster, topic) do
     cluster.otp_name(:pub_sub)
     |> Registry.unregister_match(topic, self())

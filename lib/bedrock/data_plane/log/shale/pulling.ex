@@ -1,6 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.Pulling do
+  @moduledoc false
+  alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Log.Transaction
+
+  import Bedrock.DataPlane.Log.Shale.TransactionStreams
 
   @spec pull(
           t :: State.t(),
@@ -8,6 +12,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
+            key_range: Bedrock.key_range(),
+            exclude_values: boolean(),
             recovery: boolean()
           ]
         ) ::
@@ -28,46 +34,47 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   def pull(t, from_version, opts) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
          {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
-         limit <- determine_pull_limit(opts[:limit], t) do
-      :ets.select(
-        t.log,
-        match_spec_for_version_range(from_version, last_version),
-        1 + limit
-      )
-      |> case do
-        {[{^from_version, _}], _} ->
-          {:ok, t, []}
+         {:ok, [active_segment | remaining_segments] = all_segments} <-
+           ensure_necessary_segments_are_loaded(
+             last_version,
+             [t.active_segment | t.segments]
+           ),
+         {:ok, transaction_stream} <- from_segments(all_segments, from_version) do
+      transactions =
+        transaction_stream
+        |> until_version(last_version)
+        |> at_most(determine_pull_limit(opts[:limit], t))
+        |> filter_keys_in_range(opts[:key_range])
+        |> exclude_values(opts[:exclude_values] || false)
+        |> Enum.to_list()
 
-        {[{^from_version, _} | transactions], _} ->
-          {:ok, t, transactions}
-
-        {_, _} ->
-          {:error, :version_too_old}
-      end
+      {:ok, %{t | active_segment: active_segment, segments: remaining_segments}, transactions}
     end
   end
 
-  def match_spec_for_version_range(from_version, nil),
-    do: match_spec_for_version_gte(from_version)
+  @spec ensure_necessary_segments_are_loaded(Bedrock.version() | nil, [Segment.t()]) ::
+          {:ok, [Segment.t()]} | {:error, :version_too_old}
+  def ensure_necessary_segments_are_loaded(_, []), do: {:error, :version_too_old}
 
-  def match_spec_for_version_range(from_version, last_version) do
-    [
-      {
-        {:"$1", :_},
-        [{:>=, :"$1", from_version}, {:"=<", :"$1", last_version}],
-        [:"$_"]
-      }
-    ]
+  def ensure_necessary_segments_are_loaded(nil, [segment | remaining_segments]) do
+    with segment <- Segment.ensure_transactions_are_loaded(segment) do
+      {:ok, [segment | remaining_segments]}
+    end
   end
 
-  def match_spec_for_version_gte(version) do
-    [
-      {
-        {:"$1", :_},
-        [{:>=, :"$1", version}],
-        [:"$_"]
-      }
-    ]
+  def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments])
+      when segment.min_version <= last_version do
+    with segment <- Segment.ensure_transactions_are_loaded(segment) do
+      {:ok, [segment | remaining_segments]}
+    end
+  end
+
+  def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments]) do
+    with segment <- Segment.ensure_transactions_are_loaded(segment),
+         {:ok, remaining_segments} <-
+           ensure_necessary_segments_are_loaded(last_version, remaining_segments) do
+      {:ok, [segment | remaining_segments]}
+    end
   end
 
   @spec check_for_locked_outside_of_recovery(boolean(), State.t()) ::
@@ -90,6 +97,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def check_last_version(_, _), do: {:error, :invalid_last_version}
 
+  @spec determine_pull_limit(pos_integer() | nil, State.t()) :: pos_integer()
   def determine_pull_limit(nil, t), do: t.params.default_pull_limit
   def determine_pull_limit(limit, t), do: min(limit, t.params.max_pull_limit)
 end

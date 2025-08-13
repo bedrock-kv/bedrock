@@ -1,7 +1,9 @@
 defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
+  @moduledoc false
+
   alias Bedrock.DataPlane.Storage
 
-  @type vacancy :: {:vacancy, tag :: term()}
+  @type vacancy :: {:vacancy, tag :: Bedrock.range_tag()}
 
   @typedoc """
   ## Fields:

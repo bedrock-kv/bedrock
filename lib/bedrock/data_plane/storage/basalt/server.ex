@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Server do
+  @moduledoc false
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Logic
   alias Bedrock.DataPlane.Storage.Basalt.State
@@ -35,18 +36,27 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     do: {:ok, args, {:continue, :finish_startup}}
 
   @impl true
-  def terminate(_, %State{} = t) do
-    Logic.shutdown(t)
-    :normal
+  def terminate(_reason, %State{} = state) do
+    Logic.shutdown(state)
+    :ok
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    # Handle termination when server hasn't fully initialized yet
+    # or is in any other state (e.g., during startup)
+    :ok
   end
 
   @impl true
   def handle_call({:fetch, key, version, _opts}, _from, %State{} = t),
     do: t |> Logic.fetch(key, version) |> then(&reply(t, &1))
 
+  @impl true
   def handle_call({:info, fact_names}, _from, %State{} = t),
     do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
+  @impl true
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
     with {:ok, t} <- t |> Logic.lock_for_recovery(director, epoch),
          {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
@@ -56,6 +66,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_call(
         {:unlock_after_recovery, durable_version, transaction_system_layout},
         {_director, _},
@@ -68,6 +79,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_call(_, _from, t),
     do: t |> reply({:error, :not_ready})
 
@@ -80,6 +92,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     end
   end
 
+  @impl true
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
     t |> noreply()

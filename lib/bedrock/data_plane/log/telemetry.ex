@@ -1,14 +1,16 @@
 defmodule Bedrock.DataPlane.Log.Telemetry do
-  alias Bedrock.Telemetry
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Telemetry
 
+  @spec trace_metadata() :: map()
   def trace_metadata, do: Process.get(:trace_metadata, %{})
 
+  @spec trace_metadata(metadata :: map()) :: map()
   def trace_metadata(metadata),
     do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 
-  def trace_started(),
+  @spec trace_started() :: :ok
+  def trace_started,
     do: Telemetry.execute([:bedrock, :log, :started], %{}, trace_metadata())
 
   @spec trace_lock_for_recovery(epoch :: Bedrock.epoch()) :: :ok
@@ -39,16 +41,29 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
-  @spec trace_push_transaction(Transaction.t(), expected_version :: Bedrock.version()) :: :ok
-  def trace_push_transaction(transaction, expected_version) do
+  @spec trace_push_transaction(expected_version :: Bedrock.version(), n_keys :: non_neg_integer()) ::
+          :ok
+  def trace_push_transaction(expected_version, n_keys) do
     Telemetry.execute(
       [:bedrock, :log, :push],
-      %{
-        n_keys: map_size(transaction |> Transaction.key_values())
-      },
+      %{n_keys: n_keys},
+      Map.merge(trace_metadata(), %{
+        expected_version: expected_version
+      })
+    )
+  end
+
+  @spec trace_push_out_of_order(
+          expected_version :: Bedrock.version(),
+          current_version :: Bedrock.version()
+        ) :: :ok
+  def trace_push_out_of_order(expected_version, current_version) do
+    Telemetry.execute(
+      [:bedrock, :log, :push_out_of_order],
+      %{},
       Map.merge(trace_metadata(), %{
         expected_version: expected_version,
-        transaction: transaction
+        current_version: current_version
       })
     )
   end

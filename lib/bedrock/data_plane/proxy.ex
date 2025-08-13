@@ -1,7 +1,11 @@
 defmodule Bedrock.DataPlane.Proxy do
+  @moduledoc """
+  Read version proxy for Bedrock's transaction system.
+  """
   use GenServer
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Sequencer
 
   @type t :: %__MODULE__{
           director: Director.ref(),
@@ -10,8 +14,13 @@ defmodule Bedrock.DataPlane.Proxy do
 
   defstruct ~w[director layout]a
 
+  @spec next_read_version(pid() | atom()) :: Bedrock.version()
   def next_read_version(proxy), do: GenServer.call(proxy, :get_read_version)
 
+  @spec child_spec(
+          opts :: [id: String.t(), director: Director.ref(), layout: TransactionSystemLayout.t()]
+        ) ::
+          Supervisor.child_spec()
   def child_spec(opts) do
     id = Keyword.get(opts, :id) || raise "Missing :id option"
     director = Keyword.get(opts, :director) || raise "Missing :director option"
@@ -39,6 +48,8 @@ defmodule Bedrock.DataPlane.Proxy do
     {:noreply, state}
   end
 
-  defp forward_call(gen_server, message, from),
+  @spec forward_call(Sequencer.ref(), GenServer.from(), :next_read_version) ::
+          :ok
+  defp forward_call(gen_server, from, message),
     do: send(gen_server, {:"$gen_call", from, message})
 end

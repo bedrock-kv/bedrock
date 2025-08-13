@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Version do
 
   @doc "Creates a zero version (initial version)"
   @spec zero() :: t()
-  def zero(), do: @zero_version
+  def zero, do: @zero_version
 
   @doc "Checks if version is the first version (zero)"
   @spec first?(t()) :: boolean()

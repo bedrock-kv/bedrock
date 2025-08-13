@@ -245,7 +245,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles push with valid transaction format", %{server: pid} do
-      # Create a minimally valid encoded transaction using the proper structure  
+      # Create a minimally valid encoded transaction using the proper structure
       # Start with version 0 to match server's initial last_version
       transaction = {0, %{"test_key" => "test_value"}}
       encoded_bytes = EncodedTransaction.encode(transaction)
@@ -489,16 +489,14 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   end
 
   defp eventually_loop(assertion_fn, end_time, interval) do
-    try do
-      assertion_fn.()
-    rescue
-      _ ->
-        if System.monotonic_time(:millisecond) < end_time do
-          Process.sleep(interval)
-          eventually_loop(assertion_fn, end_time, interval)
-        else
-          assertion_fn.()
-        end
-    end
+    assertion_fn.()
+  rescue
+    _ ->
+      if System.monotonic_time(:millisecond) < end_time do
+        Process.sleep(interval)
+        eventually_loop(assertion_fn, end_time, interval)
+      else
+        assertion_fn.()
+      end
   end
 end

@@ -3,8 +3,8 @@ defmodule Bedrock.Cluster.Gateway.Calls do
 
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder
-  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator
 
   @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
           {State.t(), {:ok, pid()} | {:error, :unavailable}}

@@ -23,6 +23,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Resolver
+  alias Bedrock.DataPlane.Sequencer
 
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [transactions_in_order: 1]
@@ -826,7 +827,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp notify_sequencer(%FinalizationPlan{stage: :failed} = plan, _sequencer), do: plan
 
   defp notify_sequencer(%FinalizationPlan{stage: :logged} = plan, sequencer) do
-    :ok = Bedrock.DataPlane.Sequencer.report_successful_commit(sequencer, plan.commit_version)
+    :ok = Sequencer.report_successful_commit(sequencer, plan.commit_version)
     %{plan | stage: :sequencer_notified}
   end
 

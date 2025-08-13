@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Telemetry
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @doc """
   Emits a telemetry event indicating that the cluster director has started

@@ -3,6 +3,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+  alias Bedrock.DataPlane.Log
 
   describe "execute/1" do
     test "successfully advances state with empty logs" do
@@ -313,7 +314,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       service_pids = %{"test_log_id" => test_pid}
 
       # Mock Log.recover_from to send message to test process instead of calling real log
-      _original_function = &Bedrock.DataPlane.Log.recover_from/4
+      _original_function = &Log.recover_from/4
 
       # For testing, we'll verify the function is called with correct params
       # Since we can't easily mock the Log module, we'll test the parameters
@@ -372,13 +373,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       service_pids = %{"new_log" => :new_pid, "old_log" => :old_pid}
 
       # Verify that the function can extract the correct PIDs from the map
-      # (The actual Log.recover_from call would require real log processes, 
+      # (The actual Log.recover_from call would require real log processes,
       #  but the important fix is that Map.fetch! works for non-:none values)
       assert Map.fetch!(service_pids, new_log_id) == :new_pid
       assert Map.fetch!(service_pids, old_log_id) == :old_pid
 
       # The function should not crash on Map.fetch! calls
-      # Note: We can't easily test the full Log.recover_from call without 
+      # Note: We can't easily test the full Log.recover_from call without
       # setting up real log processes, but the critical bug was the KeyError
       # on Map.fetch!(service_pids, :none) which is now fixed
     end

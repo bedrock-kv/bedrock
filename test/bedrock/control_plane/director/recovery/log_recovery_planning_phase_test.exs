@@ -158,7 +158,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       {:ok, log_ids, version_vector} =
         LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
 
-      # Shard-aware algorithm includes all available shards 
+      # Shard-aware algorithm includes all available shards
       assert length(log_ids) == 3
       assert Enum.all?([{:log, 1}, {:log, 2}, {:log, 3}], fn id -> id in log_ids end)
       # Cross-shard minimum: max(10,5,15)=15, min(50,45,55)=45
@@ -487,7 +487,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
       # Version vector should be cross-shard minimum of maximums
       # Shard A: max(10,15) = 15, min(50,45) = 45 -> {15, 45}
-      # Shard B: max(5,20) = 20, min(60,55) = 55 -> {Version.from_integer(20), Version.from_integer(55)}  
+      # Shard B: max(5,20) = 20, min(60,55) = 55 -> {Version.from_integer(20), Version.from_integer(55)}
       # Cross-shard: max(15,20) = 20, min(45,55) = 45
       assert version_vector == {Version.from_integer(20), Version.from_integer(45)}
     end

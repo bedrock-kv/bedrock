@@ -536,7 +536,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
 
       # This should stall at version determination due to insufficient storage replication
-      # (only one storage service but requires quorum) but should successfully complete 
+      # (only one storage service but requires quorum) but should successfully complete
       # log recruitment and service locking first
       {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
         Recovery.run_recovery_attempt(recovery_attempt, context)

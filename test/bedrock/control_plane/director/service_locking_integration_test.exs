@@ -11,9 +11,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
-  alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
+  alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   import RecoveryTestSupport
 
@@ -97,7 +97,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       {_validated_attempt, validation_next_phase} =
         TSLValidationPhase.execute(recovery_attempt, context)
 
-      # Should proceed to LockingPhase since TSL validation passed  
+      # Should proceed to LockingPhase since TSL validation passed
       assert validation_next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
     end
 

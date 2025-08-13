@@ -300,7 +300,7 @@ defmodule Bedrock.Service.ForemanTest do
       storage_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :storage end)
       assert storage_service == {"storage_1", :storage, :storage_1_worker}
 
-      # Check log service info (compact format)  
+      # Check log service info (compact format)
       log_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :log end)
       assert log_service == {"log_1", :log, :log_1_worker}
     end

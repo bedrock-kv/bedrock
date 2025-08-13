@@ -1,8 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Committing
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   # Test helper to create a basic transaction state
   defp create_test_state(read_version, reads, writes) do

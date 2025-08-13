@@ -73,7 +73,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     # Calculate microseconds elapsed since epoch start
     elapsed_us = current_monotonic_us - t.epoch_start_monotonic_us
 
-    # Proposed version = baseline + elapsed microseconds  
+    # Proposed version = baseline + elapsed microseconds
     proposed_version_int = t.epoch_baseline_version_int + elapsed_us
 
     # Ensure we always advance by at least 1 from the last assigned version

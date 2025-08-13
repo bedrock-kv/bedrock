@@ -264,7 +264,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
       |> Enum.map(fn {_, {_, newest}} -> newest end)
       |> Enum.min()
 
-    # Take maximum of the minimum edges (oldest versions) across all shards  
+    # Take maximum of the minimum edges (oldest versions) across all shards
     max_oldest =
       shard_results
       |> Map.values()

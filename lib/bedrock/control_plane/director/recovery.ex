@@ -135,11 +135,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {{:error, reason}, _failed_attempt} ->
         # Errors are fatal - this director should stop trying to recover
         trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
-
-        # TODO: Implement graceful shutdown mechanism for fatal recovery errors.
-        # Should notify coordinator about failure and initiate controlled termination
-        # to prevent split-brain scenarios. Consider adding retry backoff or
-        # switching to standby director if available.
         t
     end
   end

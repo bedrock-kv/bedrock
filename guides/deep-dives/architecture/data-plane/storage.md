@@ -2,7 +2,7 @@
 
 [Storage](../../../glossary.md#storage) servers solve a fundamental problem in distributed databases: how to serve fast, consistent reads while maintaining strong transactional guarantees. They sit between the authoritative [Transaction](../../../glossary.md#transaction) [Log](../../../glossary.md#log) and the applications that need to read data, creating a layer that optimizes for read performance without sacrificing consistency.
 
-**Location**: [`lib/bedrock/data_plane/storage.ex`](../../../lib/bedrock/data_plane/storage.ex)
+**Location**: [`lib/bedrock/data_plane/storage.ex`](../../../../lib/bedrock/data_plane/storage.ex)
 
 ## The Performance Problem
 
@@ -48,76 +48,7 @@ During recovery, storage servers report their current state to the Director: wha
 
 Storage servers integrate with the transaction system at several key points. [Transaction Builder](../../../glossary.md#transaction-builder) are their primary consumers, using "horse racing" to query multiple storage replicas in parallel and take the first successful response. The storage system also supports conflict detection indirectly by maintaining the version history that Resolvers need. Version leasing creates another integration point with the Gateway, ensuring that transactions only read at versions that are guaranteed to be available across all storage servers they'll access.
 
-## Cross-Component Workflow Integration
-
-### Transaction Processing Flow Role
-
-Storage serves as the **read performance layer** in Bedrock's core processing workflow:
-
-**Gateway → Transaction Builder → Commit Proxy → Resolver → Sequencer → Storage**
-
-**Workflow Context**:
-
-1. **Read Operations**: Serves versioned key-value reads to Transaction Builder processes
-2. **MVCC Support**: Maintains multiple versions of data to support consistent snapshots
-3. **Asynchronous Updates**: Continuously pulls committed transactions from Log servers for eventual consistency
-4. **Version Coordination**: Participates in version leasing to ensure read consistency
-5. **Recovery Support**: Reports durability state and rebuilds from authoritative transaction logs
-
-**Key Handoff Points**:
-
-- **To Transaction Builder**: Serves versioned read operations
-  - **Horse Racing**: Transaction Builders query multiple Storage replicas in parallel for performance
-  - **Version-Specific Reads**: Serves data at specific read versions for MVCC consistency
-  - **Key Range Partitioning**: Each Storage server handles specific key ranges for horizontal scaling
-  - **Performance Optimization**: Transaction Builders cache fastest Storage servers for subsequent reads
-  - **Error Handling**: Read failures trigger Transaction Builder retry logic with alternative Storage servers
-
-- **From Log System**: Continuously pulls committed transactions for local state updates
-  - **Asynchronous Pulling**: Storage servers pull from Log servers to maintain eventually consistent state
-  - **Version Ordering**: Transactions applied in strict version order to ensure consistency
-  - **Catch-up Process**: Storage servers can pull specific transaction ranges to recover from downtime
-  - **Long Polling**: Efficient subscription mechanism for receiving new transactions with minimal latency
-
-- **Version Leasing Integration**: Coordinates with Gateway for read consistency
-  - **Minimum Version Tracking**: Participates in cluster-wide minimum read version calculation
-  - **Garbage Collection**: Safely removes old versions based on minimum read version guarantees
-  - **Availability Confirmation**: Gateway ensures Storage servers have applied transactions up to read version before leasing
-
-**Error Propagation**:
-
-- **Read Failures**: Individual Storage server failures → Transaction Builder horse racing → automatic failover to replica Storage servers
-- **Log Pulling Failures**: Log unavailability → Storage server catch-up process → eventual consistency maintained through other Log replicas
-- **Version Unavailability**: Requested version not yet available → Transaction Builder retry or abort → version leasing prevents this scenario
-
-**Integration with Recovery Process**:
-
-- **Recovery Reporting**: Reports current durable version and minimum retained version to Director
-- **State Validation**: Director uses Storage server states to calculate cluster-wide durable version baseline
-- **Catch-up Coordination**: Offline Storage servers catch up by pulling missing transactions from Logs
-- **Range Assignment**: Receives key range assignments from Director via transaction system layout
-
-### Log Replication Workflow Role
-
-Storage participates in the **log-to-storage replication** workflow:
-
-**Log → Storage → Application Reads**
-
-**Workflow Context**:
-
-1. **Continuous Synchronization**: Maintains eventually consistent copies of committed transaction data
-2. **Multi-Version Persistence**: Stores historical versions to support MVCC read operations
-3. **Performance Optimization**: Provides local, fast access to data without Log server query overhead
-4. **Fault Tolerance**: Multiple Storage replicas ensure read availability despite individual server failures
-
-**Integration Details**:
-
-- **Pull-Based Updates**: Storage servers initiate transaction pulling rather than receiving pushes
-- **Version-Based Consistency**: Transaction version numbers ensure consistent ordering across replicas
-- **Range-Based Distribution**: Each Storage server pulls only transactions affecting its assigned key ranges
-- **Pluggable Architecture**: Abstract interface allows different storage engine implementations
-
-For the complete transaction flow, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+For the complete transaction flow, see **[Transaction Processing Deep Dive](../../transactions.md)**.
 
 ## Related Components
 

@@ -3,8 +3,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Internal.Time
 
   import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
+
+  @type next_read_version_fn() :: (State.t() ->
+                                     {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
+                                     | {:error, atom()})
+  @type time_fn() :: (-> integer())
+  @type storage_fetch_fn() :: (pid(), binary(), Bedrock.version(), keyword() ->
+                                 {:ok, binary()} | {:error, atom()})
+  @type async_stream_fn() :: (list(), function(), keyword() -> Enumerable.t())
+  @type horse_race_fn() :: ([{Bedrock.key_range(), pid()}],
+                            Bedrock.version(),
+                            binary(),
+                            pos_integer(),
+                            keyword() ->
+                              {:ok, Bedrock.key_range(), pid(), binary()}
+                              | {:error, atom()}
+                              | :error)
 
   @doc false
   @spec do_fetch(State.t(), key :: binary()) ::
@@ -12,13 +29,31 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
            {:ok, Bedrock.value()}
            | :error
            | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}}
-  def do_fetch(t, key) do
+  @spec do_fetch(
+          State.t(),
+          key :: binary(),
+          opts :: [
+            next_read_version_fn: next_read_version_fn(),
+            time_fn: time_fn(),
+            storage_fetch_fn: storage_fetch_fn(),
+            horse_race_fn: horse_race_fn()
+          ]
+        ) ::
+          {State.t(),
+           {:ok, Bedrock.value()}
+           | :error
+           | {:error, :not_found}
+           | {:error, :version_too_old}
+           | {:error, :version_too_new}
+           | {:error, :unavailable}
+           | {:error, :timeout}}
+  def do_fetch(t, key, opts \\ []) do
     {:ok, encoded_key} = t.key_codec.encode_key(key)
 
     with :error <- Map.fetch(t.writes, encoded_key),
          :error <- Map.fetch(t.reads, encoded_key),
          :error <- fetch_from_stack(encoded_key, t.stack),
-         {:ok, t, encoded_value} <- fetch_from_storage(t, encoded_key),
+         {:ok, t, encoded_value} <- fetch_from_storage(t, encoded_key, opts),
          {:ok, value} <- t.value_codec.decode_value(encoded_value) do
       {%{t | reads: Map.put(t.reads, encoded_key, value)}, {:ok, value}}
     else
@@ -43,31 +78,40 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) ::
+  @spec fetch_from_storage(
+          State.t(),
+          key :: binary(),
+          opts :: [
+            next_read_version_fn: next_read_version_fn(),
+            time_fn: time_fn(),
+            storage_fetch_fn: storage_fetch_fn()
+          ]
+        ) ::
           {:ok, State.t(), binary()}
           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}
           | :error
-  def fetch_from_storage(%{read_version: nil} = t, key) do
-    case next_read_version(t) do
+  def fetch_from_storage(%{read_version: nil} = t, key, opts) do
+    next_read_version_fn = Keyword.get(opts, :next_read_version_fn, &next_read_version/1)
+    time_fn = Keyword.get(opts, :time_fn, &Time.monotonic_now_in_ms/0)
+
+    case next_read_version_fn.(t) do
       {:ok, read_version, read_version_lease_expiration_in_ms} ->
         read_version_lease_expiration =
-          :erlang.monotonic_time(:millisecond) + read_version_lease_expiration_in_ms
+          time_fn.() + read_version_lease_expiration_in_ms
 
         t
         |> Map.put(:read_version, read_version)
         |> Map.put(:read_version_lease_expiration, read_version_lease_expiration)
-        |> fetch_from_storage(key)
+        |> fetch_from_storage(key, opts)
 
       {:error, :unavailable} ->
         raise "No read version available for fetching key: #{inspect(key)}"
     end
   end
 
-  @spec fetch_from_storage(State.t(), key :: binary()) ::
-          {:ok, State.t(), binary()}
-          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}
-          | :error
-  def fetch_from_storage(t, key) do
+  def fetch_from_storage(t, key, opts) do
+    storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
+
     fastest_storage_server_for_key(t.fastest_storage_servers, key)
     |> case do
       nil ->
@@ -77,11 +121,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
             raise "No storage server or team found for key: #{inspect(key)}"
 
           storage_servers when is_list(storage_servers) ->
-            fetch_from_fastest_storage_server(t, storage_servers, key)
+            fetch_from_fastest_storage_server(t, storage_servers, key, opts)
         end
 
       storage_server ->
-        Storage.fetch(storage_server, key, t.read_version, timeout: t.fetch_timeout_in_ms)
+        storage_fetch_fn.(storage_server, key, t.read_version, timeout: t.fetch_timeout_in_ms)
         |> case do
           {:ok, value} -> {:ok, t, value}
           error -> error
@@ -92,12 +136,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   @spec fetch_from_fastest_storage_server(
           State.t(),
           storage_servers :: [{Bedrock.key_range(), pid()}],
-          key :: binary()
+          key :: binary(),
+          opts :: [
+            horse_race_fn: horse_race_fn()
+          ]
         ) ::
-          {:ok, State.t(), binary()} | {:error, atom()} | :error
-  def fetch_from_fastest_storage_server(t, storage_servers, key) do
+          {:ok, State.t(), binary()}
+          | {:error, atom()}
+          | :error
+  def fetch_from_fastest_storage_server(t, storage_servers, key, opts) do
+    horse_race_fn = Keyword.get(opts, :horse_race_fn, &horse_race_storage_servers_for_key/5)
+
     storage_servers
-    |> horse_race_storage_servers_for_key(t.read_version, key, t.fetch_timeout_in_ms)
+    |> horse_race_fn.(t.read_version, key, t.fetch_timeout_in_ms, opts)
     |> case do
       {:ok, key_range, storage_server, value} ->
         {:ok, t |> Map.update!(:fastest_storage_servers, &Map.put(&1, key_range, storage_server)),
@@ -150,7 +201,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
           String.t()
         ) :: pid() | nil
   defp get_storage_server_pid(transaction_system_layout, storage_id) do
-    case Map.get(transaction_system_layout.services, storage_id) do
+    transaction_system_layout.services
+    |> Map.get(storage_id)
+    |> case do
       %{kind: :storage, status: {:up, pid}} -> pid
       _ -> nil
     end
@@ -166,20 +219,28 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
           storage_servers :: [{Bedrock.key_range(), pid()}],
           read_version :: non_neg_integer(),
           key :: binary(),
-          fetch_timeout_in_ms :: pos_integer()
+          fetch_timeout_in_ms :: pos_integer(),
+          opts :: [
+            async_stream_fn: async_stream_fn(),
+            storage_fetch_fn: storage_fetch_fn()
+          ]
         ) :: {:ok, Bedrock.key_range(), pid(), binary()} | {:error, atom()} | :error
-  def horse_race_storage_servers_for_key([], _, _, _), do: :error
+  def horse_race_storage_servers_for_key([], _, _, _, _), do: :error
 
   def horse_race_storage_servers_for_key(
         storage_servers,
         read_version,
         key,
-        fetch_timeout_in_ms
+        fetch_timeout_in_ms,
+        opts
       ) do
+    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
+    storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
+
     storage_servers
-    |> Task.async_stream(
+    |> async_stream_fn.(
       fn {key_range, storage_server} ->
-        Storage.fetch(storage_server, key, read_version, timeout: fetch_timeout_in_ms)
+        storage_fetch_fn.(storage_server, key, read_version, timeout: fetch_timeout_in_ms)
         |> case do
           {:ok, value} -> {key_range, storage_server, value}
           error -> error

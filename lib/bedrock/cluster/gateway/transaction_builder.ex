@@ -59,6 +59,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.Internal.Time
 
   import __MODULE__.Committing, only: [do_commit: 1]
   import __MODULE__.Fetching, only: [do_fetch: 2]
@@ -111,7 +112,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     do: t |> noreply()
 
   def handle_continue(:update_version_lease_if_needed, t) do
-    now = :erlang.monotonic_time(:millisecond)
+    now = Time.monotonic_now_in_ms()
     ms_remaining = t.read_version_lease_expiration - now
 
     cond do

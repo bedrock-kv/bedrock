@@ -42,6 +42,17 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
   @spec version(t()) :: Bedrock.version()
   def version(<<version::binary-size(8), _::binary>>), do: Version.from_bytes(version)
 
+  @spec keys(t()) :: [binary()]
+  def keys(
+        <<_version::unsigned-big-64, size_in_bytes::unsigned-big-32,
+          payload::binary-size(size_in_bytes), _::unsigned-big-32>>
+      ) do
+    <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
+      _value_section::binary>> = payload
+
+    decode_section(key_section)
+  end
+
   @spec key_count(t()) :: non_neg_integer()
   def key_count(
         <<_version::unsigned-big-64, size_in_bytes::unsigned-big-32,
@@ -50,14 +61,20 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     count_keys_in_payload(payload, 0)
   end
 
-  defp count_keys_in_payload(<<>>, count), do: count
+  defp count_keys_in_payload(payload, _count) do
+    <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
+      _value_section::binary>> = payload
 
-  defp count_keys_in_payload(
-         <<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, _key::binary-size(n_key_bytes),
-           _value::binary-size(n_bytes - n_key_bytes - 2), remainder::binary>>,
+    count_items_in_section(key_section, 0)
+  end
+
+  defp count_items_in_section(<<>>, count), do: count
+
+  defp count_items_in_section(
+         <<size::unsigned-big-16, _item::binary-size(size), rest::binary>>,
          count
        ) do
-    count_keys_in_payload(remainder, count + 1)
+    count_items_in_section(rest, count + 1)
   end
 
   @spec validate(binary()) :: {:ok, t()} | {:error, :crc32_mismatch} | {:error, :invalid}
@@ -89,36 +106,67 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     - `t()`: An opaque binary that represents the encoded transaction.
   """
   @spec encode(Transaction.t()) :: t()
-  def encode(transaction) do
-    transaction
+  def encode({version, writes}) do
+    {version, writes |> Enum.sort()}
     |> iodata_encode()
     |> IO.iodata_to_binary()
   end
 
-  @spec iodata_encode(Transaction.t()) :: iodata()
-  def iodata_encode({version, writes}) do
-    writes
-    |> Map.keys()
-    |> Enum.sort()
-    |> encode_key_value_frames(writes)
-    |> wrap_with_version_and_crc32(version)
+  @spec encode_presorted({Bedrock.version(), [{binary(), binary()}]}) :: t()
+  def encode_presorted(presorted_transaction) do
+    presorted_transaction
+    |> iodata_encode()
+    |> IO.iodata_to_binary()
   end
 
-  @spec encode_key_value_frames([binary()], %{binary() => binary()}) :: iodata()
-  defp encode_key_value_frames([], _), do: []
+  @spec iodata_encode({Bedrock.version(), [{binary(), binary()}]}) :: iodata()
+  def iodata_encode({version, sorted_pairs}) do
+    {key_frames, value_frames, key_section_size, value_section_size} =
+      encode_columnar_frames_from_pairs(sorted_pairs)
 
-  defp encode_key_value_frames([key | keys], writes),
-    do: [
-      encode_key_value_frame(key, writes[key])
-      | encode_key_value_frames(keys, writes)
-    ]
+    payload_iodata = [<<key_section_size::unsigned-big-32>>, key_frames, value_frames]
+    total_payload_size = 4 + key_section_size + value_section_size
 
-  @spec encode_key_value_frame(binary(), binary()) :: iodata()
-  defp encode_key_value_frame(key, value) do
-    n_key_bytes = byte_size(key)
-    n_value_bytes = byte_size(value)
-    n_bytes = n_value_bytes + n_key_bytes + 2
-    [<<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16>>, key, value]
+    wrap_with_version_and_crc32(payload_iodata, version, total_payload_size)
+  end
+
+  defp encode_columnar_frames_from_pairs(pairs) do
+    encode_columnar_frames_from_pairs_acc(pairs, [], [], 0, 0)
+  end
+
+  defp encode_columnar_frames_from_pairs_acc(
+         [],
+         key_acc,
+         value_acc,
+         key_section_size,
+         value_section_size
+       ) do
+    {:lists.reverse(key_acc), :lists.reverse(value_acc), key_section_size, value_section_size}
+  end
+
+  defp encode_columnar_frames_from_pairs_acc(
+         [{key, value} | pairs],
+         key_acc,
+         value_acc,
+         key_section_size,
+         value_section_size
+       ) do
+    key_size = byte_size(key)
+    value_size = byte_size(value)
+
+    key_frame = [<<key_size::unsigned-big-16>>, key]
+    value_frame = [<<value_size::unsigned-big-32>>, value]
+
+    new_key_section_size = key_section_size + 2 + key_size
+    new_value_section_size = value_section_size + 4 + value_size
+
+    encode_columnar_frames_from_pairs_acc(
+      pairs,
+      [key_frame | key_acc],
+      [value_frame | value_acc],
+      new_key_section_size,
+      new_value_section_size
+    )
   end
 
   @doc """
@@ -137,7 +185,10 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     - `{:error, :crc32_mismatch}`: If the CRC32 of the transaction payload
       does not match, indicating the transaction may be corrupted.
   """
-  @spec decode(t()) :: {:ok, Transaction.t()} | {:error, :crc32_mismatch}
+  @spec decode(t()) ::
+          {:ok, Transaction.t()}
+          | {:error, :crc32_mismatch}
+          | {:error, :invalid_binary_format}
   def decode(
         <<version::binary-size(8), size_in_bytes::unsigned-big-32,
           payload::binary-size(size_in_bytes), crc32::unsigned-big-32>>
@@ -145,9 +196,15 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     if crc32 != :erlang.crc32(payload) do
       {:error, :crc32_mismatch}
     else
-      {:ok, {version, decode_key_value_frames(payload)}}
+      {:ok, {version, decode_columnar_sections(payload)}}
     end
+  rescue
+    FunctionClauseError ->
+      {:error, :invalid_binary_format}
   end
+
+  # Catch-all for invalid binary format
+  def decode(_), do: {:error, :invalid_binary_format}
 
   @spec decode!(t()) :: Transaction.t()
   def decode!(encoded_transaction) do
@@ -157,33 +214,50 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
 
       {:error, :crc32_mismatch} ->
         raise("Transaction decode failed: CRC32 checksum mismatch indicates corruption")
+
+      {:error, :invalid_binary_format} ->
+        raise(
+          "Transaction decode failed: invalid binary format, expected encoded transaction structure"
+        )
     end
-  rescue
-    FunctionClauseError ->
-      reraise(
-        "Transaction decode failed: invalid binary format, expected encoded transaction structure",
-        __STACKTRACE__
-      )
   end
 
-  @spec decode_key_value_frames(binary()) :: %{binary() => binary()}
-  defp decode_key_value_frames(<<>>), do: %{}
+  defp decode_columnar_sections(payload) do
+    <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
+      value_section::binary>> = payload
 
-  defp decode_key_value_frames(
-         <<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, key::binary-size(n_key_bytes),
-           value::binary-size(n_bytes - n_key_bytes - 2), remainder::binary>>
+    keys = decode_section_16bit(key_section)
+    values = decode_section_32bit(value_section)
+
+    Enum.zip(keys, values) |> Map.new()
+  end
+
+  defp decode_section_16bit(data), do: decode_section_16bit_acc(data, [])
+
+  defp decode_section_16bit_acc(<<>>, acc), do: Enum.reverse(acc)
+
+  defp decode_section_16bit_acc(
+         <<size::unsigned-big-16, item::binary-size(size), rest::binary>>,
+         acc
        ) do
-    remainder
-    |> decode_key_value_frames()
-    |> Map.put(key, value)
+    decode_section_16bit_acc(rest, [item | acc])
   end
+
+  defp decode_section_32bit(data), do: decode_section_32bit_acc(data, [])
+
+  defp decode_section_32bit_acc(<<>>, acc), do: Enum.reverse(acc)
+
+  defp decode_section_32bit_acc(
+         <<size::unsigned-big-32, item::binary-size(size), rest::binary>>,
+         acc
+       ) do
+    decode_section_32bit_acc(rest, [item | acc])
+  end
+
+  defp decode_section(data), do: decode_section_16bit(data)
 
   @doc """
-  Filters keys (and values) from a transaction that are outside the specified
-  key range. Since the key-value frames are sorted, we can skip over anything
-  that precedes the min_key, and stop when we reach the max_key_ex. We attempt
-  to be as efficient as possible by avoiding unnecessary copying of the binary
-  data.
+  Filters keys and values from a transaction that are outside the specified key range.
   """
   @spec transform_by_removing_keys_outside_of_range(t(), Bedrock.key_range()) :: t()
   def transform_by_removing_keys_outside_of_range(t, key_range) do
@@ -194,100 +268,58 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
   @spec iodata_transform_by_removing_keys_outside_of_range(t(), Bedrock.key_range()) :: iodata()
   def iodata_transform_by_removing_keys_outside_of_range(
         <<version::binary-size(8), n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
-          _::unsigned-big-32>> =
-          original_transaction,
+          _::unsigned-big-32>> = original_transaction,
         {min_key, max_key_ex}
       ) do
-    if max_key_ex == :end do
-      # We only need to check the minimum key.
-      start = filter_gte_min_key(payload, min_key, 0)
-      {start, n_bytes - start}
-    else
-      # We need to check both the minimum and maximum keys.
-      filter_gte_min_key_lt_max_key(payload, min_key, max_key_ex, {0, 0})
-    end
-    |> case do
-      # The transaction is entirely inside the range.
-      {_, ^n_bytes} ->
+    <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
+      value_section::binary>> = payload
+
+    keys = decode_section(key_section)
+    values = decode_section(value_section)
+
+    original_pairs = Enum.zip(keys, values)
+
+    filtered_pairs =
+      original_pairs
+      |> Enum.filter(fn {key, _value} ->
+        key >= min_key and (max_key_ex == :end or key < max_key_ex)
+      end)
+
+    cond do
+      # All keys are in range - return original
+      length(filtered_pairs) == length(original_pairs) ->
         original_transaction
 
-      # The transaction is entirely outside the range.
-      {_, 0} ->
-        <<version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
+      # No keys in range - return empty transaction
+      Enum.empty?(filtered_pairs) ->
+        empty_payload = <<0::unsigned-big-32>>
 
-      # The transaction is partially inside the range, slice out the relevant
-      # key-value frames and reassemble the transaction.
-      {start, size_in_bytes} ->
-        payload
-        |> binary_part(start, size_in_bytes)
-        |> wrap_with_version_and_crc32(Version.from_bytes(version))
-    end
-  end
+        [
+          version,
+          <<4::unsigned-big-32>>,
+          empty_payload,
+          <<:erlang.crc32(empty_payload)::unsigned-big-32>>
+        ]
+        |> IO.iodata_to_binary()
 
-  @spec filter_gte_min_key(binary(), binary(), non_neg_integer()) :: non_neg_integer()
-  defp filter_gte_min_key(<<>>, _min_key, start),
-    do: start
-
-  defp filter_gte_min_key(
-         <<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, key::binary-size(n_key_bytes),
-           _::binary-size(n_bytes - n_key_bytes - 2), remainder::binary>>,
-         min_key,
-         start
-       ) do
-    if key < min_key do
-      filter_gte_min_key(remainder, min_key, start + 4 + n_bytes)
-    else
-      start
-    end
-  end
-
-  @spec filter_gte_min_key_lt_max_key(
-          binary(),
-          binary(),
-          binary(),
-          {non_neg_integer(), non_neg_integer()}
-        ) :: {non_neg_integer(), non_neg_integer()}
-  defp filter_gte_min_key_lt_max_key(<<>>, _, _, range),
-    do: range
-
-  defp filter_gte_min_key_lt_max_key(
-         <<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, key::binary-size(n_key_bytes),
-           _::binary-size(n_bytes - n_key_bytes - 2), remainder::binary>>,
-         min_key,
-         max_key_ex,
-         {start, size} = range
-       ) do
-    cond do
-      # The key is larger than our range, . All the others must be too, so we
-      # can stop.
-      key >= max_key_ex ->
-        range
-
-      # The key is below the range, so we can skip it.
-      key < min_key ->
-        filter_gte_min_key_lt_max_key(
-          remainder,
-          min_key,
-          max_key_ex,
-          {start + 4 + n_bytes, size - 4 - n_bytes}
-        )
-
-      # Here's a keeper, so we slice out the key-value frame and continue.
+      # Some keys in range - rebuild columnar structure
       true ->
-        filter_gte_min_key_lt_max_key(remainder, min_key, max_key_ex, {start, size + 4 + n_bytes})
+        {key_frames, value_frames, key_section_size, value_section_size} =
+          encode_columnar_frames_from_pairs(filtered_pairs)
+
+        payload_iodata = [<<key_section_size::unsigned-big-32>>, key_frames, value_frames]
+        total_payload_size = 4 + key_section_size + value_section_size
+
+        wrap_with_version_and_crc32(
+          payload_iodata,
+          Version.from_bytes(version),
+          total_payload_size
+        )
     end
   end
 
   @doc """
-  Transforms an encoded transaction by excluding the values of all key-value
-  pairs, leaving only the keys in the encoded structure.
-
-  This function is useful when there is a need to handle transactions where
-  only the keys are relevant, and the values can be excluded (like when
-  reloading a Resolver from a cold-state using the Logs).
-
-  The transformation preserves the integrity of the encoded transaction by
-  recalculating the CRC32 checksum based on the modified structure.
+  Transforms an encoded transaction by excluding all values, leaving only keys.
   """
   @spec transform_by_excluding_values(t()) :: t()
   def transform_by_excluding_values(t) do
@@ -301,28 +333,24 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
         <<version::binary-size(8), n_bytes::unsigned-big-32, payload::binary-size(n_bytes),
           _::unsigned-big-32>>
       ) do
-    payload
-    |> exclude_values_from_payload()
-    |> wrap_with_version_and_crc32(Version.from_bytes(version))
+    <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
+      _value_section::binary>> = payload
+
+    keys = decode_section(key_section)
+    empty_pairs = Enum.map(keys, fn key -> {key, <<>>} end)
+
+    {key_frames, value_frames, key_section_size, value_section_size} =
+      encode_columnar_frames_from_pairs(empty_pairs)
+
+    payload_iodata = [<<key_section_size::unsigned-big-32>>, key_frames, value_frames]
+    total_payload_size = 4 + key_section_size + value_section_size
+
+    wrap_with_version_and_crc32(payload_iodata, Version.from_bytes(version), total_payload_size)
   end
 
-  @spec exclude_values_from_payload(binary()) :: iodata()
-  defp exclude_values_from_payload(<<>>), do: []
-
-  defp exclude_values_from_payload(
-         <<n_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, key::binary-size(n_key_bytes),
-           _::binary-size(n_bytes - n_key_bytes - 2), remainder::binary>>
-       ) do
-    [
-      [<<2 + n_key_bytes::unsigned-big-32, n_key_bytes::unsigned-big-16, key::binary>>]
-      | exclude_values_from_payload(remainder)
-    ]
-  end
-
-  @spec wrap_with_version_and_crc32(iodata(), Bedrock.version()) :: iodata()
-  defp wrap_with_version_and_crc32(kv_frames, version),
+  defp wrap_with_version_and_crc32(kv_frames, version, payload_size),
     do: [
-      [version, <<IO.iodata_length(kv_frames)::unsigned-big-32>>],
+      [version, <<payload_size::unsigned-big-32>>],
       kv_frames,
       <<:erlang.crc32(kv_frames)::unsigned-big-32>>
     ]

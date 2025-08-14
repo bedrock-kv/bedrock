@@ -7,8 +7,8 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   batch processing of encoded transactions and coordination with the lock
   token system during recovery scenarios.
   """
-  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.EncodedTransaction
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree

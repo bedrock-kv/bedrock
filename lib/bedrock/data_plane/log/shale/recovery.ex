@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   @moduledoc false
-  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.EncodedTransaction
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State

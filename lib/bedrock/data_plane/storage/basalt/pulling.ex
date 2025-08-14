@@ -2,8 +2,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @moduledoc false
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.EncodedTransaction
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.Service.Worker
 

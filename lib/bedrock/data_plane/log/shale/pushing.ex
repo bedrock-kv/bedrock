@@ -22,8 +22,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       when expected_version == t.last_version do
     case write_encoded_transaction(t, encoded_transaction) do
       {:ok, t} ->
-        n_keys = EncodedTransaction.key_count(encoded_transaction)
-        trace_push_transaction(expected_version, n_keys)
+        trace_push_transaction(expected_version, encoded_transaction)
         :ok = ack_fn.(:ok)
         t |> do_pending_pushes()
     end

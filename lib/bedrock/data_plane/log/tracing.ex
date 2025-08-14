@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
   @moduledoc false
   require Logger
 
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Version
 
   @spec handler_id() :: String.t()
@@ -58,7 +59,9 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     )
   end
 
-  def log_event(:push, %{n_keys: n_keys}, %{expected_version: expected_version}) do
+  def log_event(:push, %{transaction: encoded_transaction}, %{expected_version: expected_version}) do
+    n_keys = EncodedTransaction.key_count(encoded_transaction)
+
     info(
       "Push transaction (#{n_keys} keys) with expected version #{Version.to_string(expected_version)}"
     )

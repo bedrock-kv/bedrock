@@ -8,7 +8,7 @@ defmodule Bedrock.DataPlane.Resolver.Recovery do
   token system during recovery scenarios.
   """
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree

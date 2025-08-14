@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.Segment
 
   @wal_magic_number <<"BED0">>

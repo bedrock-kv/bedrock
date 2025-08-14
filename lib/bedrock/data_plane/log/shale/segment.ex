@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @moduledoc false
   require Logger
 
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Version

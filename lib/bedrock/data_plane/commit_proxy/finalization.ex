@@ -20,7 +20,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Log.Transaction
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Sequencer

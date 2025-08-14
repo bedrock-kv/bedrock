@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
   use ExUnit.Case, async: false
 
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
   alias Bedrock.DataPlane.Version
 

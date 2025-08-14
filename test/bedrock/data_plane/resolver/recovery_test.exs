@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Resolver.RecoveryTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Resolver.Recovery
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Tree

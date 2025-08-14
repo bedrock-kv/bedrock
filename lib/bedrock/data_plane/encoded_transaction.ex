@@ -1,8 +1,8 @@
-defmodule Bedrock.DataPlane.Log.EncodedTransaction do
+defmodule Bedrock.DataPlane.EncodedTransaction do
   alias Bedrock.DataPlane.Version
 
   @moduledoc """
-  This module, `Bedrock.DataPlane.Log.EncodedTransaction`, provides functions to
+  This module, `Bedrock.DataPlane.EncodedTransaction`, provides functions to
   encode and decode `Bedrock.DataPlane.Log.Transaction.t()` comprised of a
   version and a map of key-value pairs into a binary format with embedded
   versioning and CRC32 checksums for integrity checking.

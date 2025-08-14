@@ -1,6 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
-  alias Bedrock.DataPlane.Log.EncodedTransaction
+  alias Bedrock.DataPlane.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.{Pulling, Segment, State}
   alias Bedrock.DataPlane.Version
 

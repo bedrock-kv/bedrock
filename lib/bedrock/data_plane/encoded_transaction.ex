@@ -58,10 +58,10 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
         <<_version::unsigned-big-64, size_in_bytes::unsigned-big-32,
           payload::binary-size(size_in_bytes), _::unsigned-big-32>>
       ) do
-    count_keys_in_payload(payload, 0)
+    count_keys_in_payload(payload)
   end
 
-  defp count_keys_in_payload(payload, _count) do
+  defp count_keys_in_payload(payload) do
     <<key_section_size::unsigned-big-32, key_section::binary-size(key_section_size),
       _value_section::binary>> = payload
 
@@ -109,14 +109,14 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
   def encode({version, writes}) do
     {version, writes |> Enum.sort()}
     |> iodata_encode()
-    |> IO.iodata_to_binary()
+    |> to_binary()
   end
 
   @spec encode_presorted({Bedrock.version(), [{binary(), binary()}]}) :: t()
   def encode_presorted(presorted_transaction) do
     presorted_transaction
     |> iodata_encode()
-    |> IO.iodata_to_binary()
+    |> to_binary()
   end
 
   @spec iodata_encode({Bedrock.version(), [{binary(), binary()}]}) :: iodata()
@@ -130,9 +130,8 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     wrap_with_version_and_crc32(payload_iodata, version, total_payload_size)
   end
 
-  defp encode_columnar_frames_from_pairs(pairs) do
-    encode_columnar_frames_from_pairs_acc(pairs, [], [], 0, 0)
-  end
+  defp encode_columnar_frames_from_pairs(pairs),
+    do: encode_columnar_frames_from_pairs_acc(pairs, [], [], 0, 0)
 
   defp encode_columnar_frames_from_pairs_acc(
          [],
@@ -262,7 +261,7 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
   @spec transform_by_removing_keys_outside_of_range(t(), Bedrock.key_range()) :: t()
   def transform_by_removing_keys_outside_of_range(t, key_range) do
     iodata_transform_by_removing_keys_outside_of_range(t, key_range)
-    |> IO.iodata_to_binary()
+    |> to_binary()
   end
 
   @spec iodata_transform_by_removing_keys_outside_of_range(t(), Bedrock.key_range()) :: iodata()
@@ -292,15 +291,7 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
 
       # No keys in range - return empty transaction
       Enum.empty?(filtered_pairs) ->
-        empty_payload = <<0::unsigned-big-32>>
-
-        [
-          version,
-          <<4::unsigned-big-32>>,
-          empty_payload,
-          <<:erlang.crc32(empty_payload)::unsigned-big-32>>
-        ]
-        |> IO.iodata_to_binary()
+        encode_empty_transaction(version)
 
       # Some keys in range - rebuild columnar structure
       true ->
@@ -325,7 +316,7 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
   def transform_by_excluding_values(t) do
     t
     |> iodata_transform_by_excluding_values()
-    |> IO.iodata_to_binary()
+    |> to_binary()
   end
 
   @spec iodata_transform_by_excluding_values(t()) :: iodata()
@@ -354,4 +345,17 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
       kv_frames,
       <<:erlang.crc32(kv_frames)::unsigned-big-32>>
     ]
+
+  defp encode_empty_transaction(version) do
+    empty_payload = <<0::unsigned-big-32>>
+
+    [
+      version,
+      <<4::unsigned-big-32>>,
+      empty_payload,
+      <<:erlang.crc32(empty_payload)::unsigned-big-32>>
+    ]
+  end
+
+  defp to_binary(iodata), do: IO.iodata_to_binary(iodata)
 end

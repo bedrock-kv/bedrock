@@ -99,22 +99,22 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
 
   ## Parameters
     - `transaction` ({version, writes}): A tuple containing the version and
-      a map of key-value binary pairs to be encoded. All keys and values are
-      expected to be binaries.
+      a map of key-value binary pairs to be encoded, or a list of pre-sorted
+      key-value pairs. All keys and values are expected to be binaries.
 
   ## Returns
     - `t()`: An opaque binary that represents the encoded transaction.
   """
-  @spec encode(Transaction.t()) :: t()
-  def encode({version, writes}) do
+  @spec encode({Bedrock.version(), %{Bedrock.key() => Bedrock.value()}}) :: t()
+  def encode({version, writes}) when is_map(writes) do
     {version, writes |> Enum.sort()}
     |> iodata_encode()
     |> to_binary()
   end
 
-  @spec encode_presorted({Bedrock.version(), [{binary(), binary()}]}) :: t()
-  def encode_presorted(presorted_transaction) do
-    presorted_transaction
+  @spec encode({Bedrock.version(), [{Bedrock.key(), Bedrock.value()}]}) :: t()
+  def encode({version, presorted_pairs}) when is_list(presorted_pairs) do
+    {version, presorted_pairs}
     |> iodata_encode()
     |> to_binary()
   end

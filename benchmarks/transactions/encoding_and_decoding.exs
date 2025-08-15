@@ -9,18 +9,10 @@ defmodule V0 do
     |> IO.iodata_to_binary()
   end
 
-  def iodata_encode({version, writes}) do
-    sorted_pairs = writes |> Enum.sort_by(fn {key, _value} -> key end)
-    iodata_encode_presorted({version, sorted_pairs})
-  end
+  def iodata_encode({version, writes}) when is_map(writes),
+    do: iodata_encode({version, writes |> Enum.sort_by(fn {key, _value} -> key end)})
 
-  def encode_presorted(presorted_transaction) do
-    presorted_transaction
-    |> iodata_encode_presorted()
-    |> IO.iodata_to_binary()
-  end
-
-  def iodata_encode_presorted({version, sorted_pairs}) do
+  def iodata_encode({version, sorted_pairs}) when is_list(sorted_pairs) do
     sorted_pairs
     |> encode_key_value_frames_from_pairs()
     |> wrap_with_version_and_crc32(version)
@@ -134,8 +126,8 @@ shared_raw_transactions = %{
 # Encoding benchmark - V0 vs V2 using presorted data (no sorting overhead)
 Benchee.run(
   %{
-    "V0 encode (row-based)" => fn input -> V0.encode_presorted(input) end,
-    "V2 encode (columnar)" => fn input -> V2.encode_presorted(input) end
+    "V0 encode (row-based)" => fn input -> V0.encode(input) end,
+    "V2 encode (columnar)" => fn input -> V2.encode(input) end
   },
   inputs: shared_raw_transactions,
   time: 3
@@ -151,7 +143,7 @@ medium_map_tx = {elem(medium_raw_tx, 0), Map.new(elem(medium_raw_tx, 1))}
 Benchee.run(
   %{
     "V2 encode with sorting" => fn _ -> V2.encode(medium_map_tx) end,
-    "V2 encode presorted" => fn _ -> V2.encode_presorted(medium_raw_tx) end
+    "V2 encode presorted" => fn _ -> V2.encode(medium_raw_tx) end
   },
   inputs: %{"Medium (100 keys)" => :dummy},
   time: 2,
@@ -212,8 +204,8 @@ size_transactions = [
 ]
 
 for {size, raw_tx} <- size_transactions do
-  v0_encoded = V0.encode_presorted(raw_tx)
-  v2_encoded = V2.encode_presorted(raw_tx)
+  v0_encoded = V0.encode(raw_tx)
+  v2_encoded = V2.encode(raw_tx)
 
   overhead_bytes = byte_size(v2_encoded) - byte_size(v0_encoded)
   overhead_pct = Float.round(overhead_bytes / byte_size(v0_encoded) * 100, 1)

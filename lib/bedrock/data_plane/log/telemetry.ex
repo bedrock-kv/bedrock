@@ -49,7 +49,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
   def trace_push_transaction(expected_version, encoded_transaction) do
     Telemetry.execute(
       [:bedrock, :log, :push],
-      %{transaction: encoded_transaction},
+      %{encoded_transaction: encoded_transaction},
       Map.merge(trace_metadata(), %{
         expected_version: expected_version
       })

@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Telemetry
+  alias Bedrock.DataPlane.EncodedTransaction
 
   setup do
     # Capture telemetry events
@@ -29,12 +30,15 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
   describe "trace_push_transaction/2" do
     test "emits push telemetry event with correct data" do
-      expected_version = 42
-      n_keys = 5
+      expected_version = <<42::unsigned-big-64>>
 
-      Telemetry.trace_push_transaction(expected_version, n_keys)
+      encoded_transaction =
+        EncodedTransaction.encode({expected_version, %{"key1" => "value1", "key2" => "value2"}})
 
-      assert_receive {:telemetry, [:bedrock, :log, :push], %{n_keys: ^n_keys},
+      Telemetry.trace_push_transaction(expected_version, encoded_transaction)
+
+      assert_receive {:telemetry, [:bedrock, :log, :push],
+                      %{encoded_transaction: ^encoded_transaction},
                       %{
                         expected_version: ^expected_version,
                         cluster: :test_cluster,

@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
 
   alias Bedrock.DataPlane.Log.Tracing
   alias Bedrock.DataPlane.Version
+  alias Bedrock.DataPlane.EncodedTransaction
 
   # Mock cluster module for testing
   defmodule MockCluster do
@@ -114,8 +115,15 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
     end
 
     test "handles :push event" do
-      measurements = %{n_keys: 3}
-      metadata = %{expected_version: Version.from_integer(200)}
+      version = Version.from_integer(200)
+
+      encoded_transaction =
+        EncodedTransaction.encode(
+          {version, %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}}
+        )
+
+      measurements = %{encoded_transaction: encoded_transaction}
+      metadata = %{expected_version: version}
 
       log =
         capture_log(fn ->

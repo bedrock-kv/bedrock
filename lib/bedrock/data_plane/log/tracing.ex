@@ -59,12 +59,11 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     )
   end
 
-  def log_event(:push, %{transaction: encoded_transaction}, %{expected_version: expected_version}) do
+  def log_event(:push, _, %{transaction: encoded_transaction}) do
+    version = EncodedTransaction.version(encoded_transaction)
     n_keys = EncodedTransaction.key_count(encoded_transaction)
 
-    info(
-      "Push transaction (#{n_keys} keys) with expected version #{Version.to_string(expected_version)}"
-    )
+    info("Push transaction (#{n_keys} keys) with expected version #{Version.to_string(version)}")
   end
 
   def log_event(:push_out_of_order, _, %{

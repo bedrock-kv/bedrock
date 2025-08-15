@@ -153,18 +153,12 @@ defmodule Bedrock.DataPlane.EncodedTransaction do
     key_size = byte_size(key)
     value_size = byte_size(value)
 
-    key_frame = [<<key_size::unsigned-big-16>>, key]
-    value_frame = [<<value_size::unsigned-big-32>>, value]
-
-    new_key_section_size = key_section_size + 2 + key_size
-    new_value_section_size = value_section_size + 4 + value_size
-
     encode_columnar_frames_from_pairs_acc(
       pairs,
-      [key_frame | key_acc],
-      [value_frame | value_acc],
-      new_key_section_size,
-      new_value_section_size
+      [key, <<key_size::unsigned-big-16>> | key_acc],
+      [value, <<value_size::unsigned-big-32>> | value_acc],
+      key_section_size + 2 + key_size,
+      value_section_size + 4 + value_size
     )
   end
 

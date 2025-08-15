@@ -223,11 +223,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def transform_transactions_for_resolution(transactions) do
     transactions
     |> Enum.map(fn
-      {_from, {nil, writes}} ->
-        {nil, writes |> Map.keys()}
+      {_from,
+       %{read_version: nil, read_conflicts: _read_conflicts, write_conflicts: write_conflicts}} ->
+        {nil, write_conflicts}
 
-      {_from, {{read_version, reads}, writes}} ->
-        {{read_version, reads |> Enum.uniq()}, writes |> Map.keys()}
+      {_from,
+       %{
+         read_version: read_version,
+         read_conflicts: read_conflicts,
+         write_conflicts: write_conflicts
+       }} ->
+        {{read_version, read_conflicts |> Enum.uniq()}, write_conflicts}
     end)
   end
 
@@ -483,7 +489,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   @spec process_transaction_for_grouping(
-          {{function(), {[term()], %{Bedrock.key() => term()}}}, non_neg_integer()},
+          {{function(), Bedrock.transaction()}, non_neg_integer()},
           MapSet.t(non_neg_integer()),
           [StorageTeamDescriptor.t()],
           %{Bedrock.range_tag() => %{Bedrock.key() => term()}}
@@ -491,7 +497,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:cont, {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
           | {:halt, {:error, term()}}
   defp process_transaction_for_grouping(
-         {{_reply_fn, {_reads, writes}}, idx},
+         {{_reply_fn, %{write_conflicts: write_conflicts}}, idx},
          aborted_set,
          storage_teams,
          acc
@@ -499,6 +505,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     if MapSet.member?(aborted_set, idx) do
       {:cont, {:ok, acc}}
     else
+      writes = derive_writes_from_conflicts(write_conflicts)
       handle_non_aborted_transaction(writes, storage_teams, acc)
     end
   end
@@ -510,6 +517,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         ) ::
           {:cont, {:ok, %{Bedrock.range_tag() => %{Bedrock.key() => term()}}}}
           | {:halt, {:error, term()}}
+  @spec derive_writes_from_conflicts([Bedrock.key_range()]) :: %{Bedrock.key() => nil}
+  defp derive_writes_from_conflicts(write_conflicts) do
+    # Extract writes based only on write_conflicts
+    write_conflicts
+    |> Enum.reduce(%{}, fn
+      # Handle key range conflicts - extract the start key
+      {key, _end_key}, acc when is_binary(key) ->
+        Map.put(acc, key, nil)
+
+      # Handle range conflicts for clear operations
+      {_start_key, _end_key} = range, acc ->
+        Map.put(acc, range, nil)
+    end)
+  end
+
   defp handle_non_aborted_transaction(writes, storage_teams, acc) do
     case group_writes_by_tag(writes, storage_teams) do
       {:ok, tag_grouped_writes} ->

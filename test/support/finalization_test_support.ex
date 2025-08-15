@@ -84,7 +84,13 @@ defmodule FinalizationTestSupport do
   """
   def create_test_batch(commit_version, last_commit_version, transactions \\ []) do
     default_transactions = [
-      {fn result -> send(self(), {:reply, result}) end, {nil, %{<<"key1">> => <<"value1">>}}}
+      {fn result -> send(self(), {:reply, result}) end,
+       %{
+         mutations: [{:set, <<"key1">>, <<"value1">>}],
+         write_conflicts: [{<<"key1">>, <<"key1\0">>}],
+         read_conflicts: [],
+         read_version: nil
+       }}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions

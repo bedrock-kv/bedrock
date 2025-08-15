@@ -145,15 +145,27 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   describe "transform_transactions_for_resolution/1" do
     test "transforms transaction list to resolver format" do
       transactions = [
-        {fn _ -> :ok end, {{100, [<<"read_key">>]}, %{<<"write_key1">> => <<"write_value1">>}}},
-        {fn _ -> :ok end, {nil, %{<<"write_key2">> => <<"write_value2">>}}}
+        {fn _ -> :ok end,
+         %{
+           mutations: [{:set, <<"write_key1">>, <<"write_value1">>}],
+           write_conflicts: [{<<"write_key1">>, <<"write_key1\0">>}],
+           read_conflicts: [{<<"read_key">>, <<"read_key\0">>}],
+           read_version: 100
+         }},
+        {fn _ -> :ok end,
+         %{
+           mutations: [{:set, <<"write_key2">>, <<"write_value2">>}],
+           write_conflicts: [{<<"write_key2">>, <<"write_key2\0">>}],
+           read_conflicts: [],
+           read_version: nil
+         }}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
 
       expected = [
-        {{100, [<<"read_key">>]}, [<<"write_key1">>]},
-        {nil, [<<"write_key2">>]}
+        {{100, [{<<"read_key">>, <<"read_key\0">>}]}, [{<<"write_key1">>, <<"write_key1\0">>}]},
+        {nil, [{<<"write_key2">>, <<"write_key2\0">>}]}
       ]
 
       assert result == expected
@@ -166,42 +178,69 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
     test "handles transactions with no reads" do
       transactions = [
-        {fn _ -> :ok end, {nil, %{<<"key">> => <<"value">>}}}
+        {fn _ -> :ok end,
+         %{
+           mutations: [{:set, <<"key">>, <<"value">>}],
+           write_conflicts: [{<<"key">>, <<"key\0">>}],
+           read_conflicts: [],
+           read_version: nil
+         }}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
-      expected = [{nil, [<<"key">>]}]
+      expected = [{nil, [{<<"key">>, <<"key\0">>}]}]
 
       assert result == expected
     end
 
     test "handles transactions with no writes" do
       transactions = [
-        {fn _ -> :ok end, {{100, [<<"read_key">>]}, %{}}}
+        {fn _ -> :ok end,
+         %{
+           mutations: [],
+           write_conflicts: [],
+           read_conflicts: [{<<"read_key">>, <<"read_key\0">>}],
+           read_version: 100
+         }}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
-      expected = [{{100, [<<"read_key">>]}, []}]
+      expected = [{{100, [{<<"read_key">>, <<"read_key\0">>}]}, []}]
 
       assert result == expected
     end
 
-    test "extracts write keys in consistent order" do
-      # Test that write keys are extracted in a deterministic order
-      writes = %{
-        <<"z_key">> => <<"value1">>,
-        <<"a_key">> => <<"value2">>,
-        <<"m_key">> => <<"value3">>
-      }
+    test "extracts write conflicts in consistent order" do
+      transactions = [
+        {fn _ -> :ok end,
+         %{
+           mutations: [
+             {:set, <<"z_key">>, <<"value1">>},
+             {:set, <<"a_key">>, <<"value2">>},
+             {:set, <<"m_key">>, <<"value3">>}
+           ],
+           write_conflicts: [
+             {<<"z_key">>, <<"z_key\0">>},
+             {<<"a_key">>, <<"a_key\0">>},
+             {<<"m_key">>, <<"m_key\0">>}
+           ],
+           read_conflicts: [],
+           read_version: nil
+         }}
+      ]
 
-      transactions = [{fn _ -> :ok end, {nil, writes}}]
       result = Finalization.transform_transactions_for_resolution(transactions)
 
-      [{nil, write_keys}] = result
+      [{nil, write_conflicts}] = result
 
-      # Keys should be sorted for consistency
-      expected_keys = [<<"a_key">>, <<"m_key">>, <<"z_key">>]
-      assert Enum.sort(write_keys) == expected_keys
+      # Write conflicts should maintain order from transaction
+      expected_conflicts = [
+        {<<"z_key">>, <<"z_key\0">>},
+        {<<"a_key">>, <<"a_key\0">>},
+        {<<"m_key">>, <<"m_key\0">>}
+      ]
+
+      assert write_conflicts == expected_conflicts
     end
   end
 

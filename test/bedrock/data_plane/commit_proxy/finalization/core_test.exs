@@ -35,9 +35,21 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         n_transactions: 2,
         buffer: [
           # index 0 - will be aborted
-          {reply_fn1, {nil, %{<<"key1">> => <<"value1">>}}},
+          {reply_fn1,
+           %{
+             mutations: [{:set, <<"key1">>, <<"value1">>}],
+             write_conflicts: [{<<"key1">>, <<"key1\0">>}],
+             read_conflicts: [],
+             read_version: nil
+           }},
           # index 1 - success
-          {reply_fn2, {nil, %{<<"key2">> => <<"value2">>}}}
+          {reply_fn2,
+           %{
+             mutations: [{:set, <<"key2">>, <<"value2">>}],
+             write_conflicts: [{<<"key2">>, <<"key2\0">>}],
+             read_conflicts: [],
+             read_version: nil
+           }}
         ]
       }
 
@@ -105,8 +117,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         last_commit_version: 99,
         n_transactions: 2,
         buffer: [
-          {reply_fn1, {nil, %{<<"key1">> => <<"value1">>}}},
-          {reply_fn2, {nil, %{<<"key2">> => <<"value2">>}}}
+          {reply_fn1,
+           %{
+             mutations: [{:set, <<"key1">>, <<"value1">>}],
+             write_conflicts: [{<<"key1">>, <<"key1\0">>}],
+             read_conflicts: [],
+             read_version: nil
+           }},
+          {reply_fn2,
+           %{
+             mutations: [{:set, <<"key2">>, <<"value2">>}],
+             write_conflicts: [{<<"key2">>, <<"key2\0">>}],
+             read_conflicts: [],
+             read_version: nil
+           }}
         ]
       }
 
@@ -262,7 +286,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         commit_version: 100,
         last_commit_version: 99,
         n_transactions: 1,
-        buffer: [{reply_fn, {nil, %{<<"key">> => <<"value">>}}}]
+        buffer: [
+          {reply_fn,
+           %{
+             mutations: [{:set, <<"key">>, <<"value">>}],
+             write_conflicts: [{<<"key">>, <<"key\0">>}],
+             read_conflicts: [],
+             read_version: nil
+           }}
+        ]
       }
 
       # Track calls to custom abort function

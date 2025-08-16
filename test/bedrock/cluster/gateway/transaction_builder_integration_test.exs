@@ -61,7 +61,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert Tx.commit(state.tx) == %{
                mutations: [{:set, "test_key", "test_value"}],
                write_conflicts: [{"test_key", "test_key\0"}],
-               read_conflicts: []
+               read_conflicts: {nil, []}
              }
 
       # Commit will fail due to missing infrastructure, but we can verify it tries
@@ -87,10 +87,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       state = :sys.get_state(pid)
       commit_result = Tx.commit(state.tx)
 
-      assert length(commit_result.mutations) == 3
-      assert {:set, "key1", "value1"} in commit_result.mutations
-      assert {:set, "key2", "value2"} in commit_result.mutations
-      assert {:set, "key3", "value3"} in commit_result.mutations
+      assert commit_result.mutations == [
+               {:set, "key1", "value1"},
+               {:set, "key2", "value2"},
+               {:set, "key3", "value3"}
+             ]
     end
 
     test "put overwrite behavior" do
@@ -113,8 +114,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       # Transaction should contain both operations
       state = :sys.get_state(pid)
       commit_result = Tx.commit(state.tx)
-      assert {:set, "key", "initial_value"} in commit_result.mutations
-      assert {:set, "key", "updated_value"} in commit_result.mutations
+
+      assert commit_result.mutations == [
+               {:set, "key", "updated_value"}
+             ]
     end
   end
 
@@ -144,9 +147,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert length(state.stack) == 1
 
       commit_result = Tx.commit(state.tx)
-      assert {:set, "base_key", "base_value"} in commit_result.mutations
-      assert {:set, "nested_key", "nested_value"} in commit_result.mutations
-      assert {:set, "base_key", "overwritten_value"} in commit_result.mutations
+
+      assert commit_result.mutations == [
+               {:set, "nested_key", "nested_value"},
+               {:set, "base_key", "overwritten_value"}
+             ]
     end
 
     test "rollback restores previous transaction state" do
@@ -402,8 +407,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
       # Verify codec was used
       commit_result = Tx.commit(state.tx)
-      assert {:set, "persistent_base", "value"} in commit_result.mutations
-      assert {:set, "persistent_nested", "value"} in commit_result.mutations
+
+      assert commit_result.mutations == [
+               {:set, "persistent_base", "value"},
+               {:set, "persistent_nested", "value"}
+             ]
     end
   end
 end

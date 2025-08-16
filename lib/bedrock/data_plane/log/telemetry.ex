@@ -1,5 +1,5 @@
 defmodule Bedrock.DataPlane.Log.Telemetry do
-  alias Bedrock.DataPlane.EncodedTransaction
+  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.Log
   alias Bedrock.Telemetry
 
@@ -42,7 +42,7 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
-  @spec trace_push_transaction(transaction :: EncodedTransaction.t()) :: :ok
+  @spec trace_push_transaction(transaction :: BedrockTransaction.encoded()) :: :ok
   def trace_push_transaction(transaction) when is_binary(transaction) do
     Telemetry.execute(
       [:bedrock, :log, :push],

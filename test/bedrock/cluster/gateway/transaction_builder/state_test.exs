@@ -16,7 +16,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert state.read_version == nil
       assert state.read_version_lease_expiration == nil
       assert state.commit_version == nil
-      assert Tx.commit(state.tx) == %{mutations: [], write_conflicts: [], read_conflicts: []}
+
+      assert Tx.commit(state.tx) == %{
+               mutations: [],
+               write_conflicts: [],
+               read_conflicts: {nil, []}
+             }
+
       assert state.stack == []
       assert state.fastest_storage_servers == %{}
       assert state.fetch_timeout_in_ms == 50
@@ -55,7 +61,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       # Stack should contain one empty Tx - use length check since Tx.new() creates new struct
       assert length(state.stack) == 1
       [stacked_tx] = state.stack
-      assert Tx.commit(stacked_tx) == %{mutations: [], write_conflicts: [], read_conflicts: []}
+
+      assert Tx.commit(stacked_tx) == %{
+               mutations: [],
+               write_conflicts: [],
+               read_conflicts: {nil, []}
+             }
+
       assert state.fastest_storage_servers == %{{:a, :b} => :pid}
       assert state.fetch_timeout_in_ms == 200
       assert state.lease_renewal_threshold == 300

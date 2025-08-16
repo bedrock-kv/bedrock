@@ -187,8 +187,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       final_state = :sys.get_state(pid)
       final_mutations = Tx.commit(final_state.tx).mutations
 
-      assert length(final_mutations) == length(initial_mutations) + 1
-      assert {:set, "test_key", "test_value"} in final_mutations
+      assert final_mutations == initial_mutations ++ [{:set, "test_key", "test_value"}]
     end
 
     test ":rollback cast with empty stack terminates process" do
@@ -230,12 +229,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       state = :sys.get_state(pid)
       mutations = Tx.commit(state.tx).mutations
-      assert length(mutations) == 3
 
-      # All mutations should be present
-      assert {:set, "key1", "value1"} in mutations
-      assert {:set, "key2", "value2"} in mutations
-      assert {:set, "key3", "value3"} in mutations
+      assert mutations == [
+               {:set, "key1", "value1"},
+               {:set, "key2", "value2"},
+               {:set, "key3", "value3"}
+             ]
     end
 
     test "put cast with same key overwrites in mutations but not state" do
@@ -249,11 +248,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       state = :sys.get_state(pid)
       commit_result = Tx.commit(state.tx)
 
-      # Both mutations should be recorded
-      assert {:set, "key1", "value1"} in commit_result.mutations
-      assert {:set, "key1", "updated_value"} in commit_result.mutations
+      assert commit_result.mutations == [
+               {:set, "key1", "updated_value"}
+             ]
 
-      # But fetch should return the latest value
       result = GenServer.call(pid, {:fetch, "key1"})
       assert result == {:ok, "updated_value"}
     end
@@ -383,9 +381,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       mutations2 = Tx.commit(state2.tx).mutations
       assert length(mutations2) == 2
 
-      # All previous mutations should still be present
-      assert {:set, "key1", "value1"} in mutations2
-      assert {:set, "key2", "value2"} in mutations2
+      assert mutations2 == [
+               {:set, "key1", "value1"},
+               {:set, "key2", "value2"}
+             ]
     end
   end
 

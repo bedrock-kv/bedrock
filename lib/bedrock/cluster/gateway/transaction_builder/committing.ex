@@ -3,6 +3,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.CommitProxy
 
   @spec do_commit(State.t()) :: {:ok, State.t()} | {:error, term()}
@@ -27,9 +28,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
           read_version :: Bedrock.version() | nil,
           tx :: Tx.t()
         ) ::
-          map()
+          BedrockTransaction.encoded()
   defp prepare_transaction_for_commit(read_version, tx) do
-    tx |> Tx.commit() |> Map.put(:read_version, read_version)
+    tx |> Tx.commit_binary(read_version)
   end
 
   @spec select_commit_proxy(Bedrock.ControlPlane.Config.TransactionSystemLayout.t()) ::

@@ -18,10 +18,10 @@ defmodule Bedrock do
   @type version_vector :: {oldest :: version(), newest :: version()}
 
   @type transaction :: %{
-          mutations: [mutation()],
-          write_conflicts: [key_range()],
-          read_conflicts: [key_range()],
-          read_version: version() | nil
+          optional(:mutations) => [mutation()],
+          optional(:write_conflicts) => [key_range()],
+          optional(:read_conflicts) => {version(), [key_range()]},
+          optional(:commit_version) => version()
         }
 
   @type mutation ::

@@ -22,6 +22,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.SystemKeys
 
@@ -57,11 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           cluster_config :: Config.t(),
           transaction_system_layout :: TransactionSystemLayout.t(),
           cluster :: module()
-        ) :: %{
-          mutations: [Tx.mutation()],
-          read_conflicts: [{binary(), binary()}],
-          write_conflicts: [{binary(), binary()}]
-        }
+        ) :: BedrockTransaction.encoded()
   defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
 
@@ -72,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     tx = build_monolithic_keys(tx, epoch, encoded_config, encoded_layout)
     tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
 
-    Tx.commit(tx)
+    tx |> Tx.commit_binary()
   end
 
   @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map(), map()) :: Tx.t()
@@ -231,22 +228,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   @spec submit_system_transaction(
-          %{
-            mutations: [Tx.mutation()],
-            read_conflicts: [{binary(), binary()}],
-            write_conflicts: [{binary(), binary()}]
-          },
+          BedrockTransaction.encoded(),
           [pid()],
           map()
         ) :: {:ok, Bedrock.version()} | {:error, :no_commit_proxies | :timeout | :unavailable}
   defp submit_system_transaction(_system_transaction, [], _context),
     do: {:error, :no_commit_proxies}
 
-  defp submit_system_transaction(system_transaction, proxies, context) when is_list(proxies) do
+  defp submit_system_transaction(encoded_transaction, proxies, context) when is_list(proxies) do
     commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/2)
 
     proxies
     |> Enum.random()
-    |> then(&commit_fn.(&1, system_transaction))
+    |> then(&commit_fn.(&1, encoded_transaction))
   end
 end

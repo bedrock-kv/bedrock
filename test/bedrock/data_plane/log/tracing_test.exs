@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
 
   import ExUnit.CaptureLog
 
-  alias Bedrock.DataPlane.EncodedTransaction
+  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Log.Tracing
   alias Bedrock.DataPlane.Version
 
@@ -118,8 +118,9 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       version = Version.from_integer(200)
 
       encoded_transaction =
-        EncodedTransaction.encode(
-          {version, %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}}
+        BedrockTransactionTestSupport.new_log_transaction(
+          version,
+          %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}
         )
 
       measurements = %{}

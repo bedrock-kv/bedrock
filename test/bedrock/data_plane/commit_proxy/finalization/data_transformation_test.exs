@@ -1,10 +1,78 @@
 defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.CommitProxy.Finalization
   alias FinalizationTestSupport, as: Support
 
-  describe "key_to_tag/2" do
+  describe "key_to_tags/2" do
+    setup do
+      # Create overlapping storage teams to test multi-tag behavior
+      storage_teams = [
+        %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
+        %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
+        %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
+      ]
+
+      %{storage_teams: storage_teams}
+    end
+
+    test "maps key to single tag when no overlap", %{storage_teams: storage_teams} do
+      assert {:ok, [0]} = Finalization.key_to_tags(<<0x01>>, storage_teams)
+      assert {:ok, [0]} = Finalization.key_to_tags(<<0x3F>>, storage_teams)
+    end
+
+    test "maps key to multiple tags when overlapping", %{storage_teams: storage_teams} do
+      # Key 0x90 should match tags 0, 1, and 2
+      # tag 0: <<>> to <<0xFF>>  (includes 0x90)
+      # tag 1: <<0x80>> to :end  (includes 0x90)
+      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x90)
+      assert {:ok, tags} = Finalization.key_to_tags(<<0x90>>, storage_teams)
+      assert Enum.sort(tags) == [0, 1, 2]
+
+      # Key 0x50 should match tags 0 and 2
+      # tag 0: <<>> to <<0xFF>>  (includes 0x50)
+      # tag 1: <<0x80>> to :end  (does NOT include 0x50, since 0x50 < 0x80)
+      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x50)
+      assert {:ok, tags} = Finalization.key_to_tags(<<0x50>>, storage_teams)
+      assert Enum.sort(tags) == [0, 2]
+
+      # Key 0x85 should match tags 0, 1, and 2
+      # tag 0: <<>> to <<0xFF>>  (includes 0x85)
+      # tag 1: <<0x80>> to :end  (includes 0x85)
+      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x85)
+      assert {:ok, tags} = Finalization.key_to_tags(<<0x85>>, storage_teams)
+      assert Enum.sort(tags) == [0, 1, 2]
+    end
+
+    test "returns empty list for key with no matching teams" do
+      storage_teams = [
+        %{tag: 0, key_range: {<<0x10>>, <<0x20>>}, storage_ids: ["storage_1"]}
+      ]
+
+      assert {:ok, []} = Finalization.key_to_tags(<<0x05>>, storage_teams)
+      assert {:ok, []} = Finalization.key_to_tags(<<0x25>>, storage_teams)
+    end
+
+    test "handles boundary conditions correctly", %{storage_teams: storage_teams} do
+      # Key exactly at range boundaries
+      # Key 0x80 should match tags 0, 1, and 2
+      # tag 0: <<>> to <<0xFF>>  (includes 0x80)
+      # tag 1: <<0x80>> to :end  (includes 0x80, boundary inclusive)
+      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x80)
+      assert {:ok, tags} = Finalization.key_to_tags(<<0x80>>, storage_teams)
+      assert Enum.sort(tags) == [0, 1, 2]
+
+      # Key 0x40 should match tags 0 and 2
+      # tag 0: <<>> to <<0xFF>>  (includes 0x40)
+      # tag 1: <<0x80>> to :end  (does NOT include 0x40)
+      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x40, boundary inclusive)
+      assert {:ok, tags} = Finalization.key_to_tags(<<0x40>>, storage_teams)
+      assert Enum.sort(tags) == [0, 2]
+    end
+  end
+
+  describe "key_to_tag/2 (legacy)" do
     setup do
       storage_teams = [
         %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
@@ -144,27 +212,34 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
   describe "transform_transactions_for_resolution/1" do
     test "transforms transaction list to resolver format" do
+      transaction_map1 = %{
+        mutations: [{:set, <<"write_key1">>, <<"write_value1">>}],
+        write_conflicts: [{<<"write_key1">>, <<"write_key1\0">>}],
+        read_conflicts:
+          {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
+      }
+
+      transaction_map2 = %{
+        mutations: [{:set, <<"write_key2">>, <<"write_value2">>}],
+        write_conflicts: [{<<"write_key2">>, <<"write_key2\0">>}],
+        read_conflicts: {nil, []}
+      }
+
+      binary_transaction1 = BedrockTransaction.encode(transaction_map1)
+      binary_transaction2 = BedrockTransaction.encode(transaction_map2)
+
       transactions = [
-        {fn _ -> :ok end,
-         %{
-           mutations: [{:set, <<"write_key1">>, <<"write_value1">>}],
-           write_conflicts: [{<<"write_key1">>, <<"write_key1\0">>}],
-           read_conflicts: [{<<"read_key">>, <<"read_key\0">>}],
-           read_version: 100
-         }},
-        {fn _ -> :ok end,
-         %{
-           mutations: [{:set, <<"write_key2">>, <<"write_value2">>}],
-           write_conflicts: [{<<"write_key2">>, <<"write_key2\0">>}],
-           read_conflicts: [],
-           read_version: nil
-         }}
+        {fn _ -> :ok end, binary_transaction1},
+        {fn _ -> :ok end, binary_transaction2}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
 
+      expected_version = Bedrock.DataPlane.Version.from_integer(100)
+
       expected = [
-        {{100, [{<<"read_key">>, <<"read_key\0">>}]}, [{<<"write_key1">>, <<"write_key1\0">>}]},
+        {{expected_version, [{<<"read_key">>, <<"read_key\0">>}]},
+         [{<<"write_key1">>, <<"write_key1\0">>}]},
         {nil, [{<<"write_key2">>, <<"write_key2\0">>}]}
       ]
 
@@ -177,14 +252,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles transactions with no reads" do
+      transaction_map = %{
+        mutations: [{:set, <<"key">>, <<"value">>}],
+        write_conflicts: [{<<"key">>, <<"key\0">>}],
+        read_conflicts: {nil, []}
+      }
+
+      binary_transaction = BedrockTransaction.encode(transaction_map)
+
       transactions = [
-        {fn _ -> :ok end,
-         %{
-           mutations: [{:set, <<"key">>, <<"value">>}],
-           write_conflicts: [{<<"key">>, <<"key\0">>}],
-           read_conflicts: [],
-           read_version: nil
-         }}
+        {fn _ -> :ok end, binary_transaction}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
@@ -194,39 +271,45 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles transactions with no writes" do
+      transaction_map = %{
+        mutations: [],
+        write_conflicts: [],
+        read_conflicts:
+          {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
+      }
+
+      binary_transaction = BedrockTransaction.encode(transaction_map)
+
       transactions = [
-        {fn _ -> :ok end,
-         %{
-           mutations: [],
-           write_conflicts: [],
-           read_conflicts: [{<<"read_key">>, <<"read_key\0">>}],
-           read_version: 100
-         }}
+        {fn _ -> :ok end, binary_transaction}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
-      expected = [{{100, [{<<"read_key">>, <<"read_key\0">>}]}, []}]
+      expected_version = Bedrock.DataPlane.Version.from_integer(100)
+      expected = [{{expected_version, [{<<"read_key">>, <<"read_key\0">>}]}, []}]
 
       assert result == expected
     end
 
     test "extracts write conflicts in consistent order" do
+      transaction_map = %{
+        mutations: [
+          {:set, <<"z_key">>, <<"value1">>},
+          {:set, <<"a_key">>, <<"value2">>},
+          {:set, <<"m_key">>, <<"value3">>}
+        ],
+        write_conflicts: [
+          {<<"z_key">>, <<"z_key\0">>},
+          {<<"a_key">>, <<"a_key\0">>},
+          {<<"m_key">>, <<"m_key\0">>}
+        ],
+        read_conflicts: {nil, []}
+      }
+
+      binary_transaction = BedrockTransaction.encode(transaction_map)
+
       transactions = [
-        {fn _ -> :ok end,
-         %{
-           mutations: [
-             {:set, <<"z_key">>, <<"value1">>},
-             {:set, <<"a_key">>, <<"value2">>},
-             {:set, <<"m_key">>, <<"value3">>}
-           ],
-           write_conflicts: [
-             {<<"z_key">>, <<"z_key\0">>},
-             {<<"a_key">>, <<"a_key\0">>},
-             {<<"m_key">>, <<"m_key\0">>}
-           ],
-           read_conflicts: [],
-           read_version: nil
-         }}
+        {fn _ -> :ok end, binary_transaction}
       ]
 
       result = Finalization.transform_transactions_for_resolution(transactions)
@@ -268,6 +351,40 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       # Should return error with storage team coverage error
       assert Finalization.group_writes_by_tag(writes, storage_teams) ==
                {:error, {:storage_team_coverage_error, "z_unknown"}}
+    end
+
+    test "group_writes_by_tag distributes writes to multiple tags for overlapping teams" do
+      # Create overlapping storage teams
+      storage_teams = [
+        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
+        %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
+      ]
+
+      # Keys "hello" and "india" should match both teams
+      writes = %{
+        <<"hello">> => <<"world">>,
+        <<"india">> => <<"country">>,
+        # Should only match tag 0
+        <<"apple">> => <<"fruit">>
+      }
+
+      result = Finalization.group_writes_by_tag(writes, storage_teams)
+
+      expected =
+        {:ok,
+         %{
+           0 => %{
+             <<"hello">> => <<"world">>,
+             <<"india">> => <<"country">>,
+             <<"apple">> => <<"fruit">>
+           },
+           1 => %{
+             <<"hello">> => <<"world">>,
+             <<"india">> => <<"country">>
+           }
+         }}
+
+      assert result == expected
     end
   end
 end

@@ -230,9 +230,9 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   defp add_write_conflicts_section(sections, _), do: sections
 
-  defp add_commit_version_section(sections, %{commit_version: commit_version}) do
-    payload = <<commit_version::unsigned-big-64>>
-    section = encode_section(@commit_version_tag, payload)
+  defp add_commit_version_section(sections, %{commit_version: commit_version})
+       when is_binary(commit_version) and byte_size(commit_version) == 8 do
+    section = encode_section(@commit_version_tag, commit_version)
     [section | sections]
   end
 
@@ -307,20 +307,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   @doc """
-  Lists all section tags present in the transaction.
-  """
-  @spec list_sections(binary()) :: {:ok, [section_tag()]} | {:error, reason :: term()}
-  def list_sections(encoded_transaction) do
-    case parse_transaction_header(encoded_transaction) do
-      {:ok, {section_count, sections_data}} ->
-        collect_section_tags(sections_data, section_count, [])
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
   Adds a new section to the transaction.
 
   Returns error if section already exists. Use for adding COMMIT_VERSION section
@@ -337,21 +323,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
           new_sections_map = Map.put(sections_map, section_tag, payload)
           rebuild_transaction(new_sections_map)
         end
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
-  Removes a section from the transaction.
-  """
-  @spec remove_section(binary(), section_tag()) :: {:ok, binary()} | {:error, reason :: term()}
-  def remove_section(encoded_transaction, section_tag) do
-    case parse_all_sections(encoded_transaction) do
-      {:ok, {_overall_header, sections_map}} ->
-        new_sections_map = Map.delete(sections_map, section_tag)
-        rebuild_transaction(new_sections_map)
 
       error ->
         error
@@ -449,37 +420,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   @doc """
-  Adds a transaction ID to an existing transaction.
-
-  DEPRECATED: Use add_commit_version/2 instead. This function is kept for backward compatibility.
-  """
-  @spec add_transaction_id(binary(), binary()) :: {:ok, binary()} | {:error, reason :: term()}
-  def add_transaction_id(encoded_transaction, transaction_id)
-      when is_binary(transaction_id) and byte_size(transaction_id) == 8 do
-    add_section(encoded_transaction, @commit_version_tag, transaction_id)
-  end
-
-  @doc """
-  Extracts the transaction ID if present.
-
-  DEPRECATED: Use extract_commit_version/1 instead. This function is kept for backward compatibility.
-
-  Returns nil if no COMMIT_VERSION section exists.
-  """
-  @spec extract_transaction_id(binary()) :: {:ok, binary() | nil} | {:error, reason :: term()}
-  def extract_transaction_id(encoded_transaction) do
-    case extract_section(encoded_transaction, @commit_version_tag) do
-      {:ok, <<_::unsigned-big-64>> = tx_id} -> {:ok, tx_id}
-      {:error, :section_not_found} -> {:ok, nil}
-      error -> error
-    end
-  end
-
-  @doc """
   Adds a commit version to an existing transaction.
-
-  This is the preferred name for adding commit versions. The old function name
-  add_transaction_id/2 is kept for backward compatibility.
   """
   @spec add_commit_version(binary(), binary()) :: {:ok, binary()} | {:error, reason :: term()}
   def add_commit_version(encoded_transaction, commit_version)
@@ -489,9 +430,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   @doc """
   Extracts the commit version if present.
-
-  This is the preferred name for extracting commit versions. The old function name
-  extract_transaction_id/1 is kept for backward compatibility.
 
   Returns nil if no COMMIT_VERSION section exists.
   """
@@ -508,81 +446,48 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   # DYNAMIC OPCODE CONSTRUCTION
   # ============================================================================
 
-  @doc """
-  Builds an opcode dynamically using bitwise operations.
-
-  Uses (operation <<< 3) ||| variant for elegant 5-bit operation + 3-bit variant format.
-  """
   @spec build_opcode(operation :: 0..31, variant :: 0..7) :: opcode()
-  def build_opcode(operation, variant) when operation <= 31 and variant <= 7 do
+  defp build_opcode(operation, variant) when operation <= 31 and variant <= 7 do
     operation <<< 3 ||| variant
   end
 
-  @doc """
-  Extracts the operation type from an opcode.
-
-  Uses >>> to extract the upper 5 bits.
-  """
-  @spec extract_operation(opcode()) :: 0..31
-  def extract_operation(opcode) when opcode <= 255 do
-    opcode >>> 3
-  end
-
-  @doc """
-  Extracts the variant from an opcode.
-
-  Uses &&& to extract the lower 3 bits.
-  """
   @spec extract_variant(opcode()) :: 0..7
-  def extract_variant(opcode) when opcode <= 255 do
+  defp extract_variant(opcode) when opcode <= 255 do
     opcode &&& 0x07
   end
 
-  @doc """
-  Selects the optimal opcode variant for SET operations based on key and value sizes.
-
-  Automatically chooses the most compact variant that can hold the data.
-  """
   @spec optimize_set_opcode(key_size :: non_neg_integer(), value_size :: non_neg_integer()) ::
           opcode()
-  def optimize_set_opcode(key_size, value_size) do
+  defp optimize_set_opcode(key_size, value_size) do
     cond do
       key_size <= 255 and value_size <= 255 ->
-        # SET_8_8
         build_opcode(@set_operation, 2)
 
       key_size <= 255 and value_size <= 65_535 ->
-        # SET_8_16
         build_opcode(@set_operation, 1)
 
       true ->
-        # SET_16_32
         build_opcode(@set_operation, 0)
     end
   end
 
-  @doc """
-  Selects the optimal opcode variant for CLEAR operations based on key sizes.
-
-  Automatically chooses the most compact variant that can hold the data.
-  """
   @spec optimize_clear_opcode(key_size :: non_neg_integer(), is_range :: boolean()) :: opcode()
-  def optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255 do
+  defp optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255 do
     # CLEAR_SINGLE_8
     build_opcode(@clear_operation, 1)
   end
 
-  def optimize_clear_opcode(_key_size, false = _is_range) do
+  defp optimize_clear_opcode(_key_size, false = _is_range) do
     # CLEAR_SINGLE_16
     build_opcode(@clear_operation, 0)
   end
 
-  def optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255 do
+  defp optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255 do
     # CLEAR_RANGE_8 (variant 3 = 0x0B)
     build_opcode(@clear_operation, 3)
   end
 
-  def optimize_clear_opcode(_max_key_size, true = _is_range) do
+  defp optimize_clear_opcode(_max_key_size, true = _is_range) do
     # CLEAR_RANGE_16 (variant 2 = 0x0A)
     build_opcode(@clear_operation, 2)
   end
@@ -1014,23 +919,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
     {:error, :truncated_sections}
   end
 
-  defp collect_section_tags(_data, 0, tags) do
-    {:ok, Enum.reverse(tags)}
-  end
-
-  defp collect_section_tags(
-         <<tag, payload_size::unsigned-big-24, _section_crc::unsigned-big-32,
-           _payload::binary-size(payload_size), rest::binary>>,
-         remaining_count,
-         tags
-       ) do
-    collect_section_tags(rest, remaining_count - 1, [tag | tags])
-  end
-
-  defp collect_section_tags(_, _, _) do
-    {:error, :truncated_sections}
-  end
-
   defp parse_all_sections(encoded_transaction) do
     case parse_transaction_header(encoded_transaction) do
       {:ok, {section_count, sections_data}} ->
@@ -1136,54 +1024,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
     {:halt, <<>>}
   end
 
-  # ============================================================================
-  # BINARY OPERATIONS
-  # ============================================================================
-
-  @doc """
-  Combines multiple binary transactions into a single transaction.
-
-  Merges mutations, read conflicts, and write conflicts from all transactions.
-  Uses the earliest read_version if multiple transactions have read versions.
-  """
-  @spec combine_binary_transactions([binary()]) :: {:ok, binary()} | {:error, reason :: term()}
-  def combine_binary_transactions([]), do: {:error, :empty_transaction_list}
-
-  def combine_binary_transactions([single_transaction]), do: {:ok, single_transaction}
-
-  def combine_binary_transactions(transactions) when is_list(transactions) do
-    with {:ok, decoded_transactions} <- decode_all_transactions(transactions),
-         {:ok, combined_transaction} <- merge_transactions(decoded_transactions) do
-      {:ok, encode(combined_transaction)}
-    end
-  end
-
-  @doc """
-  Extracts the conflicts section (READ_CONFLICTS or WRITE_CONFLICTS) for resolver operations.
-
-  Returns the raw section payload for efficient conflict resolution processing.
-  """
-  @spec extract_conflicts_section(binary()) ::
-          {:ok, %{read_conflicts: binary() | nil, write_conflicts: binary() | nil}}
-          | {:error, reason :: term()}
-  def extract_conflicts_section(encoded_transaction) do
-    with {:ok, read_conflicts} <-
-           extract_section_or_nil(encoded_transaction, @read_conflicts_tag),
-         {:ok, write_conflicts} <-
-           extract_section_or_nil(encoded_transaction, @write_conflicts_tag) do
-      {:ok, %{read_conflicts: read_conflicts, write_conflicts: write_conflicts}}
-    end
-  end
-
-  # Helper function to extract section payload or return nil if not found
-  defp extract_section_or_nil(encoded_transaction, tag) do
-    case extract_section(encoded_transaction, tag) do
-      {:ok, payload} -> {:ok, payload}
-      {:error, :section_not_found} -> {:ok, nil}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
   @doc """
   Combines conflict sections from multiple transactions for efficient resolver operations.
 
@@ -1205,42 +1045,6 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   # BINARY OPERATIONS IMPLEMENTATION
   # ============================================================================
 
-  defp decode_all_transactions(transactions) do
-    transactions
-    |> Enum.reduce_while({:ok, []}, fn transaction, {:ok, acc} ->
-      case decode(transaction) do
-        {:ok, decoded} -> {:cont, {:ok, [decoded | acc]}}
-        error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, decoded_list} -> {:ok, Enum.reverse(decoded_list)}
-      error -> error
-    end
-  end
-
-  defp merge_transactions(transactions) do
-    initial = %{
-      mutations: [],
-      read_conflicts: [],
-      write_conflicts: [],
-      read_version: nil
-    }
-
-    merged =
-      Enum.reduce(transactions, initial, fn transaction, acc ->
-        %{
-          mutations: acc.mutations ++ transaction.mutations,
-          read_conflicts: merge_and_dedupe_ranges(acc.read_conflicts, transaction.read_conflicts),
-          write_conflicts:
-            merge_and_dedupe_ranges(acc.write_conflicts, transaction.write_conflicts),
-          read_version: earliest_read_version(acc.read_version, transaction.read_version)
-        }
-      end)
-
-    {:ok, merged}
-  end
-
   defp decode_all_conflicts(conflict_payloads) do
     conflict_payloads
     |> Enum.reduce_while({:ok, []}, fn payload, {:ok, acc} ->
@@ -1260,14 +1064,4 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
     deduplicated = Enum.uniq(all_conflicts)
     {:ok, deduplicated}
   end
-
-  defp merge_and_dedupe_ranges(ranges1, ranges2) do
-    (ranges1 ++ ranges2)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  defp earliest_read_version(nil, version2), do: version2
-  defp earliest_read_version(version1, nil), do: version1
-  defp earliest_read_version(version1, version2), do: min(version1, version2)
 end

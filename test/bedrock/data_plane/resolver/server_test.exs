@@ -168,4 +168,247 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert final_state.mode == :running
     end
   end
+
+  describe "transaction validation" do
+    setup do
+      lock_token = :crypto.strong_rand_bytes(32)
+      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      zero_version = Bedrock.DataPlane.Version.zero()
+      next_version = Bedrock.DataPlane.Version.increment(zero_version)
+      {:ok, server: pid, zero_version: zero_version, next_version: next_version}
+    end
+
+    test "accepts valid transaction summary like [nil: []]", %{
+      server: server,
+      zero_version: zero_version,
+      next_version: next_version
+    } do
+      # Test that [nil: []] is valid transaction summary data (write-only transaction with no writes)
+      valid_transactions = [nil: []]
+
+      result =
+        GenServer.call(
+          server,
+          {:resolve_transactions, {zero_version, next_version}, valid_transactions}
+        )
+
+      # Should succeed with no aborted transactions
+      assert {:ok, []} = result
+    end
+
+    test "rejects invalid transaction summaries", %{
+      server: server,
+      zero_version: zero_version,
+      next_version: next_version
+    } do
+      # Test with invalid transaction summary data
+      invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
+
+      result =
+        GenServer.call(
+          server,
+          {:resolve_transactions, {zero_version, next_version}, invalid_transactions}
+        )
+
+      assert {:error, error_message} = result
+
+      assert error_message =~
+               "invalid transaction format: all transactions must be transaction summaries with format {read_info | nil, write_keys}"
+    end
+
+    test "validation now correctly expects transaction summaries", %{
+      server: server,
+      zero_version: zero_version,
+      next_version: next_version
+    } do
+      # Test with properly formatted transaction summaries
+      valid_summaries = [
+        # write-only transaction with no writes
+        {nil, []},
+        # write-only transaction with writes
+        {nil, ["key1", "key2"]},
+        # read-write transaction
+        {{zero_version, ["read_key"]}, ["write_key"]}
+      ]
+
+      result =
+        GenServer.call(
+          server,
+          {:resolve_transactions, {zero_version, next_version}, valid_summaries}
+        )
+
+      # Should succeed - validation accepts transaction summaries and ConflictResolution can process them
+      assert {:ok, aborted_indices} = result
+      assert is_list(aborted_indices)
+    end
+  end
+
+  describe "timeout mechanism for waiting transactions" do
+    setup do
+      lock_token = :crypto.strong_rand_bytes(32)
+      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      zero_version = Bedrock.DataPlane.Version.zero()
+      next_version = Bedrock.DataPlane.Version.increment(zero_version)
+      future_version = Bedrock.DataPlane.Version.increment(next_version)
+
+      {:ok,
+       server: pid,
+       zero_version: zero_version,
+       next_version: next_version,
+       future_version: future_version}
+    end
+
+    test "adds transaction to waiting list when dependency missing", %{
+      server: server,
+      next_version: next_version,
+      future_version: future_version
+    } do
+      # Create a valid transaction summary (the resolver now expects transaction summaries)
+      valid_transaction_summary = {nil, ["test_key"]}
+
+      # Start an async call that will need to wait (out-of-order transaction)
+      task =
+        Task.async(fn ->
+          GenServer.call(
+            server,
+            {:resolve_transactions, {next_version, future_version}, [valid_transaction_summary]}
+          )
+        end)
+
+      # Give the server time to process the call and set up waiting state
+      Process.sleep(50)
+
+      # Check that the transaction is now in waiting list
+      state = :sys.get_state(server)
+      assert map_size(state.waiting) == 1
+
+      # Verify the waiting entry structure (deadline, reply_fn, data)
+      [{deadline, _reply_fn, data}] = Map.get(state.waiting, next_version)
+      assert data == {future_version, [valid_transaction_summary]}
+      assert is_integer(deadline)
+      # Deadline should be in the future (now + 30s)
+      now = Bedrock.Internal.Time.monotonic_now_in_ms()
+      assert deadline > now
+
+      # Clean up the task
+      Task.shutdown(task)
+    end
+
+    test "timeout message cleans up expired transaction", %{
+      server: server,
+      next_version: next_version,
+      future_version: future_version
+    } do
+      # Create a valid transaction summary
+      valid_transaction_summary = {nil, ["test_key"]}
+
+      # Start an async call that will timeout
+      task =
+        Task.async(fn ->
+          GenServer.call(
+            server,
+            {:resolve_transactions, {next_version, future_version}, [valid_transaction_summary]},
+            60_000
+          )
+        end)
+
+      # Give the server time to process the call and set up waiting state
+      Process.sleep(50)
+
+      # Verify transaction is waiting
+      state = :sys.get_state(server)
+      assert map_size(state.waiting) == 1
+
+      # Manually modify the state to make the transaction appear expired
+      [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
+      # Set the deadline to 1 second ago (expired)
+      expired_deadline = Bedrock.Internal.Time.monotonic_now_in_ms() - 1_000
+      expired_entry = {expired_deadline, reply_fn, data}
+      expired_state = %{state | waiting: %{next_version => [expired_entry]}}
+      :sys.replace_state(server, fn _ -> expired_state end)
+
+      # Send GenServer timeout message to trigger cleanup
+      send(server, :timeout)
+
+      # Give the server time to process the timeout
+      Process.sleep(50)
+
+      # Verify the waiting list is cleaned up
+      final_state = :sys.get_state(server)
+      assert map_size(final_state.waiting) == 0
+
+      # The task should receive an error response
+      assert {:error, :waiting_timeout} = Task.await(task)
+    end
+
+    test "timeout message with no waiting transactions is ignored", %{server: server} do
+      # Get initial state (should have empty waiting list)
+      initial_state = :sys.get_state(server)
+      assert map_size(initial_state.waiting) == 0
+
+      # Send timeout when there are no waiting transactions
+      send(server, :timeout)
+
+      # Give the server time to process
+      Process.sleep(50)
+
+      # State should be unchanged
+      final_state = :sys.get_state(server)
+      assert final_state.waiting == initial_state.waiting
+      assert map_size(final_state.waiting) == 0
+    end
+
+    test "waiting list maintains chronological order", %{
+      server: server,
+      next_version: next_version,
+      future_version: future_version
+    } do
+      # Create valid transaction summaries
+      transaction1 = {nil, ["key1"]}
+      transaction2 = {nil, ["key2"]}
+
+      # Add first waiting transaction
+      task1 =
+        Task.async(fn ->
+          GenServer.call(
+            server,
+            {:resolve_transactions, {next_version, future_version}, [transaction1]},
+            60_000
+          )
+        end)
+
+      Process.sleep(50)
+
+      # Add second waiting transaction
+      later_version = Bedrock.DataPlane.Version.increment(future_version)
+
+      task2 =
+        Task.async(fn ->
+          GenServer.call(
+            server,
+            {:resolve_transactions, {future_version, later_version}, [transaction2]},
+            60_000
+          )
+        end)
+
+      Process.sleep(50)
+
+      # Verify both transactions are waiting
+      state = :sys.get_state(server)
+      assert map_size(state.waiting) == 2
+
+      # Verify both versions have waiting entries
+      assert Map.has_key?(state.waiting, next_version)
+      assert Map.has_key?(state.waiting, future_version)
+
+      # Check deadlines - first transaction should have earlier deadline
+      [{first_deadline, _, _}] = Map.get(state.waiting, next_version)
+      [{second_deadline, _, _}] = Map.get(state.waiting, future_version)
+      assert first_deadline <= second_deadline
+
+      # Clean up tasks
+      Task.shutdown(task1)
+      Task.shutdown(task2)
+    end
+  end
 end

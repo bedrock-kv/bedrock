@@ -24,6 +24,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  require Logger
 
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -307,8 +308,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
 
   @spec log_partial_failures([term()]) :: :ok
   defp log_partial_failures(failed_workers) do
-    require Logger
-
     Logger.warning(
       "Some storage workers failed to be tracked during creation: #{inspect(failed_workers)}"
     )

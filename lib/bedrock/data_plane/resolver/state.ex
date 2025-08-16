@@ -7,7 +7,6 @@ defmodule Bedrock.DataPlane.Resolver.State do
   authentication.
   """
 
-  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Tree
 
   @type mode :: :running
@@ -16,11 +15,7 @@ defmodule Bedrock.DataPlane.Resolver.State do
           tree: Tree.t(),
           oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
-          waiting: %{
-            Bedrock.version() =>
-              {Bedrock.version(), [Resolver.transaction_summary()],
-               (aborted :: [non_neg_integer()] -> :ok)}
-          },
+          waiting: Bedrock.Internal.WaitingList.t(),
           mode: mode(),
           lock_token: Bedrock.lock_token()
         }

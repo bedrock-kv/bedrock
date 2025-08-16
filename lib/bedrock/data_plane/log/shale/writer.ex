@@ -7,8 +7,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
 
   defstruct [:fd, :write_offset, :bytes_remaining]
 
-  @wal_eof_version 0xFFFFFFFFFFFFFFFF
-  @eof_marker <<@wal_eof_version::unsigned-big-64, 0::unsigned-big-32, 0::unsigned-big-32>>
+  @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
+  @eof_marker <<@wal_eof_version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
   @empty_segment_header <<"BED0">> <> @eof_marker
 
   @typedoc """
@@ -40,19 +40,30 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   def close(nil), do: :ok
   def close(%__MODULE__{} = writer), do: :file.close(writer.fd)
 
-  @spec append(t(), BedrockTransaction.encoded()) ::
+  @spec append(t(), BedrockTransaction.encoded(), Bedrock.version()) ::
           {:ok, t()} | {:error, :segment_full} | {:error, File.posix()}
-  def append(%__MODULE__{} = writer, transaction)
+  def append(%__MODULE__{} = writer, transaction, _commit_version)
       when writer.bytes_remaining < 16 + byte_size(transaction),
       do: {:error, :segment_full}
 
-  def append(%__MODULE__{} = writer, transaction) do
-    :file.pwrite(writer.fd, writer.write_offset, [transaction, @eof_marker])
+  def append(%__MODULE__{} = writer, transaction, commit_version) do
+    # Wrap transaction in log format: [version, size, payload, crc32]
+    payload_size = byte_size(transaction)
+    crc32 = :erlang.crc32(transaction)
+
+    log_entry = <<
+      commit_version::binary-size(8),
+      payload_size::unsigned-big-32,
+      transaction::binary,
+      crc32::unsigned-big-32
+    >>
+
+    :file.pwrite(writer.fd, writer.write_offset, [log_entry, @eof_marker])
     |> case do
       :ok ->
-        size_of_transaction = byte_size(transaction)
-        new_write_offset = writer.write_offset + size_of_transaction
-        new_bytes_remaining = writer.bytes_remaining - size_of_transaction
+        size_of_entry = byte_size(log_entry)
+        new_write_offset = writer.write_offset + size_of_entry
+        new_bytes_remaining = writer.bytes_remaining - size_of_entry
         {:ok, %{writer | write_offset: new_write_offset, bytes_remaining: new_bytes_remaining}}
 
       {:error, _reason} = error ->

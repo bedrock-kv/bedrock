@@ -95,10 +95,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def transactions(segment), do: segment.transactions
 
   @spec last_version(t()) :: Bedrock.version()
-  def last_version(%{transactions: [transaction | _]}) do
-    case BedrockTransaction.extract_commit_version(transaction) do
-      {:ok, version} -> version
-      {:error, _} -> nil
+  def last_version(%{transactions: [transaction_payload | _]}) do
+    # Extract version from BedrockTransaction payload
+    case BedrockTransaction.extract_commit_version(transaction_payload) do
+      {:ok, version_binary} -> version_binary
+      _ -> nil
     end
   end
 

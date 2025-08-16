@@ -134,7 +134,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
     # Encode and add version as transaction_id
     encoded = BedrockTransaction.encode(transaction)
-    {:ok, encoded_with_id} = BedrockTransaction.add_transaction_id(encoded, version)
+    {:ok, encoded_with_id} = BedrockTransaction.add_commit_version(encoded, version)
     encoded_with_id
   end
 

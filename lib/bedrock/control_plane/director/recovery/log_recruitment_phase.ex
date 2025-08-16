@@ -25,6 +25,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  require Logger
+
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -235,8 +237,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   @spec log_partial_failures([term()]) :: :ok
   defp log_partial_failures(failed_workers) do
-    require Logger
-
     Logger.warning(
       "Some workers failed to be tracked during creation: #{inspect(failed_workers)}"
     )

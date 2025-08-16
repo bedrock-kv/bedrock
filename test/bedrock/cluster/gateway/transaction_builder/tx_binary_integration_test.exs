@@ -182,8 +182,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       assert length(mutations) == 2
 
       version = Bedrock.DataPlane.Version.from_integer(12_345)
-      assert {:ok, stamped} = BedrockTransaction.add_transaction_id(binary_result, version)
-      assert {:ok, ^version} = BedrockTransaction.extract_transaction_id(stamped)
+      assert {:ok, stamped} = BedrockTransaction.add_commit_version(binary_result, version)
+      assert {:ok, ^version} = BedrockTransaction.extract_commit_version(stamped)
 
       # Original transaction data should be preserved
       assert {:ok, decoded} = BedrockTransaction.decode(stamped)

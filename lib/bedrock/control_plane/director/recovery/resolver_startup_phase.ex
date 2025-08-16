@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
         starter_fn.(child_spec, node)
       end)
 
-    available_resolver_nodes = Map.get(context.node_capabilities, :resolution, [])
+    available_resolver_nodes = Map.get(context.node_capabilities, :coordination, [])
 
     resolver_context = %{
       resolvers: recovery_attempt.resolvers,

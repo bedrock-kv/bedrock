@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   alias Bedrock.DataPlane.Log.Shale.Segment
 
   @wal_magic_number <<"BED0">>
-  @wal_eof_version 0xFFFFFFFFFFFFFFFF
+  @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
 
   @spec from_segments([Segment.t()], Bedrock.version()) ::
           {:ok, Enumerable.t()} | {:error, :not_found}
@@ -91,16 +91,16 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
           {:halt, error}
 
         {offset,
-         <<version::unsigned-big-64, size_in_bytes::unsigned-big-32,
+         <<version_binary::binary-size(8), size_in_bytes::unsigned-big-32,
            payload::binary-size(size_in_bytes), crc32::unsigned-big-32,
-           remaining_bytes::binary>> = bytes} ->
+           remaining_bytes::binary>>} ->
           cond do
-            @wal_eof_version == version ->
+            @wal_eof_version == version_binary ->
               {:halt, nil}
 
             :erlang.crc32(payload) == crc32 ->
-              {[binary_part(bytes, 0, 16 + size_in_bytes)],
-               {offset + 16 + size_in_bytes, remaining_bytes}}
+              # Return just the payload (the actual BedrockTransaction), not the wrapper
+              {[payload], {offset + 16 + size_in_bytes, remaining_bytes}}
 
             true ->
               nil

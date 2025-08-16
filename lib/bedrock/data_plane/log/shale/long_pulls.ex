@@ -1,5 +1,8 @@
 defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
   @moduledoc false
+
+  alias Bedrock.Internal.WaitingList
+
   @spec normalize_timeout_to_ms(term()) :: pos_integer()
   def normalize_timeout_to_ms(n), do: n |> normalize_timeout() |> max(10) |> min(10_000)
 
@@ -7,31 +10,30 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
   defp normalize_timeout(n) when is_integer(n), do: n
   defp normalize_timeout(_), do: 5000
 
-  @spec notify_waiting_pullers(map(), Bedrock.version(), Bedrock.transaction()) :: map()
+  @spec notify_waiting_pullers(WaitingList.t(), Bedrock.version(), Bedrock.transaction()) ::
+          WaitingList.t()
   def notify_waiting_pullers(waiting_pullers, version, transaction) do
-    {pullers, remaining_waiting_pullers} = Map.pop(waiting_pullers, version)
+    {new_map, entries} = WaitingList.remove_all(waiting_pullers, version)
 
-    unless is_nil(pullers) do
-      pullers
-      |> Enum.each(fn {_, reply_to_fn, _opts} ->
-        reply_to_fn.({:ok, [transaction]})
-      end)
-    end
+    # Reply to all waiting pullers for this version
+    Enum.each(entries, fn {_deadline, reply_to_fn, _opts} ->
+      reply_to_fn.({:ok, [transaction]})
+    end)
 
-    remaining_waiting_pullers
+    new_map
   end
 
   @spec try_to_add_to_waiting_pullers(
-          waiting_pullers :: map(),
+          waiting_pullers :: WaitingList.t(),
           monotonic_now :: integer(),
           reply_to_fn :: (any() -> :ok),
           from_version :: Bedrock.version(),
           opts :: keyword()
         ) ::
-          {:error, :version_too_new} | {:ok, updated_waiting_pullers :: map()}
+          {:error, :version_too_new} | {:ok, updated_waiting_pullers :: WaitingList.t()}
   def try_to_add_to_waiting_pullers(
         waiting_pullers,
-        monotonic_now,
+        _monotonic_now,
         reply_to_fn,
         from_version,
         opts
@@ -42,51 +44,35 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
       # Not willing to wait timeout, so we reply with an error
       {:error, :version_too_new}
     else
-      # Calculate the deadline for this puller and add it to the waiting pullers
-      deadline = monotonic_now + normalize_timeout_to_ms(timeout_in_ms)
-      puller = {deadline, reply_to_fn, opts}
-      {:ok, Map.update(waiting_pullers, from_version, [puller], &[puller | &1])}
+      # Add to waiting list with normalized timeout
+      timeout_ms = normalize_timeout_to_ms(timeout_in_ms)
+
+      {new_waiting_pullers, _timeout} =
+        WaitingList.insert(waiting_pullers, from_version, opts, reply_to_fn, timeout_ms)
+
+      {:ok, new_waiting_pullers}
     end
   end
 
   @spec process_expired_deadlines_for_waiting_pullers(
-          waiting_pullers :: map(),
-          monotic_now :: integer()
-        ) :: map()
-  def process_expired_deadlines_for_waiting_pullers(waiting_pullers, monotic_now) do
-    waiting_pullers
-    |> Enum.map(fn {version, pullers} ->
-      pullers
-      |> Enum.reduce([], fn
-        {deadline, reply_to_fn, _opts}, acc when deadline <= monotic_now ->
-          reply_to_fn.({:ok, []})
-          acc
+          waiting_pullers :: WaitingList.t(),
+          _monotic_now :: integer()
+        ) :: WaitingList.t()
+  def process_expired_deadlines_for_waiting_pullers(waiting_pullers, _monotic_now) do
+    {new_waiting_pullers, expired_entries} = WaitingList.expire(waiting_pullers)
 
-        puller, acc ->
-          [puller | acc]
-      end)
-      |> case do
-        [] -> nil
-        pullers -> {version, pullers}
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
-    |> Map.new()
+    # Reply to expired pullers with empty result
+    WaitingList.reply_to_expired(expired_entries, {:ok, []})
+
+    new_waiting_pullers
   end
 
-  @spec determine_timeout_for_next_puller_deadline(map(), integer()) ::
+  @spec determine_timeout_for_next_puller_deadline(WaitingList.t(), integer()) ::
           pos_integer() | nil
-  def determine_timeout_for_next_puller_deadline(waiting_pullers, now) do
-    waiting_pullers
-    |> Map.values()
-    |> Enum.map(&Enum.min/1)
-    |> Enum.min(fn -> nil end)
-    |> case do
-      nil ->
-        nil
-
-      {next_deadline, _, _} ->
-        max(1, next_deadline - now)
+  def determine_timeout_for_next_puller_deadline(waiting_pullers, _now) do
+    case WaitingList.next_timeout(waiting_pullers) do
+      :infinity -> nil
+      timeout -> max(1, timeout)
     end
   end
 end

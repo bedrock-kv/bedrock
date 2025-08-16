@@ -62,9 +62,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           {:ok, State.t()} | {:error, term()}
   def write_encoded_transaction(t, encoded_transaction)
       when is_nil(t.writer) do
-    # Extract version from BedrockTransaction transaction_id section
+    # Extract version from BedrockTransaction commit_version section
     version =
-      case BedrockTransaction.extract_transaction_id(encoded_transaction) do
+      case BedrockTransaction.extract_commit_version(encoded_transaction) do
         {:ok, version} ->
           version
 
@@ -90,22 +90,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   def write_encoded_transaction(t, encoded_transaction) do
-    case Writer.append(t.writer, encoded_transaction) do
-      {:ok, writer} ->
-        # Extract version from BedrockTransaction transaction_id section
-        case BedrockTransaction.extract_transaction_id(encoded_transaction) do
-          {:ok, version} ->
+    # Extract version from BedrockTransaction commit_version section
+    case BedrockTransaction.extract_commit_version(encoded_transaction) do
+      {:ok, version} ->
+        case Writer.append(t.writer, encoded_transaction, version) do
+          {:ok, writer} ->
             {:ok, %{t | writer: writer, last_version: version}}
 
-          {:error, reason} ->
-            {:error, {:version_extraction_failed, reason}}
+          {:error, :segment_full} ->
+            with :ok <- Writer.close(t.writer) do
+              %{t | writer: nil}
+              |> write_encoded_transaction(encoded_transaction)
+            end
         end
 
-      {:error, :segment_full} ->
-        with :ok <- Writer.close(t.writer) do
-          %{t | writer: nil}
-          |> write_encoded_transaction(encoded_transaction)
-        end
+      {:error, reason} ->
+        {:error, {:version_extraction_failed, reason}}
     end
   end
 end

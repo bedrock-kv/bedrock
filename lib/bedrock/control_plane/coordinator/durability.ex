@@ -223,13 +223,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
          node_capabilities,
          capabilities_changed
        ) do
-    unless Enum.empty?(new_or_changed_services) do
-      Director.notify_services_registered(director, new_or_changed_services)
-    end
+    case director do
+      :unavailable ->
+        :ok
 
-    if capabilities_changed do
-      capability_map = convert_to_capability_map(node_capabilities)
-      Director.notify_capabilities_updated(director, capability_map)
+      director ->
+        unless Enum.empty?(new_or_changed_services) do
+          Director.notify_services_registered(director, new_or_changed_services)
+        end
+
+        if capabilities_changed do
+          capability_map = convert_to_capability_map(node_capabilities)
+          Director.notify_capabilities_updated(director, capability_map)
+        end
     end
   end
 end

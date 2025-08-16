@@ -272,27 +272,6 @@ defmodule Bedrock.DataPlane.BedrockTransactionTest do
       assert {:error, :section_not_found} = BedrockTransaction.extract_section(binary, 0x04)
     end
 
-    test "lists all present sections" do
-      transaction = %{
-        mutations: [{:set, "key", "value"}],
-        read_conflicts:
-          {Bedrock.DataPlane.Version.from_integer(12_345), [{"read_start", "read_end"}]},
-        write_conflicts: [{"write_start", "write_end"}]
-      }
-
-      binary = BedrockTransaction.encode(transaction)
-      assert {:ok, tags} = BedrockTransaction.list_sections(binary)
-
-      # MUTATIONS always present
-      assert 0x01 in tags
-      # READ_CONFLICTS present when conflicts and read version exist
-      assert 0x02 in tags
-      # WRITE_CONFLICTS present when write conflicts exist
-      assert 0x03 in tags
-      # TRANSACTION_ID not present by default
-      refute 0x04 in tags
-    end
-
     test "adds transaction ID section" do
       transaction = %{
         mutations: [{:set, "key", "value"}],
@@ -301,37 +280,16 @@ defmodule Bedrock.DataPlane.BedrockTransactionTest do
       }
 
       binary = BedrockTransaction.encode(transaction)
-      assert {:ok, nil} = BedrockTransaction.extract_transaction_id(binary)
+      assert {:ok, nil} = BedrockTransaction.extract_commit_version(binary)
 
       # Add transaction ID
       version = Bedrock.DataPlane.Version.from_integer(98_765)
-      assert {:ok, stamped} = BedrockTransaction.add_transaction_id(binary, version)
-      assert {:ok, ^version} = BedrockTransaction.extract_transaction_id(stamped)
+      assert {:ok, stamped} = BedrockTransaction.add_commit_version(binary, version)
+      assert {:ok, ^version} = BedrockTransaction.extract_commit_version(stamped)
 
       # Original transaction should decode the same
       assert {:ok, decoded} = BedrockTransaction.decode(stamped)
       assert decoded == transaction
-    end
-
-    test "removes sections" do
-      transaction = %{
-        mutations: [{:set, "key", "value"}],
-        read_conflicts: [],
-        write_conflicts: [{"write_start", "write_end"}],
-        read_version: nil
-      }
-
-      binary = BedrockTransaction.encode(transaction)
-      assert {:ok, write_conflicts} = BedrockTransaction.extract_write_conflicts(binary)
-      assert write_conflicts == [{"write_start", "write_end"}]
-
-      # Remove WRITE_CONFLICTS section
-      assert {:ok, without_conflicts} = BedrockTransaction.remove_section(binary, 0x03)
-      assert {:ok, []} = BedrockTransaction.extract_write_conflicts(without_conflicts)
-
-      # Should decode with empty write conflicts
-      assert {:ok, decoded} = BedrockTransaction.decode(without_conflicts)
-      assert decoded.write_conflicts == []
     end
   end
 

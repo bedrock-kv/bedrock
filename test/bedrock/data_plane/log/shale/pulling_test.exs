@@ -83,27 +83,6 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1), limit: 1)
       assert length(transactions) == 1
     end
-
-    test "filters by key range", %{state: state} do
-      {:ok, _state, transactions} =
-        Pulling.pull(state, Version.from_integer(0), key_range: {"a", "c"})
-
-      assert transactions
-             |> Enum.map(&TransactionTestSupport.extract_log_writes/1)
-             |> Enum.flat_map(&Map.keys/1)
-             |> Enum.sort() ==
-               ["a", "b"]
-    end
-
-    test "can exclude values", %{state: state} do
-      {:ok, _state, transactions} =
-        Pulling.pull(state, Version.from_integer(1), exclude_values: true)
-
-      assert transactions
-             |> Enum.map(&TransactionTestSupport.extract_log_writes/1)
-             |> Enum.map(&Map.values/1)
-             |> Enum.all?(&(&1 == [<<>>]))
-    end
   end
 
   describe "check_last_version/2" do

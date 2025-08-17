@@ -12,8 +12,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
-            key_range: Bedrock.key_range(),
-            exclude_values: boolean(),
             recovery: boolean()
           ]
         ) ::
@@ -42,8 +40,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         transaction_stream
         |> until_version(last_version)
         |> at_most(determine_pull_limit(opts[:limit], t))
-        |> filter_keys_in_range(opts[:key_range])
-        |> exclude_values(opts[:exclude_values] || false)
         |> Enum.to_list()
 
       {:ok, %{t | active_segment: active_segment, segments: remaining_segments}, transactions}

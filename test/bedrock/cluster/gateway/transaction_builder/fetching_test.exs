@@ -186,7 +186,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
       defmodule FailingValueCodec do
         @moduledoc false
         def encode_value(value), do: {:ok, value}
-        def decode_value(_), do: :decode_error
+        def decode_value(_), do: {:error, :decode_error}
       end
 
       state =
@@ -203,11 +203,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       {new_state, result} = Fetching.do_fetch(state, "key", opts)
 
-      assert result == {:ok, "encoded_value"}
-      # The fetch was successful so the value should be cached and fastest server updated
-      assert new_state.tx.reads == %{"key" => "encoded_value"}
-      # Fastest storage server should be updated
-      assert new_state.fastest_storage_servers != %{}
+      assert result == {:error, :decode_error}
+      assert new_state.tx.reads == %{}
+      assert new_state.fastest_storage_servers == %{}
     end
   end
 

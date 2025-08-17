@@ -1,14 +1,8 @@
 defmodule Bedrock.Cluster.Gateway.Server do
   @moduledoc false
 
-  alias Bedrock.Cluster.Descriptor
-  alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.Internal.TimerManagement
-
   use GenServer
-  use TimerManagement
-
-  import Bedrock.Internal.GenServer.Replies
+  use Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Gateway.Calls
 
@@ -24,6 +18,11 @@ defmodule Bedrock.Cluster.Gateway.Server do
     only: [
       advertise_worker_with_leader_check: 2
     ]
+
+  import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Gateway.State
 
   require Logger
 
@@ -72,17 +71,19 @@ defmodule Bedrock.Cluster.Gateway.Server do
   def init({cluster, path_to_descriptor, descriptor, mode, capabilities}) do
     trace_started(cluster)
 
-    %State{
-      node: Node.self(),
-      cluster: cluster,
-      descriptor: descriptor,
-      path_to_descriptor: path_to_descriptor,
-      known_coordinator: :unavailable,
-      transaction_system_layout: nil,
-      mode: mode,
-      capabilities: capabilities
-    }
-    |> then(&{:ok, &1, {:continue, :find_a_live_coordinator}})
+    then(
+      %State{
+        node: Node.self(),
+        cluster: cluster,
+        descriptor: descriptor,
+        path_to_descriptor: path_to_descriptor,
+        known_coordinator: :unavailable,
+        transaction_system_layout: nil,
+        mode: mode,
+        capabilities: capabilities
+      },
+      &{:ok, &1, {:continue, :find_a_live_coordinator}}
+    )
   end
 
   @doc false
@@ -92,8 +93,8 @@ defmodule Bedrock.Cluster.Gateway.Server do
     t
     |> find_a_live_coordinator()
     |> case do
-      {t, :ok} -> t |> noreply()
-      {t, {:error, :unavailable}} -> t |> noreply()
+      {t, :ok} -> noreply(t)
+      {t, {:error, :unavailable}} -> noreply(t)
     end
   end
 
@@ -103,7 +104,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
           {:reply, term(), State.t()}
   def handle_call({:begin_transaction, opts}, _, t) do
     {updated_state, result} = begin_transaction(t, opts)
-    updated_state |> reply(result)
+    reply(updated_state, result)
   end
 
   @spec handle_call({:renew_read_version_lease, term()}, GenServer.from(), State.t()) ::
@@ -111,36 +112,35 @@ defmodule Bedrock.Cluster.Gateway.Server do
   def handle_call({:renew_read_version_lease, read_version}, _, t) do
     t
     |> renew_read_version_lease(read_version)
-    |> then(fn {t, result} -> t |> reply(result) end)
+    |> then(fn {t, result} -> reply(t, result) end)
   end
 
   @spec handle_call(:get_known_coordinator, GenServer.from(), State.t()) ::
           {:reply, {:ok, term()} | {:error, :unavailable}, State.t()}
   def handle_call(:get_known_coordinator, _, t) do
     case t.known_coordinator do
-      :unavailable -> t |> reply({:error, :unavailable})
-      coordinator -> t |> reply({:ok, coordinator})
+      :unavailable -> reply(t, {:error, :unavailable})
+      coordinator -> reply(t, {:ok, coordinator})
     end
   end
 
   @spec handle_call(:get_descriptor, GenServer.from(), State.t()) ::
           {:reply, {:ok, Descriptor.t()}, State.t()}
   def handle_call(:get_descriptor, _, t) do
-    t |> reply({:ok, t.descriptor})
+    reply(t, {:ok, t.descriptor})
   end
 
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::
           {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
-  def handle_info({:timeout, :find_a_live_coordinator}, t),
-    do: t |> noreply(continue: :find_a_live_coordinator)
+  def handle_info({:timeout, :find_a_live_coordinator}, t), do: noreply(t, continue: :find_a_live_coordinator)
 
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
   def handle_info({:tsl_updated, new_tsl}, t) do
     # Update cached TSL when coordinator broadcasts updates
     updated_state = %{t | transaction_system_layout: new_tsl}
-    updated_state |> noreply()
+    noreply(updated_state)
   end
 
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::
@@ -161,7 +161,7 @@ defmodule Bedrock.Cluster.Gateway.Server do
       |> change_coordinator(:unavailable)
       |> noreply(continue: :find_a_live_coordinator)
     else
-      t |> noreply()
+      noreply(t)
     end
   end
 

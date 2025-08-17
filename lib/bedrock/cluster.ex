@@ -5,22 +5,22 @@ defmodule Bedrock.Cluster do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Transaction
 
   require Logger
 
   @type t :: module()
   @type name :: String.t()
   @type version :: Bedrock.version()
-  @type transaction :: BedrockTransaction.encoded()
+  @type transaction :: Transaction.encoded()
   @type storage :: Storage.ref()
   @type log :: Log.ref()
   @type capability :: :coordination | :log | :storage | :resolution
 
   @callback node_capabilities() :: [Bedrock.Cluster.capability()]
-  @callback coordinator!() :: Bedrock.ControlPlane.Coordinator.ref()
+  @callback coordinator!() :: Coordinator.ref()
   @callback config!() :: Config.t()
   @callback coordinator_nodes!() :: [node()]
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
@@ -44,7 +44,7 @@ defmodule Bedrock.Cluster do
     config = opts[:config]
     name = opts[:name] || raise "Missing :name option"
 
-    unless otp_app || config do
+    if !(otp_app || config) do
       raise "Must provide either :otp_app or :config option"
     end
 
@@ -109,32 +109,28 @@ defmodule Bedrock.Cluster do
       @impl true
       @spec fetch_transaction_system_layout() ::
               {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
-      def fetch_transaction_system_layout,
-        do: ClusterSupervisor.fetch_transaction_system_layout(__MODULE__)
+      def fetch_transaction_system_layout, do: ClusterSupervisor.fetch_transaction_system_layout(__MODULE__)
 
       @doc """
       Get the transaction system layout for the cluster.
       """
       @impl true
       @spec transaction_system_layout!() :: TransactionSystemLayout.t()
-      def transaction_system_layout!,
-        do: ClusterSupervisor.transaction_system_layout!(__MODULE__)
+      def transaction_system_layout!, do: ClusterSupervisor.transaction_system_layout!(__MODULE__)
 
       @doc """
       Get the configuration for this node of the cluster.
       """
       @impl true
       @spec node_config() :: Keyword.t()
-      def node_config,
-        do: ClusterSupervisor.node_config(__MODULE__, @otp_app, @static_config)
+      def node_config, do: ClusterSupervisor.node_config(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the capability advertised to the cluster by this node.
       """
       @impl true
       @spec node_capabilities() :: [Cluster.capability()]
-      def node_capabilities,
-        do: ClusterSupervisor.node_capabilities(__MODULE__, @otp_app, @static_config)
+      def node_capabilities, do: ClusterSupervisor.node_capabilities(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the path to the descriptor file. If the path is not set in the
@@ -144,8 +140,7 @@ defmodule Bedrock.Cluster do
       """
       @impl true
       @spec path_to_descriptor() :: Path.t()
-      def path_to_descriptor,
-        do: ClusterSupervisor.path_to_descriptor(__MODULE__, @otp_app, @static_config)
+      def path_to_descriptor, do: ClusterSupervisor.path_to_descriptor(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the timeout (in milliseconds) for pinging the coordinator.
@@ -198,8 +193,7 @@ defmodule Bedrock.Cluster do
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 
       @spec otp_name(atom() | String.t()) :: atom()
-      def otp_name(component) when is_atom(component) or is_binary(component),
-        do: Cluster.otp_name(@name, component)
+      def otp_name(component) when is_atom(component) or is_binary(component), do: Cluster.otp_name(@name, component)
 
       @spec otp_name_for_worker(Worker.id()) :: atom()
       def otp_name_for_worker(id), do: otp_name("worker_#{id}")
@@ -245,8 +239,7 @@ defmodule Bedrock.Cluster do
             {:cluster, __MODULE__},
             {:node, Node.self()},
             {:otp_app, @otp_app},
-            {:static_config, @static_config}
-            | opts
+            {:static_config, @static_config} | opts
           ])
     end
   end
@@ -265,6 +258,5 @@ defmodule Bedrock.Cluster do
   Get the OTP name for a component within the cluster with the given name.
   """
   @spec otp_name(name(), service :: atom() | String.t()) :: atom()
-  def otp_name(cluster_name, service) when is_binary(cluster_name),
-    do: :"#{otp_name(cluster_name)}_#{service}"
+  def otp_name(cluster_name, service) when is_binary(cluster_name), do: :"#{otp_name(cluster_name)}_#{service}"
 end

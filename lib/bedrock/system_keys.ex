@@ -36,18 +36,15 @@ defmodule Bedrock.SystemKeys do
 
   @doc "Cluster parameter: desired replication factor"
   @spec cluster_parameters_desired_replication() :: Bedrock.key()
-  def cluster_parameters_desired_replication,
-    do: "#{@system_prefix}/cluster/parameters/desired_replication"
+  def cluster_parameters_desired_replication, do: "#{@system_prefix}/cluster/parameters/desired_replication"
 
   @doc "Cluster parameter: desired number of commit proxies"
   @spec cluster_parameters_desired_commit_proxies() :: Bedrock.key()
-  def cluster_parameters_desired_commit_proxies,
-    do: "#{@system_prefix}/cluster/parameters/desired_commit_proxies"
+  def cluster_parameters_desired_commit_proxies, do: "#{@system_prefix}/cluster/parameters/desired_commit_proxies"
 
   @doc "Cluster parameter: desired number of coordinators"
   @spec cluster_parameters_desired_coordinators() :: Bedrock.key()
-  def cluster_parameters_desired_coordinators,
-    do: "#{@system_prefix}/cluster/parameters/desired_coordinators"
+  def cluster_parameters_desired_coordinators, do: "#{@system_prefix}/cluster/parameters/desired_coordinators"
 
   @doc "Cluster parameter: desired number of read version proxies"
   @spec cluster_parameters_desired_read_version_proxies() :: Bedrock.key()
@@ -61,18 +58,15 @@ defmodule Bedrock.SystemKeys do
 
   @doc "Cluster parameter: ping rate in Hz"
   @spec cluster_parameters_ping_rate_in_hz() :: Bedrock.key()
-  def cluster_parameters_ping_rate_in_hz,
-    do: "#{@system_prefix}/cluster/parameters/ping_rate_in_hz"
+  def cluster_parameters_ping_rate_in_hz, do: "#{@system_prefix}/cluster/parameters/ping_rate_in_hz"
 
   @doc "Cluster parameter: retransmission rate in Hz"
   @spec cluster_parameters_retransmission_rate_in_hz() :: Bedrock.key()
-  def cluster_parameters_retransmission_rate_in_hz,
-    do: "#{@system_prefix}/cluster/parameters/retransmission_rate_in_hz"
+  def cluster_parameters_retransmission_rate_in_hz, do: "#{@system_prefix}/cluster/parameters/retransmission_rate_in_hz"
 
   @doc "Cluster parameter: transaction window in milliseconds"
   @spec cluster_parameters_transaction_window_in_ms() :: Bedrock.key()
-  def cluster_parameters_transaction_window_in_ms,
-    do: "#{@system_prefix}/cluster/parameters/transaction_window_in_ms"
+  def cluster_parameters_transaction_window_in_ms, do: "#{@system_prefix}/cluster/parameters/transaction_window_in_ms"
 
   # Transaction System Layout Keys
   # These contain dynamic transaction system state that changes during recovery

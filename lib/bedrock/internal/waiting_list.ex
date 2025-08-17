@@ -113,8 +113,7 @@ defmodule Bedrock.Internal.WaitingList do
     now = time_fn.()
 
     {expired_entries, new_map} =
-      map
-      |> Enum.reduce({[], %{}}, fn {version, entries}, {expired_acc, map_acc} ->
+      Enum.reduce(map, {[], %{}}, fn {version, entries}, {expired_acc, map_acc} ->
         {expired, remaining} = split_expired(entries, now)
 
         case remaining do
@@ -185,15 +184,12 @@ defmodule Bedrock.Internal.WaitingList do
   # Split entries into expired and remaining, maintaining sort order
   defp split_expired(entries, now, expired \\ [], remaining \\ [])
 
-  defp split_expired([], _now, expired, remaining),
-    do: {Enum.reverse(expired), Enum.reverse(remaining)}
+  defp split_expired([], _now, expired, remaining), do: {Enum.reverse(expired), Enum.reverse(remaining)}
 
-  defp split_expired([{deadline, _, _} = entry | rest], now, expired, remaining)
-       when deadline <= now,
-       do: split_expired(rest, now, [entry | expired], remaining)
+  defp split_expired([{deadline, _, _} = entry | rest], now, expired, remaining) when deadline <= now,
+    do: split_expired(rest, now, [entry | expired], remaining)
 
-  defp split_expired(list, _now, expired, remaining),
-    do: {Enum.reverse(expired), Enum.reverse(remaining, list)}
+  defp split_expired(list, _now, expired, remaining), do: {Enum.reverse(expired), Enum.reverse(remaining, list)}
 
   # Get earliest deadline from a deadline-sorted list
   defp get_earliest_deadline([]), do: nil

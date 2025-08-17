@@ -1,5 +1,6 @@
 defmodule Bedrock.Service.ManifestTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.Service.Manifest
 
   defp storage, do: Bedrock.DataPlane.Storage.Basalt
@@ -74,7 +75,7 @@ defmodule Bedrock.Service.ManifestTest do
       tmp_dir: tmp_dir
     } do
       path = Path.join(tmp_dir, "not_a_dict.json")
-      File.write(path, "{\"cluster\": \"test_cluster\", \"id\": \"test_id\", \"worker\": 1234}")
+      File.write(path, ~s({"cluster": "test_cluster", "id": "test_id", "worker": 1234}))
 
       assert {:error, :invalid_worker_name} = Manifest.load_from_file(path)
     end
@@ -84,7 +85,7 @@ defmodule Bedrock.Service.ManifestTest do
       tmp_dir: tmp_dir
     } do
       path = Path.join(tmp_dir, "not_a_dict.json")
-      File.write(path, "{\"cluster\": 123, \"id\": \"test_id\", \"worker\": 1234}")
+      File.write(path, ~s({"cluster": 123, "id": "test_id", "worker": 1234}))
 
       assert {:error, :invalid_cluster_name} = Manifest.load_from_file(path)
     end
@@ -94,7 +95,7 @@ defmodule Bedrock.Service.ManifestTest do
       tmp_dir: tmp_dir
     } do
       path = Path.join(tmp_dir, "not_a_dict.json")
-      File.write(path, "{\"cluster\": \"test_cluster\", \"id\": 1234, \"worker\": 1234}")
+      File.write(path, ~s({"cluster": "test_cluster", "id": 1234, "worker": 1234}))
 
       assert {:error, :invalid_cluster_id} = Manifest.load_from_file(path)
     end

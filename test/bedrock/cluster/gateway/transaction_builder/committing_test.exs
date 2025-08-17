@@ -4,7 +4,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Committing
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
   # Test helper to create a basic transaction state
   defp create_test_state(read_version, _reads, writes) do
@@ -34,7 +34,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
   defp mock_commit_fn(expected_transaction) do
     fn _proxy, binary_transaction ->
       # Decode binary transaction to compare with expected map format
-      decoded_transaction = BedrockTransaction.decode!(binary_transaction)
+      decoded_transaction = Transaction.decode!(binary_transaction)
       assert decoded_transaction == expected_transaction
       # Return a mock version number
       {:ok, 42}
@@ -43,12 +43,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
   # Helper function to decode binary transaction for assertions
   defp decode_transaction(binary_transaction) do
-    BedrockTransaction.decode!(binary_transaction)
+    Transaction.decode!(binary_transaction)
   end
 
   # Helper to create expected transaction in new format
   defp create_expected_transaction(read_version, mutations, write_conflicts, read_conflicts \\ []) do
-    # Convert read_version to binary format to match BedrockTransaction.decode! output
+    # Convert read_version to binary format to match Transaction.decode! output
     binary_read_version =
       case read_version do
         nil -> nil
@@ -375,14 +375,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     test "multiple reads with multiple writes transaction" do
       # Transaction reads multiple keys and writes to multiple keys
       reads = %{
-        "user_profile" => "{\"name\":\"Alice\",\"balance\":500}",
-        "settings" => "{\"theme\":\"dark\",\"notifications\":true}"
+        "user_profile" => ~s({"name":"Alice","balance":500}),
+        "settings" => ~s({"theme":"dark","notifications":true})
       }
 
       writes = %{
-        "user_profile" => "{\"name\":\"Alice\",\"balance\":450}",
-        "audit_log" => "{\"action\":\"purchase\",\"amount\":50}",
-        "inventory" => "{\"item_id\":123,\"quantity\":99}"
+        "user_profile" => ~s({"name":"Alice","balance":450}),
+        "audit_log" => ~s({"action":"purchase","amount":50}),
+        "inventory" => ~s({"item_id":123,"quantity":99})
       }
 
       read_version = Bedrock.DataPlane.Version.from_integer(888)
@@ -424,7 +424,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       # Transaction has reads but no writes - should return empty writes map
       reads = %{
         "config_value" => "production",
-        "feature_flags" => "{\"new_ui\":true,\"beta_features\":false}"
+        "feature_flags" => ~s({"new_ui":true,"beta_features":false})
       }
 
       writes = %{}
@@ -561,13 +561,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     test "complex key types in read-dependent transaction" do
       # Test with complex key types (composite keys) that might be used in real scenarios
       reads = %{
-        "users:alice" => "{\"balance\":100,\"status\":\"active\"}",
-        "sessions:session_123" => "{\"user_id\":\"alice\",\"expires_at\":1234567890}"
+        "users:alice" => ~s({"balance":100,"status":"active"}),
+        "sessions:session_123" => ~s({"user_id":"alice","expires_at":1234567890})
       }
 
       writes = %{
-        "users:alice" => "{\"balance\":90,\"status\":\"active\"}",
-        "transactions:tx_456" => "{\"from\":\"alice\",\"to\":\"bob\",\"amount\":10}"
+        "users:alice" => ~s({"balance":90,"status":"active"}),
+        "transactions:tx_456" => ~s({"from":"alice","to":"bob","amount":10})
       }
 
       read_version = Bedrock.DataPlane.Version.from_integer(456)

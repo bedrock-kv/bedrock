@@ -1,8 +1,10 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
   import RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
   alias Bedrock.DataPlane.Version
 
@@ -40,9 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
         }
       }
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_storage_recovery_info(storage_recovery_info)
+      recovery_attempt = with_storage_recovery_info(recovery_attempt(), storage_recovery_info)
 
       capture_log(fn ->
         {result, next_phase} =
@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
             }
           })
 
-        assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
+        assert next_phase == LogRecruitmentPhase
         assert result.durable_version == Version.from_integer(98)
         assert length(result.degraded_teams) == 2
       end)
@@ -73,9 +73,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
         }
       }
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_storage_recovery_info(storage_recovery_info)
+      recovery_attempt = with_storage_recovery_info(recovery_attempt(), storage_recovery_info)
 
       {_result, next_phase_or_stall} =
         VersionDeterminationPhase.execute(recovery_attempt, %{
@@ -121,9 +119,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
         }
       }
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_storage_recovery_info(storage_recovery_info)
+      recovery_attempt = with_storage_recovery_info(recovery_attempt(), storage_recovery_info)
 
       {result, next_phase} =
         VersionDeterminationPhase.execute(recovery_attempt, %{
@@ -135,7 +131,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
           }
         })
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
+      assert next_phase == LogRecruitmentPhase
       # min(100, 98) from team quorums
       assert result.durable_version == Version.from_integer(98)
       # 2 storages == 2 quorum (healthy)
@@ -265,7 +261,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
     end
 
     test "correctly accumulates minimum across multiple versions using reduce" do
-      versions = [120, 100, 150, 80] |> Enum.map(&Version.from_integer/1)
+      versions = Enum.map([120, 100, 150, 80], &Version.from_integer/1)
 
       result =
         Enum.reduce(versions, nil, fn version, acc ->
@@ -282,7 +278,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhaseTest d
       result = VersionDeterminationPhase.smallest_version(first_version, accumulator)
 
       assert result == first_version
-      assert result != nil
+      assert result
     end
 
     test "maintains correctness across various version magnitudes" do

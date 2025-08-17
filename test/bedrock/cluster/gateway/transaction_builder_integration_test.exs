@@ -5,11 +5,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
   defmodule TestKeyCodec do
+    @moduledoc false
     def encode_key(key) when is_binary(key), do: {:ok, key}
     def encode_key(_), do: :key_error
   end
 
   defmodule TestValueCodec do
+    @moduledoc false
     def encode_value(value), do: {:ok, value}
     def decode_value(value), do: {:ok, value}
   end
@@ -228,6 +230,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
     @tag :capture_log
     test "codec errors propagate through put operations" do
       defmodule FailingKeyCodec do
+        @moduledoc false
         def encode_key(_), do: :key_error
       end
 
@@ -337,10 +340,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
   describe "codec integration across operations" do
     test "custom codecs work end-to-end" do
       defmodule CustomKeyCodec do
+        @moduledoc false
         def encode_key(key), do: {:ok, "encoded_#{key}"}
       end
 
       defmodule CustomValueCodec do
+        @moduledoc false
         def encode_value(value), do: {:ok, "encoded_#{value}"}
         def decode_value(value), do: {:ok, value}
       end
@@ -390,6 +395,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
     test "codec configuration preserved across nested transactions" do
       defmodule PersistentKeyCodec do
+        @moduledoc false
         def encode_key(key), do: {:ok, "persistent_#{key}"}
       end
 

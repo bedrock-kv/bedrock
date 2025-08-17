@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Resolver.ServerTest do
   use ExUnit.Case, async: false
+
+  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Server
   alias Bedrock.DataPlane.Resolver.State
 
@@ -18,8 +20,10 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
                restart: :temporary
              } = spec
 
-      assert {GenServer, :start_link, [Server, {token}]} = spec.start
+      assert {GenServer, :start_link, [Server, {token, last_version, epoch}]} = spec.start
       assert is_binary(token)
+      assert last_version == Bedrock.DataPlane.Version.zero()
+      assert epoch == 123
     end
 
     test "raises error when lock_token option is missing" do
@@ -59,7 +63,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "GenServer lifecycle" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
       {:ok, server: pid, lock_token: lock_token}
     end
 
@@ -72,9 +76,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              } = state
 
       # Verify tree and versions are properly initialized
-      assert state.tree != nil
-      assert state.oldest_version != nil
-      assert state.last_version != nil
+      assert state.tree
+      assert state.oldest_version
+      assert state.last_version
       assert state.waiting == %{}
     end
   end
@@ -82,7 +86,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "handle_call - resolve_transactions when running" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
       {:ok, server: pid, lock_token: lock_token}
     end
 
@@ -100,7 +104,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "handle_info - resolve_next" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
 
       # For this test, we'll just verify the server is alive
       # Testing handle_info requires complex state manipulation
@@ -134,7 +138,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "integration scenarios" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
 
       # For integration tests, resolver starts in running mode
 
@@ -146,7 +150,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       state = :sys.get_state(server)
       assert state.mode == :running
       # Initialized with zero version
-      assert state.last_version != nil
+      assert state.last_version
       assert state.waiting == %{}
 
       # Note: Full transaction testing would require proper transaction setup
@@ -172,7 +176,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "transaction validation" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
       zero_version = Bedrock.DataPlane.Version.zero()
       next_version = Bedrock.DataPlane.Version.increment(zero_version)
       {:ok, server: pid, zero_version: zero_version, next_version: next_version}
@@ -187,10 +191,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       valid_transactions = [nil: []]
 
       result =
-        GenServer.call(
-          server,
-          {:resolve_transactions, {zero_version, next_version}, valid_transactions}
-        )
+        Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
 
       # Should succeed with no aborted transactions
       assert {:ok, []} = result
@@ -205,10 +206,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
 
       result =
-        GenServer.call(
-          server,
-          {:resolve_transactions, {zero_version, next_version}, invalid_transactions}
-        )
+        Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions)
 
       assert {:error, error_message} = result
 
@@ -232,10 +230,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       ]
 
       result =
-        GenServer.call(
-          server,
-          {:resolve_transactions, {zero_version, next_version}, valid_summaries}
-        )
+        Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_summaries)
 
       # Should succeed - validation accepts transaction summaries and ConflictResolution can process them
       assert {:ok, aborted_indices} = result
@@ -246,16 +241,12 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "timeout mechanism for waiting transactions" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token})
+      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
       zero_version = Bedrock.DataPlane.Version.zero()
       next_version = Bedrock.DataPlane.Version.increment(zero_version)
       future_version = Bedrock.DataPlane.Version.increment(next_version)
 
-      {:ok,
-       server: pid,
-       zero_version: zero_version,
-       next_version: next_version,
-       future_version: future_version}
+      {:ok, server: pid, zero_version: zero_version, next_version: next_version, future_version: future_version}
     end
 
     test "adds transaction to waiting list when dependency missing", %{
@@ -269,10 +260,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       # Start an async call that will need to wait (out-of-order transaction)
       task =
         Task.async(fn ->
-          GenServer.call(
-            server,
-            {:resolve_transactions, {next_version, future_version}, [valid_transaction_summary]}
-          )
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [
+            valid_transaction_summary
+          ])
         end)
 
       # Give the server time to process the call and set up waiting state
@@ -305,10 +295,13 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       # Start an async call that will timeout
       task =
         Task.async(fn ->
-          GenServer.call(
+          Resolver.resolve_transactions(
             server,
-            {:resolve_transactions, {next_version, future_version}, [valid_transaction_summary]},
-            60_000
+            1,
+            next_version,
+            future_version,
+            [valid_transaction_summary],
+            timeout: 60_000
           )
         end)
 
@@ -370,11 +363,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       # Add first waiting transaction
       task1 =
         Task.async(fn ->
-          GenServer.call(
-            server,
-            {:resolve_transactions, {next_version, future_version}, [transaction1]},
-            60_000
-          )
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction1], timeout: 60_000)
         end)
 
       Process.sleep(50)
@@ -384,11 +373,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       task2 =
         Task.async(fn ->
-          GenServer.call(
-            server,
-            {:resolve_transactions, {future_version, later_version}, [transaction2]},
-            60_000
-          )
+          Resolver.resolve_transactions(server, 1, future_version, later_version, [transaction2], timeout: 60_000)
         end)
 
       Process.sleep(50)

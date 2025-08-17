@@ -1,8 +1,10 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
+  alias Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
 
   describe "execute/1" do
     test "successfully creates vacancies for logs and storage teams" do
@@ -23,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
+      assert next_phase == VersionDeterminationPhase
       assert is_map(result.logs)
       assert is_list(result.storage_teams)
       # Should have vacancies created for both logs and storage
@@ -46,7 +48,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
 
       {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
+      assert next_phase == VersionDeterminationPhase
       assert result.logs == %{}
       assert result.storage_teams == []
     end

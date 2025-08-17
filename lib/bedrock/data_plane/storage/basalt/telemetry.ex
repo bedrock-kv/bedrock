@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Telemetry do
+  @moduledoc false
   alias Bedrock.Telemetry
 
   @spec trace_log_pull_start(integer(), Bedrock.version()) :: :ok

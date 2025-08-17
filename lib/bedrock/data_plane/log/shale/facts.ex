@@ -14,25 +14,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
 
   def info(%State{} = t, facts) when is_list(facts) do
     {:ok,
-     facts
-     |> Map.new(fn
+     Map.new(facts, fn
        fact_name -> {fact_name, gather_info(fact_name, t)}
      end)}
   end
 
   @spec supported_info() :: [Log.fact_name()]
   def supported_info,
-    do: [
-      :id,
-      :kind,
-      :minimum_durable_version,
-      :oldest_version,
-      :last_version,
-      :otp_name,
-      :pid,
-      :state,
-      :supported_info
-    ]
+    do: [:id, :kind, :minimum_durable_version, :oldest_version, :last_version, :otp_name, :pid, :state, :supported_info]
 
   @spec gather_info(Log.fact_name(), State.t()) ::
           String.t()

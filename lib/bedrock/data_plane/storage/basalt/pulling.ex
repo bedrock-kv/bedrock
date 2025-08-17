@@ -1,16 +1,16 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @moduledoc false
+  import Bedrock.DataPlane.Storage.Basalt.Telemetry
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
-
-  import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
   @type puller_state :: %{
           start_after: Bedrock.version(),
-          apply_transactions_fn: ([BedrockTransaction.encoded()] -> Bedrock.version()),
+          apply_transactions_fn: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn: (-> Bedrock.version()),
           flush_window_fn: (-> :ok),
           logs: %{Log.id() => LogDescriptor.t()},
@@ -22,18 +22,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
           start_after :: Bedrock.version(),
           logs :: %{Log.id() => LogDescriptor.t()},
           services :: %{Worker.id() => ServiceDescriptor.t()},
-          apply_transactions_fn :: ([BedrockTransaction.encoded()] -> Bedrock.version()),
+          apply_transactions_fn :: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn :: (-> Bedrock.version()),
           flush_window_fn :: (-> :ok)
         ) :: Task.t()
-  def start_pulling(
-        start_after,
-        logs,
-        services,
-        apply_transactions_fn,
-        get_durable_version_fn,
-        flush_window_fn
-      ) do
+  def start_pulling(start_after, logs, services, apply_transactions_fn, get_durable_version_fn, flush_window_fn) do
     state = %{
       start_after: start_after,
       apply_transactions_fn: apply_transactions_fn,
@@ -81,8 +74,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
             # Flush window once per pull batch
             :ok = state.flush_window_fn.()
 
-            %{state | start_after: next_version}
-            |> long_pull_loop()
+            long_pull_loop(%{state | start_after: next_version})
 
           {:error, reason} ->
             trace_log_pull_failed(timestamp, reason)

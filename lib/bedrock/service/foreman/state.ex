@@ -25,12 +25,7 @@ defmodule Bedrock.Service.Foreman.State do
     :workers
   ]
 
-  def new_state(%{
-        cluster: cluster,
-        capabilities: capabilities,
-        path: path,
-        otp_name: otp_name
-      }) do
+  def new_state(%{cluster: cluster, capabilities: capabilities, path: path, otp_name: otp_name}) do
     {:ok,
      %__MODULE__{
        cluster: cluster,
@@ -54,18 +49,12 @@ defmodule Bedrock.Service.Foreman.State do
 
   @spec update_waiting_for_healthy(State.t(), ([GenServer.from()] -> [GenServer.from()])) ::
           State.t()
-  def update_waiting_for_healthy(t, updater),
-    do: %{t | waiting_for_healthy: updater.(t.waiting_for_healthy)}
+  def update_waiting_for_healthy(t, updater), do: %{t | waiting_for_healthy: updater.(t.waiting_for_healthy)}
 
   @spec put_waiting_for_healthy(State.t(), [pid()]) :: State.t()
-  def put_waiting_for_healthy(t, waiting_for_healthy),
-    do: %{t | waiting_for_healthy: waiting_for_healthy}
+  def put_waiting_for_healthy(t, waiting_for_healthy), do: %{t | waiting_for_healthy: waiting_for_healthy}
 
   @spec put_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()
   def put_health_for_worker(t, worker_id, health),
-    do:
-      update_workers(t, fn workers ->
-        workers
-        |> Map.update!(worker_id, &WorkerInfo.put_health(&1, health))
-      end)
+    do: update_workers(t, fn workers -> Map.update!(workers, worker_id, &WorkerInfo.put_health(&1, health)) end)
 end

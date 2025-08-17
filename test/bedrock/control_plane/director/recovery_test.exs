@@ -1,13 +1,13 @@
 defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.DataPlane.Version
-
-  import RecoveryTestSupport
 
   # Helper to create test state with node capabilities
   defp create_test_state(overrides \\ %{}) do
@@ -46,6 +46,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    @moduledoc false
     def name, do: "test_cluster"
 
     def otp_name(component) do
@@ -59,6 +60,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   # Mock phases that return completed or stalled states
   defmodule MockStartPhase do
+    @moduledoc false
     def execute(_recovery_attempt) do
       # Mock phase does nothing
       nil
@@ -66,6 +68,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defmodule MockStalledPhase do
+    @moduledoc false
     def execute(recovery_attempt) do
       {recovery_attempt, {:stalled, :test_reason}}
     end
@@ -552,12 +555,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # Mock lock_service_fn to return newer_epoch_exists
       context =
-        create_test_context(
+        [
           old_transaction_system_layout: %{
             logs: %{"existing_log_1" => [0, 100]},
             storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["existing_storage_1"]}]
           }
-        )
+        ]
+        |> create_test_context()
         |> with_multiple_nodes()
         |> Map.put(:available_services, %{
           "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
@@ -750,11 +754,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_log_recovery(context) do
-    copy_log_data_fn = fn _new_log_id,
-                          _old_log_id,
-                          _first_version,
-                          _last_version,
-                          _service_pids ->
+    copy_log_data_fn = fn _new_log_id, _old_log_id, _first_version, _last_version, _service_pids ->
       {:ok, spawn(fn -> :ok end)}
     end
 
@@ -765,7 +765,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     foreman_all_fn = fn _foreman_ref, _opts -> {:ok, []} end
 
     remove_workers_fn = fn _foreman_ref, worker_ids, _opts ->
-      worker_ids |> Enum.map(&{&1, :ok}) |> Map.new()
+      Map.new(worker_ids, &{&1, :ok})
     end
 
     monitor_fn = fn pid -> Process.monitor(pid) end

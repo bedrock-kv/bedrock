@@ -1,11 +1,11 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Storage.Basalt.Database
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
-  def random_name, do: "basalt_database_#{Faker.random_between(0, 10_000)}" |> String.to_atom()
+  def random_name, do: String.to_atom("basalt_database_#{Faker.random_between(0, 10_000)}")
 
   describe "Basalt.Database.open/2" do
     @tag :tmp_dir
@@ -49,17 +49,17 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
 
       assert ^version_0 =
                Database.apply_transactions(db, [
-                 BedrockTransactionTestSupport.new_log_transaction(version_0, %{})
+                 TransactionTestSupport.new_log_transaction(version_0, %{})
                ])
 
       assert ^version_1 =
                Database.apply_transactions(db, [
-                 BedrockTransactionTestSupport.new_log_transaction(version_1, %{"foo" => "bar"})
+                 TransactionTestSupport.new_log_transaction(version_1, %{"foo" => "bar"})
                ])
 
       assert ^version_2 =
                Database.apply_transactions(db, [
-                 BedrockTransactionTestSupport.new_log_transaction(version_2, %{
+                 TransactionTestSupport.new_log_transaction(version_2, %{
                    "foo" => "baz",
                    "boo" => "bif"
                  })
@@ -67,7 +67,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.DatabaseTest do
 
       assert ^version_3 =
                Database.apply_transactions(db, [
-                 BedrockTransactionTestSupport.new_log_transaction(version_3, %{
+                 TransactionTestSupport.new_log_transaction(version_3, %{
                    "foo" => "biz",
                    "bam" => "bom"
                  })

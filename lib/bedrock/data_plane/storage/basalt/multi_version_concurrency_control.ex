@@ -5,27 +5,28 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   provides an implementation of MVCC for Basalt.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @opaque t :: :ets.table()
 
   @spec new(otp_name :: atom(), Bedrock.version()) :: t()
   def new(otp_name, version) when is_atom(otp_name) do
-    with mvcc <-
-           :ets.new(otp_name, [
-             :ordered_set,
-             :public,
-             read_concurrency: true,
-             write_concurrency: true
-           ]),
-         true <-
-           :ets.insert(mvcc, [
-             {:newest_version, version},
-             {:oldest_version, version}
-           ]) do
-      mvcc
-    end
+    mvcc =
+      :ets.new(otp_name, [
+        :ordered_set,
+        :public,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
+
+    true =
+      :ets.insert(mvcc, [
+        {:newest_version, version},
+        {:oldest_version, version}
+      ])
+
+    mvcc
   end
 
   @spec close(pkv :: t()) :: :ok
@@ -44,16 +45,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec apply_transactions!(
           mvcc :: t(),
-          transactions :: [BedrockTransaction.encoded()]
+          transactions :: [Transaction.encoded()]
         ) ::
           Bedrock.version()
-  @spec apply_transactions!(t(), [BedrockTransaction.encoded()]) :: :ok
+  @spec apply_transactions!(t(), [Transaction.encoded()]) :: :ok
   def apply_transactions!(mvcc, encoded_transactions) do
-    latest_version = mvcc |> newest_version()
+    latest_version = newest_version(mvcc)
 
-    encoded_transactions
-    |> Enum.reduce(latest_version, fn encoded_transaction, latest_version ->
-      {:ok, version} = BedrockTransaction.extract_commit_version(encoded_transaction)
+    Enum.reduce(encoded_transactions, latest_version, fn encoded_transaction, latest_version ->
+      {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
 
       cond do
         version < latest_version ->
@@ -74,15 +74,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   Apply a single transaction to the given table, atomically. Returns `:ok` if
   the transaction was applied successfully.
   """
-  @spec apply_one_transaction!(mvcc :: t(), BedrockTransaction.encoded()) :: :ok
+  @spec apply_one_transaction!(mvcc :: t(), Transaction.encoded()) :: :ok
   def apply_one_transaction!(mvcc, encoded_transaction) do
-    {:ok, version} = BedrockTransaction.extract_commit_version(encoded_transaction)
+    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
     # Extract mutations and convert to key-value pairs
-    {:ok, mutations_stream} = BedrockTransaction.stream_mutations(encoded_transaction)
+    {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
 
     kv_pairs =
-      mutations_stream
-      |> Enum.reduce(%{}, fn
+      Enum.reduce(mutations_stream, %{}, fn
         {:set, key, value}, acc ->
           Map.put(acc, key, value)
 
@@ -103,8 +102,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
       mvcc,
       [
         {:newest_version, version}
-        | kv_pairs
-          |> Enum.map(fn
+        | Enum.map(kv_pairs, fn
             {key, value} -> {versioned_key(key, version), value}
           end)
       ]
@@ -159,8 +157,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   defp match_value_for_key_with_version_lte(key, version),
     do: [{{{:"$1", :"$2"}, :"$3"}, [{:"=:=", key, :"$1"}, {:"=<", :"$2", version}], [:"$3"]}]
 
-  defp match_rows_with_with_version_gt(version),
-    do: [{{{:_, :"$2"}, :_}, [{:>=, :"$2", version}], [true]}]
+  defp match_rows_with_with_version_gt(version), do: [{{{:_, :"$2"}, :_}, [{:>=, :"$2", version}], [true]}]
 
   defp value_from_ets_row({value}), do: value
   defp value_from_ets_row(value), do: value
@@ -174,7 +171,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec newest_version(mvcc :: t()) :: Bedrock.version() | nil
   def newest_version(mvcc) do
-    :ets.lookup(mvcc, :newest_version)
+    mvcc
+    |> :ets.lookup(:newest_version)
     |> case do
       [{_, version}] -> version
       [] -> nil
@@ -187,7 +185,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec oldest_version(mvcc :: t()) :: Bedrock.version() | nil
   def oldest_version(mvcc) do
-    :ets.lookup(mvcc, :oldest_version)
+    mvcc
+    |> :ets.lookup(:oldest_version)
     |> case do
       [{_, version}] -> version
       [] -> nil
@@ -209,11 +208,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
           version ::
             :latest
             | Bedrock.version()
-        ) :: BedrockTransaction.encoded() | nil
+        ) :: Transaction.encoded() | nil
   @spec transaction_at_version(t(), :latest | Bedrock.version()) ::
-          BedrockTransaction.encoded() | nil
+          Transaction.encoded() | nil
   def transaction_at_version(mvcc, :latest) do
-    newest_version(mvcc)
+    mvcc
+    |> newest_version()
     |> case do
       nil -> nil
       version -> transaction_at_version(mvcc, version)
@@ -243,8 +243,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
       end)
 
     # Create transaction and add commit version
-    encoded = BedrockTransaction.encode(%{mutations: mutations})
-    {:ok, with_version} = BedrockTransaction.add_commit_version(encoded, version)
+    encoded = Transaction.encode(%{mutations: mutations})
+    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
     with_version
   end
 
@@ -268,8 +268,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     {:ok, n_purged}
   end
 
-  defp match_version_lt(version),
-    do: [{{{:_, :"$1"}, :_}, [{:<, :"$1", version}], [true]}]
+  defp match_version_lt(version), do: [{{{:_, :"$1"}, :_}, [{:<, :"$1", version}], [true]}]
 
   defp versioned_key(key, version), do: {key, version}
 end

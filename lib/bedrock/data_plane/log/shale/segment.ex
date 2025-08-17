@@ -1,16 +1,16 @@
 defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @moduledoc false
-  require Logger
-
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+
+  require Logger
 
   @type t :: %__MODULE__{
           path: String.t(),
           min_version: Bedrock.version(),
-          transactions: nil | [BedrockTransaction.encoded()]
+          transactions: nil | [Transaction.encoded()]
         }
   defstruct path: nil,
             min_version: nil,
@@ -27,27 +27,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   end
 
   @spec decode_file_name(String.t()) :: pos_integer()
-  def decode_file_name(@wal_prefix <> log_number),
-    do: log_number |> String.to_integer(32)
+  def decode_file_name(@wal_prefix <> log_number), do: String.to_integer(log_number, 32)
 
   @spec allocate_from_recycler(SegmentRecycler.server(), String.t(), Bedrock.version()) ::
           {:ok, t()} | {:error, :allocation_failed}
   def allocate_from_recycler(segment_recycler, path, version) do
-    with path_to_file <- Path.join(path, encode_file_name(Version.to_integer(version))),
-         :ok <- SegmentRecycler.check_out(segment_recycler, path_to_file) do
-      {:ok,
-       %__MODULE__{
-         min_version: version,
-         path: path_to_file
-       }}
-    else
-      _ -> {:error, :allocation_failed}
+    path_to_file = Path.join(path, encode_file_name(Version.to_integer(version)))
+
+    case SegmentRecycler.check_out(segment_recycler, path_to_file) do
+      :ok ->
+        {:ok,
+         %__MODULE__{
+           min_version: version,
+           path: path_to_file
+         }}
+
+      _ ->
+        {:error, :allocation_failed}
     end
   end
 
   @spec return_to_recycler(t(), SegmentRecycler.server()) :: :ok
-  def return_to_recycler(segment, segment_recycler),
-    do: SegmentRecycler.check_in(segment_recycler, segment.path)
+  def return_to_recycler(segment, segment_recycler), do: SegmentRecycler.check_in(segment_recycler, segment.path)
 
   @doc """
   Create a new segment from the given file path. We stat the file to get the
@@ -55,13 +56,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   """
   @spec from_path(path_to_file :: String.t()) :: {:ok, t()} | {:error, :does_not_exist}
   def from_path(path_to_file) do
-    with true <- File.exists?(path_to_file) || {:error, :does_not_exist} do
+    if File.exists?(path_to_file) do
       {:ok,
        %__MODULE__{
          path: path_to_file,
-         min_version:
-           path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
+         min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
        }}
+    else
+      {:error, :does_not_exist}
     end
   end
 
@@ -88,7 +90,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
 
   def ensure_transactions_are_loaded(segment), do: segment
 
-  @spec transactions(t()) :: [BedrockTransaction.encoded()]
+  @spec transactions(t()) :: [Transaction.encoded()]
   def transactions(%{transactions: nil} = segment),
     do: segment |> ensure_transactions_are_loaded() |> Map.get(:transactions, [])
 
@@ -96,8 +98,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
 
   @spec last_version(t()) :: Bedrock.version()
   def last_version(%{transactions: [transaction_payload | _]}) do
-    # Extract version from BedrockTransaction payload
-    case BedrockTransaction.extract_commit_version(transaction_payload) do
+    # Extract version from Transaction payload
+    case Transaction.extract_commit_version(transaction_payload) do
       {:ok, version_binary} -> version_binary
       _ -> nil
     end

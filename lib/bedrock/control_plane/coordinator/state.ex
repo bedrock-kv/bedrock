@@ -54,15 +54,13 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_director(t :: State.t(), new_director :: Director.ref() | :unavailable) ::
             State.t()
-    def put_director(t, new_director),
-      do: %{t | director: new_director}
+    def put_director(t, new_director), do: %{t | director: new_director}
 
     @spec put_leader_node(t :: State.t(), leader_node :: node() | :undecided) :: State.t()
     def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}
 
     @spec put_leader_startup_state(t :: State.t(), State.leader_startup_state()) :: State.t()
-    def put_leader_startup_state(t, leader_startup_state),
-      do: %{t | leader_startup_state: leader_startup_state}
+    def put_leader_startup_state(t, leader_startup_state), do: %{t | leader_startup_state: leader_startup_state}
 
     @spec set_raft(t :: State.t(), Raft.t()) :: State.t()
     def set_raft(t, raft), do: %{t | raft: raft}
@@ -77,8 +75,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     def update_config(t, updater), do: %{t | config: updater.(t.config)}
 
     @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
-    def put_last_durable_txn_id(t, last_durable_txn_id),
-      do: %{t | last_durable_txn_id: last_durable_txn_id}
+    def put_last_durable_txn_id(t, last_durable_txn_id), do: %{t | last_durable_txn_id: last_durable_txn_id}
 
     @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
             State.t()
@@ -89,24 +86,20 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_service_directory(t :: State.t(), %{String.t() => {atom(), {atom(), node()}}}) ::
             State.t()
-    def put_service_directory(t, service_directory),
-      do: %{t | service_directory: service_directory}
+    def put_service_directory(t, service_directory), do: %{t | service_directory: service_directory}
 
     @spec update_service_directory(
             t :: State.t(),
             updater :: (%{String.t() => {atom(), {atom(), node()}}} ->
                           %{String.t() => {atom(), {atom(), node()}}})
           ) :: State.t()
-    def update_service_directory(t, updater),
-      do: %{t | service_directory: updater.(t.service_directory)}
+    def update_service_directory(t, updater), do: %{t | service_directory: updater.(t.service_directory)}
 
     @spec add_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
-    def add_tsl_subscriber(t, subscriber),
-      do: %{t | tsl_subscribers: MapSet.put(t.tsl_subscribers, subscriber)}
+    def add_tsl_subscriber(t, subscriber), do: %{t | tsl_subscribers: MapSet.put(t.tsl_subscribers, subscriber)}
 
     @spec remove_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
-    def remove_tsl_subscriber(t, subscriber),
-      do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
+    def remove_tsl_subscriber(t, subscriber), do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
 
     @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t()) :: State.t()
     def broadcast_tsl_update(t, tsl) do

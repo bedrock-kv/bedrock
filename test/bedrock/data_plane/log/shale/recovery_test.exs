@@ -1,20 +1,17 @@
 defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.Log.Shale.Recovery
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: tmp_dir} do
     {:ok, recycler} =
-      start_supervised(
-        {SegmentRecycler,
-         path: tmp_dir, min_available: 1, max_available: 1, segment_size: 1024 * 1024}
-      )
+      start_supervised({SegmentRecycler, path: tmp_dir, min_available: 1, max_available: 1, segment_size: 1024 * 1024})
 
     state = %State{
       mode: :locked,
@@ -124,7 +121,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     # Convert data map to mutations format
     mutations = Enum.map(data, fn {key, value} -> {:set, key, value} end)
 
-    # Create BedrockTransaction
+    # Create Transaction
     transaction = %{
       mutations: mutations,
       read_conflicts: [],
@@ -133,8 +130,8 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     }
 
     # Encode and add version as transaction_id
-    encoded = BedrockTransaction.encode(transaction)
-    {:ok, encoded_with_id} = BedrockTransaction.add_commit_version(encoded, version)
+    encoded = Transaction.encode(transaction)
+    {:ok, encoded_with_id} = Transaction.add_commit_version(encoded, version)
     encoded_with_id
   end
 

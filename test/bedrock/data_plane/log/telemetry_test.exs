@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Log.TelemetryTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Log.Telemetry
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   setup do
@@ -32,7 +32,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
   describe "trace_push_transaction/2" do
     test "emits push telemetry event with correct data" do
       encoded_transaction =
-        BedrockTransactionTestSupport.new_log_transaction(
+        TransactionTestSupport.new_log_transaction(
           Version.from_integer(42),
           %{"key1" => "value1", "key2" => "value2"}
         )

@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.Transaction
   alias FinalizationTestSupport, as: Support
 
   describe "key_to_tags/2" do
@@ -106,107 +106,119 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
   end
 
-  describe "group_writes_by_tag/2" do
+  describe "mutation_to_key_or_range/1" do
+    test "extracts key from set mutation" do
+      mutation = {:set, <<"hello">>, <<"world">>}
+      assert Finalization.mutation_to_key_or_range(mutation) == <<"hello">>
+    end
+
+    test "extracts key from clear mutation" do
+      mutation = {:clear, <<"hello">>}
+      assert Finalization.mutation_to_key_or_range(mutation) == <<"hello">>
+    end
+
+    test "extracts range from clear_range mutation" do
+      mutation = {:clear_range, <<"a">>, <<"z">>}
+      assert Finalization.mutation_to_key_or_range(mutation) == {<<"a">>, <<"z">>}
+    end
+  end
+
+  describe "key_or_range_to_tags/2" do
     setup do
       storage_teams = [
         %{tag: 0, key_range: {<<>>, <<"m">>}, storage_ids: ["storage_1"]},
-        %{tag: 1, key_range: {<<"m">>, :end}, storage_ids: ["storage_2"]}
+        %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
+        %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
       ]
 
       %{storage_teams: storage_teams}
     end
 
-    test "groups writes by their target storage team tags", %{storage_teams: storage_teams} do
-      writes = %{
-        <<"apple">> => <<"fruit">>,
-        <<"banana">> => <<"yellow">>,
-        <<"orange">> => <<"citrus">>,
-        <<"zebra">> => <<"animal">>
-      }
-
-      result = Finalization.group_writes_by_tag(writes, storage_teams)
-
-      expected =
-        {:ok,
-         %{
-           0 => %{
-             <<"apple">> => <<"fruit">>,
-             <<"banana">> => <<"yellow">>
-           },
-           1 => %{
-             <<"orange">> => <<"citrus">>,
-             <<"zebra">> => <<"animal">>
-           }
-         }}
-
-      assert result == expected
+    test "maps single key to tags", %{storage_teams: storage_teams} do
+      assert {:ok, [0]} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
+      assert {:ok, [1]} = Finalization.key_or_range_to_tags(<<"orange">>, storage_teams)
+      assert {:ok, [2]} = Finalization.key_or_range_to_tags(<<"zebra">>, storage_teams)
     end
 
-    test "handles empty writes map", %{storage_teams: storage_teams} do
-      result = Finalization.group_writes_by_tag(%{}, storage_teams)
-      assert result == {:ok, %{}}
+    test "maps range to intersecting tags", %{storage_teams: storage_teams} do
+      # Range that spans multiple storage teams
+      range = {<<"a">>, <<"s">>}
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
+      assert Enum.sort(tags) == [0, 1]
     end
 
-    test "handles writes that all belong to same tag", %{storage_teams: storage_teams} do
-      writes = %{
-        <<"apple">> => <<"fruit">>,
-        <<"banana">> => <<"yellow">>
-      }
+    test "maps range that spans all storage teams", %{storage_teams: storage_teams} do
+      # Range that covers all storage teams
+      range = {<<>>, :end}
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
+      assert Enum.sort(tags) == [0, 1, 2]
+    end
 
-      result = Finalization.group_writes_by_tag(writes, storage_teams)
+    test "maps range within single storage team", %{storage_teams: storage_teams} do
+      # Range entirely within tag 1
+      range = {<<"n">>, <<"p">>}
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
+      assert tags == [1]
+    end
 
-      expected =
-        {:ok,
-         %{
-           0 => %{
-             <<"apple">> => <<"fruit">>,
-             <<"banana">> => <<"yellow">>
-           }
-         }}
+    test "handles overlapping storage teams" do
+      # Create overlapping storage teams
+      storage_teams = [
+        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
+        %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
+      ]
 
-      assert result == expected
+      # Single key in overlap region should map to both tags
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
+      assert Enum.sort(tags) == [0, 1]
+
+      # Range in overlap region should map to both tags
+      range = {<<"i">>, <<"j">>}
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
+      assert Enum.sort(tags) == [0, 1]
     end
   end
 
-  describe "merge_writes_by_tag/2" do
-    test "merges write maps for same tags" do
-      acc = %{
-        0 => %{<<"key1">> => <<"value1">>},
-        1 => %{<<"key2">> => <<"value2">>}
+  describe "find_logs_for_tags/2" do
+    test "finds logs that intersect with given tags" do
+      logs_by_id = %{
+        "log1" => [0, 1],
+        "log2" => [1, 2],
+        "log3" => [2, 3],
+        "log4" => [4]
       }
 
-      new_writes = %{
-        0 => %{<<"key3">> => <<"value3">>},
-        2 => %{<<"key4">> => <<"value4">>}
-      }
+      # Tags [1, 2] should intersect with log1, log2, and log3
+      result = Finalization.find_logs_for_tags([1, 2], logs_by_id)
+      assert Enum.sort(result) == ["log1", "log2", "log3"]
 
-      result = Finalization.merge_writes_by_tag(acc, new_writes)
+      # Tag [0] should only intersect with log1
+      result = Finalization.find_logs_for_tags([0], logs_by_id)
+      assert result == ["log1"]
 
-      expected = %{
-        0 => %{<<"key1">> => <<"value1">>, <<"key3">> => <<"value3">>},
-        1 => %{<<"key2">> => <<"value2">>},
-        2 => %{<<"key4">> => <<"value4">>}
-      }
-
-      assert result == expected
+      # Tag [4] should only intersect with log4
+      result = Finalization.find_logs_for_tags([4], logs_by_id)
+      assert result == ["log4"]
     end
 
-    test "handles empty maps" do
-      assert Finalization.merge_writes_by_tag(%{}, %{}) == %{}
+    test "handles empty tag list" do
+      logs_by_id = %{
+        "log1" => [0, 1],
+        "log2" => [1, 2]
+      }
 
-      acc = %{0 => %{<<"key">> => <<"value">>}}
-      assert Finalization.merge_writes_by_tag(acc, %{}) == acc
-      assert Finalization.merge_writes_by_tag(%{}, acc) == acc
+      result = Finalization.find_logs_for_tags([], logs_by_id)
+      assert result == []
     end
 
-    test "overwrites values for same keys" do
-      acc = %{0 => %{<<"key">> => <<"old_value">>}}
-      new_writes = %{0 => %{<<"key">> => <<"new_value">>}}
+    test "handles tags with no matching logs" do
+      logs_by_id = %{
+        "log1" => [0, 1],
+        "log2" => [1, 2]
+      }
 
-      result = Finalization.merge_writes_by_tag(acc, new_writes)
-      expected = %{0 => %{<<"key">> => <<"new_value">>}}
-
-      assert result == expected
+      result = Finalization.find_logs_for_tags([5, 6], logs_by_id)
+      assert result == []
     end
   end
 
@@ -215,8 +227,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       transaction_map1 = %{
         mutations: [{:set, <<"write_key1">>, <<"write_value1">>}],
         write_conflicts: [{<<"write_key1">>, <<"write_key1\0">>}],
-        read_conflicts:
-          {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
+        read_conflicts: {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
       }
 
       transaction_map2 = %{
@@ -225,8 +236,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         read_conflicts: {nil, []}
       }
 
-      binary_transaction1 = BedrockTransaction.encode(transaction_map1)
-      binary_transaction2 = BedrockTransaction.encode(transaction_map2)
+      binary_transaction1 = Transaction.encode(transaction_map1)
+      binary_transaction2 = Transaction.encode(transaction_map2)
 
       transactions = [
         {fn _ -> :ok end, binary_transaction1},
@@ -238,8 +249,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       expected_version = Bedrock.DataPlane.Version.from_integer(100)
 
       expected = [
-        {{expected_version, [{<<"read_key">>, <<"read_key\0">>}]},
-         [{<<"write_key1">>, <<"write_key1\0">>}]},
+        {{expected_version, [{<<"read_key">>, <<"read_key\0">>}]}, [{<<"write_key1">>, <<"write_key1\0">>}]},
         {nil, [{<<"write_key2">>, <<"write_key2\0">>}]}
       ]
 
@@ -258,7 +268,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         read_conflicts: {nil, []}
       }
 
-      binary_transaction = BedrockTransaction.encode(transaction_map)
+      binary_transaction = Transaction.encode(transaction_map)
 
       transactions = [
         {fn _ -> :ok end, binary_transaction}
@@ -274,11 +284,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       transaction_map = %{
         mutations: [],
         write_conflicts: [],
-        read_conflicts:
-          {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
+        read_conflicts: {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
       }
 
-      binary_transaction = BedrockTransaction.encode(transaction_map)
+      binary_transaction = Transaction.encode(transaction_map)
 
       transactions = [
         {fn _ -> :ok end, binary_transaction}
@@ -306,7 +315,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         read_conflicts: {nil, []}
       }
 
-      binary_transaction = BedrockTransaction.encode(transaction_map)
+      binary_transaction = Transaction.encode(transaction_map)
 
       transactions = [
         {fn _ -> :ok end, binary_transaction}
@@ -340,51 +349,33 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       assert {:ok, 1} = Finalization.key_to_tag(<<"y">>, storage_teams)
     end
 
-    test "group_writes_by_tag handles unknown keys by returning error" do
+    test "key_or_range_to_tags handles unknown keys by returning empty list" do
       storage_teams = [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]}
       ]
 
       # This key doesn't match any range
-      writes = %{<<"z_unknown">> => <<"value">>}
-
-      # Should return error with storage team coverage error
-      assert Finalization.group_writes_by_tag(writes, storage_teams) ==
-               {:error, {:storage_team_coverage_error, "z_unknown"}}
+      assert {:ok, []} = Finalization.key_or_range_to_tags(<<"z_unknown">>, storage_teams)
     end
 
-    test "group_writes_by_tag distributes writes to multiple tags for overlapping teams" do
+    test "key_or_range_to_tags distributes keys to multiple tags for overlapping teams" do
       # Create overlapping storage teams
       storage_teams = [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
         %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
       ]
 
-      # Keys "hello" and "india" should match both teams
-      writes = %{
-        <<"hello">> => <<"world">>,
-        <<"india">> => <<"country">>,
-        # Should only match tag 0
-        <<"apple">> => <<"fruit">>
-      }
+      # Key "hello" should match both teams
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
+      assert Enum.sort(tags) == [0, 1]
 
-      result = Finalization.group_writes_by_tag(writes, storage_teams)
+      # Key "india" should match both teams
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"india">>, storage_teams)
+      assert Enum.sort(tags) == [0, 1]
 
-      expected =
-        {:ok,
-         %{
-           0 => %{
-             <<"hello">> => <<"world">>,
-             <<"india">> => <<"country">>,
-             <<"apple">> => <<"fruit">>
-           },
-           1 => %{
-             <<"hello">> => <<"world">>,
-             <<"india">> => <<"country">>
-           }
-         }}
-
-      assert result == expected
+      # Key "apple" should only match tag 0
+      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"apple">>, storage_teams)
+      assert tags == [0]
     end
   end
 end

@@ -1,6 +1,15 @@
 defmodule Bedrock.ControlPlane.Director.ChangingParameters do
   @moduledoc false
 
+  import Bedrock.ControlPlane.Config.Changes,
+    only: [put_parameters: 2]
+
+  import Bedrock.ControlPlane.Config.Parameters,
+    only: [put_desired_replication_factor: 2]
+
+  import Bedrock.ControlPlane.Director.State.Changes,
+    only: [update_config: 2]
+
   alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Director.State
 
@@ -20,15 +29,6 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
   @type parameter_changes :: [parameter_change()]
   @type cluster_state :: :uninitialized | :initializing | :running | :stopped
   @type invalid_parameters :: [{parameter_name(), parameter_value()}]
-
-  import Bedrock.ControlPlane.Director.State.Changes,
-    only: [update_config: 2]
-
-  import Bedrock.ControlPlane.Config.Changes,
-    only: [put_parameters: 2]
-
-  import Bedrock.ControlPlane.Config.Parameters,
-    only: [put_desired_replication_factor: 2]
 
   @spec settable_parameters_for_state(cluster_state()) :: [parameter_name()]
   def settable_parameters_for_state(:uninitialized),
@@ -67,10 +67,8 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
     with :ok <- validate_settable_parameters_for_state(list, t.config.state),
          {:ok, updated_parameters} <- try_to_set_parameters(t.config.parameters, list) do
       t =
-        t
-        |> update_config(fn config ->
-          config
-          |> put_parameters(updated_parameters)
+        update_config(t, fn config ->
+          put_parameters(config, updated_parameters)
         end)
 
       {:ok, t}
@@ -104,7 +102,8 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
   @spec try_to_set_parameters(Parameters.t(), parameter_changes()) ::
           {:ok, Parameters.t()} | {:error, :invalid_value}
   def try_to_set_parameters(parameters, list) do
-    Enum.reduce(list, parameters, fn
+    list
+    |> Enum.reduce(parameters, fn
       {parameter_name, value}, parameters ->
         parameters
         |> try_to_set_parameter(parameter_name, value)
@@ -121,8 +120,7 @@ defmodule Bedrock.ControlPlane.Director.ChangingParameters do
 
   @spec try_to_set_parameter(Parameters.t(), parameter_name(), parameter_value()) ::
           {:ok, Parameters.t()} | {:error, :invalid_value}
-  def try_to_set_parameter(parameters, :replication_factor, n),
-    do: {:ok, put_desired_replication_factor(parameters, n)}
+  def try_to_set_parameter(parameters, :replication_factor, n), do: {:ok, put_desired_replication_factor(parameters, n)}
 
   def try_to_set_parameter(_, _, _), do: {:error, :invalid_value}
 end

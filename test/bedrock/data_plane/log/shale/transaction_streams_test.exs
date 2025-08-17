@@ -1,9 +1,9 @@
 defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   describe "from_segments/2 with unloaded transactions" do
@@ -32,12 +32,12 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
     test "processes segments with loaded transactions normally" do
       # Create a segment with pre-loaded transactions (reversed order as stored)
       transaction_1 =
-        BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+        TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
           "key1" => "value1"
         })
 
       transaction_2 =
-        BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
+        TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
           "key2" => "value2"
         })
 
@@ -57,7 +57,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       assert length(transactions) == 1
       # The stream returns the remaining transactions after the target version
       # Since target_version=1 matches the first transaction, we get the rest
-      assert BedrockTransactionTestSupport.extract_log_version(hd(transactions)) ==
+      assert TransactionTestSupport.extract_log_version(hd(transactions)) ==
                Version.from_integer(2)
     end
   end

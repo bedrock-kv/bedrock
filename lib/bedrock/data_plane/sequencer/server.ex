@@ -8,12 +8,19 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   proper causality relationships for distributed MVCC conflict detection.
   """
 
-  alias Bedrock.DataPlane.Sequencer.State
-  alias Bedrock.DataPlane.Version
-
   use GenServer
 
+  import Bedrock.DataPlane.Sequencer.Telemetry,
+    only: [
+      emit_next_read_version: 1,
+      emit_next_commit_version: 3,
+      emit_successful_commit: 2
+    ]
+
   import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.DataPlane.Sequencer.State
+  alias Bedrock.DataPlane.Version
 
   @doc false
   @spec child_spec(keyword()) :: Supervisor.child_spec()
@@ -44,26 +51,28 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     epoch_start_monotonic_us = System.monotonic_time(:microsecond)
     epoch_baseline_version_int = Version.to_integer(known_committed_version)
 
-    %State{
-      director: director,
-      epoch: epoch,
-      next_commit_version_int: epoch_baseline_version_int + 1,
-      last_commit_version_int: epoch_baseline_version_int,
-      known_committed_version_int: epoch_baseline_version_int,
-      epoch_baseline_version_int: epoch_baseline_version_int,
-      epoch_start_monotonic_us: epoch_start_monotonic_us
-    }
-    |> then(&{:ok, &1})
+    then(
+      %State{
+        director: director,
+        epoch: epoch,
+        next_commit_version_int: epoch_baseline_version_int + 1,
+        last_commit_version_int: epoch_baseline_version_int,
+        known_committed_version_int: epoch_baseline_version_int,
+        epoch_baseline_version_int: epoch_baseline_version_int,
+        epoch_start_monotonic_us: epoch_start_monotonic_us
+      },
+      &{:ok, &1}
+    )
   end
 
   @impl true
   @spec handle_call(:next_read_version | :next_commit_version, GenServer.from(), State.t()) ::
-          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
-           State.t()}
+          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()}, State.t()}
   def handle_call(:next_read_version, _from, t) do
     # Convert to Version.t() only at return
     read_version = Version.from_integer(t.known_committed_version_int)
-    t |> reply({:ok, read_version})
+    emit_next_read_version(read_version)
+    reply(t, {:ok, read_version})
   end
 
   @impl true
@@ -90,7 +99,8 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     last_commit_version = Version.from_integer(t.last_commit_version_int)
     commit_version = Version.from_integer(commit_version_int)
 
-    updated_state |> reply({:ok, last_commit_version, commit_version})
+    emit_next_commit_version(last_commit_version, commit_version, elapsed_us)
+    reply(updated_state, {:ok, last_commit_version, commit_version})
   end
 
   @impl true
@@ -101,7 +111,9 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     commit_version_int = Version.to_integer(commit_version)
     updated_known_committed_int = max(t.known_committed_version_int, commit_version_int)
 
-    %{t | known_committed_version_int: updated_known_committed_int}
-    |> noreply([])
+    known_committed_version = Version.from_integer(updated_known_committed_int)
+    emit_successful_commit(commit_version, known_committed_version)
+
+    noreply(%{t | known_committed_version_int: updated_known_committed_int}, [])
   end
 end

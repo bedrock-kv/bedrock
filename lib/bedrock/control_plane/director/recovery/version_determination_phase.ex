@@ -24,17 +24,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Storage
 
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
-
   @impl true
   def execute(recovery_attempt, context) do
-    determine_durable_version(
-      context.old_transaction_system_layout.storage_teams,
+    context.old_transaction_system_layout.storage_teams
+    |> determine_durable_version(
       recovery_attempt.storage_recovery_info_by_id,
-      context.cluster_config.parameters.desired_replication_factor |> determine_quorum()
+      determine_quorum(context.cluster_config.parameters.desired_replication_factor)
     )
     |> case do
       {:error, {:insufficient_replication, _failed_tags} = reason} ->
@@ -56,15 +56,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
           info_by_id :: %{Storage.id() => Storage.recovery_info()},
           quorum :: non_neg_integer()
         ) ::
-          {:ok, Bedrock.version(), healthy_teams :: [Bedrock.range_tag()],
-           degraded_teams :: [Bedrock.range_tag()]}
+          {:ok, Bedrock.version(), healthy_teams :: [Bedrock.range_tag()], degraded_teams :: [Bedrock.range_tag()]}
           | {:error, {:insufficient_replication, failed_tags :: [Bedrock.range_tag()]}}
   def determine_durable_version(teams, info_by_id, quorum) do
-    Enum.zip(
-      teams |> Enum.map(& &1.tag),
-      teams
-      |> Enum.map(&determine_durable_version_and_status_for_storage_team(&1, info_by_id, quorum))
-    )
+    teams
+    |> Enum.map(& &1.tag)
+    |> Enum.zip(Enum.map(teams, &determine_durable_version_and_status_for_storage_team(&1, info_by_id, quorum)))
     |> Enum.reduce({nil, [], [], []}, fn
       {tag, {:ok, version, :healthy}}, {min_version, healthy, degraded, failed} ->
         {smallest_version(version, min_version), [tag | healthy], degraded, failed}
@@ -123,9 +120,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
 
   @spec durability_status_for_storage_team(non_neg_integer(), non_neg_integer()) ::
           :healthy | :degraded
-  defp durability_status_for_storage_team(durable_versions, quorum)
-       when durable_versions == quorum,
-       do: :healthy
+  defp durability_status_for_storage_team(durable_versions, quorum) when durable_versions == quorum, do: :healthy
 
   defp durability_status_for_storage_team(_, _), do: :degraded
 end

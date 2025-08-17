@@ -7,7 +7,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   produce the final mutation list and conflict ranges for resolution.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
   @type key :: binary()
   @type value :: binary()
@@ -152,7 +152,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
       end
 
     %{
-      mutations: t.mutations |> Enum.reverse(),
+      mutations: Enum.reverse(t.mutations),
       write_conflicts: write_conflicts,
       read_conflicts: read_conflicts_tuple
     }
@@ -164,8 +164,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   This is useful for commit proxy operations and other cases where
   efficient binary format is preferred.
   """
-  def commit_binary(t, read_version \\ nil),
-    do: t |> commit(read_version) |> BedrockTransaction.encode()
+  def commit_binary(t, read_version \\ nil), do: t |> commit(read_version) |> Transaction.encode()
 
   defp remove_ops_in_range(t, s, e) do
     %{
@@ -193,8 +192,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
     %{
       t
       | reads:
-          t.reads
-          |> Map.new(fn
+          Map.new(t.reads, fn
             {k, _} when k >= s and k < e -> {k, :clear}
             kv -> kv
           end)
@@ -204,7 +202,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   defp add_write_range(t, s, e) do
     %{
       t
-      | range_writes: t.range_writes |> add_or_merge(s, e)
+      | range_writes: add_or_merge(t.range_writes, s, e)
     }
   end
 
@@ -248,30 +246,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   defp next_key(k), do: k <> <<0>>
 
   # Helper function to reduce nesting in get_range
-  defp fetch_missing_data_if_needed(
-         tx_visible,
-         limit,
-         t,
-         cleared_ranges,
-         read_range_fn,
-         state,
-         s,
-         e
-       )
+  defp fetch_missing_data_if_needed(tx_visible, limit, t, cleared_ranges, read_range_fn, state, s, e)
        when map_size(tx_visible) < limit do
     fetch_and_filter_range_data(t, cleared_ranges, read_range_fn, state, s, e, limit)
   end
 
-  defp fetch_missing_data_if_needed(
-         _tx_visible,
-         _limit,
-         _t,
-         _cleared_ranges,
-         _read_range_fn,
-         state,
-         _s,
-         _e
-       ) do
+  defp fetch_missing_data_if_needed(_tx_visible, _limit, _t, _cleared_ranges, _read_range_fn, state, _s, _e) do
     {%{}, state}
   end
 

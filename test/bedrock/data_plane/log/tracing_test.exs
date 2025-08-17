@@ -3,12 +3,13 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
 
   import ExUnit.CaptureLog
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Log.Tracing
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   # Mock cluster module for testing
   defmodule MockCluster do
+    @moduledoc false
     def name, do: "test_cluster"
   end
 
@@ -118,7 +119,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       version = Version.from_integer(200)
 
       encoded_transaction =
-        BedrockTransactionTestSupport.new_log_transaction(
+        TransactionTestSupport.new_log_transaction(
           version,
           %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}
         )

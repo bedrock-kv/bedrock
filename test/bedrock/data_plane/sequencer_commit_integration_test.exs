@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.Sequencer.Server
   alias Bedrock.DataPlane.Version
 
   describe "sequencer and commit proxy integration" do
@@ -11,7 +12,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
 
       {:ok, sequencer_pid} =
         GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
+          Server,
           {self(), 1, initial_version}
         )
 
@@ -66,7 +67,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
 
       {:ok, sequencer_pid} =
         GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
+          Server,
           {self(), 1, initial_version}
         )
 
@@ -106,7 +107,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
 
       {:ok, sequencer_pid} =
         GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
+          Server,
           {self(), 1, initial_version}
         )
 

@@ -1,41 +1,33 @@
 defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   @moduledoc false
-  alias Bedrock.DataPlane.BedrockTransaction
+  import Bedrock.DataPlane.Log.Telemetry
+
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Shale.Writer
-
-  import Bedrock.DataPlane.Log.Telemetry
+  alias Bedrock.DataPlane.Transaction
 
   @spec push(
           t :: State.t(),
           expected_version :: Bedrock.version(),
-          encoded_transaction :: BedrockTransaction.encoded(),
+          encoded_transaction :: Transaction.encoded(),
           ack_fn :: (:ok | {:error, term()} -> :ok)
         ) :: {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
-  def push(_, _, encoded_transaction, _ack_fn)
-      when byte_size(encoded_transaction) > 10_000_000 do
+  def push(_, _, encoded_transaction, _ack_fn) when byte_size(encoded_transaction) > 10_000_000 do
     {:error, :tx_too_large}
   end
 
-  def push(t, expected_version, encoded_transaction, ack_fn)
-      when expected_version == t.last_version do
+  def push(t, expected_version, encoded_transaction, ack_fn) when expected_version == t.last_version do
     case write_encoded_transaction(t, encoded_transaction) do
       {:ok, t} ->
         trace_push_transaction(encoded_transaction)
         :ok = ack_fn.(:ok)
-        t |> do_pending_pushes()
+        do_pending_pushes(t)
     end
   end
 
-  def push(t, expected_version, encoded_transaction, ack_fn)
-      when expected_version > t.last_version do
-    {:wait,
-     t
-     |> Map.update!(
-       :pending_pushes,
-       &Map.put(&1, expected_version, {encoded_transaction, ack_fn})
-     )}
+  def push(t, expected_version, encoded_transaction, ack_fn) when expected_version > t.last_version do
+    {:wait, Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, ack_fn}))}
   end
 
   def push(t, expected_version, _, _) do
@@ -53,18 +45,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {{encoded_transaction, ack_fn}, pending_pushes} ->
         :ok = ack_fn.(:ok)
 
-        %{t | pending_pushes: pending_pushes}
-        |> push(t.last_version, encoded_transaction, ack_fn)
+        push(%{t | pending_pushes: pending_pushes}, t.last_version, encoded_transaction, ack_fn)
     end
   end
 
-  @spec write_encoded_transaction(State.t(), BedrockTransaction.encoded()) ::
+  @spec write_encoded_transaction(State.t(), Transaction.encoded()) ::
           {:ok, State.t()} | {:error, term()}
-  def write_encoded_transaction(t, encoded_transaction)
-      when is_nil(t.writer) do
-    # Extract version from BedrockTransaction commit_version section
+  def write_encoded_transaction(t, encoded_transaction) when is_nil(t.writer) do
+    # Extract version from Transaction commit_version section
     version =
-      case BedrockTransaction.extract_commit_version(encoded_transaction) do
+      case Transaction.extract_commit_version(encoded_transaction) do
         {:ok, version} ->
           version
 
@@ -79,19 +69,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
              version
            ),
          {:ok, new_writer} <- Writer.open(new_segment.path) do
-      %State{
-        t
-        | writer: new_writer,
-          active_segment: new_segment,
-          segments: [t.active_segment | t.segments]
-      }
-      |> write_encoded_transaction(encoded_transaction)
+      write_encoded_transaction(
+        %{t | writer: new_writer, active_segment: new_segment, segments: [t.active_segment | t.segments]},
+        encoded_transaction
+      )
     end
   end
 
   def write_encoded_transaction(t, encoded_transaction) do
-    # Extract version from BedrockTransaction commit_version section
-    case BedrockTransaction.extract_commit_version(encoded_transaction) do
+    # Extract version from Transaction commit_version section
+    case Transaction.extract_commit_version(encoded_transaction) do
       {:ok, version} ->
         case Writer.append(t.writer, encoded_transaction, version) do
           {:ok, writer} ->
@@ -99,8 +86,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
           {:error, :segment_full} ->
             with :ok <- Writer.close(t.writer) do
-              %{t | writer: nil}
-              |> write_encoded_transaction(encoded_transaction)
+              write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
             end
         end
 

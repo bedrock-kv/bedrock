@@ -57,14 +57,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   TransactionBuilder process.
   """
 
-  alias Bedrock.Cluster.Gateway
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
-  alias Bedrock.Internal.Time
+  use GenServer
 
   import __MODULE__.Committing, only: [do_commit: 1]
   import __MODULE__.Fetching, only: [do_fetch: 2]
   import __MODULE__.Putting, only: [do_put: 3]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
+  import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.Internal.Time
 
   @doc false
   @spec start_link(
@@ -84,75 +87,65 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     GenServer.start_link(__MODULE__, {gateway, transaction_system_layout, key_codec, value_codec})
   end
 
-  use GenServer
-  import Bedrock.Internal.GenServer.Replies
+  @impl true
+  def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def init(arg),
-    do: {:ok, arg, {:continue, :initialization}}
-
-  @impl true
-  def handle_continue(
-        :initialization,
-        {gateway, transaction_system_layout, key_codec, value_codec}
-      ) do
-    %State{
+  def handle_continue(:initialization, {gateway, transaction_system_layout, key_codec, value_codec}) do
+    noreply(%State{
       state: :valid,
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       key_codec: key_codec,
       value_codec: value_codec
-    }
-    |> noreply()
+    })
   end
 
-  def handle_continue(:stop, t), do: t |> stop(:normal)
+  def handle_continue(:stop, t), do: stop(t, :normal)
 
-  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version),
-    do: t |> noreply()
+  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version), do: noreply(t)
 
   def handle_continue(:update_version_lease_if_needed, t) do
     now = Time.monotonic_now_in_ms()
     ms_remaining = t.read_version_lease_expiration - now
 
     cond do
-      ms_remaining <= 0 -> %{t | state: :expired} |> noreply()
+      ms_remaining <= 0 -> noreply(%{t | state: :expired})
       ms_remaining < t.lease_renewal_threshold -> t |> renew_read_version_lease() |> noreply()
-      true -> t |> noreply()
+      true -> noreply(t)
     end
   end
 
   @impl true
   def handle_call(:nested_transaction, _from, t) do
-    %{t | stack: [t.tx | t.stack]}
-    |> reply(:ok)
+    reply(%{t | stack: [t.tx | t.stack]}, :ok)
   end
 
   def handle_call(:commit, _from, t) do
     case do_commit(t) do
-      {:ok, t} -> t |> reply({:ok, t.commit_version}, continue: :stop)
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> reply(t, {:ok, t.commit_version}, continue: :stop)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
   def handle_call({:fetch, key}, _from, t) do
     case do_fetch(t, key) do
-      {t, result} -> t |> reply(result, continue: :update_version_lease_if_needed)
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
 
   @impl true
   def handle_cast({:put, key, value}, t) do
     case do_put(t, key, value) do
-      {:ok, t} -> t |> noreply()
+      {:ok, t} -> noreply(t)
       :key_error -> raise KeyError, "key must be a binary"
     end
   end
 
   def handle_cast(:rollback, t) do
     case do_rollback(t) do
-      :stop -> t |> noreply(continue: :stop)
-      t -> t |> noreply()
+      :stop -> noreply(t, continue: :stop)
+      t -> noreply(t)
     end
   end
 

@@ -1,8 +1,9 @@
 defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.Transaction
   alias FinalizationTestSupport, as: Support
 
   describe "finalize_batch/2" do
@@ -19,7 +20,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       batch = Support.create_test_batch(100, 99)
 
       # Test error case when resolve_transactions fails
-      result = Finalization.finalize_batch(batch, transaction_system_layout)
+      result = Finalization.finalize_batch(batch, transaction_system_layout, epoch: 1)
 
       assert result == {:error, {:resolver_unavailable, :unavailable}}
     end
@@ -45,10 +46,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         read_version: nil
       }
 
-      tx1_binary = BedrockTransaction.encode(tx1_map)
-      tx2_binary = BedrockTransaction.encode(tx2_map)
+      tx1_binary = Transaction.encode(tx1_map)
+      tx2_binary = Transaction.encode(tx2_map)
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 2,
@@ -61,7 +62,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       }
 
       # Mock resolver that aborts first transaction
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         {:ok, [1]}
       end
 
@@ -74,6 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -86,7 +88,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     end
 
     test "handles empty batch", %{transaction_system_layout: transaction_system_layout} do
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 0,
@@ -94,7 +96,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       }
 
       # Mock resolver that succeeds with no aborts
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         {:ok, []}
       end
 
@@ -107,6 +109,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -134,10 +137,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         read_version: nil
       }
 
-      binary_transaction1 = BedrockTransaction.encode(transaction_map1)
-      binary_transaction2 = BedrockTransaction.encode(transaction_map2)
+      binary_transaction1 = Transaction.encode(transaction_map1)
+      binary_transaction2 = Transaction.encode(transaction_map2)
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 2,
@@ -148,7 +151,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       }
 
       # Mock resolver that aborts all transactions
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         # Abort both transactions
         {:ok, [0, 1]}
       end
@@ -162,6 +165,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -179,7 +183,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       batch = Support.create_test_batch(100, 99)
 
       # Mock resolver that succeeds
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         # No aborts
         {:ok, []}
       end
@@ -194,6 +198,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -210,7 +215,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       batch = Support.create_test_batch(100, 99)
 
       # Mock resolver that succeeds
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         {:ok, []}
       end
 
@@ -223,6 +228,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -251,11 +257,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       test_pid = self()
 
       # Mock resolver that captures the exact last_version passed to it
-      mock_resolver_fn = fn _resolvers,
-                            last_version,
-                            received_commit_version,
-                            _summaries,
-                            _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, last_version, received_commit_version, _summaries, _opts ->
         send(test_pid, {:resolver_called, last_version, received_commit_version})
         # No aborts
         {:ok, []}
@@ -271,6 +273,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           batch_log_push_fn: mock_log_push_fn
         )
@@ -306,9 +309,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         read_version: nil
       }
 
-      binary_transaction = BedrockTransaction.encode(transaction_map)
+      binary_transaction = Transaction.encode(transaction_map)
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 1,
@@ -326,7 +329,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock resolver that fails
-      mock_resolver_fn = fn _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
         {:error, :timeout}
       end
 
@@ -334,6 +337,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
+          epoch: 1,
           resolver_fn: mock_resolver_fn,
           abort_reply_fn: custom_abort_fn
         )

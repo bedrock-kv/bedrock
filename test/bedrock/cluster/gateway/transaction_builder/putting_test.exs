@@ -6,12 +6,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
   defmodule TestKeyCodec do
+    @moduledoc false
     def encode_key(key) when is_binary(key), do: {:ok, key}
     def encode_key(:invalid_key), do: :key_error
     def encode_key(_), do: :key_error
   end
 
   defmodule TestValueCodec do
+    @moduledoc false
     def encode_value(value) when is_binary(value), do: {:ok, value}
     def encode_value(value) when is_integer(value), do: {:ok, "int:#{value}"}
     def encode_value(:invalid_value), do: :value_error
@@ -19,8 +21,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
   end
 
   defp mutations_to_writes(mutations) do
-    mutations
-    |> Enum.reduce(%{}, fn
+    Enum.reduce(mutations, %{}, fn
       {:set, key, value}, acc -> Map.put(acc, key, value)
       _, acc -> acc
     end)
@@ -42,7 +43,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, "test_key", "test_value")
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "test_key" => "test_value"
              }
     end
@@ -54,7 +55,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
       {:ok, state2} = Putting.do_put(state1, "key2", "value2")
       {:ok, state3} = Putting.do_put(state2, "key3", "value3")
 
-      assert Tx.commit(state3.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(state3.tx).mutations) == %{
                "key1" => "value1",
                "key2" => "value2",
                "key3" => "value3"
@@ -66,7 +67,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, "existing_key", "new_value")
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "existing_key" => "new_value"
              }
     end
@@ -76,7 +77,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, "number_key", 42)
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "number_key" => "int:42"
              }
     end
@@ -89,7 +90,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
       {:ok, state3} = Putting.do_put(state2, "atom", :test)
       {:ok, state4} = Putting.do_put(state3, "map", %{a: 1})
 
-      assert Tx.commit(state4.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(state4.tx).mutations) == %{
                "string" => "text",
                "number" => "int:123",
                "atom" => "encoded",
@@ -110,7 +111,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, "", "")
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{"" => ""}
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"" => ""}
     end
 
     test "handles unicode keys and values" do
@@ -118,7 +119,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, "键名", "值")
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{"键名" => "值"}
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"键名" => "值"}
     end
 
     test "preserves other state fields" do
@@ -139,7 +140,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
       {:ok, new_state} = Putting.do_put(original_state, "new_key", "new_value")
 
       # Verify writes were updated - should have both existing and new values
-      result_writes = Tx.commit(new_state.tx).mutations |> mutations_to_writes
+      result_writes = mutations_to_writes(Tx.commit(new_state.tx).mutations)
       assert result_writes == %{"existing" => "value", "new_key" => "new_value"}
 
       # Verify other fields preserved
@@ -157,7 +158,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, large_key, large_value)
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                large_key => large_value
              }
     end
@@ -169,7 +170,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
       {:ok, new_state} = Putting.do_put(state, binary_key, binary_value)
 
-      assert Tx.commit(new_state.tx).mutations |> mutations_to_writes == %{
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                binary_key => binary_value
              }
     end
@@ -177,10 +178,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
 
   describe "error propagation" do
     defmodule FailingKeyCodec do
+      @moduledoc false
       def encode_key(_), do: :key_error
     end
 
     defmodule FailingValueCodec do
+      @moduledoc false
       def encode_value(_), do: :value_error
     end
 

@@ -1,8 +1,10 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+  alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
   alias Bedrock.DataPlane.Log
 
   describe "execute/1" do
@@ -19,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
+      assert next_phase == SequencerStartupPhase
     end
 
     test "handles actual log replay scenarios with stall expectation" do
@@ -35,7 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance to next state
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
+      assert next_phase == SequencerStartupPhase
     end
   end
 
@@ -70,7 +72,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}, {:log, 20}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [
@@ -86,7 +89,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}, {:log, 20}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [
@@ -104,7 +108,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}, {:log, 20}, {:log, 30}, {:log, 40}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [
@@ -120,7 +125,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = []
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [
@@ -137,7 +143,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}, {:log, 20}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       assert result == []
@@ -148,7 +155,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [{{:log, 1}, {:log, 10}}]
@@ -161,7 +169,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       old_log_ids = [{:log, 10}]
 
       result =
-        LogReplayPhase.pair_with_old_log_ids(new_log_ids, old_log_ids)
+        new_log_ids
+        |> LogReplayPhase.pair_with_old_log_ids(old_log_ids)
         |> Enum.to_list()
 
       expected = [
@@ -201,7 +210,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should advance successfully
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
+      assert next_phase == SequencerStartupPhase
     end
   end
 
@@ -267,7 +276,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
 
       # With empty logs, should succeed
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
+      assert next_phase == SequencerStartupPhase
     end
 
     test "execute preserves other recovery_attempt fields" do

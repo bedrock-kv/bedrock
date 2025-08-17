@@ -33,14 +33,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
-
-  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -76,10 +76,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
       logs
       |> Enum.group_by(&Enum.sort(elem(&1, 1)), &elem(&1, 0))
       |> Enum.reduce({%{}, 1}, fn {tags, _ids}, {acc_map, vacancy_counter} ->
-        new_vacancies =
-          vacancy_counter..(vacancy_counter + desired_logs - 1)
-          |> Enum.map(&{{:vacancy, &1}, tags})
-          |> Map.new()
+        new_vacancies = Map.new(vacancy_counter..(vacancy_counter + desired_logs - 1), &{{:vacancy, &1}, tags})
 
         {Map.merge(acc_map, new_vacancies), vacancy_counter + desired_logs}
       end)
@@ -131,7 +128,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
 
         if n_vacancies > 0 do
           new_vacancy_count = vacancy_count + n_vacancies - 1
-          new_vacancies = vacancy_count..new_vacancy_count |> Enum.map(&{:vacancy, &1})
+          new_vacancies = Enum.map(vacancy_count..new_vacancy_count, &{:vacancy, &1})
           {[{tags, new_vacancies ++ storage_ids} | expanded_sets], new_vacancy_count}
         else
           {[{tags, storage_ids} | expanded_sets], vacancy_count}
@@ -139,7 +136,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
       end
     )
     |> then(fn {expanded_sets, vacancy_count} ->
-      {expanded_sets |> Map.new(), vacancy_count}
+      {Map.new(expanded_sets), vacancy_count}
     end)
   end
 
@@ -150,7 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
       expanded_rosters_by_tag_set
       |> Enum.flat_map(fn {tags, storage_ids} ->
         Enum.map(tags, fn tag ->
-          {tag, storage_ids |> Enum.sort()}
+          {tag, Enum.sort(storage_ids)}
         end)
       end)
       |> Map.new()

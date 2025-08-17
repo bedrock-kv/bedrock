@@ -1,6 +1,11 @@
 defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
-  alias Bedrock.DataPlane.BedrockTransaction
+  @moduledoc """
+  A module for handling transaction streams with operations like limiting,
+  filtering, and halting based on conditions.
+  """
+
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Transaction
 
   @wal_magic_number <<"BED0">>
   @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
@@ -9,8 +14,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
           {:ok, Enumerable.t()} | {:error, :not_found}
   def from_segments([], _target_version), do: {:error, :not_found}
 
-  def from_segments([segment | segments], target_version)
-      when segment.min_version > target_version do
+  def from_segments([segment | segments], target_version) when segment.min_version > target_version do
     case from_segments(segments, target_version) do
       {:ok, stream} ->
         {:ok,
@@ -33,7 +37,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     |> Segment.transactions()
     |> Enum.reverse()
     |> Enum.drop_while(fn transaction ->
-      case BedrockTransaction.extract_commit_version(transaction) do
+      case Transaction.extract_commit_version(transaction) do
         {:ok, version} -> version < target_version
         # Skip invalid transactions
         {:error, _} -> true
@@ -41,7 +45,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     end)
     |> case do
       [transaction | rest] ->
-        case BedrockTransaction.extract_commit_version(transaction) do
+        case Transaction.extract_commit_version(transaction) do
           {:ok, version} when version == target_version ->
             {:ok, from_list_of_transactions(fn -> rest end)}
 
@@ -54,7 +58,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     end
   end
 
-  @spec from_list_of_transactions((-> [BedrockTransaction.encoded()] | nil)) :: Enumerable.t()
+  @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t()
   def from_list_of_transactions(transactions_fn) do
     Stream.resource(
       transactions_fn,
@@ -79,7 +83,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   append operations can be performed safely.
   """
   @spec from_file!(path_to_file :: String.t()) ::
-          Enumerable.t({BedrockTransaction.encoded() | :eof | :corrupted, non_neg_integer()})
+          Enumerable.t({Transaction.encoded() | :eof | :corrupted, non_neg_integer()})
   def from_file!(path_to_file) do
     Stream.resource(
       fn ->
@@ -91,15 +95,14 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
           {:halt, error}
 
         {offset,
-         <<version_binary::binary-size(8), size_in_bytes::unsigned-big-32,
-           payload::binary-size(size_in_bytes), crc32::unsigned-big-32,
-           remaining_bytes::binary>>} ->
+         <<version_binary::binary-size(8), size_in_bytes::unsigned-big-32, payload::binary-size(size_in_bytes),
+           crc32::unsigned-big-32, remaining_bytes::binary>>} ->
           cond do
             @wal_eof_version == version_binary ->
               {:halt, nil}
 
             :erlang.crc32(payload) == crc32 ->
-              # Return just the payload (the actual BedrockTransaction), not the wrapper
+              # Return just the payload (the actual Transaction), not the wrapper
               {[payload], {offset + 16 + size_in_bytes, remaining_bytes}}
 
             true ->
@@ -114,18 +117,13 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     )
   end
 
-  @moduledoc """
-  A module for handling transaction streams with operations like limiting,
-  filtering, and halting based on conditions.
-  """
-
   @spec until_version(Enumerable.t(), Bedrock.version()) :: Enumerable.t()
   def until_version(stream, nil), do: stream
 
   def until_version(stream, last_version) do
     Stream.transform(stream, last_version, fn
       encoded_transaction, last_version ->
-        case BedrockTransaction.extract_commit_version(encoded_transaction) do
+        case Transaction.extract_commit_version(encoded_transaction) do
           {:ok, version} when version <= last_version ->
             {[encoded_transaction], last_version}
 
@@ -166,7 +164,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
 
   # Helper functions to reduce nesting
   defp filter_transaction_keys(transaction, start_key, end_key) do
-    case BedrockTransaction.stream_mutations(transaction) do
+    case Transaction.stream_mutations(transaction) do
       {:ok, mutations_stream} ->
         filtered_mutations = filter_mutations_by_key_range(mutations_stream, start_key, end_key)
         rebuild_transaction_with_mutations(transaction, filtered_mutations)
@@ -177,7 +175,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   end
 
   defp exclude_transaction_values(transaction) do
-    case BedrockTransaction.stream_mutations(transaction) do
+    case Transaction.stream_mutations(transaction) do
       {:ok, mutations_stream} ->
         filtered_mutations = exclude_mutation_values(mutations_stream)
         rebuild_transaction_with_mutations(transaction, filtered_mutations)
@@ -188,8 +186,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   end
 
   defp filter_mutations_by_key_range(mutations_stream, start_key, end_key) do
-    mutations_stream
-    |> Enum.filter(fn
+    Enum.filter(mutations_stream, fn
       {:set, key, _value} ->
         key >= start_key and key < end_key
 
@@ -203,8 +200,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   end
 
   defp exclude_mutation_values(mutations_stream) do
-    mutations_stream
-    |> Enum.map(fn
+    Enum.map(mutations_stream, fn
       {:set, key, _value} -> {:set, key, <<>>}
       {:clear, key} -> {:clear, key}
       {:clear_range, start_key, end_key} -> {:clear_range, start_key, end_key}
@@ -212,10 +208,10 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   end
 
   defp rebuild_transaction_with_mutations(transaction, filtered_mutations) do
-    {:ok, commit_version} = BedrockTransaction.extract_commit_version(transaction)
+    {:ok, commit_version} = Transaction.extract_commit_version(transaction)
     new_transaction = %{mutations: filtered_mutations}
-    encoded = BedrockTransaction.encode(new_transaction)
-    {:ok, with_version} = BedrockTransaction.add_commit_version(encoded, commit_version)
+    encoded = Transaction.encode(new_transaction)
+    {:ok, with_version} = Transaction.add_commit_version(encoded, commit_version)
     with_version
   end
 end

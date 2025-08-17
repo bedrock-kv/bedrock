@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
 
   describe "sequencer notification" do
@@ -18,7 +19,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
           end
         end)
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: 100,
         last_commit_version: 99,
         n_transactions: 0,
@@ -35,7 +36,8 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
 
       # Mock all the finalization functions to just return :ok
       opts = [
-        resolver_fn: fn _, _, _, _, _ -> {:ok, []} end,
+        epoch: 1,
+        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
         batch_log_push_fn: fn _, _, _, _, _ -> :ok end
       ]
 
@@ -55,7 +57,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       # even for invalid refs, so sequencer notification doesn't crash the commit proxy.
       # In a real system, the sequencer would be a valid reference.
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: 100,
         last_commit_version: 99,
         n_transactions: 0,
@@ -72,7 +74,8 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       }
 
       opts = [
-        resolver_fn: fn _, _, _, _, _ -> {:ok, []} end,
+        epoch: 1,
+        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
         batch_log_push_fn: fn _, _, _, _, _ -> :ok end
       ]
 

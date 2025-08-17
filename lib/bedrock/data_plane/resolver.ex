@@ -28,6 +28,7 @@ defmodule Bedrock.DataPlane.Resolver do
 
   @spec resolve_transactions(
           ref(),
+          epoch :: Bedrock.epoch(),
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
           [transaction_summary()],
@@ -35,10 +36,10 @@ defmodule Bedrock.DataPlane.Resolver do
         ) ::
           {:ok, aborted :: [transaction_index :: non_neg_integer()]}
           | {:error, :timeout | :unavailable | :unknown}
-  def resolve_transactions(ref, last_version, commit_version, transaction_summaries, opts \\ []) do
+  def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, opts \\ []) do
     call(
       ref,
-      {:resolve_transactions, {last_version, commit_version}, transaction_summaries},
+      {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries},
       opts[:timeout] || :infinity
     )
   end

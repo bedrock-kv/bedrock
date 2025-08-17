@@ -1,14 +1,17 @@
 defmodule Bedrock.DataPlane.Resolver.Interval.TreeTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
+
   import StreamData
 
   alias Bedrock.DataPlane.Resolver.Tree
 
   def key_or_range_generator do
-    string(:alphanumeric)
+    :alphanumeric
+    |> string()
     |> StreamData.bind(fn v1 ->
-      string(:alphanumeric)
+      :alphanumeric
+      |> string()
       |> StreamData.map(fn
         v2 when v1 > v2 -> {v2, v1}
         v2 when v1 == v2 -> v1

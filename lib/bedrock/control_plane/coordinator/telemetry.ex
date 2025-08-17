@@ -1,4 +1,5 @@
 defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
+  @moduledoc false
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Telemetry
 
@@ -37,8 +38,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
           logs_count: map_size(old_transaction_system_layout[:logs] || %{}),
           storage_teams_count: length(old_transaction_system_layout[:storage_teams] || [])
         }
-      else
-        nil
       end
 
     Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{

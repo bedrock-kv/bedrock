@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   A struct that represents a writer for a segment.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
   defstruct [:fd, :write_offset, :bytes_remaining]
 
@@ -40,7 +40,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   def close(nil), do: :ok
   def close(%__MODULE__{} = writer), do: :file.close(writer.fd)
 
-  @spec append(t(), BedrockTransaction.encoded(), Bedrock.version()) ::
+  @spec append(t(), Transaction.encoded(), Bedrock.version()) ::
           {:ok, t()} | {:error, :segment_full} | {:error, File.posix()}
   def append(%__MODULE__{} = writer, transaction, _commit_version)
       when writer.bytes_remaining < 16 + byte_size(transaction),
@@ -58,7 +58,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
       crc32::unsigned-big-32
     >>
 
-    :file.pwrite(writer.fd, writer.write_offset, [log_entry, @eof_marker])
+    writer.fd
+    |> :file.pwrite(writer.write_offset, [log_entry, @eof_marker])
     |> case do
       :ok ->
         size_of_entry = byte_size(log_entry)

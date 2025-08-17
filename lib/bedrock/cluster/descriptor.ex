@@ -41,7 +41,8 @@ defmodule Bedrock.Cluster.Descriptor do
   """
   @spec read_from_file!(path_to_file :: Path.t()) :: t()
   def read_from_file!(path_to_file) do
-    read_from_file(path_to_file)
+    path_to_file
+    |> read_from_file()
     |> case do
       {:ok, descriptor} -> descriptor
       {:error, reason} -> raise "Unable to read cluster descriptor: #{inspect(reason)}"
@@ -66,8 +67,7 @@ defmodule Bedrock.Cluster.Descriptor do
   end
 
   @spec encode_cluster_file_contents(t()) :: String.t()
-  def encode_cluster_file_contents(t),
-    do: "#{t.cluster_name}:#{Enum.join(t.coordinator_nodes, ",")}"
+  def encode_cluster_file_contents(t), do: "#{t.cluster_name}:#{Enum.join(t.coordinator_nodes, ",")}"
 
   @spec parse_cluster_file_contents(String.t()) ::
           {:ok, t()} | {:error, :invalid_cluster_descriptor}
@@ -83,10 +83,9 @@ defmodule Bedrock.Cluster.Descriptor do
         joined_coordinator_nodes |> String.replace("\n", "") |> String.split(",", trim: true)
       )
 
-  defp parse_cluster_name_and_rest(_),
-    do: {:error, :invalid_cluster_descriptor}
+  defp parse_cluster_name_and_rest(_), do: {:error, :invalid_cluster_descriptor}
 
   @spec parse_joined_cluster_nodes(String.t(), [String.t()]) :: {:ok, t()}
   defp parse_joined_cluster_nodes(cluster_name, joined_coordinator_nodes),
-    do: {:ok, new(cluster_name, joined_coordinator_nodes |> Enum.map(&String.to_atom/1))}
+    do: {:ok, new(cluster_name, Enum.map(joined_coordinator_nodes, &String.to_atom/1))}
 end

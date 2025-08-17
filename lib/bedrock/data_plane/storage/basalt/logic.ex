@@ -1,5 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   @moduledoc false
+  import Bedrock.DataPlane.Storage.Basalt.State,
+    only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
@@ -8,9 +11,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
-
-  import Bedrock.DataPlane.Storage.Basalt.State,
-    only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
@@ -27,24 +27,19 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
          foreman: foreman,
          database: database
        }}
-    else
-      {:error, error} -> {:error, error}
     end
   end
 
   @spec ensure_directory_exists(Path.t()) :: :ok | {:error, File.posix()}
-  defp ensure_directory_exists(path),
-    do: File.mkdir_p(path)
+  defp ensure_directory_exists(path), do: File.mkdir_p(path)
 
   @spec shutdown(State.t()) :: :ok
-  def shutdown(%State{} = t),
-    do: :ok = Database.close(t.database)
+  def shutdown(%State{} = t), do: :ok = Database.close(t.database)
 
   @spec lock_for_recovery(State.t(), Director.ref(), Bedrock.epoch()) ::
           {:ok, State.t()} | {:error, :newer_epoch_exists | String.t()}
   @spec lock_for_recovery(State.t(), term(), integer()) :: {:error, :epoch_rollback}
-  def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch,
-    do: {:error, :newer_epoch_exists}
+  def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch, do: {:error, :newer_epoch_exists}
 
   @spec lock_for_recovery(State.t(), term(), integer()) :: {:ok, State.t()}
   def lock_for_recovery(t, director, epoch) do
@@ -61,23 +56,24 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   @spec stop_pulling(State.t()) :: State.t()
   def stop_pulling(%{pull_task: puller} = t) do
     Pulling.stop(puller)
-    t |> reset_puller()
+    reset_puller(t)
   end
 
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   @spec unlock_after_recovery(State.t(), term(), map()) :: State.t()
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    with :ok <- Database.purge_transactions_newer_than(t.database, durable_version),
-         puller <-
-           Pulling.start_pulling(
-             durable_version,
-             logs,
-             services,
-             &Database.apply_transactions(t.database, &1),
-             fn -> Database.last_durable_version(t.database) end,
-             fn -> Database.ensure_durability_within_window(t.database) end
-           ) do
+    with :ok <- Database.purge_transactions_newer_than(t.database, durable_version) do
+      puller =
+        Pulling.start_pulling(
+          durable_version,
+          logs,
+          services,
+          &Database.apply_transactions(t.database, &1),
+          fn -> Database.last_durable_version(t.database) end,
+          fn -> Database.ensure_durability_within_window(t.database) end
+        )
+
       t
       |> update_mode(:running)
       |> put_puller(puller)
@@ -88,14 +84,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   @spec fetch(State.t(), Bedrock.key(), Version.t()) ::
           {:error, :key_out_of_range | :not_found | :version_too_old} | {:ok, binary()}
   @spec fetch(State.t(), Bedrock.key(), Bedrock.version()) :: Bedrock.value() | :not_found
-  def fetch(%State{} = t, key, version),
-    do: Database.fetch(t.database, key, version)
+  def fetch(%State{} = t, key, version), do: Database.fetch(t.database, key, version)
 
   @spec info(State.t(), Storage.fact_name() | [Storage.fact_name()]) ::
           {:ok, term() | %{Storage.fact_name() => term()}} | {:error, :unsupported_info}
   @spec info(State.t(), atom()) :: term()
-  def info(%State{} = t, fact_name) when is_atom(fact_name),
-    do: {:ok, gather_info(fact_name, t)}
+  def info(%State{} = t, fact_name) when is_atom(fact_name), do: {:ok, gather_info(fact_name, t)}
 
   @spec info(State.t(), [Storage.fact_name()]) :: {:ok, %{Storage.fact_name() => term()}}
   def info(%State{} = t, fact_names) when is_list(fact_names) do

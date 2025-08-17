@@ -6,11 +6,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   defmodule TestKeyCodec do
+    @moduledoc false
     def encode_key(key) when is_binary(key), do: {:ok, key}
     def encode_key(_), do: :key_error
   end
 
   defmodule TestValueCodec do
+    @moduledoc false
     def encode_value(value), do: {:ok, value}
     def decode_value(value), do: {:ok, value}
   end
@@ -19,8 +21,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
     %State{
       state: :valid,
       gateway: Keyword.get(opts, :gateway, :test_gateway),
-      transaction_system_layout:
-        Keyword.get(opts, :transaction_system_layout, create_test_layout()),
+      transaction_system_layout: Keyword.get(opts, :transaction_system_layout, create_test_layout()),
       key_codec: Keyword.get(opts, :key_codec, TestKeyCodec),
       value_codec: Keyword.get(opts, :value_codec, TestValueCodec),
       read_version: Keyword.get(opts, :read_version),
@@ -170,6 +171,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
     test "handles key encoding error" do
       defmodule FailingKeyCodec do
+        @moduledoc false
         def encode_key(_), do: :key_error
       end
 
@@ -182,6 +184,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
     test "handles value decoding error" do
       defmodule FailingValueCodec do
+        @moduledoc false
         def encode_value(value), do: {:ok, value}
         def decode_value(_), do: :decode_error
       end

@@ -3,7 +3,7 @@ defmodule FinalizationTestSupport do
   Shared test utilities and fixtures for finalization tests.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   # Mock cluster module for testing
@@ -97,15 +97,14 @@ defmodule FinalizationTestSupport do
         do: Version.from_integer(last_commit_version),
         else: last_commit_version
 
-    # Create binary transaction using BedrockTransaction encoding
+    # Create binary transaction using Transaction encoding
     default_transaction_map = %{
       mutations: [{:set, <<"key1">>, <<"value1">>}],
       write_conflicts: [{<<"key1">>, <<"key1\0">>}],
-      read_conflicts: [],
-      read_version: nil
+      read_conflicts: nil
     }
 
-    default_binary = BedrockTransaction.encode(default_transaction_map)
+    default_binary = Transaction.encode(default_transaction_map)
 
     default_transactions = [
       {fn result -> send(self(), {:reply, result}) end, default_binary}
@@ -147,8 +146,7 @@ defmodule FinalizationTestSupport do
   """
   def mock_async_stream_with_responses(responses) do
     fn logs, _fun, _opts ->
-      logs
-      |> Enum.map(fn {log_id, _service_descriptor} ->
+      Enum.map(logs, fn {log_id, _service_descriptor} ->
         process_log_response(log_id, responses)
       end)
     end

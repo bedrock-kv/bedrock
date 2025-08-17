@@ -1,4 +1,5 @@
 defmodule Bedrock.Cluster.Gateway.Telemetry do
+  @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Telemetry

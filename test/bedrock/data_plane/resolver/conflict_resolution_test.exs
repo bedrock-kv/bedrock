@@ -17,10 +17,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
   # Generate a range where the start is always less than the end. If we happen
   # to generate the same value, we just return the value.
   def range_generator do
-    key_generator()
-    |> StreamData.bind(fn v1 ->
-      key_generator()
-      |> StreamData.map(fn
+    StreamData.bind(key_generator(), fn v1 ->
+      StreamData.map(key_generator(), fn
         v2 when v1 > v2 -> {v2, v1}
         v2 when v1 == v2 -> v1
         v2 -> {v1, v2}
@@ -78,7 +76,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
         # The transactions up to the failed index should not include the one
         # that has failed (since we're not supposed to have processed it yet.)
-        assert index not in failed_indexes
+        refute index in failed_indexes
 
         # Pull out the transaction that failed.
         failed_transaction = Enum.at(transactions, index)

@@ -1,11 +1,13 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    @moduledoc false
     def otp_name(:sup), do: :test_supervisor
   end
 
@@ -154,7 +156,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
   describe "round-robin distribution behavior" do
     test "creates correct number of proxies even when requested more than available nodes" do
       # Track which nodes were used
-      node_usage = Agent.start_link(fn -> [] end) |> elem(1)
+      node_usage = fn -> [] end |> Agent.start_link() |> elem(1)
 
       start_supervised_fn = fn _child_spec, node ->
         Agent.update(node_usage, fn nodes -> [node | nodes] end)

@@ -18,10 +18,10 @@ defmodule Bedrock do
   @type version_vector :: {oldest :: version(), newest :: version()}
 
   @type transaction :: %{
-          optional(:mutations) => [mutation()],
-          optional(:write_conflicts) => [key_range()],
-          optional(:read_conflicts) => {version(), [key_range()]},
-          optional(:commit_version) => version()
+          optional(:mutations) => [mutation()] | nil,
+          optional(:write_conflicts) => [key_range()] | nil,
+          optional(:read_conflicts) => {version(), [key_range()]} | nil,
+          optional(:commit_version) => version() | nil
         }
 
   @type mutation ::
@@ -64,7 +64,6 @@ defmodule Bedrock do
 
   """
   @spec key_range(Bedrock.key(), Bedrock.key() | :end) :: Bedrock.key_range()
-  def key_range(min_key, max_key_exclusive)
-      when min_key < max_key_exclusive or max_key_exclusive == :end,
-      do: {min_key, max_key_exclusive}
+  def key_range(min_key, max_key_exclusive) when min_key < max_key_exclusive or max_key_exclusive == :end,
+    do: {min_key, max_key_exclusive}
 end

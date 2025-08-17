@@ -2,17 +2,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Cluster
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: tmp_dir} do
     cluster = Cluster
-    otp_name = :"test_log_#{:rand.uniform(10000)}"
-    id = "test_log_#{:rand.uniform(10000)}"
+    otp_name = :"test_log_#{:rand.uniform(10_000)}"
+    id = "test_log_#{:rand.uniform(10_000)}"
     foreman = self()
     path = Path.join(tmp_dir, "log_segments")
 
@@ -137,7 +137,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # Wait for initialization to complete
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       if Process.alive?(pid), do: GenServer.stop(pid)
@@ -151,7 +151,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # Wait for initialization
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -194,7 +194,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -223,7 +223,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -248,7 +248,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # Create a minimally valid encoded transaction using the proper structure
       # Start with version 0 to match server's initial last_version
       encoded_bytes =
-        BedrockTransactionTestSupport.new_log_transaction(0, %{"test_key" => "test_value"})
+        TransactionTestSupport.new_log_transaction(0, %{"test_key" => "test_value"})
 
       # Match server's initial last_version
       expected_version = 0
@@ -267,7 +267,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -315,7 +315,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -357,7 +357,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -383,7 +383,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -412,7 +412,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       foreman: foreman
     } do
       invalid_path = "/nonexistent/path/that/should/not/exist"
-      otp_name = :"test_log_error_#{:rand.uniform(10000)}"
+      otp_name = :"test_log_error_#{:rand.uniform(10_000)}"
 
       opts = [
         cluster: cluster,
@@ -440,7 +440,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->

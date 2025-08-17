@@ -35,16 +35,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       end)
 
     available_resolver_nodes = Map.get(context.node_capabilities, :coordination, [])
+    {_first_version, last_committed_version} = recovery_attempt.version_vector
 
     resolver_context = %{
       resolvers: recovery_attempt.resolvers,
       epoch: recovery_attempt.epoch,
       available_nodes: available_resolver_nodes,
       start_supervised_fn: start_supervised_fn,
-      lock_token: context.lock_token
+      lock_token: context.lock_token,
+      last_committed_version: last_committed_version
     }
 
-    define_resolvers(resolver_context)
+    resolver_context
+    |> define_resolvers()
     |> case do
       {:error, reason} ->
         {recovery_attempt, {:stalled, reason}}
@@ -52,8 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       {:ok, resolvers} ->
         updated_recovery_attempt = %{recovery_attempt | resolvers: resolvers}
 
-        {updated_recovery_attempt,
-         Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase}
     end
   end
 
@@ -63,7 +65,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
           available_nodes: [node()],
           start_supervised_fn: (Supervisor.child_spec(), node() ->
                                   {:ok, pid()} | {:error, term()}),
-          lock_token: Bedrock.lock_token()
+          lock_token: Bedrock.lock_token(),
+          last_committed_version: Bedrock.version()
         }) ::
           {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
@@ -73,7 +76,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       |> generate_resolver_ranges()
       |> Enum.map(fn [start_key, end_key] ->
         key_range = {start_key, end_key}
-        {child_spec_for_resolver(context.epoch, key_range, context.lock_token), start_key}
+
+        {child_spec_for_resolver(
+           context.epoch,
+           key_range,
+           context.lock_token,
+           context.last_committed_version
+         ), start_key}
       end)
 
     start_resolvers(
@@ -101,11 +110,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
         ) ::
           {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
-  def start_resolvers(
-        resolver_boot_info,
-        available_nodes,
-        start_supervised
-      ) do
+  def start_resolvers(resolver_boot_info, available_nodes, start_supervised) do
     available_nodes
     |> Stream.cycle()
     |> Enum.zip(resolver_boot_info)
@@ -130,17 +135,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
     end)
     |> case do
       {:error, reason} -> {:error, reason}
-      resolvers -> {:ok, resolvers |> Enum.sort_by(&elem(&1, 0))}
+      resolvers -> {:ok, Enum.sort_by(resolvers, &elem(&1, 0))}
     end
   end
 
   @spec child_spec_for_resolver(
           epoch :: Bedrock.epoch(),
           key_range :: Bedrock.key_range(),
-          lock_token :: Bedrock.lock_token()
+          lock_token :: Bedrock.lock_token(),
+          last_committed_version :: Bedrock.version()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_resolver(epoch, key_range, lock_token) do
-    Resolver.child_spec(lock_token: lock_token, epoch: epoch, key_range: key_range)
+  def child_spec_for_resolver(epoch, key_range, lock_token, last_committed_version) do
+    Resolver.child_spec(
+      lock_token: lock_token,
+      epoch: epoch,
+      key_range: key_range,
+      last_version: last_committed_version
+    )
   end
 end

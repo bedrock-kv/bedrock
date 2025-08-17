@@ -1,30 +1,27 @@
-defmodule Bedrock.DataPlane.BedrockTransaction do
-  import Bitwise, only: [>>>: 2, &&&: 2, <<<: 2, |||: 2]
-
+defmodule Bedrock.DataPlane.Transaction do
   @moduledoc """
   Tagged binary transaction encoding for Bedrock that supports efficient operations
   and extensibility through self-describing sections with embedded CRC validation.
 
-  This module implements a comprehensive tagged binary format that replaces the
+  This module implements a comprehensive tagged binary format that encodes the
   simple map structure from `Tx.commit/1` with an efficient binary format featuring:
 
   - **Tagged sections**: Self-describing sections with type, size, and embedded CRC
   - **Order independence**: Sections can appear in any order for better extensibility
-  - **Elegant opcode format**: 5-bit operations + 3-bit variants with size optimization
-  - **Section omission**: Empty sections are completely omitted to save space
+  - **Section omission**: All sections are optional - empty sections are completely omitted to save space
   - **Efficient operations**: Extract specific sections without full decode
   - **Robust validation**: Self-validating CRCs detect any bit corruption
+  - **Simple opcode format**: 5-bit operations + 3-bit variants with size optimization
 
   ## Transaction Structure
 
   Input/output transaction map:
   ```elixir
   %{
-    mutations: [Tx.mutation()],              # optional - {:set, binary(), binary()} | {:clear_range, binary(), binary()}
-    read_conflicts: [{binary(), binary()}],  # optional - omit section if empty
-    write_conflicts: [{binary(), binary()}], # optional - omit section if empty
-    read_version: Bedrock.version(),         # optional - stored in READ_CONFLICTS section
-    commit_version: Bedrock.version()        # optional - assigned by commit proxy
+    commit_version: Bedrock.version()               # assigned by commit proxy
+    mutations: [Tx.mutation()],                     # {:set, binary(), binary()} | {:clear_range, binary(), binary()}
+    read_conflicts: {read_version, [key_range()]},
+    write_conflicts: [key_range()}],
   }
   ```
 
@@ -65,40 +62,18 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   ## Section Types
 
-  - 0x01: MUTATIONS - Always present (may be empty)
-  - 0x02: READ_CONFLICTS - Only present when read conflicts exist AND read version available
-  - 0x03: WRITE_CONFLICTS - Only present when write conflicts exist
-  - 0x04: COMMIT_VERSION - Only present when stamped by commit proxy
+  - 0x01: MUTATIONS - Nearly always present (may be omitted if empty)
+  - 0x02: READ_CONFLICTS - Present when read conflicts exist AND read version available
+  - 0x03: WRITE_CONFLICTS - Present when write conflicts exist
+  - 0x04: COMMIT_VERSION - Present when stamped by commit proxy
 
-  ## Flexible Section Usage
+  ## Section Usage by Component
 
-  All sections of BedrockTransaction are optional and used differently throughout the system:
+  **Logs:** mutations, commit_version
+  **Resolver:** write_conflicts, read_conflicts (if any), commit_version
+  **Commit Proxy:** mutations, read_conflicts (if reads performed), write_conflicts
 
-  **Transaction Builder → Commit Proxy:**
-  - mutations: Contains all mutations ({:set, key, value}, {:clear_range, start, end})
-  - read_conflicts: Contains read conflict ranges (if any reads were performed)
-  - write_conflicts: Contains write conflict ranges for all mutations
-  - read_version: Present if transaction performed reads
-  - commit_version: Not present (will be assigned by commit proxy)
-
-  **Commit Proxy → Resolver:**
-  - mutations: Not needed for conflict resolution
-  - read_conflicts: Required for conflict detection
-  - write_conflicts: Required for conflict detection
-  - read_version: Used for conflict resolution if present
-  - commit_version: Present after assignment by commit proxy
-
-  **Commit Proxy → Logs:**
-  - mutations: Required for storage operations
-  - read_conflicts: Not needed for storage
-  - write_conflicts: Not needed for storage
-  - read_version: Not needed for storage
-  - commit_version: Present for transaction ordering
-
-  This flexible design allows each component to work with only the sections it needs,
-  improving efficiency and reducing data transfer overhead.
-
-  ## Elegant Opcode Format
+  ## Opcode Format
 
   Mutations use a 5-bit operation + 3-bit variant structure for optimal size:
 
@@ -115,6 +90,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   Size optimization automatically selects the most compact variant.
   """
+
+  import Bitwise, only: [>>>: 2, &&&: 2, <<<: 2, |||: 2]
 
   @type transaction_map :: Bedrock.transaction()
 
@@ -185,7 +162,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
     IO.iodata_to_binary([overall_header | sections])
   end
 
-  defp add_mutations_section(sections, %{mutations: mutations}) do
+  defp add_mutations_section(sections, %{mutations: mutations}) when is_list(mutations) do
     payload = encode_mutations_payload(mutations)
     section = encode_section(@mutations_tag, payload)
     [section | sections]
@@ -193,9 +170,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   defp add_mutations_section(sections, _), do: sections
 
-  defp add_read_conflicts_section(sections, %{
-         read_conflicts: {read_version, read_conflicts}
-       }) do
+  defp add_read_conflicts_section(sections, %{read_conflicts: {read_version, read_conflicts}}) do
     # Validate coupling rules: both must be nil/empty or both must be non-nil/non-empty
     case {read_version, read_conflicts} do
       {nil, []} ->
@@ -222,7 +197,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   defp add_write_conflicts_section(sections, %{write_conflicts: []}), do: sections
 
-  defp add_write_conflicts_section(sections, %{write_conflicts: write_conflicts}) do
+  defp add_write_conflicts_section(sections, %{write_conflicts: write_conflicts}) when is_list(write_conflicts) do
     payload = encode_write_conflicts_payload(write_conflicts)
     section = encode_section(@write_conflicts_tag, payload)
     [section | sections]
@@ -230,8 +205,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   defp add_write_conflicts_section(sections, _), do: sections
 
-  defp add_commit_version_section(sections, %{commit_version: commit_version})
-       when is_binary(commit_version) and byte_size(commit_version) == 8 do
+  defp add_commit_version_section(sections, %{commit_version: <<commit_version::binary-size(8)>>}) do
     section = encode_section(@commit_version_tag, commit_version)
     [section | sections]
   end
@@ -265,7 +239,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   def decode!(binary_transaction) do
     case decode(binary_transaction) do
       {:ok, transaction} -> transaction
-      {:error, reason} -> raise "Failed to decode BedrockTransaction: #{inspect(reason)}"
+      {:error, reason} -> raise "Failed to decode Transaction: #{inspect(reason)}"
     end
   end
 
@@ -550,8 +524,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
       0 ->
         # SET_16_32: 16-bit key length + 32-bit value length (full size)
-        <<opcode, key_len::unsigned-big-16, key::binary, value_len::unsigned-big-32,
-          value::binary>>
+        <<opcode, key_len::unsigned-big-16, key::binary, value_len::unsigned-big-32, value::binary>>
     end
   end
 
@@ -584,8 +557,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
       2 ->
         # CLEAR_RANGE_16: Range (16-bit start/end lengths)
-        <<opcode, start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16,
-          end_key::binary>>
+        <<opcode, start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
     end
   end
 
@@ -636,8 +608,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp parse_sections(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32,
-           payload::binary-size(payload_size), rest::binary>>,
+         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
+           rest::binary>>,
          remaining_count,
          sections_map
        ) do
@@ -695,8 +667,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   # SET operations (0x00 << 3)
   defp stream_mutations_opcodes(
-         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len),
-           value_len::unsigned-big-32, value::binary-size(value_len), rest::binary>>,
+         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
+           value::binary-size(value_len), rest::binary>>,
          mutations
        ) do
     mutation = {:set, key, value}
@@ -739,8 +711,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp stream_mutations_opcodes(
-         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len),
-           end_len::unsigned-big-16, end_key::binary-size(end_len), rest::binary>>,
+         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
+           end_key::binary-size(end_len), rest::binary>>,
          mutations
        ) do
     mutation = {:clear_range, start_key, end_key}
@@ -748,8 +720,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp stream_mutations_opcodes(
-         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len),
-           end_len::unsigned-8, end_key::binary-size(end_len), rest::binary>>,
+         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len), end_len::unsigned-8,
+           end_key::binary-size(end_len), rest::binary>>,
          mutations
        ) do
     mutation = {:clear_range, start_key, end_key}
@@ -757,18 +729,15 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   # Reserved opcodes
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations)
-       when opcode in 0x03..0x07 do
+  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x03..0x07 do
     {:error, {:reserved_set_variant, opcode}}
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations)
-       when opcode in 0x0C..0x0F do
+  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x0C..0x0F do
     {:error, {:reserved_clear_variant, opcode}}
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations)
-       when opcode in 0x10..0xFF do
+  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x10..0xFF do
     # Extract upper 5 bits
     operation_type = opcode >>> 3
     # Extract lower 3 bits
@@ -800,8 +769,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp decode_read_conflicts_payload(
-         <<read_version_value::signed-big-64, conflict_count::unsigned-big-32,
-           conflicts_data::binary>>
+         <<read_version_value::signed-big-64, conflict_count::unsigned-big-32, conflicts_data::binary>>
        ) do
     read_version =
       if read_version_value == -1 do
@@ -841,8 +809,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp decode_conflict_ranges(
-         <<start_len::unsigned-big-16, start_key::binary-size(start_len),
-           end_len::unsigned-big-16, end_key::binary-size(end_len), rest::binary>>,
+         <<start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
+           end_key::binary-size(end_len), rest::binary>>,
          remaining_count,
          conflicts
        ) do
@@ -860,8 +828,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   defp validate_all_sections(_data, 0), do: :ok
 
   defp validate_all_sections(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32,
-           payload::binary-size(payload_size), rest::binary>>,
+         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
+           rest::binary>>,
          remaining_count
        ) do
     # Validate section CRC using standard approach
@@ -882,8 +850,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   # ============================================================================
 
   defp parse_transaction_header(
-         <<@magic_number::unsigned-big-32, @format_version, _flags,
-           section_count::unsigned-big-16, sections_data::binary>>
+         <<@magic_number::unsigned-big-32, @format_version, _flags, section_count::unsigned-big-16,
+           sections_data::binary>>
        ) do
     {:ok, {section_count, sections_data}}
   end
@@ -895,8 +863,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   defp find_section_by_tag(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32,
-           payload::binary-size(payload_size), rest::binary>>,
+         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
+           rest::binary>>,
          target_tag,
          remaining_count
        ) do
@@ -938,8 +906,7 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   defp rebuild_transaction(sections_map) do
     sections =
-      sections_map
-      |> Enum.map(fn {tag, payload} -> encode_section(tag, payload) end)
+      Enum.map(sections_map, fn {tag, payload} -> encode_section(tag, payload) end)
 
     section_count = length(sections)
     overall_header = encode_overall_header(section_count)
@@ -956,8 +923,8 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
 
   # SET operations (0x00 << 3)
   defp stream_next_mutation(
-         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len),
-           value_len::unsigned-big-32, value::binary-size(value_len), rest::binary>>
+         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
+           value::binary-size(value_len), rest::binary>>
        ) do
     mutation = {:set, key, value}
     {[mutation], rest}
@@ -980,31 +947,27 @@ defmodule Bedrock.DataPlane.BedrockTransaction do
   end
 
   # CLEAR operations (0x01 << 3)
-  defp stream_next_mutation(
-         <<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>
-       ) do
+  defp stream_next_mutation(<<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>) do
+    mutation = {:clear, key}
+    {[mutation], rest}
+  end
+
+  defp stream_next_mutation(<<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>) do
     mutation = {:clear, key}
     {[mutation], rest}
   end
 
   defp stream_next_mutation(
-         <<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>
-       ) do
-    mutation = {:clear, key}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(
-         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len),
-           end_len::unsigned-big-16, end_key::binary-size(end_len), rest::binary>>
+         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
+           end_key::binary-size(end_len), rest::binary>>
        ) do
     mutation = {:clear_range, start_key, end_key}
     {[mutation], rest}
   end
 
   defp stream_next_mutation(
-         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len),
-           end_len::unsigned-8, end_key::binary-size(end_len), rest::binary>>
+         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len), end_len::unsigned-8,
+           end_key::binary-size(end_len), rest::binary>>
        ) do
     mutation = {:clear_range, start_key, end_key}
     {[mutation], rest}

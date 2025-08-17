@@ -1,13 +1,14 @@
 defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   defp random_file_name do
     random_chars =
-      :crypto.strong_rand_bytes(16)
+      16
+      |> :crypto.strong_rand_bytes()
       |> Base.encode16()
       |> String.downcase()
 
@@ -16,19 +17,19 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
 
   defp with_empty_pkv(context) do
     file_name = random_file_name()
-    {:ok, pkv} = PersistentKeyValues.open(file_name |> String.to_atom(), file_name)
+    {:ok, pkv} = file_name |> String.to_atom() |> PersistentKeyValues.open(file_name)
 
     :ok =
       PersistentKeyValues.apply_transaction(
         pkv,
-        BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{})
+        TransactionTestSupport.new_log_transaction(Version.zero(), %{})
       )
 
     on_exit(fn ->
       File.rm!(file_name)
     end)
 
-    {:ok, context |> Map.put(:pkv, pkv)}
+    {:ok, Map.put(context, :pkv, pkv)}
   end
 
   describe "Basalt.PersistentKeyValues.open/2" do
@@ -56,7 +57,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
+          TransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
         )
 
       zero_version = Version.zero()
@@ -67,13 +68,13 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
+          TransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
             "foo" => "baz"
           })
         )
@@ -90,7 +91,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
+          TransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
         )
 
       assert {:ok, "bar"} = PersistentKeyValues.fetch(pkv, "foo")
@@ -100,13 +101,13 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
+          TransactionTestSupport.new_log_transaction(Version.zero(), %{"foo" => "bar"})
         )
 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
             "foo" => "baz"
           })
         )
@@ -118,7 +119,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert :ok =
                PersistentKeyValues.apply_transaction(
                  pkv,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.zero(), %{
+                 TransactionTestSupport.new_log_transaction(Version.zero(), %{
                    "foo" => "baz"
                  })
                )
@@ -126,7 +127,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert :ok =
                PersistentKeyValues.apply_transaction(
                  pkv,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
                    "foo" => "baz"
                  })
                )
@@ -134,7 +135,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert :ok =
                PersistentKeyValues.apply_transaction(
                  pkv,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
                    "foo" => "baz"
                  })
                )
@@ -142,7 +143,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert {:error, :version_too_old} ==
                PersistentKeyValues.apply_transaction(
                  pkv,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
                    "foo" => "bar"
                  })
                )
@@ -158,7 +159,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
             "foo" => "bar",
             "a" => "1"
           })
@@ -167,7 +168,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
             "foo" => "baz",
             "l" => "3"
           })
@@ -176,7 +177,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(3), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(3), %{
             "foo" => "biz",
             "j" => "2"
           })
@@ -185,7 +186,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(4), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(4), %{
             "foo" => "buz"
           })
         )
@@ -193,13 +194,14 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(5), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(5), %{
             <<0xFF, 0xFF>> => "system_key"
           })
         )
 
       assert ["a", "foo", "j", "l", <<0xFF, 0xFF>>] ==
-               PersistentKeyValues.stream_keys(pkv)
+               pkv
+               |> PersistentKeyValues.stream_keys()
                |> Enum.to_list()
                |> Enum.sort()
     end

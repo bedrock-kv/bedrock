@@ -21,12 +21,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       end
 
       # Test that function goes through all retry attempts
-      opts_with_functions =
-        opts
-        |> Keyword.put(:timeout_fn, timeout_fn)
+      opts_with_functions = Keyword.put(opts, :timeout_fn, timeout_fn)
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -80,12 +79,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # Short timeout for faster test
       timeout_fn = fn _attempt -> 100 end
 
-      opts_with_functions =
-        opts
-        |> Keyword.put(:timeout_fn, timeout_fn)
+      opts_with_functions = Keyword.put(opts, :timeout_fn, timeout_fn)
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -96,11 +94,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       assert result == {:error, {:resolver_unavailable, :unavailable}}
 
       # Should receive telemetry for retry attempts and final failure
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1},
-                      %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1}, %{reason: :unavailable}}
 
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2},
-                      %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2}, %{reason: :unavailable}}
 
       assert_receive {:telemetry, :max_retries, %{total_attempts: 3}, %{reason: :unavailable}}
 
@@ -132,6 +128,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -155,6 +152,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # With no injection, should use defaults and eventually return error
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -205,6 +203,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # Call resolve_transactions with our specific version numbers
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,

@@ -51,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
                                                                {:ok, pid()} | {:error, term()})
   defp get_starter_function(recovery_attempt, context) do
     Map.get(context, :start_supervised_fn, fn child_spec, _node ->
-      starter_fn = recovery_attempt.cluster.otp_name(:sup) |> Shared.starter_for()
+      starter_fn = :sup |> recovery_attempt.cluster.otp_name() |> Shared.starter_for()
       starter_fn.(child_spec, node())
     end)
   end

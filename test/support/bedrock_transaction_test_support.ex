@@ -1,13 +1,13 @@
-defmodule Bedrock.DataPlane.BedrockTransactionTestSupport do
+defmodule Bedrock.DataPlane.TransactionTestSupport do
   @moduledoc """
-  Test support utilities for creating BedrockTransaction instances.
+  Test support utilities for creating Transaction instances.
 
   This module provides convenience functions for tests that need to create
   simple transactions from key-value pairs. Production code should use the
-  proper transaction builder system and BedrockTransaction.encode() directly.
+  proper transaction builder system and Transaction.encode() directly.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @doc """
@@ -24,17 +24,17 @@ defmodule Bedrock.DataPlane.BedrockTransactionTestSupport do
       true
 
       iex> encoded = new_log_transaction(42, %{"key1" => "value1", "key2" => nil})
-      iex> BedrockTransaction.extract_log_version(encoded) == <<42::64>>
+      iex> Transaction.extract_log_version(encoded) == <<42::64>>
       true
   """
   @spec new_log_transaction(
           Bedrock.version() | integer(),
           %{Bedrock.key() => Bedrock.value() | nil} | [{Bedrock.key(), Bedrock.key() | nil}]
-        ) :: BedrockTransaction.encoded()
+        ) :: Transaction.encoded()
   def new_log_transaction(version, key_values) when is_map(key_values) do
     mutations = convert_writes_to_mutations(key_values)
     transaction = %{mutations: mutations}
-    encoded = BedrockTransaction.encode(transaction)
+    encoded = Transaction.encode(transaction)
 
     # Ensure version is in binary format
     version_binary =
@@ -42,7 +42,7 @@ defmodule Bedrock.DataPlane.BedrockTransactionTestSupport do
         do: version,
         else: Version.from_integer(version)
 
-    {:ok, with_version} = BedrockTransaction.add_commit_version(encoded, version_binary)
+    {:ok, with_version} = Transaction.add_commit_version(encoded, version_binary)
     with_version
   end
 
@@ -53,9 +53,9 @@ defmodule Bedrock.DataPlane.BedrockTransactionTestSupport do
   @doc """
   Extracts the commit version from a transaction created with new_log_transaction.
   """
-  @spec extract_log_version(BedrockTransaction.encoded()) :: binary() | nil
+  @spec extract_log_version(Transaction.encoded()) :: binary() | nil
   def extract_log_version(encoded_transaction) do
-    case BedrockTransaction.extract_commit_version(encoded_transaction) do
+    case Transaction.extract_commit_version(encoded_transaction) do
       {:ok, version} -> version
       {:error, _} -> nil
     end
@@ -64,12 +64,11 @@ defmodule Bedrock.DataPlane.BedrockTransactionTestSupport do
   @doc """
   Extracts the key-value writes from a transaction created with new_log_transaction.
   """
-  @spec extract_log_writes(BedrockTransaction.encoded()) :: %{binary() => binary() | nil}
+  @spec extract_log_writes(Transaction.encoded()) :: %{binary() => binary() | nil}
   def extract_log_writes(encoded_transaction) do
-    case BedrockTransaction.stream_mutations(encoded_transaction) do
+    case Transaction.stream_mutations(encoded_transaction) do
       {:ok, mutations_stream} ->
-        mutations_stream
-        |> Enum.reduce(%{}, fn
+        Enum.reduce(mutations_stream, %{}, fn
           {:set, key, value}, acc -> Map.put(acc, key, value)
           {:clear, key}, acc -> Map.put(acc, key, nil)
           {:clear_range, _start, _end}, acc -> acc

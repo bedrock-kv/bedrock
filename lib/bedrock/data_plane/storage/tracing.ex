@@ -27,15 +27,11 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def stop, do: :telemetry.detach(handler_id())
 
   @spec handler(list(atom()), map(), map(), term()) :: :ok
-  def handler([:bedrock, :storage, event], measurements, metadata, _),
-    do: log_event(event, measurements, metadata)
+  def handler([:bedrock, :storage, event], measurements, metadata, _), do: log_event(event, measurements, metadata)
 
   @spec log_event(atom(), map(), map()) :: :ok
   def log_event(:pull_start, _, %{timestamp: timestamp, next_version: next_version}),
-    do:
-      debug(
-        "Log pull started at #{timestamp} for version #{Bedrock.DataPlane.Version.to_string(next_version)}"
-      )
+    do: debug("Log pull started at #{timestamp} for version #{Bedrock.DataPlane.Version.to_string(next_version)}")
 
   def log_event(:pull_succeeded, _, %{timestamp: timestamp, n_transactions: n_transactions}),
     do: debug("Log pull succeeded at #{timestamp} with #{n_transactions} transactions")
@@ -46,11 +42,8 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def log_event(:log_marked_as_failed, _, %{timestamp: timestamp, log_id: log_id}),
     do: warn("Log #{log_id} marked as failed at #{timestamp}")
 
-  def log_event(:log_pull_circuit_breaker_tripped, _, %{
-        timestamp: timestamp,
-        ms_to_wait: ms_to_wait
-      }),
-      do: warn("Log pull circuit breaker tripped at #{timestamp}, waiting #{ms_to_wait}ms")
+  def log_event(:log_pull_circuit_breaker_tripped, _, %{timestamp: timestamp, ms_to_wait: ms_to_wait}),
+    do: warn("Log pull circuit breaker tripped at #{timestamp}, waiting #{ms_to_wait}ms")
 
   def log_event(:log_pull_circuit_breaker_reset, _, %{timestamp: timestamp}),
     do: info("Log pull circuit breaker reset at #{timestamp}")

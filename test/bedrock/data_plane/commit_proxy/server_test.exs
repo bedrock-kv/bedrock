@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    @moduledoc false
     def otp_name(component) when is_atom(component) do
       :"test_cluster_#{component}"
     end

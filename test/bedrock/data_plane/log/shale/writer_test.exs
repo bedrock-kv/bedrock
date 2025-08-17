@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.DataPlane.Log.Shale.Writer
 
   @test_file "test_segment.log"
@@ -14,7 +15,7 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
     assert {:ok, %Writer{fd: fd, write_offset: 4, bytes_remaining: 1004}} =
              Writer.open(@test_file)
 
-    assert not is_nil(fd)
+    assert fd
   end
 
   test "close/1 successfully closes the file descriptor" do

@@ -1,5 +1,6 @@
 defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
 
   describe "new/3" do

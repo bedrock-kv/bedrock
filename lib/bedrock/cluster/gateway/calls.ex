@@ -13,12 +13,13 @@ defmodule Bedrock.Cluster.Gateway.Calls do
     |> ensure_current_tsl()
     |> case do
       {:ok, tsl, updated_state} ->
-        TransactionBuilder.start_link(
+        [
           gateway: self(),
           transaction_system_layout: tsl,
           key_codec: Keyword.fetch!(opts, :key_codec),
           value_codec: Keyword.fetch!(opts, :value_codec)
-        )
+        ]
+        |> TransactionBuilder.start_link()
         |> case do
           {:ok, pid} -> {updated_state, {:ok, pid}}
           {:error, reason} -> {updated_state, {:error, reason}}
@@ -59,7 +60,8 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   def renew_read_version_lease(t, read_version) do
     now = :erlang.monotonic_time(:millisecond)
 
-    Map.pop(t.deadline_by_version, read_version)
+    t.deadline_by_version
+    |> Map.pop(read_version)
     |> case do
       {expiration, deadline_by_version} when expiration <= now ->
         {deadline_by_version, {:error, :lease_expired}}
@@ -68,11 +70,10 @@ defmodule Bedrock.Cluster.Gateway.Calls do
         renewal_deadline_in_ms = t.lease_renewal_interval_in_ms
         new_lease_deadline_in_ms = now + 10 + renewal_deadline_in_ms
 
-        {Map.put(deadline_by_version, read_version, new_lease_deadline_in_ms),
-         {:ok, renewal_deadline_in_ms}}
+        {Map.put(deadline_by_version, read_version, new_lease_deadline_in_ms), {:ok, renewal_deadline_in_ms}}
     end
     |> then(fn {updated_deadline_by_version, result} ->
-      {t |> Map.put(:deadline_by_version, updated_deadline_by_version), result}
+      {Map.put(t, :deadline_by_version, updated_deadline_by_version), result}
     end)
   end
 end

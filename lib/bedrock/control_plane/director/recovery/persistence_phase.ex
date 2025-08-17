@@ -18,15 +18,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.DataPlane.BedrockTransaction
   alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.SystemKeys
-
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -34,19 +34,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    with system_transaction <-
-           build_system_transaction(
-             recovery_attempt.epoch,
-             context.cluster_config,
-             transaction_system_layout,
-             recovery_attempt.cluster
-           ),
-         {:ok, _version} <-
-           submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
-      trace_recovery_system_state_persisted()
+    system_transaction =
+      build_system_transaction(
+        recovery_attempt.epoch,
+        context.cluster_config,
+        transaction_system_layout,
+        recovery_attempt.cluster
+      )
 
-      {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
-    else
+    case submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
+      {:ok, _version} ->
+        trace_recovery_system_state_persisted()
+
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
+
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
@@ -58,7 +59,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           cluster_config :: Config.t(),
           transaction_system_layout :: TransactionSystemLayout.t(),
           cluster :: module()
-        ) :: BedrockTransaction.encoded()
+        ) :: Transaction.encoded()
   defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
 
@@ -69,7 +70,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     tx = build_monolithic_keys(tx, epoch, encoded_config, encoded_layout)
     tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
 
-    tx |> Tx.commit_binary()
+    Tx.commit_binary(tx)
   end
 
   @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map(), map()) :: Tx.t()
@@ -135,9 +136,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_empty_transaction_timeout_ms(),
-        :erlang.term_to_binary(
-          Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000)
-        )
+        :erlang.term_to_binary(Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000))
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_ping_rate_in_hz(),
@@ -168,8 +167,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     # Set log keys directly
     tx =
-      transaction_system_layout.logs
-      |> Enum.reduce(tx, fn {log_id, log_descriptor}, tx ->
+      Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         encoded_descriptor =
           log_descriptor
           |> encode_log_descriptor_for_storage(cluster)
@@ -198,7 +196,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
     |> Tx.set(
       SystemKeys.recovery_last_completed(),
-      System.system_time(:millisecond) |> :erlang.term_to_binary()
+      :millisecond |> System.system_time() |> :erlang.term_to_binary()
     )
   end
 
@@ -207,8 +205,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp encode_component_for_storage(nil, _cluster), do: nil
   defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
 
-  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid),
-    do: {start_key, pid}
+  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid), do: {start_key, pid}
 
   defp encode_components_for_storage(components, cluster) when is_list(components),
     do: Enum.map(components, &encode_component_for_storage(&1, cluster))
@@ -228,18 +225,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   @spec submit_system_transaction(
-          BedrockTransaction.encoded(),
+          Transaction.encoded(),
           [pid()],
           map()
         ) :: {:ok, Bedrock.version()} | {:error, :no_commit_proxies | :timeout | :unavailable}
-  defp submit_system_transaction(_system_transaction, [], _context),
-    do: {:error, :no_commit_proxies}
+  defp submit_system_transaction(_system_transaction, [], _context), do: {:error, :no_commit_proxies}
 
   defp submit_system_transaction(encoded_transaction, proxies, context) when is_list(proxies) do
     commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/2)
 
     proxies
     |> Enum.random()
-    |> then(&commit_fn.(&1, encoded_transaction))
+    |> commit_fn.(encoded_transaction)
   end
 end

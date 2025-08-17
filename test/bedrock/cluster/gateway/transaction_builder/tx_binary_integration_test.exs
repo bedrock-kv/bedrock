@@ -2,7 +2,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
   describe "binary transaction integration" do
     test "commit returns binary transaction" do
@@ -16,9 +16,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       binary_result = Tx.commit_binary(tx)
       assert is_binary(binary_result)
 
-      assert {:ok, _validated} = BedrockTransaction.validate(binary_result)
+      assert {:ok, _validated} = Transaction.validate(binary_result)
 
-      assert {:ok, decoded} = BedrockTransaction.decode(binary_result)
+      assert {:ok, decoded} = Transaction.decode(binary_result)
 
       # Verify mutations are in exact order
       assert decoded.mutations == [
@@ -58,7 +58,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       # Commit to binary with read_version (required for read_conflicts to be preserved)
       read_version = Bedrock.DataPlane.Version.from_integer(12_345)
       binary_result = Tx.commit_binary(tx, read_version)
-      assert {:ok, decoded} = BedrockTransaction.decode(binary_result)
+      assert {:ok, decoded} = Transaction.decode(binary_result)
 
       # Verify decoded structure
       assert %{
@@ -82,7 +82,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
         |> Tx.set("inside_range", "value")
 
       binary_result = Tx.commit_binary(tx)
-      assert {:ok, decoded} = BedrockTransaction.decode(binary_result)
+      assert {:ok, decoded} = Transaction.decode(binary_result)
 
       assert decoded.mutations == [
                {:clear_range, "start_key", "end_key"},
@@ -100,7 +100,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       binary_result = Tx.commit_binary(tx)
 
       assert is_binary(binary_result)
-      assert {:ok, decoded} = BedrockTransaction.decode(binary_result)
+      assert {:ok, decoded} = Transaction.decode(binary_result)
 
       # Empty transaction should have empty structure
       assert decoded == %{
@@ -131,7 +131,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       # Commit with read_version (required for read_conflicts to be preserved)
       read_version = Bedrock.DataPlane.Version.from_integer(54_321)
       binary_result = Tx.commit_binary(tx, read_version)
-      assert {:ok, decoded} = BedrockTransaction.decode(binary_result)
+      assert {:ok, decoded} = Transaction.decode(binary_result)
 
       assert decoded.mutations == [{:set, "new_key", "new_value"}]
 
@@ -147,25 +147,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
 
     test "binary transaction maintains size optimization" do
       # Create transactions with different key/value sizes
-      small_tx = Tx.new() |> Tx.set("k", "v")
-      medium_tx = Tx.new() |> Tx.set("k", String.duplicate("x", 300))
-      large_tx = Tx.new() |> Tx.set(String.duplicate("k", 300), String.duplicate("v", 70_000))
+      small_tx = Tx.set(Tx.new(), "k", "v")
+      medium_tx = Tx.set(Tx.new(), "k", String.duplicate("x", 300))
+      large_tx = Tx.set(Tx.new(), String.duplicate("k", 300), String.duplicate("v", 70_000))
 
       small_binary = Tx.commit_binary(small_tx)
       medium_binary = Tx.commit_binary(medium_tx)
       large_binary = Tx.commit_binary(large_tx)
 
       # All should decode correctly
-      assert {:ok, _} = BedrockTransaction.decode(small_binary)
-      assert {:ok, _} = BedrockTransaction.decode(medium_binary)
-      assert {:ok, _} = BedrockTransaction.decode(large_binary)
+      assert {:ok, _} = Transaction.decode(small_binary)
+      assert {:ok, _} = Transaction.decode(medium_binary)
+      assert {:ok, _} = Transaction.decode(large_binary)
 
       # Size optimization should result in smaller binaries for smaller data
       assert byte_size(small_binary) < byte_size(medium_binary)
       assert byte_size(medium_binary) < byte_size(large_binary)
     end
 
-    test "transaction builder integrates with BedrockTransaction section operations" do
+    test "transaction builder integrates with Transaction section operations" do
       tx =
         Tx.new()
         |> Tx.set("key1", "value1")
@@ -173,20 +173,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
 
       binary_result = Tx.commit_binary(tx)
 
-      assert {:ok, mutations_section} = BedrockTransaction.extract_section(binary_result, 0x01)
+      assert {:ok, mutations_section} = Transaction.extract_section(binary_result, 0x01)
       assert is_binary(mutations_section)
       assert byte_size(mutations_section) > 0
 
-      assert {:ok, stream} = BedrockTransaction.stream_mutations(binary_result)
-      mutations = stream |> Enum.to_list()
+      assert {:ok, stream} = Transaction.stream_mutations(binary_result)
+      mutations = Enum.to_list(stream)
       assert length(mutations) == 2
 
       version = Bedrock.DataPlane.Version.from_integer(12_345)
-      assert {:ok, stamped} = BedrockTransaction.add_commit_version(binary_result, version)
-      assert {:ok, ^version} = BedrockTransaction.extract_commit_version(stamped)
+      assert {:ok, stamped} = Transaction.add_commit_version(binary_result, version)
+      assert {:ok, ^version} = Transaction.extract_commit_version(stamped)
 
       # Original transaction data should be preserved
-      assert {:ok, decoded} = BedrockTransaction.decode(stamped)
+      assert {:ok, decoded} = Transaction.decode(stamped)
 
       assert decoded.mutations == [
                {:set, "key1", "value1"},

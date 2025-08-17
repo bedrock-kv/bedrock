@@ -1,14 +1,13 @@
 defmodule Bedrock.ControlPlane.Coordinator.Server do
   @moduledoc false
-  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
-  alias Bedrock.ControlPlane.Coordinator.RaftAdapter
-  alias Bedrock.ControlPlane.Coordinator.State
-  alias Bedrock.Raft
-  alias Bedrock.Raft.Log
-  alias Bedrock.Raft.Log.InMemoryLog
-  alias Bedrock.Raft.Log.TupleInMemoryLog
+  use GenServer
 
-  alias Bedrock.ControlPlane.Coordinator.Commands
+  import Bedrock.ControlPlane.Coordinator.DirectorManagement,
+    only: [
+      try_to_start_director: 1,
+      handle_director_failure: 3,
+      cleanup_director_on_leadership_loss: 1
+    ]
 
   import Bedrock.ControlPlane.Coordinator.Durability,
     only: [
@@ -16,13 +15,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       durably_write_transaction_system_layout: 3,
       durably_write_service_registration: 3,
       durable_write_completed: 3
-    ]
-
-  import Bedrock.ControlPlane.Coordinator.DirectorManagement,
-    only: [
-      try_to_start_director: 1,
-      handle_director_failure: 3,
-      cleanup_director_on_leadership_loss: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.State.Changes,
@@ -44,10 +36,18 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       trace_leader_ready_starting_director: 1
     ]
 
-  require Logger
-
-  use GenServer
   import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.ControlPlane.Coordinator.Commands
+  alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
+  alias Bedrock.ControlPlane.Coordinator.RaftAdapter
+  alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.Raft
+  alias Bedrock.Raft.Log
+  alias Bedrock.Raft.Log.InMemoryLog
+  alias Bedrock.Raft.Log.TupleInMemoryLog
+
+  require Logger
 
   @spec child_spec(opts :: [cluster: module()]) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -71,8 +71,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def init({cluster, otp_name}) do
     trace_started(cluster, otp_name)
 
-    with my_node <- Node.self(),
-         {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
+    my_node = Node.self()
+
+    with {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
       {:ok,
@@ -84,7 +85,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          raft:
            Raft.new(
              my_node,
-             coordinator_nodes |> Enum.reject(&(&1 == my_node)),
+             Enum.reject(coordinator_nodes, &(&1 == my_node)),
              raft_log,
              RaftAdapter
            ),
@@ -112,10 +113,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_call(:fetch_config, _from, t), do: t |> reply({:ok, t.config})
+  def handle_call(:fetch_config, _from, t), do: reply(t, {:ok, t.config})
 
-  def handle_call(:fetch_transaction_system_layout, _from, t),
-    do: t |> reply({:ok, t.transaction_system_layout})
+  def handle_call(:fetch_transaction_system_layout, _from, t), do: reply(t, {:ok, t.transaction_system_layout})
 
   def handle_call({:update_config, config}, from, t) do
     command = Commands.update_config(config)
@@ -123,8 +123,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> durably_write_config(command, ack_fn(from))
     |> case do
-      {:ok, t} -> t |> noreply()
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> noreply(t)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
@@ -134,8 +134,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> durably_write_transaction_system_layout(command, ack_fn(from))
     |> case do
-      {:ok, t} -> t |> noreply()
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> noreply(t)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
@@ -146,8 +146,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> durably_write_service_registration(command, ack_fn(from))
     |> case do
-      {:ok, t} -> t |> noreply()
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> noreply(t)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
@@ -157,15 +157,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> durably_write_service_registration(command, ack_fn(from))
     |> case do
-      {:ok, t} -> t |> noreply()
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> noreply(t)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
   def handle_call({:register_gateway, gateway_pid, compact_services, capabilities}, from, t) do
     # Always subscribe gateway for TSL updates (monitor to clean up on death)
     Process.monitor(gateway_pid)
-    updated_state = t |> add_tsl_subscriber(gateway_pid)
+    updated_state = add_tsl_subscriber(t, gateway_pid)
 
     # Expand compact services to full format
     caller_node = node(gateway_pid)
@@ -178,8 +178,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         updated_state
         |> durably_write_service_registration(command, ack_fn(from))
         |> case do
-          {:ok, final_state} -> final_state |> noreply()
-          {:error, _reason} = error -> updated_state |> reply(error)
+          {:ok, final_state} -> noreply(final_state)
+          {:error, _reason} = error -> reply(updated_state, error)
         end
 
       leader_node ->
@@ -191,13 +191,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
           {:forward_register_node_resources, caller_node, expanded_services, capabilities, from}
         )
 
-        updated_state |> noreply()
+        noreply(updated_state)
     end
   end
 
   def handle_call(:ping, _from, t) do
-    leader = if t.leader_node == t.my_node, do: self(), else: nil
-    t |> reply({:pong, t.epoch, leader})
+    leader = if t.leader_node == t.my_node, do: self()
+    reply(t, {:pong, t.epoch, leader})
   end
 
   @impl true
@@ -218,19 +218,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       |> put_leader_node(new_leader)
       |> put_epoch(raft_epoch)
 
-    if new_leader == t.my_node do
-      # We became leader - wait for first consensus before starting director
-      trace_leader_waiting_for_consensus()
+    if_result =
+      if new_leader == t.my_node do
+        # We became leader - wait for first consensus before starting director
+        trace_leader_waiting_for_consensus()
 
-      updated_t
-      |> put_leader_startup_state(:leader_waiting_consensus)
-    else
-      # Someone else is leader - clean up director if we have one
-      updated_t
-      |> put_leader_startup_state(:not_leader)
-      |> cleanup_director_on_leadership_loss()
-    end
-    |> noreply()
+        put_leader_startup_state(updated_t, :leader_waiting_consensus)
+      else
+        # Someone else is leader - clean up director if we have one
+        updated_t
+        |> put_leader_startup_state(:not_leader)
+        |> cleanup_director_on_leadership_loss()
+      end
+
+    noreply(if_result)
   end
 
   def handle_info({:raft, :timer, event}, t) do
@@ -241,11 +242,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_info({:raft, :send_rpc, event, target}, t) do
     GenServer.cast({t.otp_name, target}, {:raft, :rpc, event, Node.self()})
-    t |> noreply()
+    noreply(t)
   end
 
-  def handle_info({:raft, :consensus_reached, _log, _durable_txn_id, :behind}, t),
-    do: noreply(t)
+  def handle_info({:raft, :consensus_reached, _log, _durable_txn_id, :behind}, t), do: noreply(t)
 
   def handle_info({:raft, :consensus_reached, log, durable_txn_id, :latest}, t) do
     trace_consensus_reached(durable_txn_id)
@@ -266,29 +266,26 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_cast({:ping, {epoch, director}}, t) when t.epoch == epoch do
     GenServer.cast(director, {:pong, self()})
-    t |> noreply()
+    noreply(t)
   end
 
   def handle_cast({:ping, _}, t) do
-    t |> noreply()
+    noreply(t)
   end
 
-  def handle_cast(
-        {:forward_register_node_resources, node, services, capabilities, original_from},
-        t
-      ) do
+  def handle_cast({:forward_register_node_resources, node, services, capabilities, original_from}, t) do
     command = Commands.set_node_resources(node, services, capabilities)
 
     t
     |> durably_write_service_registration(command, ack_fn(original_from))
     |> case do
       {:ok, updated_state} ->
-        updated_state |> noreply()
+        noreply(updated_state)
 
       {:error, _reason} = error ->
         # Reply directly to original caller
         GenServer.reply(original_from, error)
-        t |> noreply()
+        noreply(t)
     end
   end
 
@@ -305,7 +302,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
           {:ok, DiskRaftLog.t() | TupleInMemoryLog.t()} | {:error, term()}
   def init_raft_log(cluster) do
     # Use same pattern as logs/storage: get base path from coordinator config
-    coordinator_config = cluster.node_config() |> Keyword.get(:coordinator, [])
+    coordinator_config = Keyword.get(cluster.node_config(), :coordinator, [])
 
     case Keyword.get(coordinator_config, :path) do
       nil ->
@@ -333,7 +330,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   defp send_recovery_consensus_for_committed_transactions(t, log, newest_safe_txn_id) do
     # Find any pending transactions that are actually already committed
     already_committed_txns =
-      Map.keys(t.waiting_list)
+      t.waiting_list
+      |> Map.keys()
       |> Enum.filter(fn txn_id ->
         # Transaction is committed if it's <= newest_safe_transaction_id
         txn_id <= newest_safe_txn_id
@@ -353,9 +351,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
-  defp try_to_start_director_after_first_consensus(
-         %{leader_startup_state: :leader_waiting_consensus} = t
-       ) do
+  defp try_to_start_director_after_first_consensus(%{leader_startup_state: :leader_waiting_consensus} = t) do
     # First consensus received! Now we can start director with populated service_directory
     service_count = map_size(t.service_directory)
     trace_leader_ready_starting_director(service_count)

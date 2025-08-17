@@ -69,8 +69,7 @@ defmodule Bedrock.Internal.Repo do
   def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
-  def fetch(t, key),
-    do: call(t, {:fetch, key}, :infinity)
+  def fetch(t, key), do: call(t, {:fetch, key}, :infinity)
 
   @spec fetch!(transaction(), key()) :: value()
   def fetch!(t, key) do
@@ -97,12 +96,10 @@ defmodule Bedrock.Internal.Repo do
   @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
           {:ok, Bedrock.version()}
           | {:error, :unavailable | :timeout | :unknown}
-  def commit(t, opts \\ []),
-    do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
+  def commit(t, opts \\ []), do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
 
   @spec rollback(transaction()) :: :ok
-  def rollback(t),
-    do: cast(t, :rollback)
+  def rollback(t), do: cast(t, :rollback)
 
   @spec default_timeout_in_ms() :: pos_integer()
   def default_timeout_in_ms, do: 1_000

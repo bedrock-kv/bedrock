@@ -1,12 +1,13 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   @moduledoc false
+  use GenServer
+
+  import Bedrock.Internal.GenServer.Replies
+
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Basalt.Logic
   alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.Service.Foreman
-
-  use GenServer
-  import Bedrock.Internal.GenServer.Replies
 
   @spec child_spec(opts :: keyword()) :: map()
   def child_spec(opts) do
@@ -28,12 +29,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   end
 
   @impl true
-  def init(args),
-    # We use a continuation here to ensure that the foreman isn't blocked
-    # waiting for the worker to finish it's startup sequence (which could take
-    # a few seconds or longer if the database is large.) The foreman will
-    # be notified when the worker is ready to accept requests.
-    do: {:ok, args, {:continue, :finish_startup}}
+  # We use a continuation here to ensure that the foreman isn't blocked
+  # waiting for the worker to finish it's startup sequence (which could take
+  # a few seconds or longer if the database is large.) The foreman will
+  # be notified when the worker is ready to accept requests.
+  def init(args), do: {:ok, args, {:continue, :finish_startup}}
 
   @impl true
   def terminate(_reason, %State{} = state) do
@@ -53,48 +53,43 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
     do: t |> Logic.fetch(key, version) |> then(&reply(t, &1))
 
   @impl true
-  def handle_call({:info, fact_names}, _from, %State{} = t),
-    do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
+  def handle_call({:info, fact_names}, _from, %State{} = t), do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
   @impl true
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
-    with {:ok, t} <- t |> Logic.lock_for_recovery(director, epoch),
-         {:ok, info} <- t |> Logic.info(Storage.recovery_info()) do
-      t |> reply({:ok, self(), info})
+    with {:ok, t} <- Logic.lock_for_recovery(t, director, epoch),
+         {:ok, info} <- Logic.info(t, Storage.recovery_info()) do
+      reply(t, {:ok, self(), info})
     else
-      error -> t |> reply(error)
+      error -> reply(t, error)
     end
   end
 
   @impl true
-  def handle_call(
-        {:unlock_after_recovery, durable_version, transaction_system_layout},
-        {_director, _},
-        t
-      ) do
+  def handle_call({:unlock_after_recovery, durable_version, transaction_system_layout}, {_director, _}, t) do
     t
     |> Logic.unlock_after_recovery(durable_version, transaction_system_layout)
     |> case do
-      {:ok, t} -> t |> reply(:ok)
+      {:ok, t} -> reply(t, :ok)
     end
   end
 
   @impl true
-  def handle_call(_, _from, t),
-    do: t |> reply({:error, :not_ready})
+  def handle_call(_, _from, t), do: reply(t, {:error, :not_ready})
 
   @impl true
   def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
-    Logic.startup(otp_name, foreman, id, path)
+    otp_name
+    |> Logic.startup(foreman, id, path)
     |> case do
-      {:ok, t} -> t |> noreply(continue: :report_health_to_foreman)
-      {:error, reason} -> :no_state |> stop(reason)
+      {:ok, t} -> noreply(t, continue: :report_health_to_foreman)
+      {:error, reason} -> stop(:no_state, reason)
     end
   end
 
   @impl true
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
-    t |> noreply()
+    noreply(t)
   end
 end

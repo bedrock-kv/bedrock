@@ -8,6 +8,7 @@ defmodule Bedrock.Cluster.Gateway.ServerTest do
 
   # Test cluster module
   defmodule TestCluster do
+    @moduledoc false
     def name, do: "test_cluster"
     def otp_name(:coordinator), do: :test_coordinator
     def otp_name(component), do: :"test_#{component}"

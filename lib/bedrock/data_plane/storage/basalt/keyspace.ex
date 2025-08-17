@@ -11,13 +11,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
   of the insert operation).
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
   @opaque t :: :ets.tid()
 
   @spec new(atom()) :: t()
-  def new(name) when is_atom(name),
-    do: :ets.new(name, [:ordered_set, :public, read_concurrency: true])
+  def new(name) when is_atom(name), do: :ets.new(name, [:ordered_set, :public, read_concurrency: true])
 
   @spec close(pkv :: t()) :: :ok
   def close(mvcc) do
@@ -25,28 +24,26 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
     :ok
   end
 
-  @spec apply_transaction(keyspace :: t(), BedrockTransaction.encoded()) :: :ok
+  @spec apply_transaction(keyspace :: t(), Transaction.encoded()) :: :ok
   def apply_transaction(keyspace, encoded_transaction) do
-    {:ok, version} = BedrockTransaction.extract_commit_version(encoded_transaction)
-    {:ok, mutations_stream} = BedrockTransaction.stream_mutations(encoded_transaction)
+    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
+    {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
 
     # Convert mutations to key presence indicators
     key_entries =
-      mutations_stream
-      |> Enum.map(fn
+      Enum.map(mutations_stream, fn
         {:set, key, _value} -> {key, true}
         # Treat as single key clear for simplicity
         {:clear_range, key, _end} -> {key, false}
       end)
 
-    with true <- :ets.insert(keyspace, [{:last_version, version} | key_entries]) do
-      :ok
-    end
+    true = :ets.insert(keyspace, [{:last_version, version} | key_entries])
+    :ok
   end
 
   @spec insert_many(keyspace :: t(), keys :: [Bedrock.key()]) :: :ok
   def insert_many(keyspace, keys) do
-    true = :ets.insert_new(keyspace, keys |> Enum.map(fn key -> {key, true} end))
+    true = :ets.insert_new(keyspace, Enum.map(keys, fn key -> {key, true} end))
     :ok
   end
 
@@ -58,7 +55,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
 
   @spec key_exists?(keyspace :: t(), Bedrock.key()) :: boolean()
   def key_exists?(keyspace, key) when is_binary(key) do
-    :ets.lookup(keyspace, key)
+    keyspace
+    |> :ets.lookup(key)
     |> case do
       [] -> false
       [{_, present}] -> present

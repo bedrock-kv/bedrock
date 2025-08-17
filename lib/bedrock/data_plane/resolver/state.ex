@@ -17,12 +17,14 @@ defmodule Bedrock.DataPlane.Resolver.State do
           last_version: Bedrock.version(),
           waiting: Bedrock.Internal.WaitingList.t(),
           mode: mode(),
-          lock_token: Bedrock.lock_token()
+          lock_token: Bedrock.lock_token(),
+          epoch: Bedrock.epoch()
         }
   defstruct tree: nil,
             oldest_version: nil,
             last_version: nil,
             waiting: %{},
             mode: :running,
-            lock_token: nil
+            lock_token: nil,
+            epoch: nil
 end

@@ -55,14 +55,13 @@ defmodule Bedrock.Internal.Time.Interval do
     end
   end
 
-  def normalize(perfect = {_unit, n}) when is_integer(n), do: perfect
+  def normalize({_unit, n} = perfect) when is_integer(n), do: perfect
 
   @spec do_humanize({unit(), number()}) :: String.t()
-  defp do_humanize({unit, n}) when is_integer(n),
-    do: "#{n}#{unit_abbreviation(unit)}"
+  defp do_humanize({unit, n}) when is_integer(n), do: "#{n}#{unit_abbreviation(unit)}"
 
   defp do_humanize({unit, n}) when is_float(n),
-    do: "#{:io_lib.format("~.2f", [n]) |> List.to_string()}#{unit_abbreviation(unit)}"
+    do: "#{"~.2f" |> :io_lib.format([n]) |> List.to_string()}#{unit_abbreviation(unit)}"
 
   @spec unit_abbreviation(unit()) :: String.t()
   def unit_abbreviation(:nanosecond), do: "ns"

@@ -19,8 +19,7 @@ defmodule Bedrock.DataPlane.Version do
 
   @doc "Creates a version from a non-negative integer"
   @spec from_integer(non_neg_integer()) :: t()
-  def from_integer(int) when is_integer(int) and int >= 0 and int <= 0xFFFFFFFFFFFFFFFF,
-    do: <<int::unsigned-big-64>>
+  def from_integer(int) when is_integer(int) and int >= 0 and int <= 0xFFFFFFFFFFFFFFFF, do: <<int::unsigned-big-64>>
 
   @doc "Creates a version from a binary representation"
   @spec from_bytes(binary()) :: t()

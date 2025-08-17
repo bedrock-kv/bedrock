@@ -6,14 +6,13 @@ defmodule Bedrock.DataPlane.Resolver.Validation do
   to the expected format before processing in the resolver.
   """
 
-  alias Bedrock.DataPlane.BedrockTransaction
+  alias Bedrock.DataPlane.Transaction
 
-  @spec check_transactions([BedrockTransaction.encoded()]) :: :ok | {:error, String.t()}
+  @spec check_transactions([Transaction.encoded()]) :: :ok | {:error, String.t()}
   def check_transactions(transactions) do
     cond do
       not is_list(transactions) ->
-        {:error,
-         "invalid transactions: expected list of transaction summaries, got #{inspect(transactions)}"}
+        {:error, "invalid transactions: expected list of transaction summaries, got #{inspect(transactions)}"}
 
       not Enum.all?(transactions, &valid_transaction_summary?/1) ->
         {:error,
@@ -32,9 +31,8 @@ defmodule Bedrock.DataPlane.Resolver.Validation do
   @spec valid_transaction_summary?(any()) :: boolean()
   defp valid_transaction_summary?({nil, write_keys}) when is_list(write_keys), do: true
 
-  defp valid_transaction_summary?({{_version, read_keys}, write_keys})
-       when is_list(read_keys) and is_list(write_keys),
-       do: true
+  defp valid_transaction_summary?({{_version, read_keys}, write_keys}) when is_list(read_keys) and is_list(write_keys),
+    do: true
 
   defp valid_transaction_summary?(_), do: false
 end

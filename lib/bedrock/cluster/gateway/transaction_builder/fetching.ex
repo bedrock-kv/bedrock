@@ -1,12 +1,13 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   @moduledoc false
 
+  import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
+
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Internal.Time
-
-  import Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions, only: [next_read_version: 1]
 
   @type next_read_version_fn() :: (State.t() ->
                                      {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
@@ -15,11 +16,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   @type storage_fetch_fn() :: (pid(), binary(), Bedrock.version(), keyword() ->
                                  {:ok, binary()} | {:error, atom()})
   @type async_stream_fn() :: (list(), function(), keyword() -> Enumerable.t())
-  @type horse_race_fn() :: ([{Bedrock.key_range(), pid()}],
-                            Bedrock.version(),
-                            binary(),
-                            pos_integer(),
-                            keyword() ->
+  @type horse_race_fn() :: ([{Bedrock.key_range(), pid()}], Bedrock.version(), binary(), pos_integer(), keyword() ->
                               {:ok, Bedrock.key_range(), pid(), binary()}
                               | {:error, atom()}
                               | :error)
@@ -53,9 +50,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     # Create a fetch function that matches Tx.get expectations: (key, state) -> {result, state}
     fetch_fn = fn k, state ->
       case fetch_from_storage(state, k, opts) do
-        {:ok, new_state, value} -> {{:ok, value}, new_state}
-        {:error, reason} -> {{:error, reason}, state}
-        :error -> {:error, state}
+        {:ok, new_state, encoded_value} ->
+          {:ok, decoded_value} = state.value_codec.decode_value(encoded_value)
+          {{:ok, decoded_value}, new_state}
+
+        {:error, reason} ->
+          {{:error, reason}, state}
+
+        :error ->
+          {:error, state}
       end
     end
 
@@ -97,10 +100,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   def fetch_from_storage(t, key, opts) do
     storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
 
-    fastest_storage_server_for_key(t.fastest_storage_servers, key)
+    t.fastest_storage_servers
+    |> fastest_storage_server_for_key(key)
     |> case do
       nil ->
-        storage_servers_for_key(t.transaction_system_layout, key)
+        t.transaction_system_layout
+        |> storage_servers_for_key(key)
         |> case do
           [] ->
             raise "No storage server or team found for key: #{inspect(key)}"
@@ -110,7 +115,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
         end
 
       storage_server ->
-        storage_fetch_fn.(storage_server, key, t.read_version, timeout: t.fetch_timeout_in_ms)
+        storage_server
+        |> storage_fetch_fn.(key, t.read_version, timeout: t.fetch_timeout_in_ms)
         |> case do
           {:ok, value} -> {:ok, t, value}
           error -> error
@@ -136,8 +142,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
     |> horse_race_fn.(t.read_version, key, t.fetch_timeout_in_ms, opts)
     |> case do
       {:ok, key_range, storage_server, value} ->
-        {:ok, t |> Map.update!(:fastest_storage_servers, &Map.put(&1, key_range, storage_server)),
-         value}
+        {:ok, Map.update!(t, :fastest_storage_servers, &Map.put(&1, key_range, storage_server)), value}
 
       error ->
         error
@@ -162,7 +167,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   Transaction System Layout.
   """
   @spec storage_servers_for_key(
-          Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
+          TransactionSystemLayout.t(),
           key :: binary()
         ) ::
           [{Bedrock.key_range(), pid()}]
@@ -182,7 +187,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
   end
 
   @spec get_storage_server_pid(
-          Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
+          TransactionSystemLayout.t(),
           String.t()
         ) :: pid() | nil
   defp get_storage_server_pid(transaction_system_layout, storage_id) do
@@ -212,20 +217,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
         ) :: {:ok, Bedrock.key_range(), pid(), binary()} | {:error, atom()} | :error
   def horse_race_storage_servers_for_key([], _, _, _, _), do: :error
 
-  def horse_race_storage_servers_for_key(
-        storage_servers,
-        read_version,
-        key,
-        fetch_timeout_in_ms,
-        opts
-      ) do
+  def horse_race_storage_servers_for_key(storage_servers, read_version, key, fetch_timeout_in_ms, opts) do
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
     storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
 
     storage_servers
     |> async_stream_fn.(
       fn {key_range, storage_server} ->
-        storage_fetch_fn.(storage_server, key, read_version, timeout: fetch_timeout_in_ms)
+        storage_server
+        |> storage_fetch_fn.(key, read_version, timeout: fetch_timeout_in_ms)
         |> case do
           {:ok, value} -> {key_range, storage_server, value}
           error -> error

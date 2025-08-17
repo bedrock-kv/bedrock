@@ -1,19 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.Server do
   @moduledoc false
-  alias Bedrock.Cluster
-  alias Bedrock.DataPlane.BedrockTransaction
-  alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.Shale.Segment
-  alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
-  alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Version
+  use GenServer
 
   import Bedrock.DataPlane.Log.Shale.ColdStarting, only: [reload_segments_at_path: 1]
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
   import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 3]
-  import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
-  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
-  import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
 
   import Bedrock.DataPlane.Log.Shale.LongPulls,
     only: [
@@ -23,10 +14,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       notify_waiting_pullers: 3
     ]
 
+  import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
+  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
+  import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
   import Bedrock.DataPlane.Log.Telemetry
-
-  use GenServer
   import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.Cluster
+  alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
+  alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
 
   @doc false
   @spec child_spec(
@@ -64,8 +64,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec init({module(), atom(), Bedrock.DataPlane.Log.id(), pid(), Path.t()}) ::
-          {:ok, Bedrock.DataPlane.Log.Shale.State.t(), {:continue, :initialization}}
+  @spec init({module(), atom(), Log.id(), pid(), Path.t()}) ::
+          {:ok, State.t(), {:continue, :initialization}}
   def init({cluster, otp_name, id, foreman, path}) do
     {:ok,
      %State{
@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   @spec handle_continue(
           :initialization
-          | {:notify_waiting_pullers, Bedrock.version(), BedrockTransaction.encoded()}
+          | {:notify_waiting_pullers, Bedrock.version(), Transaction.encoded()}
           | :check_for_expired_pullers
           | :wait_for_next_puller_deadline,
           State.t()
@@ -103,7 +103,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
     {oldest_version, last_version, active_segment, segments} =
       t.path
-      |> reload_segments_at_path
+      |> reload_segments_at_path()
       |> case do
         {:error, :unable_to_list_segments} ->
           {Version.zero(), Version.zero(), nil, []}
@@ -115,9 +115,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
           active_segment = Segment.ensure_transactions_are_loaded(active_segment)
           last_version = Segment.last_version(active_segment)
 
-          oldest_version =
-            [active_segment.min_version | Enum.map(segments, & &1.min_version)]
-            |> Enum.min()
+          oldest_version = Enum.min([active_segment.min_version | Enum.map(segments, & &1.min_version)])
 
           {oldest_version, last_version, active_segment, segments}
       end
@@ -157,7 +155,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     |> Map.get(:waiting_pullers)
     |> determine_timeout_for_next_puller_deadline(monotonic_now())
     |> case do
-      nil -> t |> noreply()
+      nil -> noreply(t)
       timeout -> {:noreply, t, timeout}
     end
   end
@@ -165,7 +163,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   @spec handle_info(:timeout, State.t()) ::
           {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
-  def handle_info(:timeout, t), do: t |> noreply(continue: :check_for_expired_pullers)
+  def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
 
   @impl true
   @spec handle_call(
@@ -179,8 +177,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), {:continue, atom()}}
-  def handle_call({:info, fact_names}, _, t),
-    do: info(t, fact_names) |> then(&(t |> reply(&1)))
+  def handle_call({:info, fact_names}, _, t), do: t |> info(fact_names) |> then(&reply(t, &1))
 
   @impl true
   def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
@@ -188,9 +185,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
     with {:ok, t} <- lock_for_recovery(t, epoch, director),
          {:ok, info} <- info(t, Log.recovery_info()) do
-      t |> reply({:ok, self(), info})
+      reply(t, {:ok, self(), info})
     else
-      error -> t |> reply(error)
+      error -> reply(t, error)
     end
   end
 
@@ -199,19 +196,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     trace_recover_from(source_log, first_version, last_version)
 
     case recover_from(t, source_log, first_version, last_version) do
-      {:ok, t} -> t |> reply({:ok, self()})
-      {:error, reason} -> t |> reply({:error, {:failed_to_recover, reason}})
+      {:ok, t} -> reply(t, {:ok, self()})
+      {:error, reason} -> reply(t, {:error, {:failed_to_recover, reason}})
     end
   end
 
   @impl true
   def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
-    with {:ok, transaction} <- BedrockTransaction.validate(transaction_bytes),
+    with {:ok, transaction} <- Transaction.validate(transaction_bytes),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
-      t |> noreply(continue: {:notify_waiting_pullers, expected_version, transaction})
+      noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
-      {:wait, t} -> t |> noreply(continue: :check_for_expired_pullers)
-      {:error, _reason} = error -> t |> reply(error, continue: :check_for_expired_pullers)
+      {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)
+      {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
   end
 
@@ -221,11 +218,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
-        t |> reply({:ok, transactions})
+        reply(t, {:ok, transactions})
 
       {:waiting_for, from_version} ->
-        try_to_add_to_waiting_pullers(
-          t.waiting_pullers,
+        t.waiting_pullers
+        |> try_to_add_to_waiting_pullers(
           monotonic_now(),
           reply_to_fn(from),
           from_version,
@@ -233,7 +230,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         )
         |> case do
           {:error, _reason} = error ->
-            t |> reply(error, continue: :check_for_expired_pullers)
+            reply(t, error, continue: :check_for_expired_pullers)
 
           {:ok, waiting_pullers} ->
             t
@@ -242,12 +239,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         end
 
       {:error, _reason} = error ->
-        t |> reply(error)
+        reply(t, error)
     end
   end
 
   @impl true
-  def handle_call(:ping, _from, t), do: t |> reply(:pong)
+  def handle_call(:ping, _from, t), do: reply(t, :pong)
 
   @spec check_running(term()) :: {:error, :unavailable}
   def check_running(_t), do: {:error, :unavailable}

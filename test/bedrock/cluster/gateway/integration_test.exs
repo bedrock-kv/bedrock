@@ -84,7 +84,7 @@ defmodule Bedrock.Cluster.Gateway.IntegrationTest do
 
       # With cached TSL, gateway should work regardless of coordinator leadership
       assert state.known_coordinator == :any_coordinator
-      assert not is_nil(state.transaction_system_layout)
+      assert state.transaction_system_layout
     end
 
     test "coordinator ping response includes leader information" do

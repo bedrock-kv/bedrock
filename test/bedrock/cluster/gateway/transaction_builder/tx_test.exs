@@ -31,9 +31,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   describe "set/3" do
     test "sets key-value pair" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
+      tx = Tx.set(Tx.new(), "key1", "value1")
 
       assert %Tx{
                mutations: [{:set, "key1", "value1"}],
@@ -118,9 +116,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "handles empty string key and value" do
-      tx =
-        Tx.new()
-        |> Tx.set("", "")
+      tx = Tx.set(Tx.new(), "", "")
 
       assert %{
                mutations: [{:set, "", ""}],
@@ -130,9 +126,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "handles unicode keys and values" do
-      tx =
-        Tx.new()
-        |> Tx.set("键名", "值")
+      tx = Tx.set(Tx.new(), "键名", "值")
 
       assert %{
                mutations: [{:set, "键名", "值"}],
@@ -145,9 +139,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       binary_key = "\x00\x01\xFF\x02"
       binary_value = "\xFF\x00\x01\x02"
 
-      tx =
-        Tx.new()
-        |> Tx.set(binary_key, binary_value)
+      tx = Tx.set(Tx.new(), binary_key, binary_value)
 
       expected_end_key = binary_key <> "\0"
 
@@ -221,9 +213,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   describe "clear_range/3" do
     test "clears range of keys" do
-      tx =
-        Tx.new()
-        |> Tx.clear_range("a", "z")
+      tx = Tx.clear_range(Tx.new(), "a", "z")
 
       assert %Tx{
                mutations: [{:clear_range, "a", "z"}],
@@ -268,9 +258,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   describe "get/4" do
     test "gets value from writes cache" do
-      tx =
-        Tx.new()
-        |> Tx.set("cached_key", "cached_value")
+      tx = Tx.set(Tx.new(), "cached_key", "cached_value")
 
       fetch_fn = fn _key, state ->
         flunk("Should not call fetch_fn when value is in writes cache")
@@ -294,9 +282,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "gets value from reads cache when not in writes" do
-      tx =
-        Tx.new()
-        |> then(&%{&1 | reads: %{"cached_key" => "cached_value"}})
+      tx = then(Tx.new(), &%{&1 | reads: %{"cached_key" => "cached_value"}})
 
       fetch_fn = fn _key, state ->
         flunk("Should not call fetch_fn when value is in reads cache")
@@ -342,9 +328,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "handles cleared key in writes" do
-      tx =
-        Tx.new()
-        |> Tx.clear("cleared_key")
+      tx = Tx.clear(Tx.new(), "cleared_key")
 
       fetch_fn = fn _key, _state ->
         flunk("Should not call fetch_fn for cleared key")
@@ -358,9 +342,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "handles cleared key in reads" do
-      tx =
-        Tx.new()
-        |> then(&%{&1 | reads: %{"cleared_key" => :clear}})
+      tx = then(Tx.new(), &%{&1 | reads: %{"cleared_key" => :clear}})
 
       fetch_fn = fn _key, _state ->
         flunk("Should not call fetch_fn for cleared key in reads")
@@ -430,11 +412,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "merges writes with storage data" do
-      tx =
-        Tx.new()
-        # Override storage
-        |> Tx.set("key2", "tx_value2")
+      tx = Tx.set(Tx.new(), "key2", "tx_value2")
 
+      # Override storage
       read_range_fn = fn state, start_key, end_key, opts ->
         assert start_key == "key1"
         assert end_key == "key3"
@@ -486,9 +466,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "handles clear_range operations" do
-      tx =
-        Tx.new()
-        |> Tx.clear_range("key1", "key3")
+      tx = Tx.clear_range(Tx.new(), "key1", "key3")
 
       read_range_fn = fn _state, _start, _end, _opts ->
         {[{"key1", "storage_value1"}, {"key2", "storage_value2"}], :test_state}
@@ -574,9 +552,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
 
     test "coalesces overlapping ranges in conflicts" do
-      tx =
-        Tx.new()
-        |> then(&%{&1 | range_reads: [{"a", "m"}, {"k", "z"}, {"b", "n"}]})
+      tx = then(Tx.new(), &%{&1 | range_reads: [{"a", "m"}, {"k", "z"}, {"b", "n"}]})
 
       # Provide a read_version since this transaction has range reads
       read_version = Bedrock.DataPlane.Version.from_integer(789)
@@ -594,9 +570,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       large_key = String.duplicate("k", 1000)
       large_value = String.duplicate("v", 10_000)
 
-      tx =
-        Tx.new()
-        |> Tx.set(large_key, large_value)
+      tx = Tx.set(Tx.new(), large_key, large_value)
 
       assert %{
                mutations: [{:set, ^large_key, ^large_value}],

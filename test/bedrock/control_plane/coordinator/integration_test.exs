@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
       }
 
       # Simulate the ping handler logic
-      leader = if state.leader_node == state.my_node, do: self(), else: nil
+      leader = if state.leader_node == state.my_node, do: self()
       response = {:pong, state.epoch, leader}
 
       assert {:pong, ^epoch, ^leader_pid} = response
@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
       }
 
       # Simulate the ping handler logic
-      leader = if state.leader_node == state.my_node, do: self(), else: nil
+      leader = if state.leader_node == state.my_node, do: self()
       response = {:pong, state.epoch, leader}
 
       assert {:pong, ^epoch, nil} = response

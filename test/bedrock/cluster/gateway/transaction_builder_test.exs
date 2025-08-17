@@ -15,11 +15,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   # For individual module testing, see the respective module test files
 
   defmodule TestKeyCodec do
+    @moduledoc false
     def encode_key(key) when is_binary(key), do: {:ok, key}
     def encode_key(_), do: :key_error
   end
 
   defmodule TestValueCodec do
+    @moduledoc false
     def encode_value(value), do: {:ok, value}
     def decode_value(value), do: {:ok, value}
   end
@@ -455,10 +457,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "GenServer configuration and customization" do
     test "custom codecs are applied and preserved" do
       defmodule CustomKeyCodec do
+        @moduledoc false
         def encode_key(key), do: {:ok, "custom_#{key}"}
       end
 
       defmodule CustomValueCodec do
+        @moduledoc false
         def encode_value(value), do: {:ok, "encoded_#{value}"}
         def decode_value(value), do: {:ok, value}
       end

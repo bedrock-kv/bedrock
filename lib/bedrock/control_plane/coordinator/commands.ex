@@ -73,11 +73,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   Create a command to update cluster configuration via consensus.
   """
   @spec update_config(Config.t()) :: update_config_command()
-  def update_config(config),
-    do: {
-      :update_config,
-      %{config: config}
-    }
+  def update_config(config), do: {:update_config, %{config: config}}
 
   @doc """
   Create a command to update transaction system layout via consensus.
@@ -85,10 +81,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   @spec update_transaction_system_layout(TransactionSystemLayout.t()) ::
           update_transaction_system_layout_command()
   def update_transaction_system_layout(transaction_system_layout),
-    do: {
-      :update_transaction_system_layout,
-      %{transaction_system_layout: transaction_system_layout}
-    }
+    do: {:update_transaction_system_layout, %{transaction_system_layout: transaction_system_layout}}
 
   @doc """
   Create a command to SET node resources (services and capabilities) via consensus.

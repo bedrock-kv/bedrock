@@ -1,7 +1,4 @@
 defmodule Mix.Tasks.Bedrock.Config do
-  use Mix.Task
-  import Mix.Bedrock
-
   @shortdoc "Prints configuration"
 
   @moduledoc """
@@ -26,15 +23,13 @@ defmodule Mix.Tasks.Bedrock.Config do
 
   """
 
-  defp switches,
-    do: [
-      cluster: [:string, :keep]
-    ]
+  use Mix.Task
 
-  defp aliases,
-    do: [
-      c: :cluster
-    ]
+  import Mix.Bedrock
+
+  defp switches, do: [cluster: [:string, :keep]]
+
+  defp aliases, do: [c: :cluster]
 
   @spec run([String.t()]) :: :ok
   def run(argv) do

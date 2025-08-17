@@ -31,14 +31,8 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
           opts :: keyword()
         ) ::
           {:error, :version_too_new} | {:ok, updated_waiting_pullers :: WaitingList.t()}
-  def try_to_add_to_waiting_pullers(
-        waiting_pullers,
-        _monotonic_now,
-        reply_to_fn,
-        from_version,
-        opts
-      ) do
-    {timeout_in_ms, opts} = opts |> Keyword.pop(:willing_to_wait_in_ms)
+  def try_to_add_to_waiting_pullers(waiting_pullers, _monotonic_now, reply_to_fn, from_version, opts) do
+    {timeout_in_ms, opts} = Keyword.pop(opts, :willing_to_wait_in_ms)
 
     if timeout_in_ms == nil do
       # Not willing to wait timeout, so we reply with an error

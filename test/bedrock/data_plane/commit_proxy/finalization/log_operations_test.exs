@@ -1,204 +1,119 @@
 defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
   alias FinalizationTestSupport, as: Support
 
-  describe "build_log_transactions/3" do
-    test "builds transaction for each log based on tag coverage" do
-      log_descriptors = %{
-        # covers tags 0 and 1
-        "log_1" => [0, 1],
-        # covers tags 1 and 2
-        "log_2" => [1, 2],
-        # covers tag 3 only
-        "log_3" => [3]
+  describe "push_transaction_to_logs_direct/5" do
+    test "pushes pre-built transactions directly to logs" do
+      # Create mock log servers
+      log_server_1 = Support.create_mock_log_server()
+      log_server_2 = Support.create_mock_log_server()
+
+      # Set up transaction system layout
+      layout = %{
+        logs: %{
+          "log_1" => [0, 1],
+          "log_2" => [1, 2]
+        },
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, log_server_1}},
+          "log_2" => %{kind: :log, status: {:up, log_server_2}}
+        }
       }
 
-      transactions_by_tag = %{
-        0 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_0" => "value_0"}),
-        1 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_1" => "value_1"}),
-        2 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_2" => "value_2"})
-      }
-
-      result =
-        Finalization.build_log_transactions(
-          log_descriptors,
-          transactions_by_tag,
-          Version.from_integer(100)
-        )
-
-      # log_1 should get writes for tags 0 and 1
-      log_1_writes = BedrockTransactionTestSupport.extract_log_writes(result["log_1"])
-      assert log_1_writes == %{"key_0" => "value_0", "key_1" => "value_1"}
-
-      # log_2 should get writes for tags 1 and 2
-      log_2_writes = BedrockTransactionTestSupport.extract_log_writes(result["log_2"])
-      assert log_2_writes == %{"key_1" => "value_1", "key_2" => "value_2"}
-
-      # log_3 should get empty transaction (no matching tags)
-      log_3_writes = BedrockTransactionTestSupport.extract_log_writes(result["log_3"])
-      assert log_3_writes == %{}
-
-      # All transactions should have same version
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_1"]) ==
-               Version.from_integer(100)
-
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_2"]) ==
-               Version.from_integer(100)
-
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_3"]) ==
-               Version.from_integer(100)
-    end
-
-    test "handles case where no tags match any logs" do
-      log_descriptors = %{
-        # tags that don't exist in transactions
-        "log_1" => [10, 11]
-      }
-
-      transactions_by_tag = %{
-        0 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_0" => "value_0"})
-      }
-
-      result =
-        Finalization.build_log_transactions(
-          log_descriptors,
-          transactions_by_tag,
-          Version.from_integer(100)
-        )
-
-      # log_1 should get empty transaction
-      log_1_writes = BedrockTransactionTestSupport.extract_log_writes(result["log_1"])
-      assert log_1_writes == %{}
-
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_1"]) ==
-               Version.from_integer(100)
-    end
-
-    test "handles empty transactions_by_tag" do
-      log_descriptors = %{
-        "log_1" => [0, 1],
-        "log_2" => [2, 3]
-      }
-
-      result =
-        Finalization.build_log_transactions(log_descriptors, %{}, Version.from_integer(100))
-
-      # All logs should get empty transactions
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_1"]) == %{}
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_2"]) == %{}
-
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_1"]) ==
-               Version.from_integer(100)
-
-      assert BedrockTransactionTestSupport.extract_log_version(result["log_2"]) ==
-               Version.from_integer(100)
-    end
-
-    test "handles overlapping tag coverage" do
-      log_descriptors = %{
-        "log_1" => [0, 1],
-        "log_2" => [1, 2],
-        # Overlaps with both log_1 and log_2
-        "log_3" => [0, 2]
-      }
-
-      transactions_by_tag = %{
-        0 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_0" => "value_0"}),
-        1 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_1" => "value_1"}),
-        2 => BedrockTransactionTestSupport.new_log_transaction(100, %{"key_2" => "value_2"})
-      }
-
-      result =
-        Finalization.build_log_transactions(
-          log_descriptors,
-          transactions_by_tag,
-          Version.from_integer(100)
-        )
-
-      # Verify each log gets correct writes
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_1"]) == %{
-               "key_0" => "value_0",
-               "key_1" => "value_1"
-             }
-
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_2"]) == %{
-               "key_1" => "value_1",
-               "key_2" => "value_2"
-             }
-
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_3"]) == %{
-               "key_0" => "value_0",
-               "key_2" => "value_2"
-             }
-    end
-
-    test "demonstrates multi-tag write distribution with overlapping storage teams" do
-      # This test demonstrates the full multi-tag functionality:
-      # A single write gets distributed to multiple logs based on tag intersection
-      log_descriptors = %{
-        "log_alpha" => [:team_a, :team_b],
-        "log_beta" => [:team_b, :team_c],
-        "log_gamma" => [:team_a, :team_c]
-      }
-
-      # Simulating the result after group_writes_by_tag with overlapping teams:
-      # A key "shared_key" was distributed to multiple tags due to overlapping storage teams
-      transactions_by_tag = %{
-        # All three teams contain the same key due to overlapping ranges
-        :team_a =>
-          BedrockTransactionTestSupport.new_log_transaction(100, %{
-            <<"shared_key">> => <<"shared_value">>,
-            <<"key_a">> => <<"value_a">>
+      # Pre-built transactions for each log (this would come from build_transactions_for_logs)
+      transactions_by_log = %{
+        "log_1" =>
+          TransactionTestSupport.new_log_transaction(100, %{
+            "key_0" => "value_0",
+            "key_1" => "value_1"
           }),
-        :team_b =>
-          BedrockTransactionTestSupport.new_log_transaction(100, %{
-            <<"shared_key">> => <<"shared_value">>,
-            <<"key_b">> => <<"value_b">>
-          }),
-        :team_c =>
-          BedrockTransactionTestSupport.new_log_transaction(100, %{
-            <<"shared_key">> => <<"shared_value">>,
-            <<"key_c">> => <<"value_c">>
+        "log_2" =>
+          TransactionTestSupport.new_log_transaction(100, %{
+            "key_1" => "value_1",
+            "key_2" => "value_2"
           })
       }
 
       result =
-        Finalization.build_log_transactions(
-          log_descriptors,
-          transactions_by_tag,
-          Version.from_integer(100)
+        Finalization.push_transaction_to_logs_direct(
+          layout,
+          # last_commit_version
+          Version.from_integer(99),
+          transactions_by_log,
+          # commit_version (unused in direct version)
+          Version.from_integer(100),
+          []
         )
 
-      # log_alpha covers team_a and team_b, so gets writes from both
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_alpha"]) == %{
-               # appears from both teams (same key/value)
-               <<"shared_key">> => <<"shared_value">>,
-               <<"key_a">> => <<"value_a">>,
-               <<"key_b">> => <<"value_b">>
-             }
+      assert result == :ok
+    end
 
-      # log_beta covers team_b and team_c
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_beta"]) == %{
-               # appears from both teams
-               <<"shared_key">> => <<"shared_value">>,
-               <<"key_b">> => <<"value_b">>,
-               <<"key_c">> => <<"value_c">>
-             }
+    test "handles empty transactions" do
+      layout = %{
+        logs: %{
+          "log_1" => [0]
+        },
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, Support.create_mock_log_server()}}
+        }
+      }
 
-      # log_gamma covers team_a and team_c
-      assert BedrockTransactionTestSupport.extract_log_writes(result["log_gamma"]) == %{
-               # appears from both teams
-               <<"shared_key">> => <<"shared_value">>,
-               <<"key_a">> => <<"value_a">>,
-               <<"key_c">> => <<"value_c">>
-             }
+      # Empty transaction
+      transactions_by_log = %{
+        "log_1" => TransactionTestSupport.new_log_transaction(100, %{})
+      }
 
-      # This demonstrates that a single write (shared_key) properly reaches all logs
-      # that have tag intersection with the storage teams containing that key
+      result =
+        Finalization.push_transaction_to_logs_direct(
+          layout,
+          Version.from_integer(99),
+          transactions_by_log,
+          Version.from_integer(100),
+          []
+        )
+
+      assert result == :ok
+    end
+
+    test "returns error when log server fails" do
+      # Create a failing log server
+      failing_log_server =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :disk_full})
+          end
+        end)
+
+      Support.ensure_process_killed(failing_log_server)
+
+      layout = %{
+        logs: %{
+          "log_1" => [0]
+        },
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, failing_log_server}}
+        }
+      }
+
+      transactions_by_log = %{
+        "log_1" => TransactionTestSupport.new_log_transaction(100, %{"key" => "value"})
+      }
+
+      result =
+        Finalization.push_transaction_to_logs_direct(
+          layout,
+          Version.from_integer(99),
+          transactions_by_log,
+          Version.from_integer(100),
+          []
+        )
+
+      assert {:error, {:log_failures, [{"log_1", :disk_full}]}} = result
     end
   end
 

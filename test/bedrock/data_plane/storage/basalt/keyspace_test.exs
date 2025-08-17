@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.BedrockTransactionTestSupport
   alias Bedrock.DataPlane.Storage.Basalt.Keyspace
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   def new_random_keyspace, do: Keyspace.new(:"keyspace_#{Faker.random_between(0, 10_000)}")
@@ -20,7 +20,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
                    "a" => "a",
                    "c" => "c",
                    "d" => "d",
@@ -45,7 +45,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
                    "a" => "a",
                    "c" => "c",
                    "d" => "d",
@@ -56,7 +56,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
                    "f" => "f",
                    "g" => "g",
                    "h" => "h",
@@ -85,7 +85,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
             "a" => "a",
             "c" => "c",
             "d" => "d",
@@ -96,7 +96,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
                    "c" => nil,
                    "d" => nil
                  })
@@ -104,13 +104,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
 
       version_1 = Version.from_integer(1)
 
-      assert [
-               {:last_version, ^version_1},
-               {"a", true},
-               {"c", false},
-               {"d", false},
-               {"e", true}
-             ] = keyspace |> :ets.tab2list()
+      assert [{:last_version, ^version_1}, {"a", true}, {"c", false}, {"d", false}, {"e", true}] =
+               :ets.tab2list(keyspace)
     end
   end
 
@@ -121,7 +116,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
             "a" => "a",
             "c" => "c",
             "d" => "d",
@@ -148,7 +143,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
             "a" => "a",
             "c" => "c",
             "d" => "d",
@@ -159,7 +154,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
             "a" => nil,
             "d" => nil
           })
@@ -184,7 +179,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
             "a" => "a",
             "c" => "c",
             "d" => "d",
@@ -201,7 +196,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          BedrockTransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
             "a" => "a",
             "c" => "c",
             "d" => "d",

@@ -1,6 +1,8 @@
 defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @moduledoc false
 
+  import Bedrock.ControlPlane.Coordinator.State.Changes
+
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.DirectorManagement
   alias Bedrock.ControlPlane.Coordinator.State
@@ -8,15 +10,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
 
-  import Bedrock.ControlPlane.Coordinator.State.Changes
-
   @type ack_fn :: (term() -> :ok)
   @type waiting_list :: %{Raft.transaction_id() => ack_fn()}
 
   @spec durably_write_config(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
   def durably_write_config(t, command, ack_fn) do
-    case t.raft |> Raft.add_transaction(command) do
+    case Raft.add_transaction(t.raft, command) do
       {:ok, raft, txn_id} ->
         {:ok,
          t
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @spec durably_write_transaction_system_layout(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
   def durably_write_transaction_system_layout(t, command, ack_fn) do
-    case t.raft |> Raft.add_transaction(command) do
+    case Raft.add_transaction(t.raft, command) do
       {:ok, raft, txn_id} ->
         {:ok,
          t
@@ -48,7 +48,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @spec durably_write_service_registration(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader}
   def durably_write_service_registration(t, command, ack_fn) do
-    case t.raft |> Raft.add_transaction(command) do
+    case Raft.add_transaction(t.raft, command) do
       {:ok, raft, txn_id} ->
         {:ok,
          t
@@ -63,8 +63,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   @spec wait_for_durable_write_to_complete(State.t(), ack_fn(), Raft.transaction_id()) ::
           State.t()
-  def wait_for_durable_write_to_complete(t, ack_fn, txn_id),
-    do: update_in(t.waiting_list, &Map.put(&1, txn_id, ack_fn))
+  def wait_for_durable_write_to_complete(t, ack_fn, txn_id), do: update_in(t.waiting_list, &Map.put(&1, txn_id, ack_fn))
 
   @spec durable_write_completed(State.t(), Log.t(), Raft.transaction_id()) :: State.t()
   def durable_write_completed(t, log, durable_txn_id) do
@@ -94,15 +93,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   @spec process_command(State.t(), Commands.command()) :: State.t()
   def process_command(t, {:update_config, %{config: config}}) do
-    t
-    |> put_config(config)
+    put_config(t, config)
   end
 
-  def process_command(
-        t,
-        {:update_transaction_system_layout,
-         %{transaction_system_layout: transaction_system_layout}}
-      ) do
+  def process_command(t, {:update_transaction_system_layout, %{transaction_system_layout: transaction_system_layout}}) do
     t
     |> put_transaction_system_layout(transaction_system_layout)
     |> put_epoch(transaction_system_layout.epoch)
@@ -110,14 +104,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
 
   def process_command(t, {:end_epoch, _previous_epoch}) do
     # End of epoch - shut down the current director if we're running one
-    t
-    |> DirectorManagement.shutdown_director_if_running()
+    DirectorManagement.shutdown_director_if_running(t)
   end
 
-  def process_command(
-        t,
-        {:set_node_resources, %{node: node, services: services, capabilities: capabilities}}
-      ) do
+  def process_command(t, {:set_node_resources, %{node: node, services: services, capabilities: capabilities}}) do
     existing_services_for_node =
       t.service_directory
       |> Enum.filter(fn {_service_id, {_kind, {_name, service_node}}} -> service_node == node end)
@@ -140,7 +130,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
         directory
         |> Map.drop(existing_services_for_node)
         |> Map.merge(
-          Enum.into(services, %{}, fn {service_id, kind, worker_ref} ->
+          Map.new(services, fn {service_id, kind, worker_ref} ->
             {service_id, {kind, worker_ref}}
           end)
         )
@@ -157,10 +147,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     updated_state
   end
 
-  def process_command(
-        t,
-        {:merge_node_resources, %{node: node, services: services, capabilities: capabilities}}
-      ) do
+  def process_command(t, {:merge_node_resources, %{node: node, services: services, capabilities: capabilities}}) do
     new_or_changed_services =
       Enum.filter(services, fn {service_id, kind, worker_ref} ->
         case Map.get(t.service_directory, service_id) do
@@ -170,7 +157,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       end)
 
     current_capabilities = Map.get(t.node_capabilities, node, [])
-    merged_capabilities = (current_capabilities ++ capabilities) |> Enum.uniq()
+    merged_capabilities = Enum.uniq(current_capabilities ++ capabilities)
     capabilities_changed = current_capabilities != merged_capabilities
 
     updated_state =
@@ -193,8 +180,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   def process_command(t, {:register_services, %{services: services}}) do
-    t
-    |> update_service_directory(fn directory ->
+    update_service_directory(t, fn directory ->
       Enum.into(services, directory, fn {service_id, kind, worker_ref} ->
         {service_id, {kind, worker_ref}}
       end)
@@ -202,33 +188,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   def process_command(t, {:deregister_services, %{service_ids: service_ids}}) do
-    t
-    |> update_service_directory(fn directory ->
+    update_service_directory(t, fn directory ->
       Map.drop(directory, service_ids)
     end)
   end
 
   # Private helper to notify director of resource changes
-  defp notify_director_of_resource_changes(
-         :unavailable,
-         _services,
-         _node_capabilities,
-         _capabilities_changed
-       ),
-       do: :ok
+  defp notify_director_of_resource_changes(:unavailable, _services, _node_capabilities, _capabilities_changed), do: :ok
 
-  defp notify_director_of_resource_changes(
-         director,
-         new_or_changed_services,
-         node_capabilities,
-         capabilities_changed
-       ) do
+  defp notify_director_of_resource_changes(director, new_or_changed_services, node_capabilities, capabilities_changed) do
     case director do
       :unavailable ->
         :ok
 
       director ->
-        unless Enum.empty?(new_or_changed_services) do
+        if !Enum.empty?(new_or_changed_services) do
           Director.notify_services_registered(director, new_or_changed_services)
         end
 

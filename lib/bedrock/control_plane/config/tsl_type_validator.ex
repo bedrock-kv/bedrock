@@ -77,8 +77,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   defp validate_log_id({:vacancy, tag}) when is_integer(tag) and tag > 0, do: :ok
 
   defp validate_log_id(log_id) do
-    {:error,
-     {:invalid_log_id, "expected string or {:vacancy, pos_integer}, got: #{inspect(log_id)}"}}
+    {:error, {:invalid_log_id, "expected string or {:vacancy, pos_integer}, got: #{inspect(log_id)}"}}
   end
 
   # Log ranges should be [start_int, end_int] where both are integers
@@ -88,13 +87,11 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
     cond do
       Version.valid?(start_range) ->
         {:error,
-         {:version_in_log_range,
-          "log range start is Version.t() binary, should be integer: #{inspect(start_range)}"}}
+         {:version_in_log_range, "log range start is Version.t() binary, should be integer: #{inspect(start_range)}"}}
 
       Version.valid?(end_range) ->
         {:error,
-         {:version_in_log_range,
-          "log range end is Version.t() binary, should be integer: #{inspect(end_range)}"}}
+         {:version_in_log_range, "log range end is Version.t() binary, should be integer: #{inspect(end_range)}"}}
 
       true ->
         :ok
@@ -119,9 +116,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   end
 
   defp validate_storage_teams(storage_teams) do
-    {:error,
-     {:invalid_storage_teams_structure,
-      "storage_teams must be a list, got: #{inspect(storage_teams)}"}}
+    {:error, {:invalid_storage_teams_structure, "storage_teams must be a list, got: #{inspect(storage_teams)}"}}
   end
 
   defp validate_storage_team(%{tag: tag, key_range: key_range, storage_ids: storage_ids})
@@ -132,8 +127,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   end
 
   defp validate_storage_team(storage_team) do
-    {:error,
-     {:invalid_storage_team_structure, "invalid storage team format: #{inspect(storage_team)}"}}
+    {:error, {:invalid_storage_team_structure, "invalid storage team format: #{inspect(storage_team)}"}}
   end
 
   defp validate_key_range({start_key, end_key}) when is_binary(start_key) do
@@ -165,9 +159,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   defp validate_storage_id({:vacancy, tag}) when is_integer(tag) and tag > 0, do: :ok
 
   defp validate_storage_id(storage_id) do
-    {:error,
-     {:invalid_storage_id,
-      "expected string or {:vacancy, pos_integer}, got: #{inspect(storage_id)}"}}
+    {:error, {:invalid_storage_id, "expected string or {:vacancy, pos_integer}, got: #{inspect(storage_id)}"}}
   end
 
   # Validate resolvers: [ResolverDescriptor.t()]
@@ -185,16 +177,14 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   end
 
   defp validate_resolvers(resolvers) do
-    {:error,
-     {:invalid_resolvers_structure, "resolvers must be a list, got: #{inspect(resolvers)}"}}
+    {:error, {:invalid_resolvers_structure, "resolvers must be a list, got: #{inspect(resolvers)}"}}
   end
 
   defp validate_resolver({start_key, resolver_ref}) when is_binary(start_key) do
     validate_resolver_ref(resolver_ref)
   end
 
-  defp validate_resolver(%{start_key: start_key, resolver: resolver_ref})
-       when is_binary(start_key) do
+  defp validate_resolver(%{start_key: start_key, resolver: resolver_ref}) when is_binary(start_key) do
     validate_resolver_ref(resolver_ref)
   end
 
@@ -206,8 +196,6 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   defp validate_resolver_ref({:vacancy, tag}) when is_integer(tag) and tag > 0, do: :ok
 
   defp validate_resolver_ref(resolver_ref) do
-    {:error,
-     {:invalid_resolver_ref,
-      "expected pid or {:vacancy, pos_integer}, got: #{inspect(resolver_ref)}"}}
+    {:error, {:invalid_resolver_ref, "expected pid or {:vacancy, pos_integer}, got: #{inspect(resolver_ref)}"}}
   end
 end

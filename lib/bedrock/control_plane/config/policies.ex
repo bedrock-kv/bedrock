@@ -15,8 +15,5 @@ defmodule Bedrock.ControlPlane.Config.Policies do
         }
 
   @spec default_policies() :: t()
-  def default_policies,
-    do: %{
-      allow_volunteer_nodes_to_join: true
-    }
+  def default_policies, do: %{allow_volunteer_nodes_to_join: true}
 end

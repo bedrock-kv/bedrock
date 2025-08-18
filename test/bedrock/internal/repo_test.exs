@@ -1,5 +1,6 @@
 defmodule Bedrock.Internal.RepoTest do
   use ExUnit.Case, async: true
+
   import Mox
 
   alias Bedrock.Internal.Repo

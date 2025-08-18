@@ -54,10 +54,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   @spec try_to_resolve_transaction(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) ::
           {:ok, Tree.t()} | :abort
   def try_to_resolve_transaction(tree, transaction, write_version) do
-    if tree |> conflict?(transaction, write_version) do
+    if conflict?(tree, transaction, write_version) do
       :abort
     else
-      {:ok, tree |> apply_transaction(transaction, write_version)}
+      {:ok, apply_transaction(tree, transaction, write_version)}
     end
   end
 
@@ -91,9 +91,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
   @spec apply_transaction(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) :: Tree.t()
   def apply_transaction(tree, {_, writes}, write_version),
-    do: writes |> Enum.reduce(tree, &Tree.insert(&2, &1, write_version))
+    do: Enum.reduce(writes, tree, &Tree.insert(&2, &1, write_version))
 
   @spec remove_old_transactions(Tree.t(), Bedrock.version()) :: Tree.t()
-  def remove_old_transactions(tree, min_version),
-    do: tree |> Tree.filter_by_value(&(&1 > min_version))
+  def remove_old_transactions(tree, min_version), do: Tree.filter_by_value(tree, &(&1 > min_version))
 end

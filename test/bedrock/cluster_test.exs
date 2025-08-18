@@ -1,6 +1,5 @@
 defmodule Bedrock.ClusterTest do
   use ExUnit.Case
-  alias Faker
 
   alias Bedrock.Cluster
 
@@ -13,7 +12,7 @@ defmodule Bedrock.ClusterTest do
   describe "otp_name/2" do
     test "returns the OTP name for the given cluster and name" do
       name = Faker.Lorem.word()
-      service = ~w[airport bus_station train_station taxi_stand]a |> Enum.random()
+      service = Enum.random(~w[airport bus_station train_station taxi_stand]a)
 
       assert Cluster.otp_name(name, service) == :"bedrock_#{name}_#{service}"
     end
@@ -22,7 +21,8 @@ defmodule Bedrock.ClusterTest do
   describe "__using__/1 with config option" do
     test "creates cluster module with static config" do
       defmodule TestClusterWithConfig do
-        use Bedrock.Cluster,
+        @moduledoc false
+        use Cluster,
           name: "test_config",
           config: [
             capabilities: [:coordination, :storage],
@@ -39,7 +39,8 @@ defmodule Bedrock.ClusterTest do
 
     test "creates cluster module with otp_app (backward compatibility)" do
       defmodule TestClusterWithOtpApp do
-        use Bedrock.Cluster,
+        @moduledoc false
+        use Cluster,
           name: "test_otp_app",
           otp_app: :test_app
       end
@@ -57,7 +58,8 @@ defmodule Bedrock.ClusterTest do
     test "raises error when neither otp_app nor config is provided" do
       assert_raise RuntimeError, "Must provide either :otp_app or :config option", fn ->
         defmodule TestClusterWithoutConfig do
-          use Bedrock.Cluster, name: "test_no_config"
+          @moduledoc false
+          use Cluster, name: "test_no_config"
         end
       end
     end
@@ -65,14 +67,16 @@ defmodule Bedrock.ClusterTest do
     test "raises error when name is missing" do
       assert_raise RuntimeError, "Missing :name option", fn ->
         defmodule TestClusterWithoutName do
-          use Bedrock.Cluster, config: []
+          @moduledoc false
+          use Cluster, config: []
         end
       end
     end
 
     test "config takes precedence when both otp_app and config are provided" do
       defmodule TestClusterBoth do
-        use Bedrock.Cluster,
+        @moduledoc false
+        use Cluster,
           name: "test_both",
           otp_app: :test_app,
           config: [capabilities: [:storage]]
@@ -85,7 +89,8 @@ defmodule Bedrock.ClusterTest do
 
     test "defaults to empty config when only name is provided with config: []" do
       defmodule TestClusterEmpty do
-        use Bedrock.Cluster,
+        @moduledoc false
+        use Cluster,
           name: "test_empty",
           config: []
       end

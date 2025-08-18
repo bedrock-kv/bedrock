@@ -1,8 +1,9 @@
 defmodule Bedrock.Service.Foreman.WorkingDirectory do
   @moduledoc false
+  import Bedrock.Service.Manifest, only: [load_from_file: 1]
+
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
-  import Bedrock.Service.Manifest, only: [load_from_file: 1]
 
   @spec initialize_working_directory(Path.t(), Manifest.t()) ::
           :ok | {:error, File.posix()}

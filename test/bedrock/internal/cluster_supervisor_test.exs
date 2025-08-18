@@ -1,8 +1,8 @@
 defmodule Bedrock.Internal.ClusterSupervisorTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
   import Mox
-  alias Faker
 
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Internal.ClusterSupervisor
@@ -65,7 +65,7 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       ]
 
       expected_message =
-        "Bedrock: This node is not part of a cluster (use the \"--name\" or \"--sname\" option when starting the Erlang VM)"
+        ~s{Bedrock: This node is not part of a cluster (use the "--name" or "--sname" option when starting the Erlang VM)}
 
       expect(Bedrock.MockCluster, :name, fn -> expected_name end)
 
@@ -85,14 +85,14 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       expect(Bedrock.MockCluster, :name, fn -> expected_name end)
 
       expected_spec = %{
-        id: Bedrock.Internal.ClusterSupervisor,
+        id: ClusterSupervisor,
         restart: :permanent,
         start:
           {Supervisor, :start_link,
            [
-             Bedrock.Internal.ClusterSupervisor,
+             ClusterSupervisor,
              {:some_node, Bedrock.MockCluster, nil, nil, "bedrock.cluster",
-              %Bedrock.Cluster.Descriptor{
+              %Descriptor{
                 cluster_name: expected_name,
                 coordinator_nodes: [:some_node]
               }},
@@ -123,14 +123,14 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       expect(Bedrock.MockCluster, :name, fn -> expected_name end)
 
       expected_spec = %{
-        id: Bedrock.Internal.ClusterSupervisor,
+        id: ClusterSupervisor,
         restart: :permanent,
         start:
           {Supervisor, :start_link,
            [
-             Bedrock.Internal.ClusterSupervisor,
+             ClusterSupervisor,
              {:some_node, Bedrock.MockCluster, nil, nil, "path-to-invalid-descriptor",
-              %Bedrock.Cluster.Descriptor{
+              %Descriptor{
                 cluster_name: expected_name,
                 coordinator_nodes: [:some_node]
               }},

@@ -1,5 +1,6 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
 
   alias Bedrock.ControlPlane.Director.Recovery.Tracing
@@ -7,6 +8,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
 
   # Mock cluster for testing
   defmodule TestCluster do
+    @moduledoc false
     def name, do: "test_cluster"
   end
 
@@ -268,7 +270,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
         end)
 
       assert log_output =~
-               "Bedrock [test_cluster/42]: Suitable logs chosen for copying: \"log:1\", \"log:2\""
+               ~s(Bedrock [test_cluster/42]: Suitable logs chosen for copying: "log:1", "log:2")
 
       assert log_output =~ "Bedrock [test_cluster/42]: Version vector: {5, 25}"
     end

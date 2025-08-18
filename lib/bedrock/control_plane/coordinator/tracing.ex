@@ -44,17 +44,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
     info("Coordinator started")
   end
 
-  def trace(:election_completed, _, %{new_leader: :undecided}),
-    do: info("There is no leader")
+  def trace(:election_completed, _, %{new_leader: :undecided}), do: info("There is no leader")
 
   def trace(:election_completed, _, %{new_leader: leader}),
     do: info("#{inspect(leader)} was elected as the cluster leader")
 
-  def trace(:director_changed, _, %{director: :unavailable}),
-    do: info("A quorum of coordinators is not present")
+  def trace(:director_changed, _, %{director: :unavailable}), do: info("A quorum of coordinators is not present")
 
-  def trace(:director_changed, _, %{director: director}),
-    do: info("Director changed to #{inspect(director)}")
+  def trace(:director_changed, _, %{director: director}), do: info("Director changed to #{inspect(director)}")
 
   def trace(:director_launch, _, %{epoch: epoch, config_summary: nil}),
     do: info("Starting director for epoch #{epoch} with NO CONFIG")
@@ -68,8 +65,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
   def trace(:director_shutdown, _, %{director: director, reason: reason}),
     do: info("Shutting down director #{inspect(director)} (reason: #{reason})")
 
-  def trace(:consensus_reached, _, %{transaction_id: tx_id}),
-    do: info("Consensus reached at #{inspect(tx_id)}")
+  def trace(:consensus_reached, _, %{transaction_id: tx_id}), do: info("Consensus reached at #{inspect(tx_id)}")
 
   def trace(:leader_waiting_consensus, _, _),
     do: info("New leader waiting for first consensus before starting director")

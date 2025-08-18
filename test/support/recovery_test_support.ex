@@ -3,9 +3,10 @@ defmodule RecoveryTestSupport do
   Shared test utilities and fixtures for recovery tests.
   """
 
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.DataPlane.Version
-  import ExUnit.Callbacks, only: [on_exit: 1]
 
   # Helper for best-effort cleanup
   defp cleanup(fun), do: on_exit(fn -> try do: fun.(), catch: (_, _ -> :ok) end)
@@ -85,9 +86,8 @@ defmodule RecoveryTestSupport do
       log_recovery_info_by_id: %{},
       storage_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
-      version_vector:
-        {Bedrock.DataPlane.Version.from_integer(0), Bedrock.DataPlane.Version.from_integer(0)},
-      durable_version: Bedrock.DataPlane.Version.from_integer(0),
+      version_vector: {Version.from_integer(0), Version.from_integer(0)},
+      durable_version: Version.from_integer(0),
       degraded_teams: [],
       logs: %{},
       storage_teams: [],
@@ -105,7 +105,7 @@ defmodule RecoveryTestSupport do
   @doc """
   Creates a recovery context with common defaults.
   """
-  def recovery_context(overrides \\ %{}), do: create_test_context() |> Map.merge(overrides)
+  def recovery_context(overrides \\ %{}), do: Map.merge(create_test_context(), overrides)
 
   # ============================================================================
   # Preset Recovery Scenarios
@@ -148,7 +148,7 @@ defmodule RecoveryTestSupport do
       }
     }
 
-    recovery_attempt(base) |> Map.merge(overrides)
+    base |> recovery_attempt() |> Map.merge(overrides)
   end
 
   @doc """
@@ -185,8 +185,7 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets logs. Can accept a map of logs or an integer count to generate simple logs.
   """
-  def with_logs(recovery_attempt, logs) when is_map(logs),
-    do: Map.put(recovery_attempt, :logs, logs)
+  def with_logs(recovery_attempt, logs) when is_map(logs), do: Map.put(recovery_attempt, :logs, logs)
 
   def with_logs(recovery_attempt, count) when is_integer(count) do
     logs = for i <- 1..count, into: %{}, do: {"log_#{i}", %{}}
@@ -196,14 +195,12 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets storage teams.
   """
-  def with_storage_teams(recovery_attempt, teams),
-    do: Map.put(recovery_attempt, :storage_teams, teams)
+  def with_storage_teams(recovery_attempt, teams), do: Map.put(recovery_attempt, :storage_teams, teams)
 
   @doc """
   Sets the sequencer PID.
   """
-  def with_sequencer(recovery_attempt, sequencer),
-    do: Map.put(recovery_attempt, :sequencer, sequencer)
+  def with_sequencer(recovery_attempt, sequencer), do: Map.put(recovery_attempt, :sequencer, sequencer)
 
   @doc """
   Sets commit proxies.
@@ -213,8 +210,7 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets resolvers.
   """
-  def with_resolvers(recovery_attempt, resolvers),
-    do: Map.put(recovery_attempt, :resolvers, resolvers)
+  def with_resolvers(recovery_attempt, resolvers), do: Map.put(recovery_attempt, :resolvers, resolvers)
 
   @doc """
   Sets version vector.
@@ -237,14 +233,12 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets log recovery info by ID.
   """
-  def with_log_recovery_info(recovery_attempt, info),
-    do: Map.put(recovery_attempt, :log_recovery_info_by_id, info)
+  def with_log_recovery_info(recovery_attempt, info), do: Map.put(recovery_attempt, :log_recovery_info_by_id, info)
 
   @doc """
   Sets required services.
   """
-  def with_required_services(recovery_attempt, services),
-    do: Map.put(recovery_attempt, :required_services, services)
+  def with_required_services(recovery_attempt, services), do: Map.put(recovery_attempt, :required_services, services)
 
   # ============================================================================
   # Pipeable Transformation Functions for Recovery Context
@@ -267,8 +261,7 @@ defmodule RecoveryTestSupport do
           %{log: nodes, storage: nodes}
       end
 
-    context
-    |> Map.put(:node_capabilities, node_capabilities)
+    Map.put(context, :node_capabilities, node_capabilities)
   end
 
   @doc """
@@ -424,8 +417,7 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets cluster parameters, replacing any existing parameters.
   """
-  def with_parameters(cluster_config, params) when is_map(params),
-    do: Map.put(cluster_config, :parameters, params)
+  def with_parameters(cluster_config, params) when is_map(params), do: Map.put(cluster_config, :parameters, params)
 
   @doc """
   Merges cluster parameters with existing parameters.
@@ -439,8 +431,7 @@ defmodule RecoveryTestSupport do
   @doc """
   Sets cluster policies, replacing any existing policies.
   """
-  def with_policies(cluster_config, policies) when is_map(policies),
-    do: Map.put(cluster_config, :policies, policies)
+  def with_policies(cluster_config, policies) when is_map(policies), do: Map.put(cluster_config, :policies, policies)
 
   @doc """
   Merges cluster policies with existing policies.
@@ -490,8 +481,7 @@ defmodule RecoveryTestSupport do
     Map.put(context, :create_worker_fn, create_worker_fn)
   end
 
-  defp add_mock_function(:monitoring, context),
-    do: Map.put(context, :monitor_fn, fn _pid -> make_ref() end)
+  defp add_mock_function(:monitoring, context), do: Map.put(context, :monitor_fn, fn _pid -> make_ref() end)
 
   defp add_mock_function(:commit_proxy, context) do
     commit_transaction_fn =
@@ -507,11 +497,7 @@ defmodule RecoveryTestSupport do
   end
 
   defp add_mock_function(:log_recovery, context) do
-    copy_log_data_fn = fn _new_log_id,
-                          _old_log_id,
-                          _first_version,
-                          _last_version,
-                          _service_pids ->
+    copy_log_data_fn = fn _new_log_id, _old_log_id, _first_version, _last_version, _service_pids ->
       {:ok, spawn(fn -> :ok end)}
     end
 
@@ -693,7 +679,7 @@ defmodule RecoveryTestSupport do
         :gen_server_mock -> spawn(fn -> loop_gen_server_mock() end)
       end
 
-    unless behavior == :immediate_exit do
+    if behavior != :immediate_exit do
       cleanup(fn -> terminate_managed_process(pid, behavior) end)
     end
 

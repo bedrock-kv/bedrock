@@ -25,6 +25,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   `Bedrock.ControlPlane.Director.Nodes` for service discovery integration.
   """
 
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+  import Bedrock.Internal.Time, only: [now: 0]
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
@@ -32,10 +35,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
-
-  import Bedrock.Internal.Time, only: [now: 0]
-
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @type recovery_context :: %{
           cluster_config: Config.t(),
@@ -79,8 +78,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
-    t
-    |> Map.update!(:recovery_attempt, fn recovery_attempt ->
+    Map.update!(t, :recovery_attempt, fn recovery_attempt ->
       %{
         recovery_attempt
         | attempt: recovery_attempt.attempt + 1
@@ -115,8 +113,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         t
         |> Map.put(:state, :running)
         |> Map.update!(:config, fn config ->
-          config
-          |> Map.delete(:recovery_attempt)
+          Map.delete(config, :recovery_attempt)
         end)
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
@@ -127,8 +124,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
         t
         |> Map.update!(:config, fn config ->
-          config
-          |> Map.put(:recovery_attempt, stalled)
+          Map.put(config, :recovery_attempt, stalled)
         end)
         |> persist_config()
 
@@ -181,7 +177,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         {stalled, stalled_attempt}
 
       {updated_attempt, next_next_phase_module} ->
-        updated_attempt |> run_recovery_attempt(context, next_next_phase_module)
+        run_recovery_attempt(updated_attempt, context, next_next_phase_module)
     end
   end
 end

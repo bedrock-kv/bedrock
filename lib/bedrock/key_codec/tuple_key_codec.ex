@@ -41,10 +41,7 @@ defmodule Bedrock.KeyCodec.TupleKeyCodec do
   defp encode_value(float) when is_float(float), do: encode_float(float)
 
   defp encode_value(tuple) when is_tuple(tuple),
-    do:
-      <<@nested_tuple_tag>> <>
-        Enum.map_join(Tuple.to_list(tuple), &encode_value/1) <>
-        @stop_marker
+    do: <<@nested_tuple_tag>> <> Enum.map_join(Tuple.to_list(tuple), &encode_value/1) <> @stop_marker
 
   defp encode_value(_), do: raise(ArgumentError, "Unsupported data type")
 
@@ -92,8 +89,7 @@ defmodule Bedrock.KeyCodec.TupleKeyCodec do
 
   defp decode_value(<<@int_zero_tag, rest::binary>>), do: {0, rest}
 
-  defp decode_value(<<tag, rest::binary>>)
-       when tag >= @int_zero_tag and tag < @int_zero_tag + 8 do
+  defp decode_value(<<tag, rest::binary>>) when tag >= @int_zero_tag and tag < @int_zero_tag + 8 do
     <<integer::size(tag - @int_zero_tag)-unit(8), rest::binary>> = rest
     {integer, rest}
   end
@@ -113,8 +109,7 @@ defmodule Bedrock.KeyCodec.TupleKeyCodec do
 
   defp decode_value(<<@stop_marker, rest::binary>>), do: {:stop, rest}
 
-  defp decode_value(x),
-    do: raise(ArgumentError, "Unsupported or malformed data: #{Base.encode16(x)}")
+  defp decode_value(x), do: raise(ArgumentError, "Unsupported or malformed data: #{Base.encode16(x)}")
 
   defp extract_escaped_data(binary, acc \\ "") do
     case binary do

@@ -5,6 +5,7 @@ Faker.start()
 
 # Default test cluster for telemetry
 defmodule DefaultTestCluster do
+  @moduledoc false
   def name, do: "test_cluster"
   def otp_name(component), do: :"test_#{component}"
 
@@ -22,6 +23,7 @@ Mox.defmock(Bedrock.Raft.MockInterface, for: Bedrock.Raft.Interface)
 
 # Define behavior for Resolver testing
 defmodule Bedrock.DataPlane.Resolver.Behaviour do
+  @moduledoc false
   @callback resolve_transactions(
               ref :: any(),
               last_version :: Bedrock.version(),
@@ -37,6 +39,7 @@ end
 Mox.defmock(Bedrock.DataPlane.ResolverMock, for: Bedrock.DataPlane.Resolver.Behaviour)
 
 defmodule QuietDetsHandler do
+  @moduledoc false
   def init(_) do
     {:ok, []}
   end

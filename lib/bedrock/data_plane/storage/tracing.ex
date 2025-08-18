@@ -27,33 +27,35 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def stop, do: :telemetry.detach(handler_id())
 
   @spec handler(list(atom()), map(), map(), term()) :: :ok
-  def handler([:bedrock, :storage, event], measurements, metadata, _),
-    do: log_event(event, measurements, metadata)
+  def handler([:bedrock, :storage, event], measurements, metadata, _), do: log_event(event, measurements, metadata)
 
   @spec log_event(atom(), map(), map()) :: :ok
   def log_event(:pull_start, _, %{timestamp: timestamp, next_version: next_version}),
     do:
       debug(
-        "Log pull started at #{timestamp} for version #{Bedrock.DataPlane.Version.to_string(next_version)}"
+        "Log pull started at #{Bedrock.DataPlane.Version.to_string(timestamp)} for version #{Bedrock.DataPlane.Version.to_string(next_version)}"
       )
 
   def log_event(:pull_succeeded, _, %{timestamp: timestamp, n_transactions: n_transactions}),
-    do: debug("Log pull succeeded at #{timestamp} with #{n_transactions} transactions")
+    do:
+      debug(
+        "Log pull succeeded at #{Bedrock.DataPlane.Version.to_string(timestamp)} with #{n_transactions} transactions"
+      )
 
   def log_event(:pull_failed, _, %{timestamp: timestamp, reason: reason}),
-    do: warn("Log pull failed at #{timestamp}: #{inspect(reason)}")
+    do: warn("Log pull failed at #{Bedrock.DataPlane.Version.to_string(timestamp)}: #{inspect(reason)}")
 
   def log_event(:log_marked_as_failed, _, %{timestamp: timestamp, log_id: log_id}),
-    do: warn("Log #{log_id} marked as failed at #{timestamp}")
+    do: warn("Log #{log_id} marked as failed at #{Bedrock.DataPlane.Version.to_string(timestamp)}")
 
-  def log_event(:log_pull_circuit_breaker_tripped, _, %{
-        timestamp: timestamp,
-        ms_to_wait: ms_to_wait
-      }),
-      do: warn("Log pull circuit breaker tripped at #{timestamp}, waiting #{ms_to_wait}ms")
+  def log_event(:log_pull_circuit_breaker_tripped, _, %{timestamp: timestamp, ms_to_wait: ms_to_wait}),
+    do:
+      warn(
+        "Log pull circuit breaker tripped at #{Bedrock.DataPlane.Version.to_string(timestamp)}, waiting #{ms_to_wait}ms"
+      )
 
   def log_event(:log_pull_circuit_breaker_reset, _, %{timestamp: timestamp}),
-    do: info("Log pull circuit breaker reset at #{timestamp}")
+    do: info("Log pull circuit breaker reset at #{Bedrock.DataPlane.Version.to_string(timestamp)}")
 
   @spec debug(String.t()) :: :ok
   defp debug(message) do

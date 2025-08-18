@@ -1,12 +1,11 @@
 defmodule Bedrock.DataPlane.Log do
   @moduledoc false
+  use Bedrock.Internal.GenServerApi
 
-  alias Bedrock.DataPlane.Log.EncodedTransaction
-  alias Bedrock.DataPlane.Log.Transaction
+  # EncodedTransaction removed - using Transaction binary format
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
-
-  use Bedrock.Internal.GenServerApi
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
@@ -56,12 +55,11 @@ defmodule Bedrock.DataPlane.Log do
   """
   @spec push(
           log_ref :: ref(),
-          transaction :: EncodedTransaction.t(),
+          transaction :: Transaction.encoded(),
           last_commit_version :: Bedrock.version()
         ) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable}
-  def push(log, transaction, last_commit_version),
-    do: call(log, {:push, transaction, last_commit_version}, :infinity)
+  def push(log, transaction, last_commit_version), do: call(log, {:push, transaction, last_commit_version}, :infinity)
 
   @doc """
   Pull transactions from the log starting from a given version. Options allow
@@ -86,7 +84,7 @@ defmodule Bedrock.DataPlane.Log do
 
   ## Return Values:
 
-    - `{:ok, [Transaction.t()]}`: A successful pull with a list of transactions.
+    - `{:ok, [Transaction.encoded()]}`: A successful pull with a list of encoded transactions.
     - `{:error, :not_ready}`: Log is not ready for pulling.
     - `{:error, :not_locked}`: Log is not locked for pulling transactions.
     - `{:error, :invalid_from_version}`: The provided `from_version` is invalid.
@@ -107,7 +105,7 @@ defmodule Bedrock.DataPlane.Log do
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
-          {:ok, transactions :: [EncodedTransaction.t()]} | pull_errors()
+          {:ok, transactions :: [Transaction.encoded()]} | pull_errors()
   @type pull_errors ::
           {:error, :not_ready}
           | {:error, :not_locked}
@@ -118,16 +116,22 @@ defmodule Bedrock.DataPlane.Log do
           | {:error, :version_not_found}
           | {:error, :unavailable}
   @type pull_error :: pull_errors()
-  def pull(log, start_after, opts),
-    do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
+  def pull(log, start_after, opts), do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
   The initial transaction that is applied to a new log if the current version
   is set to 0 during a recovery. It is an explicit a directive to clear the
   entire key range.
   """
-  @spec initial_transaction :: Transaction.t()
-  def initial_transaction, do: Transaction.new(Version.zero(), %{})
+  @spec initial_transaction :: Transaction.encoded()
+  def initial_transaction do
+    # Create an empty transaction with no mutations
+    encoded = Transaction.encode(%{mutations: []})
+    # Add zero version as commit version
+    zero_version = Version.from_integer(0)
+    {:ok, with_version} = Transaction.add_commit_version(encoded, zero_version)
+    with_version
+  end
 
   @doc """
   Request that the transaction log worker lock itself and stop accepting new

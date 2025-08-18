@@ -24,8 +24,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftPersistenceTest do
         Log.append_transactions(log1, initial_id, [
           {{1, 1}, {1, {:coordinator_config, %{epoch: 1, coordinators: [:node1, :node2]}}}},
           {{1, 2}, {1, {:director_assignment, :node1}}},
-          {{2, 3},
-           {2, {:coordinator_config, %{epoch: 2, coordinators: [:node1, :node2, :node3]}}}}
+          {{2, 3}, {2, {:coordinator_config, %{epoch: 2, coordinators: [:node1, :node2, :node3]}}}}
         ])
 
       # Commit the transactions

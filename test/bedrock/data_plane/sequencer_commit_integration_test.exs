@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.Sequencer.Server
   alias Bedrock.DataPlane.Version
 
   describe "sequencer and commit proxy integration" do
@@ -9,10 +10,15 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
       # Start a sequencer process
       initial_version = Version.from_integer(100)
 
-      {:ok, sequencer_pid} =
-        GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
-          {self(), 1, initial_version}
+      sequencer_pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer_1
+           ]}
         )
 
       # 1. Get initial read version
@@ -57,17 +63,21 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
       # next available version should be > current
       assert Version.to_integer(next_commit) > Version.to_integer(commit_v2)
 
-      # Cleanup
-      GenServer.stop(sequencer_pid)
+      # Process will be automatically stopped by start_supervised!
     end
 
     test "out-of-order commit notifications handled correctly" do
       initial_version = Version.from_integer(200)
 
-      {:ok, sequencer_pid} =
-        GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
-          {self(), 1, initial_version}
+      sequencer_pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer_2
+           ]}
         )
 
       # Assign versions 201, 202, 203
@@ -98,16 +108,21 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
       # unchanged due to monotonic property
       assert read_version == v3
 
-      GenServer.stop(sequencer_pid)
+      # Process will be automatically stopped by start_supervised!
     end
 
     test "version invariants maintained under concurrent operations" do
       initial_version = Version.from_integer(300)
 
-      {:ok, sequencer_pid} =
-        GenServer.start_link(
-          Bedrock.DataPlane.Sequencer.Server,
-          {self(), 1, initial_version}
+      sequencer_pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer_3
+           ]}
         )
 
       # Simulate multiple commit proxies getting versions concurrently
@@ -143,7 +158,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
       max_commit_version = Enum.max_by(commit_versions, &Version.to_integer/1)
       assert final_read_version == max_commit_version
 
-      GenServer.stop(sequencer_pid)
+      # Process will be automatically stopped by start_supervised!
     end
   end
 end

@@ -1,6 +1,4 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
-  alias Bedrock.DataPlane.Version
-
   @moduledoc """
   Determines which logs from the previous layout should be copied to preserve committed transactions.
 
@@ -25,17 +23,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.DataPlane.Log
-
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+  alias Bedrock.DataPlane.Version
 
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
-    determine_old_logs_to_copy(
-      context.old_transaction_system_layout |> Map.get(:logs, %{}),
+    context.old_transaction_system_layout
+    |> Map.get(:logs, %{})
+    |> determine_old_logs_to_copy(
       recovery_attempt.log_recovery_info_by_id,
-      context.cluster_config.parameters.desired_logs |> determine_quorum()
+      determine_quorum(context.cluster_config.parameters.desired_logs)
     )
     |> case do
       {:error, :unable_to_meet_log_quorum = reason} ->
@@ -111,8 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   @spec version_vectors_by_id(%{Log.id() => Log.recovery_info()}) ::
           [{Log.id(), Bedrock.version_vector()}]
   def version_vectors_by_id(log_info) do
-    log_info
-    |> Enum.map(fn
+    Enum.map(log_info, fn
       {id, info} ->
         {id, {info[:oldest_version], info[:last_version]}}
     end)
@@ -125,7 +124,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
     |> Enum.map(fn group ->
       oldest = group |> Enum.map(fn {_, {oldest, _}} -> oldest end) |> Enum.max()
       newest = group |> Enum.map(fn {_, {_, newest}} -> newest end) |> Enum.min()
-      {group |> Enum.map(&elem(&1, 0)), {oldest, newest}}
+      {Enum.map(group, &elem(&1, 0)), {oldest, newest}}
     end)
     |> Enum.filter(&valid_range?(&1))
   end
@@ -145,8 +144,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
           {[Log.id()], Bedrock.version_vector()}
         ]
   def rank_log_groups(groups) do
-    groups
-    |> Enum.sort_by(
+    Enum.sort_by(
+      groups,
       fn {_, {oldest, newest}} -> Version.distance(newest, oldest) end,
       :desc
     )
@@ -162,10 +161,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
           %{Log.id() => LogDescriptor.t()}
         ) :: %{Bedrock.range_tag() => [{Log.id(), Log.recovery_info()}]}
   def group_logs_by_shard(log_recovery_info, old_logs) do
-    log_recovery_info
-    |> Enum.reduce(%{}, fn {log_id, recovery_info}, acc ->
+    Enum.reduce(log_recovery_info, %{}, fn {log_id, recovery_info}, acc ->
       range_tags = Map.get(old_logs, log_id, [])
-
       # Add this log to each shard it participates in
       Enum.reduce(range_tags, acc, fn range_tag, shard_acc ->
         Map.update(shard_acc, range_tag, [{log_id, recovery_info}], fn existing ->
@@ -179,8 +176,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
           Bedrock.range_tag() => [Log.id()]
         }
   def group_all_logs_by_shard(old_logs) do
-    old_logs
-    |> Enum.reduce(%{}, fn {log_id, range_tags}, acc ->
+    Enum.reduce(old_logs, %{}, fn {log_id, range_tags}, acc ->
       Enum.reduce(range_tags, acc, fn range_tag, shard_acc ->
         Map.update(shard_acc, range_tag, [log_id], fn existing ->
           [log_id | existing]

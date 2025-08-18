@@ -1,11 +1,13 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
+    @moduledoc false
     def otp_name(:sup), do: :test_supervisor
     def otp_name(:sequencer), do: :test_sequencer
   end

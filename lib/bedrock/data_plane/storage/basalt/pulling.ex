@@ -1,17 +1,16 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @moduledoc false
+  import Bedrock.DataPlane.Storage.Basalt.Telemetry
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.EncodedTransaction
-  alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.Service.Worker
-
-  import Bedrock.DataPlane.Storage.Basalt.Telemetry
 
   @type puller_state :: %{
           start_after: Bedrock.version(),
-          apply_transactions_fn: ([Transaction.t()] -> Bedrock.version()),
+          apply_transactions_fn: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn: (-> Bedrock.version()),
           flush_window_fn: (-> :ok),
           logs: %{Log.id() => LogDescriptor.t()},
@@ -23,18 +22,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
           start_after :: Bedrock.version(),
           logs :: %{Log.id() => LogDescriptor.t()},
           services :: %{Worker.id() => ServiceDescriptor.t()},
-          apply_transactions_fn :: ([Transaction.t()] -> Bedrock.version()),
+          apply_transactions_fn :: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn :: (-> Bedrock.version()),
           flush_window_fn :: (-> :ok)
         ) :: Task.t()
-  def start_pulling(
-        start_after,
-        logs,
-        services,
-        apply_transactions_fn,
-        get_durable_version_fn,
-        flush_window_fn
-      ) do
+  def start_pulling(start_after, logs, services, apply_transactions_fn, get_durable_version_fn, flush_window_fn) do
     state = %{
       start_after: start_after,
       apply_transactions_fn: apply_transactions_fn,
@@ -63,11 +55,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
 
   @spec long_pull_loop(puller_state()) :: no_return()
   def long_pull_loop(%{apply_transactions_fn: apply_transactions_fn} = state) do
-    timestamp = System.system_time(:millisecond)
-
     case select_log(state) do
       {:ok, {log_id, %{status: {:up, worker_pid}}}} ->
-        trace_log_pull_start(timestamp, state.start_after)
+        trace_log_pull_start(state.start_after, state.start_after)
 
         case Log.pull(worker_pid, state.start_after,
                limit: 100,
@@ -75,28 +65,24 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
                subscriber: {"storage_server", state.get_durable_version_fn.()}
              ) do
           {:ok, encoded_transactions} ->
-            trace_log_pull_succeeded(timestamp, length(encoded_transactions))
+            trace_log_pull_succeeded(state.start_after, length(encoded_transactions))
 
-            next_version =
-              encoded_transactions
-              |> Enum.map(&EncodedTransaction.decode!/1)
-              |> apply_transactions_fn.()
+            next_version = apply_transactions_fn.(encoded_transactions)
 
             # Flush window once per pull batch
             :ok = state.flush_window_fn.()
 
-            %{state | start_after: next_version}
-            |> long_pull_loop()
+            long_pull_loop(%{state | start_after: next_version})
 
           {:error, reason} ->
-            trace_log_pull_failed(timestamp, reason)
+            trace_log_pull_failed(state.start_after, reason)
             new_state = mark_log_as_failed(state, log_id)
             long_pull_loop(new_state)
         end
 
       :no_available_logs ->
         ms_to_wait = retry_delay()
-        trace_log_pull_circuit_breaker_tripped(timestamp, ms_to_wait)
+        trace_log_pull_circuit_breaker_tripped(state.start_after, ms_to_wait)
         :timer.sleep(ms_to_wait)
         long_pull_loop(reset_failed_logs(state))
     end
@@ -135,7 +121,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     retry_timestamp = now + circuit_breaker_timeout()
     failed_logs = Map.put(state.failed_logs, log_id, retry_timestamp)
 
-    trace_log_marked_as_failed(now, log_id)
+    trace_log_marked_as_failed(state.start_after, log_id)
 
     %{state | failed_logs: failed_logs}
   end
@@ -143,8 +129,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   # Reset all failed logs, clearing the circuit breakers
   @spec reset_failed_logs(puller_state()) :: puller_state()
   def reset_failed_logs(state) do
-    now = System.monotonic_time(:millisecond)
-    trace_log_pull_circuit_breaker_reset(now)
+    trace_log_pull_circuit_breaker_reset(state.start_after)
 
     %{state | failed_logs: %{}}
   end

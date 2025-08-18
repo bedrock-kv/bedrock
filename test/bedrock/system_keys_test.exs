@@ -100,24 +100,21 @@ defmodule Bedrock.SystemKeysTest do
     test "all_cluster_keys/0 returns all cluster configuration keys" do
       keys = SystemKeys.all_cluster_keys()
 
-      assert Enum.member?(keys, SystemKeys.cluster_coordinators())
-      assert Enum.member?(keys, SystemKeys.cluster_epoch())
-      assert Enum.member?(keys, SystemKeys.cluster_policies_volunteer_nodes())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_desired_logs())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_desired_replication())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_desired_commit_proxies())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_desired_coordinators())
+      assert SystemKeys.cluster_coordinators() in keys
+      assert SystemKeys.cluster_epoch() in keys
+      assert SystemKeys.cluster_policies_volunteer_nodes() in keys
+      assert SystemKeys.cluster_parameters_desired_logs() in keys
+      assert SystemKeys.cluster_parameters_desired_replication() in keys
+      assert SystemKeys.cluster_parameters_desired_commit_proxies() in keys
+      assert SystemKeys.cluster_parameters_desired_coordinators() in keys
 
-      assert Enum.member?(
-               keys,
-               SystemKeys.cluster_parameters_desired_read_version_proxies()
-             )
+      assert SystemKeys.cluster_parameters_desired_read_version_proxies() in keys
 
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_empty_transaction_timeout_ms())
+      assert SystemKeys.cluster_parameters_empty_transaction_timeout_ms() in keys
 
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_ping_rate_in_hz())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_retransmission_rate_in_hz())
-      assert Enum.member?(keys, SystemKeys.cluster_parameters_transaction_window_in_ms())
+      assert SystemKeys.cluster_parameters_ping_rate_in_hz() in keys
+      assert SystemKeys.cluster_parameters_retransmission_rate_in_hz() in keys
+      assert SystemKeys.cluster_parameters_transaction_window_in_ms() in keys
 
       # Should have exactly 12 keys
       assert length(keys) == 12
@@ -126,13 +123,13 @@ defmodule Bedrock.SystemKeysTest do
     test "all_layout_keys/0 returns all transaction layout keys" do
       keys = SystemKeys.all_layout_keys()
 
-      assert Enum.member?(keys, SystemKeys.layout_sequencer())
-      assert Enum.member?(keys, SystemKeys.layout_proxies())
-      assert Enum.member?(keys, SystemKeys.layout_resolvers())
-      assert Enum.member?(keys, SystemKeys.layout_services())
-      assert Enum.member?(keys, SystemKeys.layout_director())
-      assert Enum.member?(keys, SystemKeys.layout_rate_keeper())
-      assert Enum.member?(keys, SystemKeys.layout_id())
+      assert SystemKeys.layout_sequencer() in keys
+      assert SystemKeys.layout_proxies() in keys
+      assert SystemKeys.layout_resolvers() in keys
+      assert SystemKeys.layout_services() in keys
+      assert SystemKeys.layout_director() in keys
+      assert SystemKeys.layout_rate_keeper() in keys
+      assert SystemKeys.layout_id() in keys
 
       # Should have exactly 7 keys
       assert length(keys) == 7
@@ -141,10 +138,10 @@ defmodule Bedrock.SystemKeysTest do
     test "all_legacy_keys/0 returns all legacy compatibility keys" do
       keys = SystemKeys.all_legacy_keys()
 
-      assert Enum.member?(keys, SystemKeys.config_monolithic())
-      assert Enum.member?(keys, SystemKeys.layout_monolithic())
-      assert Enum.member?(keys, SystemKeys.epoch_legacy())
-      assert Enum.member?(keys, SystemKeys.last_recovery_legacy())
+      assert SystemKeys.config_monolithic() in keys
+      assert SystemKeys.layout_monolithic() in keys
+      assert SystemKeys.epoch_legacy() in keys
+      assert SystemKeys.last_recovery_legacy() in keys
 
       # Should have exactly 4 keys
       assert length(keys) == 4

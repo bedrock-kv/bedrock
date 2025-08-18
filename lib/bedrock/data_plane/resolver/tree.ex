@@ -72,11 +72,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
   def overlap?(nil, _, _), do: false
 
-  def overlap?(
-        %Tree{start: tree_start, end: tree_end} = tree,
-        {start, end_} = range,
-        predicate
-      ) do
+  def overlap?(%Tree{start: tree_start, end: tree_end} = tree, {start, end_} = range, predicate) do
     if start < tree_end and tree_start < end_ and predicate.(tree.value) do
       true
     else
@@ -88,8 +84,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     end
   end
 
-  def overlap?(tree, key, predicate) when is_binary(key),
-    do: overlap?(tree, {key, key <> <<0>>}, predicate)
+  def overlap?(tree, key, predicate) when is_binary(key), do: overlap?(tree, {key, key <> <<0>>}, predicate)
 
   defp default_predicate(_), do: true
 
@@ -109,29 +104,25 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     - The updated interval tree containing the new interval.
   """
   @spec insert(nil | t(), Bedrock.key() | Bedrock.key_range(), Bedrock.version()) :: t()
-  def insert(nil, {start, end_}, value),
-    do: %Tree{
-      start: start,
-      end: end_,
-      value: value,
-      height: 1
-    }
+  def insert(nil, {start, end_}, value), do: %Tree{start: start, end: end_, value: value, height: 1}
 
   def insert(%Tree{} = tree, {start, _end} = range, value) do
-    cond do
-      # If the range comes before the current tree
-      start < tree.start ->
-        %{tree | left: insert(tree.left, range, value)}
+    cond_result =
+      cond do
+        # If the range comes before the current tree
+        start < tree.start ->
+          %{tree | left: insert(tree.left, range, value)}
 
-      # If the range comes after the current tree
-      start > tree.start ->
-        %{tree | right: insert(tree.right, range, value)}
+        # If the range comes after the current tree
+        start > tree.start ->
+          %{tree | right: insert(tree.right, range, value)}
 
-      # If the range overlaps or is the same, we can choose to overwrite or handle differently
-      true ->
-        %{tree | value: value}
-    end
-    |> balance()
+        # If the range overlaps or is the same, we can choose to overwrite or handle differently
+        true ->
+          %{tree | value: value}
+      end
+
+    balance(cond_result)
   end
 
   def insert(tree, key, value) when is_binary(key), do: insert(tree, {key, key <> <<0>>}, value)
@@ -143,23 +134,21 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
   # Update the height of the tree based on its children's heights
   @spec update_height(t()) :: t()
-  defp update_height(%Tree{left: left, right: right} = tree),
-    do: %{tree | height: 1 + max(height(left), height(right))}
+  defp update_height(%Tree{left: left, right: right} = tree), do: %{tree | height: 1 + max(height(left), height(right))}
 
   # Calculate the balance factor of the tree
   @spec balance_factor(t()) :: integer()
-  defp balance_factor(%Tree{left: left, right: right}),
-    do: height(left) - height(right)
+  defp balance_factor(%Tree{left: left, right: right}), do: height(left) - height(right)
 
   # Perform a right rotation
   @spec rotate_right(t()) :: t()
   defp rotate_right(%Tree{left: %Tree{left: t1, right: t2} = x, right: t3} = y),
-    do: %{x | left: t1, right: %{y | right: t3, left: t2} |> update_height()} |> update_height()
+    do: update_height(%{x | left: t1, right: update_height(%{y | right: t3, left: t2})})
 
   # Perform a left rotation
   @spec rotate_left(t()) :: t()
   defp rotate_left(%Tree{right: %Tree{left: t2, right: t3} = y, left: t1} = x),
-    do: %{y | right: t3, left: %{x | right: t2, left: t1} |> update_height()} |> update_height()
+    do: update_height(%{y | right: t3, left: update_height(%{x | right: t2, left: t1})})
 
   # Balance the tree if unbalanced
   @spec balance(t()) :: t()
@@ -172,7 +161,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
         if balance_factor(tree.left) >= 0 do
           rotate_right(tree)
         else
-          %{tree | left: rotate_left(tree.left)} |> rotate_right()
+          rotate_right(%{tree | left: rotate_left(tree.left)})
         end
 
       # Right heavy
@@ -180,7 +169,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
         if balance_factor(tree.right) <= 0 do
           rotate_left(tree)
         else
-          %{tree | right: rotate_right(tree.right)} |> rotate_left()
+          rotate_left(%{tree | right: rotate_right(tree.right)})
         end
 
       # Already balanced
@@ -205,19 +194,18 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   """
 
   @spec filter_by_value(t() | nil, (Bedrock.version() -> boolean())) :: t() | nil
-  def filter_by_value(
-        %Tree{} = tree,
-        predicate
-      ) do
+  def filter_by_value(%Tree{} = tree, predicate) do
     new_left = filter_by_value(tree.left, predicate)
     new_right = filter_by_value(tree.right, predicate)
 
-    if predicate.(tree.value) do
-      %{tree | left: new_left, right: new_right}
-    else
-      combine_filtered_subtrees(new_left, new_right)
-    end
-    |> balance()
+    if_result =
+      if predicate.(tree.value) do
+        %{tree | left: new_left, right: new_right}
+      else
+        combine_filtered_subtrees(new_left, new_right)
+      end
+
+    balance(if_result)
   end
 
   def filter_by_value(nil, _predicate), do: nil
@@ -250,5 +238,5 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   defp to_list(list, nil), do: list
 
   defp to_list(list, %Tree{left: left, right: right} = tree),
-    do: [{tree.start, tree.end, tree.value} | list |> to_list(right)] |> to_list(left)
+    do: to_list([{tree.start, tree.end, tree.value} | to_list(list, right)], left)
 end

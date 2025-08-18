@@ -1,10 +1,10 @@
 defmodule Bedrock.DataPlane.Storage do
   @moduledoc false
 
+  import Bedrock.Internal.GenServer.Calls
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
-
-  import Bedrock.Internal.GenServer.Calls
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
@@ -92,8 +92,7 @@ defmodule Bedrock.DataPlane.Storage do
   @spec info(storage :: ref(), [fact_name()], opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           {:ok,
            %{
-             fact_name() =>
-               Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
+             fact_name() => Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
            }}
           | {:error, :unavailable}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker

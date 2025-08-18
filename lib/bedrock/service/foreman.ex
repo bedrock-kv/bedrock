@@ -18,15 +18,14 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
-  def all(foreman, opts \\ []),
-    do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
+  def all(foreman, opts \\ []), do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
 
   @doc """
   Create a new worker.
   """
   @spec new_worker(
           foreman :: ref(),
-          id :: Bedrock.Service.Worker.id(),
+          id :: Worker.id(),
           kind :: :log | :storage,
           opts :: [timeout: timeout()]
         ) ::
@@ -39,8 +38,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
-  def storage_workers(foreman, opts \\ []),
-    do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
+  def storage_workers(foreman, opts \\ []), do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
 
   @doc """
   Wait until the foreman signals that it (and all of it's workers) are
@@ -98,10 +96,9 @@ defmodule Bedrock.Service.Foreman do
   @spec report_health(
           foreman :: ref(),
           Worker.id(),
-          Bedrock.Service.Worker.health()
+          Worker.health()
         ) :: :ok
-  def report_health(foreman, worker_id, health),
-    do: cast(foreman, {:worker_health, worker_id, health})
+  def report_health(foreman, worker_id, health), do: cast(foreman, {:worker_health, worker_id, health})
 
   @doc """
   Return a list of all running services with information needed for coordinator registration.

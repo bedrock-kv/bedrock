@@ -40,20 +40,13 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
     info("Gateway started")
   end
 
-  def trace(:advertise_capabilities, _, %{
-        capabilities: capabilities,
-        running_services: running_services
-      }) do
-    info(
-      "Advertising capabilities (#{capabilities |> Enum.join(", ")}): #{inspect(running_services, pretty: true)}"
-    )
+  def trace(:advertise_capabilities, _, %{capabilities: capabilities, running_services: running_services}) do
+    info("Advertising capabilities (#{Enum.join(capabilities, ", ")}): #{inspect(running_services, pretty: true)}")
   end
 
-  def trace(:searching_for_coordinator, _, _),
-    do: info("Searching for a coordinator")
+  def trace(:searching_for_coordinator, _, _), do: info("Searching for a coordinator")
 
-  def trace(:found_coordinator, _, %{coordinator: coordinator}),
-    do: info("Found coordinator: #{inspect(coordinator)}")
+  def trace(:found_coordinator, _, %{coordinator: coordinator}), do: info("Found coordinator: #{inspect(coordinator)}")
 
   def trace(:missed_pong, %{missed_pongs: missed_pongs}, _) when missed_pongs > 1,
     do: info("Missed #{inspect(missed_pongs)} pongs from coordinator")
@@ -63,7 +56,7 @@ defmodule Bedrock.Cluster.Gateway.Tracing do
 
   @spec info(message :: String.t()) :: :ok
   def info(message) do
-    cluster = Logger.metadata() |> Keyword.fetch!(:cluster)
+    cluster = Keyword.fetch!(Logger.metadata(), :cluster)
     Logger.info("Bedrock [#{cluster.name()}]: #{message}")
   end
 end

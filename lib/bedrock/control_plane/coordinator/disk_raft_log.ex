@@ -29,6 +29,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   """
 
   alias Bedrock.Raft
+  alias Bedrock.Raft.TransactionID
 
   # Type definitions based on Raft types for better specificity
   @type input_transaction :: {term :: Raft.election_term(), data :: term()}
@@ -95,7 +96,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   """
   @spec open(t()) :: open_result()
   def open(%__MODULE__{} = log) do
-    case :dets.open_file(log.table_name, [{:file, log.table_file |> String.to_charlist()}]) do
+    case :dets.open_file(log.table_name, [{:file, String.to_charlist(log.table_file)}]) do
       {:ok, table_name} ->
         {:ok, %{log | table_name: table_name, is_open: true}}
 
@@ -191,8 +192,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   end
 
   # Raft.Log protocol implementation functions
-
-  alias Bedrock.Raft.TransactionID
 
   @initial_transaction_id TransactionID.new(0, 0)
 
@@ -320,11 +319,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   @spec transactions_to(t(), Raft.transaction_id() | :newest | :newest_safe) :: [
           stored_transaction_record()
         ]
-  def transactions_to(t, :newest),
-    do: transactions_from(t, @initial_transaction_id, newest_transaction_id(t))
+  def transactions_to(t, :newest), do: transactions_from(t, @initial_transaction_id, newest_transaction_id(t))
 
-  def transactions_to(t, :newest_safe),
-    do: transactions_from(t, @initial_transaction_id, newest_safe_transaction_id(t))
+  def transactions_to(t, :newest_safe), do: transactions_from(t, @initial_transaction_id, newest_safe_transaction_id(t))
 
   def transactions_to(t, to), do: transactions_from(t, @initial_transaction_id, to)
 
@@ -336,11 +333,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
           Raft.transaction_id(),
           Raft.transaction_id() | :newest | :newest_safe
         ) :: [stored_transaction_record()]
-  def transactions_from(t, from, :newest),
-    do: transactions_from(t, from, newest_transaction_id(t))
+  def transactions_from(t, from, :newest), do: transactions_from(t, from, newest_transaction_id(t))
 
-  def transactions_from(t, from, :newest_safe),
-    do: transactions_from(t, from, newest_safe_transaction_id(t))
+  def transactions_from(t, from, :newest_safe), do: transactions_from(t, from, newest_safe_transaction_id(t))
 
   def transactions_from(t, @initial_transaction_id, to) do
     # Special case: from initial_transaction_id includes all up to 'to'
@@ -402,6 +397,7 @@ end
 # Implement the Bedrock.Raft.Log protocol using delegation
 defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
+
   defdelegate new_id(t, term, sequence), to: DiskRaftLog
   defdelegate initial_transaction_id(t), to: DiskRaftLog
   defdelegate append_transactions(t, prev_id, transactions), to: DiskRaftLog

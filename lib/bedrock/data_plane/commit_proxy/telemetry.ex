@@ -1,4 +1,5 @@
 defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
+  @moduledoc false
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.Telemetry
 
@@ -8,8 +9,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   def trace_metadata, do: Process.get(:trace_metadata, %{})
 
   @spec trace_metadata(metadata :: telemetry_metadata()) :: telemetry_metadata()
-  def trace_metadata(metadata),
-    do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
+  def trace_metadata(metadata), do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 
   @spec trace_commit_proxy_batch_started(
           commit_version :: Bedrock.version(),
@@ -34,7 +34,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
     Telemetry.execute(
       [:bedrock, :data_plane, :commit_proxy, :stop],
       %{n_oks: n_oks, n_aborts: n_aborts, duration_us: duration_us},
-      Map.merge(trace_metadata(), %{commit_version: commit_version})
+      Map.put(trace_metadata(), :commit_version, commit_version)
     )
   end
 
@@ -51,7 +51,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
         duration_us: duration_us,
         commit_version: batch.commit_version
       },
-      Map.merge(trace_metadata(), %{reason: reason})
+      Map.put(trace_metadata(), :reason, reason)
     )
   end
 end

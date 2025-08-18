@@ -39,8 +39,8 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
     digits = [2, 2, 3]
 
     [h | t] =
-      Enum.map_reduce(
-        units,
+      units
+      |> Enum.map_reduce(
         milliseconds,
         fn
           unit, val ->
@@ -57,12 +57,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   defp info(elapsed, message), do: Logger.info("#{to_hh_mm_ss_ms(elapsed)}: #{message}")
 
   @spec log_event(list(atom()), map(), map(), integer()) :: :ok
-  def log_event(
-        [:bedrock, :raft, :mode_change],
-        %{at: at},
-        %{mode: :follower, term: term, leader: leader},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :mode_change], %{at: at}, %{mode: :follower, term: term, leader: leader}, start) do
     info(
       at - start,
       "Became follower with term #{term} and leader #{leader}"
@@ -93,21 +88,11 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
     )
   end
 
-  def log_event(
-        [:bedrock, :raft, :consensus_reached],
-        %{at: at},
-        %{transaction_id: transaction_id},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :consensus_reached], %{at: at}, %{transaction_id: transaction_id}, start) do
     info(at - start, "Consensus reached for transaction #{inspect(transaction_id)}")
   end
 
-  def log_event(
-        [:bedrock, :raft, :leadership_change],
-        %{at: at},
-        %{leader: leader, term: term},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :leadership_change], %{at: at}, %{leader: leader, term: term}, start) do
     info(at - start, "Leadership changed to #{leader} with term #{term}")
   end
 
@@ -123,50 +108,29 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
     )
   end
 
-  def log_event(
-        [:bedrock, :raft, :vote_received],
-        %{at: at},
-        %{term: term, follower: follower},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :vote_received], %{at: at}, %{term: term, follower: follower}, start) do
     info(at - start, "Received vote for from #{follower} in term #{term}")
   end
 
-  def log_event(
-        [:bedrock, :raft, :vote_sent],
-        %{at: at},
-        %{term: term, candidate: candidate},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :vote_sent], %{at: at}, %{term: term, candidate: candidate}, start) do
     info(at - start, "Voted for candidate #{candidate} in term #{term}")
   end
 
-  def log_event(
-        [:bedrock, :raft, :election_ended],
-        %{at: at},
-        %{term: term, votes: votes, quorum: quorum},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :election_ended], %{at: at}, %{term: term, votes: votes, quorum: quorum}, start) do
     info(
       at - start,
       "Election ended for term #{term} with votes #{inspect(votes)} and quorum #{quorum}"
     )
   end
 
-  def log_event(
-        [:bedrock, :raft, :transaction_added],
-        %{at: at},
-        %{term: term, transaction_id: transaction_id},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :transaction_added], %{at: at}, %{term: term, transaction_id: transaction_id}, start) do
     info(at - start, "Transaction #{inspect(transaction_id)} added to term #{term}")
   end
 
   def log_event(
         [:bedrock, :raft, :append_entries_ack_received],
         %{at: at},
-        %{term: term, follower: follower, newest_transaction_id: newest_transaction_id} =
-          _metadata,
+        %{term: term, follower: follower, newest_transaction_id: newest_transaction_id} = _metadata,
         start
       ) do
     info(
@@ -178,8 +142,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :append_entries_ack_sent],
         %{at: at},
-        %{term: term, leader: leader, newest_transaction_id: newest_transaction_id} =
-          _metadata,
+        %{term: term, leader: leader, newest_transaction_id: newest_transaction_id} = _metadata,
         start
       ) do
     info(
@@ -188,12 +151,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
     )
   end
 
-  def log_event(
-        [:bedrock, :raft, :heartbeat],
-        %{at: at},
-        %{term: term},
-        start
-      ) do
+  def log_event([:bedrock, :raft, :heartbeat], %{at: at}, %{term: term}, start) do
     info(at - start, "Heartbeat for term #{term}")
   end
 

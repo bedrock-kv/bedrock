@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.FactsTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.DataPlane.Log.Shale.Facts
   alias Bedrock.DataPlane.Log.Shale.State
 

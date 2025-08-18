@@ -5,6 +5,8 @@ defmodule Bedrock.Internal.GenServerApi do
     module = Keyword.get(opts, :for)
 
     quote do
+      import Bedrock.Internal.GenServer.Calls
+
       unquote do
         if module do
           quote do
@@ -17,8 +19,6 @@ defmodule Bedrock.Internal.GenServerApi do
           end
         end
       end
-
-      import Bedrock.Internal.GenServer.Calls
     end
   end
 end

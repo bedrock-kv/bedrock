@@ -1,5 +1,8 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batch do
   @moduledoc false
+
+  alias Bedrock.DataPlane.Transaction
+
   @type reply_fn :: ({:ok, Bedrock.version()} | {:error, :abort} -> :ok)
 
   @type t :: %__MODULE__{
@@ -8,7 +11,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
           last_commit_version: Bedrock.version(),
           commit_version: Bedrock.version(),
           n_transactions: non_neg_integer(),
-          buffer: [{reply_fn(), Bedrock.transaction()}]
+          buffer: [{reply_fn(), Transaction.encoded()}]
         }
   defstruct started_at: nil,
             finalized_at: nil,
@@ -32,19 +35,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
     }
   end
 
-  @spec transactions_in_order(t()) :: [{reply_fn(), Bedrock.transaction()}]
-  def transactions_in_order(t),
-    do: t.buffer |> Enum.reverse()
+  @spec transactions_in_order(t()) :: [
+          {reply_fn(), Transaction.encoded()}
+        ]
+  def transactions_in_order(t), do: Enum.reverse(t.buffer)
 
   @spec all_callers(t()) :: [reply_fn()]
-  def all_callers(t),
-    do: t.buffer |> Enum.map(&elem(&1, 0))
+  def all_callers(t), do: Enum.map(t.buffer, &elem(&1, 0))
 
-  @spec add_transaction(t(), Bedrock.transaction(), reply_fn()) :: t()
-  def add_transaction(t, transaction, reply_fn),
+  @spec add_transaction(t(), Transaction.encoded(), reply_fn()) :: t()
+  def add_transaction(t, transaction, reply_fn) when is_binary(transaction),
     do: %{t | buffer: [{reply_fn, transaction} | t.buffer], n_transactions: t.n_transactions + 1}
 
   @spec set_finalized_at(t(), Bedrock.timestamp_in_ms()) :: t()
-  def set_finalized_at(t, finalized_at),
-    do: %{t | finalized_at: finalized_at}
+  def set_finalized_at(t, finalized_at), do: %{t | finalized_at: finalized_at}
 end

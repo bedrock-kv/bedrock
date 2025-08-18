@@ -7,16 +7,13 @@ defmodule Bedrock.DataPlane.Resolver do
   transaction batches from Commit Proxies and returns lists of conflicting transaction
   indices to abort.
 
-  Resolvers start in locked mode during recovery, rebuilding their interval tree from
-  committed transaction logs. They handle out-of-order transactions through a version-
-  indexed waiting queue that ensures consistent conflict detection regardless of
-  network timing variations.
+  Resolvers start in running mode and are immediately ready to process transactions.
+  They handle out-of-order transactions through a version-indexed waiting queue that
+  ensures consistent conflict detection regardless of network timing variations.
 
   For detailed conflict detection concepts and architectural integration, see the
   [Resolver documentation](../../../../docs/components/resolver.md).
   """
-
-  alias Bedrock.DataPlane.Log
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
@@ -29,21 +26,9 @@ defmodule Bedrock.DataPlane.Resolver do
           write_keys :: [Bedrock.key() | Bedrock.key_range()]
         }
 
-  @spec recover_from(
-          ref(),
-          lock_token :: binary(),
-          logs_to_copy :: %{Log.id() => Log.ref()},
-          first_version :: Bedrock.version(),
-          last_version :: Bedrock.version()
-        ) ::
-          :ok
-          | {:error, :timeout | :unavailable | :unknown}
-  def recover_from(ref, lock_token, logs_to_copy, first_version, last_version),
-    do:
-      call(ref, {:recover_from, lock_token, logs_to_copy, first_version, last_version}, :infinity)
-
   @spec resolve_transactions(
           ref(),
+          epoch :: Bedrock.epoch(),
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
           [transaction_summary()],
@@ -51,10 +36,10 @@ defmodule Bedrock.DataPlane.Resolver do
         ) ::
           {:ok, aborted :: [transaction_index :: non_neg_integer()]}
           | {:error, :timeout | :unavailable | :unknown}
-  def resolve_transactions(ref, last_version, commit_version, transaction_summaries, opts \\ []) do
+  def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, opts \\ []) do
     call(
       ref,
-      {:resolve_transactions, {last_version, commit_version}, transaction_summaries},
+      {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries},
       opts[:timeout] || :infinity
     )
   end

@@ -1,19 +1,13 @@
 defmodule Bedrock.Repo do
+  alias Bedrock.KeyCodec.BinaryKeyCodec
+  alias Bedrock.ValueCodec.BinaryValueCodec
+
   @spec builtin_key_codecs() :: %{(:default | :binary | :tuple) => module()}
-  def builtin_key_codecs,
-    do: %{
-      default: Bedrock.KeyCodec.BinaryKeyCodec,
-      binary: Bedrock.KeyCodec.BinaryKeyCodec,
-      tuple: Bedrock.KeyCodec.TupleKeyCodec
-    }
+  def builtin_key_codecs, do: %{default: BinaryKeyCodec, binary: BinaryKeyCodec, tuple: Bedrock.KeyCodec.TupleKeyCodec}
 
   @spec builtin_value_codecs() :: %{(:default | :raw | :bert) => module()}
   def builtin_value_codecs,
-    do: %{
-      default: Bedrock.ValueCodec.BinaryValueCodec,
-      raw: Bedrock.ValueCodec.BinaryValueCodec,
-      bert: Bedrock.ValueCodec.BertValueCodec
-    }
+    do: %{default: BinaryValueCodec, raw: BinaryValueCodec, bert: Bedrock.ValueCodec.BertValueCodec}
 
   defmacro __using__(opts) do
     cluster = Keyword.fetch!(opts, :cluster)
@@ -31,11 +25,9 @@ defmodule Bedrock.Repo do
 
       @opaque transaction :: Bedrock.Internal.Repo.transaction()
 
-      defp key_codec(name),
-        do: @key_codecs[name] || raise(ArgumentError, "Unknown key codec: #{inspect(name)}")
+      defp key_codec(name), do: @key_codecs[name] || raise(ArgumentError, "Unknown key codec: #{inspect(name)}")
 
-      defp value_codec(name),
-        do: @value_codecs[name] || raise(ArgumentError, "Unknown value codec: #{inspect(name)}")
+      defp value_codec(name), do: @value_codecs[name] || raise(ArgumentError, "Unknown value codec: #{inspect(name)}")
 
       @spec transaction(
               (transaction() -> result),

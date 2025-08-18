@@ -127,6 +127,36 @@ For detailed technical documentation on any component, see the [Components Docum
 - **[Shale Deep Dive](architecture/implementations/shale.md)** - Disk-based log implementation, WAL architecture
 - **[Storage Deep Dive](architecture/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
 
+## Transaction Format
+
+Bedrock uses a sophisticated tagged binary format for transaction encoding that replaced the simple map structure. This format provides several key advantages:
+
+### Binary Structure
+
+- **Tagged sections**: Self-describing sections with type, size, and embedded CRC validation
+- **Order independence**: Sections can appear in any order for better extensibility  
+- **Efficient operations**: Extract specific sections without full decode
+- **Space optimization**: Empty sections are omitted, opcodes are size-optimized
+
+### Section Types
+
+- **MUTATIONS** (0x01): Always present, contains `{:set, key, value}` and `{:clear_range, start, end}` operations
+- **READ_CONFLICTS** (0x02): Present when transaction performed reads, includes read version
+- **WRITE_CONFLICTS** (0x03): Present when write conflicts exist
+- **COMMIT_VERSION** (0x04): Added by commit proxy after version assignment
+
+### Usage Throughout System
+
+The flexible design allows each component to work with only needed sections:
+
+- **Transaction Builder → Commit Proxy**: Full transaction with mutations, conflicts, and read version
+- **Commit Proxy → Resolver**: Conflicts and versions for conflict detection (mutations not needed)
+- **Commit Proxy → Logs**: Mutations and commit version for storage (conflicts not needed)
+
+This approach improves efficiency and reduces data transfer overhead between components.
+
+> **Implementation Details**: See `lib/bedrock/data_plane/bedrock_transaction.ex` for complete binary format specification, CRC validation, and section operations.
+
 ## Detailed Phase Breakdown
 
 ### Phase 1: Transaction Initiation
@@ -196,16 +226,18 @@ This is the most complex phase involving multiple distributed components working
 **Process**:
 
 1. Transaction builder calls `do_commit/1`
-2. Prepare transaction tuple: `{read_info, writes}`
-   - `read_info`: `{read_version, [read_keys]}` or `nil` for write-only transactions
-   - `writes`: `%{key => value}` map of accumulated writes
+2. Prepare transaction using Transaction binary format:
+   - `mutations`: List of `{:set, key, value}` or `{:clear_range, start, end}` operations
+   - `read_conflicts`: `{read_version, [read_conflict_ranges]}` or `{nil, []}` for write-only transactions
+   - `write_conflicts`: List of write conflict ranges for all mutations
+   - Uses tagged binary sections with CRC validation for efficient processing
 3. Select a Commit Proxy randomly from available commit proxies
-4. Send transaction to selected Commit Proxy
+4. Send encoded transaction to selected Commit Proxy
 
 **Key Code Locations**:
 
 - Commit preparation: `lib/bedrock/cluster/gateway/transaction_builder/committing.ex:8`
-- Transaction format: `lib/bedrock/cluster/gateway/transaction_builder/committing.ex:26`
+- Transaction format: `lib/bedrock/data_plane/bedrock_transaction.ex`
 
 #### Step 4.2: Batch Formation and Version Assignment
 
@@ -230,13 +262,18 @@ This is the most complex phase involving multiple distributed components working
 
 **Process**:
 
-1. Transform transactions into conflict resolution format
-2. Distribute transactions to appropriate Resolvers based on key ranges
-3. Each Resolver checks for:
+1. **Validation**: Validate transaction format using Transaction validation
+   - Verify binary format integrity with CRC checks
+   - Ensure transaction summaries conform to expected format
+   - Handle validation errors with appropriate telemetry
+2. Transform transactions into conflict resolution format
+3. Distribute transactions to appropriate Resolvers based on key ranges
+4. Each Resolver checks for:
    - **Read-Write conflicts**: Transaction read a key that was written by a later-committed transaction
    - **Write-Write conflicts**: Two transactions wrote to the same key
    - **Within-batch conflicts**: Transactions in the same batch conflict with each other
-4. Return list of aborted transaction indices
+5. **Timeout handling**: Transactions waiting for version ordering may timeout (default 30 seconds)
+6. Return list of aborted transaction indices or timeout errors
 
 **Key Code Locations**:
 
@@ -356,6 +393,19 @@ This is the most complex phase involving multiple distributed components working
 - Clients receive `{:error, :aborted}` for conflicted transactions
 - Applications should retry with exponential backoff
 - Conflicts are natural in optimistic concurrency control
+
+### Validation Errors
+
+- **Format Validation**: Transaction binary format validation with CRC checks
+- **Transaction Summary Validation**: Ensures transaction summaries conform to expected `{read_info | nil, write_keys}` format
+- **Waiting List Validation**: Validates transactions before adding to resolver waiting queues
+- All validation failures include detailed telemetry for debugging
+
+### Timeout Handling
+
+- **Waiting List Timeout**: Transactions waiting for version ordering timeout after 30 seconds (default)
+- **Read Version Lease Expiration**: Read version leases expire to prevent indefinite holds
+- **WaitingList Management**: Automatic cleanup of expired transactions with appropriate error responses
 
 ### System Failures
 
@@ -523,6 +573,9 @@ defmodule BedrockEx.Repo do
       default: Bedrock.ValueCodec.BertValueCodec  # Elixir term serialization
     ]
 end
+
+# Note: Transaction binary format handles the low-level encoding/decoding
+# of mutations and conflict ranges transparently to client applications
 ```
 
 ## Key Transaction Patterns

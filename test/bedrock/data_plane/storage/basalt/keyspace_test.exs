@@ -2,6 +2,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Storage.Basalt.Keyspace
+  alias Bedrock.DataPlane.TransactionTestSupport
+  alias Bedrock.DataPlane.Version
 
   def new_random_keyspace, do: Keyspace.new(:"keyspace_#{Faker.random_between(0, 10_000)}")
 
@@ -12,17 +14,24 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   end
 
   describe "Keyspace.apply_transaction/2" do
-    test "it adds the keys to the space" do
+    test "adds keys to the space" do
       keyspace = new_random_keyspace()
 
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+                   "a" => "a",
+                   "c" => "c",
+                   "d" => "d",
+                   "e" => "e"
+                 })
                )
 
+      version_0 = Version.from_integer(0)
+
       assert [
-               {:last_version, 0},
+               {:last_version, ^version_0},
                {"a", true},
                {"c", true},
                {"d", true},
@@ -30,23 +39,35 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it adds the keys to the space that already has keys" do
+    test "adds keys to space that already has keys" do
       keyspace = new_random_keyspace()
 
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+                   "a" => "a",
+                   "c" => "c",
+                   "d" => "d",
+                   "e" => "e"
+                 })
                )
 
       assert :ok =
                Keyspace.apply_transaction(
                  keyspace,
-                 {1, %{"f" => "f", "g" => "g", "h" => "h", "i" => "i"}}
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                   "f" => "f",
+                   "g" => "g",
+                   "h" => "h",
+                   "i" => "i"
+                 })
                )
 
+      version_1 = Version.from_integer(1)
+
       assert [
-               {:last_version, 1},
+               {:last_version, ^version_1},
                {"a", true},
                {"c", true},
                {"d", true},
@@ -58,41 +79,57 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it removes keys properly" do
+    test "removes keys properly" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+            "a" => "a",
+            "c" => "c",
+            "d" => "d",
+            "e" => "e"
+          })
         )
 
-      assert :ok = Keyspace.apply_transaction(keyspace, {1, %{"c" => nil, "d" => nil}})
+      assert :ok =
+               Keyspace.apply_transaction(
+                 keyspace,
+                 TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+                   "c" => nil,
+                   "d" => nil
+                 })
+               )
 
-      assert [
-               {:last_version, 1},
-               {"a", true},
-               {"c", false},
-               {"d", false},
-               {"e", true}
-             ] = keyspace |> :ets.tab2list()
+      version_1 = Version.from_integer(1)
+
+      assert [{:last_version, ^version_1}, {"a", true}, {"c", false}, {"d", false}, {"e", true}] =
+               :ets.tab2list(keyspace)
     end
   end
 
   describe "Keyspace.prune/2" do
-    test "it suceeds and changes nothing when there are no keys to prune" do
+    test "succeeds and changes nothing when there are no keys to prune" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+            "a" => "a",
+            "c" => "c",
+            "d" => "d",
+            "e" => "e"
+          })
         )
 
       assert {:ok, 0} = Keyspace.prune(keyspace)
 
+      version_0 = Version.from_integer(0)
+
       assert [
-               {:last_version, 0},
+               {:last_version, ^version_0},
                {"a", true},
                {"c", true},
                {"d", true},
@@ -100,25 +137,35 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it succeeds and removes the keys when there are keys to prune" do
+    test "succeeds and removes keys when there are keys to prune" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+            "a" => "a",
+            "c" => "c",
+            "d" => "d",
+            "e" => "e"
+          })
         )
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {1, %{"a" => nil, "d" => nil}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+            "a" => nil,
+            "d" => nil
+          })
         )
 
       assert {:ok, 2} = Keyspace.prune(keyspace)
 
+      version_1 = Version.from_integer(1)
+
       assert [
-               {:last_version, 1},
+               {:last_version, ^version_1},
                {"c", true},
                {"e", true}
              ] = :ets.tab2list(keyspace)
@@ -126,25 +173,35 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   end
 
   describe "Keyspace.key_exists?/2" do
-    test "it returns true when the key exists" do
+    test "returns true when key exists" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+            "a" => "a",
+            "c" => "c",
+            "d" => "d",
+            "e" => "e"
+          })
         )
 
       assert true = Keyspace.key_exists?(keyspace, "a")
     end
 
-    test "it returns false when the key does not exist" do
+    test "returns false when key does not exist" do
       keyspace = new_random_keyspace()
 
       :ok =
         Keyspace.apply_transaction(
           keyspace,
-          {0, %{"a" => "a", "c" => "c", "d" => "d", "e" => "e"}}
+          TransactionTestSupport.new_log_transaction(Version.from_integer(0), %{
+            "a" => "a",
+            "c" => "c",
+            "d" => "d",
+            "e" => "e"
+          })
         )
 
       refute false = Keyspace.key_exists?(keyspace, "q")

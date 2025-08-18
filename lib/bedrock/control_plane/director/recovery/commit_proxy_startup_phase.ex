@@ -38,8 +38,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
 
     available_commit_proxy_nodes = Map.get(context.node_capabilities, :coordination, [])
 
-    define_commit_proxies(
-      context.cluster_config.parameters.desired_commit_proxies,
+    context.cluster_config.parameters.desired_commit_proxies
+    |> define_commit_proxies(
       recovery_attempt.cluster,
       recovery_attempt.epoch,
       self(),
@@ -105,7 +105,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
     nodes
     |> Task.async_stream(
       fn node ->
-        start_supervised.(child_spec, node)
+        child_spec
+        |> start_supervised.(node)
         |> case do
           {:ok, pid} -> {node, pid}
           {:error, reason} -> {node, {:error, reason}}

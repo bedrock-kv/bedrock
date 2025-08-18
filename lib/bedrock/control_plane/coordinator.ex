@@ -28,10 +28,10 @@ defmodule Bedrock.ControlPlane.Coordinator do
   - `Bedrock.ControlPlane.Director` - Recovery orchestration
   - `Bedrock.ControlPlane.Coordinator.State` - Internal state management
   """
+  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
+
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-
-  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
@@ -41,8 +41,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   @spec fetch_config(coordinator_ref :: ref(), timeout_ms :: timeout_in_ms()) ::
           {:ok, config :: Config.t()} | {:error, :unavailable | :timeout}
-  def fetch_config(coordinator, timeout \\ 5_000),
-    do: coordinator |> call(:fetch_config, timeout)
+  def fetch_config(coordinator, timeout \\ 5_000), do: call(coordinator, :fetch_config, timeout)
 
   @spec update_config(
           coordinator_ref :: ref(),
@@ -53,8 +52,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def update_config(coordinator, config, timeout \\ 5_000),
-    do: coordinator |> call({:update_config, config}, timeout)
+  def update_config(coordinator, config, timeout \\ 5_000), do: call(coordinator, {:update_config, config}, timeout)
 
   @spec fetch_transaction_system_layout(
           coordinator_ref :: ref(),
@@ -63,7 +61,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
           {:ok, transaction_system_layout :: TransactionSystemLayout.t()}
           | {:error, :unavailable | :timeout}
   def fetch_transaction_system_layout(coordinator, timeout \\ 5_000),
-    do: coordinator |> call(:fetch_transaction_system_layout, timeout)
+    do: call(coordinator, :fetch_transaction_system_layout, timeout)
 
   @spec update_transaction_system_layout(
           coordinator_ref :: ref(),
@@ -75,9 +73,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :failed}
           | {:error, :not_leader}
   def update_transaction_system_layout(coordinator, transaction_system_layout, timeout \\ 5_000),
-    do:
-      coordinator
-      |> call({:update_transaction_system_layout, transaction_system_layout}, timeout)
+    do: call(coordinator, {:update_transaction_system_layout, transaction_system_layout}, timeout)
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}
@@ -92,7 +88,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :failed}
           | {:error, :not_leader}
   def register_services(coordinator, services, timeout \\ 5_000),
-    do: coordinator |> call({:register_services, services}, timeout)
+    do: call(coordinator, {:register_services, services}, timeout)
 
   @spec deregister_services(
           coordinator_ref :: ref(),
@@ -104,7 +100,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :failed}
           | {:error, :not_leader}
   def deregister_services(coordinator, service_ids, timeout \\ 5_000),
-    do: coordinator |> call({:deregister_services, service_ids}, timeout)
+    do: call(coordinator, {:deregister_services, service_ids}, timeout)
 
   @spec register_gateway(
           coordinator_ref :: ref(),
@@ -117,14 +113,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def register_gateway(
-        coordinator,
-        gateway_pid,
-        compact_services,
-        capabilities,
-        timeout \\ 5_000
-      ),
-      do:
-        coordinator
-        |> call({:register_gateway, gateway_pid, compact_services, capabilities}, timeout)
+  def register_gateway(coordinator, gateway_pid, compact_services, capabilities, timeout \\ 5_000),
+    do: call(coordinator, {:register_gateway, gateway_pid, compact_services, capabilities}, timeout)
 end

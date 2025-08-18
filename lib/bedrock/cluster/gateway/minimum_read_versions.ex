@@ -1,10 +1,10 @@
 defmodule Bedrock.Cluster.Gateway.MinimumReadVersions do
   @moduledoc false
 
-  @type deadline_by_version :: %{Bedrock.version() => Bedrock.timestamp_in_ms()}
-
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.Internal.Time
+
+  @type deadline_by_version :: %{Bedrock.version() => Bedrock.timestamp_in_ms()}
 
   @spec recalculate_minimum_read_version(State.t()) :: State.t()
   def recalculate_minimum_read_version(t) do
@@ -31,8 +31,7 @@ defmodule Bedrock.Cluster.Gateway.MinimumReadVersions do
   @spec find_minimum_active_version(deadline_by_version(), at :: Bedrock.timestamp_in_ms()) ::
           {minimum_version :: Bedrock.version() | nil, deadline_by_version()}
   def find_minimum_active_version(deadline_by_version, at) do
-    deadline_by_version
-    |> Enum.reduce({nil, %{}}, fn
+    Enum.reduce(deadline_by_version, {nil, %{}}, fn
       {read_version, deadline}, {minimum_version, deadline_by_version} when deadline > at ->
         {min(read_version, minimum_version), Map.put(deadline_by_version, read_version, deadline)}
 

@@ -12,7 +12,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     on_exit(fn -> DiskRaftLog.close(log) end)
 
-    {:ok, context |> Map.put(:log, log)}
+    {:ok, Map.put(context, :log, log)}
   end
 
   describe "basic protocol methods" do

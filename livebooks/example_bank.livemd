@@ -136,7 +136,7 @@ defmodule Example.Bank do
   defp fetch_balance(repo, account) do
     case Repo.fetch(repo, key_for_account_balance(account)) do
       {:ok, balance} -> {:ok, balance}
-      :error -> {:error, :account_not_found}
+      {:error, :not_found} -> {:error, :account_not_found}
     end
   end
 

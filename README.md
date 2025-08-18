@@ -15,7 +15,7 @@ by adding `bedrock` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.1"}
+    {:bedrock, "~> 0.2"}
   ]
 end
 ```

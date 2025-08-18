@@ -3,9 +3,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
-  # Helper function to get the transaction map from Tx.commit/1
   defp decode_commit(tx) do
-    # Tx.commit/1 now returns the map directly
     Tx.commit(tx)
   end
 
@@ -94,7 +92,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key1", "value1")
         |> Tx.set("key1", "updated_value")
 
-      # Assert on whole struct state (optimization removes previous sets to same key)
       assert %Tx{
                mutations: [
                  {:set, "key1", "updated_value"}
@@ -105,7 +102,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                range_reads: []
              } = tx
 
-      # Optimization removes previous operations, only final set remains
       assert %{
                mutations: [
                  {:set, "key1", "updated_value"}
@@ -238,8 +234,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("banana", "fruit")
         |> Tx.clear_range("a", "m")
 
-      # Should have operations in chronological order
-      # Apple and banana should be removed by clear_range, only zebra and clear_range remain
       assert %{
                mutations: [
                  {:set, "zebra", "animal"},
@@ -292,7 +286,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       {new_tx, result, state} = Tx.get(tx, "cached_key", fetch_fn, :test_state)
 
       assert result == {:ok, "cached_value"}
-      # No change when reading from reads cache
       assert new_tx == tx
       assert state == :test_state
     end
@@ -358,9 +351,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "writes cache takes precedence over reads cache" do
       tx =
         Tx.new()
-        # Value in reads
         |> then(&%{&1 | reads: %{"key" => "old_value"}})
-        # Override in writes
         |> Tx.set("key", "new_value")
 
       fetch_fn = fn _key, _state ->
@@ -369,7 +360,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
       {new_tx, result, state} = Tx.get(tx, "key", fetch_fn, :test_state)
 
-      # Gets writes value, not reads
       assert result == {:ok, "new_value"}
       assert new_tx == tx
       assert state == :test_state
@@ -396,11 +386,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         Tx.new()
         |> Tx.set("key1", "value1")
         |> Tx.set("key2", "value2")
-        # Outside range
         |> Tx.set("key0", "value0")
 
       read_range_fn = fn state, _start, _end, _opts ->
-        # No storage data
         {[], state}
       end
 
@@ -414,7 +402,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "merges writes with storage data" do
       tx = Tx.set(Tx.new(), "key2", "tx_value2")
 
-      # Override storage
       read_range_fn = fn state, start_key, end_key, opts ->
         assert start_key == "key1"
         assert end_key == "key3"
@@ -424,7 +411,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
       {new_tx, results, _state} = Tx.get_range(tx, "key1", "key3", read_range_fn, :test_state)
 
-      # Transaction writes should override storage
       assert results == [{"key1", "storage_value1"}, {"key2", "tx_value2"}]
       assert new_tx.reads["key1"] == "storage_value1"
       assert new_tx.reads["key2"] == "tx_value2"
@@ -452,7 +438,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       tx =
         Tx.new()
         |> Tx.set("key1", "value1")
-        # Clear key2
         |> Tx.clear("key2")
 
       read_range_fn = fn _state, _start, _end, _opts ->
@@ -461,7 +446,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
       {_tx, results, _state} = Tx.get_range(tx, "key1", "key3", read_range_fn, :test_state)
 
-      # key2 should be excluded because it's cleared
       assert results == [{"key1", "value1"}]
     end
 
@@ -474,7 +458,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
       {_tx, results, _state} = Tx.get_range(tx, "key1", "key4", read_range_fn, :test_state)
 
-      # All keys in cleared range should be excluded
       assert results == []
     end
   end
@@ -515,7 +498,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key1", "value1")
         |> then(&%{&1 | reads: %{"read_key" => "read_value"}})
 
-      # Provide a read_version since this transaction has reads
       read_version = Bedrock.DataPlane.Version.from_integer(123)
 
       assert %{
@@ -533,7 +515,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key3", "value3")
         |> then(&%{&1 | reads: %{"read_key" => "read_value"}})
 
-      # Provide a read_version since this transaction has reads
       read_version = Bedrock.DataPlane.Version.from_integer(456)
 
       assert %{
@@ -554,7 +535,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "coalesces overlapping ranges in conflicts" do
       tx = then(Tx.new(), &%{&1 | range_reads: [{"a", "m"}, {"k", "z"}, {"b", "n"}]})
 
-      # Provide a read_version since this transaction has range reads
       read_version = Bedrock.DataPlane.Version.from_integer(789)
 
       assert %{
@@ -592,7 +572,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.clear("clear_key")
         |> Tx.clear_range("a", "b")
 
-      # Mutations should be in chronological order: set large_key -> clear "clear_key" -> clear_range "a","b"
       assert %{
                mutations: [
                  {:set, ^large_key, ^large_value},
@@ -618,7 +597,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("collision_key", "value")
         |> Tx.clear("collision_key")
 
-      # Clear should overwrite the set in writes map
       assert tx.writes["collision_key"] == :clear
 
       assert %{

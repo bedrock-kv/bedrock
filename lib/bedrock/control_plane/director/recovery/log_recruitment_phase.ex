@@ -260,7 +260,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
       |> Map.keys()
       |> Enum.reject(&match?({:vacancy, _}, &1))
 
-    # Lock each existing log service that was recruited
     Enum.reduce_while(existing_log_ids, {:ok, %{}}, fn log_id, {:ok, locked_services} ->
       process_log_service_locking(
         log_id,
@@ -287,7 +286,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         )
 
       _ ->
-        # Service not available - this shouldn't happen if recruitment logic is correct
         {:halt, {:error, {:recruited_service_unavailable, log_id}}}
     end
   end

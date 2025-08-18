@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.State do
 
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage.Basalt.Database
+  alias Bedrock.Internal.WaitingList
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -15,7 +16,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.State do
           pull_task: Task.t() | nil,
           epoch: Bedrock.epoch() | nil,
           director: Director.ref() | nil,
-          mode: :locked | :running
+          mode: :locked | :running,
+          waiting_fetches: WaitingList.t()
         }
   defstruct otp_name: nil,
             path: nil,
@@ -25,7 +27,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.State do
             pull_task: nil,
             epoch: nil,
             director: nil,
-            mode: :locked
+            mode: :locked,
+            waiting_fetches: %{}
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

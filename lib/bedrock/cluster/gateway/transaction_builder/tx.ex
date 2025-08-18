@@ -267,7 +267,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   end
 
   defp should_skip_key?({k, _v}, writes, cleared_ranges) do
-    # Skip if we already have it in writes or if it's in a cleared range
     Map.has_key?(writes, k) or
       Enum.any?(cleared_ranges, fn {cs, ce} -> k >= cs and k < ce end)
   end

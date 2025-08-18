@@ -242,7 +242,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
   describe "mark_log_as_failed/2" do
     test "adds log to failed_logs with timeout" do
-      state = %{failed_logs: %{}}
+      state = %{failed_logs: %{}, start_after: Version.zero()}
       log_id = "test_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -257,7 +257,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "preserves existing failed logs" do
       existing_timestamp = System.monotonic_time(:millisecond) + 5000
-      state = %{failed_logs: %{"existing_log" => existing_timestamp}}
+      state = %{failed_logs: %{"existing_log" => existing_timestamp}, start_after: Version.zero()}
       log_id = "new_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -269,7 +269,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "updates existing failed log timestamp" do
       old_timestamp = System.monotonic_time(:millisecond) - 1000
-      state = %{failed_logs: %{"test_log" => old_timestamp}}
+      state = %{failed_logs: %{"test_log" => old_timestamp}, start_after: Version.zero()}
       log_id = "test_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -285,7 +285,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         failed_logs: %{
           "log1" => System.monotonic_time(:millisecond) + 5000,
           "log2" => System.monotonic_time(:millisecond) + 10_000
-        }
+        },
+        start_after: Version.zero()
       }
 
       new_state = Pulling.reset_failed_logs(state)
@@ -295,14 +296,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "preserves other state fields" do
       state = %{
-        start_after: 100,
+        start_after: Version.from_integer(100),
         logs: %{"log1" => []},
         failed_logs: %{"log1" => 12_345}
       }
 
       new_state = Pulling.reset_failed_logs(state)
 
-      assert new_state.start_after == 100
+      assert new_state.start_after == Version.from_integer(100)
       assert new_state.logs == %{"log1" => []}
       assert new_state.failed_logs == %{}
     end

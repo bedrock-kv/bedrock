@@ -6,9 +6,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.DataPlane.Transaction
 
-  # Test helper to create a basic transaction state
   defp create_test_state(read_version, _reads, writes) do
-    # Build transaction with the specified writes (all keys and values must be binary)
     tx =
       Enum.reduce(writes, Tx.new(), fn {k, v}, tx ->
         Tx.set(tx, k, v)
@@ -30,25 +28,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     }
   end
 
-  # Mock commit function that captures the transaction for testing
   defp mock_commit_fn(expected_transaction) do
     fn _proxy, binary_transaction ->
-      # Decode binary transaction to compare with expected map format
       decoded_transaction = Transaction.decode!(binary_transaction)
       assert decoded_transaction == expected_transaction
-      # Return a mock version number
       {:ok, 42}
     end
   end
 
-  # Helper function to decode binary transaction for assertions
   defp decode_transaction(binary_transaction) do
     Transaction.decode!(binary_transaction)
   end
 
-  # Helper to create expected transaction in new format
   defp create_expected_transaction(read_version, mutations, write_conflicts, read_conflicts \\ []) do
-    # Convert read_version to binary format to match Transaction.decode! output
     binary_read_version =
       case read_version do
         nil -> nil
@@ -56,7 +48,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         version -> version
       end
 
-    # Apply the new coupling rules: if no read_conflicts, read_version must be nil
+    # New coupling rules: if no read_conflicts, read_version must be nil
     read_conflicts_tuple =
       case read_conflicts do
         [] -> {nil, []}
@@ -94,8 +86,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       read_version = Bedrock.DataPlane.Version.from_integer(123)
       state = create_test_state(read_version, reads, writes)
 
-      # Expected new transaction format from Tx.commit() + read_version
-      # Note: mutations are now in chronological order
+      # Note: mutations are in chronological order
       expected_transaction =
         create_expected_transaction(
           read_version,
@@ -116,17 +107,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{"write_key" => "write_val"}
       read_version = Bedrock.DataPlane.Version.from_integer(456)
 
-      # Create transaction with both reads and writes
       tx =
         Enum.reduce(writes, Tx.new(), fn {k, v}, tx ->
           Tx.set(tx, k, v)
         end)
 
-      # Simulate reads by setting them in the reads cache
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Expected new transaction format - writes in mutations, reads in read_conflicts
       expected_transaction =
         create_expected_transaction(
           read_version,
@@ -156,16 +144,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       read_version = Bedrock.DataPlane.Version.from_integer(1001)
       state = create_test_state(read_version, reads, writes)
 
-      # Expected transaction format with binary keys and values
       expected_mutations = [
         {:set, "balances:1", "100"},
         {:set, "balances:2", "500"}
       ]
 
-      # Use a relaxed commit function that only checks the key fields
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
-        # Write-only transactions should have read_version as nil in new format
         {actual_read_version, _} = transaction.read_conflicts
         assert actual_read_version == nil
         assert transaction.mutations == expected_mutations
@@ -196,23 +181,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       read_version = Bedrock.DataPlane.Version.from_integer(2001)
 
-      # Create transaction with both reads and writes
       tx =
         Enum.reduce(writes, Tx.new(), fn {k, v}, tx ->
           Tx.set(tx, k, v)
         end)
 
-      # Simulate reads by setting them in the reads cache
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Expected transaction format with binary keys and values
       expected_mutations = [
         {:set, "balances:1", "90"},
         {:set, "balances:2", "510"}
       ]
 
-      # Use a relaxed commit function that only checks the key fields
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -239,7 +220,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{"current_write" => "val"}
       stacked_writes = %{"stacked_write" => "val"}
 
-      # Create a stacked Tx with the stacked writes
       stacked_tx =
         Enum.reduce(stacked_writes, Tx.new(), fn {k, v}, tx ->
           Tx.set(tx, k, v)
@@ -253,18 +233,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       # For nested commits, no external commit should happen - it should just pop the stack
       {:ok, result_state} = Committing.do_commit(state)
 
-      # Should pop stack but keep current transaction (not restore stacked)
       assert result_state.stack == []
-      # Still valid, not committed
       assert result_state.state == :valid
 
-      # The current transaction should remain unchanged
       commit_result = Tx.commit(result_state.tx)
       assert commit_result.mutations == [{:set, "current_write", "val"}]
     end
 
     test "commit proxy selection error handling" do
-      # Test when no proxies are available
       state = %{
         create_test_state(Bedrock.DataPlane.Version.from_integer(100), %{}, %{"key" => "val"})
         | transaction_system_layout: %{
@@ -285,7 +261,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       read_version = Bedrock.DataPlane.Version.from_integer(789)
       state = create_test_state(read_version, reads, writes)
 
-      # Mock a failing commit
       failing_commit_fn = fn _proxy, _transaction ->
         {:error, :timeout}
       end
@@ -303,12 +278,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{"account_balance" => "240"}
       read_version = Bedrock.DataPlane.Version.from_integer(555)
 
-      # Simulate setting up reads in the transaction
       tx = Tx.set(Tx.new(), "account_balance", "240")
       tx = %{tx | reads: %{"account_balance" => "250"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -317,8 +290,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         assert transaction.mutations == [{:set, "account_balance", "240"}]
         assert is_list(transaction.write_conflicts)
         assert length(transaction.write_conflicts) == 1
-        # Note: read conflicts only appear when reads cache is populated during fetch
-        # In this test, we have reads so should get read_conflicts
         {_, actual_read_conflicts} = transaction.read_conflicts
         assert is_list(actual_read_conflicts)
         assert length(actual_read_conflicts) == 1
@@ -342,12 +313,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{"transaction_log" => "transfer_completed"}
       read_version = Bedrock.DataPlane.Version.from_integer(777)
 
-      # Simulate setting up reads in the transaction
       tx = Tx.set(Tx.new(), "transaction_log", "transfer_completed")
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -356,7 +325,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         assert transaction.mutations == [{:set, "transaction_log", "transfer_completed"}]
         assert is_list(transaction.write_conflicts)
         assert transaction.write_conflicts == [{"transaction_log", "transaction_log\0"}]
-        # Reads should generate read_conflicts for all accounts
+
         assert actual_read_conflicts == [
                  {"account_1", "account_1\0"},
                  {"account_2", "account_2\0"},
@@ -387,7 +356,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       read_version = Bedrock.DataPlane.Version.from_integer(888)
 
-      # Create transaction with both reads and writes
       tx =
         Enum.reduce(writes, Tx.new(), fn {k, v}, tx ->
           Tx.set(tx, k, v)
@@ -396,20 +364,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
         {actual_read_version, _} = transaction.read_conflicts
         assert actual_read_version == expected_read_version
         assert is_list(transaction.mutations)
-        # Three writes
         assert length(transaction.mutations) == 3
         assert is_list(transaction.write_conflicts)
         assert length(transaction.write_conflicts) == 3
         {_, actual_read_conflicts} = transaction.read_conflicts
         assert is_list(actual_read_conflicts)
-        # Two reads
         assert length(actual_read_conflicts) == 2
         {:ok, 42}
       end
@@ -430,23 +395,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{}
       read_version = Bedrock.DataPlane.Version.from_integer(333)
 
-      # Create transaction with only reads
       tx = %{Tx.new() | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
         {actual_read_version, _} = transaction.read_conflicts
         assert actual_read_version == expected_read_version
-        # No writes
         assert transaction.mutations == []
-        # No writes
         assert transaction.write_conflicts == []
         {_, actual_read_conflicts} = transaction.read_conflicts
         assert is_list(actual_read_conflicts)
-        # Two reads
         assert length(actual_read_conflicts) == 2
         {:ok, 42}
       end
@@ -458,17 +418,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     end
 
     test "read version handling with version 0" do
-      # Verify read_version 0 is preserved correctly
       reads = %{"counter" => "0"}
       writes = %{"counter" => "1"}
       read_version = Bedrock.DataPlane.Version.from_integer(0)
 
-      # Create transaction with both reads and writes
       tx = Tx.set(Tx.new(), "counter", "1")
       tx = %{tx | reads: %{"counter" => "0"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -490,17 +447,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     end
 
     test "read version handling with large version number" do
-      # Verify large read_version numbers are preserved correctly
       reads = %{"large_dataset" => "chunk_1"}
       writes = %{"large_dataset" => "chunk_1_processed"}
       read_version = Bedrock.DataPlane.Version.from_integer(999_999_999)
 
-      # Create transaction with both reads and writes
       tx = Tx.set(Tx.new(), "large_dataset", "chunk_1_processed")
       tx = %{tx | reads: %{"large_dataset" => "chunk_1"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -522,7 +476,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     end
 
     test "read keys order preservation" do
-      # Verify read keys maintain consistent order when extracted
       reads = %{
         "z_last" => "value_z",
         "a_first" => "value_a",
@@ -532,12 +485,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       writes = %{"result" => "processed"}
       read_version = Bedrock.DataPlane.Version.from_integer(123)
 
-      # Create transaction with both reads and writes
       tx = Tx.set(Tx.new(), "result", "processed")
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
@@ -559,7 +510,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
     end
 
     test "complex key types in read-dependent transaction" do
-      # Test with complex key types (composite keys) that might be used in real scenarios
+      # Test with complex key types (composite keys)
       reads = %{
         "users:alice" => ~s({"balance":100,"status":"active"}),
         "sessions:session_123" => ~s({"user_id":"alice","expires_at":1234567890})
@@ -572,7 +523,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       read_version = Bedrock.DataPlane.Version.from_integer(456)
 
-      # Create transaction with both reads and writes using binary keys
       tx =
         Enum.reduce(writes, Tx.new(), fn {k, v}, tx ->
           Tx.set(tx, k, v)
@@ -581,20 +531,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = read_version
         {actual_read_version, _} = transaction.read_conflicts
         assert actual_read_version == expected_read_version
         assert is_list(transaction.mutations)
-        # Two writes
         assert length(transaction.mutations) == 2
         assert is_list(transaction.write_conflicts)
         assert length(transaction.write_conflicts) == 2
         {_, actual_read_conflicts} = transaction.read_conflicts
         assert is_list(actual_read_conflicts)
-        # Two reads
         assert length(actual_read_conflicts) == 2
         {:ok, 42}
       end
@@ -616,10 +563,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       read_version = Bedrock.DataPlane.Version.from_integer(999)
       state = create_test_state(read_version, reads, writes)
 
-      # Use relaxed commit function for new format
       commit_fn = fn _proxy, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
-        # Write-only transactions should have read_version as nil in new format
         {actual_read_version, _} = transaction.read_conflicts
         assert actual_read_version == nil
         assert transaction.mutations == [{:set, "test_key", "test_value"}]
@@ -630,15 +575,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      # Execute
       {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
 
-      # Verify success
       assert result_state.state == :committed
       assert result_state.commit_version == 42
 
-      # The mock_commit_fn will fail if the wrong transaction format is passed,
-      # so this test passing means the fix is working correctly
+      # The mock_commit_fn will fail if the wrong transaction format is passed
     end
 
     test "fix does not break existing functionality" do
@@ -687,7 +629,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       {:ok, _} = Committing.do_commit(state2, commit_fn: commit_fn2)
 
-      # All assertions pass if we reach here
       assert true
     end
   end

@@ -23,7 +23,6 @@ defmodule Bedrock.Internal.WaitingListTest do
       map = %{1 => [{1200, reply_fn1, :data1}]}
       time_fn = fn -> 1000 end
 
-      # Add entry with earlier deadline
       {new_map, _} = WaitingList.insert(map, 1, :data2, reply_fn2, 100, time_fn)
       assert new_map == %{1 => [{1100, reply_fn2, :data2}, {1200, reply_fn1, :data1}]}
 
@@ -64,7 +63,6 @@ defmodule Bedrock.Internal.WaitingListTest do
       {new_map, timeout} = WaitingList.insert(map, 1, :data, reply_fn, 500, time_fn)
       assert timeout == 500
 
-      # Add entry with earlier deadline - should update timeout
       {_new_map, timeout} = WaitingList.insert(new_map, 2, :data, reply_fn, 200, time_fn)
       assert timeout == 200
     end
@@ -79,7 +77,6 @@ defmodule Bedrock.Internal.WaitingListTest do
 
       [{deadline, ^reply_fn, :data}] = Map.get(new_map, 1)
       assert is_integer(deadline)
-      # Monotonic time can be negative, so just check it's a valid integer
     end
   end
 
@@ -295,7 +292,6 @@ defmodule Bedrock.Internal.WaitingListTest do
 
       timeout = WaitingList.next_timeout(map, time_fn)
 
-      # 1100 - 1000
       assert timeout == 100
     end
 
@@ -396,7 +392,6 @@ defmodule Bedrock.Internal.WaitingListTest do
 
     test "handles empty expired entries list" do
       WaitingList.reply_to_expired([])
-      # Should not crash
     end
   end
 
@@ -407,14 +402,10 @@ defmodule Bedrock.Internal.WaitingListTest do
 
       map = %{}
 
-      # Add entries in random deadline order
-      # deadline: 1300
+      # Add entries in random deadline order to test sorting
       {map, _} = WaitingList.insert(map, 1, :data3, reply_fn, 300, time_fn)
-      # deadline: 1100
       {map, _} = WaitingList.insert(map, 1, :data1, reply_fn, 100, time_fn)
-      # deadline: 1200
       {map, _} = WaitingList.insert(map, 1, :data2, reply_fn, 200, time_fn)
-      # deadline: 1400
       {map, _} = WaitingList.insert(map, 1, :data4, reply_fn, 400, time_fn)
 
       entries = Map.get(map, 1)
@@ -436,7 +427,6 @@ defmodule Bedrock.Internal.WaitingListTest do
       timeout = WaitingList.next_timeout(new_map, time_fn)
 
       assert length(expired_entries) == 2
-      # Next deadline is 1100
       assert timeout == 100
     end
 
@@ -447,17 +437,13 @@ defmodule Bedrock.Internal.WaitingListTest do
 
       map = %{}
 
-      # Version 1 gets a waiter
       {map, _} = WaitingList.insert(map, 1, :req1, reply_fn1, 500, time_fn)
-
-      # Version 2 gets a waiter
       {map, _} = WaitingList.insert(map, 2, :req2, reply_fn2, 600, time_fn)
 
       # Fulfill version 1 (single waiter pattern)
       {map, removed} = WaitingList.remove(map, 1)
       assert removed == {1500, reply_fn1, :req1}
 
-      # Version 1 should be empty, version 2 should remain
       assert Map.get(map, 1) == nil
       assert Map.get(map, 2) == [{1600, reply_fn2, :req2}]
     end
@@ -475,13 +461,12 @@ defmodule Bedrock.Internal.WaitingListTest do
       {map, _} = WaitingList.insert(map, 1, :req2, reply_fn2, 600, time_fn)
       {map, _} = WaitingList.insert(map, 1, :req3, reply_fn3, 400, time_fn)
 
-      # Fulfill version 1 (multi waiter pattern)
+      # Fulfill all waiters for version (multi waiter pattern)
       {map, removed_all} = WaitingList.remove_all(map, 1)
 
       assert length(removed_all) == 3
       assert Map.get(map, 1) == nil
 
-      # Check they're sorted by deadline
       deadlines = Enum.map(removed_all, fn {deadline, _, _} -> deadline end)
       assert deadlines == [1400, 1500, 1600]
     end

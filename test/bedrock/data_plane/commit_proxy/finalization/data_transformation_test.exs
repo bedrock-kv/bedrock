@@ -7,7 +7,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
   describe "key_to_tags/2" do
     setup do
-      # Create overlapping storage teams to test multi-tag behavior
       storage_teams = [
         %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
         %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
@@ -23,24 +22,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "maps key to multiple tags when overlapping", %{storage_teams: storage_teams} do
-      # Key 0x90 should match tags 0, 1, and 2
-      # tag 0: <<>> to <<0xFF>>  (includes 0x90)
-      # tag 1: <<0x80>> to :end  (includes 0x90)
-      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x90)
       assert {:ok, tags} = Finalization.key_to_tags(<<0x90>>, storage_teams)
       assert Enum.sort(tags) == [0, 1, 2]
 
-      # Key 0x50 should match tags 0 and 2
-      # tag 0: <<>> to <<0xFF>>  (includes 0x50)
-      # tag 1: <<0x80>> to :end  (does NOT include 0x50, since 0x50 < 0x80)
-      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x50)
       assert {:ok, tags} = Finalization.key_to_tags(<<0x50>>, storage_teams)
       assert Enum.sort(tags) == [0, 2]
 
-      # Key 0x85 should match tags 0, 1, and 2
-      # tag 0: <<>> to <<0xFF>>  (includes 0x85)
-      # tag 1: <<0x80>> to :end  (includes 0x85)
-      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x85)
       assert {:ok, tags} = Finalization.key_to_tags(<<0x85>>, storage_teams)
       assert Enum.sort(tags) == [0, 1, 2]
     end
@@ -55,18 +42,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles boundary conditions correctly", %{storage_teams: storage_teams} do
-      # Key exactly at range boundaries
-      # Key 0x80 should match tags 0, 1, and 2
-      # tag 0: <<>> to <<0xFF>>  (includes 0x80)
-      # tag 1: <<0x80>> to :end  (includes 0x80, boundary inclusive)
-      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x80)
+      # Boundary inclusive behavior at key range edges
       assert {:ok, tags} = Finalization.key_to_tags(<<0x80>>, storage_teams)
       assert Enum.sort(tags) == [0, 1, 2]
 
-      # Key 0x40 should match tags 0 and 2
-      # tag 0: <<>> to <<0xFF>>  (includes 0x40)
-      # tag 1: <<0x80>> to :end  (does NOT include 0x40)
-      # tag 2: <<0x40>> to <<0xC0>>  (includes 0x40, boundary inclusive)
       assert {:ok, tags} = Finalization.key_to_tags(<<0x40>>, storage_teams)
       assert Enum.sort(tags) == [0, 2]
     end
@@ -98,10 +77,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles boundary conditions correctly", %{storage_teams: storage_teams} do
-      # Key exactly at range boundary should belong to second range
       assert {:ok, 1} = Finalization.key_to_tag(<<0xFF>>, storage_teams)
-
-      # Key just before boundary should belong to first range
       assert {:ok, 0} = Finalization.key_to_tag(<<0xFE, 0xFF>>, storage_teams)
     end
   end
@@ -141,38 +117,32 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "maps range to intersecting tags", %{storage_teams: storage_teams} do
-      # Range that spans multiple storage teams
       range = {<<"a">>, <<"s">>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
       assert Enum.sort(tags) == [0, 1]
     end
 
     test "maps range that spans all storage teams", %{storage_teams: storage_teams} do
-      # Range that covers all storage teams
       range = {<<>>, :end}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
       assert Enum.sort(tags) == [0, 1, 2]
     end
 
     test "maps range within single storage team", %{storage_teams: storage_teams} do
-      # Range entirely within tag 1
       range = {<<"n">>, <<"p">>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
       assert tags == [1]
     end
 
     test "handles overlapping storage teams" do
-      # Create overlapping storage teams
       storage_teams = [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
         %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
       ]
 
-      # Single key in overlap region should map to both tags
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
       assert Enum.sort(tags) == [0, 1]
 
-      # Range in overlap region should map to both tags
       range = {<<"i">>, <<"j">>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
       assert Enum.sort(tags) == [0, 1]
@@ -188,15 +158,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         "log4" => [4]
       }
 
-      # Tags [1, 2] should intersect with log1, log2, and log3
       result = Finalization.find_logs_for_tags([1, 2], logs_by_id)
       assert Enum.sort(result) == ["log1", "log2", "log3"]
 
-      # Tag [0] should only intersect with log1
       result = Finalization.find_logs_for_tags([0], logs_by_id)
       assert result == ["log1"]
 
-      # Tag [4] should only intersect with log4
       result = Finalization.find_logs_for_tags([4], logs_by_id)
       assert result == ["log4"]
     end
@@ -325,7 +292,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
       [{nil, write_conflicts}] = result
 
-      # Write conflicts should maintain order from transaction
+      # Write conflicts must maintain transaction ordering for consistency
       expected_conflicts = [
         {<<"z_key">>, <<"z_key\0">>},
         {<<"a_key">>, <<"a_key\0">>},
@@ -340,11 +307,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     test "key_to_tag handles keys at exact boundaries" do
       storage_teams = Support.sample_storage_teams()
 
-      # Key exactly at boundary should belong to the second range
       assert {:ok, 1} = Finalization.key_to_tag(<<"m">>, storage_teams)
       assert {:ok, 2} = Finalization.key_to_tag(<<"z">>, storage_teams)
-
-      # Keys just before boundaries
       assert {:ok, 0} = Finalization.key_to_tag(<<"l">>, storage_teams)
       assert {:ok, 1} = Finalization.key_to_tag(<<"y">>, storage_teams)
     end
@@ -354,26 +318,21 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]}
       ]
 
-      # This key doesn't match any range
       assert {:ok, []} = Finalization.key_or_range_to_tags(<<"z_unknown">>, storage_teams)
     end
 
     test "key_or_range_to_tags distributes keys to multiple tags for overlapping teams" do
-      # Create overlapping storage teams
       storage_teams = [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
         %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
       ]
 
-      # Key "hello" should match both teams
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
       assert Enum.sort(tags) == [0, 1]
 
-      # Key "india" should match both teams
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"india">>, storage_teams)
       assert Enum.sort(tags) == [0, 1]
 
-      # Key "apple" should only match tag 0
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"apple">>, storage_teams)
       assert tags == [0]
     end

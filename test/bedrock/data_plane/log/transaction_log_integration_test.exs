@@ -17,14 +17,12 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
   @test_file "test_transaction_log_integration.log"
 
   setup do
-    # Create a test file large enough for transactions
     File.write!(@test_file, :binary.copy(<<0>>, 10_000))
     on_exit(fn -> File.rm(@test_file) end)
     :ok
   end
 
   test "full transaction log pipeline: encode -> write -> read -> stream_mutations" do
-    # 1. Create a transaction with various mutation types
     transaction_map = %{
       mutations: [
         {:set, "key1", "value1"},
@@ -36,7 +34,6 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
       read_conflicts: {Version.from_integer(100), [{"read_key", "read_key\0"}]}
     }
 
-    # 2. Encode the transaction with Transaction
     encoded_transaction = Transaction.encode(transaction_map)
 
     # Add commit version to simulate what commit proxy does
@@ -45,12 +42,10 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, transaction_with_version} =
       Transaction.add_commit_version(encoded_transaction, commit_version)
 
-    # 3. Write to log using Writer.append (simulates log push)
     {:ok, writer} = Writer.open(@test_file)
     {:ok, _updated_writer} = Writer.append(writer, transaction_with_version, commit_version)
     Writer.close(writer)
 
-    # 4. Read back from log using TransactionStreams.from_file! (simulates log pull)
     transactions_from_log =
       @test_file
       |> TransactionStreams.from_file!()
@@ -61,18 +56,15 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
         _ -> false
       end)
 
-    # Should have exactly one transaction
     assert length(transactions_from_log) == 1
     [read_transaction] = transactions_from_log
 
-    # 5. CRITICAL: Verify that what we read back is a valid Transaction
+    # CRITICAL: Verify that what we read back is a valid Transaction
     # This would fail with the old bug where wrapper was returned instead of payload
     assert {:ok, _decoded} = Transaction.decode(read_transaction)
 
-    # 6. CRITICAL: Verify stream_mutations works (this was failing with the bug)
+    # CRITICAL: Verify stream_mutations works (this was failing with the bug)
     assert {:ok, mutations_stream} = Transaction.stream_mutations(read_transaction)
-
-    # 7. Verify the mutations are correct
     mutations_list = Enum.to_list(mutations_stream)
     assert length(mutations_list) == 4
 
@@ -81,11 +73,9 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     assert {:clear, "key3"} in mutations_list
     assert {:clear_range, "range_start", "range_end"} in mutations_list
 
-    # 8. Verify commit version is preserved
     assert {:ok, extracted_version} = Transaction.extract_commit_version(read_transaction)
     assert extracted_version == commit_version
 
-    # 9. Verify other sections are preserved
     assert {:ok, {read_version, read_conflicts}} =
              Transaction.extract_read_conflicts(read_transaction)
 
@@ -97,14 +87,12 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
   end
 
   test "multiple transactions in log preserve order and individual integrity" do
-    # Create multiple transactions
     transactions = [
       %{mutations: [{:set, "key1", "value1"}]},
       %{mutations: [{:set, "key2", "value2"}]},
       %{mutations: [{:clear, "key3"}]}
     ]
 
-    # Write all transactions
     {:ok, writer} = Writer.open(@test_file)
 
     {final_writer, _} =
@@ -118,7 +106,6 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
 
     Writer.close(final_writer)
 
-    # Read all transactions back
     read_transactions =
       @test_file
       |> TransactionStreams.from_file!()
@@ -129,22 +116,17 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
         _ -> false
       end)
 
-    # Verify count
     assert length(read_transactions) == 3
 
     # Verify each transaction can be processed individually
     read_transactions
     |> Enum.with_index(1)
     |> Enum.each(fn {tx, expected_version} ->
-      # Each should decode successfully
       assert {:ok, _decoded} = Transaction.decode(tx)
-
-      # Each should stream mutations successfully
       assert {:ok, mutations_stream} = Transaction.stream_mutations(tx)
       mutations = Enum.to_list(mutations_stream)
       assert length(mutations) == 1
 
-      # Version should match
       assert {:ok, version} = Transaction.extract_commit_version(tx)
       assert version == Version.from_integer(expected_version)
     end)
@@ -181,7 +163,6 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     assert {:ok, mutations_stream} = Transaction.stream_mutations(read_transaction)
     assert Enum.to_list(mutations_stream) == []
 
-    # Other sections should be preserved
     assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(read_transaction)
     assert write_conflicts == [{"key1", "key1\0"}]
   end
@@ -199,7 +180,6 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, _} = Writer.append(writer, tx_with_version, version)
     Writer.close(writer)
 
-    # Read transaction back from log
     [read_transaction] =
       @test_file
       |> TransactionStreams.from_file!()
@@ -213,18 +193,16 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     # CRITICAL TEST: This is what was failing with the bug
     # The read transaction should be a valid Transaction, not a wrapper
 
-    # 1. Should start with Transaction magic number, not version bytes
+    # Should start with Transaction magic number, not version bytes
     <<"BRDT", _rest::binary>> = read_transaction
 
-    # 2. Should decode as Transaction
     assert {:ok, decoded} = Transaction.decode(read_transaction)
     assert decoded.mutations == [{:set, "key", "value"}]
 
-    # 3. Should stream mutations successfully (this was the failing operation)
+    # Should stream mutations successfully (this was the failing operation)
     assert {:ok, stream} = Transaction.stream_mutations(read_transaction)
     assert Enum.to_list(stream) == [{:set, "key", "value"}]
 
-    # 4. Should preserve the commit version
     assert {:ok, commit_version} = Transaction.extract_commit_version(read_transaction)
     assert commit_version == version
   end

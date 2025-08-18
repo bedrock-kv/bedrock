@@ -39,15 +39,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
     end
   end
 
-  @spec start_batch_if_needed(State.t()) :: State.t() | no_return()
+  @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}
   def start_batch_if_needed(%{batch: nil} = t) do
     case next_commit_version(t.transaction_system_layout.sequencer) do
       {:ok, last_commit_version, commit_version} ->
         %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
 
       {:error, reason} ->
-        # Sequencer not available - this is a system error that should propagate
-        exit({:sequencer_unavailable, reason})
+        {:error, {:sequencer_unavailable, reason}}
     end
   end
 

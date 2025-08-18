@@ -8,11 +8,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
 
   describe "push_transaction_to_logs_direct/5" do
     test "pushes pre-built transactions directly to logs" do
-      # Create mock log servers
       log_server_1 = Support.create_mock_log_server()
       log_server_2 = Support.create_mock_log_server()
 
-      # Set up transaction system layout
       layout = %{
         logs: %{
           "log_1" => [0, 1],
@@ -24,7 +22,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         }
       }
 
-      # Pre-built transactions for each log (this would come from build_transactions_for_logs)
       transactions_by_log = %{
         "log_1" =>
           TransactionTestSupport.new_log_transaction(100, %{
@@ -41,10 +38,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       result =
         Finalization.push_transaction_to_logs_direct(
           layout,
-          # last_commit_version
           Version.from_integer(99),
           transactions_by_log,
-          # commit_version (unused in direct version)
           Version.from_integer(100),
           []
         )
@@ -62,7 +57,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
         }
       }
 
-      # Empty transaction
       transactions_by_log = %{
         "log_1" => TransactionTestSupport.new_log_transaction(100, %{})
       }
@@ -80,7 +74,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
     end
 
     test "returns error when log server fails" do
-      # Create a failing log server
       failing_log_server =
         spawn(fn ->
           receive do
@@ -176,16 +169,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
     end
 
     test "handles log server process exit" do
-      # Create a log server that will exit immediately
       log_server = spawn(fn -> exit(:normal) end)
-      # Give it time to exit
       Process.sleep(100)
 
       service_descriptor = %{kind: :log, status: {:up, log_server}}
       encoded_transaction = "mock_encoded_transaction"
       last_commit_version = 99
 
-      # Should handle process exit gracefully
       result =
         Finalization.try_to_push_transaction_to_log(
           service_descriptor,
@@ -193,7 +183,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
           last_commit_version
         )
 
-      # Should get an error when the process is dead
       assert {:error, _reason} = result
     end
   end

@@ -14,7 +14,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   end
 
   describe "Keyspace.apply_transaction/2" do
-    test "it adds the keys to the space" do
+    test "adds keys to the space" do
       keyspace = new_random_keyspace()
 
       assert :ok =
@@ -39,7 +39,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it adds the keys to the space that already has keys" do
+    test "adds keys to space that already has keys" do
       keyspace = new_random_keyspace()
 
       assert :ok =
@@ -79,7 +79,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it removes keys properly" do
+    test "removes keys properly" do
       keyspace = new_random_keyspace()
 
       :ok =
@@ -110,7 +110,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   end
 
   describe "Keyspace.prune/2" do
-    test "it suceeds and changes nothing when there are no keys to prune" do
+    test "succeeds and changes nothing when there are no keys to prune" do
       keyspace = new_random_keyspace()
 
       :ok =
@@ -137,7 +137,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
              ] = :ets.tab2list(keyspace)
     end
 
-    test "it succeeds and removes the keys when there are keys to prune" do
+    test "succeeds and removes keys when there are keys to prune" do
       keyspace = new_random_keyspace()
 
       :ok =
@@ -173,7 +173,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
   end
 
   describe "Keyspace.key_exists?/2" do
-    test "it returns true when the key exists" do
+    test "returns true when key exists" do
       keyspace = new_random_keyspace()
 
       :ok =
@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
       assert true = Keyspace.key_exists?(keyspace, "a")
     end
 
-    test "it returns false when the key does not exist" do
+    test "returns false when key does not exist" do
       keyspace = new_random_keyspace()
 
       :ok =

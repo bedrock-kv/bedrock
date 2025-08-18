@@ -47,7 +47,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
            | {:error, :timeout}}
   def do_fetch(t, key, opts \\ []) do
     {:ok, encoded_key} = t.key_codec.encode_key(key)
-    # Create a fetch function that matches Tx.get expectations: (key, state) -> {result, state}
+
     fetch_fn = fn k, state ->
       with {:ok, new_state, encoded_value} <- fetch_from_storage(state, k, opts),
            {:ok, decoded_value} <- state.value_codec.decode_value(encoded_value) do

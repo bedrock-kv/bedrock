@@ -116,7 +116,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec terminate(term(), State.t()) :: :ok
-  def terminate(_reason, _t), do: :ok
+  def terminate(_reason, t) do
+    abort_current_batch(t)
+    :ok
+  end
 
   @impl true
   @spec handle_call(
@@ -133,20 +136,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  # When a transaction is submitted, we check to see if we have a batch already
-  # in progress. If we do, we add the transaction to the batch. If we don't, we
-  # create a new batch and add the transaction to it. Once added, we check to
-  # see if the batch meets the finalization policy. If it does, we finalize the
-  # batch. If it doesn't, we wait for a short timeout to see if anything else
-  # is submitted before re-considering finalizing the batch.
-  def handle_call({:commit, transaction}, from, %{mode: :running} = t) when is_binary(transaction) do
-    case t.transaction_system_layout do
-      nil ->
-        reply(t, {:error, :no_transaction_system_layout})
+  def handle_call({:commit, transaction}, _from, %{mode: :running, transaction_system_layout: nil} = t)
+      when is_binary(transaction) do
+    reply(t, {:error, :no_transaction_system_layout})
+  end
 
-      _layout ->
-        t
-        |> start_batch_if_needed()
+  def handle_call({:commit, transaction}, from, %{mode: :running} = t) when is_binary(transaction) do
+    case start_batch_if_needed(t) do
+      {:error, reason} ->
+        GenServer.reply(from, {:error, :abort})
+        exit(reason)
+
+      updated_t ->
+        updated_t
         |> add_transaction_to_batch(transaction, reply_fn(from))
         |> apply_finalization_policy()
         |> case do
@@ -156,14 +158,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  # Reject commit calls when locked (except from director with system layout)
   def handle_call({:commit, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
   @spec handle_info(:timeout, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, term()}}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
-    # Create empty transaction as binary format, not map
     empty_transaction = Transaction.encode(%{mutations: []})
 
     case single_transaction_batch(t, empty_transaction) do
@@ -191,7 +191,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
       {n_usec, {:error, {:log_failures, errors}}} ->
         trace_commit_proxy_batch_failed(batch, {:log_failures, errors}, n_usec)
-        # Exit to trigger recovery since logs are failing
         exit({:log_failures, errors})
 
       {n_usec, {:error, {:insufficient_acknowledgments, count, required, errors}}} ->
@@ -213,7 +212,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
       {n_usec, {:error, reason}} ->
         trace_commit_proxy_batch_failed(batch, reason, n_usec)
-        noreply(t)
+        exit({:unknown_error, reason})
     end
   end
 
@@ -225,6 +224,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: noreply(t, timeout: t.empty_transaction_timeout_ms)
 
   defp maybe_set_empty_transaction_timeout(t), do: noreply(t)
+
+  @spec abort_current_batch(State.t()) :: :ok
+  defp abort_current_batch(%{batch: nil}), do: :ok
+
+  defp abort_current_batch(%{batch: batch}) do
+    batch
+    |> Batch.all_callers()
+    |> Enum.each(fn reply_fn -> reply_fn.({:error, :abort}) end)
+  end
 
   @doc """
   Updates the transaction system layout if the transaction contains system layout information.
@@ -246,7 +254,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           %{state | transaction_system_layout: layout}
         rescue
           _ ->
-            # If decoding fails, return state unchanged
             state
         end
 

@@ -87,7 +87,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
   describe "Basalt.PersistentKeyValues.apply_transaction/2" do
     setup :with_empty_pkv
 
-    test "stores the given key-values correctly", %{pkv: pkv} do
+    test "stores key-values correctly", %{pkv: pkv} do
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
@@ -97,7 +97,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
       assert {:ok, "bar"} = PersistentKeyValues.fetch(pkv, "foo")
     end
 
-    test "correctly overwrites a previous value for a key", %{pkv: pkv} do
+    test "overwrites previous value for key", %{pkv: pkv} do
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,
@@ -155,7 +155,7 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
   describe "Basalt.PersistentKeyValues.stream_keys/1" do
     setup :with_empty_pkv
 
-    test "returns the correct set of keys", %{pkv: pkv} do
+    test "returns correct set of keys", %{pkv: pkv} do
       :ok =
         PersistentKeyValues.apply_transaction(
           pkv,

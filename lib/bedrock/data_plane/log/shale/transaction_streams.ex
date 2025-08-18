@@ -27,19 +27,27 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
            end)
          )}
 
-      error ->
-        error
+      {:error, :not_found} ->
+        filtered_transactions =
+          segment
+          |> Segment.transactions()
+          |> Enum.reverse()
+          |> Enum.drop_while(&transaction_version_lte(&1, target_version))
+
+        case filtered_transactions do
+          [] -> {:error, :not_found}
+          transactions -> {:ok, from_list_of_transactions(fn -> transactions end)}
+        end
     end
   end
 
-  def from_segments([segment | _segments], target_version) do
+  def from_segments([segment | remaining_segments], target_version) do
     segment
     |> Segment.transactions()
     |> Enum.reverse()
     |> Enum.drop_while(fn transaction ->
       case Transaction.extract_commit_version(transaction) do
         {:ok, version} -> version < target_version
-        # Skip invalid transactions
         {:error, _} -> true
       end
     end)
@@ -49,12 +57,15 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
           {:ok, version} when version == target_version ->
             {:ok, from_list_of_transactions(fn -> rest end)}
 
+          {:ok, version} when version > target_version ->
+            {:ok, from_list_of_transactions(fn -> [transaction | rest] end)}
+
           _ ->
-            {:error, :not_found}
+            from_segments(remaining_segments, target_version)
         end
 
       _ ->
-        {:error, :not_found}
+        from_segments(remaining_segments, target_version)
     end
   end
 
@@ -87,8 +98,13 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   def from_file!(path_to_file) do
     Stream.resource(
       fn ->
-        <<@wal_magic_number, bytes::binary>> = File.read!(path_to_file)
-        {4, bytes}
+        case File.read!(path_to_file) do
+          <<@wal_magic_number, bytes::binary>> ->
+            {4, bytes}
+
+          other ->
+            {:error, {:invalid_wal_format, byte_size(other)}}
+        end
       end,
       fn
         {:error, _reason} = error ->
@@ -102,7 +118,6 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
               {:halt, nil}
 
             :erlang.crc32(payload) == crc32 ->
-              # Return just the payload (the actual Transaction), not the wrapper
               {[payload], {offset + 16 + size_in_bytes, remaining_bytes}}
 
             true ->
@@ -142,5 +157,13 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
       transaction, 0 -> {:halt, transaction}
       transaction, n -> {[transaction], n - 1}
     end)
+  end
+
+  @spec transaction_version_lte(Transaction.encoded(), Bedrock.version()) :: boolean()
+  defp transaction_version_lte(transaction, target_version) do
+    case Transaction.extract_commit_version(transaction) do
+      {:ok, version} -> version <= target_version
+      {:error, _} -> true
+    end
   end
 end

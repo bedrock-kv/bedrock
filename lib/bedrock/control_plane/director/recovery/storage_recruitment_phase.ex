@@ -169,24 +169,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
     n_candidates = MapSet.size(candidate_ids)
 
     if n_vacancies <= n_candidates do
-      # We have enough existing workers
       {:ok,
        replace_vacancies_with_storage_ids(
          storage_teams,
          vacancies |> Enum.zip(candidate_ids) |> Map.new()
        ), []}
     else
-      # We need to create new workers
       needed_workers = n_vacancies - n_candidates
 
       if length(available_nodes) < needed_workers do
         {:error, {:insufficient_nodes, needed_workers, length(available_nodes)}}
       else
-        # Create new worker IDs
         new_worker_ids =
           Enum.map(1..needed_workers, fn _ -> Worker.random_id() end)
 
-        # Use existing candidates plus new worker IDs
         all_worker_ids = Enum.concat(candidate_ids, new_worker_ids)
 
         {:ok,
@@ -314,7 +310,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
       |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
       |> Enum.reject(&match?({:vacancy, _}, &1))
 
-    # Lock each existing storage service that was recruited
     Enum.reduce_while(existing_storage_ids, {:ok, %{}}, fn storage_id, {:ok, locked_services} ->
       process_storage_service_locking(
         storage_id,
@@ -341,7 +336,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
         )
 
       _ ->
-        # Service not available - this shouldn't happen if recruitment logic is correct
         {:halt, {:error, {:recruited_service_unavailable, storage_id}}}
     end
   end

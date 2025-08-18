@@ -15,7 +15,6 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
   def notify_waiting_pullers(waiting_pullers, version, transaction) do
     {new_map, entries} = WaitingList.remove_all(waiting_pullers, version)
 
-    # Reply to all waiting pullers for this version
     Enum.each(entries, fn {_deadline, reply_to_fn, _opts} ->
       reply_to_fn.({:ok, [transaction]})
     end)
@@ -35,10 +34,8 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
     {timeout_in_ms, opts} = Keyword.pop(opts, :willing_to_wait_in_ms)
 
     if timeout_in_ms == nil do
-      # Not willing to wait timeout, so we reply with an error
       {:error, :version_too_new}
     else
-      # Add to waiting list with normalized timeout
       timeout_ms = normalize_timeout_to_ms(timeout_in_ms)
 
       {new_waiting_pullers, _timeout} =
@@ -55,7 +52,6 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
   def process_expired_deadlines_for_waiting_pullers(waiting_pullers, _monotic_now) do
     {new_waiting_pullers, expired_entries} = WaitingList.expire(waiting_pullers)
 
-    # Reply to expired pullers with empty result
     WaitingList.reply_to_expired(expired_entries, {:ok, []})
 
     new_waiting_pullers
@@ -63,8 +59,8 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
 
   @spec determine_timeout_for_next_puller_deadline(WaitingList.t(), integer()) ::
           pos_integer() | nil
-  def determine_timeout_for_next_puller_deadline(waiting_pullers, _now) do
-    case WaitingList.next_timeout(waiting_pullers) do
+  def determine_timeout_for_next_puller_deadline(waiting_pullers, now) do
+    case WaitingList.next_timeout(waiting_pullers, fn -> now end) do
       :infinity -> nil
       timeout -> max(1, timeout)
     end

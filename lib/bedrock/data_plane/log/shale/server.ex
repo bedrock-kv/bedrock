@@ -35,7 +35,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
             otp_name: atom(),
             id: Log.id(),
             foreman: pid(),
-            path: Path.t()
+            path: Path.t(),
+            start_unlocked: boolean()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -44,6 +45,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     id = Keyword.fetch!(opts, :id) || raise "Missing :id option"
     foreman = Keyword.fetch!(opts, :foreman)
     path = Keyword.fetch!(opts, :path)
+    start_unlocked = Keyword.get(opts, :start_unlocked, false)
 
     %{
       id: {__MODULE__, id},
@@ -56,7 +58,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              otp_name,
              id,
              foreman,
-             path
+             path,
+             start_unlocked
            },
            [name: otp_name]
          ]}
@@ -64,14 +67,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec init({module(), atom(), Log.id(), pid(), Path.t()}) ::
+  @spec init({module(), atom(), Log.id(), pid(), Path.t(), boolean()}) ::
           {:ok, State.t(), {:continue, :initialization}}
-  def init({cluster, otp_name, id, foreman, path}) do
+  def init({cluster, otp_name, id, foreman, path, start_unlocked}) do
+    initial_mode = if start_unlocked, do: :running, else: :locked
+
     {:ok,
      %State{
        path: path,
        cluster: cluster,
-       mode: :locked,
+       mode: initial_mode,
        id: id,
        otp_name: otp_name,
        foreman: foreman,

@@ -36,7 +36,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @type reply_fn :: (result :: {:ok, [non_neg_integer()]} | {:error, any()} -> :ok)
 
-  # Default timeout for waiting transactions (30 seconds)
   @default_waiting_timeout_ms 30_000
 
   @spec child_spec(
@@ -86,17 +85,12 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     :ok
   end
 
-  # Reject requests from wrong epochs - these are stale requests from previous epochs
   @impl true
   def handle_call({:resolve_transactions, epoch, {_last_version, _next_version}, _transactions}, _from, t)
       when epoch != t.epoch do
     reply(t, {:error, {:epoch_mismatch, expected: t.epoch, received: epoch}})
   end
 
-  # When transactions come in order, we can resolve them immediately. Once we're
-  # done, we check if there are any transactions waiting for this version to be
-  # resolved, and if so, we resolve them as well. We reply to this caller before
-  # we do to avoid blocking them.
   @impl true
   def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions}, from, t)
       when t.mode == :running and epoch == t.epoch and last_version == t.last_version do
@@ -114,8 +108,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end
   end
 
-  # When transactions come in a little out of order, we need to wait for the
-  # previous transaction to be resolved before we can resolve the next one.
   @impl true
   def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions}, from, t)
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
@@ -152,12 +144,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end
   end
 
-  # Handle transactions that are stale (last_version < t.last_version)
-  # All transactions should be aborted as they're operating on outdated data
   @impl true
   def handle_call({:resolve_transactions, epoch, {last_version, _next_version}, transactions}, _from, t)
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
-    # Abort all transactions - they're stale
     aborted_indices = Enum.to_list(0..(length(transactions) - 1))
     reply(t, {:ok, aborted_indices})
   end
@@ -179,7 +168,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
     {new_waiting, _} = WaitingList.remove(t.waiting, t.last_version)
 
-    # Process the current transaction
     {tree, aborted} = resolve(t.tree, transactions, next_version)
     t = %{t | tree: tree, last_version: next_version, waiting: new_waiting}
 
@@ -191,7 +179,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       t.last_version
     )
 
-    # Reply to caller
     reply_fn.({:ok, aborted})
 
     emit_reply_sent(length(transactions), length(aborted), t.last_version, next_version)

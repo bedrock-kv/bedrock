@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
   alias Bedrock.DataPlane.Storage.Basalt.State
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.WaitingList
   alias Bedrock.Service.Worker
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
@@ -61,15 +62,21 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
 
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
-  @spec unlock_after_recovery(State.t(), term(), map()) :: State.t()
+  @spec unlock_after_recovery(State.t(), term(), map()) :: {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
     with :ok <- Database.purge_transactions_newer_than(t.database, durable_version) do
+      apply_and_notify_fn = fn encoded_transactions ->
+        version = Database.apply_transactions(t.database, encoded_transactions)
+        send(self(), {:transactions_applied, version})
+        version
+      end
+
       puller =
         Pulling.start_pulling(
           durable_version,
           logs,
           services,
-          &Database.apply_transactions(t.database, &1),
+          apply_and_notify_fn,
           fn -> Database.last_durable_version(t.database) end,
           fn -> Database.ensure_durability_within_window(t.database) end
         )
@@ -85,6 +92,58 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Logic do
           {:error, :key_out_of_range | :not_found | :version_too_old} | {:ok, binary()}
   @spec fetch(State.t(), Bedrock.key(), Bedrock.version()) :: Bedrock.value() | :not_found
   def fetch(%State{} = t, key, version), do: Database.fetch(t.database, key, version)
+
+  @spec try_fetch_or_waitlist(State.t(), Bedrock.key(), Bedrock.version(), GenServer.from()) ::
+          {:ok, Bedrock.value(), State.t()}
+          | {:error, term(), State.t()}
+          | {:waitlist, State.t()}
+  def try_fetch_or_waitlist(%State{} = t, key, version, from) do
+    current_version = Database.last_committed_version(t.database)
+
+    case Database.fetch(t.database, key, version) do
+      {:ok, value} ->
+        {:ok, value, t}
+
+      {:error, :key_out_of_range} ->
+        {:error, :key_out_of_range, t}
+
+      {:error, :version_too_old} ->
+        {:error, :version_too_old, t}
+
+      {:error, :not_found} when version > current_version ->
+        fetch_data = {key, version}
+        reply_fn = fn result -> GenServer.reply(from, result) end
+        timeout_ms = 30_000
+
+        {new_waiting, _timeout} =
+          WaitingList.insert(
+            t.waiting_fetches,
+            version,
+            fetch_data,
+            reply_fn,
+            timeout_ms
+          )
+
+        {:waitlist, %{t | waiting_fetches: new_waiting}}
+
+      {:error, :not_found} ->
+        {:error, :not_found, t}
+    end
+  end
+
+  @spec notify_waiting_fetches(State.t(), Bedrock.version()) :: State.t()
+  def notify_waiting_fetches(%State{} = t, applied_version) do
+    {new_waiting, notified_entries} = WaitingList.remove_all(t.waiting_fetches, applied_version)
+
+    Enum.each(notified_entries, fn {_deadline, reply_fn, {key, version}} ->
+      case Database.fetch(t.database, key, version) do
+        {:ok, value} -> reply_fn.({:ok, value})
+        error -> reply_fn.(error)
+      end
+    end)
+
+    %{t | waiting_fetches: new_waiting}
+  end
 
   @spec info(State.t(), Storage.fact_name() | [Storage.fact_name()]) ::
           {:ok, term() | %{Storage.fact_name() => term()}} | {:error, :unsupported_info}

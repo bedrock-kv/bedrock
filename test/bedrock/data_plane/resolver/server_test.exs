@@ -75,7 +75,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
                mode: :running
              } = state
 
-      # Verify tree and versions are properly initialized
       assert state.tree
       assert state.oldest_version
       assert state.last_version
@@ -91,13 +90,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     end
 
     test "resolver starts in running mode and is ready for transactions", %{server: server} do
-      # Verify the resolver is in running mode and ready for transactions
       state = :sys.get_state(server)
       assert state.mode == :running
-
-      # Note: To properly test transaction resolution, we'd need to set up
-      # the full transaction structure and version coordination which is
-      # beyond the scope of this cleanup test
     end
   end
 
@@ -106,17 +100,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       lock_token = :crypto.strong_rand_bytes(32)
       {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
 
-      # For this test, we'll just verify the server is alive
-      # Testing handle_info requires complex state manipulation
-
       {:ok, server: pid}
     end
 
     test "server is alive and can receive messages", %{server: server} do
-      # Just verify the server process is alive
       assert Process.alive?(server)
-
-      # Verify we can get the state
       state = :sys.get_state(server)
       assert %State{mode: :running} = state
     end
@@ -124,11 +112,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
   describe "private functions" do
     test "module compiles and has expected structure" do
-      # Ensure module is loaded before checking exports
       Code.ensure_loaded!(Server)
 
-      # We can't directly test private functions like reply_fn/1
-      # but we can verify the module structure
       assert is_atom(Server)
       assert function_exported?(Server, :child_spec, 1)
       assert function_exported?(Server, :init, 1)
@@ -140,33 +125,22 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       lock_token = :crypto.strong_rand_bytes(32)
       {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
 
-      # For integration tests, resolver starts in running mode
-
       {:ok, server: pid, lock_token: lock_token}
     end
 
     test "resolver is ready to accept transactions", %{server: server} do
-      # Verify resolver starts in running mode
       state = :sys.get_state(server)
       assert state.mode == :running
-      # Initialized with zero version
       assert state.last_version
       assert state.waiting == %{}
-
-      # Note: Full transaction testing would require proper transaction setup
-      # which is beyond the scope of this recovery cleanup
     end
 
     test "server maintains state consistency", %{server: server, lock_token: lock_token} do
-      # Verify initial state
       state = :sys.get_state(server)
       assert state.lock_token == lock_token
       assert state.mode == :running
-
-      # Verify server is stable and running
       assert Process.alive?(server)
 
-      # State should be consistent
       final_state = :sys.get_state(server)
       assert final_state.lock_token == lock_token
       assert final_state.mode == :running
@@ -187,13 +161,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       zero_version: zero_version,
       next_version: next_version
     } do
-      # Test that [nil: []] is valid transaction summary data (write-only transaction with no writes)
       valid_transactions = [nil: []]
 
       result =
         Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
 
-      # Should succeed with no aborted transactions
       assert {:ok, []} = result
     end
 
@@ -202,7 +174,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       zero_version: zero_version,
       next_version: next_version
     } do
-      # Test with invalid transaction summary data
       invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
 
       result =
@@ -219,20 +190,15 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       zero_version: zero_version,
       next_version: next_version
     } do
-      # Test with properly formatted transaction summaries
       valid_summaries = [
-        # write-only transaction with no writes
         {nil, []},
-        # write-only transaction with writes
         {nil, ["key1", "key2"]},
-        # read-write transaction
         {{zero_version, ["read_key"]}, ["write_key"]}
       ]
 
       result =
         Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_summaries)
 
-      # Should succeed - validation accepts transaction summaries and ConflictResolution can process them
       assert {:ok, aborted_indices} = result
       assert is_list(aborted_indices)
     end
@@ -254,10 +220,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create a valid transaction summary (the resolver now expects transaction summaries)
       valid_transaction_summary = {nil, ["test_key"]}
 
-      # Start an async call that will need to wait (out-of-order transaction)
       task =
         Task.async(fn ->
           Resolver.resolve_transactions(server, 1, next_version, future_version, [
@@ -265,22 +229,16 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           ])
         end)
 
-      # Give the server time to process the call and set up waiting state
       Process.sleep(50)
-
-      # Check that the transaction is now in waiting list
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 1
 
-      # Verify the waiting entry structure (deadline, reply_fn, data)
       [{deadline, _reply_fn, data}] = Map.get(state.waiting, next_version)
       assert data == {future_version, [valid_transaction_summary]}
       assert is_integer(deadline)
-      # Deadline should be in the future (now + 30s)
       now = Bedrock.Internal.Time.monotonic_now_in_ms()
       assert deadline > now
 
-      # Clean up the task
       Task.shutdown(task)
     end
 
@@ -289,10 +247,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create a valid transaction summary
       valid_transaction_summary = {nil, ["test_key"]}
 
-      # Start an async call that will timeout
       task =
         Task.async(fn ->
           Resolver.resolve_transactions(
@@ -305,47 +261,33 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           )
         end)
 
-      # Give the server time to process the call and set up waiting state
       Process.sleep(50)
-
-      # Verify transaction is waiting
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 1
 
-      # Manually modify the state to make the transaction appear expired
       [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
-      # Set the deadline to 1 second ago (expired)
       expired_deadline = Bedrock.Internal.Time.monotonic_now_in_ms() - 1_000
       expired_entry = {expired_deadline, reply_fn, data}
       expired_state = %{state | waiting: %{next_version => [expired_entry]}}
       :sys.replace_state(server, fn _ -> expired_state end)
 
-      # Send GenServer timeout message to trigger cleanup
       send(server, :timeout)
 
-      # Give the server time to process the timeout
       Process.sleep(50)
 
-      # Verify the waiting list is cleaned up
       final_state = :sys.get_state(server)
       assert map_size(final_state.waiting) == 0
 
-      # The task should receive an error response
       assert {:error, :waiting_timeout} = Task.await(task)
     end
 
     test "timeout message with no waiting transactions is ignored", %{server: server} do
-      # Get initial state (should have empty waiting list)
       initial_state = :sys.get_state(server)
       assert map_size(initial_state.waiting) == 0
 
-      # Send timeout when there are no waiting transactions
       send(server, :timeout)
-
-      # Give the server time to process
       Process.sleep(50)
 
-      # State should be unchanged
       final_state = :sys.get_state(server)
       assert final_state.waiting == initial_state.waiting
       assert map_size(final_state.waiting) == 0
@@ -356,11 +298,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create valid transaction summaries
       transaction1 = {nil, ["key1"]}
       transaction2 = {nil, ["key2"]}
 
-      # Add first waiting transaction
       task1 =
         Task.async(fn ->
           Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction1], timeout: 60_000)
@@ -368,7 +308,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       Process.sleep(50)
 
-      # Add second waiting transaction
       later_version = Bedrock.DataPlane.Version.increment(future_version)
 
       task2 =
@@ -378,20 +317,16 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       Process.sleep(50)
 
-      # Verify both transactions are waiting
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 2
 
-      # Verify both versions have waiting entries
       assert Map.has_key?(state.waiting, next_version)
       assert Map.has_key?(state.waiting, future_version)
 
-      # Check deadlines - first transaction should have earlier deadline
       [{first_deadline, _, _}] = Map.get(state.waiting, next_version)
       [{second_deadline, _, _}] = Map.get(state.waiting, future_version)
       assert first_deadline <= second_deadline
 
-      # Clean up tasks
       Task.shutdown(task1)
       Task.shutdown(task2)
     end

@@ -173,7 +173,6 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   @spec load_workers_from_disk(State.t()) :: State.t()
-  @spec load_workers_from_disk(State.t()) :: State.t()
   def load_workers_from_disk(t) do
     update_workers(t, fn workers ->
       t.path
@@ -182,7 +181,6 @@ defmodule Bedrock.Service.Foreman.Impl do
     end)
   end
 
-  @spec start_workers_that_are_stopped(State.t()) :: State.t()
   @spec start_workers_that_are_stopped(State.t()) :: State.t()
   def start_workers_that_are_stopped(t) do
     update_workers(t, fn workers ->
@@ -207,11 +205,9 @@ defmodule Bedrock.Service.Foreman.Impl do
           %{Worker.id() => WorkerInfo.t()}
   defp merge_worker_info_into_workers(worker_info, workers), do: Enum.into(worker_info, workers, &{&1.id, &1})
 
-  @spec add_pid_to_waiting_for_healthy(State.t(), pid()) :: State.t()
   @spec add_pid_to_waiting_for_healthy(State.t(), GenServer.from()) :: State.t()
   def add_pid_to_waiting_for_healthy(t, pid), do: update_waiting_for_healthy(t, &[pid | &1])
 
-  @spec notify_waiting_for_healthy(State.t()) :: State.t()
   @spec notify_waiting_for_healthy(State.t()) :: State.t()
   def notify_waiting_for_healthy(%{health: :ok, waiting_for_healthy: waiting_for_healthy} = t)
       when waiting_for_healthy != [] do
@@ -230,10 +226,8 @@ defmodule Bedrock.Service.Foreman.Impl do
   defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Basalt
 
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
-  @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t), do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)
 
-  @spec otp_names_for_running_storage_workers(State.t()) :: [atom()]
   @spec otp_names_for_running_storage_workers(State.t()) :: [atom()]
   def otp_names_for_running_storage_workers(t) do
     t.workers

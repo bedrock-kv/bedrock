@@ -103,7 +103,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   def process_command(t, {:end_epoch, _previous_epoch}) do
-    # End of epoch - shut down the current director if we're running one
     DirectorManagement.shutdown_director_if_running(t)
   end
 
@@ -193,7 +192,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
     end)
   end
 
-  # Private helper to notify director of resource changes
   defp notify_director_of_resource_changes(:unavailable, _services, _node_capabilities, _capabilities_changed), do: :ok
 
   defp notify_director_of_resource_changes(director, new_or_changed_services, node_capabilities, capabilities_changed) do

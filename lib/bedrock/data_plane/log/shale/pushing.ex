@@ -13,6 +13,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           encoded_transaction :: Transaction.encoded(),
           ack_fn :: (:ok | {:error, term()} -> :ok)
         ) :: {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
+  def push(%{mode: :locked}, _, _, _) do
+    {:error, :not_ready}
+  end
+
   def push(_, _, encoded_transaction, _ack_fn) when byte_size(encoded_transaction) > 10_000_000 do
     {:error, :tx_too_large}
   end
@@ -23,6 +27,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         trace_push_transaction(encoded_transaction)
         :ok = ack_fn.(:ok)
         do_pending_pushes(t)
+
+      {:error, reason} ->
+        :ok = ack_fn.({:error, reason})
+        {:error, reason}
     end
   end
 
@@ -52,7 +60,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   @spec write_encoded_transaction(State.t(), Transaction.encoded()) ::
           {:ok, State.t()} | {:error, term()}
   def write_encoded_transaction(t, encoded_transaction) when is_nil(t.writer) do
-    # Extract version from Transaction commit_version section
     version =
       case Transaction.extract_commit_version(encoded_transaction) do
         {:ok, version} ->
@@ -70,14 +77,18 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
            ),
          {:ok, new_writer} <- Writer.open(new_segment.path) do
       write_encoded_transaction(
-        %{t | writer: new_writer, active_segment: new_segment, segments: [t.active_segment | t.segments]},
+        %{
+          t
+          | writer: new_writer,
+            active_segment: new_segment,
+            segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
+        },
         encoded_transaction
       )
     end
   end
 
   def write_encoded_transaction(t, encoded_transaction) do
-    # Extract version from Transaction commit_version section
     case Transaction.extract_commit_version(encoded_transaction) do
       {:ok, version} ->
         case Writer.append(t.writer, encoded_transaction, version) do

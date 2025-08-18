@@ -133,9 +133,11 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       state = %{base_state | minimum_read_version: 100}
       read_version = 50
 
-      result = Calls.renew_read_version_lease(state, read_version)
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
 
       assert result == {:error, :lease_expired}
+      # State should be unchanged
+      assert updated_state == state
     end
 
     test "allows renewal when read_version equals minimum_read_version", %{
@@ -251,8 +253,9 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     } do
       # Test the specific calculation: now + 10 + renewal_deadline_in_ms
       custom_renewal_interval = 3_000
-      now = :erlang.monotonic_time(:millisecond)
-      future_deadline = now + 20_000
+      # Use deterministic time for testing
+      current_time = 1_000_000
+      future_deadline = current_time + 20_000
       read_version = 100
 
       state = %{
@@ -261,21 +264,16 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           lease_renewal_interval_in_ms: custom_renewal_interval
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      time_fn = fn -> current_time end
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
       assert {:ok, ^custom_renewal_interval} = result
 
       # Verify the calculation: new_lease_deadline_in_ms = now + 10 + renewal_deadline_in_ms
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
+      expected_deadline = current_time + 10 + custom_renewal_interval
 
-      # Calculate the actual interval between now and new_deadline
-      actual_interval = new_deadline - now
-      expected_interval = 10 + custom_renewal_interval
-
-      # Allow for small timing differences since we can't control exact timing
-      # The interval should be roughly expected_interval ± 5ms
-      assert actual_interval >= expected_interval - 5
-      assert actual_interval <= expected_interval + 5
+      assert new_deadline == expected_deadline
     end
 
     test "handles boundary case when deadline exactly equals current time", %{

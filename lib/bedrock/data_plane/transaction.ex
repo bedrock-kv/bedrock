@@ -100,37 +100,23 @@ defmodule Bedrock.DataPlane.Transaction do
   @type section_tag :: 0x01..0xFF
   @type opcode :: 0x00..0xFF
 
-  # Magic number "BRDT" for Bedrock Transaction
   @magic_number 0x42524454
   @format_version 0x01
 
-  # Section tags
   @mutations_tag 0x01
   @read_conflicts_tag 0x02
   @write_conflicts_tag 0x03
   @commit_version_tag 0x04
 
-  # Operation types (upper 5 bits) - not used directly but document the design
-
-  # SET variants (lower 3 bits)
-  # 16-bit key + 32-bit value
   @set_16_32 0x00
-  # 8-bit key + 16-bit value
   @set_8_16 0x01
-  # 8-bit key + 8-bit value
   @set_8_8 0x02
 
-  # CLEAR variants (lower 3 bits + base operation)
-  # Single key, 16-bit length
   @clear_single_16 0x08
-  # Single key, 8-bit length
   @clear_single_8 0x09
-  # Range, 16-bit lengths
   @clear_range_16 0x0A
-  # Range, 8-bit lengths
   @clear_range_8 0x0B
 
-  # Operation types (for dynamic opcode construction)
   @set_operation 0x00
   @clear_operation 0x01
 
@@ -171,22 +157,17 @@ defmodule Bedrock.DataPlane.Transaction do
   defp add_mutations_section(sections, _), do: sections
 
   defp add_read_conflicts_section(sections, %{read_conflicts: {read_version, read_conflicts}}) do
-    # Validate coupling rules: both must be nil/empty or both must be non-nil/non-empty
     case {read_version, read_conflicts} do
       {nil, []} ->
-        # Both are nil/empty - don't include section
         sections
 
       {nil, [_ | _]} ->
-        # Error: read_version is nil but read_conflicts is non-empty
         raise ArgumentError, "read_version is nil but read_conflicts is non-empty"
 
       {_non_nil_version, []} ->
-        # Error: read_version is non-nil but read_conflicts is empty
         raise ArgumentError, "read_version is non-nil but read_conflicts is empty"
 
       {_non_nil_version, [_ | _]} ->
-        # Both are non-nil/non-empty - include section
         payload = encode_read_conflicts_payload(read_conflicts, read_version)
         section = encode_section(@read_conflicts_tag, payload)
         [section | sections]
@@ -447,22 +428,18 @@ defmodule Bedrock.DataPlane.Transaction do
 
   @spec optimize_clear_opcode(key_size :: non_neg_integer(), is_range :: boolean()) :: opcode()
   defp optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255 do
-    # CLEAR_SINGLE_8
     build_opcode(@clear_operation, 1)
   end
 
   defp optimize_clear_opcode(_key_size, false = _is_range) do
-    # CLEAR_SINGLE_16
     build_opcode(@clear_operation, 0)
   end
 
   defp optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255 do
-    # CLEAR_RANGE_8 (variant 3 = 0x0B)
     build_opcode(@clear_operation, 3)
   end
 
   defp optimize_clear_opcode(_max_key_size, true = _is_range) do
-    # CLEAR_RANGE_16 (variant 2 = 0x0A)
     build_opcode(@clear_operation, 2)
   end
 
@@ -472,32 +449,22 @@ defmodule Bedrock.DataPlane.Transaction do
 
   defp encode_overall_header(section_count) do
     <<
-      # Magic number "BRDT"
       @magic_number::unsigned-big-32,
-      # Format version 1
       @format_version,
-      # Flags (all reserved)
       0x00,
-      # Section count
       section_count::unsigned-big-16
     >>
   end
 
   defp encode_section(tag, payload) do
     payload_size = byte_size(payload)
-
-    # Calculate CRC32 over tag + size + payload (standard approach)
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
     section_crc = :erlang.crc32(section_content)
 
     <<
-      # 1 byte tag
       tag,
-      # 3 byte size (max 16MB)
       payload_size::unsigned-big-24,
-      # 4 byte CRC32
       section_crc::unsigned-big-32,
-      # Variable size payload
       payload::binary
     >>
   end
@@ -507,7 +474,6 @@ defmodule Bedrock.DataPlane.Transaction do
     IO.iodata_to_binary(mutations_data)
   end
 
-  # Elegant opcode encoding with automatic size optimization using dynamic opcode construction
   defp encode_mutation_opcode({:set, key, value}) do
     key_len = byte_size(key)
     value_len = byte_size(value)
@@ -515,15 +481,12 @@ defmodule Bedrock.DataPlane.Transaction do
 
     case extract_variant(opcode) do
       2 ->
-        # SET_8_8: 8-bit key length + 8-bit value length (most compact)
         <<opcode, key_len::unsigned-8, key::binary, value_len::unsigned-8, value::binary>>
 
       1 ->
-        # SET_8_16: 8-bit key length + 16-bit value length
         <<opcode, key_len::unsigned-8, key::binary, value_len::unsigned-big-16, value::binary>>
 
       0 ->
-        # SET_16_32: 16-bit key length + 32-bit value length (full size)
         <<opcode, key_len::unsigned-big-16, key::binary, value_len::unsigned-big-32, value::binary>>
     end
   end
@@ -534,11 +497,9 @@ defmodule Bedrock.DataPlane.Transaction do
 
     case extract_variant(opcode) do
       1 ->
-        # CLEAR_SINGLE_8: Single key (8-bit key length)
         <<opcode, key_len::unsigned-8, key::binary>>
 
       0 ->
-        # CLEAR_SINGLE_16: Single key (16-bit key length)
         <<opcode, key_len::unsigned-big-16, key::binary>>
     end
   end
@@ -546,17 +507,14 @@ defmodule Bedrock.DataPlane.Transaction do
   defp encode_mutation_opcode({:clear_range, start_key, end_key}) do
     start_len = byte_size(start_key)
     end_len = byte_size(end_key)
-    # Use the maximum key size to determine the optimal variant
     max_key_len = max(start_len, end_len)
     opcode = optimize_clear_opcode(max_key_len, true)
 
     case extract_variant(opcode) do
       3 ->
-        # CLEAR_RANGE_8: Range (8-bit start/end lengths)
         <<opcode, start_len::unsigned-8, start_key::binary, end_len::unsigned-8, end_key::binary>>
 
       2 ->
-        # CLEAR_RANGE_16: Range (16-bit start/end lengths)
         <<opcode, start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
     end
   end
@@ -565,7 +523,6 @@ defmodule Bedrock.DataPlane.Transaction do
     conflict_count = length(read_conflicts)
     conflicts_data = Enum.map(read_conflicts, &encode_conflict_range/1)
 
-    # Convert read_version to integer for encoding
     read_version_value =
       case read_version do
         nil -> -1
@@ -613,7 +570,6 @@ defmodule Bedrock.DataPlane.Transaction do
          remaining_count,
          sections_map
        ) do
-    # Verify section CRC using standard approach
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
     calculated_crc = :erlang.crc32(section_content)
 
@@ -665,7 +621,6 @@ defmodule Bedrock.DataPlane.Transaction do
     {:ok, mutations}
   end
 
-  # SET operations (0x00 << 3)
   defp stream_mutations_opcodes(
          <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
            value::binary-size(value_len), rest::binary>>,
@@ -693,7 +648,6 @@ defmodule Bedrock.DataPlane.Transaction do
     stream_mutations_opcodes(rest, [mutation | mutations])
   end
 
-  # CLEAR operations (0x01 << 3)
   defp stream_mutations_opcodes(
          <<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
          mutations
@@ -728,7 +682,6 @@ defmodule Bedrock.DataPlane.Transaction do
     stream_mutations_opcodes(rest, [mutation | mutations])
   end
 
-  # Reserved opcodes
   defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x03..0x07 do
     {:error, {:reserved_set_variant, opcode}}
   end
@@ -738,9 +691,7 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x10..0xFF do
-    # Extract upper 5 bits
     operation_type = opcode >>> 3
-    # Extract lower 3 bits
     variant = opcode &&& 0x07
     {:error, {:unsupported_operation, operation_type, variant}}
   end
@@ -754,7 +705,6 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp maybe_decode_read_conflicts(transaction, nil) do
-    # No READ_CONFLICTS section present - this means no read conflicts exist
     {:ok, %{transaction | read_conflicts: {nil, []}}}
   end
 
@@ -785,7 +735,6 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp maybe_decode_write_conflicts(transaction, nil) do
-    # No WRITE_CONFLICTS section present - this means no write conflicts exist
     {:ok, %{transaction | write_conflicts: []}}
   end
 
@@ -832,7 +781,6 @@ defmodule Bedrock.DataPlane.Transaction do
            rest::binary>>,
          remaining_count
        ) do
-    # Validate section CRC using standard approach
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
     calculated_crc = :erlang.crc32(section_content)
 
@@ -869,7 +817,6 @@ defmodule Bedrock.DataPlane.Transaction do
          remaining_count
        ) do
     if tag == target_tag do
-      # Verify section CRC using standard approach
       section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
       calculated_crc = :erlang.crc32(section_content)
 
@@ -921,7 +868,6 @@ defmodule Bedrock.DataPlane.Transaction do
 
   defp stream_next_mutation(<<>>), do: {:halt, <<>>}
 
-  # SET operations (0x00 << 3)
   defp stream_next_mutation(
          <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
            value::binary-size(value_len), rest::binary>>
@@ -946,7 +892,6 @@ defmodule Bedrock.DataPlane.Transaction do
     {[mutation], rest}
   end
 
-  # CLEAR operations (0x01 << 3)
   defp stream_next_mutation(<<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>) do
     mutation = {:clear, key}
     {[mutation], rest}
@@ -973,13 +918,9 @@ defmodule Bedrock.DataPlane.Transaction do
     {[mutation], rest}
   end
 
-  # Unknown or unsupported opcodes - halt stream
   defp stream_next_mutation(<<opcode, _rest::binary>>) when opcode >= 0x10 do
-    # Extract upper 5 bits
     operation_type = opcode >>> 3
-    # Extract lower 3 bits
     variant = opcode &&& 0x07
-    # For streaming, we halt on unknown opcodes rather than error
     {:halt, {:unknown_opcode, operation_type, variant}}
   end
 

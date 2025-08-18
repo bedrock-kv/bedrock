@@ -8,18 +8,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
   describe "finalize_batch integration with new log-first approach" do
     test "end-to-end finalization builds transactions directly for logs" do
-      # Set up log servers
       log_server_1 = Support.create_mock_log_server()
       log_server_2 = Support.create_mock_log_server()
 
-      # Transaction system layout with overlapping storage teams
       transaction_system_layout = %{
         sequencer: self(),
         resolvers: [{<<>>, self()}],
         logs: %{
-          # covers storage teams 0 and 1
           "log_1" => [0, 1],
-          # covers storage teams 1 and 2
           "log_2" => [1, 2]
         },
         services: %{
@@ -33,24 +29,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         ]
       }
 
-      # Create transactions with mutations that will affect different storage teams
       transaction1 =
         Transaction.encode(%{
-          # affects storage team 0
           mutations: [{:set, <<"apple">>, <<"fruit">>}],
           write_conflicts: [{<<"apple">>, <<"apple\0">>}]
         })
 
       transaction2 =
         Transaction.encode(%{
-          # affects storage team 1
           mutations: [{:set, <<"orange">>, <<"citrus">>}],
           write_conflicts: [{<<"orange">>, <<"orange\0">>}]
         })
 
       transaction3 =
         Transaction.encode(%{
-          # affects storage team 2
           mutations: [{:set, <<"zebra">>, <<"animal">>}],
           write_conflicts: [{<<"zebra">>, <<"zebra\0">>}]
         })
@@ -66,13 +58,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           ]
         )
 
-      # Mock resolver that doesn't abort any transactions
       mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
-        # no aborted transactions
         {:ok, []}
       end
 
-      # Execute finalization
       result =
         Finalization.finalize_batch(
           batch,
@@ -83,12 +72,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:ok, 0, 3} = result
 
-      # Verify all transactions succeeded
       assert_receive {:reply1, {:ok, _}}
       assert_receive {:reply2, {:ok, _}}
       assert_receive {:reply3, {:ok, _}}
-
-      # Verify sequencer was notified
       assert_receive {:"$gen_cast", {:report_successful_commit, _version}}
     end
 
@@ -99,7 +85,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         sequencer: self(),
         resolvers: [{<<>>, self()}],
         logs: %{
-          # covers all storage teams
           "log_1" => [0, 1, 2]
         },
         services: %{
@@ -112,10 +97,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         ]
       }
 
-      # Create transaction with range operation that spans all storage teams
+      # Range operation spanning all storage teams
       transaction =
         Transaction.encode(%{
-          # spans all teams
           mutations: [{:clear_range, <<"a">>, <<"zzzz">>}],
           write_conflicts: [{<<"a">>, <<"zzzz">>}]
         })
@@ -142,8 +126,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:ok, 0, 1} = result
       assert_receive {:range_reply, {:ok, _}}
-
-      # Verify sequencer was notified
       assert_receive {:"$gen_cast", {:report_successful_commit, _version}}
     end
 
@@ -155,9 +137,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         sequencer: self(),
         resolvers: [{<<>>, self()}],
         logs: %{
-          # only covers storage team 0
           "log_1" => [0],
-          # only covers storage team 1
           "log_2" => [1]
         },
         services: %{
@@ -170,10 +150,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         ]
       }
 
-      # Create transaction that only affects storage team 0
       transaction =
         Transaction.encode(%{
-          # only affects team 0
           mutations: [{:set, <<"apple">>, <<"fruit">>}],
           write_conflicts: [{<<"apple">>, <<"apple\0">>}]
         })
@@ -201,10 +179,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:ok, 0, 1} = result
       assert_receive {:reply, {:ok, _}}
 
-      # Both logs should have received transactions (one with data, one empty)
-      # This ensures version consistency across all logs
-
-      # Verify sequencer was notified
+      # Both logs receive transactions (one with data, one empty) for version consistency
       assert_receive {:"$gen_cast", {:report_successful_commit, _version}}
     end
   end
@@ -225,7 +200,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         }
       }
 
-      # Pre-built transactions (this is what the new pipeline produces)
       transactions_by_log = %{
         "log_1" =>
           Transaction.encode(%{
@@ -242,10 +216,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       result =
         Finalization.push_transaction_to_logs_direct(
           layout,
-          # last_commit_version
           Version.from_integer(99),
           transactions_by_log,
-          # commit_version (unused)
           Version.from_integer(100),
           []
         )
@@ -299,7 +271,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       mock_async_stream_fn = fn _logs, _fun, opts ->
         timeout = Keyword.get(opts, :timeout, :default)
         send(test_pid, {:timeout_used, timeout})
-        # Return successful result
         [ok: {"log_1", :ok}]
       end
 

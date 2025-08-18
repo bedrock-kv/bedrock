@@ -58,7 +58,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert state.read_version_lease_expiration == 67_890
       assert state.commit_version == 11_111
       assert state.tx == tx
-      # Stack should contain one empty Tx - use length check since Tx.new() creates new struct
       assert length(state.stack) == 1
       [stacked_tx] = state.stack
 
@@ -78,16 +77,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "valid state transitions" do
       state = %State{state: :valid}
 
-      # Valid -> Committed
       committed_state = %{state | state: :committed, commit_version: 12_345}
       assert committed_state.state == :committed
       assert committed_state.commit_version == 12_345
 
-      # Valid -> Rolled Back
       rolled_back_state = %{state | state: :rolled_back}
       assert rolled_back_state.state == :rolled_back
 
-      # Valid -> Expired
       expired_state = %{state | state: :expired}
       assert expired_state.state == :expired
     end
@@ -107,11 +103,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
       committed_state = %{original_state | state: :committed, commit_version: 67_890}
 
-      # State transition fields
       assert committed_state.state == :committed
       assert committed_state.commit_version == 67_890
 
-      # All other fields preserved
       assert committed_state.gateway == original_state.gateway
       assert committed_state.transaction_system_layout == original_state.transaction_system_layout
       assert committed_state.key_codec == original_state.key_codec
@@ -128,7 +122,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       original_tx = Tx.set(Tx.new(), "key1", "value1")
       state = %State{tx: original_tx, stack: []}
 
-      # Push current tx to stack, start new tx
       new_tx = Tx.set(Tx.new(), "key2", "value2")
       state_with_stack = %{state | tx: new_tx, stack: [original_tx]}
 
@@ -142,7 +135,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       current_tx = Tx.set(Tx.new(), "current", "value")
       state = %State{tx: current_tx, stack: [stacked_tx]}
 
-      # Pop from stack
       state_after_pop = %{state | tx: stacked_tx, stack: []}
 
       assert state_after_pop.stack == []
@@ -154,13 +146,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       tx2 = Tx.set(Tx.new(), "key2", "value2")
       tx3 = Tx.set(Tx.new(), "key3", "value3")
 
-      # Start with tx1
       state = %State{tx: tx1, stack: []}
 
-      # Nest tx2 (push tx1 to stack)
       state = %{state | tx: tx2, stack: [tx1]}
 
-      # Nest tx3 (push tx2 to stack)
       state = %{state | tx: tx3, stack: [tx2, tx1]}
 
       assert length(state.stack) == 2
@@ -191,7 +180,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
       state = %State{
         read_version: 12_345,
-        # Expired
         read_version_lease_expiration: current_time - 1000
       }
 
@@ -204,11 +192,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "handles zero and large version numbers" do
       state = %State{}
 
-      # Zero version
       zero_state = %{state | read_version: 0}
       assert zero_state.read_version == 0
 
-      # Large version
       large_version = 999_999_999_999
       large_state = %{state | read_version: large_version}
       assert large_state.read_version == large_version
@@ -254,9 +240,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       ranges = [
         {"", :end},
         {"a", "z"},
-        # Single character diff
         {"key_prefix", "key_prefiy"},
-        # Binary ranges
         {"\x00", "\xFF"}
       ]
 
@@ -293,7 +277,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         lease_renewal_threshold: 800
       }
 
-      # Update other fields
       updated_state = %{
         original_state
         | state: :valid,
@@ -301,7 +284,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
           tx: Tx.set(Tx.new(), "key", "value")
       }
 
-      # Timeout values should be preserved
       assert updated_state.fetch_timeout_in_ms == 500
       assert updated_state.lease_renewal_threshold == 800
     end
@@ -360,11 +342,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         tx: Tx.new()
       }
 
-      # Simulate put operation effect
       new_tx = Tx.set(initial_state.tx, "key", "value")
       updated_state = %{initial_state | tx: new_tx}
 
-      # State unchanged
       assert updated_state.state == :valid
       assert Tx.commit(updated_state.tx).mutations == [{:set, "key", "value"}]
     end
@@ -377,12 +357,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         tx: tx_with_data
       }
 
-      # Simulate commit operation effect
       committed_state = %{initial_state | state: :committed, commit_version: 12_345}
 
       assert committed_state.state == :committed
       assert committed_state.commit_version == 12_345
-      # Tx should be preserved for inspection
       assert committed_state.tx == tx_with_data
     end
 
@@ -396,10 +374,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         stack: [stacked_tx]
       }
 
-      # Simulate rollback (pop from stack)
       rolled_back_state = %{initial_state | tx: stacked_tx, stack: []}
 
-      # Still valid after nested rollback
       assert rolled_back_state.state == :valid
       assert rolled_back_state.tx == stacked_tx
       assert rolled_back_state.stack == []

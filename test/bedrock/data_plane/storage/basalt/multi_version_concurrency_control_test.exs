@@ -46,20 +46,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
                  })
                )
 
-      # Check the key-value pairs, excluding nil values which are handled as clears
       version_1 = Version.from_integer(1)
       version_0 = Version.zero()
       actual_map = mvcc |> :ets.tab2list() |> Map.new()
 
-      # Verify version metadata
       assert actual_map[:newest_version] == version_1
       assert actual_map[:oldest_version] == version_0
 
-      # Verify non-nil values are stored correctly
       assert actual_map[{"a", version_1}] == "b"
       assert actual_map[{"c", version_1}] == "d"
-
-      # For nil values, verify they result in clears (not stored in ETS)
     end
   end
 
@@ -183,8 +178,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
          } do
       result = MVCC.transaction_at_version(mvcc, :latest)
 
-      # Verify the transaction returns correct version and writes in Transaction format
-      # Note: nil values are not included in the writes map since they represent clears
       assert TransactionTestSupport.extract_log_version(result) == Version.from_integer(3)
 
       assert TransactionTestSupport.extract_log_writes(result) == %{
@@ -198,12 +191,10 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
          %{
            mvcc: mvcc
          } do
-      # Verify the transaction returns a Transaction binary with correct version and empty mutations
       transaction = MVCC.transaction_at_version(mvcc, Version.zero())
       assert TransactionTestSupport.extract_log_version(transaction) == Version.zero()
       assert TransactionTestSupport.extract_log_writes(transaction) == %{}
 
-      # Verify transaction at version 1 (excluding nil values which are handled as clears)
       transaction_v1 = MVCC.transaction_at_version(mvcc, Version.from_integer(1))
 
       assert TransactionTestSupport.extract_log_version(transaction_v1) ==
@@ -239,12 +230,10 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
       MVCC.insert_read(mvcc, "a", Version.zero(), "x")
       MVCC.insert_read(mvcc, "x", Version.from_integer(2), "x")
 
-      # Verify the transaction returns a Transaction binary with correct version and empty mutations
       transaction = MVCC.transaction_at_version(mvcc, Version.zero())
       assert TransactionTestSupport.extract_log_version(transaction) == Version.zero()
       assert TransactionTestSupport.extract_log_writes(transaction) == %{}
 
-      # Verify transaction at version 1 (excluding nil values which are handled as clears)
       transaction_v1 = MVCC.transaction_at_version(mvcc, Version.from_integer(1))
 
       assert TransactionTestSupport.extract_log_version(transaction_v1) ==
@@ -280,7 +269,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
     test "it succeeds when there are no keys to purge", %{mvcc: mvcc} do
       assert {:ok, 0} = MVCC.purge_keys_older_than_version(mvcc, Version.from_integer(1))
 
-      # Verify transaction at version 1 (excluding nil values which are handled as clears)
       transaction_v1 = MVCC.transaction_at_version(mvcc, Version.from_integer(1))
 
       assert TransactionTestSupport.extract_log_version(transaction_v1) ==
@@ -296,7 +284,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
     test "it succeeds for transactions less than 2", %{mvcc: mvcc} do
       assert {:ok, 4} = MVCC.purge_keys_older_than_version(mvcc, Version.from_integer(2))
 
-      # Verify transaction at version 2 (excluding nil values which are handled as clears)
       transaction_v2 = MVCC.transaction_at_version(mvcc, Version.from_integer(2))
 
       assert TransactionTestSupport.extract_log_version(transaction_v2) ==
@@ -308,7 +295,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
     test "it succeeds for transactions less than 3", %{mvcc: mvcc} do
       assert {:ok, 6} = MVCC.purge_keys_older_than_version(mvcc, Version.from_integer(3))
 
-      # Verify transaction at version 3
       transaction_v3 = MVCC.transaction_at_version(mvcc, Version.from_integer(3))
 
       assert TransactionTestSupport.extract_log_version(transaction_v3) ==

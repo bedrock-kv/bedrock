@@ -56,6 +56,26 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert recovered.last_version == Version.from_integer(1)
     end
 
+    test "correctly handles recovery when first_version equals last_version", %{state: state} do
+      # This test verifies the fix for the issue where logs would report having
+      # version ranges but had no segments loaded, causing :not_found errors
+      version = Version.from_integer(5)
+
+      assert {:ok, recovered} =
+               Recovery.recover_from(
+                 state,
+                 nil,
+                 version,
+                 version
+               )
+
+      assert recovered.mode == :running
+      assert recovered.oldest_version == version
+      assert recovered.last_version == version
+      assert recovered.active_segment
+      assert recovered.writer
+    end
+
     test "successfully recovers with valid transactions", %{state: state} do
       transactions = [
         create_encoded_tx(Version.from_integer(1), %{"data" => "test1"}),
@@ -94,13 +114,32 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     test "handles empty transaction list", %{state: state} do
       source_log = setup_mock_log([])
 
-      assert {:ok, ^state} =
+      assert {:ok, result_state} =
                Recovery.pull_transactions(
                  state,
                  source_log,
                  Version.from_integer(1),
                  Version.from_integer(1)
                )
+
+      assert result_state.oldest_version == Version.from_integer(1)
+      assert result_state.last_version == Version.from_integer(1)
+    end
+
+    test "correctly sets versions when first_version equals last_version", %{state: state} do
+      # This directly tests the fix for the version consistency issue
+      version = Version.from_integer(10)
+
+      assert {:ok, result_state} =
+               Recovery.pull_transactions(
+                 state,
+                 nil,
+                 version,
+                 version
+               )
+
+      assert result_state.oldest_version == version
+      assert result_state.last_version == version
     end
 
     test "handles invalid transaction data", %{state: state} do
@@ -116,12 +155,9 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     end
   end
 
-  # Helper functions
   defp create_encoded_tx(version, data) do
-    # Convert data map to mutations format
     mutations = Enum.map(data, fn {key, value} -> {:set, key, value} end)
 
-    # Create Transaction
     transaction = %{
       mutations: mutations,
       read_conflicts: [],
@@ -129,7 +165,6 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       read_version: nil
     }
 
-    # Encode and add version as transaction_id
     encoded = Transaction.encode(transaction)
     {:ok, encoded_with_id} = Transaction.add_commit_version(encoded, version)
     encoded_with_id

@@ -49,8 +49,13 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   end
 
   @impl true
-  def handle_call({:fetch, key, version, _opts}, _from, %State{} = t),
-    do: t |> Logic.fetch(key, version) |> then(&reply(t, &1))
+  def handle_call({:fetch, key, version, _opts}, from, %State{} = t) do
+    case Logic.try_fetch_or_waitlist(t, key, version, from) do
+      {:ok, value, new_state} -> reply(new_state, {:ok, value})
+      {:error, reason, new_state} -> reply(new_state, {:error, reason})
+      {:waitlist, new_state} -> noreply(new_state)
+    end
+  end
 
   @impl true
   def handle_call({:info, fact_names}, _from, %State{} = t), do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
@@ -91,5 +96,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
     noreply(t)
+  end
+
+  @impl true
+  def handle_info({:transactions_applied, version}, %State{} = t) do
+    new_state = Logic.notify_waiting_fetches(t, version)
+    noreply(new_state)
   end
 end

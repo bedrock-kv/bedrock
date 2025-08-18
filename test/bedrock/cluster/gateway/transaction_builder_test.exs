@@ -60,7 +60,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       assert Process.alive?(pid)
 
-      # Verify initial state structure
       state = :sys.get_state(pid)
       assert %State{} = state
       assert state.state == :valid
@@ -114,25 +113,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       initial_state = :sys.get_state(pid)
       initial_stack_size = length(initial_state.stack)
 
-      # Call nested_transaction
       result = GenServer.call(pid, :nested_transaction)
       assert result == :ok
 
       final_state = :sys.get_state(pid)
-      # Stack should have one more frame
       assert length(final_state.stack) == initial_stack_size + 1
-      # Process should still be alive
       assert Process.alive?(pid)
     end
 
     test ":fetch call with cached key" do
       pid = start_transaction_builder()
 
-      # Put a value first via cast
       GenServer.cast(pid, {:put, "test_key", "test_value"})
       :timer.sleep(10)
 
-      # Call fetch - should return cached value
       result = GenServer.call(pid, {:fetch, "test_key"})
       assert result == {:ok, "test_value"}
     end
@@ -140,23 +134,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test ":commit call returns error for empty transaction" do
       pid = start_transaction_builder()
 
-      # Call commit on empty transaction
       result = GenServer.call(pid, :commit)
-      # Should return an error (infrastructure not available)
       assert {:error, _reason} = result
-      # Process should still be alive
       assert Process.alive?(pid)
     end
 
     test "multiple :nested_transaction calls stack properly" do
       pid = start_transaction_builder()
 
-      # First nested call
       :ok = GenServer.call(pid, :nested_transaction)
       state1 = :sys.get_state(pid)
       assert length(state1.stack) == 1
 
-      # Second nested call
       :ok = GenServer.call(pid, :nested_transaction)
       state2 = :sys.get_state(pid)
       assert length(state2.stack) == 2
@@ -181,9 +170,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       initial_state = :sys.get_state(pid)
       initial_mutations = Tx.commit(initial_state.tx).mutations
 
-      # Cast put operation
       GenServer.cast(pid, {:put, "test_key", "test_value"})
-      # Allow cast to process
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
@@ -196,22 +183,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       ref = Process.monitor(pid)
 
-      # Cast rollback with empty stack
       GenServer.cast(pid, :rollback)
 
-      # Process should terminate normally
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
     end
 
     test ":rollback cast with non-empty stack pops stack frame" do
       pid = start_transaction_builder()
 
-      # Create nested transaction to populate stack
       :ok = GenServer.call(pid, :nested_transaction)
       state_before = :sys.get_state(pid)
       assert length(state_before.stack) == 1
 
-      # Cast rollback
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
 
@@ -223,7 +206,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "multiple put casts accumulate in transaction" do
       pid = start_transaction_builder()
 
-      # Multiple put casts
       GenServer.cast(pid, {:put, "key1", "value1"})
       GenServer.cast(pid, {:put, "key2", "value2"})
       GenServer.cast(pid, {:put, "key3", "value3"})
@@ -242,7 +224,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "put cast with same key overwrites in mutations but not state" do
       pid = start_transaction_builder()
 
-      # Put same key twice
       GenServer.cast(pid, {:put, "key1", "value1"})
       GenServer.cast(pid, {:put, "key1", "updated_value"})
       :timer.sleep(10)
@@ -301,7 +282,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       state = :sys.get_state(pid)
 
-      # Verify state structure and defaults
       assert %State{} = state
       assert state.state == :valid
       assert state.gateway == self()
@@ -320,7 +300,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       custom_layout = %{custom: :test_layout}
       pid = start_transaction_builder(transaction_system_layout: custom_layout)
 
-      # Perform various operations
       GenServer.cast(pid, {:put, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
       GenServer.cast(pid, {:put, "key2", "value2"})
@@ -328,7 +307,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       state = :sys.get_state(pid)
 
-      # Core configuration should be preserved
       assert state.state == :valid
       assert state.transaction_system_layout == custom_layout
       assert state.key_codec == TestKeyCodec
@@ -339,25 +317,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "stack management through GenServer operations" do
       pid = start_transaction_builder()
 
-      # Initial stack should be empty
       initial_state = :sys.get_state(pid)
       assert Enum.empty?(initial_state.stack)
 
-      # Add some data and nest
       GenServer.cast(pid, {:put, "base", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
 
       nested_state = :sys.get_state(pid)
       assert length(nested_state.stack) == 1
 
-      # Add more data and nest again
       GenServer.cast(pid, {:put, "nested", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
 
       double_nested_state = :sys.get_state(pid)
       assert length(double_nested_state.stack) == 2
 
-      # Rollback should reduce stack
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
 
@@ -368,7 +342,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "transaction state accumulates properly" do
       pid = start_transaction_builder()
 
-      # Add operations incrementally
       GenServer.cast(pid, {:put, "key1", "value1"})
       :timer.sleep(5)
 
@@ -395,7 +368,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       ref = Process.monitor(pid)
 
-      # Send many messages rapidly
       for i <- 1..50 do
         GenServer.cast(pid, {:put, "key_#{i}", "value_#{i}"})
 
@@ -406,23 +378,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       :timer.sleep(50)
 
-      # Process should still be alive
       assert Process.alive?(pid)
 
-      # No DOWN message should be received
       refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 10
 
-      # State should be valid
       state = :sys.get_state(pid)
       assert state.state == :valid
-      # 50/10 nested calls
       assert length(state.stack) == 5
     end
 
     test "process handles rapid rollbacks correctly" do
       pid = start_transaction_builder()
 
-      # Build up nested stack
       for _i <- 1..5 do
         :ok = GenServer.call(pid, :nested_transaction)
       end
@@ -430,14 +397,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       initial_state = :sys.get_state(pid)
       assert length(initial_state.stack) == 5
 
-      # Rapid rollbacks
       for _i <- 1..3 do
         GenServer.cast(pid, :rollback)
       end
 
       :timer.sleep(20)
 
-      # Process should still be alive with reduced stack
       assert Process.alive?(pid)
       final_state = :sys.get_state(pid)
       assert length(final_state.stack) == 2
@@ -447,7 +412,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       ref = Process.monitor(pid)
 
-      # Single rollback on empty stack should terminate
       GenServer.cast(pid, :rollback)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
@@ -473,12 +437,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
           value_codec: CustomValueCodec
         )
 
-      # Verify codecs are set
       state = :sys.get_state(pid)
       assert state.key_codec == CustomKeyCodec
       assert state.value_codec == CustomValueCodec
 
-      # Verify codecs are used
       GenServer.cast(pid, {:put, "test", "value"})
       :timer.sleep(10)
 
@@ -497,13 +459,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       pid = start_transaction_builder(transaction_system_layout: custom_layout)
 
-      # Perform operations that might affect layout
       GenServer.cast(pid, {:put, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
 
-      # Layout should be unchanged
       state = :sys.get_state(pid)
       assert state.transaction_system_layout == custom_layout
     end

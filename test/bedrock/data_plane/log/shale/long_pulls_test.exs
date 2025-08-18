@@ -158,17 +158,17 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
   describe "determine_timeout_for_next_puller_deadline/2" do
     test "returns the correct timeout" do
-      # Use current time for realistic timing
-      now = Bedrock.Internal.Time.monotonic_now_in_ms()
+      # Use deterministic time for predictable test results
+      current_time = 1_000_000
 
       waiting_pullers = %{
-        1 => [{now + 1000, fn _ -> :ok end, []}],
-        2 => [{now + 2000, fn _ -> :ok end, []}]
+        1 => [{current_time + 1000, fn _ -> :ok end, []}],
+        2 => [{current_time + 2000, fn _ -> :ok end, []}]
       }
 
-      # Should return roughly 1000ms (time until first deadline)
-      timeout = LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, now)
-      assert timeout >= 999 and timeout <= 1001
+      # Should return exactly 1000ms (time until first deadline)
+      timeout = LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, current_time)
+      assert timeout == 1000
     end
 
     test "returns nil if there are no pullers" do

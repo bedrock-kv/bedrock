@@ -5,6 +5,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Internal.Time
 
   @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
           {State.t(), {:ok, pid()} | {:error, :unavailable}}
@@ -53,12 +54,18 @@ defmodule Bedrock.Cluster.Gateway.Calls do
           {State.t(),
            {:ok, expiration_interval_in_ms :: Bedrock.interval_in_ms()}
            | {:error, :lease_expired}}
-  def renew_read_version_lease(t, read_version)
-      when not is_nil(t.minimum_read_version) and read_version < t.minimum_read_version,
-      do: {:error, :lease_expired}
+  @spec renew_read_version_lease(State.t(), read_version :: Bedrock.version(), time_fn :: (-> integer())) ::
+          {State.t(),
+           {:ok, expiration_interval_in_ms :: Bedrock.interval_in_ms()}
+           | {:error, :lease_expired}}
+  def renew_read_version_lease(t, read_version, time_fn \\ &Time.monotonic_now_in_ms/0)
 
-  def renew_read_version_lease(t, read_version) do
-    now = :erlang.monotonic_time(:millisecond)
+  def renew_read_version_lease(t, read_version, _time_fn)
+      when not is_nil(t.minimum_read_version) and read_version < t.minimum_read_version,
+      do: {t, {:error, :lease_expired}}
+
+  def renew_read_version_lease(t, read_version, time_fn) do
+    now = time_fn.()
 
     t.deadline_by_version
     |> Map.pop(read_version)

@@ -60,7 +60,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
           raise "Transactions must be applied in order (new #{Version.to_string(version)}, old #{Version.to_string(latest_version)})"
 
         version == latest_version ->
-          # Skip duplicate version - already applied
           latest_version
 
         true ->
@@ -77,7 +76,6 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   @spec apply_one_transaction!(mvcc :: t(), Transaction.encoded()) :: :ok
   def apply_one_transaction!(mvcc, encoded_transaction) do
     {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
-    # Extract mutations and convert to key-value pairs
     {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
 
     kv_pairs =
@@ -89,11 +87,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
           Map.put(acc, key, nil)
 
         {:clear_range, start_key, end_key}, acc ->
-          # Handle single-key clears (where end_key = start_key + "\0")
           if end_key == start_key <> <<0>> do
             Map.put(acc, start_key, nil)
           else
-            # Skip multi-key range operations for now
             acc
           end
       end)
@@ -235,14 +231,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
         mvcc
       )
 
-    # Convert snapshot to mutations
     mutations =
       Enum.map(snapshot, fn
         {key, nil} -> {:clear_range, key, key <> <<0>>}
         {key, value} -> {:set, key, value}
       end)
 
-    # Create transaction and add commit version
     encoded = Transaction.encode(%{mutations: mutations})
     {:ok, with_version} = Transaction.add_commit_version(encoded, version)
     with_version

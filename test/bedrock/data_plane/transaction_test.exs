@@ -70,7 +70,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
       binary = Transaction.encode(transaction)
       assert {:ok, decoded} = Transaction.decode(binary)
 
-      # Should decode with empty read conflicts tuple
       expected = %{
         mutations: [{:set, "key", "value"}],
         read_conflicts: {nil, []},
@@ -99,7 +98,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
   describe "size optimization" do
     test "automatically selects compact SET variants" do
-      # Small key and value should use 8+8 bit lengths (most compact)
       small_transaction = %{
         mutations: [{:set, "k", "v"}],
         read_conflicts: {nil, []},
@@ -108,7 +106,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       small_binary = Transaction.encode(small_transaction)
 
-      # Larger value should use 8+16 bit lengths
       medium_transaction = %{
         mutations: [{:set, "k", String.duplicate("x", 300)}],
         read_conflicts: {nil, []},
@@ -117,7 +114,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       medium_binary = Transaction.encode(medium_transaction)
 
-      # Large key should use 16+32 bit lengths
       large_transaction = %{
         mutations: [{:set, String.duplicate("k", 300), String.duplicate("v", 70_000)}],
         read_conflicts: {nil, []},
@@ -126,7 +122,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       large_binary = Transaction.encode(large_transaction)
 
-      # Verify all decode correctly
       assert {:ok, decoded_small} = Transaction.decode(small_binary)
       assert {:ok, decoded_medium} = Transaction.decode(medium_binary)
       assert {:ok, decoded_large} = Transaction.decode(large_binary)
@@ -135,20 +130,17 @@ defmodule Bedrock.DataPlane.TransactionTest do
       assert decoded_medium == medium_transaction
       assert decoded_large == large_transaction
 
-      # Small transaction should be most compact
       assert byte_size(small_binary) < byte_size(medium_binary)
       assert byte_size(medium_binary) < byte_size(large_binary)
     end
 
     test "automatically selects compact CLEAR variants" do
-      # Small key should use 8-bit length
       small_clear = %{
         mutations: [{:clear, "k"}],
         read_conflicts: {nil, []},
         write_conflicts: []
       }
 
-      # Large key should use 16-bit length
       large_clear = %{
         mutations: [{:clear, String.duplicate("k", 300)}],
         read_conflicts: {nil, []},
@@ -167,14 +159,12 @@ defmodule Bedrock.DataPlane.TransactionTest do
     end
 
     test "automatically selects compact CLEAR_RANGE variants" do
-      # Small keys should use 8-bit lengths
       small_range = %{
         mutations: [{:clear_range, "a", "z"}],
         read_conflicts: {nil, []},
         write_conflicts: []
       }
 
-      # Large keys should use 16-bit lengths
       large_range = %{
         mutations: [{:clear_range, String.duplicate("a", 300), String.duplicate("z", 300)}],
         read_conflicts: {nil, []},
@@ -217,7 +207,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Corrupt magic number
       <<_::32, rest::binary>> = binary
       corrupted = <<0x00000000::32, rest::binary>>
 
@@ -235,7 +224,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Corrupt a byte in the middle (should affect section CRC)
       <<prefix::binary-size(20), _byte, suffix::binary>> = binary
       corrupted = <<prefix::binary, 0xFF, suffix::binary>>
 
@@ -253,20 +241,16 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Should always find MUTATIONS section
       assert {:ok, mutations_payload} = Transaction.extract_section(binary, 0x01)
       assert is_binary(mutations_payload)
       assert byte_size(mutations_payload) > 0
 
-      # Should find READ_CONFLICTS section when present
       assert {:ok, read_conflicts_payload} = Transaction.extract_section(binary, 0x02)
       assert is_binary(read_conflicts_payload)
 
-      # Should find WRITE_CONFLICTS section when present
       assert {:ok, write_conflicts_payload} = Transaction.extract_section(binary, 0x03)
       assert is_binary(write_conflicts_payload)
 
-      # Should not find TRANSACTION_ID section unless added
       assert {:error, :section_not_found} = Transaction.extract_section(binary, 0x04)
     end
 
@@ -280,12 +264,10 @@ defmodule Bedrock.DataPlane.TransactionTest do
       binary = Transaction.encode(transaction)
       assert {:ok, nil} = Transaction.extract_commit_version(binary)
 
-      # Add transaction ID
       version = Bedrock.DataPlane.Version.from_integer(98_765)
       assert {:ok, stamped} = Transaction.add_commit_version(binary, version)
       assert {:ok, ^version} = Transaction.extract_commit_version(stamped)
 
-      # Original transaction should decode the same
       assert {:ok, decoded} = Transaction.decode(stamped)
       assert decoded == transaction
     end
@@ -385,7 +367,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Truncate the binary
       truncated = binary_part(binary, 0, byte_size(binary) - 5)
 
       assert {:error, _} = Transaction.decode(truncated)
@@ -401,7 +382,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Try to extract non-existent sections
       assert {:error, :section_not_found} = Transaction.extract_section(binary, 0x02)
       assert {:error, :section_not_found} = Transaction.extract_section(binary, 0x03)
       assert {:error, :section_not_found} = Transaction.extract_section(binary, 0x04)
@@ -417,7 +397,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       binary = Transaction.encode(transaction)
 
-      # Try to add MUTATIONS section (already exists)
       assert {:error, :section_already_exists} =
                Transaction.add_section(binary, 0x01, <<>>)
     end
@@ -435,7 +414,6 @@ defmodule Bedrock.DataPlane.TransactionTest do
       <<magic::unsigned-big-32, version, _flags, _section_count::unsigned-big-16, _rest::binary>> =
         Transaction.encode(transaction)
 
-      # "BRDT"
       assert magic == 0x42524454
       assert version == 0x01
     end
@@ -447,10 +425,8 @@ defmodule Bedrock.DataPlane.TransactionTest do
         write_conflicts: [{"write_start", "write_end"}]
       }
 
-      # Encode multiple times - sections might appear in different orders
       binaries = for _ <- 1..10, do: Transaction.encode(transaction)
 
-      # All should decode to the same result regardless of section order
       for binary <- binaries do
         assert {:ok, decoded} = Transaction.decode(binary)
         assert decoded == transaction

@@ -32,7 +32,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     |> pull_transactions(source_log, first_version, last_version)
     |> case do
       {:ok, t} ->
-        {:ok, %{t | mode: :running, oldest_version: first_version, last_version: last_version}}
+        {oldest, last} =
+          if first_version == last_version do
+            {t.oldest_version, t.last_version}
+          else
+            {first_version, last_version}
+          end
+
+        {:ok, %{t | mode: :running, oldest_version: oldest, last_version: last}}
 
       error ->
         error
@@ -48,7 +55,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           {:ok, State.t()}
           | Log.pull_errors()
           | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
-  def pull_transactions(t, _, first_version, last_version) when first_version == last_version, do: {:ok, t}
+  def pull_transactions(t, _, first_version, last_version) when first_version == last_version do
+    {:ok, %{t | oldest_version: first_version, last_version: first_version}}
+  end
 
   def pull_transactions(t, log_ref, first_version, last_version) do
     case Log.pull(log_ref, first_version, recovery: true, last_version: last_version) do
@@ -97,7 +106,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
         ) ::
           {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term()}}
   defp handle_valid_transaction_bytes(bytes, version, last_version, t) do
-    # Validate that the transaction can be decoded (but pass the original bytes to push)
     with {:ok, _transaction} <- Transaction.decode(bytes),
          {:ok, t} <- push(t, last_version, bytes, fn _ -> :ok end) do
       {:cont, {version, t}}
@@ -173,13 +181,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   @spec push_sentinel(State.t(), Bedrock.version()) :: State.t()
   def push_sentinel(t, version) do
-    # Create empty Transaction sentinel
     sentinel_transaction = %{
       mutations: []
     }
 
     encoded_sentinel = Transaction.encode(sentinel_transaction)
-    # Ensure version is in binary format
     version_binary = if is_binary(version), do: version, else: Version.from_integer(version)
     {:ok, sentinel} = Transaction.add_commit_version(encoded_sentinel, version_binary)
 

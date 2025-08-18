@@ -8,13 +8,9 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
   """
   use ExUnit.Case, async: true
 
-  import Bedrock.DataPlane.WALTestSupport, only: [setup_wal_test: 0]
-
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Version
   alias Bedrock.DataPlane.WALTestSupport
-
-  setup_wal_test()
 
   describe "Log.pull/3 with start_after semantics" do
     setup [:create_test_log]

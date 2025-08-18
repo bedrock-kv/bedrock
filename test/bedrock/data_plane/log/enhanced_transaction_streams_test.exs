@@ -11,14 +11,10 @@ defmodule Bedrock.DataPlane.Log.EnhancedTransactionStreamsTest do
   """
   use ExUnit.Case, async: true
 
-  import Bedrock.DataPlane.WALTestSupport, only: [setup_wal_test: 0]
-
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Version
   alias Bedrock.DataPlane.WALTestSupport
-
-  setup_wal_test()
 
   describe "TransactionStreams with real WAL files" do
     test "can stream transactions from segments loaded from actual files" do

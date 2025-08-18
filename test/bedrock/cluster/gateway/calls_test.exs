@@ -173,16 +173,18 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     end
 
     test "successfully renews lease when deadline is valid", %{base_state: base_state} do
-      now = :erlang.monotonic_time(:millisecond)
+      # Fixed time for deterministic test
+      now = 1_000_000
       future_deadline = now + 10_000
       read_version = 100
+      time_fn = fn -> now end
 
       state = %{
         base_state
         | deadline_by_version: %{read_version => future_deadline}
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
       assert {:ok, renewal_interval} = result
       assert renewal_interval == 5_000
@@ -191,15 +193,9 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
       assert new_deadline > now
 
-      # New deadline should be roughly now + 10 + renewal_interval_in_ms
-      # Calculate the actual interval and verify it's within expected range
-      actual_interval = new_deadline - now
-      # 10ms + renewal_interval_in_ms
-      expected_interval = 10 + 5_000
-
-      # Allow small timing variance (±10ms)
-      assert actual_interval >= expected_interval
-      assert actual_interval <= expected_interval + 10
+      # New deadline should be exactly now + 10 + renewal_interval_in_ms
+      expected_deadline = now + 10 + 5_000
+      assert new_deadline == expected_deadline
     end
 
     test "handles version not in deadline_by_version map", %{base_state: base_state} do

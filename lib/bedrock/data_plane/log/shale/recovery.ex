@@ -89,6 +89,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       {:ok, nil} ->
         {:halt, {:error, :missing_transaction_id}}
 
+      {:error, :invalid_format} ->
+        {:halt, {:error, :invalid_transaction}}
+
       {:error, reason} ->
         {:halt, {:error, reason}}
     end
@@ -111,6 +114,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       {:cont, {version, t}}
     else
       {:wait, _t} -> {:halt, {:error, :tx_out_of_order}}
+      {:error, :invalid_format} -> {:halt, {:error, :invalid_transaction}}
       {:error, _reason} = error -> {:halt, error}
     end
   end

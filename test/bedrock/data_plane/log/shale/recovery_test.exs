@@ -145,7 +145,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     test "handles invalid transaction data", %{state: state} do
       source_log = setup_mock_log(["invalid"])
 
-      assert {:error, :invalid_format} =
+      assert {:error, :invalid_transaction} =
                Recovery.pull_transactions(
                  state,
                  source_log,

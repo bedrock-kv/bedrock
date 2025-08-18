@@ -63,7 +63,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "GenServer lifecycle" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
+
       {:ok, server: pid, lock_token: lock_token}
     end
 
@@ -85,7 +96,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "handle_call - resolve_transactions when running" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
+
       {:ok, server: pid, lock_token: lock_token}
     end
 
@@ -98,7 +120,17 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "handle_info - resolve_next" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
 
       {:ok, server: pid}
     end
@@ -123,7 +155,17 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "integration scenarios" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
 
       {:ok, server: pid, lock_token: lock_token}
     end
@@ -150,7 +192,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "transaction validation" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
+
       zero_version = Bedrock.DataPlane.Version.zero()
       next_version = Bedrock.DataPlane.Version.increment(zero_version)
       {:ok, server: pid, zero_version: zero_version, next_version: next_version}
@@ -207,7 +260,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "timeout mechanism for waiting transactions" do
     setup do
       lock_token = :crypto.strong_rand_bytes(32)
-      {:ok, pid} = GenServer.start_link(Server, {lock_token, Bedrock.DataPlane.Version.zero(), 1})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             lock_token: lock_token,
+             key_range: {"", :end},
+             epoch: 1,
+             last_version: Bedrock.DataPlane.Version.zero()
+           ]}
+        )
+
       zero_version = Bedrock.DataPlane.Version.zero()
       next_version = Bedrock.DataPlane.Version.increment(zero_version)
       future_version = Bedrock.DataPlane.Version.increment(next_version)

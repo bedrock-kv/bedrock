@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   Created to catch the :not_found bug where logs claim version ranges they can't retrieve.
   """
 
-  import ExUnit.Callbacks, only: [start_supervised!: 1]
+  import ExUnit.Callbacks, only: [start_supervised!: 1, on_exit: 1]
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Segment
@@ -33,7 +33,16 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   """
   @spec create_test_wal([{integer(), map()}]) :: {String.t(), %{Version.t() => map()}}
   def create_test_wal(version_data_pairs) do
-    file_path = "test_wal_#{:rand.uniform(999_999)}.log"
+    # Use tmp directory to avoid working directory issues
+    temp_dir = System.tmp_dir!()
+    # Ensure temp directory exists
+    File.mkdir_p!(temp_dir)
+    # Make filename more unique to avoid conflicts in parallel tests
+    unique_id = "#{System.unique_integer([:positive])}_#{:erlang.monotonic_time()}"
+    file_path = Path.join(temp_dir, "test_wal_#{unique_id}.log")
+
+    # Register cleanup for this specific file
+    on_exit(fn -> File.rm(file_path) end)
 
     File.write!(file_path, "")
     {:ok, fd} = File.open(file_path, [:write, :raw, :binary])
@@ -115,7 +124,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
 
   Returns {file_path, test_scenarios} where test_scenarios contains:
   - :existing_versions - versions that should be found
-  - :missing_versions - versions that should return :not_found  
+  - :missing_versions - versions that should return :not_found
   - :boundary_versions - first and last versions
   """
   @spec create_comprehensive_test_scenario() :: {String.t(), map()}
@@ -208,8 +217,14 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   """
   @spec create_test_log() :: {:ok, pid()}
   def create_test_log do
-    test_dir = "/tmp/wal_test_#{System.unique_integer([:positive])}"
+    # Use system temp directory with unique subdirectory
+    temp_base = System.tmp_dir!()
+    unique_id = "#{System.unique_integer([:positive])}_#{:erlang.monotonic_time()}"
+    test_dir = Path.join(temp_base, "wal_test_#{unique_id}")
     File.mkdir_p!(test_dir)
+
+    # Register cleanup for this specific directory
+    on_exit(fn -> File.rm_rf(test_dir) end)
 
     cluster = Bedrock.Cluster
     otp_name = :"test_log_#{System.unique_integer([:positive])}"
@@ -272,21 +287,5 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   @spec get_log_info(pid(), [atom()]) :: {:ok, map()} | {:error, term()}
   def get_log_info(log_pid, info_keys) do
     Log.info(log_pid, info_keys)
-  end
-
-  @doc """
-  Creates a test setup macro for WAL tests.
-  """
-  defmacro setup_wal_test do
-    quote do
-      setup do
-        on_exit(fn ->
-          "test_wal_*.log" |> Path.wildcard() |> Enum.each(&File.rm/1)
-          "/tmp/wal_test_*" |> Path.wildcard() |> Enum.each(&File.rm_rf/1)
-        end)
-
-        :ok
-      end
-    end
   end
 end

@@ -8,7 +8,17 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
     test "versions progress based on monotonic time" do
       # Start with a known baseline
       initial_version = Version.from_integer(1000)
-      {:ok, pid} = GenServer.start_link(Server, {self(), 1, initial_version})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer
+           ]}
+        )
 
       # Get first version
       {:ok, _read1, commit1} = GenServer.call(pid, :next_commit_version)
@@ -32,7 +42,17 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
 
     test "versions always progress monotonically even with rapid requests" do
       initial_version = Version.from_integer(2000)
-      {:ok, pid} = GenServer.start_link(Server, {self(), 1, initial_version})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer
+           ]}
+        )
 
       # Make rapid requests
       versions =
@@ -58,7 +78,17 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
     test "initialization preserves baseline from previous epoch" do
       # Simulate recovery with large version from previous epoch
       previous_epoch_version = Version.from_integer(1_000_000)
-      {:ok, pid} = GenServer.start_link(Server, {self(), 2, previous_epoch_version})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 2,
+             last_committed_version: previous_epoch_version,
+             otp_name: :test_sequencer_epoch2
+           ]}
+        )
 
       # First version should be >= previous epoch version
       {:ok, _read, commit} = GenServer.call(pid, :next_commit_version)
@@ -71,7 +101,17 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
 
     test "read versions track committed versions correctly" do
       initial_version = Version.from_integer(5000)
-      {:ok, pid} = GenServer.start_link(Server, {self(), 1, initial_version})
+
+      pid =
+        start_supervised!(
+          {Server,
+           [
+             director: self(),
+             epoch: 1,
+             last_committed_version: initial_version,
+             otp_name: :test_sequencer
+           ]}
+        )
 
       # Initial read version should be the baseline
       {:ok, read_v1} = GenServer.call(pid, :next_read_version)

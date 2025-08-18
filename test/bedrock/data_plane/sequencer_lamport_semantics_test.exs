@@ -183,9 +183,19 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
   # Helper function to start a sequencer with given initial version
   defp start_sequencer(initial_version) do
-    GenServer.start_link(
-      Bedrock.DataPlane.Sequencer.Server,
-      {self(), 1, initial_version}
-    )
+    otp_name = :"test_sequencer_#{:erlang.unique_integer([:positive])}"
+
+    pid =
+      start_supervised!(
+        {Bedrock.DataPlane.Sequencer.Server,
+         [
+           director: self(),
+           epoch: 1,
+           last_committed_version: initial_version,
+           otp_name: otp_name
+         ]}
+      )
+
+    {:ok, pid}
   end
 end

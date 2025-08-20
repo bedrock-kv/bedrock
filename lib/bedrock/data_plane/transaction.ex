@@ -375,6 +375,20 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   @doc """
+  Streams mutations from the transaction, raising if the transaction is invalid.
+
+  Returns a stream of mutations. Use this when you're confident the transaction
+  is valid or want to fail fast on invalid data.
+  """
+  @spec stream_mutations!(binary()) :: Enumerable.t()
+  def stream_mutations!(encoded_transaction) do
+    case stream_mutations(encoded_transaction) do
+      {:ok, stream} -> stream
+      {:error, reason} -> raise "Failed to stream mutations: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
   Adds a commit version to an existing transaction.
   """
   @spec add_commit_version(binary(), binary()) :: {:ok, binary()} | {:error, reason :: term()}

@@ -1,15 +1,45 @@
-defmodule Bedrock.DataPlane.Log.Shale.Tracing do
+defmodule Bedrock.DataPlane.Log.Tracing do
   @moduledoc false
-  alias Bedrock.DataPlane.Log.Tracing
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
+
+  require Logger
+
+  @spec handler_id() :: String.t()
+  defp handler_id, do: "bedrock_trace_data_plane_log"
 
   @spec start() :: :ok | {:error, :already_exists}
   def start do
-    Tracing.start()
+    :telemetry.attach_many(
+      handler_id(),
+      [
+        [:bedrock, :log, :started],
+        [:bedrock, :log, :lock_for_recovery],
+        [:bedrock, :log, :recover_from],
+        [:bedrock, :log, :push],
+        [:bedrock, :log, :push_out_of_order],
+        [:bedrock, :log, :pull]
+      ],
+      &__MODULE__.handler/4,
+      nil
+    )
   end
 
   @spec stop() :: :ok | {:error, :not_found}
-  def stop do
-    Tracing.stop()
+  def stop, do: :telemetry.detach(handler_id())
+
+  @spec handler(list(atom()), map(), map(), term()) :: :ok
+  def handler([:bedrock, :log, event], measurements, metadata, _), do: log_event(event, measurements, metadata)
+
+  @spec log_event(atom(), map(), map()) :: :ok
+  def log_event(:started, _, %{cluster: cluster, id: id, otp_name: otp_name}) do
+    Logger.metadata(
+      id: id,
+      cluster: cluster,
+      otp_name: otp_name
+    )
+
+    info("Started log service: #{otp_name}")
   end
 
   def log_event(:lock_for_recovery, _, %{epoch: epoch}), do: info("Lock for recovery in epoch #{epoch}")
@@ -43,6 +73,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Tracing do
     metadata = Logger.metadata()
     cluster = Keyword.fetch!(metadata, :cluster)
     id = Keyword.fetch!(metadata, :id)
-    Logger.info("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
+    Logger.info("Bedrock [#{cluster.name()}/#{id}]: #{message}")
   end
 end

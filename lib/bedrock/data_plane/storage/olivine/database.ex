@@ -129,13 +129,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   This is used during transaction application for values within the window.
   """
   @spec store_value(t(), key :: Bedrock.key(), version :: Bedrock.version(), value :: Bedrock.value()) ::
-          :ok | {:error, term()}
+          :ok
   def store_value(database, key, version, value) do
-    if :ets.insert_new(database.buffer, {{version, key}, value}) do
-      :ok
-    else
-      {:error, :already_exists}
-    end
+    :ets.insert(database.buffer, {{version, key}, value})
+    :ok
   end
 
   @doc """
@@ -143,13 +140,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   This is used during transaction application for modified pages within the window.
   """
   @spec store_page_version(t(), Page.id(), version :: Bedrock.version(), page :: Page.t()) ::
-          :ok | {:error, term()}
+          :ok
   def store_page_version(database, page_id, version, page) do
-    if :ets.insert_new(database.buffer, {{version, {:page, page_id}}, page}) do
-      :ok
-    else
-      {:error, :already_exists}
-    end
+    :ets.insert(database.buffer, {{version, {:page, page_id}}, page})
+    :ok
   end
 
   @doc """
@@ -157,20 +151,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   This is used during transaction application for efficient batch storage of modified pages.
   """
   @spec store_modified_pages(t(), version :: Bedrock.version(), pages :: [Page.t()]) ::
-          :ok | {:error, term()}
+          :ok
   def store_modified_pages(database, version, pages) do
     Enum.each(pages, fn page ->
       page_id = Page.id(page)
-
-      case store_page_version(database, page_id, version, page) do
-        :ok -> :ok
-        {:error, reason} -> throw({:error, reason})
-      end
+      :ok = store_page_version(database, page_id, version, page)
     end)
 
     :ok
-  catch
-    {:error, reason} -> {:error, reason}
   end
 
   @doc """
@@ -281,6 +269,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
           {:ok, Bedrock.version()} | {:error, :not_found}
   def load_durable_version(database) do
     {:ok, database.durable_version}
+  end
+
+  @doc """
+  Load durable version directly from DETS storage.
+  This is useful for background processes that may have a stale database struct.
+  """
+  @spec load_current_durable_version(t()) ::
+          {:ok, Bedrock.version()} | {:error, :not_found}
+  def load_current_durable_version(database) do
+    load_durable_version_internal(database.dets_storage)
   end
 
   @spec info(t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) ::

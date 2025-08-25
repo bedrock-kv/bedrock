@@ -125,6 +125,23 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   end
 
   @impl true
+  def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t) do
+    # Discard transactions when locked
+    noreply(t)
+  end
+
+  @impl true
+  def handle_info({:apply_transactions, encoded_transactions}, %State{} = t) do
+    case Logic.apply_transactions_from_puller(t, encoded_transactions) do
+      {:ok, updated_state, version} ->
+        # Notify waiting fetches and continue with updated state
+        updated_state
+        |> Logic.notify_waiting_fetches(version)
+        |> noreply()
+    end
+  end
+
+  @impl true
   def handle_info({:transactions_applied, version}, %State{} = t) do
     t
     |> Logic.notify_waiting_fetches(version)

@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   @moduledoc false
 
   import Bedrock.DataPlane.Storage.Olivine.State,
-    only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1]
+    only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
@@ -10,7 +10,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
+  alias Bedrock.DataPlane.Storage.Olivine.Pulling
   alias Bedrock.DataPlane.Storage.Olivine.State
+  alias Bedrock.DataPlane.Storage.Olivine.Telemetry
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.WaitingList
   alias Bedrock.Service.Worker
 
@@ -37,6 +41,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
 
   @spec shutdown(State.t()) :: :ok
   def shutdown(%State{} = t) do
+    stop_pulling(t)
     notify_waitlist_shutdown(t.waiting_fetches)
     :ok = Database.close(t.database)
   end
@@ -56,24 +61,70 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   @spec stop_pulling(State.t()) :: State.t()
   def stop_pulling(%{pull_task: nil} = t), do: t
 
-  def stop_pulling(%{pull_task: _puller} = t) do
+  def stop_pulling(%{pull_task: puller} = t) do
+    Pulling.stop(puller)
     reset_puller(t)
   end
 
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
-  def unlock_after_recovery(t, durable_version, %{logs: _logs, services: _services}) do
+  def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
     with :ok <- IndexManager.purge_transactions_newer_than(t.index_manager, durable_version) do
-      _apply_and_notify_fn = fn encoded_transactions ->
-        updated_vm = IndexManager.apply_transactions(t.index_manager, encoded_transactions, t.database)
-        version = updated_vm.current_version
-        send(self(), {:transactions_applied, version})
-        version
+      # Stop any existing puller before starting a new one
+      t = stop_pulling(t)
+      main_process_pid = self()
+
+      apply_and_notify_fn = fn encoded_transactions ->
+        send(main_process_pid, {:apply_transactions, encoded_transactions})
+        # Extract the version from the last transaction to tell the puller what to request next
+        case encoded_transactions do
+          [] ->
+            # No transactions, keep current position - call back to main process for current version
+            try do
+              case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
+                {:ok, version} -> version
+                _ -> Version.zero()
+              end
+            catch
+              # Handle timeout/exit gracefully
+              :exit, _ -> Version.zero()
+            end
+
+          transactions ->
+            # Return the commit version of the last transaction
+            last_transaction = List.last(transactions)
+            Transaction.extract_commit_version!(last_transaction)
+        end
       end
+
+      puller =
+        Pulling.start_pulling(
+          durable_version,
+          t.id,
+          logs,
+          services,
+          apply_and_notify_fn,
+          fn ->
+            # Call back to the main process to get current durable version
+            # This ensures we get the up-to-date version after transactions are applied
+            try do
+              case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
+                {:ok, version} -> version
+                # Default to zero version if call fails
+                _ -> Version.zero()
+              end
+            catch
+              # Handle timeout/exit gracefully
+              :exit, _ -> Version.zero()
+            end
+          end,
+          # Window advancement is handled by the main process after applying transactions
+          fn -> :ok end
+        )
 
       t
       |> update_mode(:running)
-      # |> put_puller(puller)
+      |> put_puller(puller)
       |> then(&{:ok, &1})
     end
   end
@@ -271,15 +322,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   def advance_window_with_persistence(%State{} = state) do
     case IndexManager.prepare_window_advancement(state.index_manager) do
       :no_eviction ->
+        # Trace that window advancement was considered but no eviction was needed
+        Telemetry.trace_window_advancement_no_eviction(state.id)
         {:ok, state}
 
       {:evict, new_durable_version, evicted_versions, index_manager} ->
+        # Trace that window advancement is evicting data
+        Telemetry.trace_window_advancement_evicting(state.id, new_durable_version, length(evicted_versions))
+
         with {:ok, database} <-
                Database.advance_durable_version(
                  state.database,
                  new_durable_version,
                  evicted_versions
                ) do
+          Telemetry.trace_window_advancement_complete(state.id, new_durable_version)
           {:ok, %{state | index_manager: index_manager, database: database}}
         end
     end
@@ -291,6 +348,30 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     |> Enum.each(fn {_deadline, reply_fn, _fetch_request} ->
       reply_fn.({:error, :shutting_down})
     end)
+  end
+
+  @doc """
+  Apply transactions from the puller to the storage state.
+  """
+  @spec apply_transactions_from_puller(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
+  def apply_transactions_from_puller(%State{} = t, encoded_transactions) do
+    # Apply transactions to get updated index manager
+    updated_index_manager = IndexManager.apply_transactions(t.index_manager, encoded_transactions, t.database)
+    version = updated_index_manager.current_version
+
+    # Update state with new index manager
+    state_with_transactions = %{t | index_manager: updated_index_manager}
+
+    # Advance window to handle durability and cleanup
+    case advance_window_with_persistence(state_with_transactions) do
+      {:ok, final_state} ->
+        {:ok, final_state, version}
+
+      {:error, _reason} ->
+        # Log error but continue - window advancement is important but shouldn't block transaction processing
+        # The window will be advanced on the next batch or via periodic cleanup
+        {:ok, state_with_transactions, version}
+    end
   end
 
   #

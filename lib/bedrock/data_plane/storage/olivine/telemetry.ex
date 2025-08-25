@@ -134,4 +134,50 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Telemetry do
       otp_name: otp_name
     })
   end
+
+  @spec trace_log_pull_circuit_breaker_tripped(Bedrock.version(), pos_integer()) :: :ok
+  def trace_log_pull_circuit_breaker_tripped(version, ms_to_wait) do
+    Telemetry.execute([:olivine, :storage, :pull_circuit_breaker_tripped], %{}, %{
+      version: version,
+      ms_to_wait: ms_to_wait
+    })
+  end
+
+  @spec trace_log_marked_as_failed(Bedrock.version(), term()) :: :ok
+  def trace_log_marked_as_failed(version, log_id) do
+    Telemetry.execute([:olivine, :storage, :log_marked_as_failed], %{}, %{
+      version: version,
+      log_id: log_id
+    })
+  end
+
+  @spec trace_log_pull_circuit_breaker_reset(Bedrock.version()) :: :ok
+  def trace_log_pull_circuit_breaker_reset(version) do
+    Telemetry.execute([:olivine, :storage, :pull_circuit_breaker_reset], %{}, %{
+      version: version
+    })
+  end
+
+  @spec trace_window_advancement_no_eviction(term()) :: :ok
+  def trace_window_advancement_no_eviction(worker_id) do
+    Telemetry.execute([:olivine, :window, :advancement_no_eviction], %{}, %{
+      worker_id: worker_id
+    })
+  end
+
+  @spec trace_window_advancement_evicting(term(), Bedrock.version(), non_neg_integer()) :: :ok
+  def trace_window_advancement_evicting(worker_id, new_durable_version, evicted_version_count) do
+    Telemetry.execute([:olivine, :window, :advancement_evicting], %{evicted_version_count: evicted_version_count}, %{
+      worker_id: worker_id,
+      new_durable_version: new_durable_version
+    })
+  end
+
+  @spec trace_window_advancement_complete(term(), Bedrock.version()) :: :ok
+  def trace_window_advancement_complete(worker_id, new_durable_version) do
+    Telemetry.execute([:olivine, :window, :advancement_complete], %{}, %{
+      worker_id: worker_id,
+      new_durable_version: new_durable_version
+    })
+  end
 end

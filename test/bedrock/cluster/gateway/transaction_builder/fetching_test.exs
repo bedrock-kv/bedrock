@@ -568,4 +568,69 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
   defp key_in_range?(key, min_key, max_key) when is_binary(max_key) do
     key >= min_key and key < max_key
   end
+
+  describe "lease_expired error handling" do
+    test "confirms fix: lease_expired is now handled gracefully" do
+      # Mock next_read_version_fn to return lease_expired (simulates old incarnation scenario)
+      next_read_version_fn = fn _state -> {:error, :lease_expired} end
+
+      state = create_test_state(read_version: nil)
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      # Should now handle gracefully - confirming our fix works
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+      assert result == {:error, :lease_expired}
+    end
+
+    test "handles lease_expired error gracefully (desired behavior after fix)" do
+      # This test will pass after we implement the fix
+      next_read_version_fn = fn _state -> {:error, :lease_expired} end
+
+      state = create_test_state(read_version: nil)
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+
+      # After fix, should handle gracefully instead of crashing
+      assert result == {:error, :lease_expired}
+    end
+
+    test "simulates node incarnation scenario leading to lease_expired" do
+      # Create a mock sequencer that returns a "stale" read version
+      sequencer_fn = fn _sequencer_pid ->
+        # Old read version
+        {:ok, <<0, 0, 0, 0, 50, 0, 0, 0>>}
+      end
+
+      # Create a mock gateway that rejects old read versions
+      gateway_fn = fn _gateway_pid, read_version ->
+        # Simulate gateway with advanced minimum_read_version due to node restart
+        minimum_version = <<0, 0, 0, 0, 100, 0, 0, 0>>
+
+        if read_version < minimum_version do
+          {:error, :lease_expired}
+        else
+          # 5 second lease
+          {:ok, 5000}
+        end
+      end
+
+      state = create_test_state(read_version: nil)
+
+      opts = [
+        next_read_version_fn: fn t ->
+          # Simulate the full next_read_version flow
+          with {:ok, read_version} <- sequencer_fn.(t.transaction_system_layout.sequencer),
+               {:ok, lease_deadline_ms} <- gateway_fn.(t.gateway, read_version) do
+            {:ok, read_version, lease_deadline_ms}
+          end
+        end
+      ]
+
+      # This reproduces the exact scenario from the error logs
+      # Should now handle gracefully instead of crashing
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+      assert result == {:error, :lease_expired}
+    end
+  end
 end

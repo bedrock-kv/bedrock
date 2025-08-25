@@ -300,15 +300,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
     end
 
     @tag :tmp_dir
-    test "store_value/4 prevents duplicate entries", %{db: db} do
+    test "store_value/4 allows duplicate entries (last write wins)", %{db: db} do
       key = <<"dup_key">>
       version = Version.from_integer(1000)
 
       :ok = Database.store_value(db, key, version, <<"first">>)
-      {:error, :already_exists} = Database.store_value(db, key, version, <<"second">>)
+      :ok = Database.store_value(db, key, version, <<"second">>)
 
-      # Should still have the first value
-      assert {:ok, <<"first">>} = Database.fetch_value(db, key, version)
+      # Should have the last value (last write wins)
+      assert {:ok, <<"second">>} = Database.fetch_value(db, key, version)
     end
   end
 

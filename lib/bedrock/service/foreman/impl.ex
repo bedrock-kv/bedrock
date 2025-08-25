@@ -223,7 +223,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   defp worker_for_kind(:log), do: Bedrock.DataPlane.Log.Shale
 
   @spec worker_for_kind(:storage) :: module()
-  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Basalt
+  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Olivine
 
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t), do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)

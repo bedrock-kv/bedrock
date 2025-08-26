@@ -123,7 +123,7 @@ The Data Plane follows these design principles:
 ## See Also
 
 - [Control Plane Overview](control-plane.md) - Cluster coordination components that orchestrate Data Plane recovery
-- [Infrastructure Components](../deep-dives/architecture/infrastructure/) - Client interface and worker management components that initiate Data Plane operations
-- [Implementation Components](../deep-dives/architecture/implementations/) - Concrete storage engines that implement Data Plane interfaces
+- [Infrastructure Components](../deep-dives/architecture/infrastructure/README.md) - Client interface and worker management components that initiate Data Plane operations
+- [Implementation Components](../deep-dives/architecture/implementations/README.md) - Concrete storage engines that implement Data Plane interfaces
 - [Transactions Deep Dive](../deep-dives/transactions.md) - Detailed examination of transaction processing across Data Plane components
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Data Plane component recovery and coordination processes

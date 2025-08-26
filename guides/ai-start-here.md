@@ -61,7 +61,7 @@ Structured technical guidance for development tasks and system integration. Thes
 - **[Component Reference](deep-dives/architecture.md)** - Complete component architecture with interfaces and interaction patterns
 - **[Control Plane Overview](quick-reads/control-plane.md)** - Cluster coordination, recovery orchestration, and distributed consensus
 - **[Data Plane Overview](quick-reads/data-plane.md)** - Transaction processing, conflict resolution, and data persistence
-- **[Implementation Components](deep-dives/architecture/implementations)** - Concrete storage engines with performance characteristics
+- **[Implementation Components](deep-dives/architecture/implementations/README.md)** - Concrete storage engines with performance characteristics
 
 ## Deep Dives (Tier 3)
 

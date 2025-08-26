@@ -14,7 +14,7 @@ Bedrock solves this through a Raft-based consensus system where Coordinator proc
 
 Every Bedrock cluster must establish two critical elements before transaction processing can begin:
 
-**Authoritative Leadership**: One Coordinator must possess exclusive authority to make cluster-wide decisions, manage [epoch](../glossary.md#epoch) transitions, and coordinate [recovery](recovery.md) processes. Without clear leadership, competing coordinators could make conflicting decisions that compromise data consistency.
+**Authoritative Leadership**: One Coordinator must possess exclusive authority to make cluster-wide decisions, manage [epoch](../../../glossary.md#epoch) transitions, and coordinate [recovery](recovery.md) processes. Without clear leadership, competing coordinators could make conflicting decisions that compromise data consistency.
 
 **Complete Service Topology**: The system requires comprehensive knowledge of all available services across all nodes—their capabilities, locations, and operational status. Incomplete topology information leads to suboptimal resource allocation and potential recovery failures when services go unrecognized.
 
@@ -38,7 +38,7 @@ The most straightforward startup scenario occurs when nodes join a cluster with 
 
 ## Leader Discovery Through Coordinator Polling
 
-The [Gateway](architecture/infrastructure/gateway.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Gateway selects the coordinator reporting the highest [epoch](../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
+The [Gateway](architecture/infrastructure/gateway.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Gateway selects the coordinator reporting the highest [epoch](../../../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
 
 ## Service Registration with Coordinator
 
@@ -128,7 +128,7 @@ Distributed systems rarely achieve perfect timing synchronization—services may
 
 After Coordinator leadership stabilizes and initial [recovery](recovery.md) begins, late-starting services can still join the cluster seamlessly. When the local Foreman detects new services becoming operational, it advertises them to the local [Gateway](architecture/infrastructure/gateway.md). The Gateway registers these services with the Coordinator leader, which updates the service directory through Raft consensus and actively notifies the [Director](../glossary.md#director).
 
-This dynamic registration enables the Director to incorporate newly available resources into ongoing [recovery](recovery.md) operations or future [transaction system layouts](../quick-reads/transaction-system-layout.md), ensuring that all available resources contribute to system capacity and fault tolerance.
+This dynamic registration enables the Director to incorporate newly available resources into ongoing [recovery](recovery.md) operations or future [transaction system layouts](../../../quick-reads/transaction-system-layout.md), ensuring that all available resources contribute to system capacity and fault tolerance.
 
 ```mermaid
 sequenceDiagram
@@ -251,23 +251,23 @@ Cluster startup transforms a collection of individual processes into a coordinat
 
 Successful cluster startup establishes three essential guarantees that enable effective [recovery](recovery.md):
 
-**Unambiguous Authority**: Exactly one Coordinator possesses leadership authority with a current [epoch](../glossary.md#epoch), eliminating competing decision-makers that could compromise [recovery](recovery.md) consistency.
+**Unambiguous Authority**: Exactly one Coordinator possesses leadership authority with a current [epoch](../../../glossary.md#epoch), eliminating competing decision-makers that could compromise [recovery](recovery.md) consistency.
 
-**Complete Resource Visibility**: The [Director](../glossary.md#director) receives comprehensive knowledge of all available services across the cluster, ensuring [recovery](recovery.md) planning can utilize every available resource for fault tolerance and performance.
+**Complete Resource Visibility**: The [Director](../../../glossary.md#director) receives comprehensive knowledge of all available services across the cluster, ensuring [recovery](recovery.md) planning can utilize every available resource for fault tolerance and performance.
 
-**Coordinated Timing**: The two-phase readiness protocol ensures the [Director](../glossary.md#director) starts only after all concurrent service registration completes, preventing race conditions that could compromise [recovery](recovery.md) effectiveness.
+**Coordinated Timing**: The two-phase readiness protocol ensures the [Director](../../../glossary.md#director) starts only after all concurrent service registration completes, preventing race conditions that could compromise [recovery](recovery.md) effectiveness.
 
 ## The Coordinator-Managed Recovery Initiation
 
 With these guarantees established, the Coordinator leader actively starts the [recovery](recovery.md) process, which transforms the raw service inventory into a functioning [transaction processing system](transactions.md). The Coordinator provides [recovery](recovery.md) with a stable foundation—clear Raft-based leadership, complete resource knowledge, and coordinated timing—while supervising and managing the systematic reconstruction of distributed database infrastructure.
 
-This clear separation of concerns allows each component to focus on its essential challenge: the Coordinator handles distributed consensus and coordination, while the [Director](../glossary.md#director) handles distributed systems reconstruction under Coordinator supervision. Together, they transform system failure into reliable operation through well-defined, Raft-based protocols.
+This clear separation of concerns allows each component to focus on its essential challenge: the Coordinator handles distributed consensus and coordination, while the [Director](../../../glossary.md#director) handles distributed systems reconstruction under Coordinator supervision. Together, they transform system failure into reliable operation through well-defined, Raft-based protocols.
 
 ## Related Components and Processes
 
 - **[Recovery Architecture](recovery.md)**: The comprehensive reconstruction process that follows successful cluster startup
 - **[Gateway Component](architecture/infrastructure/gateway.md)**: Node-level coordination and service registration
-- **[Transaction System Layout](../quick-reads/transaction-system-layout.md)**: The coordination blueprint created during recovery
+- **[Transaction System Layout](../../../quick-reads/transaction-system-layout.md)**: The coordination blueprint created during recovery
 - **[Architecture Overview](architecture.md)**: System-wide architectural context for startup coordination
 
 ## Implementation References

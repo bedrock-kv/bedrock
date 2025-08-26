@@ -1,24 +1,24 @@
 # Resolver
 
-The [Resolver](../../glossary.md#resolver) implements Bedrock's [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) [conflict](../../glossary.md#conflict) detection, serving as the arbiter that determines which [transactions](../../glossary.md#transaction) can safely [commit](../../glossary.md#commit) together. Each Resolver covers a specific [key range](../../glossary.md#key-range) and maintains [version](../../glossary.md#version) history to detect when transactions would violate serialization if allowed to proceed.
+The [Resolver](../../../glossary.md#resolver) implements Bedrock's [Multi-Version Concurrency Control (MVCC)](../../../glossary.md#multi-version-concurrency-control) [conflict](../../../glossary.md#conflict) detection, serving as the arbiter that determines which [transactions](../../../glossary.md#transaction) can safely [commit](../../../glossary.md#commit) together. Each Resolver covers a specific [key range](../../../glossary.md#key-range) and maintains [version](../../../glossary.md#version) history to detect when transactions would violate serialization if allowed to proceed.
 
 **Location**: [`lib/bedrock/data_plane/resolver/server.ex`](../../../lib/bedrock/data_plane/resolver/server.ex)
 
 ## Optimistic Concurrency and Conflict Detection
 
-Bedrock uses [Optimistic Concurrency Control (OCC)](../../glossary.md#optimistic-concurrency-control), where transactions proceed without acquiring locks and conflicts are detected only at commit time. This approach maximizes concurrency and eliminates deadlocks, but it requires sophisticated conflict detection to maintain correctness. The fundamental challenge is determining whether a set of transactions, if committed together, would produce a result equivalent to some serial execution of those same transactions.
+Bedrock uses [Optimistic Concurrency Control (OCC)](../../../glossary.md#optimistic-concurrency-control), where transactions proceed without acquiring locks and conflicts are detected only at commit time. This approach maximizes concurrency and eliminates deadlocks, but it requires sophisticated conflict detection to maintain correctness. The fundamental challenge is determining whether a set of transactions, if committed together, would produce a result equivalent to some serial execution of those same transactions.
 
-Resolvers detect two primary types of conflicts that can violate serializability. Read-write conflicts occur when a transaction reads a key, then another transaction commits a write to that same key before the first transaction commits—the reading transaction based its decisions on stale data. Write-write conflicts happen when two transactions attempt to write to overlapping key ranges, which would produce arbitrary results depending on [storage](../../glossary.md#storage) server timing.
+Resolvers detect two primary types of conflicts that can violate serializability. Read-write conflicts occur when a transaction reads a key, then another transaction commits a write to that same key before the first transaction commits—the reading transaction based its decisions on stale data. Write-write conflicts happen when two transactions attempt to write to overlapping key ranges, which would produce arbitrary results depending on [storage](../../../glossary.md#storage) server timing.
 
 ## Version History Through Interval Trees
 
-Resolvers maintain an interval tree that tracks which key ranges were written at which versions. This structure enables efficient conflict detection by answering whether any writes occurred to overlapping key ranges after a transaction's [read version](../../glossary.md#read-version). The tree must be carefully pruned to prevent unbounded memory growth by removing entries for versions older than the [minimum read version](../../glossary.md#minimum-read-version) across active transactions.
+Resolvers maintain an interval tree that tracks which key ranges were written at which versions. This structure enables efficient conflict detection by answering whether any writes occurred to overlapping key ranges after a transaction's [read version](../../../glossary.md#read-version). The tree must be carefully pruned to prevent unbounded memory growth by removing entries for versions older than the [minimum read version](../../../glossary.md#minimum-read-version) across active transactions.
 
-The [Commit Proxy](../../glossary.md#commit-proxy) handles all key range partitioning and routing, sending each Resolver only the transactions relevant to its assigned key space. Resolvers don't need to know their specific key ranges—they simply process whatever transactions they receive, trusting that the Commit Proxy has already performed the necessary filtering based on the [transaction system layout](../../glossary.md#transaction-system-layout) established during [recovery](../../glossary.md#recovery).
+The [Commit Proxy](../../../glossary.md#commit-proxy) handles all key range partitioning and routing, sending each Resolver only the transactions relevant to its assigned key space. Resolvers don't need to know their specific key ranges—they simply process whatever transactions they receive, trusting that the Commit Proxy has already performed the necessary filtering based on the [transaction system layout](../../../glossary.md#transaction-system-layout) established during [recovery](../../../glossary.md#recovery).
 
 ## Resolution Process and Abort Strategy
 
-When a Resolver receives a [batch](../../glossary.md#batch) of transactions from the Commit Proxy, it processes each transaction in order to detect conflicts. For read-write conflicts, it checks whether any read keys overlap with key ranges that were written after the transaction's read version. For write-write conflicts, it identifies cases where multiple transactions attempt to modify overlapping key ranges.
+When a Resolver receives a [batch](../../../glossary.md#batch) of transactions from the Commit Proxy, it processes each transaction in order to detect conflicts. For read-write conflicts, it checks whether any read keys overlap with key ranges that were written after the transaction's read version. For write-write conflicts, it identifies cases where multiple transactions attempt to modify overlapping key ranges.
 
 When conflicts are detected, transactions are processed in order and conflicting transactions are simply added to an aborted list by their index position. This preserves transaction arrival order and provides predictable behavior.
 
@@ -178,7 +178,7 @@ Resolver serves as the **MVCC conflict detection authority** with these specific
 - **Memory Management**: Prunes old version history based on minimum read version to prevent unbounded growth
 - **Recovery State Reconstruction**: Rebuilds conflict detection state from committed transaction logs during recovery
 
-> **Complete Flow**: For the full transaction processing sequence showing Resolver's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+> **Complete Flow**: For the full transaction processing sequence showing Resolver's role in context, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ## Related Components
 

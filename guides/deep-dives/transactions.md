@@ -155,7 +155,7 @@ The flexible design allows each component to work with only needed sections:
 
 This approach improves efficiency and reduces data transfer overhead between components.
 
-> **Implementation Details**: See `lib/bedrock/data_plane/bedrock_transaction.ex` for complete binary format specification, CRC validation, and section operations.
+> **Binary Format**: Transactions use Transaction encoding with tagged binary sections for efficient processing. See the [deep dive](../quick-reads/transaction-format.md) for technical details.
 
 ## Detailed Phase Breakdown
 

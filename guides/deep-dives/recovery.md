@@ -52,15 +52,15 @@ The resolver startup phase handles the sophisticated challenge of preventing con
 
 ## Phase 11: [Transaction System Layout](../quick-reads/recovery/transaction-system-layout.md)
 
-The transaction system layout phase resolves the coordination challenge of isolated components by constructing and persisting the authoritative blueprint that enables distributed system components to locate and communicate with each other effectively. Recovery performs final validation of core components, constructs the complete coordination blueprint containing mappings of services to roles and key ranges to teams, then culminates in a comprehensive system transaction that both durably stores the configuration and validates the entire transaction processing pipeline end-to-end, employing fail-fast error handling that immediately terminates recovery if any failure occurs.
+The transaction system layout phase resolves the coordination challenge of isolated components by constructing the authoritative blueprint that enables distributed system components to locate and communicate with each other effectively. Recovery performs final validation of core components and constructs the complete coordination blueprint containing mappings of services to roles and key ranges to teams, preparing for the critical system transaction that will durably store this configuration.
 
-## Phase 12: [Persistence](../quick-reads/recovery/persistence.md)
+## Phase 12: [Monitoring](../quick-reads/recovery/monitoring.md)
 
-The persistence phase durably stores the new system configuration through a system transaction that validates the complete transaction processing pipeline while ensuring the configuration survives future failures and remains available for operational reference.
+The monitoring phase establishes comprehensive monitoring infrastructure that implements Bedrock's core fail-fast philosophy, covering sequencer, commit proxies, resolvers, logs, and the director with continuous operational validation while deliberately excluding storage servers that handle failures independently. **Critically, monitoring is established before the system transaction to ensure that any component failures during transaction processing trigger immediate fail-fast behavior rather than recovery stalls.**
 
-## Phase 13: [Monitoring](../quick-reads/recovery/monitoring.md)
+## Phase 13: [Persistence](../quick-reads/recovery/persistence.md)
 
-The monitoring phase establishes comprehensive monitoring infrastructure that implements Bedrock's core fail-fast philosophy, covering sequencer, commit proxies, resolvers, logs, and the director with continuous operational validation while deliberately excluding storage servers that handle failures independently. Once monitoring becomes fully active, the director transitions from recovery mode to normal operation, officially completing the transformation from system failure state to trusted operational infrastructure.
+The persistence phase durably stores the new system configuration through a system transaction that validates the complete transaction processing pipeline while ensuring the configuration survives future failures and remains available for operational reference. **With monitoring already active, any resolver timeouts or component failures during this critical transaction will trigger proper director shutdown and fresh recovery startup, preventing the system from getting stuck in repair loops.** Once this transaction succeeds, the director transitions from recovery mode to normal operation, officially completing the transformation from system failure state to trusted operational infrastructure.
 
 ## From Crisis to Confidence
 

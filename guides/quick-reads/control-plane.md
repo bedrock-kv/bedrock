@@ -73,7 +73,7 @@ The Control Plane follows these design principles to maintain system reliability
 ## See Also
 
 - [Data Plane Overview](data-plane.md) - Transaction processing and conflict resolution components coordinated by the Control Plane
-- [Infrastructure Components](../deep-dives/architecture/infrastructure) - Foundational cluster interface and client gateway components  
+- [Infrastructure Components](../deep-dives/architecture/infrastructure/README.md) - Foundational cluster interface and client gateway components  
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Detailed examination of Control Plane recovery coordination
 - [Cluster Startup](../deep-dives/cluster-startup.md) - Control Plane role in cluster initialization
 - [Architecture Overview](../deep-dives/architecture.md) - System-wide architectural context and component relationships

@@ -55,18 +55,18 @@ Bedrock components coordinate through key cross-cutting workflows that span mult
 
 The core workflow for processing client transactions through the distributed system. Components collaborate to provide ACID guarantees, MVCC consistency, and horizontal scalability.
 
-For detailed workflow documentation, see **[Transaction Processing Deep Dive](./transactions.md)**.
+For detailed workflow documentation, see **[Transaction Processing Deep Dive](../transactions.md)**.
 
 ### Recovery Coordination
 
 Systematic recovery from system failures through multi-phase orchestration. Components participate in service locking, state reconstruction, and system layout rebuilding to restore full operational capability.
 
-For detailed workflow documentation, see **[Recovery Deep Dive](./recovery.md)**.
+For detailed workflow documentation, see **[Recovery Deep Dive](../recovery.md)**.
 
 ### Cluster Startup
 
 Initial bootstrap process for new Bedrock clusters. Components coordinate to establish consensus leadership, initialize system configuration, and create the first operational transaction system layout.
 
-For detailed workflow documentation, see **[Cluster Startup Deep Dive](./cluster-startup.md)**.
+For detailed workflow documentation, see **[Cluster Startup Deep Dive](../cluster-startup.md)**.
 
 This separation ensures system-wide consistency and reliability while allowing each component to optimize for its specific responsibilities.

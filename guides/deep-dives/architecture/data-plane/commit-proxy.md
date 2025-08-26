@@ -1,12 +1,12 @@
 # Commit Proxy
 
-The [Commit Proxy](../../glossary.md#commit-proxy) serves as the central orchestrator of Bedrock's [transaction](../../glossary.md#transaction) commit process, transforming individual client transaction requests into efficiently processed batches while maintaining strict consistency guarantees. It coordinates the complete lifecycle from submission to durable persistence, managing [conflict resolution](../../glossary.md#conflict), [durability](../../glossary.md#durability-guarantee), and client notification in a carefully orchestrated pipeline.
+The [Commit Proxy](../../../glossary.md#commit-proxy) serves as the central orchestrator of Bedrock's [transaction](../../../glossary.md#transaction) commit process, transforming individual client transaction requests into efficiently processed batches while maintaining strict consistency guarantees. It coordinates the complete lifecycle from submission to durable persistence, managing [conflict resolution](../../../glossary.md#conflict), [durability](../../../glossary.md#durability-guarantee), and client notification in a carefully orchestrated pipeline.
 
 **Location**: [`lib/bedrock/data_plane/commit_proxy/server.ex`](../../../lib/bedrock/data_plane/commit_proxy/server.ex)
 
 ## System Role and Context
 
-The Commit Proxy occupies the critical junction between client transaction requests and the distributed storage infrastructure. It receives prepared transactions from [Transaction Builders](../../glossary.md#transaction-builder) and orchestrates their processing through multiple specialized components: [Resolvers](../../glossary.md#resolver) for conflict detection, [Log servers](../../glossary.md#log) for durable persistence, and the [Sequencer](../../glossary.md#sequencer) for version ordering.
+The Commit Proxy occupies the critical junction between client transaction requests and the distributed storage infrastructure. It receives prepared transactions from [Transaction Builders](../../../glossary.md#transaction-builder) and orchestrates their processing through multiple specialized components: [Resolvers](../../../glossary.md#resolver) for conflict detection, [Log servers](../../../glossary.md#log) for durable persistence, and the [Sequencer](../../../glossary.md#sequencer) for version ordering.
 
 This central coordination role enables sophisticated optimizations impossible with direct client-to-storage interactions. The component aggregates transactions into batches that amortize processing overhead, implements intra-batch conflict detection[^1], and ensures atomic all-or-nothing durability guarantees across the distributed log infrastructure.
 
@@ -25,7 +25,7 @@ Batching policies are configurable through size limits (`max_per_batch`) and tim
 
 ### Transaction Format Integration
 
-The Commit Proxy operates on Bedrock's optimized [Transaction binary format](../../glossary.md#transaction-format), which provides tagged section-based encoding. This structured format enables selective data access throughout the processing pipeline:
+The Commit Proxy operates on Bedrock's optimized [Transaction binary format](../../../glossary.md#transaction-format), which provides tagged section-based encoding. This structured format enables selective data access throughout the processing pipeline:
 
 - **Conflict Resolution**: Extract only READ_CONFLICTS and WRITE_CONFLICTS sections
 - **Logging**: Utilize complete transactions with MUTATIONS and COMMIT_VERSION sections  
@@ -46,7 +46,7 @@ Each batch advances through a precisely defined sequence of eight states managed
 #### Step 1: Batch Initialization
 **State Transition**: `:initialized → :created`
 
-**Purpose**: Capture batch metadata and establish [version](../../glossary.md#version) context
+**Purpose**: Capture batch metadata and establish [version](../../../glossary.md#version) context
 
 **Actions Performed**:
 - Assign a unique commit version to the batch
@@ -74,7 +74,7 @@ Each batch advances through a precisely defined sequence of eight states managed
 #### Step 3: Conflict Resolution
 **State Transition**: `:ready_for_resolution → :conflicts_resolved`
 
-**Purpose**: Coordinate with [Resolvers](../../glossary.md#resolver) to detect conflicts
+**Purpose**: Coordinate with [Resolvers](../../../glossary.md#resolver) to detect conflicts
 
 **Actions Performed**:
 - Distribute transactions to appropriate resolvers based on key ranges
@@ -116,7 +116,7 @@ default_timeout_fn(attempts_used) -> 500 * (1 <<< attempts_used)
 )
 ```
 
-The system implements exponential backoff with configurable retry limits (default 2 attempts) to handle transient resolver failures without overwhelming the system. All retry attempts emit [telemetry](../../glossary.md#telemetry) events for operational monitoring.
+The system implements exponential backoff with configurable retry limits (default 2 attempts) to handle transient resolver failures without overwhelming the system. All retry attempts emit [telemetry](../../../glossary.md#telemetry) events for operational monitoring.
 
 ---
 
@@ -138,7 +138,7 @@ The system implements exponential backoff with configurable retry limits (defaul
 #### Step 5: Logging Preparation
 **State Transition**: `:aborts_notified → :ready_for_logging`
 
-**Purpose**: Organize mutations by [storage team](../../glossary.md#storage-team) tags for efficient distribution
+**Purpose**: Organize mutations by [storage team](../../../glossary.md#storage-team) tags for efficient distribution
 
 **Actions Performed**:
 - Map transaction keys to storage team tags
@@ -174,7 +174,7 @@ The distribution algorithm ensures each log server receives exactly the mutation
 #### Step 6: Durable Persistence
 **State Transition**: `:ready_for_logging → :logged`
 
-**Purpose**: Push transactions to all required [log servers](../../glossary.md#log) and await acknowledgments
+**Purpose**: Push transactions to all required [log servers](../../../glossary.md#log) and await acknowledgments
 
 **Actions Performed**:
 - Transmit mutations to all required log servers in parallel
@@ -201,7 +201,7 @@ The logging system enforces strict all-or-nothing durability through parallel pu
 #### Step 7: Version Coordination
 **State Transition**: `:logged → :sequencer_notified`
 
-**Purpose**: Report successful commits to [Sequencer](../../glossary.md#sequencer) for version tracking
+**Purpose**: Report successful commits to [Sequencer](../../../glossary.md#sequencer) for version tracking
 
 **Actions Performed**:
 - Notify sequencer of successful commit version advancement
@@ -257,7 +257,7 @@ The Commit Proxy's performance is governed by fundamental trade-offs in batching
 
 ### Monitoring and Observability
 
-The system provides comprehensive operational visibility through structured [telemetry](../../glossary.md#telemetry) events:
+The system provides comprehensive operational visibility through structured [telemetry](../../../glossary.md#telemetry) events:
 
 #### Key Performance Indicators
 
@@ -287,7 +287,7 @@ Essential metrics for operational health monitoring:
 
 ### Error Recovery and Resilience
 
-The Commit Proxy employs a **fail-fast recovery model** consistent with other Bedrock components. When unrecoverable errors occur—such as persistent resolver unavailability or insufficient log acknowledgments—the component exits immediately, triggering [Director](../../glossary.md#director)-coordinated system recovery.
+The Commit Proxy employs a **fail-fast recovery model** consistent with other Bedrock components. When unrecoverable errors occur—such as persistent resolver unavailability or insufficient log acknowledgments—the component exits immediately, triggering [Director](../../../glossary.md#director)-coordinated system recovery.
 
 This approach prioritizes consistency over availability by avoiding complex partial recovery scenarios. Failed instances are replaced with fresh components that begin operation with clean, well-defined initial state. In-flight transactions are lost during recovery, requiring client-side retry logic as part of Bedrock's consistency-first design philosophy.
 
@@ -295,15 +295,15 @@ This approach prioritizes consistency over availability by avoiding complex part
 
 The Commit Proxy coordinates with multiple specialized components throughout the transaction lifecycle:
 
-- **[Transaction Builders](../../glossary.md#transaction-builder)**: Receive prepared transaction data for batch processing
-- **[Resolvers](../../glossary.md#resolver)**: Coordinate conflict detection with range-based filtering and parallel processing
-- **[Log Servers](../../glossary.md#log)**: Ensure durable persistence through universal acknowledgment requirements
-- **[Sequencer](../../glossary.md#sequencer)**: Report successful commits for version consistency maintenance
-- **[Director](../../glossary.md#director)**: Coordinate recovery operations and cluster layout updates
+- **[Transaction Builders](../../../glossary.md#transaction-builder)**: Receive prepared transaction data for batch processing
+- **[Resolvers](../../../glossary.md#resolver)**: Coordinate conflict detection with range-based filtering and parallel processing
+- **[Log Servers](../../../glossary.md#log)**: Ensure durable persistence through universal acknowledgment requirements
+- **[Sequencer](../../../glossary.md#sequencer)**: Report successful commits for version consistency maintenance
+- **[Director](../../../glossary.md#director)**: Coordinate recovery operations and cluster layout updates
 
 These integration points are designed for both resilience and optimal performance, implementing appropriate timeout mechanisms to prevent resource leaks and providing comprehensive telemetry for system-wide optimization.
 
-> **Complete Transaction Flow**: For the full transaction processing sequence showing the Commit Proxy's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+> **Complete Transaction Flow**: For the full transaction processing sequence showing the Commit Proxy's role in context, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ## Related Components
 
@@ -315,7 +315,7 @@ These integration points are designed for both resilience and optimal performanc
 
 ## Related Guides
 
-- **[Transaction Format](../../quick-reads/transaction-format.md)**: Binary format specification and encoding details
-- **[Transactions Overview](../../quick-reads/transactions.md)**: Complete transaction processing and ACID guarantees
+- **[Transaction Format](../../../quick-reads/transaction-format.md)**: Binary format specification and encoding details
+- **[Transactions Overview](../../../quick-reads/transactions.md)**: Complete transaction processing and ACID guarantees
 
 [^1]: Intra-batch conflict detection examines transactions within the same batch for conflicts with each other, preventing incompatible transactions from being committed together while maximizing batch success rates.

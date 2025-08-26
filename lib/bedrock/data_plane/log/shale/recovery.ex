@@ -76,11 +76,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       {:error, :unavailable} ->
         {:error, {:source_log_unavailable, log_ref}}
-
-      {:error, :version_not_found} ->
-        # No transactions found in the specified range due to version gaps.
-        # This is normal during recovery - just return success with current state.
-        {:ok, t}
     end
   end
 

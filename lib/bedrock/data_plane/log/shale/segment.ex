@@ -47,6 +47,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
+  @spec allocate_from_recycler!(SegmentRecycler.server(), String.t(), Bedrock.version()) :: t()
+  def allocate_from_recycler!(segment_recycler, path, version) do
+    case allocate_from_recycler(segment_recycler, path, version) do
+      {:ok, segment} -> segment
+      {:error, :allocation_failed} -> raise "Failed to allocate segment from recycler"
+    end
+  end
+
   @spec return_to_recycler(t(), SegmentRecycler.server()) :: :ok
   def return_to_recycler(segment, segment_recycler), do: SegmentRecycler.check_in(segment_recycler, segment.path)
 

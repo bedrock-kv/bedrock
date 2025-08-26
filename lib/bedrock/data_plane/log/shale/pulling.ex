@@ -23,13 +23,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:error, :version_too_old}
   def pull(t, from_version, opts \\ [])
 
-  def pull(t, from_version, _) when from_version >= t.last_version, do: {:waiting_for, from_version}
+  def pull(t, from_version, _) when from_version > t.last_version do
+    {:waiting_for, from_version}
+  end
+
+  def pull(t, from_version, _) when from_version == t.last_version do
+    {:waiting_for, from_version}
+  end
 
   def pull(t, from_version, _) when from_version < t.oldest_version, do: {:error, :version_too_old}
 
   def pull(t, from_version, opts) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
-         {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
+         {:ok, last_version} <- check_last_version(opts[:last_version] || t.last_version, from_version),
          {:ok, [active_segment | remaining_segments] = all_segments} <-
            ensure_necessary_segments_are_loaded(
              last_version,
@@ -43,6 +49,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         |> Enum.to_list()
 
       {:ok, %{t | active_segment: active_segment, segments: remaining_segments}, transactions}
+    else
+      {:error, :not_found} ->
+        # No transactions found after from_version due to version gaps.
+        # For recovery operations, return the error directly since recovery is synchronous.
+        # For regular pulls, wait for new transactions like we do for future versions.
+        if opts[:recovery] do
+          {:error, :not_found}
+        else
+          {:waiting_for, from_version}
+        end
+
+      error ->
+        error
     end
   end
 

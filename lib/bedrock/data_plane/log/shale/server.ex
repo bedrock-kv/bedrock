@@ -111,10 +111,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       |> reload_segments_at_path()
       |> case do
         {:error, :unable_to_list_segments} ->
-          {Version.zero(), Version.zero(), nil, []}
+          # Create initial active segment for new log
+          new_segment = Segment.allocate_from_recycler!(pid, t.path, Version.zero())
+          {Version.zero(), Version.zero(), new_segment, []}
 
         {:ok, []} ->
-          {Version.zero(), Version.zero(), nil, []}
+          # Create initial active segment for empty log
+          new_segment = Segment.allocate_from_recycler!(pid, t.path, Version.zero())
+          {Version.zero(), Version.zero(), new_segment, []}
 
         {:ok, [active_segment | segments]} ->
           active_segment = Segment.ensure_transactions_are_loaded(active_segment)

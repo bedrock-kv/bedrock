@@ -397,6 +397,23 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
+  @doc """
+  Extracts the commit version from an encoded transaction, raising on error.
+
+  This is the bang version of `extract_commit_version/1` that raises an exception
+  instead of returning an error tuple.
+
+  Returns the commit version binary or nil if no commit version is present.
+  Raises an exception if the transaction is malformed.
+  """
+  @spec extract_commit_version!(binary()) :: binary() | nil
+  def extract_commit_version!(encoded_transaction) do
+    case extract_commit_version(encoded_transaction) do
+      {:ok, version} -> version
+      {:error, reason} -> raise "Failed to extract commit version: #{inspect(reason)}"
+    end
+  end
+
   # ============================================================================
   # DYNAMIC OPCODE CONSTRUCTION
   # ============================================================================

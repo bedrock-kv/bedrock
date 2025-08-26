@@ -14,58 +14,26 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
           {:ok, Enumerable.t()} | {:error, :not_found}
   def from_segments([], _target_version), do: {:error, :not_found}
 
-  def from_segments([segment | segments], target_version) when segment.min_version > target_version do
-    case from_segments(segments, target_version) do
-      {:ok, stream} ->
-        {:ok,
-         Stream.concat(
-           stream,
-           from_list_of_transactions(fn ->
-             segment
-             |> Segment.transactions()
-             |> Enum.reverse()
-           end)
-         )}
+  def from_segments(segments, target_version) do
+    # Collect all transactions from all segments that match the criteria
+    all_valid_transactions =
+      segments
+      |> Enum.flat_map(fn segment ->
+        segment
+        |> Segment.transactions()
+        |> Enum.filter(fn transaction ->
+          version = Transaction.extract_commit_version!(transaction)
+          version > target_version
+        end)
+      end)
+      |> Enum.sort_by(fn transaction ->
+        # Sort by version to ensure proper ordering
+        Transaction.extract_commit_version!(transaction)
+      end)
 
-      {:error, :not_found} ->
-        filtered_transactions =
-          segment
-          |> Segment.transactions()
-          |> Enum.reverse()
-          |> Enum.drop_while(&transaction_version_lte(&1, target_version))
-
-        case filtered_transactions do
-          [] -> {:error, :not_found}
-          transactions -> {:ok, from_list_of_transactions(fn -> transactions end)}
-        end
-    end
-  end
-
-  def from_segments([segment | remaining_segments], target_version) do
-    segment
-    |> Segment.transactions()
-    |> Enum.reverse()
-    |> Enum.drop_while(fn transaction ->
-      case Transaction.extract_commit_version(transaction) do
-        {:ok, version} -> version < target_version
-        {:error, _} -> true
-      end
-    end)
-    |> case do
-      [transaction | rest] ->
-        case Transaction.extract_commit_version(transaction) do
-          {:ok, version} when version == target_version ->
-            {:ok, from_list_of_transactions(fn -> rest end)}
-
-          {:ok, version} when version > target_version ->
-            {:ok, from_list_of_transactions(fn -> [transaction | rest] end)}
-
-          _ ->
-            from_segments(remaining_segments, target_version)
-        end
-
-      _ ->
-        from_segments(remaining_segments, target_version)
+    case all_valid_transactions do
+      [] -> {:error, :not_found}
+      transactions -> {:ok, from_list_of_transactions(fn -> transactions end)}
     end
   end
 
@@ -157,13 +125,5 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
       transaction, 0 -> {:halt, transaction}
       transaction, n -> {[transaction], n - 1}
     end)
-  end
-
-  @spec transaction_version_lte(Transaction.encoded(), Bedrock.version()) :: boolean()
-  defp transaction_version_lte(transaction, target_version) do
-    case Transaction.extract_commit_version(transaction) do
-      {:ok, version} -> version <= target_version
-      {:error, _} -> true
-    end
   end
 end

@@ -69,7 +69,7 @@ defmodule CoverageSummary do
   end
 
   def main(_) do
-    IO.puts("Usage: coverage_summary.exs path/to/excoveralls.json [module_name]")
+    IO.puts("Usage: coverage_summary.exs [module_name] [path/to/excoveralls.json]")
     IO.puts("  - If module_name is provided, shows detailed coverage for that module")
 
     IO.puts(

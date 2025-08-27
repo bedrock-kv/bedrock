@@ -16,8 +16,9 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   end
 
   defp transaction_generator(version) do
-    version_int = Version.to_integer(version)
-    TransactionTestSupport.new_log_transaction(version_int, %{"key" => "value_#{version_int}"})
+    TransactionTestSupport.new_log_transaction(Version.to_integer(version), %{
+      "key" => "value_#{Version.to_integer(version)}"
+    })
   end
 
   defp segments_generator do
@@ -117,13 +118,10 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
             transactions = Enum.to_list(bounded_stream)
 
             # Property 1: All transactions in range (target_version, last_version]
-            target_int = Version.to_integer(target_version)
-            last_int = Version.to_integer(last_version)
+            transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
 
-            transaction_versions = get_transaction_versions(transactions)
-
-            assert Enum.all?(transaction_versions, fn v -> v > target_int and v <= last_int end),
-                   "Found transactions outside range (#{target_int}, #{last_int}]: #{inspect(transaction_versions)}"
+            assert Enum.all?(transaction_versions, fn v -> v > target_version and v <= last_version end),
+                   "Found transactions outside range (#{Version.to_integer(target_version)}, #{Version.to_integer(last_version)}]: #{inspect(Enum.map(transaction_versions, &Version.to_integer/1))}"
 
             # Property 2: Ordering preserved
             assert_transactions_ordered(transactions)
@@ -191,24 +189,18 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
 
             transactions = Enum.to_list(final_stream)
 
-            target_int = Version.to_integer(target_version)
-            last_int = Version.to_integer(last_version)
-            transaction_versions = get_transaction_versions(transactions)
+            transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
 
             # Property 1: Respects all bounds
             assert length(transactions) <= limit
-            assert Enum.all?(transaction_versions, fn v -> v > target_int and v <= last_int end)
+            assert Enum.all?(transaction_versions, fn v -> v > target_version and v <= last_version end)
 
             # Property 2: Ordering preserved
             assert_transactions_ordered(transactions)
 
             # Property 3: Should be equivalent to manual filtering and limiting
-            # We need to simulate the exact same behavior as the stream:
-            # 1. flat_map with reverse (to match stream behavior)
-            # 2. filter by version range
-            # 3. take limit (at_most)
             all_expected_transactions = simulate_stream_behavior(segments, target_version, last_version, limit)
-            expected_versions = get_transaction_versions(all_expected_transactions)
+            expected_versions = Enum.map(all_expected_transactions, &Transaction.extract_commit_version!/1)
 
             # Sort both for comparison since implementation doesn't guarantee global order across segments
             actual_sorted = Enum.sort(transaction_versions)
@@ -232,17 +224,16 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
       prev_max_version =
         prev_segment.transactions
         |> Enum.map(&TransactionTestSupport.extract_log_version/1)
-        |> Enum.max(fn -> <<0::64>> end)
-        |> Version.to_integer()
+        |> Enum.max(fn -> Version.from_integer(0) end)
 
-      next_min_version = Version.to_integer(next_segment.min_version)
+      next_min_version = next_segment.min_version
 
       # Assert that the next segment's min_version is > the previous segment's max transaction version
       assert next_min_version > prev_max_version,
              """
              Segments have overlapping version ranges!
-             Previous segment max version: #{prev_max_version}
-             Next segment min version: #{next_min_version}
+             Previous segment max version: #{Version.to_integer(prev_max_version)}
+             Next segment min version: #{Version.to_integer(next_min_version)}
              """
     end)
   end
@@ -250,91 +241,80 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   # Helper functions for property assertions
 
   defp assert_all_transactions_greater_than(transactions, target_version) do
-    target_int = Version.to_integer(target_version)
-    transaction_versions = get_transaction_versions(transactions)
+    transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
 
-    violating_versions = Enum.filter(transaction_versions, fn v -> v <= target_int end)
+    violating_versions = Enum.filter(transaction_versions, fn v -> v <= target_version end)
 
     assert violating_versions == [],
-           "Found transactions <= target_version (#{target_int}): #{inspect(violating_versions)}"
+           "Found transactions <= target_version (#{Version.to_integer(target_version)}): #{inspect(Enum.map(violating_versions, &Version.to_integer/1))}"
   end
 
   defp assert_transactions_ordered(transactions) do
-    versions = get_transaction_versions(transactions)
+    versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
 
     # Instead of requiring global ordering, just verify no duplicates and all valid versions
     assert length(versions) == length(Enum.uniq(versions)),
-           "Found duplicate transaction versions: #{inspect(versions)}"
+           "Found duplicate transaction versions: #{inspect(Enum.map(versions, &Version.to_integer/1))}"
 
-    # All versions should be positive
-    assert Enum.all?(versions, fn v -> v > 0 end),
-           "Found invalid transaction versions: #{inspect(versions)}"
+    # All versions should be positive (compare against zero version)
+    zero_version = Version.from_integer(0)
+
+    assert Enum.all?(versions, fn v -> v > zero_version end),
+           "Found invalid transaction versions: #{inspect(Enum.map(versions, &Version.to_integer/1))}"
   end
 
   defp assert_contains_all_expected(actual_transactions, expected_transactions) do
-    actual_versions = actual_transactions |> get_transaction_versions() |> Enum.sort()
-    expected_versions = expected_transactions |> get_transaction_versions() |> Enum.sort()
+    actual_versions = actual_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
+    expected_versions = expected_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
 
     missing_versions = expected_versions -- actual_versions
 
     assert missing_versions == [],
-           "Missing expected transactions with versions: #{inspect(missing_versions)}"
+           "Missing expected transactions with versions: #{inspect(Enum.map(missing_versions, &Version.to_integer/1))}"
   end
 
   defp assert_no_unexpected_transactions(actual_transactions, expected_transactions) do
-    actual_versions = actual_transactions |> get_transaction_versions() |> Enum.sort()
-    expected_versions = expected_transactions |> get_transaction_versions() |> Enum.sort()
+    actual_versions = actual_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
+    expected_versions = expected_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
 
     unexpected_versions = actual_versions -- expected_versions
 
     assert unexpected_versions == [],
-           "Found unexpected transactions with versions: #{inspect(unexpected_versions)}"
+           "Found unexpected transactions with versions: #{inspect(Enum.map(unexpected_versions, &Version.to_integer/1))}"
   end
 
   defp assert_no_valid_transactions_exist(segments, target_version) do
-    target_int = Version.to_integer(target_version)
-
     all_transactions = Enum.flat_map(segments, fn segment -> segment.transactions end)
-    all_versions = get_transaction_versions(all_transactions)
-    valid_versions = Enum.filter(all_versions, fn v -> v > target_int end)
+    all_versions = Enum.map(all_transactions, &Transaction.extract_commit_version!/1)
+    valid_versions = Enum.filter(all_versions, fn v -> v > target_version end)
 
     assert valid_versions == [],
-           "Expected :not_found but found valid transactions with versions: #{inspect(valid_versions)}"
+           "Expected :not_found but found valid transactions with versions: #{inspect(Enum.map(valid_versions, &Version.to_integer/1))}"
   end
 
-  defp get_transaction_versions(transactions) do
-    Enum.map(transactions, fn tx ->
-      tx |> Transaction.extract_commit_version!() |> Version.to_integer()
-    end)
-  end
+  # This function is now unused - replaced with direct Transaction.extract_commit_version! calls
+  # defp get_transaction_versions(transactions) do
+  #   Enum.map(transactions, &Transaction.extract_commit_version!/1)
+  # end
 
   defp collect_expected_transactions(segments, target_version) do
-    target_int = Version.to_integer(target_version)
-
     segments
     |> Enum.flat_map(fn segment -> segment.transactions end)
     |> Enum.filter(fn tx ->
-      version = tx |> Transaction.extract_commit_version!() |> Version.to_integer()
-      version > target_int
+      version = Transaction.extract_commit_version!(tx)
+      version > target_version
     end)
-    |> Enum.sort_by(fn tx ->
-      tx |> Transaction.extract_commit_version!() |> Version.to_integer()
-    end)
+    |> Enum.sort_by(&Transaction.extract_commit_version!/1)
   end
 
   defp collect_expected_transactions_in_range(segments, target_version, last_version) do
-    target_int = Version.to_integer(target_version)
-    last_int = Version.to_integer(last_version)
-
     segments
     |> Enum.flat_map(fn segment -> segment.transactions end)
     |> Enum.filter(fn tx ->
-      version = tx |> Transaction.extract_commit_version!() |> Version.to_integer()
-      version > target_int and version <= last_int
+      version = Transaction.extract_commit_version!(tx)
+      version > target_version and version <= last_version
     end)
-    |> Enum.sort_by(fn tx ->
-      tx |> Transaction.extract_commit_version!() |> Version.to_integer()
-    end)
+    |> Enum.sort_by(&Transaction.extract_commit_version!/1)
   end
 
   defp simulate_stream_behavior(segments, target_version, last_version, limit) do

@@ -238,8 +238,9 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
     # Create actual encoded transactions with the specified versions
     transactions =
       Enum.map(versions, fn version ->
-        version_int = Version.to_integer(version)
-        TransactionTestSupport.new_log_transaction(version_int, %{"key" => "value_#{version_int}"})
+        TransactionTestSupport.new_log_transaction(Version.to_integer(version), %{
+          "key" => "value_#{Version.to_integer(version)}"
+        })
       end)
 
     %Segment{

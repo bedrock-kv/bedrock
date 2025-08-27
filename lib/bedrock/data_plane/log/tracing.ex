@@ -73,6 +73,6 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     metadata = Logger.metadata()
     cluster = Keyword.fetch!(metadata, :cluster)
     id = Keyword.fetch!(metadata, :id)
-    Logger.info("Bedrock [#{cluster.name()}/#{id}]: #{message}")
+    Logger.info("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
   end
 end

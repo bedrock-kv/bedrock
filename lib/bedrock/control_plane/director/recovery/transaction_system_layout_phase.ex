@@ -116,7 +116,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
 
-      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
     else
       {:error, reason} ->
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}

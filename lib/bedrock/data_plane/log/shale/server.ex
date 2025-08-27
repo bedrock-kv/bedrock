@@ -111,7 +111,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       |> reload_segments_at_path()
       |> case do
         {:error, :unable_to_list_segments} ->
-          raise "Failed to list segments"
+          raise "Unable to read WAL segment files from path: #{t.path}. Check directory permissions and filesystem health."
 
         {:ok, []} ->
           # Create initial active segment for empty log

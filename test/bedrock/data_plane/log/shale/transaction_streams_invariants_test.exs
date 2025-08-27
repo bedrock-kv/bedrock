@@ -292,11 +292,6 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
            "Expected :not_found but found valid transactions with versions: #{inspect(Enum.map(valid_versions, &Version.to_integer/1))}"
   end
 
-  # This function is now unused - replaced with direct Transaction.extract_commit_version! calls
-  # defp get_transaction_versions(transactions) do
-  #   Enum.map(transactions, &Transaction.extract_commit_version!/1)
-  # end
-
   defp collect_expected_transactions(segments, target_version) do
     segments
     |> Enum.flat_map(fn segment -> segment.transactions end)

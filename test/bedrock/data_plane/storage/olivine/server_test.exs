@@ -27,11 +27,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
     end
 
     test "basic telemetry events can be emitted" do
-      alias Bedrock.DataPlane.Storage.Olivine.Telemetry
+      alias Bedrock.DataPlane.Storage.Telemetry
 
-      assert :ok = Telemetry.trace_fetch_start("test_key", <<1::64>>)
-      assert :ok = Telemetry.trace_transaction_applied(<<1::64>>, 1)
-      assert :ok = Telemetry.trace_persistent_error(:test_error)
+      assert :ok = Telemetry.trace_startup_start(:test_server)
+      assert :ok = Telemetry.trace_startup_complete(:test_server)
+      assert :ok = Telemetry.trace_log_pull_start(<<1::64>>, <<2::64>>)
     end
   end
 

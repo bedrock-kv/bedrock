@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   alias Bedrock.DataPlane.Storage
   alias Bedrock.DataPlane.Storage.Olivine.Logic
   alias Bedrock.DataPlane.Storage.Olivine.State
-  alias Bedrock.DataPlane.Storage.Olivine.Telemetry
+  alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.Service.Foreman
 
   @spec child_spec(opts :: keyword()) :: map()

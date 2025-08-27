@@ -14,13 +14,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   as their status was confirmed during storage recruitment):
 
   - **Sequencer**: Must have valid process ID (exactly one runs cluster-wide)
-  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)
+  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)  
   - **Resolvers**: Must have valid `{start_key, process_id}` pairs defining key range responsibilities
   - **Logs**: Must have corresponding service entries with `{:up, process_id}` status
 
   ## TSL Construction
 
-  Builds the complete TSL data structure containing component process IDs,
+  Builds the complete TSL data structure containing component process IDs, 
   service mappings, and operational status. See [Transaction System Layout](../../../../../../docs/transaction-system-layout.md)
   for detailed data structure specification.
 
@@ -77,7 +77,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   This function implements the three-step TSL construction process:
 
   1. **Validation**: Confirms all transaction components are operational via `validate_recovery_state/1`
-  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`
+  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`  
   3. **Unlocking**: Selectively unlocks commit proxies and storage servers via `unlock_services/4`
 
   ## Parameters
@@ -116,7 +116,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
 
-      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
     else
       {:error, reason} ->
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
@@ -318,26 +318,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   defp validate_resolvers([]), do: {:error, :no_resolvers}
 
   defp validate_resolvers(resolvers) when is_list(resolvers) do
-    case Enum.find(resolvers, &invalid_resolver?/1) do
-      nil -> :ok
-      {start_key, pid} -> {:error, {:unreachable_resolver, start_key, pid}}
-    end
-  end
+    valid_resolvers =
+      Enum.all?(resolvers, fn
+        {_start_key, pid} when is_pid(pid) -> true
+        _ -> false
+      end)
 
-  @spec invalid_resolver?({Bedrock.key(), pid()}) :: boolean()
-  defp invalid_resolver?({_start_key, pid}) when not is_pid(pid), do: true
-
-  defp invalid_resolver?({_start_key, pid}) do
-    case node(pid) do
-      node when node == node() ->
-        not Process.alive?(pid)
-
-      remote_node ->
-        case :rpc.call(remote_node, Process, :alive?, [pid], 1000) do
-          true -> false
-          false -> true
-          {:badrpc, _} -> true
-        end
+    if valid_resolvers do
+      :ok
+    else
+      {:error, :invalid_resolvers}
     end
   end
 

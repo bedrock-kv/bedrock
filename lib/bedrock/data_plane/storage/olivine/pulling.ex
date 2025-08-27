@@ -1,6 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
   @moduledoc false
-  import Bedrock.DataPlane.Storage.Olivine.Telemetry
+  import Bedrock.DataPlane.Storage.Telemetry
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
@@ -13,10 +13,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
           worker_id: Worker.id(),
           apply_transactions_fn: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn: (-> Bedrock.version()),
-          flush_window_fn: (-> :ok),
           logs: %{Log.id() => LogDescriptor.t()},
           services: %{Worker.id() => ServiceDescriptor.t()},
-          failed_logs: %{Log.id() => any()}
+          failed_logs: %{Log.id() => any()},
+          id: integer()
         }
 
   @spec start_pulling(
@@ -25,27 +25,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
           logs :: %{Log.id() => LogDescriptor.t()},
           services :: %{Worker.id() => ServiceDescriptor.t()},
           apply_transactions_fn :: ([Transaction.encoded()] -> Bedrock.version()),
-          get_durable_version_fn :: (-> Bedrock.version()),
-          flush_window_fn :: (-> :ok)
+          get_durable_version_fn :: (-> Bedrock.version())
         ) :: Task.t()
-  def start_pulling(
-        start_after,
-        worker_id,
-        logs,
-        services,
-        apply_transactions_fn,
-        get_durable_version_fn,
-        flush_window_fn
-      ) do
+  def start_pulling(start_after, worker_id, logs, services, apply_transactions_fn, get_durable_version_fn) do
     state = %{
       start_after: start_after,
       worker_id: worker_id,
       apply_transactions_fn: apply_transactions_fn,
       get_durable_version_fn: get_durable_version_fn,
-      flush_window_fn: flush_window_fn,
       logs: logs,
       services: services,
-      failed_logs: %{}
+      failed_logs: %{},
+      id: :rand.uniform(1_000_000)
     }
 
     Task.async(fn -> long_pull_loop(state) end)
@@ -57,11 +48,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
     :ok
   end
 
-  @spec circuit_breaker_timeout() :: pos_integer()
   def circuit_breaker_timeout, do: 10_000
-  @spec retry_delay() :: pos_integer()
-  def retry_delay, do: 5_000
-  @spec call_timeout() :: pos_integer()
+  def retry_delay, do: 1_000
   def call_timeout, do: 5_000
 
   @spec long_pull_loop(puller_state()) :: no_return()
@@ -75,20 +63,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
                willing_to_wait_in_ms: call_timeout(),
                subscriber: {state.worker_id, state.get_durable_version_fn.()}
              ) do
-          {:ok, encoded_transactions} ->
-            trace_log_pull_succeeded(state.start_after, length(encoded_transactions))
-
-            next_version = apply_transactions_fn.(encoded_transactions)
-
-            # Flush window once per pull batch
-            :ok = state.flush_window_fn.()
-
-            long_pull_loop(%{state | start_after: next_version})
+          {:ok, transactions} ->
+            trace_log_pull_succeeded(state.start_after, length(transactions))
+            new_state = process_pulled_transactions(state, transactions, apply_transactions_fn)
+            long_pull_loop(new_state)
 
           {:error, reason} ->
             trace_log_pull_failed(state.start_after, reason)
-            new_state = mark_log_as_failed(state, log_id)
-            long_pull_loop(new_state)
+
+            state
+            |> mark_log_as_failed(log_id)
+            |> long_pull_loop()
         end
 
       :no_available_logs ->
@@ -143,5 +128,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Pulling do
     trace_log_pull_circuit_breaker_reset(state.start_after)
 
     %{state | failed_logs: %{}}
+  end
+
+  # Process pulled transactions and update state accordingly
+  @spec process_pulled_transactions(puller_state(), [Transaction.encoded()], ([Transaction.encoded()] ->
+                                                                                Bedrock.version())) :: puller_state()
+  defp process_pulled_transactions(state, [], _apply_transactions_fn) do
+    # Add small delay to avoid rapid cycling when no transactions are available
+    :timer.sleep(50)
+    state
+  end
+
+  defp process_pulled_transactions(state, transactions, apply_transactions_fn) do
+    next_version = apply_transactions_fn.(transactions)
+    %{state | start_after: next_version}
   end
 end

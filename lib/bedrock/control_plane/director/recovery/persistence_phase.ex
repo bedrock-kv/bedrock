@@ -46,7 +46,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, _version} ->
         trace_recovery_system_state_persisted()
 
-        {recovery_attempt, :completed}
+        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
 
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)

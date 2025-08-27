@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     |> extract_pids_to_monitor()
     |> monitor_all_pids(monitor_fn)
 
-    {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+    {recovery_attempt, :completed}
   end
 
   @spec extract_pids_to_monitor(map()) :: [pid()]

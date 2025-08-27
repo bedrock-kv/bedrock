@@ -12,9 +12,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Pulling
   alias Bedrock.DataPlane.Storage.Olivine.State
-  alias Bedrock.DataPlane.Storage.Olivine.Telemetry
+  alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.WaitingList
   alias Bedrock.Service.Worker
 
@@ -70,31 +69,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
     with :ok <- IndexManager.purge_transactions_newer_than(t.index_manager, durable_version) do
-      # Stop any existing puller before starting a new one
       t = stop_pulling(t)
       main_process_pid = self()
 
-      apply_and_notify_fn = fn encoded_transactions ->
-        send(main_process_pid, {:apply_transactions, encoded_transactions})
-        # Extract the version from the last transaction to tell the puller what to request next
-        case encoded_transactions do
-          [] ->
-            # No transactions, keep current position - call back to main process for current version
-            try do
-              case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
-                {:ok, version} -> version
-                _ -> Version.zero()
-              end
-            catch
-              # Handle timeout/exit gracefully
-              :exit, _ -> Version.zero()
-            end
-
-          transactions ->
-            # Return the commit version of the last transaction
-            last_transaction = List.last(transactions)
-            Transaction.extract_commit_version!(last_transaction)
-        end
+      apply_and_notify_fn = fn transactions ->
+        send(main_process_pid, {:apply_transactions, transactions})
+        last_transaction = List.last(transactions)
+        Transaction.extract_commit_version!(last_transaction)
       end
 
       puller =
@@ -105,21 +86,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           services,
           apply_and_notify_fn,
           fn ->
-            # Call back to the main process to get current durable version
-            # This ensures we get the up-to-date version after transactions are applied
             try do
               case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
                 {:ok, version} -> version
-                # Default to zero version if call fails
-                _ -> Version.zero()
+                _ -> raise "Failed to get current durable version"
               end
             catch
-              # Handle timeout/exit gracefully
-              :exit, _ -> Version.zero()
+              :exit, _ -> raise "Failed to get current durable version"
             end
-          end,
-          # Window advancement is handled by the main process after applying transactions
-          fn -> :ok end
+          end
         )
 
       t

@@ -99,19 +99,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def ensure_transactions_are_loaded(segment), do: segment
 
   @spec transactions(t()) :: [Transaction.encoded()]
-  def transactions(%{transactions: nil} = segment),
-    do: segment |> ensure_transactions_are_loaded() |> Map.get(:transactions, [])
-
-  def transactions(segment), do: segment.transactions
-
-  @spec last_version(t()) :: Bedrock.version()
-  def last_version(%{transactions: [transaction_payload | _]}) do
-    # Extract version from Transaction payload
-    case Transaction.extract_commit_version(transaction_payload) do
-      {:ok, version_binary} -> version_binary
-      _ -> nil
-    end
+  def transactions(segment) do
+    segment
+    |> ensure_transactions_are_loaded()
+    |> Map.get(:transactions, [])
   end
 
-  def last_version(%{min_version: min_version}), do: min_version
+  def oldest_version(%{min_version: min_version}), do: min_version
+
+  def last_version(%{transactions: []}), do: nil
+  def last_version(%{transactions: [transaction | _]}), do: Transaction.extract_commit_version!(transaction)
 end

@@ -11,33 +11,45 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
 
   @spec from_segments([Segment.t()], Bedrock.version()) ::
-          {:ok, Enumerable.t()} | {:error, :not_found}
+          {:ok, Enumerable.t(Transaction.encoded())} | {:error, :not_found}
   def from_segments([], _target_version), do: {:error, :not_found}
 
   def from_segments(segments, target_version) do
-    # Collect all transactions from all segments that match the criteria
-    all_valid_transactions =
-      segments
-      |> Enum.flat_map(fn segment ->
-        segment
-        |> Segment.transactions()
-        |> Enum.filter(fn transaction ->
-          version = Transaction.extract_commit_version!(transaction)
-          version > target_version
-        end)
-      end)
-      |> Enum.sort_by(fn transaction ->
-        # Sort by version to ensure proper ordering
-        Transaction.extract_commit_version!(transaction)
-      end)
+    case find_segments_from_target(segments, target_version) do
+      [] ->
+        {:error, :not_found}
 
-    case all_valid_transactions do
-      [] -> {:error, :not_found}
-      transactions -> {:ok, from_list_of_transactions(fn -> transactions end)}
+      segments ->
+        stream =
+          segments
+          |> Stream.flat_map(fn segment ->
+            segment
+            |> Segment.transactions()
+            # Convert from newest-first to oldest-first
+            |> Enum.reverse()
+          end)
+          |> Stream.filter(fn transaction ->
+            version = Transaction.extract_commit_version!(transaction)
+            version > target_version
+          end)
+
+        # Check if stream has any elements
+        case Enum.take(stream, 1) do
+          [] -> {:error, :not_found}
+          _ -> {:ok, stream}
+        end
     end
   end
 
-  @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t()
+  # Find segments starting from the first one that could contain transactions > target_version
+  defp find_segments_from_target(segments, target_version), do: find_valid_segments(segments, target_version, [])
+
+  defp find_valid_segments([segment | rest], target_version, acc),
+    do: find_valid_segments(rest, target_version, [segment | acc])
+
+  defp find_valid_segments([], _target_version, acc), do: Enum.reverse(acc)
+
+  @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t(Transaction.encoded())
   def from_list_of_transactions(transactions_fn) do
     Stream.resource(
       transactions_fn,

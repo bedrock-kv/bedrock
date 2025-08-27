@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
 
   def pull(t, from_version, opts) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
-         {:ok, last_version} <- check_last_version(opts[:last_version] || t.last_version, from_version),
+         {:ok, last_version} <- check_last_version(opts[:last_version], from_version),
          {:ok, [active_segment | remaining_segments] = all_segments} <-
            ensure_necessary_segments_are_loaded(
              last_version,

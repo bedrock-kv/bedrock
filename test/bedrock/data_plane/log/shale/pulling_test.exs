@@ -69,10 +69,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       {:ok, _state, transactions} =
         Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
 
-      assert length(transactions) == 1
-
-      assert TransactionTestSupport.extract_log_version(hd(transactions)) ==
-               Version.from_integer(2)
+      versions = Enum.map(transactions, &TransactionTestSupport.extract_log_version/1)
+      assert versions == [Version.from_integer(2)]
     end
 
     test "handles recovery mode correctly", %{state: state} do

@@ -43,7 +43,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     test "returns waiting_for when from_version >= last_version", %{state: state} do
       version_3 = Version.from_integer(3)
       version_4 = Version.from_integer(4)
+      # Request for version 3 when last_version is 3 should wait (nothing after version 3)
       assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
+      # Request for version 4 when last_version is 3 should wait (need version 4+)
       assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
     end
 
@@ -67,10 +69,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       {:ok, _state, transactions} =
         Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
 
-      assert length(transactions) == 1
-
-      assert TransactionTestSupport.extract_log_version(hd(transactions)) ==
-               Version.from_integer(2)
+      versions = Enum.map(transactions, &TransactionTestSupport.extract_log_version/1)
+      assert versions == [Version.from_integer(2)]
     end
 
     test "handles recovery mode correctly", %{state: state} do
@@ -82,6 +82,24 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     test "respects pull limits", %{state: state} do
       {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1), limit: 1)
       assert length(transactions) == 1
+    end
+
+    test "boundary condition: pull exactly at last_version waits correctly", %{state: state} do
+      # When requesting start_after == last_version, should wait for new transactions
+      version_3 = Version.from_integer(3)
+
+      # state.last_version is 3, so requesting start_after: 3 should wait
+      assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
+    end
+
+    test "boundary condition: pull beyond last_version waits correctly", %{state: state} do
+      # When requesting start_after > last_version, should wait
+      version_4 = Version.from_integer(4)
+      version_5 = Version.from_integer(5)
+
+      # state.last_version is 3, so requesting start_after: 4 or 5 should wait
+      assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
+      assert {:waiting_for, ^version_5} = Pulling.pull(state, version_5)
     end
   end
 

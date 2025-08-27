@@ -43,6 +43,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         |> Enum.to_list()
 
       {:ok, %{t | active_segment: active_segment, segments: remaining_segments}, transactions}
+    else
+      {:error, :not_found} ->
+        # No transactions found after from_version due to version gaps.
+        # For recovery operations, return the error directly since recovery is synchronous.
+        # For regular pulls, wait for new transactions like we do for future versions.
+        if opts[:recovery] do
+          {:error, :not_found}
+        else
+          {:waiting_for, from_version}
+        end
+
+      error ->
+        error
     end
   end
 

@@ -11,65 +11,45 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
 
   @spec from_segments([Segment.t()], Bedrock.version()) ::
-          {:ok, Enumerable.t()} | {:error, :not_found}
+          {:ok, Enumerable.t(Transaction.encoded())} | {:error, :not_found}
   def from_segments([], _target_version), do: {:error, :not_found}
 
-  def from_segments([segment | segments], target_version) when segment.min_version > target_version do
-    case from_segments(segments, target_version) do
-      {:ok, stream} ->
-        {:ok,
-         Stream.concat(
-           stream,
-           from_list_of_transactions(fn ->
-             segment
-             |> Segment.transactions()
-             |> Enum.reverse()
-           end)
-         )}
+  def from_segments(segments, target_version) do
+    case find_segments_from_target(segments, target_version) do
+      [] ->
+        {:error, :not_found}
 
-      {:error, :not_found} ->
-        filtered_transactions =
-          segment
-          |> Segment.transactions()
-          |> Enum.reverse()
-          |> Enum.drop_while(&transaction_version_lte(&1, target_version))
+      segments ->
+        stream =
+          segments
+          |> Stream.flat_map(fn segment ->
+            segment
+            |> Segment.transactions()
+            # Convert from newest-first to oldest-first
+            |> Enum.reverse()
+          end)
+          |> Stream.filter(fn transaction ->
+            version = Transaction.extract_commit_version!(transaction)
+            version > target_version
+          end)
 
-        case filtered_transactions do
+        # Check if stream has any elements
+        case Enum.take(stream, 1) do
           [] -> {:error, :not_found}
-          transactions -> {:ok, from_list_of_transactions(fn -> transactions end)}
+          _ -> {:ok, stream}
         end
     end
   end
 
-  def from_segments([segment | remaining_segments], target_version) do
-    segment
-    |> Segment.transactions()
-    |> Enum.reverse()
-    |> Enum.drop_while(fn transaction ->
-      case Transaction.extract_commit_version(transaction) do
-        {:ok, version} -> version < target_version
-        {:error, _} -> true
-      end
-    end)
-    |> case do
-      [transaction | rest] ->
-        case Transaction.extract_commit_version(transaction) do
-          {:ok, version} when version == target_version ->
-            {:ok, from_list_of_transactions(fn -> rest end)}
+  # Find segments starting from the first one that could contain transactions > target_version
+  defp find_segments_from_target(segments, target_version), do: find_valid_segments(segments, target_version, [])
 
-          {:ok, version} when version > target_version ->
-            {:ok, from_list_of_transactions(fn -> [transaction | rest] end)}
+  defp find_valid_segments([segment | rest], target_version, acc),
+    do: find_valid_segments(rest, target_version, [segment | acc])
 
-          _ ->
-            from_segments(remaining_segments, target_version)
-        end
+  defp find_valid_segments([], _target_version, acc), do: Enum.reverse(acc)
 
-      _ ->
-        from_segments(remaining_segments, target_version)
-    end
-  end
-
-  @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t()
+  @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t(Transaction.encoded())
   def from_list_of_transactions(transactions_fn) do
     Stream.resource(
       transactions_fn,
@@ -157,13 +137,5 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
       transaction, 0 -> {:halt, transaction}
       transaction, n -> {[transaction], n - 1}
     end)
-  end
-
-  @spec transaction_version_lte(Transaction.encoded(), Bedrock.version()) :: boolean()
-  defp transaction_version_lte(transaction, target_version) do
-    case Transaction.extract_commit_version(transaction) do
-      {:ok, version} -> version <= target_version
-      {:error, _} -> true
-    end
   end
 end

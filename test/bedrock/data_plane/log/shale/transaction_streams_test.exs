@@ -6,8 +6,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
   alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
-  describe "from_segments/2 with unloaded transactions" do
-    test "demonstrates the fix - no longer crashes with enumerable error" do
+  describe "TransactionStreams.from_segments/2 with unloaded segments" do
+    test "handles nil transactions gracefully without enumerable protocol errors" do
       # Create a segment with nil transactions (simulating unloaded state)
       segment = %Segment{
         path: "nonexistent_path_for_test",
@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       # Protocol.UndefinedError with "protocol Enumerable not implemented for type Atom"
     end
 
-    test "processes segments with loaded transactions normally" do
+    test "processes segments with pre-loaded transactions correctly" do
       # Create a segment with pre-loaded transactions (reversed order as stored)
       transaction_1 =
         TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{

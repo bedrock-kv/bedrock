@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
+defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
   @moduledoc """
   Tests focused on Lamport clock semantics and version chain properties.
 
@@ -10,6 +10,11 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
 
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Version
+
+  # Mock cluster module for testing
+  defmodule TestCluster do
+    @moduledoc false
+  end
 
   describe "Lamport clock chain semantics" do
     test "consecutive version assignments form proper chains" do
@@ -189,6 +194,7 @@ defmodule Bedrock.DataPlane.SequencerLamportSemanticsTest do
       start_supervised!(
         {Bedrock.DataPlane.Sequencer.Server,
          [
+           cluster: TestCluster,
            director: self(),
            epoch: 1,
            last_committed_version: initial_version,

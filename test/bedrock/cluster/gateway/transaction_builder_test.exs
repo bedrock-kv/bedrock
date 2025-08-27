@@ -246,7 +246,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       GenServer.cast(pid, :unknown_cast)
 
-      assert_receive {:DOWN, ^ref, :process, ^pid, reason}
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 1000
       assert match?({:function_clause, _}, reason)
     end
   end

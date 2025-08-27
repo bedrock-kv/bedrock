@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
 
       {result, next_phase} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.PersistencePhase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
       assert result.transaction_system_layout
       assert result.transaction_system_layout.epoch == recovery_attempt.epoch
       assert result.transaction_system_layout.sequencer == recovery_attempt.sequencer

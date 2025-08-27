@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
+  alias Bedrock.DataPlane.Sequencer.Server
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -40,11 +41,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   end
 
   describe "execute/1 with mocked starter functions" do
-    test "returns error when starter returns non-pid value" do
-      # We need to test this through execute/1 now, but we need to mock the Shared.starter_for function
-      # This is more complex to test directly, so we'll focus on the integration behavior
+    test "transitions to next phase when sequencer starts successfully" do
+      agent = fn -> nil end |> Agent.start_link() |> elem(1)
+      sequencer_pid = spawn(fn -> :ok end)
 
-      # Create a recovery attempt that will use a mocked starter
+      start_supervised_fn = fn child_spec, node ->
+        Agent.update(agent, fn _ -> {child_spec, node} end)
+        {:ok, sequencer_pid}
+      end
+
+      recovery_attempt =
+        recovery_attempt()
+        |> with_cluster(TestCluster)
+        |> with_epoch(42)
+        |> with_version_vector({10, 100})
+        |> with_sequencer(nil)
+
+      context = %{start_supervised_fn: start_supervised_fn}
+
+      {result, next_phase} = SequencerStartupPhase.execute(recovery_attempt, context)
+
+      # Should transition to next phase
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
+      assert result.sequencer == sequencer_pid
+
+      # Verify the child spec passed to start_supervised_fn
+      {captured_child_spec, captured_node} = Agent.get(agent, & &1)
+
+      # Should be called on current node
+      assert captured_node == node()
+
+      # Verify child spec has correct tuple-based ID format
+      assert %{id: {Server, TestCluster, 42}} = captured_child_spec
+
+      # Verify start args contain correct parameters
+      assert %{start: {GenServer, :start_link, [Server, start_args, opts]}} = captured_child_spec
+      # epoch 42, last_committed_version 100
+      assert {_director, 42, 100} = start_args
+      assert [name: :test_sequencer] = opts
+    end
+
+    test "returns error when starter function fails" do
+      start_supervised_fn = fn _child_spec, _node ->
+        {:error, :startup_failed}
+      end
+
       recovery_attempt =
         recovery_attempt()
         |> with_cluster(TestCluster)
@@ -52,30 +93,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
         |> with_version_vector({0, 100})
         |> with_sequencer(nil)
 
-      # Since we can't easily mock Shared.starter_for in this context,
-      # we'll test the error handling path through the actual execution
-      {result, next_phase_or_error} =
-        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
+      context = %{start_supervised_fn: start_supervised_fn}
 
-      # Should be error due to supervisor not existing - halts recovery
-      assert {:error, {:failed_to_start, :sequencer, _, _}} = next_phase_or_error
+      {result, error} = SequencerStartupPhase.execute(recovery_attempt, context)
+
+      assert {:error, {:failed_to_start, :sequencer, _, :startup_failed}} = error
       assert result.sequencer == nil
     end
 
-    test "handles startup errors gracefully" do
+    test "uses correct last committed version from version vector" do
+      agent = fn -> nil end |> Agent.start_link() |> elem(1)
+
+      start_supervised_fn = fn child_spec, _node ->
+        Agent.update(agent, fn _ -> child_spec end)
+        {:ok, spawn(fn -> :ok end)}
+      end
+
       recovery_attempt =
         recovery_attempt()
         |> with_cluster(TestCluster)
-        |> with_epoch(1)
-        |> with_version_vector({0, 100})
+        |> with_epoch(5)
+        # last_committed_version should be 250
+        |> with_version_vector({25, 250})
         |> with_sequencer(nil)
 
-      {result, next_phase_or_error} =
-        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
+      context = %{start_supervised_fn: start_supervised_fn}
 
-      # Should transition to error state on any startup failure - halts recovery
-      assert {:error, {:failed_to_start, :sequencer, _, _}} = next_phase_or_error
-      assert result.sequencer == nil
+      {_result, _next_phase} = SequencerStartupPhase.execute(recovery_attempt, context)
+
+      captured_child_spec = Agent.get(agent, & &1)
+      assert %{start: {GenServer, :start_link, [_, start_args, _]}} = captured_child_spec
+      # epoch 5, last_committed_version 250
+      assert {_director, 5, 250} = start_args
     end
   end
 end

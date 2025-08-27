@@ -86,47 +86,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
     if Enum.empty?(available_nodes) do
       {:error, {:insufficient_nodes, :no_coordination_capable_nodes, n_proxies, 0}}
     else
-      child_spec =
-        child_spec_for_commit_proxy(cluster, epoch, director, lock_token, cluster_config)
-
       available_nodes
       |> distribute_proxies_round_robin(n_proxies)
-      |> start_proxies_on_nodes(child_spec, start_supervised)
-    end
-  end
-
-  @spec start_proxies_on_nodes(
-          [node()],
-          Supervisor.child_spec(),
-          (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
-        ) ::
-          {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), term()}}
-  defp start_proxies_on_nodes(nodes, child_spec, start_supervised) do
-    nodes
-    |> Task.async_stream(
-      fn node ->
-        child_spec
-        |> start_supervised.(node)
-        |> case do
-          {:ok, pid} -> {node, pid}
-          {:error, reason} -> {node, {:error, reason}}
-        end
-      end,
-      ordered: false
-    )
-    |> Enum.reduce_while([], fn
-      {:ok, {_node, pid}}, pids when is_pid(pid) ->
-        {:cont, [pid | pids]}
-
-      {:ok, {node, {:error, reason}}}, _ ->
-        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
-
-      {:exit, {node, reason}}, _ ->
-        {:halt, {:error, {:failed_to_start, :commit_proxy, node, reason}}}
-    end)
-    |> case do
-      {:error, reason} -> {:error, reason}
-      pids -> {:ok, pids}
+      |> Enum.with_index()
+      |> start_proxies(cluster, epoch, director, lock_token, cluster_config, start_supervised)
     end
   end
 
@@ -139,15 +102,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
     |> Enum.take(n_proxies)
   end
 
-  @spec child_spec_for_commit_proxy(
+  @spec child_spec(
           cluster :: Cluster.t(),
           epoch :: Bedrock.epoch(),
           director :: pid(),
           lock_token :: Bedrock.lock_token(),
-          cluster_config :: map()
+          cluster_config :: map(),
+          instance :: non_neg_integer()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_commit_proxy(cluster, epoch, director, lock_token, cluster_config) do
+  def child_spec(cluster, epoch, director, lock_token, cluster_config, instance) do
     empty_transaction_timeout_ms =
       Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000)
 
@@ -156,7 +120,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
       epoch: epoch,
       director: director,
       lock_token: lock_token,
-      empty_transaction_timeout_ms: empty_transaction_timeout_ms
+      instance: instance,
+      empty_transaction_timeout_ms: empty_transaction_timeout_ms,
+      max_latency_in_ms: 1,
+      max_per_batch: 10
     )
+  end
+
+  @spec start_proxies(
+          [{node(), non_neg_integer()}],
+          cluster :: module(),
+          Bedrock.epoch(),
+          director :: pid(),
+          lock_token :: binary(),
+          cluster_config :: map(),
+          (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
+        ) ::
+          {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), term()}}
+  defp start_proxies(nodes_with_instances, cluster, epoch, director, lock_token, cluster_config, start_supervised) do
+    nodes_with_instances
+    |> Task.async_stream(
+      fn {node, instance} ->
+        child_spec = child_spec(cluster, epoch, director, lock_token, cluster_config, instance)
+
+        child_spec
+        |> start_supervised.(node)
+        |> case do
+          {:ok, pid} -> {:ok, pid}
+          {:error, reason} -> {:error, {:failed_to_start, :commit_proxy, node, reason}}
+        end
+      end,
+      ordered: true
+    )
+    |> Enum.reduce_while({:ok, []}, fn
+      {:ok, {:ok, pid}}, {:ok, acc} -> {:cont, {:ok, [pid | acc]}}
+      {:ok, {:error, reason}}, _ -> {:halt, {:error, reason}}
+      {:exit, reason}, _ -> {:halt, {:error, {:failed_to_start, :commit_proxy, :unknown_node, reason}}}
+    end)
+    |> case do
+      {:ok, pids} -> {:ok, Enum.reverse(pids)}
+      error -> error
+    end
   end
 end

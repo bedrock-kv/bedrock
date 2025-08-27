@@ -72,7 +72,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
           ]
         ) ::
           {:ok, State.t(), binary()}
-          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}
+          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout | :lease_expired}
           | :error
   def fetch_from_storage(%{read_version: nil} = t, key, opts) do
     next_read_version_fn = Keyword.get(opts, :next_read_version_fn, &next_read_version/1)
@@ -90,6 +90,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Fetching do
 
       {:error, :unavailable} ->
         raise "No read version available for fetching key: #{inspect(key)}"
+
+      {:error, :lease_expired} ->
+        {:error, :lease_expired}
     end
   end
 

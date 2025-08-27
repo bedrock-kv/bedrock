@@ -68,22 +68,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
             director: pid(),
             epoch: Bedrock.epoch(),
             lock_token: Bedrock.lock_token(),
+            instance: non_neg_integer(),
             max_latency_in_ms: non_neg_integer(),
             max_per_batch: pos_integer(),
             empty_transaction_timeout_ms: non_neg_integer()
           ]
-        ) :: Supervisor.child_spec()
+        ) :: Supervisor.child_spec() | no_return()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
+    instance = opts[:instance] || raise "Missing :instance option"
     max_latency_in_ms = opts[:max_latency_in_ms] || 1
     max_per_batch = opts[:max_per_batch] || 10
     empty_transaction_timeout_ms = opts[:empty_transaction_timeout_ms] || 1_000
 
     %{
-      id: __MODULE__,
+      id: {__MODULE__, cluster, epoch, instance},
       start:
         {GenServer, :start_link,
          [
@@ -98,6 +100,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec init({module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), non_neg_integer(), binary()}) ::
           {:ok, State.t(), timeout()}
   def init({cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token}) do
+    # Monitor the Director - if it dies, this commit proxy should terminate
+    Process.monitor(director)
+
     trace_metadata(%{cluster: cluster, pid: self()})
 
     then(
@@ -178,6 +183,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_info(:timeout, %{batch: nil} = t), do: noreply(t, timeout: t.empty_transaction_timeout_ms)
 
   def handle_info(:timeout, %{batch: batch} = t), do: noreply(%{t | batch: nil}, continue: {:finalize, batch})
+
+  def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
+    # Director has died - this commit proxy should terminate gracefully
+    {:stop, :normal, t}
+  end
+
+  def handle_info(_msg, t) do
+    {:noreply, t}
+  end
 
   @impl true
   @spec handle_continue({:finalize, Batch.t()}, State.t()) :: {:noreply, State.t()}

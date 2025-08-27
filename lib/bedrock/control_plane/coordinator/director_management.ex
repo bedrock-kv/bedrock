@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     only: [
       put_director: 2,
       put_config: 2,
+      put_leader_startup_state: 2,
       convert_to_capability_map: 1
     ]
 
@@ -13,7 +14,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       trace_director_changed: 1,
       trace_director_failure_detected: 2,
       trace_director_launch: 2,
-      trace_director_shutdown: 2
+      trace_director_shutdown: 2,
+      trace_recovery_retry_attempt: 1,
+      trace_recovery_failed: 1
     ]
 
   alias Bedrock.ControlPlane.Config
@@ -28,11 +31,16 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
     trace_director_launch(t.epoch, t.transaction_system_layout)
 
-    {:ok, new_director} = start_director_with_monitoring!(t)
+    case start_director_with_monitoring(t) do
+      {:ok, new_director} ->
+        trace_director_changed(new_director)
+        put_director(t, new_director)
 
-    trace_director_changed(new_director)
-
-    put_director(t, new_director)
+      {:error, reason} ->
+        Logger.warning("Failed to start director: #{inspect(reason)}")
+        trace_recovery_failed(reason)
+        t
+    end
   end
 
   def try_to_start_director(t), do: t
@@ -42,29 +50,28 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   defp maybe_put_default_config(t), do: t
 
-  @spec start_director_with_monitoring!(State.t()) ::
-          {:ok, pid()} | no_return()
-  defp start_director_with_monitoring!(t) do
-    t.supervisor_otp_name
-    |> DynamicSupervisor.start_child(
-      {Director,
-       [
-         cluster: t.cluster,
-         config: t.config,
-         old_transaction_system_layout: t.transaction_system_layout,
-         epoch: t.epoch,
-         coordinator: self(),
-         services: t.service_directory,
-         node_capabilities: convert_to_capability_map(t.node_capabilities)
-       ]}
-    )
-    |> case do
+  @spec start_director_with_monitoring(State.t()) ::
+          {:ok, pid()} | {:error, term()}
+  defp start_director_with_monitoring(t) do
+    case DynamicSupervisor.start_child(
+           t.supervisor_otp_name,
+           {Director,
+            [
+              cluster: t.cluster,
+              config: t.config,
+              old_transaction_system_layout: t.transaction_system_layout,
+              epoch: t.epoch,
+              coordinator: self(),
+              services: t.service_directory,
+              node_capabilities: convert_to_capability_map(t.node_capabilities)
+            ]}
+         ) do
       {:ok, director_pid} ->
         Process.monitor(director_pid)
         {:ok, director_pid}
 
       {:error, reason} ->
-        raise "Failed to start director: #{inspect(reason)}"
+        {:error, reason}
     end
   end
 
@@ -75,11 +82,16 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
     updated_t = put_director(t, :unavailable)
 
-    # Only attempt restart if we have necessary state (not in tests)
-    if t.raft != nil and t.supervisor_otp_name != nil do
+    # Only attempt restart if we have necessary state (not in tests) and we're in a state that allows recovery
+    if t.raft != nil and t.supervisor_otp_name != nil and t.leader_startup_state == :leader_ready do
+      trace_recovery_retry_attempt(:director_failure)
       try_to_start_director(updated_t)
     else
-      updated_t
+      # Mark as recovery failed if we can't retry
+      case t.leader_startup_state do
+        :leader_ready -> put_leader_startup_state(updated_t, :recovery_failed)
+        _ -> updated_t
+      end
     end
   end
 

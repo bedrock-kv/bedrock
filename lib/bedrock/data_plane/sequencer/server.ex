@@ -25,6 +25,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @doc false
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
+    cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     otp_name = opts[:otp_name] || raise "Missing :name option"
@@ -33,7 +34,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
       opts[:last_committed_version] || raise "Missing :last_committed_version option"
 
     %{
-      id: __MODULE__,
+      id: {__MODULE__, cluster, epoch},
       start:
         {GenServer, :start_link,
          [
@@ -48,6 +49,9 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @impl true
   @spec init({pid(), Bedrock.epoch(), Bedrock.version()}) :: {:ok, State.t()}
   def init({director, epoch, known_committed_version}) do
+    # Monitor the Director - if it dies, this sequencer should terminate
+    Process.monitor(director)
+
     epoch_start_monotonic_us = System.monotonic_time(:microsecond)
     epoch_baseline_version_int = Version.to_integer(known_committed_version)
 
@@ -115,5 +119,16 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     emit_successful_commit(commit_version, known_committed_version)
 
     noreply(%{t | known_committed_version_int: updated_known_committed_int}, [])
+  end
+
+  @impl true
+  @spec handle_info({:DOWN, reference(), :process, pid(), term()}, State.t()) :: {:stop, :normal, State.t()}
+  def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
+    # Director has died - this sequencer should terminate gracefully
+    {:stop, :normal, t}
+  end
+
+  def handle_info(_msg, t) do
+    {:noreply, t}
   end
 end

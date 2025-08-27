@@ -61,6 +61,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
     {_first_version, last_committed_version} = recovery_attempt.version_vector
 
     Sequencer.child_spec(
+      cluster: recovery_attempt.cluster,
       director: self(),
       epoch: recovery_attempt.epoch,
       last_committed_version: last_committed_version,

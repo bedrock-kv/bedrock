@@ -18,7 +18,8 @@ defmodule Bedrock.DataPlane.Resolver.State do
           waiting: Bedrock.Internal.WaitingList.t(),
           mode: mode(),
           lock_token: Bedrock.lock_token(),
-          epoch: Bedrock.epoch()
+          epoch: Bedrock.epoch(),
+          director: pid()
         }
   defstruct tree: nil,
             oldest_version: nil,
@@ -26,5 +27,6 @@ defmodule Bedrock.DataPlane.Resolver.State do
             waiting: %{},
             mode: :running,
             lock_token: nil,
-            epoch: nil
+            epoch: nil,
+            director: nil
 end

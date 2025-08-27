@@ -1,9 +1,14 @@
-defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
+defmodule Bedrock.DataPlane.Sequencer.CommitIntegrationTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Sequencer.Server
   alias Bedrock.DataPlane.Version
+
+  # Mock cluster module for testing
+  defmodule TestCluster do
+    @moduledoc false
+  end
 
   describe "sequencer and commit proxy integration" do
     test "complete flow: version assignment -> commit notification -> read version update" do
@@ -14,6 +19,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,
@@ -73,6 +79,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,
@@ -118,6 +125,7 @@ defmodule Bedrock.DataPlane.SequencerCommitIntegrationTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,

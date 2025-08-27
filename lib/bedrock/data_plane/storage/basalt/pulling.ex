@@ -1,6 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
   @moduledoc false
-  import Bedrock.DataPlane.Storage.Basalt.Telemetry
+  import Bedrock.DataPlane.Storage.Telemetry
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
@@ -66,13 +66,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
              ) do
           {:ok, encoded_transactions} ->
             trace_log_pull_succeeded(state.start_after, length(encoded_transactions))
-
-            next_version = apply_transactions_fn.(encoded_transactions)
-
-            # Flush window once per pull batch
-            :ok = state.flush_window_fn.()
-
-            long_pull_loop(%{state | start_after: next_version})
+            new_state = process_pulled_transactions(state, encoded_transactions, apply_transactions_fn)
+            long_pull_loop(new_state)
 
           {:error, reason} ->
             trace_log_pull_failed(state.start_after, reason)
@@ -132,5 +127,23 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Pulling do
     trace_log_pull_circuit_breaker_reset(state.start_after)
 
     %{state | failed_logs: %{}}
+  end
+
+  # Process pulled transactions and update state accordingly
+  @spec process_pulled_transactions(puller_state(), [Transaction.encoded()], ([Transaction.encoded()] ->
+                                                                                Bedrock.version())) :: puller_state()
+  defp process_pulled_transactions(state, [], _apply_transactions_fn) do
+    # Add small delay to avoid rapid cycling when no transactions are available
+    :timer.sleep(50)
+    state
+  end
+
+  defp process_pulled_transactions(state, encoded_transactions, apply_transactions_fn) do
+    next_version = apply_transactions_fn.(encoded_transactions)
+
+    # Flush window once per pull batch
+    :ok = state.flush_window_fn.()
+
+    %{state | start_after: next_version}
   end
 end

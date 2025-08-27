@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       {result, next_phase} = PersistencePhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
+      assert next_phase == :completed
       assert result.transaction_system_layout == transaction_system_layout
     end
 

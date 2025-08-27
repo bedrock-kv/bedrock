@@ -36,10 +36,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   @impl true
   def execute(recovery_attempt, context) do
+    # Only copy transactions from durable_version onwards (what storage actually needs)
+    # instead of copying from the beginning of the version vector
+    {_original_first, last_version} = recovery_attempt.version_vector
+    optimized_version_vector = {recovery_attempt.durable_version, last_version}
+
     recovery_attempt.old_log_ids_to_copy
     |> replay_old_logs_into_new_logs(
       Map.keys(recovery_attempt.logs),
-      recovery_attempt.version_vector,
+      optimized_version_vector,
       recovery_attempt,
       context
     )

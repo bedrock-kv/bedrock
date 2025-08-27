@@ -43,7 +43,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
             lock_token: Bedrock.lock_token(),
             key_range: Bedrock.key_range(),
             epoch: Bedrock.epoch(),
-            last_version: Bedrock.version()
+            last_version: Bedrock.version(),
+            director: pid(),
+            cluster: module()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -51,21 +53,26 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     _key_range = opts[:key_range] || raise "Missing :key_range option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     last_version = opts[:last_version] || Version.zero()
+    director = opts[:director] || raise "Missing :director option"
+    cluster = opts[:cluster] || __MODULE__
 
     %{
-      id: __MODULE__,
+      id: {__MODULE__, cluster, epoch},
       start:
         {GenServer, :start_link,
          [
            __MODULE__,
-           {lock_token, last_version, epoch}
+           {lock_token, last_version, epoch, director}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({lock_token, last_version, epoch}) do
+  def init({lock_token, last_version, epoch, director}) do
+    # Monitor the Director - if it dies, this resolver should terminate
+    Process.monitor(director)
+
     then(
       %State{
         lock_token: lock_token,
@@ -74,7 +81,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         last_version: last_version,
         waiting: %{},
         mode: :running,
-        epoch: epoch
+        epoch: epoch,
+        director: director
       },
       &{:ok, &1}
     )
@@ -160,6 +168,15 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end)
 
     noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
+  end
+
+  def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
+    # Director has died - this resolver should terminate gracefully
+    {:stop, :normal, t}
+  end
+
+  def handle_info(_msg, t) do
+    {:noreply, t}
   end
 
   @impl true

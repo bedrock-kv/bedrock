@@ -24,7 +24,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       put_leader_startup_state: 2,
       update_raft: 2,
       add_tsl_subscriber: 2,
-      remove_tsl_subscriber: 2
+      remove_tsl_subscriber: 2,
+      check_for_recovery_capability_changes: 1,
+      update_recovery_capability_hash: 1
     ]
 
   import Bedrock.ControlPlane.Coordinator.Telemetry,
@@ -33,7 +35,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       trace_election_completed: 1,
       trace_consensus_reached: 1,
       trace_leader_waiting_for_consensus: 0,
-      trace_leader_ready_starting_director: 1
+      trace_leader_ready_starting_director: 1,
+      trace_recovery_capability_change_detected: 0,
+      trace_recovery_retry_attempt: 1,
+      trace_recovery_failed: 1
     ]
 
   import Bedrock.Internal.GenServer.Replies
@@ -206,6 +211,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     t
     |> put_leader_node(:undecided)
+    |> put_leader_startup_state(:not_leader)
     |> cleanup_director_on_leadership_loss()
     |> noreply()
   end
@@ -220,7 +226,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     if_result =
       if new_leader == t.my_node do
-        # We became leader - wait for first consensus before starting director
+        # We became leader - wait for first consensus to ensure state is fully processed
         trace_leader_waiting_for_consensus()
 
         put_leader_startup_state(updated_t, :leader_waiting_consensus)
@@ -250,9 +256,12 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_info({:raft, :consensus_reached, log, durable_txn_id, :latest}, t) do
     trace_consensus_reached(durable_txn_id)
 
-    t
-    |> durable_write_completed(log, durable_txn_id)
+    updated_t = durable_write_completed(t, log, durable_txn_id)
+
+    # Check if capability changes should trigger recovery retry, or if this is the first consensus after becoming leader
+    updated_t
     |> try_to_start_director_after_first_consensus()
+    |> maybe_retry_recovery_on_capability_change()
     |> noreply()
   end
 
@@ -350,20 +359,107 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     end
   end
 
-  @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
-  defp try_to_start_director_after_first_consensus(%{leader_startup_state: :leader_waiting_consensus} = t) do
-    # First consensus received! Now we can start director with populated service_directory
-    service_count = map_size(t.service_directory)
-    trace_leader_ready_starting_director(service_count)
+  @spec attempt_director_recovery(State.t(), :leadership_change | :capability_change) :: State.t()
+  defp attempt_director_recovery(t, reason) when t.leader_node == t.my_node do
+    case t.leader_startup_state do
+      :leader_ready ->
+        trace_recovery_retry_attempt(reason)
 
-    t
-    |> put_leader_startup_state(:leader_ready)
-    |> try_to_start_director()
+        case try_to_start_director(t) do
+          %{director: :unavailable} = failed_state ->
+            # Recovery failed - mark as such and don't retry automatically
+            trace_recovery_failed(:director_start_failed)
+            put_leader_startup_state(failed_state, :recovery_failed)
+
+          successful_state ->
+            # Recovery succeeded
+            successful_state
+        end
+
+      :recovery_failed ->
+        # Don't retry if we've already failed - wait for meaningful capability changes
+        case reason do
+          :capability_change ->
+            # Capability change detected - worth retrying
+            attempt_director_recovery(put_leader_startup_state(t, :leader_ready), reason)
+
+          _ ->
+            # Other reasons don't trigger retry from failed state
+            t
+        end
+
+      :not_leader ->
+        # Not leader - shouldn't attempt recovery
+        t
+    end
+  end
+
+  defp attempt_director_recovery(t, _reason), do: t
+
+  @spec maybe_retry_recovery_on_capability_change(State.t()) :: State.t()
+  defp maybe_retry_recovery_on_capability_change(t) when t.leader_node == t.my_node do
+    case check_for_recovery_capability_changes(t) do
+      {:changed, updated_t} ->
+        trace_recovery_capability_change_detected()
+        attempt_director_recovery(updated_t, :capability_change)
+
+      {:unchanged, updated_t} ->
+        updated_t
+    end
+  end
+
+  defp maybe_retry_recovery_on_capability_change(t), do: t
+
+  @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
+  defp try_to_start_director_after_first_consensus(%{leader_startup_state: :leader_waiting_consensus} = t)
+       when t.leader_node == t.my_node do
+    # Check if we have TSL state (either nil for new system or restored from Raft)
+    # This prevents the race condition where director starts before TSL restoration
+    case t.transaction_system_layout do
+      nil ->
+        # TSL is nil - check if this is a genuinely new system or if we need to wait for restoration
+        if has_persisted_tsl_in_raft(t) do
+          # We have persisted TSL but it's not restored yet - keep waiting for TSL consensus
+          Logger.info("Bedrock [#{t.cluster}]: Leader waiting for TSL restoration from Raft before starting director")
+          t
+        else
+          # No persisted TSL - this is genuinely a new system, safe to start director
+          start_director_after_consensus(t)
+        end
+
+      _tsl ->
+        # TSL is available (restored or default) - safe to start director
+        start_director_after_consensus(t)
+    end
   end
 
   defp try_to_start_director_after_first_consensus(t) do
     # Not waiting for consensus, or already ready
     t
+  end
+
+  defp start_director_after_consensus(t) do
+    service_count = map_size(t.service_directory)
+    trace_leader_ready_starting_director(service_count)
+
+    t
+    |> put_leader_startup_state(:leader_ready)
+    |> update_recovery_capability_hash()
+    |> attempt_director_recovery(:leadership_change)
+  end
+
+  defp has_persisted_tsl_in_raft(t) do
+    # Check if Raft log contains any TSL update transactions
+    # This indicates we have persisted TSL that should be restored
+    log = Raft.log(t.raft)
+    newest_safe_txn_id = Log.newest_safe_transaction_id(log)
+
+    # Look for any TSL update commands in committed transactions
+    log
+    |> Log.transactions_to(newest_safe_txn_id)
+    |> Enum.any?(fn {_txn_id, command} ->
+      match?({:update_transaction_system_layout, _}, command)
+    end)
   end
 
   @spec expand_compact_services([{String.t(), atom(), atom()}], node()) :: [

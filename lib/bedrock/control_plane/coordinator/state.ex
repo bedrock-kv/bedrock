@@ -4,10 +4,11 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTracker
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
 
-  @type leader_startup_state :: :not_leader | :leader_waiting_consensus | :leader_ready
+  @type leader_startup_state :: :not_leader | :leader_waiting_consensus | :leader_ready | :recovery_failed
 
   @type t :: %__MODULE__{
           cluster: module(),
@@ -25,7 +26,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
           node_capabilities: %{node() => [Cluster.capability()]},
           tsl_subscribers: MapSet.t(pid()),
-          leader_startup_state: leader_startup_state()
+          leader_startup_state: leader_startup_state(),
+          recovery_tracker: RecoveryCapabilityTracker.t()
         }
   defstruct cluster: nil,
             leader_node: :undecided,
@@ -42,7 +44,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             service_directory: %{},
             node_capabilities: %{},
             tsl_subscribers: MapSet.new(),
-            leader_startup_state: :not_leader
+            leader_startup_state: :not_leader,
+            recovery_tracker: %RecoveryCapabilityTracker{}
 
   defmodule Changes do
     @moduledoc false
@@ -61,6 +64,13 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_leader_startup_state(t :: State.t(), State.leader_startup_state()) :: State.t()
     def put_leader_startup_state(t, leader_startup_state), do: %{t | leader_startup_state: leader_startup_state}
+
+    @spec put_recovery_tracker(t :: State.t(), RecoveryCapabilityTracker.t()) :: State.t()
+    def put_recovery_tracker(t, recovery_tracker), do: %{t | recovery_tracker: recovery_tracker}
+
+    @spec update_recovery_tracker(t :: State.t(), (RecoveryCapabilityTracker.t() -> RecoveryCapabilityTracker.t())) ::
+            State.t()
+    def update_recovery_tracker(t, updater), do: %{t | recovery_tracker: updater.(t.recovery_tracker)}
 
     @spec set_raft(t :: State.t(), Raft.t()) :: State.t()
     def set_raft(t, raft), do: %{t | raft: raft}
@@ -130,6 +140,34 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
       # For now, set resolution capable nodes to the same as coordination capable nodes
       coordination_nodes = Map.get(capability_map, :coordination, [])
       Map.put(capability_map, :resolution, coordination_nodes)
+    end
+
+    @spec check_for_recovery_capability_changes(State.t()) ::
+            {:changed | :unchanged, State.t()}
+    def check_for_recovery_capability_changes(t) do
+      case RecoveryCapabilityTracker.check_for_recovery_state_changes(
+             t.recovery_tracker,
+             t.node_capabilities,
+             t.service_directory
+           ) do
+        {:changed, new_tracker} ->
+          {:changed, put_recovery_tracker(t, new_tracker)}
+
+        {:unchanged, tracker} ->
+          {:unchanged, put_recovery_tracker(t, tracker)}
+      end
+    end
+
+    @spec update_recovery_capability_hash(State.t()) :: State.t()
+    def update_recovery_capability_hash(t) do
+      new_tracker =
+        RecoveryCapabilityTracker.update_recovery_state_hash(
+          t.recovery_tracker,
+          t.node_capabilities,
+          t.service_directory
+        )
+
+      put_recovery_tracker(t, new_tracker)
     end
   end
 end

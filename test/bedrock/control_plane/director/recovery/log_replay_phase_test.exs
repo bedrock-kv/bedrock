@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
   alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Version
 
   describe "execute/1" do
     test "successfully advances state with empty logs" do
@@ -199,7 +200,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       recovery_attempt = %{
         old_log_ids_to_copy: [],
         logs: %{},
-        version_vector: {10, 50},
+        version_vector: {Version.from_integer(10), Version.from_integer(50)},
+        # Add missing durable_version field as binary
+        durable_version: Version.from_integer(25),
         available_services: available_services,
         service_pids: %{
           {:log, 1} => test_pid,
@@ -283,7 +286,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       recovery_attempt = %{
         old_log_ids_to_copy: [],
         logs: %{},
-        version_vector: {10, 50},
+        version_vector: {Version.from_integer(10), Version.from_integer(50)},
+        # Add missing durable_version field as binary
+        durable_version: Version.from_integer(25),
         available_services: %{},
         service_pids: %{},
         extra_field: "preserved",

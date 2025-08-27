@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
+  alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
 
   # Helper to create test transaction system layout
   defp create_layout(opts \\ []) do
@@ -37,7 +38,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       recovery_attempt = Map.put(recovery_attempt(), :transaction_system_layout, create_layout())
 
       {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
-      assert next_phase == :completed
+      assert next_phase == PersistencePhase
 
       # Should have monitored sequencer, 1 proxy, 1 resolver, 1 log
       assert_received {:monitored, _}
@@ -50,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       recovery_attempt = Map.put(recovery_attempt(), :transaction_system_layout, create_layout())
 
       {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{})
-      assert next_phase == :completed
+      assert next_phase == PersistencePhase
     end
 
     test "monitors multiple components correctly" do
@@ -82,7 +83,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       }
 
       {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, %{})
-      assert next_phase == :completed
+      assert next_phase == PersistencePhase
     end
 
     test "excludes storage services from monitoring" do

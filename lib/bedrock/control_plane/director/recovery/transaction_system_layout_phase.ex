@@ -116,7 +116,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
 
-      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
     else
       {:error, reason} ->
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
@@ -249,7 +249,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t(), map()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
-    durable_version = recovery_attempt.durable_version
+    # Use the latest version from logs (high end of version vector) instead of conservative durable_version
+    # This prevents storage from purging committed data it already has
+    {_first, latest_log_version} = recovery_attempt.version_vector
     unlock_fn = Map.get(context, :unlock_storage_fn, &Storage.unlock_after_recovery/3)
 
     transaction_system_layout.storage_teams
@@ -262,7 +264,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
     end)
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->
-        {storage_id, unlock_fn.(storage_pid, durable_version, transaction_system_layout)}
+        {storage_id, unlock_fn.(storage_pid, latest_log_version, transaction_system_layout)}
       end,
       ordered: false,
       timeout: 5000

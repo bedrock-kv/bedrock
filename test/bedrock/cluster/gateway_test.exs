@@ -277,6 +277,8 @@ defmodule Bedrock.Cluster.GatewayTest do
     end
 
     test "uses GenServerApi correctly" do
+      Code.ensure_loaded(Gateway)
+
       # Verify that the module properly uses the GenServerApi
       # This tests that the module structure is correct
       assert function_exported?(Gateway, :child_spec, 1)

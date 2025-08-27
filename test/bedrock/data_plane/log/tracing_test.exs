@@ -66,7 +66,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
         end)
 
       assert log =~ "Started log service: test_log_server"
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :lock_for_recovery event" do
@@ -79,7 +79,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
         end)
 
       assert log =~ "Lock for recovery in epoch 5"
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :recover_from event with no source" do
@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
         end)
 
       assert log =~ "Reset to initial version"
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :recover_from event with source log" do
@@ -112,7 +112,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       assert log =~
                "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
 
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :push event" do
@@ -133,7 +133,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
         end)
 
       assert log =~ "Push transaction (3 keys) with expected version <0,0,0,0,0,0,0,200>"
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :push_out_of_order event" do
@@ -152,7 +152,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       assert log =~
                "Rejected out-of-order transaction: expected <0,0,0,0,0,0,0,205>, current <0,0,0,0,0,0,0,200>"
 
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :pull event" do
@@ -171,7 +171,7 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       assert log =~
                "Pull transactions from version <0,0,0,0,0,0,0,100> with options [timeout: 5000]"
 
-      assert log =~ "Bedrock [test_cluster/test_log_1]"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
   end
 end

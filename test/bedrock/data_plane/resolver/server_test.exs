@@ -10,26 +10,30 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       opts = [
         lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
-        epoch: 123
+        epoch: 123,
+        director: self(),
+        cluster: TestCluster
       ]
 
       spec = Server.child_spec(opts)
 
       assert %{
-               id: Server,
+               id: {Server, _, _},
                restart: :temporary
              } = spec
 
-      assert {GenServer, :start_link, [Server, {token, last_version, epoch}]} = spec.start
+      assert {GenServer, :start_link, [Server, {token, last_version, epoch, director}]} = spec.start
       assert is_binary(token)
       assert last_version == Bedrock.DataPlane.Version.zero()
       assert epoch == 123
+      assert is_pid(director)
     end
 
     test "raises error when lock_token option is missing" do
       opts = [
         key_range: {"a", "z"},
-        epoch: 123
+        epoch: 123,
+        director: self()
       ]
 
       assert_raise RuntimeError, "Missing :lock_token option", fn ->
@@ -40,7 +44,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     test "raises error when key_range option is missing" do
       opts = [
         lock_token: :crypto.strong_rand_bytes(32),
-        epoch: 123
+        epoch: 123,
+        director: self()
       ]
 
       assert_raise RuntimeError, "Missing :key_range option", fn ->
@@ -51,10 +56,23 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     test "raises error when epoch option is missing" do
       opts = [
         lock_token: :crypto.strong_rand_bytes(32),
-        key_range: {"a", "z"}
+        key_range: {"a", "z"},
+        director: self()
       ]
 
       assert_raise RuntimeError, "Missing :epoch option", fn ->
+        Server.child_spec(opts)
+      end
+    end
+
+    test "raises error when director option is missing" do
+      opts = [
+        lock_token: :crypto.strong_rand_bytes(32),
+        key_range: {"a", "z"},
+        epoch: 123
+      ]
+
+      assert_raise RuntimeError, "Missing :director option", fn ->
         Server.child_spec(opts)
       end
     end
@@ -71,7 +89,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 
@@ -104,7 +123,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 
@@ -128,7 +148,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 
@@ -163,7 +184,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 
@@ -200,7 +222,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 
@@ -268,7 +291,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              lock_token: lock_token,
              key_range: {"", :end},
              epoch: 1,
-             last_version: Bedrock.DataPlane.Version.zero()
+             last_version: Bedrock.DataPlane.Version.zero(),
+             director: self()
            ]}
         )
 

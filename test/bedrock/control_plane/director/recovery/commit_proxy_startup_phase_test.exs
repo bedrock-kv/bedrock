@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
+  alias Bedrock.DataPlane.CommitProxy.Server
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -150,6 +151,86 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
         )
 
       assert {:error, {:failed_to_start, :commit_proxy, :failing_node, :node_failure}} = result
+    end
+  end
+
+  describe "child_spec validation" do
+    test "passes correct child specs with instance IDs to start_supervised_fn" do
+      agent = fn -> {[], []} end |> Agent.start_link() |> elem(1)
+
+      start_supervised_fn = fn child_spec, node ->
+        Agent.update(agent, fn {specs, nodes} ->
+          {[child_spec | specs], [node | nodes]}
+        end)
+
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      available_nodes = [:node1, :node2]
+
+      {:ok, pids} =
+        CommitProxyStartupPhase.define_commit_proxies(
+          # Want 3 proxies
+          3,
+          TestCluster,
+          # epoch
+          42,
+          self(),
+          available_nodes,
+          start_supervised_fn,
+          "test_lock_token",
+          %{parameters: %{empty_transaction_timeout_ms: 5000}}
+        )
+
+      assert length(pids) == 3
+
+      {captured_specs, captured_nodes} = Agent.get(agent, & &1)
+      captured_specs = Enum.reverse(captured_specs)
+      captured_nodes = Enum.reverse(captured_nodes)
+
+      # Check that we got 3 child specs
+      assert length(captured_specs) == 3
+
+      # Check each child spec has the correct tuple-based ID format
+      Enum.with_index(captured_specs, fn child_spec, index ->
+        # The ID should be {CommitProxy.Server, cluster, epoch, instance}
+        assert %{id: {Server, TestCluster, 42, ^index}} = child_spec
+
+        # Check the start tuple contains the correct parameters
+        assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
+
+        # Verify the start args contain the instance
+        assert {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token"} = start_args
+      end)
+
+      # Verify round-robin distribution across nodes
+      assert captured_nodes == [:node1, :node2, :node1]
+    end
+
+    test "uses correct empty_transaction_timeout_ms from config" do
+      agent = fn -> [] end |> Agent.start_link() |> elem(1)
+
+      start_supervised_fn = fn child_spec, _node ->
+        Agent.update(agent, fn specs -> [child_spec | specs] end)
+        {:ok, spawn(fn -> :ok end)}
+      end
+
+      {:ok, _pids} =
+        CommitProxyStartupPhase.define_commit_proxies(
+          1,
+          TestCluster,
+          1,
+          self(),
+          [:node1],
+          start_supervised_fn,
+          "token",
+          %{parameters: %{empty_transaction_timeout_ms: 2500}}
+        )
+
+      [child_spec] = Agent.get(agent, & &1)
+      assert %{start: {GenServer, :start_link, [_, start_args]}} = child_spec
+      # Check that empty_transaction_timeout_ms is correctly passed through
+      assert {_cluster, _director, _epoch, _max_latency, _max_per_batch, 2500, _lock_token} = start_args
     end
   end
 

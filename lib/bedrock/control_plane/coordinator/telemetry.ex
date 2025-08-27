@@ -114,4 +114,31 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
       %{}
     )
   end
+
+  @spec trace_recovery_capability_change_detected() :: :ok
+  def trace_recovery_capability_change_detected do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_capability_change],
+      %{},
+      %{}
+    )
+  end
+
+  @spec trace_recovery_retry_attempt(reason :: :capability_change | :leadership_change | :director_failure) :: :ok
+  def trace_recovery_retry_attempt(reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_retry_attempt],
+      %{},
+      %{reason: reason}
+    )
+  end
+
+  @spec trace_recovery_failed(reason :: term()) :: :ok
+  def trace_recovery_failed(reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_failed],
+      %{},
+      %{reason: reason}
+    )
+  end
 end

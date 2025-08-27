@@ -444,7 +444,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, context)
 
-      assert next_phase == :completed
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.PersistencePhase
 
       # Should monitor sequencer, proxies, resolvers, and logs (but not storage)
       # Expected: 1 sequencer + 2 proxies + 1 resolver + 2 logs = 6 processes

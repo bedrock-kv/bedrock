@@ -43,7 +43,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       available_nodes: available_resolver_nodes,
       start_supervised_fn: start_supervised_fn,
       lock_token: context.lock_token,
-      last_committed_version: last_committed_version
+      last_committed_version: last_committed_version,
+      cluster: recovery_attempt.cluster
     }
 
     resolver_context
@@ -66,30 +67,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
           start_supervised_fn: (Supervisor.child_spec(), node() ->
                                   {:ok, pid()} | {:error, term()}),
           lock_token: Bedrock.lock_token(),
-          last_committed_version: Bedrock.version()
+          last_committed_version: Bedrock.version(),
+          cluster: module()
         }) ::
           {:ok, [{start_key :: Bedrock.key(), resolver :: pid()}]}
           | {:error, {:failed_to_start, :resolver, node(), reason :: term()}}
   def define_resolvers(context) do
-    resolver_boot_info =
-      context.resolvers
-      |> generate_resolver_ranges()
-      |> Enum.map(fn [start_key, end_key] ->
-        key_range = {start_key, end_key}
+    if Enum.empty?(context.available_nodes) and not Enum.empty?(context.resolvers) do
+      {:error, {:insufficient_nodes, :no_coordination_capable_nodes, length(context.resolvers), 0}}
+    else
+      resolver_boot_info =
+        context.resolvers
+        |> generate_resolver_ranges()
+        |> Enum.map(fn [start_key, end_key] ->
+          key_range = {start_key, end_key}
 
-        {child_spec_for_resolver(
-           context.epoch,
-           key_range,
-           context.lock_token,
-           context.last_committed_version
-         ), start_key}
-      end)
+          {child_spec_for_resolver(
+             context.epoch,
+             key_range,
+             context.lock_token,
+             context.last_committed_version,
+             self(),
+             context.cluster
+           ), start_key}
+        end)
 
-    start_resolvers(
-      resolver_boot_info,
-      context.available_nodes,
-      context.start_supervised_fn
-    )
+      start_resolvers(
+        resolver_boot_info,
+        context.available_nodes,
+        context.start_supervised_fn
+      )
+    end
   end
 
   @spec generate_resolver_ranges([ResolverDescriptor.t()]) :: [[Bedrock.key() | :end]]
@@ -143,15 +151,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
           epoch :: Bedrock.epoch(),
           key_range :: Bedrock.key_range(),
           lock_token :: Bedrock.lock_token(),
-          last_committed_version :: Bedrock.version()
+          last_committed_version :: Bedrock.version(),
+          director :: pid(),
+          cluster :: module()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_resolver(epoch, key_range, lock_token, last_committed_version) do
+  def child_spec_for_resolver(epoch, key_range, lock_token, last_committed_version, director, cluster) do
     Resolver.child_spec(
       lock_token: lock_token,
       epoch: epoch,
       key_range: key_range,
-      last_version: last_committed_version
+      last_version: last_committed_version,
+      director: director,
+      cluster: cluster
     )
   end
 end

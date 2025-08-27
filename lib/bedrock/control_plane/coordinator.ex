@@ -4,7 +4,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   The Coordinator maintains the authoritative cluster configuration and service
   directory through distributed consensus. When elected as leader, it manages
-  Director startup with proper service discovery timing to prevent race conditions.
+  Director startup with capability-based readiness checking to ensure robust
+  recovery in dynamic environments.
 
   ## Service Registration Flow
 
@@ -12,21 +13,35 @@ defmodule Bedrock.ControlPlane.Coordinator do
   calling `register_services/2` or `register_gateway/4`. The leader then persists
   this service information through Raft consensus, propagating updates to all
   Coordinators. The service directory is maintained consistently across the
-  cluster, ensuring the Director receives a populated service directory at startup.
+  cluster, ensuring the Director receives current service topology during recovery.
 
   ## Leader Readiness States
 
-  New leaders transition through readiness states to prevent service discovery
-  race conditions. Upon election, leaders enter `:leader_waiting_consensus` state,
-  waiting for the first consensus round to populate the service directory. Once
-  consensus completes, they transition to `:leader_ready` state and can start
-  the Director. This ensures Directors receive complete service topology before
-  beginning recovery.
+  New leaders transition through readiness states to ensure state consistency
+  before Director recovery:
+
+  - `:not_leader` - This node is not the cluster leader
+  - `:leader_waiting_consensus` - Leader elected but waiting for first consensus to ensure fully processed state
+  - `:leader_ready` - This node is leader and ready to attempt Director recovery
+  - `:recovery_failed` - Director recovery failed; waiting for meaningful capability changes
+
+  Upon election, leaders enter `:leader_waiting_consensus` state, waiting for the first
+  consensus round to ensure all Raft log entries have been processed and state is current.
+  Once consensus completes, they transition to `:leader_ready` and attempt Director recovery
+  with fully up-to-date state.
+
+  ## Capability-Based Recovery Retry
+
+  Leaders track service capability changes through hashing of recovery-relevant
+  capabilities (coordination, log, storage). Recovery is only retried when
+  meaningful capability changes occur, avoiding unnecessary retry attempts on
+  transient service announcements or time-based intervals.
 
   ## See Also
 
   - `Bedrock.ControlPlane.Director` - Recovery orchestration
   - `Bedrock.ControlPlane.Coordinator.State` - Internal state management
+  - `Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTracker` - Capability change detection
   """
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 

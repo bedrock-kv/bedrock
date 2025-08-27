@@ -140,7 +140,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
       updated_state.director,
       new_or_changed_services,
       updated_state.node_capabilities,
-      capabilities_changed || true
+      capabilities_changed
     )
 
     updated_state

@@ -1,8 +1,13 @@
-defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
+defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Sequencer.Server
   alias Bedrock.DataPlane.Version
+
+  # Mock cluster module for testing
+  defmodule TestCluster do
+    @moduledoc false
+  end
 
   describe "microsecond-based versioning" do
     test "versions progress based on monotonic time" do
@@ -13,6 +18,7 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,
@@ -47,6 +53,7 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,
@@ -83,6 +90,7 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 2,
              last_committed_version: previous_epoch_version,
@@ -106,6 +114,7 @@ defmodule Bedrock.DataPlane.SequencerMicrosecondVersioningTest do
         start_supervised!(
           {Server,
            [
+             cluster: TestCluster,
              director: self(),
              epoch: 1,
              last_committed_version: initial_version,

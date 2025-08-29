@@ -242,32 +242,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
 
       # Should succeed and include ALL keys in range: storage keys + tx writes
-      assert {:ok, data, continuation} = result
+      assert {:ok, data, :finished} = result
 
-      # Verify we get both storage data and tx writes
-      keys = Enum.map(data, &elem(&1, 0))
-      # from storage
-      assert "a" in keys
-      # from storage
-      assert "b" in keys
-      # from storage
-      assert "k" in keys
-      # from tx writes
-      assert "m" in keys
-      # from tx writes
-      assert "n" in keys
-      # from tx writes
-      assert "o" in keys
-
-      # Should be finished since we covered the full range
-      assert continuation == :finished
-
-      # Verify values are correct
-      data_map = Map.new(data)
-      assert data_map["a"] == "storage_value_a"
-      assert data_map["m"] == "tx_value_m"
-      assert data_map["n"] == "tx_value_n"
-      assert data_map["o"] == "tx_value_o"
+      # Verify complete result includes both storage and tx writes in sorted order
+      assert data == [
+               {"a", "storage_value_a"},
+               {"b", "storage_value_b"},
+               {"k", "storage_value_k"},
+               {"m", "tx_value_m"},
+               {"n", "tx_value_n"},
+               {"o", "tx_value_o"}
+             ]
     end
   end
 end

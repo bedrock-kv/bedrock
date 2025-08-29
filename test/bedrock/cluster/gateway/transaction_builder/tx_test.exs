@@ -3,6 +3,22 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
+  # Helper function for testing - converts gb_trees writes back to map format
+  defp writes_to_map(%Tx{writes: writes}) do
+    writes |> :gb_trees.to_list() |> Map.new()
+  end
+
+  # Helper function for testing - converts entire Tx to map format for easy comparison
+  defp to_test_map(%Tx{} = tx) do
+    %{
+      mutations: tx.mutations,
+      writes: writes_to_map(tx),
+      reads: tx.reads,
+      range_writes: tx.range_writes,
+      range_reads: tx.range_reads
+    }
+  end
+
   defp decode_commit(tx) do
     Tx.commit(tx)
   end
@@ -11,13 +27,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "creates empty transaction" do
       tx = Tx.new()
 
-      assert %Tx{
+      assert to_test_map(tx) == %{
                mutations: [],
                writes: %{},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [],
@@ -31,13 +47,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "sets key-value pair" do
       tx = Tx.set(Tx.new(), "key1", "value1")
 
-      assert %Tx{
+      assert to_test_map(tx) == %{
                mutations: [{:set, "key1", "value1"}],
                writes: %{"key1" => "value1"},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [{:set, "key1", "value1"}],
@@ -53,21 +69,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key2", "value2")
         |> Tx.set("key3", "value3")
 
-      assert %Tx{
-               mutations: [
-                 {:set, "key3", "value3"},
-                 {:set, "key2", "value2"},
-                 {:set, "key1", "value1"}
-               ],
-               writes: %{
-                 "key1" => "value1",
-                 "key2" => "value2",
-                 "key3" => "value3"
-               },
+      assert to_test_map(tx) == %{
+               mutations: [{:set, "key3", "value3"}, {:set, "key2", "value2"}, {:set, "key1", "value1"}],
+               writes: %{"key1" => "value1", "key2" => "value2", "key3" => "value3"},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [
@@ -92,15 +100,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key1", "value1")
         |> Tx.set("key1", "updated_value")
 
-      assert %Tx{
-               mutations: [
-                 {:set, "key1", "updated_value"}
-               ],
+      assert to_test_map(tx) == %{
+               mutations: [{:set, "key1", "updated_value"}],
                writes: %{"key1" => "updated_value"},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [
@@ -154,19 +160,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key1", "value1")
         |> Tx.clear("key2")
 
-      assert %Tx{
-               mutations: [
-                 {:clear, "key2"},
-                 {:set, "key1", "value1"}
-               ],
-               writes: %{
-                 "key1" => "value1",
-                 "key2" => :clear
-               },
+      assert to_test_map(tx) == %{
+               mutations: [{:clear, "key2"}, {:set, "key1", "value1"}],
+               writes: %{"key1" => "value1", "key2" => :clear},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [
@@ -187,15 +187,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("key1", "value1")
         |> Tx.clear("key1")
 
-      assert %Tx{
-               mutations: [
-                 {:clear, "key1"}
-               ],
+      assert to_test_map(tx) == %{
+               mutations: [{:clear, "key1"}],
                writes: %{"key1" => :clear},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [
@@ -211,13 +209,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "clears range of keys" do
       tx = Tx.clear_range(Tx.new(), "a", "z")
 
-      assert %Tx{
+      assert to_test_map(tx) == %{
                mutations: [{:clear_range, "a", "z"}],
                writes: %{},
                reads: %{},
                range_writes: [{"a", "z"}],
                range_reads: []
-             } = tx
+             }
 
       assert %{
                mutations: [{:clear_range, "a", "z"}],
@@ -264,13 +262,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       assert result == {:ok, "cached_value"}
       assert state == :test_state
 
-      assert %Tx{
+      assert to_test_map(new_tx) == %{
                mutations: [{:set, "cached_key", "cached_value"}],
                writes: %{"cached_key" => "cached_value"},
                reads: %{},
                range_writes: [],
                range_reads: []
-             } = new_tx
+             }
 
       assert new_tx == tx
     end
@@ -366,101 +364,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     end
   end
 
-  describe "get_range/6" do
-    test "gets empty range from empty transaction" do
-      tx = Tx.new()
-
-      read_range_fn = fn state, _start, _end, _opts ->
-        {[], state}
-      end
-
-      {new_tx, results, new_state} = Tx.get_range(tx, "a", "z", read_range_fn, :test_state)
-
-      assert results == []
-      assert new_state == :test_state
-      assert new_tx.range_reads == [{"a", "z"}]
-    end
-
-    test "gets range with only writes" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.set("key2", "value2")
-        |> Tx.set("key0", "value0")
-
-      read_range_fn = fn state, _start, _end, _opts ->
-        {[], state}
-      end
-
-      {new_tx, results, _state} = Tx.get_range(tx, "key1", "key2", read_range_fn, :test_state)
-
-      assert results == [{"key1", "value1"}]
-      assert new_tx.range_reads == [{"key1", "key2"}]
-      assert new_tx.reads["key1"] == "value1"
-    end
-
-    test "merges writes with storage data" do
-      tx = Tx.set(Tx.new(), "key2", "tx_value2")
-
-      read_range_fn = fn state, start_key, end_key, opts ->
-        assert start_key == "key1"
-        assert end_key == "key3"
-        assert opts[:limit] == 1000
-        {[{"key1", "storage_value1"}, {"key2", "storage_value2"}], state}
-      end
-
-      {new_tx, results, _state} = Tx.get_range(tx, "key1", "key3", read_range_fn, :test_state)
-
-      assert results == [{"key1", "storage_value1"}, {"key2", "tx_value2"}]
-      assert new_tx.reads["key1"] == "storage_value1"
-      assert new_tx.reads["key2"] == "tx_value2"
-    end
-
-    test "respects limit parameter" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.set("key2", "value2")
-        |> Tx.set("key3", "value3")
-
-      read_range_fn = fn _state, _start, _end, _opts ->
-        {[], :test_state}
-      end
-
-      {_tx, results, _state} =
-        Tx.get_range(tx, "key1", "key9", read_range_fn, :test_state, limit: 2)
-
-      assert length(results) == 2
-      assert results == [{"key1", "value1"}, {"key2", "value2"}]
-    end
-
-    test "excludes cleared keys from results" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.clear("key2")
-
-      read_range_fn = fn _state, _start, _end, _opts ->
-        {[{"key2", "storage_value2"}], :test_state}
-      end
-
-      {_tx, results, _state} = Tx.get_range(tx, "key1", "key3", read_range_fn, :test_state)
-
-      assert results == [{"key1", "value1"}]
-    end
-
-    test "handles clear_range operations" do
-      tx = Tx.clear_range(Tx.new(), "key1", "key3")
-
-      read_range_fn = fn _state, _start, _end, _opts ->
-        {[{"key1", "storage_value1"}, {"key2", "storage_value2"}], :test_state}
-      end
-
-      {_tx, results, _state} = Tx.get_range(tx, "key1", "key4", read_range_fn, :test_state)
-
-      assert results == []
-    end
-  end
+  # get_range/6 functionality has been moved to client-side streaming
 
   describe "commit/1" do
     test "commits empty transaction" do
@@ -597,7 +501,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.set("collision_key", "value")
         |> Tx.clear("collision_key")
 
-      assert tx.writes["collision_key"] == :clear
+      assert writes_to_map(tx)["collision_key"] == :clear
 
       assert %{
                mutations: [

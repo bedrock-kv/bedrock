@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
+  {:bedrock, path: "/Users/j5n/Workspace/bedrock"},
   {:kino, "~> 0.16.0"}
 ])
 ```
@@ -88,11 +88,11 @@ defmodule Example.Bank do
         {:error, :account_not_found} ->
           set_balance(repo, account, balance)
           {:ok, balance}
-        {:ok, balance} ->
+        {:ok, existing_balance} ->
           if opts[:on_exists] == :raise do
             raise "Account #{account} already exists"
           end
-          {:ok, balance}
+          {:ok, existing_balance}
       end
     end)
   end
@@ -121,6 +121,56 @@ defmodule Example.Bank do
         _ -> false
       end
     end)
+  end
+
+  @doc """
+  List all accounts and their balances.
+
+  Demonstrates:
+  - Range reads using the new range_fetch functionality
+  - Efficient scanning of all accounts with tuple key prefixes
+  - Optional limit parameter for large account sets
+  """
+  def list_accounts(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 1000)
+    
+    Repo.transaction(fn repo ->
+      # Use range_stream to get all keys starting with {"balances", ...}
+      # The range goes from {"balances"} to {"balances\0"} which covers all balance keys
+      accounts = 
+        Repo.range_stream(repo, {"balances"}, {"balances\0"}, limit: limit)
+        |> Enum.map(fn {{"balances", account}, balance} -> {account, balance} end)
+        |> Enum.sort_by(fn {account, _balance} -> account end)
+      
+      {:ok, accounts}
+    end)
+  end
+
+  @doc """
+  Get summary statistics for all accounts.
+
+  Demonstrates:
+  - Using list_accounts as a building block for analytics
+  - Processing range query results efficiently
+  """
+  def account_summary(opts \\ []) do
+    case list_accounts(opts) do
+      {:ok, accounts} ->
+        total_balance = accounts |> Enum.map(fn {_, balance} -> balance end) |> Enum.sum()
+        account_count = length(accounts)
+        
+        avg_balance = if account_count > 0, do: total_balance / account_count, else: 0.0
+        
+        {:ok, %{
+          total_accounts: account_count,
+          total_balance: total_balance,
+          average_balance: Float.round(avg_balance, 2),
+          accounts: accounts
+        }}
+      
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp check_sufficient_balance_for_transfer(repo, account, amount) do
@@ -171,4 +221,83 @@ Bank.create_account("2", 500, on_exists: :raise)
 
 ```elixir
 Bank.move_money(84, "2", "1")
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+# Let's create a few more accounts to demonstrate list_accounts
+Bank.create_account("alice", 250)
+Bank.create_account("bob", 750) 
+Bank.create_account("charlie", 100)
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+# List all accounts using the new range_fetch functionality
+case Bank.list_accounts() do
+  {:ok, accounts} -> 
+    IO.puts("All accounts:")
+    Enum.each(accounts, fn {account, balance} -> 
+      IO.puts("  #{account}: $#{balance}")
+    end)
+    accounts
+  {:error, reason} -> 
+    IO.puts("Error listing accounts: #{inspect(reason)}")
+end
+```
+
+```elixir
+# List accounts with a limit
+case Bank.list_accounts(limit: 3) do
+  {:ok, accounts} -> 
+    IO.puts("First 3 accounts:")
+    Enum.each(accounts, fn {account, balance} -> 
+      IO.puts("  #{account}: $#{balance}")
+    end)
+    accounts
+  {:error, reason} -> 
+    IO.puts("Error listing accounts: #{inspect(reason)}")
+end
+```
+
+```elixir
+alias Example.Repo
+
+# Demonstrate that list_accounts sees uncommitted changes within the same transaction
+Repo.transaction(fn repo ->
+  # Create a temporary account within this transaction
+  Repo.put(repo, {"balances", "temp_account"}, 999)
+  
+  # List accounts - should include the temporary account
+  {:ok, accounts} = Bank.list_accounts()
+  
+  IO.puts("Accounts visible within transaction:")
+  Enum.each(accounts, fn {account, balance} -> 
+    IO.puts("  #{account}: $#{balance}")
+  end)
+  
+  # This transaction will be rolled back since we don't return :ok
+  {:rollback, accounts}
+end)
+```
+
+```elixir
+# Verify the temporary account was rolled back
+Bank.list_accounts()
+```
+
+```elixir
+# Get account summary statistics
+case Bank.account_summary() do
+  {:ok, summary} ->
+    IO.puts("=== Bank Summary ===")
+    IO.puts("Total Accounts: #{summary.total_accounts}")
+    IO.puts("Total Balance: $#{summary.total_balance}")
+    IO.puts("Average Balance: $#{summary.average_balance}")
+    summary
+  {:error, reason} ->
+    IO.puts("Error getting summary: #{inspect(reason)}")
+end
 ```

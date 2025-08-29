@@ -318,8 +318,10 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     end
 
     test "handles large renewal intervals", %{base_state: base_state} do
-      now = :erlang.monotonic_time(:millisecond)
-      future_deadline = now + 100_000
+      # Mock time to avoid timing-sensitive test failures
+      # Fixed time point
+      mock_now = 1_000_000
+      future_deadline = mock_now + 100_000
       read_version = 500
       # 1 minute
       large_interval = 60_000
@@ -330,18 +332,20 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           lease_renewal_interval_in_ms: large_interval
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      # Use mocked time function
+      mock_time_fn = fn -> mock_now end
+
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, mock_time_fn)
       assert {:ok, ^large_interval} = result
 
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
 
-      # Calculate the actual interval and verify it's within expected range
-      actual_interval = new_deadline - now
+      # Calculate the actual interval and verify it matches expected exactly
+      actual_interval = new_deadline - mock_now
       expected_interval = 10 + large_interval
 
-      # Allow timing variance (±10ms)
-      assert actual_interval >= expected_interval - 10
-      assert actual_interval <= expected_interval + 10
+      # With mocked time, this should be exact
+      assert actual_interval == expected_interval
     end
   end
 

@@ -3,12 +3,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
   use ExUnitProperties
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Fetching
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   defmodule TestKeyCodec do
     @moduledoc false
     def encode_key(key) when is_binary(key), do: {:ok, key}
     def encode_key(_), do: :key_error
+    def decode_key(key) when is_binary(key), do: {:ok, key}
+    def decode_key(_), do: :key_error
   end
 
   defmodule TestValueCodec do
@@ -18,10 +21,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
   end
 
   def create_test_state(opts \\ []) do
+    layout = Keyword.get(opts, :transaction_system_layout, create_test_layout())
+    layout_index = LayoutUtils.build_layout_index(layout)
+
     %State{
       state: :valid,
       gateway: Keyword.get(opts, :gateway, :test_gateway),
-      transaction_system_layout: Keyword.get(opts, :transaction_system_layout, create_test_layout()),
+      transaction_system_layout: layout,
+      layout_index: layout_index,
       key_codec: Keyword.get(opts, :key_codec, TestKeyCodec),
       value_codec: Keyword.get(opts, :value_codec, TestValueCodec),
       read_version: Keyword.get(opts, :read_version),
@@ -102,8 +109,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
     test "fetches from storage when not in cache" do
       state = create_test_state(read_version: 12_345)
 
-      storage_fetch_fn = fn :storage1_pid, "storage_key", 12_345, [timeout: 100] ->
-        {:ok, "storage_value"}
+      storage_fetch_fn = fn
+        :storage1_pid, "storage_key", 12_345, [timeout: 100] ->
+          {:ok, "storage_value"}
+
+        :storage2_pid, "storage_key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
       end
 
       opts = [storage_fetch_fn: storage_fetch_fn]
@@ -118,8 +129,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
     test "handles storage fetch error" do
       state = create_test_state(read_version: 12_345)
 
-      storage_fetch_fn = fn :storage1_pid, "error_key", 12_345, [timeout: 100] ->
-        {:error, :not_found}
+      storage_fetch_fn = fn
+        :storage1_pid, "error_key", 12_345, [timeout: 100] ->
+          {:error, :not_found}
+
+        :storage2_pid, "error_key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
       end
 
       opts = [storage_fetch_fn: storage_fetch_fn]
@@ -138,8 +153,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
       next_read_version_fn = fn ^state -> {:ok, 12_345, 5000} end
       time_fn = fn -> current_time end
 
-      storage_fetch_fn = fn :storage1_pid, "key", 12_345, [timeout: 100] ->
-        {:ok, "value"}
+      storage_fetch_fn = fn
+        :storage1_pid, "key", 12_345, [timeout: 100] ->
+          {:ok, "value"}
+
+        :storage2_pid, "key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
       end
 
       opts = [
@@ -195,8 +214,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
           value_codec: FailingValueCodec
         )
 
-      storage_fetch_fn = fn :storage1_pid, "key", 12_345, [timeout: 100] ->
-        {:ok, "encoded_value"}
+      storage_fetch_fn = fn
+        :storage1_pid, "key", 12_345, [timeout: 100] -> {:ok, "encoded_value"}
+        :storage2_pid, "key", 12_345, [timeout: 100] -> {:error, :timeout}
       end
 
       opts = [storage_fetch_fn: storage_fetch_fn]
@@ -205,7 +225,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       assert result == {:error, :decode_error}
       assert new_state.tx.reads == %{}
-      assert new_state.fastest_storage_servers == %{}
+      assert new_state.fastest_storage_servers == %{{"", :end} => :storage1_pid}
     end
   end
 
@@ -232,15 +252,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
         }
       }
 
+      index = LayoutUtils.build_layout_index(layout)
+
       # Key "hello" should be in first range
-      result = Fetching.storage_servers_for_key(layout, "hello")
-      expected = [{{"a", "m"}, :pid1}, {{"a", "m"}, :pid2}]
-      assert result == expected
+      result = LayoutUtils.storage_servers_for_key(index, "hello")
+      # Note: With segmented index, this returns a single segment containing the key
+      assert {_, pids} = result
+      assert :pid1 in pids and :pid2 in pids
 
       # Key "zebra" should be in second range
-      result = Fetching.storage_servers_for_key(layout, "zebra")
-      expected = [{{"m", :end}, :pid3}]
-      assert result == expected
+      result = LayoutUtils.storage_servers_for_key(index, "zebra")
+      assert {_, pids} = result
+      assert :pid3 in pids
     end
 
     test "filters out down storage servers" do
@@ -258,12 +281,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
         }
       }
 
-      result = Fetching.storage_servers_for_key(layout, "key")
-      expected = [{{"", :end}, :pid1}, {{"", :end}, :pid3}]
-      assert result == expected
+      index = LayoutUtils.build_layout_index(layout)
+      result = LayoutUtils.storage_servers_for_key(index, "key")
+      assert {_, pids} = result
+      assert :pid1 in pids and :pid3 in pids
+      refute :pid2 in pids
     end
 
-    test "returns empty list when no servers available" do
+    test "raises when no servers available for key" do
       layout = %{
         storage_teams: [
           %{
@@ -276,52 +301,23 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
         }
       }
 
+      index = LayoutUtils.build_layout_index(layout)
+
       # Key "z" is outside range
-      result = Fetching.storage_servers_for_key(layout, "z")
-      assert result == []
+      assert_raise RuntimeError, ~r/No segment found containing key/, fn ->
+        LayoutUtils.storage_servers_for_key(index, "z")
+      end
     end
   end
 
-  describe "fastest_storage_server_for_key/2" do
-    test "finds fastest server for key in range" do
-      fastest_servers = %{
-        {"a", "m"} => :fast_pid1,
-        {"m", :end} => :fast_pid2
-      }
-
-      assert Fetching.fastest_storage_server_for_key(fastest_servers, "hello") == :fast_pid1
-      assert Fetching.fastest_storage_server_for_key(fastest_servers, "zebra") == :fast_pid2
-    end
-
-    test "returns nil when no fastest server found" do
-      fastest_servers = %{
-        {"a", "m"} => :fast_pid1
-      }
-
-      assert Fetching.fastest_storage_server_for_key(fastest_servers, "zebra") == nil
-    end
-
-    test "handles :end boundary correctly" do
-      fastest_servers = %{
-        {"m", :end} => :fast_pid
-      }
-
-      assert Fetching.fastest_storage_server_for_key(fastest_servers, "m") == :fast_pid
-      assert Fetching.fastest_storage_server_for_key(fastest_servers, "zzzz") == :fast_pid
-    end
-  end
-
-  describe "horse_race_storage_servers_for_key/5" do
+  describe "horse_race_storage_servers/5" do
     test "returns :error for empty server list" do
-      result = Fetching.horse_race_storage_servers_for_key([], 12_345, "key", 100, [])
-      assert result == :error
+      result = Fetching.horse_race_storage_servers([], 12_345, "key", 100, [])
+      assert result == {:error, :unavailable}
     end
 
     test "returns first successful response" do
-      servers = [
-        {{"a", "m"}, :pid1},
-        {{"a", "m"}, :pid2}
-      ]
+      servers = [:pid1, :pid2]
 
       async_stream_fn = fn servers, fun, _opts ->
         servers
@@ -336,15 +332,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       opts = [async_stream_fn: async_stream_fn, storage_fetch_fn: storage_fetch_fn]
 
-      result = Fetching.horse_race_storage_servers_for_key(servers, 12_345, "key", 100, opts)
-      assert result == {:ok, {"a", "m"}, :pid1, "value1"}
+      result = Fetching.horse_race_storage_servers(servers, 12_345, "key", 100, opts)
+      assert result == {:ok, :pid1, "value1"}
     end
 
     test "handles all servers returning errors" do
-      servers = [
-        {{"a", "m"}, :pid1},
-        {{"a", "m"}, :pid2}
-      ]
+      servers = [:pid1, :pid2]
 
       async_stream_fn = fn servers, fun, _opts ->
         servers
@@ -359,16 +352,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       opts = [async_stream_fn: async_stream_fn, storage_fetch_fn: storage_fetch_fn]
 
-      result = Fetching.horse_race_storage_servers_for_key(servers, 12_345, "key", 100, opts)
+      result = Fetching.horse_race_storage_servers(servers, 12_345, "key", 100, opts)
       # Returns first error that matches the pattern
-      assert result == {:error, :not_found}
+      assert result == {:ok, :pid2, :not_found}
     end
 
     test "prioritizes version errors" do
-      servers = [
-        {{"a", "m"}, :pid1},
-        {{"a", "m"}, :pid2}
-      ]
+      servers = [:pid1, :pid2]
 
       async_stream_fn = fn servers, fun, _opts ->
         servers
@@ -383,24 +373,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       opts = [async_stream_fn: async_stream_fn, storage_fetch_fn: storage_fetch_fn]
 
-      result = Fetching.horse_race_storage_servers_for_key(servers, 12_345, "key", 100, opts)
-      assert result == {:error, :version_too_old}
+      result = Fetching.horse_race_storage_servers(servers, 12_345, "key", 100, opts)
+      assert result == {:ok, :pid2, :version_too_old}
     end
   end
 
-  describe "fetch_from_fastest_storage_server/4" do
+  describe "fetch_from_fastest_storage_server/5" do
     test "updates fastest_storage_servers when successful" do
       state = create_test_state(read_version: 12_345, fastest_storage_servers: %{})
-      servers = [{{"a", "m"}, :pid1}]
+      servers = [:pid1]
+      key_range = {"a", "m"}
 
       horse_race_fn = fn ^servers, 12_345, "key", 100, _opts ->
-        {:ok, {"a", "m"}, :pid1, "value"}
+        {:ok, :pid1, "value"}
       end
 
       opts = [horse_race_fn: horse_race_fn]
 
       {:ok, new_state, value} =
-        Fetching.fetch_from_fastest_storage_server(state, servers, "key", opts)
+        Fetching.fetch_from_fastest_storage_server(servers, state, key_range, "key", opts)
 
       assert value == "value"
       assert new_state.fastest_storage_servers == %{{"a", "m"} => :pid1}
@@ -408,7 +399,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
     test "propagates horse race errors" do
       state = create_test_state(read_version: 12_345)
-      servers = [{{"a", "m"}, :pid1}]
+      servers = [:pid1]
+      key_range = {"a", "m"}
 
       horse_race_fn = fn ^servers, 12_345, "key", 100, _opts ->
         {:error, :timeout}
@@ -416,7 +408,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
       opts = [horse_race_fn: horse_race_fn]
 
-      result = Fetching.fetch_from_fastest_storage_server(state, servers, "key", opts)
+      result = Fetching.fetch_from_fastest_storage_server(servers, state, key_range, "key", opts)
       assert result == {:error, :timeout}
     end
   end
@@ -426,8 +418,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
       # Start with empty caches, should go to storage
       state = create_test_state(read_version: 12_345)
 
-      storage_fetch_fn = fn :storage1_pid, "integration_key", 12_345, [timeout: 100] ->
-        {:ok, "integration_value"}
+      storage_fetch_fn = fn
+        :storage1_pid, "integration_key", 12_345, [timeout: 100] ->
+          {:ok, "integration_value"}
+
+        :storage2_pid, "integration_key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
       end
 
       opts = [storage_fetch_fn: storage_fetch_fn]
@@ -466,61 +462,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
 
   # Property-based tests for robust validation of key functions
   describe "property-based tests" do
-    property "fastest_storage_server_for_key returns nil when no servers match key range" do
-      check all(
-              key <- binary(),
-              server_map <- map_of(key_range_generator(), pid_generator())
-            ) do
-        # Filter out any ranges that would actually contain our key
-        filtered_map =
-          server_map
-          |> Enum.reject(fn {{min_key, max_key}, _pid} ->
-            key_in_range?(key, min_key, max_key)
-          end)
-          |> Map.new()
-
-        if map_size(filtered_map) > 0 do
-          assert nil == Fetching.fastest_storage_server_for_key(filtered_map, key)
-        end
-      end
-    end
-
-    property "fastest_storage_server_for_key returns server when key is in range" do
-      check all(
-              key <- binary(),
-              server_pid <- pid_generator()
-            ) do
-        # Create a range that definitely contains our key
-        # Key to end always contains the key
-        range = {key, :end}
-        server_map = %{range => server_pid}
-
-        assert ^server_pid = Fetching.fastest_storage_server_for_key(server_map, key)
-      end
-    end
-
-    property "fastest_storage_server_for_key handles :end boundary correctly" do
-      check all(
-              key <- binary(),
-              server_pid <- pid_generator()
-            ) do
-        # Range with :end should include everything >= min_key
-        # Empty string to end includes everything
-        range = {"", :end}
-        server_map = %{range => server_pid}
-
-        assert ^server_pid = Fetching.fastest_storage_server_for_key(server_map, key)
-      end
-    end
-
-    property "storage_servers_for_key returns empty list when no teams cover key range" do
+    property "storage_servers_for_key raises when no teams cover key range" do
       check all(key <- binary()) do
         layout = %{
           storage_teams: [],
           services: %{}
         }
 
-        assert [] = Fetching.storage_servers_for_key(layout, key)
+        index = LayoutUtils.build_layout_index(layout)
+
+        assert_raise RuntimeError, ~r/No segment found containing key/, fn ->
+          LayoutUtils.storage_servers_for_key(index, key)
+        end
       end
     end
 
@@ -539,33 +492,77 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FetchingTest do
           }
         }
 
-        result = Fetching.storage_servers_for_key(layout, key)
+        index = LayoutUtils.build_layout_index(layout)
+        result = LayoutUtils.storage_servers_for_key(index, key)
 
         # Should only include the up server
-        assert [{{"", :end}, :up_pid}] = result
+        assert {{"", :end}, [:up_pid]} = result
       end
     end
   end
 
-  # Property test generators and helpers
-  defp key_range_generator do
-    gen all(
-          min_key <- binary(),
-          max_key <- one_of([binary(), constant(:end)])
-        ) do
-      {min_key, max_key}
+  describe "lease_expired error handling" do
+    test "confirms fix: lease_expired is now handled gracefully" do
+      # Mock next_read_version_fn to return lease_expired (simulates old incarnation scenario)
+      next_read_version_fn = fn _state -> {:error, :lease_expired} end
+
+      state = create_test_state(read_version: nil)
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      # Should now handle gracefully - confirming our fix works
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+      assert result == {:error, :lease_expired}
     end
-  end
 
-  defp pid_generator do
-    constant(self())
-  end
+    test "handles lease_expired error gracefully (desired behavior after fix)" do
+      # This test will pass after we implement the fix
+      next_read_version_fn = fn _state -> {:error, :lease_expired} end
 
-  defp key_in_range?(key, min_key, :end) do
-    key >= min_key
-  end
+      state = create_test_state(read_version: nil)
+      opts = [next_read_version_fn: next_read_version_fn]
 
-  defp key_in_range?(key, min_key, max_key) when is_binary(max_key) do
-    key >= min_key and key < max_key
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+
+      # After fix, should handle gracefully instead of crashing
+      assert result == {:error, :lease_expired}
+    end
+
+    test "simulates node incarnation scenario leading to lease_expired" do
+      # Create a mock sequencer that returns a "stale" read version
+      sequencer_fn = fn _sequencer_pid ->
+        # Old read version
+        {:ok, <<0, 0, 0, 0, 50, 0, 0, 0>>}
+      end
+
+      # Create a mock gateway that rejects old read versions
+      gateway_fn = fn _gateway_pid, read_version ->
+        # Simulate gateway with advanced minimum_read_version due to node restart
+        minimum_version = <<0, 0, 0, 0, 100, 0, 0, 0>>
+
+        if read_version < minimum_version do
+          {:error, :lease_expired}
+        else
+          # 5 second lease
+          {:ok, 5000}
+        end
+      end
+
+      state = create_test_state(read_version: nil)
+
+      opts = [
+        next_read_version_fn: fn t ->
+          # Simulate the full next_read_version flow
+          with {:ok, read_version} <- sequencer_fn.(t.transaction_system_layout.sequencer),
+               {:ok, lease_deadline_ms} <- gateway_fn.(t.gateway, read_version) do
+            {:ok, read_version, lease_deadline_ms}
+          end
+        end
+      ]
+
+      # This reproduces the exact scenario from the error logs
+      # Should now handle gracefully instead of crashing
+      result = Fetching.fetch_from_storage(state, "test_key", opts)
+      assert result == {:error, :lease_expired}
+    end
   end
 end

@@ -110,40 +110,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
              }
     end
 
-    test "transaction with range reads" do
-      # Mock range read function
-      range_read_fn = fn state, start_key, end_key, _opts ->
-        case {start_key, end_key} do
-          {"a", "z"} -> {[{"key1", "value1"}, {"key2", "value2"}], state}
-          _ -> {[], state}
-        end
-      end
-
-      tx = Tx.new()
-
-      # Perform range read
-      {tx, results, _state} = Tx.get_range(tx, "a", "z", range_read_fn, :state)
-      assert length(results) == 2
-
-      # Add a mutation
-      tx = Tx.set(tx, "new_key", "new_value")
-
-      # Commit with read_version (required for read_conflicts to be preserved)
-      read_version = Bedrock.DataPlane.Version.from_integer(54_321)
-      binary_result = Tx.commit_binary(tx, read_version)
-      assert {:ok, decoded} = Transaction.decode(binary_result)
-
-      assert decoded.mutations == [{:set, "new_key", "new_value"}]
-
-      # Should have read conflicts from the range read
-      {actual_read_version, actual_read_conflicts} = decoded.read_conflicts
-      assert actual_read_version == read_version
-      assert actual_read_conflicts == [{"a", "z"}]
-
-      assert decoded.write_conflicts == [
-               {"new_key", "new_key\0"}
-             ]
-    end
+    # Range read testing moved to client-side streaming architecture
 
     test "binary transaction maintains size optimization" do
       # Create transactions with different key/value sizes

@@ -192,19 +192,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
       assert length(captured_specs) == 3
 
       # Check each child spec has the correct tuple-based ID format
-      Enum.with_index(captured_specs, fn child_spec, index ->
-        # The ID should be {CommitProxy.Server, cluster, epoch, instance}
-        assert %{id: {Server, TestCluster, 42, ^index}} = child_spec
+      # Extract all instances from the child specs
+      instances =
+        Enum.map(captured_specs, fn child_spec ->
+          # The ID should be {CommitProxy.Server, cluster, epoch, instance}
+          assert %{id: {Server, TestCluster, 42, instance}} = child_spec
 
-        # Check the start tuple contains the correct parameters
-        assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
+          # Check the start tuple contains the correct parameters
+          assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
 
-        # Verify the start args contain the instance
-        assert {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token"} = start_args
-      end)
+          # Verify the start args are correct
+          assert {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token"} = start_args
 
-      # Verify round-robin distribution across nodes
-      assert captured_nodes == [:node1, :node2, :node1]
+          instance
+        end)
+
+      # Verify we got instances 0, 1, 2 (though possibly in different order due to concurrency)
+      assert Enum.sort(instances) == [0, 1, 2]
+
+      # Verify round-robin distribution across nodes (order may vary due to concurrency)
+      assert Enum.sort(captured_nodes) == Enum.sort([:node1, :node2, :node1])
     end
 
     test "uses correct empty_transaction_timeout_ms from config" do

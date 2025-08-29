@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       spec = Server.child_spec(opts)
 
       assert %{
-               id: {Server, _, _},
+               id: {Server, _, _, _},
                restart: :temporary
              } = spec
 
@@ -90,7 +90,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 
@@ -124,7 +125,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 
@@ -149,7 +151,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 
@@ -185,7 +188,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 
@@ -223,7 +227,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 
@@ -292,7 +297,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              key_range: {"", :end},
              epoch: 1,
              last_version: Bedrock.DataPlane.Version.zero(),
-             director: self()
+             director: self(),
+             cluster: TestCluster
            ]}
         )
 

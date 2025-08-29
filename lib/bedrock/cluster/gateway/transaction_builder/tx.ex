@@ -20,13 +20,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
 
   @type t :: %__MODULE__{
           mutations: [mutation()],
-          writes: %{key() => value() | :clear},
+          writes: :gb_trees.tree(key(), value() | :clear),
           reads: %{key() => value() | :clear},
           range_writes: [range()],
           range_reads: [range()]
         }
   defstruct mutations: [],
-            writes: %{},
+            writes: :gb_trees.empty(),
             reads: %{},
             range_writes: [],
             range_reads: []
@@ -46,61 +46,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
       :clear -> {t, {:error, :not_found}, state}
       value -> {t, {:ok, value}, state}
     end
-  end
-
-  @spec get_range(
-          t(),
-          start :: key(),
-          end_ex :: key(),
-          (start :: key(), end_ex :: key(), opts :: keyword(), state -> {[range()], state}),
-          state,
-          opts :: keyword()
-        ) :: {t(), [{key(), value()}], state}
-        when state: term()
-  def get_range(t, s, e, read_range_fn, state, opts \\ []) do
-    limit = Keyword.get(opts, :limit, 1000)
-
-    tx_visible =
-      t.writes
-      |> Enum.filter(fn {k, v} ->
-        k >= s and k < e and v != :clear
-      end)
-      |> Map.new()
-
-    cleared_ranges =
-      t.mutations
-      |> Enum.filter(fn
-        {:clear_range, _, _} -> true
-        _ -> false
-      end)
-      |> Enum.map(fn {:clear_range, cs, ce} -> {cs, ce} end)
-
-    {db_results, new_state} =
-      fetch_missing_data_if_needed(
-        tx_visible,
-        limit,
-        t,
-        cleared_ranges,
-        read_range_fn,
-        state,
-        s,
-        e
-      )
-
-    merged = Map.merge(db_results, tx_visible)
-
-    result =
-      merged
-      |> Enum.sort_by(fn {k, _} -> k end)
-      |> Enum.take(limit)
-
-    new_t = %{
-      t
-      | range_reads: add_or_merge(t.range_reads, s, e),
-        reads: Map.merge(t.reads, Map.new(result))
-    }
-
-    {new_t, result, new_state}
   end
 
   def set(t, k, v) when is_binary(k) and is_binary(v) do
@@ -135,7 +80,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   def commit(t, read_version \\ nil) do
     write_conflicts =
       t.writes
-      |> Map.keys()
+      |> :gb_trees.keys()
       |> Enum.reduce(t.range_writes, fn k, acc -> add_or_merge(acc, k, next_key(k)) end)
 
     read_conflicts =
@@ -179,13 +124,29 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   end
 
   defp remove_writes_in_range(t, s, e) do
-    %{
-      t
-      | writes:
-          t.writes
-          |> Enum.reject(fn {k, _} -> k >= s && k < e end)
-          |> Map.new()
-    }
+    # Get all keys in range and delete them
+    keys_to_remove =
+      s
+      |> :gb_trees.iterator_from(t.writes)
+      |> gb_trees_range_keys(e, [])
+
+    new_writes =
+      Enum.reduce(keys_to_remove, t.writes, fn k, tree ->
+        :gb_trees.delete_any(k, tree)
+      end)
+
+    %{t | writes: new_writes}
+  end
+
+  # Helper function to collect keys in range from gb_trees iterator
+  defp gb_trees_range_keys(iterator, end_key, acc) do
+    case :gb_trees.next(iterator) do
+      {key, _value, next_iterator} when key < end_key ->
+        gb_trees_range_keys(next_iterator, end_key, [key | acc])
+
+      _ ->
+        Enum.reverse(acc)
+    end
   end
 
   defp clear_reads_in_range(t, s, e) do
@@ -212,16 +173,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   def add_or_merge([{hs, he} | rest], s, e), do: add_or_merge(rest, min(hs, s), max(he, e))
 
   @spec get_write(t(), k :: binary()) :: binary() | :clear | nil
-  defp get_write(t, k), do: Map.get(t.writes, k)
+  defp get_write(t, k) do
+    case :gb_trees.lookup(k, t.writes) do
+      {:value, v} -> v
+      :none -> nil
+    end
+  end
 
   @spec get_read(t(), k :: binary()) :: binary() | :clear | nil
   defp get_read(t, k), do: Map.get(t.reads, k)
 
   @spec put_clear(t(), k :: binary()) :: t()
-  defp put_clear(t, k), do: %{t | writes: Map.put(t.writes, k, :clear)}
+  defp put_clear(t, k), do: %{t | writes: :gb_trees.enter(k, :clear, t.writes)}
 
   @spec put_write(t(), k :: binary(), v :: binary()) :: t()
-  defp put_write(t, k, v), do: %{t | writes: Map.put(t.writes, k, v)}
+  defp put_write(t, k, v), do: %{t | writes: :gb_trees.enter(k, v, t.writes)}
 
   defp fetch(t, k, fetch_fn, state) do
     {result, new_state} = fetch_fn.(k, state)
@@ -246,28 +212,4 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   defp next_key(k), do: k <> <<0>>
 
   # Helper function to reduce nesting in get_range
-  defp fetch_missing_data_if_needed(tx_visible, limit, t, cleared_ranges, read_range_fn, state, s, e)
-       when map_size(tx_visible) < limit do
-    fetch_and_filter_range_data(t, cleared_ranges, read_range_fn, state, s, e, limit)
-  end
-
-  defp fetch_missing_data_if_needed(_tx_visible, _limit, _t, _cleared_ranges, _read_range_fn, state, _s, _e) do
-    {%{}, state}
-  end
-
-  defp fetch_and_filter_range_data(t, cleared_ranges, read_range_fn, state, s, e, limit) do
-    {range_data, updated_state} = read_range_fn.(state, s, e, limit: limit)
-
-    filtered_data =
-      range_data
-      |> Enum.reject(&should_skip_key?(&1, t.writes, cleared_ranges))
-      |> Map.new()
-
-    {filtered_data, updated_state}
-  end
-
-  defp should_skip_key?({k, _v}, writes, cleared_ranges) do
-    Map.has_key?(writes, k) or
-      Enum.any?(cleared_ranges, fn {cs, ce} -> k >= cs and k < ce end)
-  end
 end

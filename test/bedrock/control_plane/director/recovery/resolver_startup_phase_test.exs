@@ -56,7 +56,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       |> Enum.with_index()
       |> Enum.each(fn {{child_spec, node}, index} ->
         # Verify child spec has correct tuple-based ID format
-        assert %{id: {Server, TestCluster, 42}} = child_spec
+        assert %{id: {Server, TestCluster, _key_range, 42}} = child_spec
 
         # Verify start args contain correct parameters
         assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec

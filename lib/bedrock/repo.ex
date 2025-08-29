@@ -13,6 +13,9 @@ defmodule Bedrock.Repo do
     cluster = Keyword.fetch!(opts, :cluster)
 
     quote do
+      alias Bedrock.Internal.Repo
+      alias Bedrock.Internal.TransactionManager
+
       @cluster unquote(cluster)
       @key_codecs Map.merge(
                     Bedrock.Repo.builtin_key_codecs(),
@@ -23,7 +26,7 @@ defmodule Bedrock.Repo do
                       Map.new(unquote(opts[:value_codecs] || []))
                     )
 
-      @opaque transaction :: Bedrock.Internal.Repo.transaction()
+      @opaque transaction :: Repo.transaction()
 
       defp key_codec(name), do: @key_codecs[name] || raise(ArgumentError, "Unknown key codec: #{inspect(name)}")
 
@@ -40,22 +43,22 @@ defmodule Bedrock.Repo do
             ) :: result
             when result: term()
       def transaction(fun, opts \\ []) do
-        Bedrock.Internal.Repo.transaction(
-          @cluster,
-          fun,
+        processed_opts =
           opts
           |> Keyword.put(:key_codec, key_codec(opts[:key_codec] || :default))
           |> Keyword.put(:value_codec, value_codec(opts[:value_codec] || :default))
-        )
+
+        TransactionManager.transaction(@cluster, fun, processed_opts)
       end
 
-      defdelegate nested_transaction(t), to: Bedrock.Internal.Repo
-      defdelegate fetch(t, key), to: Bedrock.Internal.Repo
-      defdelegate fetch!(t, key), to: Bedrock.Internal.Repo
-      defdelegate get(t, key), to: Bedrock.Internal.Repo
-      defdelegate put(t, key, value), to: Bedrock.Internal.Repo
-      defdelegate commit(t, opts \\ []), to: Bedrock.Internal.Repo
-      defdelegate rollback(t), to: Bedrock.Internal.Repo
+      defdelegate fetch(t, key), to: Repo
+      defdelegate fetch!(t, key), to: Repo
+      defdelegate get(t, key), to: Repo
+      defdelegate range_fetch(t, start_key, end_key, opts \\ []), to: Repo
+      defdelegate range_stream(t, start_key, end_key, opts \\ []), to: Repo
+      defdelegate put(t, key, value), to: Repo
+      defdelegate commit(t, opts \\ []), to: Repo
+      defdelegate rollback(t), to: Repo
     end
   end
 end

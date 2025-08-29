@@ -219,11 +219,11 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec notify_waiting_for_healthy(State.t()) :: State.t()
   def notify_waiting_for_healthy(t), do: t
 
-  @spec worker_for_kind(:storage) :: module()
+  @spec worker_for_kind(:log) :: module()
   defp worker_for_kind(:log), do: Bedrock.DataPlane.Log.Shale
 
-  @spec worker_for_kind(:log) :: module()
-  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Basalt
+  @spec worker_for_kind(:storage) :: module()
+  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Olivine
 
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t), do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)

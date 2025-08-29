@@ -90,7 +90,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "starts with custom configuration" do
-      custom_layout = %{sequencer: :custom, proxies: []}
+      custom_layout = %{
+        sequencer: :custom,
+        proxies: [],
+        storage_teams: [
+          %{
+            key_range: {"", :end},
+            storage_ids: ["storage1"]
+          }
+        ],
+        services: %{
+          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+        }
+      }
 
       pid =
         start_transaction_builder(
@@ -297,7 +309,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "state fields are preserved across operations" do
-      custom_layout = %{custom: :test_layout}
+      custom_layout = %{
+        storage_teams: [
+          %{
+            key_range: {"", :end},
+            storage_ids: ["storage1"]
+          }
+        ],
+        services: %{
+          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+        }
+      }
+
       pid = start_transaction_builder(transaction_system_layout: custom_layout)
 
       GenServer.cast(pid, {:put, "key", "value"})
@@ -453,8 +476,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       custom_layout = %{
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy1, :custom_proxy2],
-        storage_teams: [%{custom: :team}],
-        services: %{custom: :service}
+        storage_teams: [
+          %{
+            key_range: {"", "m"},
+            storage_ids: ["storage1"]
+          },
+          %{
+            key_range: {"m", :end},
+            storage_ids: ["storage2"]
+          }
+        ],
+        services: %{
+          "storage1" => %{kind: :storage, status: {:up, :pid1}},
+          "storage2" => %{kind: :storage, status: {:up, :pid2}}
+        }
       }
 
       pid = start_transaction_builder(transaction_system_layout: custom_layout)

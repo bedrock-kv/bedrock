@@ -50,14 +50,14 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
-    _key_range = opts[:key_range] || raise "Missing :key_range option"
+    key_range = opts[:key_range] || raise "Missing :key_range option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     last_version = opts[:last_version] || Version.zero()
     director = opts[:director] || raise "Missing :director option"
-    cluster = opts[:cluster] || __MODULE__
+    cluster = opts[:cluster] || raise "Missing :cluster option"
 
     %{
-      id: {__MODULE__, cluster, epoch},
+      id: {__MODULE__, cluster, key_range, epoch},
       start:
         {GenServer, :start_link,
          [

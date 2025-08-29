@@ -193,5 +193,81 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       assert length(data) == 5
       assert {:continue_from, _next_key} = continuation
     end
+
+    test "includes tx writes when storage says no more keys but writes exist beyond batch" do
+      layout = %{
+        sequencer: :test_sequencer,
+        storage_teams: [
+          %{
+            key_range: {"", :end},
+            storage_ids: ["storage1"]
+          }
+        ],
+        services: %{
+          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
+        }
+      }
+
+      # Create state with some pending writes in the transaction
+      state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+
+      # Add some writes to the tx that fall within our query range but beyond the storage batch
+      tx_with_writes = %{
+        state.tx
+        | writes:
+            :gb_trees.insert(
+              "m",
+              "tx_value_m",
+              :gb_trees.insert("n", "tx_value_n", :gb_trees.insert("o", "tx_value_o", state.tx.writes))
+            )
+      }
+
+      state = %{state | tx: tx_with_writes}
+
+      # Mock storage function that returns limited data and says no more keys
+      mock_storage_fn = fn _pids, {_start_key, _end_key}, _version, _batch_size, _timeout ->
+        # Storage only returns keys up to "k", then says has_more = false
+        data = [
+          {"a", "storage_value_a"},
+          {"b", "storage_value_b"},
+          {"k", "storage_value_k"}
+        ]
+
+        {:ok, %{data: data, has_more: false}}
+      end
+
+      opts = [storage_fetch_fn: mock_storage_fn]
+
+      # Query range "a" to "z" - this should include both storage results AND tx writes
+      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
+
+      # Should succeed and include ALL keys in range: storage keys + tx writes
+      assert {:ok, data, continuation} = result
+
+      # Verify we get both storage data and tx writes
+      keys = Enum.map(data, &elem(&1, 0))
+      # from storage
+      assert "a" in keys
+      # from storage
+      assert "b" in keys
+      # from storage
+      assert "k" in keys
+      # from tx writes
+      assert "m" in keys
+      # from tx writes
+      assert "n" in keys
+      # from tx writes
+      assert "o" in keys
+
+      # Should be finished since we covered the full range
+      assert continuation == :finished
+
+      # Verify values are correct
+      data_map = Map.new(data)
+      assert data_map["a"] == "storage_value_a"
+      assert data_map["m"] == "tx_value_m"
+      assert data_map["n"] == "tx_value_n"
+      assert data_map["o"] == "tx_value_o"
+    end
   end
 end

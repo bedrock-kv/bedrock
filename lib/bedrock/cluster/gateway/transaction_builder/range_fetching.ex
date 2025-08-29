@@ -139,13 +139,32 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetching do
       end)
 
     tx_iterator = :gb_trees.iterator_from(start_key, tx.writes)
-    merge_ordered_results(storage_results, tx_iterator, tx_clear_ranges, [])
+    {acc, tx_iterator} = merge_ordered_results(storage_results, tx_iterator, tx_clear_ranges, [])
+
+    acc
+    |> filter_cleared_keys(tx_clear_ranges)
+    |> append_remaining_tx_writes(tx_iterator, end_key)
+    |> Enum.reverse()
   end
 
-  defp merge_ordered_results([], _tx_iterator, clear_ranges, acc) do
-    acc
-    |> filter_cleared_keys(clear_ranges)
-    |> Enum.reverse()
+  defp append_remaining_tx_writes(acc, tx_iterator, end_key) do
+    case :gb_trees.next(tx_iterator) do
+      {tx_key, tx_value, iterator} when tx_key < end_key ->
+        append_remaining_tx_writes([{tx_key, tx_value} | acc], iterator, end_key)
+
+      _ ->
+        acc
+    end
+  end
+
+  defp merge_ordered_results([], tx_iterator, clear_ranges, acc) do
+    case :gb_trees.next(tx_iterator) do
+      {tx_key, tx_value, iterator} ->
+        merge_ordered_results([], iterator, clear_ranges, [{tx_key, tx_value} | acc])
+
+      :none ->
+        {acc, tx_iterator}
+    end
   end
 
   defp merge_ordered_results(storage_list, tx_iterator, clear_ranges, acc) do
@@ -154,9 +173,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetching do
         merge_with_tx_write({tx_key, tx_value}, iterator, storage_list, clear_ranges, acc)
 
       :none ->
-        # No more tx writes, add remaining storage results
-        remaining_storage = filter_cleared_keys(storage_list, clear_ranges)
-        Enum.reverse(acc, remaining_storage)
+        {Enum.reverse(storage_list, acc), tx_iterator}
     end
   end
 
@@ -175,9 +192,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetching do
         merge_ordered_results(storage_rest, iterator, clear_ranges, [tx_kv | acc])
 
       true ->
-        merge_ordered_results(storage_rest, iterator, clear_ranges, [storage_kv | acc])
+        merge_with_tx_write(tx_kv, iterator, storage_rest, clear_ranges, [storage_kv | acc])
     end
   end
+
+  defp merge_with_tx_write({_tx_key, _tx_value} = tx_kv, iterator, [], clear_ranges, acc),
+    do: merge_ordered_results([], iterator, clear_ranges, [tx_kv | acc])
 
   defp filter_cleared_keys(key_value_pairs, clear_ranges) do
     Enum.reject(key_value_pairs, fn {key, _value} ->

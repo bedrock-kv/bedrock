@@ -62,10 +62,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   import __MODULE__.Committing, only: [do_commit: 1]
   import __MODULE__.Fetching, only: [do_fetch: 2]
   import __MODULE__.Putting, only: [do_put: 3]
+  import __MODULE__.RangeFetching, only: [do_range_batch: 4]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Internal.Time
 
@@ -92,10 +94,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @impl true
   def handle_continue(:initialization, {gateway, transaction_system_layout, key_codec, value_codec}) do
+    # Build the layout index once during initialization for O(log n) lookups
+    layout_index = LayoutUtils.build_layout_index(transaction_system_layout)
+
     noreply(%State{
       state: :valid,
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
+      layout_index: layout_index,
       key_codec: key_codec,
       value_codec: value_codec
     })
@@ -130,6 +136,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   def handle_call({:fetch, key}, _from, t) do
     case do_fetch(t, key) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
+  def handle_call({:range_batch, start_key, end_key, batch_size, opts}, _from, t) do
+    case do_range_batch(t, {start_key, end_key}, batch_size, opts) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end

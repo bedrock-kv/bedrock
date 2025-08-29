@@ -1,72 +1,21 @@
 defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls
 
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Internal.RangeQuery
 
   @opaque transaction :: pid()
   @type key :: term()
   @type value :: term()
 
-  @spec transaction(
-          cluster :: module(),
-          (transaction() -> result),
-          opts :: [
-            key_codec: module(),
-            value_codec: module(),
-            retry_count: pos_integer(),
-            timeout_in_ms: Bedrock.timeout_in_ms()
-          ]
-        ) :: result
-        when result: term()
-  def transaction(cluster, fun, opts \\ []) do
-    with {:ok, gateway} <- cluster.fetch_gateway(),
-         {:ok, txn} <- Gateway.begin_transaction(gateway, opts) do
-      result =
-        try do
-          fun.(txn)
-        rescue
-          exception ->
-            rollback(txn)
-            reraise exception, __STACKTRACE__
-        end
-
-      if :ok == result || (is_tuple(result) and :ok == elem(result, 0)) do
-        handle_commit_result(txn, result, cluster, fun, opts)
-      else
-        rollback(txn)
-        result
-      end
-    end
+  @spec nested_transaction(transaction(), function()) :: term()
+  def nested_transaction(txn, fun) do
+    call(txn, :nested_transaction, :infinity)
+    fun.(txn)
+  rescue
+    exception ->
+      rollback(txn)
+      reraise exception, __STACKTRACE__
   end
-
-  @spec handle_commit_result(transaction(), term(), module(), function(), keyword()) :: term()
-  defp handle_commit_result(txn, result, cluster, fun, opts) do
-    txn
-    |> commit()
-    |> case do
-      {:ok, _} ->
-        result
-
-      {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
-        handle_commit_retry(cluster, fun, opts, reason)
-    end
-  end
-
-  @spec handle_commit_retry(module(), function(), keyword(), atom()) :: term()
-  defp handle_commit_retry(cluster, fun, opts, reason) do
-    retry_count = opts[:retry_count] || 0
-
-    if retry_count > 0 do
-      opts = Keyword.put(opts, :retry_count, retry_count - 1)
-      transaction(cluster, fun, opts)
-    else
-      raise "Transaction failed: #{inspect(reason)}"
-    end
-  end
-
-  @spec nested_transaction(transaction()) ::
-          {:ok, transaction()} | {:error, :unavailable | :timeout | :unknown}
-  def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
   def fetch(t, key), do: call(t, {:fetch, key}, :infinity)
@@ -86,6 +35,27 @@ defmodule Bedrock.Internal.Repo do
       {:ok, value} -> value
     end
   end
+
+  @spec range_fetch(transaction(), start_key :: key(), end_key :: key(), opts :: [limit: pos_integer()]) ::
+          {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
+  def range_fetch(t, start_key, end_key, opts \\ []) do
+    {:ok, t |> range_stream(start_key, end_key, opts) |> Enum.to_list()}
+  rescue
+    RuntimeError -> {:error, :unavailable}
+  end
+
+  @spec range_stream(
+          transaction(),
+          start_key :: key(),
+          end_key :: key(),
+          opts :: [
+            batch_size: pos_integer(),
+            timeout: pos_integer(),
+            limit: pos_integer(),
+            mode: :individual | :batch
+          ]
+        ) :: Enumerable.t({any(), any()})
+  def range_stream(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
 
   @spec put(transaction(), key(), value()) :: transaction()
   def put(t, key, value) do

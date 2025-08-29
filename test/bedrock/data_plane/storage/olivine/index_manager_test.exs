@@ -676,4 +676,48 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       assert key_versions_1 == key_versions_2
     end
   end
+
+  describe "Page.apply_operations right_key bug regression test" do
+    test "apply_operations preserves valid last_key_offset for right_key access" do
+      # This test reproduces the exact scenario from the failing property test
+      # where apply_operations corrupts the last_key_offset, causing right_key to fail
+
+      # Create a page with some initial data similar to the failing case
+      initial_keys_versions = [
+        {"BE7t", Version.from_integer(6)},
+        {"S", Version.from_integer(1)}
+      ]
+
+      page = Page.new(388, initial_keys_versions)
+
+      # Verify the initial page is valid and right_key works
+      # Should be the last key alphabetically after sorting
+      assert Page.right_key(page) == "S"
+
+      # Apply operations that caused the bug in the property test
+      operations = %{
+        "Ej3s" => {:set, Version.from_integer(1)},
+        "S" => :clear,
+        "ce" => :clear,
+        "fFE" => :clear
+      }
+
+      # This should not corrupt the page binary format
+      updated_page = Page.apply_operations(page, operations)
+
+      # The key assertion: right_key should work on the updated page
+      # This will fail with FunctionClauseError if last_key_offset is corrupted
+      result = Page.right_key(updated_page)
+
+      # Verify the result makes sense - should be the last key after operations
+      # After operations: "BE7t" remains, "S" is cleared, "Ej3s" is added
+      # So the last key alphabetically should be "Ej3s"
+      assert result == "Ej3s", "right_key should return the correct last key after apply_operations"
+
+      # Additional verification: the page should have valid internal structure
+      assert not Page.empty?(updated_page), "Page should not be empty after operations"
+      keys = Page.keys(updated_page)
+      assert Enum.sort(keys) == keys, "Keys should remain sorted after operations"
+    end
+  end
 end

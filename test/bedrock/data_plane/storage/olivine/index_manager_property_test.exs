@@ -87,7 +87,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
           keys <- key_list_generator(),
           versions <- list_of(version_generator(), length: length(keys))
         ) do
-      Page.new(page_id, keys |> Enum.zip(versions) |> Enum.sort())
+      # Create page using the proper API to ensure consistent binary structure
+      page = Page.new(page_id, keys |> Enum.zip(versions) |> Enum.sort())
+
+      # Validate the page structure by round-tripping through apply_operations
+      # This ensures the page has consistent internal offsets
+      validated_page = Page.apply_operations(page, %{})
+      validated_page
     end
   end
 

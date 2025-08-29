@@ -26,6 +26,17 @@ defmodule Bedrock.Internal.GenServer.Calls do
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
+  @spec call!(GenServer.server(), message :: term(), timeout()) :: term()
+  def call!(server, message, timeout) do
+    GenServer.call(server, message, normalize_timeout(timeout))
+  rescue
+    error -> raise "GenServer call failed: #{inspect(error)}"
+  catch
+    :exit, {:noproc, _} -> raise "GenServer call failed: #{inspect(:unavailable)}"
+    :exit, {{:nodedown, _}, _} -> raise "GenServer call failed: #{inspect(:unavailable)}"
+    :exit, {:timeout, _} -> raise "GenServer call failed: #{inspect(:timeout)}"
+  end
+
   @spec normalize_timeout(timeout()) :: timeout()
   defp normalize_timeout(:infinity), do: :infinity
   defp normalize_timeout(timeout) when is_integer(timeout) and timeout >= 0, do: timeout

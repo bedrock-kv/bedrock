@@ -17,7 +17,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
       [
         [:bedrock, :data_plane, :commit_proxy, :start],
         [:bedrock, :data_plane, :commit_proxy, :stop],
-        [:bedrock, :data_plane, :commit_proxy, :failed]
+        [:bedrock, :data_plane, :commit_proxy, :failed],
+        [:bedrock, :commit_proxy, :resolver, :retry],
+        [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded]
       ],
       &__MODULE__.handler/4,
       nil
@@ -30,6 +32,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   @spec handler(list(atom()), map(), map(), term()) :: :ok
   def handler([:bedrock, :data_plane, :commit_proxy, event], measurements, metadata, _),
     do: trace(event, measurements, metadata)
+
+  def handler([:bedrock, :commit_proxy, :resolver, event], measurements, metadata, _),
+    do: trace_resolver(event, measurements, metadata)
 
   @spec trace(atom(), map(), map()) :: :ok
   def trace(:start, %{n_transactions: n_transactions}, %{cluster: cluster, commit_version: commit_version}) do
@@ -47,6 +52,36 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
   def trace(:failed, %{duration_us: duration_us, commit_version: commit_version}, %{reason: reason}) do
     error(
       "Transaction Batch #{Version.to_string(commit_version)} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_us})}"
+    )
+  end
+
+  @spec trace_resolver(atom(), map(), map()) :: :ok
+  def trace_resolver(:retry, %{attempts_remaining: attempts_remaining, attempts_used: attempts_used}, %{reason: reason}) do
+    Logger.warning(
+      "Resolver retry #{attempts_used + 1}, #{attempts_remaining} attempts remaining due to: #{inspect(reason)}",
+      ansi_color: :yellow
+    )
+  end
+
+  def trace_resolver(:max_retries_exceeded, %{total_attempts: total_attempts}, %{reason: reason}) do
+    error("Resolver failed after #{total_attempts} attempts: #{inspect(reason)}")
+  end
+
+  @spec emit_resolver_retry(non_neg_integer(), non_neg_integer(), term()) :: :ok
+  def emit_resolver_retry(attempts_remaining, attempts_used, reason) do
+    :telemetry.execute(
+      [:bedrock, :commit_proxy, :resolver, :retry],
+      %{attempts_remaining: attempts_remaining, attempts_used: attempts_used},
+      %{reason: reason}
+    )
+  end
+
+  @spec emit_resolver_max_retries_exceeded(non_neg_integer(), term()) :: :ok
+  def emit_resolver_max_retries_exceeded(total_attempts, reason) do
+    :telemetry.execute(
+      [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded],
+      %{total_attempts: total_attempts},
+      %{reason: reason}
     )
   end
 

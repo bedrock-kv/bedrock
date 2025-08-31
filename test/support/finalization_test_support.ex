@@ -17,6 +17,59 @@ defmodule FinalizationTestSupport do
     end
   end
 
+  # Fake sequencer for testing finalization without self-calls
+  defmodule FakeSequencer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts \\ []) do
+      GenServer.start_link(__MODULE__, :ok, opts)
+    end
+
+    def init(:ok), do: {:ok, %{}}
+
+    def handle_call({:report_successful_commit, _commit_version}, _from, state) do
+      {:reply, :ok, state}
+    end
+  end
+
+  # Fake resolver for testing conflict resolution without self-calls
+  defmodule FakeResolver do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts \\ []) do
+      GenServer.start_link(__MODULE__, :ok, opts)
+    end
+
+    def init(:ok), do: {:ok, %{}}
+
+    def handle_call(
+          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries},
+          _from,
+          state
+        ) do
+      # Return no conflicts (empty list) for simple test scenarios
+      {:reply, {:ok, []}, state}
+    end
+  end
+
+  @doc """
+  Creates a fake sequencer that handles synchronous report_successful_commit calls.
+  Uses start_supervised! for proper test lifecycle management.
+  """
+  def create_fake_sequencer do
+    ExUnit.Callbacks.start_supervised!(FakeSequencer)
+  end
+
+  @doc """
+  Creates a fake resolver that handles resolve_transactions calls without conflicts.
+  Uses start_supervised! for proper test lifecycle management.
+  """
+  def create_fake_resolver do
+    ExUnit.Callbacks.start_supervised!(FakeResolver)
+  end
+
   @doc """
   Creates a mock log server that responds to GenServer calls.
   Automatically registers cleanup via on_exit to ensure the process is killed.
@@ -107,16 +160,25 @@ defmodule FinalizationTestSupport do
     default_binary = Transaction.encode(default_transaction_map)
 
     default_transactions = [
-      {fn result -> send(self(), {:reply, result}) end, default_binary}
+      {0, fn result -> send(self(), {:reply, result}) end, default_binary}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
 
+    # Ensure buffer contains indexed transactions
+    indexed_buffer =
+      case buffer do
+        # If buffer already has indexed format {index, reply_fn, binary}, use as-is
+        [{_idx, _reply_fn, _binary} | _] -> buffer
+        # If buffer has old format {reply_fn, binary}, add indices
+        _ -> buffer |> Enum.with_index() |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary} end)
+      end
+
     %Bedrock.DataPlane.CommitProxy.Batch{
       commit_version: commit_version,
       last_commit_version: last_commit_version,
-      n_transactions: length(buffer),
-      buffer: buffer
+      n_transactions: length(indexed_buffer),
+      buffer: indexed_buffer
     }
   end
 

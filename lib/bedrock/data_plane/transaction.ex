@@ -286,6 +286,102 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
+  @doc """
+  Efficiently extracts specific sections from a transaction and reassembles them into a new transaction.
+
+  This avoids the decode-encode cycle by working directly with binary sections.
+  Much faster than extracting data and calling encode/1 again.
+
+  ## Parameters
+    - `encoded_transaction`: The source transaction  
+    - `sections_to_keep`: List of section names to keep in the new transaction (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
+    - `new_sections`: Map of additional sections to add (e.g. %{commit_version: version_binary})
+
+  ## Examples
+      # Extract just mutations and add commit version
+      {:ok, log_transaction} = reassemble_sections(transaction, [:mutations], %{commit_version: version})
+      
+      # Extract read conflicts and write conflicts for resolver
+      {:ok, conflict_data} = reassemble_sections(transaction, [:read_conflicts, :write_conflicts], %{})
+  """
+  @spec reassemble_sections(binary(), [atom()], %{atom() => binary()}) ::
+          {:ok, binary()} | {:error, reason :: term()}
+  def reassemble_sections(encoded_transaction, sections_to_keep, new_sections \\ %{}) do
+    case parse_all_sections(encoded_transaction) do
+      {:ok, {_overall_header, sections_map}} ->
+        # Convert atom names to internal tags
+        section_tags_to_keep = Enum.map(sections_to_keep, &atom_to_tag/1)
+
+        new_section_tags =
+          Map.new(new_sections, fn {atom_name, payload} ->
+            {atom_to_tag(atom_name), payload}
+          end)
+
+        # Keep only the requested sections from original transaction
+        kept_sections = Map.take(sections_map, section_tags_to_keep)
+
+        # Merge with new sections (new sections override if same tag)
+        final_sections = Map.merge(kept_sections, new_section_tags)
+
+        rebuild_transaction(final_sections)
+
+      error ->
+        error
+    end
+  end
+
+  @spec atom_to_tag(atom()) :: section_tag()
+  defp atom_to_tag(:mutations), do: @mutations_tag
+  defp atom_to_tag(:read_conflicts), do: @read_conflicts_tag
+  defp atom_to_tag(:write_conflicts), do: @write_conflicts_tag
+  defp atom_to_tag(:commit_version), do: @commit_version_tag
+
+  @doc """
+  Efficiently extracts specific sections from a transaction into a smaller binary transaction.
+
+  This is a convenience wrapper around reassemble_sections/3 for the common case
+  of extracting sections without adding new ones.
+
+  ## Parameters
+    - `encoded_transaction`: The source transaction  
+    - `sections_to_keep`: List of section names to keep (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
+
+  ## Examples
+      # Extract just conflict sections for resolver
+      {:ok, conflict_binary} = extract_sections(transaction, [:read_conflicts, :write_conflicts])
+      
+      # Extract mutations for log processing  
+      {:ok, mutations_binary} = extract_sections(transaction, [:mutations])
+  """
+  @spec extract_sections(binary(), [atom()]) :: {:ok, binary()} | {:error, reason :: term()}
+  def extract_sections(encoded_transaction, sections_to_keep) do
+    reassemble_sections(encoded_transaction, sections_to_keep, %{})
+  end
+
+  @doc """
+  Efficiently extracts specific sections from a transaction into a smaller binary transaction.
+
+  Same as extract_sections/2 but raises on error instead of returning {:error, reason}.
+
+  ## Parameters
+    - `encoded_transaction`: The source transaction  
+    - `sections_to_keep`: List of section names to keep (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
+
+  ## Examples
+      # Extract just conflict sections for resolver  
+      conflict_binary = extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      
+      # Extract mutations for log processing
+      mutations_binary = extract_sections!(transaction, [:mutations])
+  """
+  @spec extract_sections!(binary(), [atom()]) :: binary()
+  def extract_sections!(encoded_transaction, sections_to_keep) do
+    case extract_sections(encoded_transaction, sections_to_keep) do
+      {:ok, result} -> result
+      {:error, reason} -> raise "Failed to extract sections #{inspect(sections_to_keep)}: #{inspect(reason)}"
+    end
+  end
+
   # ============================================================================
   # CONVENIENCE FUNCTIONS
   # ============================================================================

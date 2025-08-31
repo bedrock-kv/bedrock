@@ -70,8 +70,12 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
-  @spec handle_call(:next_read_version | :next_commit_version, GenServer.from(), State.t()) ::
-          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()}, State.t()}
+  @spec handle_call(
+          :next_read_version | :next_commit_version | {:report_successful_commit, Bedrock.version()},
+          GenServer.from(),
+          State.t()
+        ) ::
+          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()} | :ok, State.t()}
   def handle_call(:next_read_version, _from, t) do
     # Convert to Version.t() only at return
     read_version = Version.from_integer(t.known_committed_version_int)
@@ -108,9 +112,9 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
-  @spec handle_cast({:report_successful_commit, Bedrock.version()}, State.t()) ::
-          {:noreply, State.t()}
-  def handle_cast({:report_successful_commit, commit_version}, t) do
+  @spec handle_call({:report_successful_commit, Bedrock.version()}, GenServer.from(), State.t()) ::
+          {:reply, :ok, State.t()}
+  def handle_call({:report_successful_commit, commit_version}, _from, t) do
     # Convert incoming Version.t() to integer for comparison
     commit_version_int = Version.to_integer(commit_version)
     updated_known_committed_int = max(t.known_committed_version_int, commit_version_int)
@@ -118,7 +122,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     known_committed_version = Version.from_integer(updated_known_committed_int)
     emit_successful_commit(commit_version, known_committed_version)
 
-    noreply(%{t | known_committed_version_int: updated_known_committed_int}, [])
+    reply(%{t | known_committed_version_int: updated_known_committed_int}, :ok)
   end
 
   @impl true

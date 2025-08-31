@@ -4,6 +4,16 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Server
   alias Bedrock.DataPlane.Resolver.State
+  alias Bedrock.DataPlane.Transaction
+
+  # Helper to create simple binary transactions for testing
+  defp simple_binary_transaction(write_keys \\ []) do
+    Transaction.encode(%{
+      mutations: Enum.map(write_keys, &{:set, &1, "value"}),
+      read_conflicts: [],
+      write_conflicts: Enum.map(write_keys, &{&1, &1 <> "\0"})
+    })
+  end
 
   describe "child_spec/1" do
     test "creates valid child spec with required options" do
@@ -237,12 +247,13 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       {:ok, server: pid, zero_version: zero_version, next_version: next_version}
     end
 
-    test "accepts valid transaction summary like [nil: []]", %{
+    test "accepts valid binary transaction", %{
       server: server,
       zero_version: zero_version,
       next_version: next_version
     } do
-      valid_transactions = [nil: []]
+      # Create a simple binary transaction with no write conflicts
+      valid_transactions = [simple_binary_transaction()]
 
       result =
         Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
@@ -263,22 +274,26 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert {:error, error_message} = result
 
       assert error_message =~
-               "invalid transaction format: all transactions must be transaction summaries with format {read_info | nil, write_keys}"
+               "invalid transaction format: all transactions must be binary"
     end
 
-    test "validation now correctly expects transaction summaries", %{
+    test "validation now correctly expects binary transaction summaries", %{
       server: server,
       zero_version: zero_version,
       next_version: next_version
     } do
-      valid_summaries = [
-        {nil, []},
-        {nil, ["key1", "key2"]},
-        {{zero_version, ["read_key"]}, ["write_key"]}
+      # Test with various binary transactions
+      binary_transactions = [
+        # no writes
+        simple_binary_transaction(),
+        # writes to key1, key2
+        simple_binary_transaction(["key1", "key2"]),
+        # write to write_key
+        simple_binary_transaction(["write_key"])
       ]
 
       result =
-        Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_summaries)
+        Resolver.resolve_transactions(server, 1, zero_version, next_version, binary_transactions)
 
       assert {:ok, aborted_indices} = result
       assert is_list(aborted_indices)
@@ -314,13 +329,12 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      valid_transaction_summary = {nil, ["test_key"]}
+      # Create simple binary transaction that writes to "test_key"
+      test_transaction = simple_binary_transaction(["test_key"])
 
       task =
         Task.async(fn ->
-          Resolver.resolve_transactions(server, 1, next_version, future_version, [
-            valid_transaction_summary
-          ])
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [test_transaction])
         end)
 
       Process.sleep(50)
@@ -328,7 +342,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert map_size(state.waiting) == 1
 
       [{deadline, _reply_fn, data}] = Map.get(state.waiting, next_version)
-      assert data == {future_version, [valid_transaction_summary]}
+      assert data == {future_version, [test_transaction]}
       assert is_integer(deadline)
       now = Bedrock.Internal.Time.monotonic_now_in_ms()
       assert deadline > now
@@ -341,7 +355,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      valid_transaction_summary = {nil, ["test_key"]}
+      # Create simple binary transaction that writes to "test_key"
+      test_transaction = simple_binary_transaction(["test_key"])
 
       task =
         Task.async(fn ->
@@ -350,7 +365,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
             1,
             next_version,
             future_version,
-            [valid_transaction_summary],
+            [test_transaction],
             timeout: 60_000
           )
         end)
@@ -392,8 +407,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      transaction1 = {nil, ["key1"]}
-      transaction2 = {nil, ["key2"]}
+      # Create simple binary transactions that write to different keys
+      transaction1 = simple_binary_transaction(["key1"])
+      transaction2 = simple_binary_transaction(["key2"])
 
       task1 =
         Task.async(fn ->

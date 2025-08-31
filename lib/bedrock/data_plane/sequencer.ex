@@ -36,6 +36,11 @@ defmodule Bedrock.DataPlane.Sequencer do
           | {:error, :unavailable}
   def next_commit_version(t, opts \\ []), do: call(t, :next_commit_version, opts[:timeout_in_ms] || :infinity)
 
-  @spec report_successful_commit(ref(), commit_version :: Bedrock.version()) :: :ok
-  def report_successful_commit(t, commit_version), do: cast(t, {:report_successful_commit, commit_version})
+  @spec report_successful_commit(
+          ref(),
+          commit_version :: Bedrock.version(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) :: :ok | {:error, :unavailable}
+  def report_successful_commit(t, commit_version, opts \\ []),
+    do: call(t, {:report_successful_commit, commit_version}, opts[:timeout_in_ms] || :infinity)
 end

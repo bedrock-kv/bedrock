@@ -134,7 +134,7 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
       assert Version.to_integer(read_v2) == 5000
 
       # Report the commit
-      GenServer.cast(pid, {:report_successful_commit, commit_v1})
+      :ok = GenServer.call(pid, {:report_successful_commit, commit_v1})
 
       # Now read version should advance
       {:ok, read_v3} = GenServer.call(pid, :next_read_version)

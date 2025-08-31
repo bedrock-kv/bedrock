@@ -55,19 +55,33 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         n_transactions: 2,
         buffer: [
           # index 0 - will be aborted
-          {reply_fn1, tx1_binary},
+          {0, reply_fn1, tx1_binary},
           # index 1 - success
-          {reply_fn2, tx2_binary}
+          {1, reply_fn2, tx2_binary}
         ]
       }
 
       # Mock resolver that aborts first transaction
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
-        {:ok, [1]}
+      mock_resolver_fn = fn resolver, epoch, last_version, commit_version, summaries, opts ->
+        # Comprehensive parameter assertions
+        assert resolver == :test_resolver
+        assert epoch == 1
+        assert last_version == Bedrock.DataPlane.Version.from_integer(99)
+        assert commit_version == Bedrock.DataPlane.Version.from_integer(100)
+        assert length(summaries) == 2
+        assert Keyword.has_key?(opts, :timeout)
+        {:ok, [0]}
       end
 
       # Mock log push function that succeeds
       mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
+        :ok
+      end
+
+      # Mock sequencer notification function
+      mock_sequencer_notify_fn = fn sequencer, commit_version ->
+        assert sequencer == :test_sequencer
+        assert commit_version == Bedrock.DataPlane.Version.from_integer(100)
         :ok
       end
 
@@ -77,7 +91,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           transaction_system_layout,
           epoch: 1,
           resolver_fn: mock_resolver_fn,
-          batch_log_push_fn: mock_log_push_fn
+          batch_log_push_fn: mock_log_push_fn,
+          sequencer_notify_fn: mock_sequencer_notify_fn
         )
 
       assert {:ok, 1, 1} = result
@@ -96,12 +111,19 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       }
 
       # Mock resolver that succeeds with no aborts
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _opts ->
+        assert resolver == :test_resolver
         {:ok, []}
       end
 
       # Mock log push function that succeeds (for empty transactions)
       mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
+        :ok
+      end
+
+      # Mock sequencer notification function
+      mock_sequencer_notify_fn = fn sequencer, _commit_version ->
+        assert sequencer == :test_sequencer
         :ok
       end
 
@@ -111,7 +133,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           transaction_system_layout,
           epoch: 1,
           resolver_fn: mock_resolver_fn,
-          batch_log_push_fn: mock_log_push_fn
+          batch_log_push_fn: mock_log_push_fn,
+          sequencer_notify_fn: mock_sequencer_notify_fn
         )
 
       assert {:ok, 0, 0} = result
@@ -145,13 +168,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 2,
         buffer: [
-          {reply_fn1, binary_transaction1},
-          {reply_fn2, binary_transaction2}
+          {0, reply_fn1, binary_transaction1},
+          {1, reply_fn2, binary_transaction2}
         ]
       }
 
       # Mock resolver that aborts all transactions
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _opts ->
+        assert resolver == :test_resolver
         # Abort both transactions
         {:ok, [0, 1]}
       end
@@ -161,13 +185,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         :ok
       end
 
+      # Mock sequencer notification function
+      mock_sequencer_notify_fn = fn sequencer, _commit_version ->
+        assert sequencer == :test_sequencer
+        :ok
+      end
+
       result =
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
           epoch: 1,
           resolver_fn: mock_resolver_fn,
-          batch_log_push_fn: mock_log_push_fn
+          batch_log_push_fn: mock_log_push_fn,
+          sequencer_notify_fn: mock_sequencer_notify_fn
         )
 
       assert {:ok, 2, 0} = result
@@ -183,7 +214,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       batch = Support.create_test_batch(100, 99)
 
       # Mock resolver that succeeds
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _opts ->
+        assert resolver == :test_resolver
         # No aborts
         {:ok, []}
       end
@@ -215,7 +247,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       batch = Support.create_test_batch(100, 99)
 
       # Mock resolver that succeeds
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _opts ->
+        assert resolver == :test_resolver
         {:ok, []}
       end
 
@@ -269,13 +302,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         :ok
       end
 
+      # Mock sequencer notification function
+      mock_sequencer_notify_fn = fn sequencer, _commit_version ->
+        assert sequencer == :test_sequencer
+        :ok
+      end
+
       result =
         Finalization.finalize_batch(
           batch,
           transaction_system_layout,
           epoch: 1,
           resolver_fn: mock_resolver_fn,
-          batch_log_push_fn: mock_log_push_fn
+          batch_log_push_fn: mock_log_push_fn,
+          sequencer_notify_fn: mock_sequencer_notify_fn
         )
 
       assert {:ok, 0, 1} = result
@@ -316,7 +356,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 1,
         buffer: [
-          {reply_fn, binary_transaction}
+          {0, reply_fn, binary_transaction}
         ]
       }
 
@@ -329,7 +369,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock resolver that fails
-      mock_resolver_fn = fn _epoch, _resolvers, _last_version, _commit_version, _summaries, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _opts ->
+        assert resolver == :test_resolver
         {:error, :timeout}
       end
 
@@ -342,7 +383,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           abort_reply_fn: custom_abort_fn
         )
 
-      assert {:error, :timeout} = result
+      assert {:error, {:resolver_unavailable, :timeout}} = result
       assert_receive {:custom_abort_called, 1}
       assert_receive {:reply, {:error, :custom_abort}}
     end

@@ -21,10 +21,8 @@ defmodule Bedrock.DataPlane.Resolver do
 
   @type read_info :: {version :: Bedrock.version(), keys :: [Bedrock.key() | Bedrock.key_range()]}
 
-  @type transaction_summary :: {
-          read_info :: read_info() | nil,
-          write_keys :: [Bedrock.key() | Bedrock.key_range()]
-        }
+  # Binary transaction containing only conflict sections (read_conflicts and write_conflicts)
+  @type transaction_summary :: binary()
 
   @spec resolve_transactions(
           ref(),

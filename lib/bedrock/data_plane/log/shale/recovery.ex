@@ -82,7 +82,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   @spec process_transaction_bytes(Transaction.encoded(), {Bedrock.version(), State.t()}) ::
           {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term()}}
   defp process_transaction_bytes(bytes, {last_version, t}) do
-    case Transaction.extract_commit_version(bytes) do
+    case Transaction.commit_version(bytes) do
       {:ok, version} when is_binary(version) ->
         handle_valid_transaction_bytes(bytes, version, last_version, t)
 

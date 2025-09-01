@@ -152,12 +152,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   """
   @spec apply_transaction(t(), binary(), Database.t()) :: t()
   def apply_transaction(%{versions: [{_version, current_index} | _]} = index_manager, transaction, database) do
-    commit_version = Transaction.extract_commit_version!(transaction)
+    commit_version = Transaction.commit_version!(transaction)
 
     {new_index, updated_page_allocator} =
       current_index
       |> IndexUpdate.new(commit_version, index_manager.page_allocator)
-      |> IndexUpdate.apply_mutations(Transaction.stream_mutations!(transaction), database)
+      |> IndexUpdate.apply_mutations(Transaction.mutations!(transaction), database)
       |> IndexUpdate.process_pending_operations()
       |> IndexUpdate.store_modified_pages(database)
       |> IndexUpdate.finish()

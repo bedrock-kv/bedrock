@@ -62,12 +62,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @spec apply_transaction(t(), Transaction.encoded()) ::
           :ok | {:error, :version_too_new} | {:error, :version_too_old}
   def apply_transaction(pkv, encoded_transaction) do
-    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
     last_version = last_version(pkv)
 
     # Extract mutations and convert to key-value writes
     writes =
-      case Transaction.stream_mutations(encoded_transaction) do
+      case Transaction.mutations(encoded_transaction) do
         {:ok, mutations_stream} ->
           Enum.reduce(mutations_stream, [], fn
             {:set, key, value}, acc -> [{key, value} | acc]

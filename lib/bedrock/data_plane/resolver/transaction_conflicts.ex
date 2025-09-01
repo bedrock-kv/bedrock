@@ -74,14 +74,14 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   defp extract_conflicts(binary_transaction) when is_binary(binary_transaction) do
     # Extract write conflicts from binary transaction
     writes =
-      case Transaction.extract_write_conflicts(binary_transaction) do
+      case Transaction.write_conflicts(binary_transaction) do
         {:ok, write_conflicts} -> Enum.map(write_conflicts, fn {key, _end_key} -> key end)
         {:error, _} -> []
       end
 
     # Extract read conflicts from binary transaction
     read_info =
-      case Transaction.extract_read_conflicts(binary_transaction) do
+      case Transaction.read_conflicts(binary_transaction) do
         {:ok, {nil, []}} ->
           nil
 

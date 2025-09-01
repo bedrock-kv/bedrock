@@ -61,7 +61,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           {:ok, State.t()} | {:error, term()}
   def write_encoded_transaction(t, encoded_transaction) when is_nil(t.writer) do
     version =
-      case Transaction.extract_commit_version(encoded_transaction) do
+      case Transaction.commit_version(encoded_transaction) do
         {:ok, version} ->
           version
 
@@ -89,7 +89,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   def write_encoded_transaction(t, encoded_transaction) do
-    case Transaction.extract_commit_version(encoded_transaction) do
+    case Transaction.commit_version(encoded_transaction) do
       {:ok, version} ->
         case Writer.append(t.writer, encoded_transaction, version) do
           {:ok, writer} ->

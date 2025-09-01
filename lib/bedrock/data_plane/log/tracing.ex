@@ -53,8 +53,8 @@ defmodule Bedrock.DataPlane.Log.Tracing do
   end
 
   def log_event(:push, _, %{transaction: encoded_transaction}) do
-    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
-    {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
+    {:ok, mutations_stream} = Transaction.mutations(encoded_transaction)
     n_keys = Enum.count(mutations_stream)
 
     info("Push transaction (#{n_keys} keys) with expected version #{Version.to_string(version)}")

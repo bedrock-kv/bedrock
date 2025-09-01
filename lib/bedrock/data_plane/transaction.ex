@@ -122,10 +122,6 @@ defmodule Bedrock.DataPlane.Transaction do
   @set_operation 0x00
   @clear_operation 0x01
 
-  # ============================================================================
-  # CORE API
-  # ============================================================================
-
   @doc """
   Encodes a transaction map into the tagged binary format.
 
@@ -213,20 +209,6 @@ defmodule Bedrock.DataPlane.Transaction do
   def decode(_), do: {:error, :invalid_format}
 
   @doc """
-  Decodes a tagged binary transaction back to the transaction map format.
-
-  Raises on error. Use this variant when you're confident the binary is valid
-  or in test scenarios where you want to fail fast on invalid data.
-  """
-  @spec decode!(binary()) :: transaction_map()
-  def decode!(binary_transaction) do
-    case decode(binary_transaction) do
-      {:ok, transaction} -> transaction
-      {:error, reason} -> raise "Failed to decode Transaction: #{inspect(reason)}"
-    end
-  end
-
-  @doc """
   Validates the binary format integrity using section CRCs.
 
   Each section validates independently using standard CRC validation
@@ -245,22 +227,17 @@ defmodule Bedrock.DataPlane.Transaction do
 
   def validate(_), do: {:error, :invalid_format}
 
-  # ============================================================================
-  # SECTION OPERATIONS API
-  # ============================================================================
-
   @doc """
   Extracts a specific section payload by tag without full transaction decode.
   """
   @spec extract_section(binary(), section_tag()) :: {:ok, binary()} | {:error, reason :: term()}
   def extract_section(encoded_transaction, target_tag) do
-    case parse_transaction_header(encoded_transaction) do
-      {:ok, {section_count, sections_data}} ->
-        find_section_by_tag(sections_data, target_tag, section_count)
-
-      error ->
-        error
-    end
+    extract_and_process_section(
+      encoded_transaction,
+      target_tag,
+      &{:ok, &1},
+      {:error, :section_not_found}
+    )
   end
 
   @doc """
@@ -272,14 +249,27 @@ defmodule Bedrock.DataPlane.Transaction do
   @spec add_section(binary(), section_tag(), binary()) ::
           {:ok, binary()} | {:error, reason :: term()}
   def add_section(encoded_transaction, section_tag, payload) do
-    case parse_all_sections(encoded_transaction) do
-      {:ok, {_overall_header, sections_map}} ->
-        if Map.has_key?(sections_map, section_tag) do
-          {:error, :section_already_exists}
-        else
-          new_sections_map = Map.put(sections_map, section_tag, payload)
-          rebuild_transaction(new_sections_map)
-        end
+    callback = fn
+      tag, _offset, _size, section_payload, sections_map ->
+        {:ok, Map.put(sections_map, tag, section_payload)}
+    end
+
+    case iterate_sections(encoded_transaction, callback, %{}) do
+      {:ok, sections_map} when is_map_key(sections_map, section_tag) ->
+        {:error, :section_already_exists}
+
+      {:ok, sections_map} ->
+        new_sections_map = Map.put(sections_map, section_tag, payload)
+
+        sections =
+          Enum.map(new_sections_map, fn {tag, section_payload} ->
+            encode_section(tag, section_payload)
+          end)
+
+        section_count = length(sections)
+        overall_header = encode_overall_header(section_count)
+        transaction = IO.iodata_to_binary([overall_header | sections])
+        {:ok, transaction}
 
       error ->
         error
@@ -293,40 +283,139 @@ defmodule Bedrock.DataPlane.Transaction do
   Much faster than extracting data and calling encode/1 again.
 
   ## Parameters
-    - `encoded_transaction`: The source transaction  
+    - `encoded_transaction`: The source transaction
     - `sections_to_keep`: List of section names to keep in the new transaction (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
     - `new_sections`: Map of additional sections to add (e.g. %{commit_version: version_binary})
 
   ## Examples
       # Extract just mutations and add commit version
       {:ok, log_transaction} = reassemble_sections(transaction, [:mutations], %{commit_version: version})
-      
+
       # Extract read conflicts and write conflicts for resolver
       {:ok, conflict_data} = reassemble_sections(transaction, [:read_conflicts, :write_conflicts], %{})
   """
   @spec reassemble_sections(binary(), [atom()], %{atom() => binary()}) ::
           {:ok, binary()} | {:error, reason :: term()}
-  def reassemble_sections(encoded_transaction, sections_to_keep, new_sections \\ %{}) do
-    case parse_all_sections(encoded_transaction) do
-      {:ok, {_overall_header, sections_map}} ->
-        # Convert atom names to internal tags
+  def reassemble_sections(encoded_transaction, sections_to_keep, new_sections \\ %{}),
+    do: extract_and_add_sections_optimized(encoded_transaction, sections_to_keep, new_sections)
+
+  defp extract_and_add_sections_optimized(encoded_transaction, sections_to_keep, new_sections) do
+    case parse_section_offsets(encoded_transaction) do
+      {:ok, section_offsets} ->
         section_tags_to_keep = Enum.map(sections_to_keep, &atom_to_tag/1)
 
-        new_section_tags =
-          Map.new(new_sections, fn {atom_name, payload} ->
-            {atom_to_tag(atom_name), payload}
+        existing_offsets =
+          section_offsets
+          |> Enum.filter(fn {tag, _offset, _size} -> tag in section_tags_to_keep end)
+          |> Enum.sort_by(fn {_tag, offset, _size} -> offset end)
+
+        new_section_binaries =
+          Enum.map(new_sections, fn {atom_name, payload} ->
+            tag = atom_to_tag(atom_name)
+            encode_section(tag, payload)
           end)
 
-        # Keep only the requested sections from original transaction
-        kept_sections = Map.take(sections_map, section_tags_to_keep)
-
-        # Merge with new sections (new sections override if same tag)
-        final_sections = Map.merge(kept_sections, new_section_tags)
-
-        rebuild_transaction(final_sections)
+        combine_existing_and_new_sections(encoded_transaction, existing_offsets, new_section_binaries)
 
       error ->
         error
+    end
+  end
+
+  defp combine_existing_and_new_sections(encoded_transaction, existing_offsets, new_section_binaries) do
+    case parse_transaction_header(encoded_transaction) do
+      {:ok, {_section_count, sections_data}} ->
+        existing_section_binaries =
+          Enum.map(existing_offsets, fn {_tag, offset, size} ->
+            binary_part(sections_data, offset, size)
+          end)
+
+        all_section_binaries = existing_section_binaries ++ new_section_binaries
+        total_section_count = length(all_section_binaries)
+
+        case total_section_count do
+          0 ->
+            {:ok, encode_overall_header(0)}
+
+          _ ->
+            overall_header = encode_overall_header(total_section_count)
+            {:ok, IO.iodata_to_binary([overall_header | all_section_binaries])}
+        end
+
+      error ->
+        error
+    end
+  end
+
+  # Unified section iterator - handles offsets, decoding, and searching
+  defp iterate_sections(encoded_transaction, callback_fn, initial_acc) do
+    case parse_transaction_header(encoded_transaction) do
+      {:ok, {section_count, sections_data}} ->
+        iterate_sections_data(sections_data, section_count, callback_fn, initial_acc, 0)
+
+      error ->
+        error
+    end
+  end
+
+  defp iterate_sections_data(_data, 0, _callback_fn, acc, _offset), do: {:ok, acc}
+
+  defp iterate_sections_data(
+         <<tag, payload_size::unsigned-big-24, _stored_crc::unsigned-big-32, payload::binary-size(payload_size),
+           rest::binary>>,
+         remaining_count,
+         callback_fn,
+         acc,
+         current_offset
+       ) do
+    # Calculate section size including header
+    # tag(1) + size(3) + crc(4)
+    section_header_size = 8
+    total_section_size = section_header_size + payload_size
+
+    # Call the callback with section info
+    case callback_fn.(tag, current_offset, total_section_size, payload, acc) do
+      {:ok, new_acc} ->
+        next_offset = current_offset + total_section_size
+        iterate_sections_data(rest, remaining_count - 1, callback_fn, new_acc, next_offset)
+
+      {:found, result} ->
+        {:found, result}
+    end
+  end
+
+  defp iterate_sections_data(_, _, _, _, _), do: {:error, :truncated_sections}
+
+  # Fast offset-only parsing using unified iterator
+  defp parse_section_offsets(encoded_transaction) do
+    callback = fn
+      tag, offset, size, _payload, acc ->
+        {:ok, [{tag, offset, size} | acc]}
+    end
+
+    case iterate_sections(encoded_transaction, callback, []) do
+      {:ok, offsets} -> {:ok, Enum.reverse(offsets)}
+      error -> error
+    end
+  end
+
+  # Unified extract-and-process pattern using optimized iterator
+  defp extract_and_process_section(encoded_transaction, target_tag, process_fn, not_found_result) do
+    callback = fn
+      ^target_tag, _offset, _size, payload, _acc ->
+        case process_fn.(payload) do
+          {:ok, result} -> {:found, {:ok, result}}
+          {:error, reason} -> {:found, {:error, reason}}
+        end
+
+      _other_tag, _offset, _size, _payload, _acc ->
+        {:ok, nil}
+    end
+
+    case iterate_sections(encoded_transaction, callback, nil) do
+      {:found, result} -> result
+      {:ok, nil} -> not_found_result
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -343,20 +432,19 @@ defmodule Bedrock.DataPlane.Transaction do
   of extracting sections without adding new ones.
 
   ## Parameters
-    - `encoded_transaction`: The source transaction  
+    - `encoded_transaction`: The source transaction
     - `sections_to_keep`: List of section names to keep (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
 
   ## Examples
       # Extract just conflict sections for resolver
       {:ok, conflict_binary} = extract_sections(transaction, [:read_conflicts, :write_conflicts])
-      
-      # Extract mutations for log processing  
+
+      # Extract mutations for log processing
       {:ok, mutations_binary} = extract_sections(transaction, [:mutations])
   """
   @spec extract_sections(binary(), [atom()]) :: {:ok, binary()} | {:error, reason :: term()}
-  def extract_sections(encoded_transaction, sections_to_keep) do
-    reassemble_sections(encoded_transaction, sections_to_keep, %{})
-  end
+  def extract_sections(encoded_transaction, sections_to_keep),
+    do: reassemble_sections(encoded_transaction, sections_to_keep, %{})
 
   @doc """
   Efficiently extracts specific sections from a transaction into a smaller binary transaction.
@@ -364,13 +452,13 @@ defmodule Bedrock.DataPlane.Transaction do
   Same as extract_sections/2 but raises on error instead of returning {:error, reason}.
 
   ## Parameters
-    - `encoded_transaction`: The source transaction  
+    - `encoded_transaction`: The source transaction
     - `sections_to_keep`: List of section names to keep (`:mutations`, `:read_conflicts`, `:write_conflicts`, `:commit_version`)
 
   ## Examples
-      # Extract just conflict sections for resolver  
+      # Extract just conflict sections for resolver
       conflict_binary = extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      
+
       # Extract mutations for log processing
       mutations_binary = extract_sections!(transaction, [:mutations])
   """
@@ -387,46 +475,19 @@ defmodule Bedrock.DataPlane.Transaction do
   # ============================================================================
 
   @doc """
-  Extracts the read version from the READ_CONFLICTS section.
-
-  Returns nil if no READ_CONFLICTS section exists (write-only transaction).
-  """
-  @spec extract_read_version(binary()) ::
-          {:ok, Bedrock.version() | nil} | {:error, reason :: term()}
-  def extract_read_version(encoded_transaction) do
-    case extract_section(encoded_transaction, @read_conflicts_tag) do
-      {:ok, payload} ->
-        case decode_read_conflicts_payload(payload) do
-          {:ok, {read_version, _conflicts}} -> {:ok, read_version}
-          error -> error
-        end
-
-      {:error, :section_not_found} ->
-        {:ok, nil}
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
   Extracts read conflicts and read version from READ_CONFLICTS section.
 
   Returns {nil, []} if no READ_CONFLICTS section exists.
   """
-  @spec extract_read_conflicts(binary()) ::
+  @spec read_conflicts(binary()) ::
           {:ok, {Bedrock.version() | nil, [{binary(), binary()}]}} | {:error, reason :: term()}
-  def extract_read_conflicts(encoded_transaction) do
-    case extract_section(encoded_transaction, @read_conflicts_tag) do
-      {:ok, payload} ->
-        decode_read_conflicts_payload(payload)
-
-      {:error, :section_not_found} ->
-        {:ok, {nil, []}}
-
-      error ->
-        error
-    end
+  def read_conflicts(encoded_transaction) do
+    extract_and_process_section(
+      encoded_transaction,
+      @read_conflicts_tag,
+      &decode_read_conflicts_payload/1,
+      {:ok, {nil, []}}
+    )
   end
 
   @doc """
@@ -434,42 +495,36 @@ defmodule Bedrock.DataPlane.Transaction do
 
   Returns empty list if no WRITE_CONFLICTS section exists.
   """
-  @spec extract_write_conflicts(binary()) ::
+  @spec write_conflicts(binary()) ::
           {:ok, [{binary(), binary()}]} | {:error, reason :: term()}
-  def extract_write_conflicts(encoded_transaction) do
-    case extract_section(encoded_transaction, @write_conflicts_tag) do
-      {:ok, payload} ->
-        decode_write_conflicts_payload(payload)
-
-      {:error, :section_not_found} ->
+  def write_conflicts(encoded_transaction),
+    do:
+      extract_and_process_section(
+        encoded_transaction,
+        @write_conflicts_tag,
+        &decode_write_conflicts_payload/1,
         {:ok, []}
-
-      error ->
-        error
-    end
-  end
+      )
 
   @doc """
   Creates a stream of mutations from the MUTATIONS section.
 
   Enables processing large transactions without loading all mutations into memory.
   """
-  @spec stream_mutations(binary()) :: {:ok, Enumerable.t(Tx.mutation())} | {:error, reason :: term()}
-  def stream_mutations(encoded_transaction) do
-    case extract_section(encoded_transaction, @mutations_tag) do
-      {:ok, mutations_payload} ->
-        stream =
-          Stream.resource(
-            fn -> mutations_payload end,
-            &stream_next_mutation/1,
-            fn _ -> :ok end
-          )
+  @spec mutations(binary()) :: {:ok, Enumerable.t(Tx.mutation())} | {:error, reason :: term()}
+  def mutations(encoded_transaction) do
+    process_fn = fn payload ->
+      stream =
+        Stream.resource(
+          fn -> payload end,
+          &stream_next_mutation/1,
+          fn _ -> :ok end
+        )
 
-        {:ok, stream}
-
-      error ->
-        error
+      {:ok, stream}
     end
+
+    extract_and_process_section(encoded_transaction, @mutations_tag, process_fn, {:error, :section_not_found})
   end
 
   @doc """
@@ -478,9 +533,9 @@ defmodule Bedrock.DataPlane.Transaction do
   Returns a stream of mutations. Use this when you're confident the transaction
   is valid or want to fail fast on invalid data.
   """
-  @spec stream_mutations!(binary()) :: Enumerable.t(Tx.mutation())
-  def stream_mutations!(encoded_transaction) do
-    case stream_mutations(encoded_transaction) do
+  @spec mutations!(binary()) :: Enumerable.t(Tx.mutation())
+  def mutations!(encoded_transaction) do
+    case mutations(encoded_transaction) do
       {:ok, stream} -> stream
       {:error, reason} -> raise "Failed to stream mutations: #{inspect(reason)}"
     end
@@ -500,27 +555,30 @@ defmodule Bedrock.DataPlane.Transaction do
 
   Returns nil if no COMMIT_VERSION section exists.
   """
-  @spec extract_commit_version(binary()) :: {:ok, binary() | nil} | {:error, reason :: term()}
-  def extract_commit_version(encoded_transaction) do
-    case extract_section(encoded_transaction, @commit_version_tag) do
-      {:ok, <<_::unsigned-big-64>> = version} -> {:ok, version}
-      {:error, :section_not_found} -> {:ok, nil}
-      error -> error
+  @spec commit_version(binary()) :: {:ok, binary() | nil} | {:error, reason :: term()}
+  def commit_version(encoded_transaction) do
+    process_fn = fn payload ->
+      case payload do
+        <<_::unsigned-big-64>> = version -> {:ok, version}
+        _ -> {:error, :invalid_commit_version_format}
+      end
     end
+
+    extract_and_process_section(encoded_transaction, @commit_version_tag, process_fn, {:ok, nil})
   end
 
   @doc """
   Extracts the commit version from an encoded transaction, raising on error.
 
-  This is the bang version of `extract_commit_version/1` that raises an exception
+  This is the bang version of `commit_version/1` that raises an exception
   instead of returning an error tuple.
 
   Returns the commit version binary or nil if no commit version is present.
   Raises an exception if the transaction is malformed.
   """
-  @spec extract_commit_version!(binary()) :: binary() | nil
-  def extract_commit_version!(encoded_transaction) do
-    case extract_commit_version(encoded_transaction) do
+  @spec commit_version!(binary()) :: binary() | nil
+  def commit_version!(encoded_transaction) do
+    case commit_version(encoded_transaction) do
       {:ok, version} -> version
       {:error, reason} -> raise "Failed to extract commit version: #{inspect(reason)}"
     end
@@ -531,14 +589,10 @@ defmodule Bedrock.DataPlane.Transaction do
   # ============================================================================
 
   @spec build_opcode(operation :: 0..31, variant :: 0..7) :: opcode()
-  defp build_opcode(operation, variant) when operation <= 31 and variant <= 7 do
-    operation <<< 3 ||| variant
-  end
+  defp build_opcode(operation, variant) when operation <= 31 and variant <= 7, do: operation <<< 3 ||| variant
 
   @spec extract_variant(opcode()) :: 0..7
-  defp extract_variant(opcode) when opcode <= 255 do
-    opcode &&& 0x07
-  end
+  defp extract_variant(opcode) when opcode <= 255, do: opcode &&& 0x07
 
   @spec optimize_set_opcode(key_size :: non_neg_integer(), value_size :: non_neg_integer()) ::
           opcode()
@@ -556,21 +610,14 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   @spec optimize_clear_opcode(key_size :: non_neg_integer(), is_range :: boolean()) :: opcode()
-  defp optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255 do
-    build_opcode(@clear_operation, 1)
-  end
+  defp optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255, do: build_opcode(@clear_operation, 1)
 
-  defp optimize_clear_opcode(_key_size, false = _is_range) do
-    build_opcode(@clear_operation, 0)
-  end
+  defp optimize_clear_opcode(_key_size, false = _is_range), do: build_opcode(@clear_operation, 0)
 
-  defp optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255 do
-    build_opcode(@clear_operation, 3)
-  end
+  defp optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255,
+    do: build_opcode(@clear_operation, 3)
 
-  defp optimize_clear_opcode(_max_key_size, true = _is_range) do
-    build_opcode(@clear_operation, 2)
-  end
+  defp optimize_clear_opcode(_max_key_size, true = _is_range), do: build_opcode(@clear_operation, 2)
 
   # ============================================================================
   # ENCODING IMPLEMENTATION
@@ -685,33 +732,14 @@ defmodule Bedrock.DataPlane.Transaction do
   # DECODING IMPLEMENTATION
   # ============================================================================
 
-  defp parse_sections(data, section_count) do
-    parse_sections(data, section_count, %{})
-  end
-
-  defp parse_sections(_data, 0, sections_map) do
-    {:ok, sections_map}
-  end
-
-  defp parse_sections(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
-           rest::binary>>,
-         remaining_count,
-         sections_map
-       ) do
-    section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
-    calculated_crc = :erlang.crc32(section_content)
-
-    if calculated_crc == stored_crc do
-      new_sections_map = Map.put(sections_map, tag, payload)
-      parse_sections(rest, remaining_count - 1, new_sections_map)
-    else
-      {:error, {:section_checksum_mismatch, tag}}
+  # Parse all sections into map using unified iterator
+  defp parse_sections(sections_data, section_count) do
+    callback = fn
+      tag, _offset, _size, payload, sections_map ->
+        {:ok, Map.put(sections_map, tag, payload)}
     end
-  end
 
-  defp parse_sections(_, _, _) do
-    {:error, :truncated_sections}
+    iterate_sections_data(sections_data, section_count, callback, %{}, 0)
   end
 
   defp build_transaction_from_sections(sections) do
@@ -739,97 +767,92 @@ defmodule Bedrock.DataPlane.Transaction do
 
   defp decode_mutations_payload(payload) do
     payload
-    |> stream_mutations_opcodes([])
+    |> mutations_opcodes([])
     |> case do
       {:ok, mutations} -> {:ok, Enum.reverse(mutations)}
       error -> error
     end
   end
 
-  defp stream_mutations_opcodes(<<>>, mutations) do
-    {:ok, mutations}
-  end
+  defp mutations_opcodes(<<>>, mutations), do: {:ok, mutations}
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
            value::binary-size(value_len), rest::binary>>,
          mutations
        ) do
     mutation = {:set, key, value}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@set_8_16, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-big-16,
            value::binary-size(value_len), rest::binary>>,
          mutations
        ) do
     mutation = {:set, key, value}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@set_8_8, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-8,
            value::binary-size(value_len), rest::binary>>,
          mutations
        ) do
     mutation = {:set, key, value}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
          mutations
        ) do
     mutation = {:clear, key}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
-         <<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>,
-         mutations
-       ) do
+  defp mutations_opcodes(<<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>, mutations) do
     mutation = {:clear, key}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
            end_key::binary-size(end_len), rest::binary>>,
          mutations
        ) do
     mutation = {:clear_range, start_key, end_key}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(
+  defp mutations_opcodes(
          <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len), end_len::unsigned-8,
            end_key::binary-size(end_len), rest::binary>>,
          mutations
        ) do
     mutation = {:clear_range, start_key, end_key}
-    stream_mutations_opcodes(rest, [mutation | mutations])
+    mutations_opcodes(rest, [mutation | mutations])
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x03..0x07 do
+  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x03..0x07 do
     {:error, {:reserved_set_variant, opcode}}
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x0C..0x0F do
+  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x0C..0x0F do
     {:error, {:reserved_clear_variant, opcode}}
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x10..0xFF do
+  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x10..0xFF do
     operation_type = opcode >>> 3
     variant = opcode &&& 0x07
     {:error, {:unsupported_operation, operation_type, variant}}
   end
 
-  defp stream_mutations_opcodes(<<opcode, _rest::binary>>, _mutations) do
+  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) do
     {:error, {:invalid_opcode, opcode}}
   end
 
-  defp stream_mutations_opcodes(_truncated_data, _mutations) do
+  defp mutations_opcodes(_truncated_data, _mutations) do
     {:error, :truncated_mutation_data}
   end
 
@@ -848,15 +871,8 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp decode_read_conflicts_payload(
-         <<read_version_value::signed-big-64, conflict_count::unsigned-big-32, conflicts_data::binary>>
+         <<read_version::binary-size(8), conflict_count::unsigned-big-32, conflicts_data::binary>>
        ) do
-    read_version =
-      if read_version_value == -1 do
-        nil
-      else
-        Bedrock.DataPlane.Version.from_integer(read_version_value)
-      end
-
     case decode_conflict_ranges(conflicts_data, conflict_count, []) do
       {:ok, conflicts} -> {:ok, {read_version, Enum.reverse(conflicts)}}
       error -> error
@@ -882,9 +898,7 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
-  defp decode_conflict_ranges(_data, 0, conflicts) do
-    {:ok, conflicts}
-  end
+  defp decode_conflict_ranges(_data, 0, conflicts), do: {:ok, conflicts}
 
   defp decode_conflict_ranges(
          <<start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
@@ -895,9 +909,7 @@ defmodule Bedrock.DataPlane.Transaction do
     decode_conflict_ranges(rest, remaining_count - 1, [{start_key, end_key} | conflicts])
   end
 
-  defp decode_conflict_ranges(_, _, _) do
-    {:error, :truncated_conflict_data}
-  end
+  defp decode_conflict_ranges(_, _, _), do: {:error, :truncated_conflict_data}
 
   # ============================================================================
   # VALIDATION IMPLEMENTATION
@@ -906,12 +918,13 @@ defmodule Bedrock.DataPlane.Transaction do
   defp validate_all_sections(_data, 0), do: :ok
 
   defp validate_all_sections(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
-           rest::binary>>,
+         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, _payload::binary-size(payload_size),
+           rest::binary>> = data,
          remaining_count
        ) do
-    section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
-    calculated_crc = :erlang.crc32(section_content)
+    tag_and_size = binary_part(data, 0, 4)
+    payload_part = binary_part(data, 8, payload_size)
+    calculated_crc = :erlang.crc32([tag_and_size, payload_part])
 
     if calculated_crc == stored_crc do
       validate_all_sections(rest, remaining_count - 1)
@@ -934,62 +947,6 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp parse_transaction_header(_), do: {:error, :invalid_format}
-
-  defp find_section_by_tag(_data, _target_tag, 0) do
-    {:error, :section_not_found}
-  end
-
-  defp find_section_by_tag(
-         <<tag, payload_size::unsigned-big-24, stored_crc::unsigned-big-32, payload::binary-size(payload_size),
-           rest::binary>>,
-         target_tag,
-         remaining_count
-       ) do
-    if tag == target_tag do
-      section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
-      calculated_crc = :erlang.crc32(section_content)
-
-      if calculated_crc == stored_crc do
-        {:ok, payload}
-      else
-        {:error, {:section_checksum_mismatch, tag}}
-      end
-    else
-      find_section_by_tag(rest, target_tag, remaining_count - 1)
-    end
-  end
-
-  defp find_section_by_tag(_, _, _) do
-    {:error, :truncated_sections}
-  end
-
-  defp parse_all_sections(encoded_transaction) do
-    case parse_transaction_header(encoded_transaction) do
-      {:ok, {section_count, sections_data}} ->
-        case parse_sections(sections_data, section_count) do
-          {:ok, sections_map} ->
-            overall_header = encode_overall_header(map_size(sections_map))
-            {:ok, {overall_header, sections_map}}
-
-          error ->
-            error
-        end
-
-      error ->
-        error
-    end
-  end
-
-  defp rebuild_transaction(sections_map) do
-    sections =
-      Enum.map(sections_map, fn {tag, payload} -> encode_section(tag, payload) end)
-
-    section_count = length(sections)
-    overall_header = encode_overall_header(section_count)
-
-    transaction = IO.iodata_to_binary([overall_header | sections])
-    {:ok, transaction}
-  end
 
   # ============================================================================
   # STREAMING IMPLEMENTATION
@@ -1053,48 +1010,9 @@ defmodule Bedrock.DataPlane.Transaction do
     {:halt, {:unknown_opcode, operation_type, variant}}
   end
 
-  defp stream_next_mutation(_invalid_data) do
-    {:halt, <<>>}
-  end
-
-  @doc """
-  Combines conflict sections from multiple transactions for efficient resolver operations.
-
-  Takes raw conflict section payloads and merges them without full transaction decode.
-  """
-  @spec combine_conflicts([binary()]) :: {:ok, binary()} | {:error, reason :: term()}
-  def combine_conflicts([]), do: {:error, :empty_conflicts_list}
-
-  def combine_conflicts([single_conflict]), do: {:ok, single_conflict}
-
-  def combine_conflicts(conflict_payloads) when is_list(conflict_payloads) do
-    with {:ok, decoded_conflicts} <- decode_all_conflicts(conflict_payloads),
-         {:ok, merged_conflicts} <- merge_conflict_ranges(decoded_conflicts) do
-      {:ok, encode_write_conflicts_payload(merged_conflicts)}
-    end
-  end
+  defp stream_next_mutation(_invalid_data), do: {:halt, <<>>}
 
   # ============================================================================
   # BINARY OPERATIONS IMPLEMENTATION
   # ============================================================================
-
-  defp decode_all_conflicts(conflict_payloads) do
-    conflict_payloads
-    |> Enum.reduce_while({:ok, []}, fn payload, {:ok, acc} ->
-      case decode_write_conflicts_payload(payload) do
-        {:ok, conflicts} -> {:cont, {:ok, [conflicts | acc]}}
-        error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, conflicts_list} -> {:ok, Enum.reverse(conflicts_list)}
-      error -> error
-    end
-  end
-
-  defp merge_conflict_ranges(conflicts_lists) do
-    all_conflicts = Enum.flat_map(conflicts_lists, & &1)
-    deduplicated = Enum.uniq(all_conflicts)
-    {:ok, deduplicated}
-  end
 end

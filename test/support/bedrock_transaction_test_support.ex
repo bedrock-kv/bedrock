@@ -55,7 +55,7 @@ defmodule Bedrock.DataPlane.TransactionTestSupport do
   """
   @spec extract_log_version(Transaction.encoded()) :: binary() | nil
   def extract_log_version(encoded_transaction) do
-    case Transaction.extract_commit_version(encoded_transaction) do
+    case Transaction.commit_version(encoded_transaction) do
       {:ok, version} -> version
       {:error, _} -> nil
     end
@@ -66,7 +66,7 @@ defmodule Bedrock.DataPlane.TransactionTestSupport do
   """
   @spec extract_log_writes(Transaction.encoded()) :: %{binary() => binary() | nil}
   def extract_log_writes(encoded_transaction) do
-    case Transaction.stream_mutations(encoded_transaction) do
+    case Transaction.mutations(encoded_transaction) do
       {:ok, mutations_stream} ->
         Enum.reduce(mutations_stream, %{}, fn
           {:set, key, value}, acc -> Map.put(acc, key, value)

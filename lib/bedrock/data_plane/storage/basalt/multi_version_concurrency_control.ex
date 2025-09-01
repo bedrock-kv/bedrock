@@ -53,7 +53,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
     latest_version = newest_version(mvcc)
 
     Enum.reduce(encoded_transactions, latest_version, fn encoded_transaction, latest_version ->
-      {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
+      {:ok, version} = Transaction.commit_version(encoded_transaction)
 
       cond do
         version < latest_version ->
@@ -75,8 +75,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   """
   @spec apply_one_transaction!(mvcc :: t(), Transaction.encoded()) :: :ok
   def apply_one_transaction!(mvcc, encoded_transaction) do
-    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
-    {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
+    {:ok, mutations_stream} = Transaction.mutations(encoded_transaction)
 
     kv_pairs =
       Enum.reduce(mutations_stream, %{}, fn

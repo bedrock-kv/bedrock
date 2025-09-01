@@ -204,20 +204,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       # Verify the first binary contains both read and write conflicts
       [conflict_binary1, conflict_binary2] = conflict_binaries
 
-      assert {:ok, read_version1} = Transaction.extract_read_version(conflict_binary1)
+      assert {:ok, {read_version1, read_conflicts1}} = Transaction.read_conflicts(conflict_binary1)
       assert read_version1 == Bedrock.DataPlane.Version.from_integer(100)
-
-      assert {:ok, {_version, read_conflicts1}} = Transaction.extract_read_conflicts(conflict_binary1)
       assert read_conflicts1 == [{<<"read_key">>, <<"read_key\0">>}]
 
-      assert {:ok, write_conflicts1} = Transaction.extract_write_conflicts(conflict_binary1)
+      assert {:ok, write_conflicts1} = Transaction.write_conflicts(conflict_binary1)
       assert write_conflicts1 == [{<<"write_key1">>, <<"write_key1\0">>}]
 
       # Verify the second binary has no read version but has write conflicts
-      assert {:ok, read_version2} = Transaction.extract_read_version(conflict_binary2)
+      assert {:ok, {read_version2, _read_conflicts2}} = Transaction.read_conflicts(conflict_binary2)
       assert read_version2 == nil
 
-      assert {:ok, write_conflicts2} = Transaction.extract_write_conflicts(conflict_binary2)
+      assert {:ok, write_conflicts2} = Transaction.write_conflicts(conflict_binary2)
       assert write_conflicts2 == [{<<"write_key2">>, <<"write_key2\0">>}]
     end
 
@@ -269,10 +267,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       assert is_binary(conflict_binary)
 
       # Should have no read version but have write conflicts
-      assert {:ok, read_version} = Transaction.extract_read_version(conflict_binary)
+      assert {:ok, {read_version, _read_conflicts}} = Transaction.read_conflicts(conflict_binary)
       assert read_version == nil
 
-      assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(conflict_binary)
+      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
       assert write_conflicts == [{<<"key">>, <<"key\0">>}]
     end
 
@@ -306,13 +304,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       assert is_binary(conflict_binary)
 
       # Should have read version and read conflicts but no write conflicts
-      assert {:ok, read_version} = Transaction.extract_read_version(conflict_binary)
+      assert {:ok, {read_version, read_conflicts}} = Transaction.read_conflicts(conflict_binary)
       assert read_version == Bedrock.DataPlane.Version.from_integer(100)
-
-      assert {:ok, {_version, read_conflicts}} = Transaction.extract_read_conflicts(conflict_binary)
       assert read_conflicts == [{<<"read_key">>, <<"read_key\0">>}]
 
-      assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(conflict_binary)
+      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
       assert write_conflicts == []
     end
 
@@ -354,7 +350,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       assert is_binary(conflict_binary)
 
       # Write conflicts must maintain transaction ordering for consistency
-      assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(conflict_binary)
+      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
 
       expected_conflicts = [
         {<<"z_key">>, <<"z_key\0">>},
@@ -425,7 +421,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         for idx <- 0..3 do
           {_idx, _reply_fn, binary} = Map.fetch!(plan.transactions, idx)
           conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
-          {:ok, write_conflicts} = Transaction.extract_write_conflicts(conflict_binary)
+          {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
           {idx, write_conflicts}
         end
 
@@ -486,7 +482,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       Enum.each(0..2, fn idx ->
         {_idx, _reply_fn, binary} = Map.fetch!(plan.transactions, idx)
         conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
-        {:ok, write_conflicts} = Transaction.extract_write_conflicts(conflict_binary)
+        {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
         expected_key = "tx_#{idx}"
         assert [{^expected_key, _}] = write_conflicts, "Transaction #{idx} should be at position #{idx}"
       end)

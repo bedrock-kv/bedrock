@@ -118,7 +118,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
             transactions = Enum.to_list(bounded_stream)
 
             # Property 1: All transactions in range (target_version, last_version]
-            transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
+            transaction_versions = Enum.map(transactions, &Transaction.commit_version!/1)
 
             assert Enum.all?(transaction_versions, fn v -> v > target_version and v <= last_version end),
                    "Found transactions outside range (#{Version.to_integer(target_version)}, #{Version.to_integer(last_version)}]: #{inspect(Enum.map(transaction_versions, &Version.to_integer/1))}"
@@ -189,7 +189,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
 
             transactions = Enum.to_list(final_stream)
 
-            transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
+            transaction_versions = Enum.map(transactions, &Transaction.commit_version!/1)
 
             # Property 1: Respects all bounds
             assert length(transactions) <= limit
@@ -200,7 +200,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
 
             # Property 3: Should be equivalent to manual filtering and limiting
             all_expected_transactions = simulate_stream_behavior(segments, target_version, last_version, limit)
-            expected_versions = Enum.map(all_expected_transactions, &Transaction.extract_commit_version!/1)
+            expected_versions = Enum.map(all_expected_transactions, &Transaction.commit_version!/1)
 
             # Sort both for comparison since implementation doesn't guarantee global order across segments
             actual_sorted = Enum.sort(transaction_versions)
@@ -241,7 +241,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   # Helper functions for property assertions
 
   defp assert_all_transactions_greater_than(transactions, target_version) do
-    transaction_versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
+    transaction_versions = Enum.map(transactions, &Transaction.commit_version!/1)
 
     violating_versions = Enum.filter(transaction_versions, fn v -> v <= target_version end)
 
@@ -250,7 +250,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   end
 
   defp assert_transactions_ordered(transactions) do
-    versions = Enum.map(transactions, &Transaction.extract_commit_version!/1)
+    versions = Enum.map(transactions, &Transaction.commit_version!/1)
 
     # Instead of requiring global ordering, just verify no duplicates and all valid versions
     assert length(versions) == length(Enum.uniq(versions)),
@@ -264,8 +264,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   end
 
   defp assert_contains_all_expected(actual_transactions, expected_transactions) do
-    actual_versions = actual_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
-    expected_versions = expected_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
+    actual_versions = actual_transactions |> Enum.map(&Transaction.commit_version!/1) |> Enum.sort()
+    expected_versions = expected_transactions |> Enum.map(&Transaction.commit_version!/1) |> Enum.sort()
 
     missing_versions = expected_versions -- actual_versions
 
@@ -274,8 +274,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
   end
 
   defp assert_no_unexpected_transactions(actual_transactions, expected_transactions) do
-    actual_versions = actual_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
-    expected_versions = expected_transactions |> Enum.map(&Transaction.extract_commit_version!/1) |> Enum.sort()
+    actual_versions = actual_transactions |> Enum.map(&Transaction.commit_version!/1) |> Enum.sort()
+    expected_versions = expected_transactions |> Enum.map(&Transaction.commit_version!/1) |> Enum.sort()
 
     unexpected_versions = actual_versions -- expected_versions
 
@@ -285,7 +285,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
 
   defp assert_no_valid_transactions_exist(segments, target_version) do
     all_transactions = Enum.flat_map(segments, fn segment -> segment.transactions end)
-    all_versions = Enum.map(all_transactions, &Transaction.extract_commit_version!/1)
+    all_versions = Enum.map(all_transactions, &Transaction.commit_version!/1)
     valid_versions = Enum.filter(all_versions, fn v -> v > target_version end)
 
     assert valid_versions == [],
@@ -296,20 +296,20 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
     segments
     |> Enum.flat_map(fn segment -> segment.transactions end)
     |> Enum.filter(fn tx ->
-      version = Transaction.extract_commit_version!(tx)
+      version = Transaction.commit_version!(tx)
       version > target_version
     end)
-    |> Enum.sort_by(&Transaction.extract_commit_version!/1)
+    |> Enum.sort_by(&Transaction.commit_version!/1)
   end
 
   defp collect_expected_transactions_in_range(segments, target_version, last_version) do
     segments
     |> Enum.flat_map(fn segment -> segment.transactions end)
     |> Enum.filter(fn tx ->
-      version = Transaction.extract_commit_version!(tx)
+      version = Transaction.commit_version!(tx)
       version > target_version and version <= last_version
     end)
-    |> Enum.sort_by(&Transaction.extract_commit_version!/1)
+    |> Enum.sort_by(&Transaction.commit_version!/1)
   end
 
   defp simulate_stream_behavior(segments, target_version, last_version, limit) do
@@ -318,7 +318,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsInvariantsTest do
       Enum.reverse(segment.transactions)
     end)
     |> Enum.filter(fn tx ->
-      version = Transaction.extract_commit_version!(tx)
+      version = Transaction.commit_version!(tx)
       version > target_version and version <= last_version
     end)
     |> Enum.take(limit)

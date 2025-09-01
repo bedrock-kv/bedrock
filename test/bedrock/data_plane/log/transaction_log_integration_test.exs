@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
   instead of just the Transaction payload.
 
   This test exercises the full flow:
-  Transaction.encode -> Writer.append -> TransactionStreams.from_file! -> Transaction.stream_mutations
+  Transaction.encode -> Writer.append -> TransactionStreams.from_file! -> Transaction.mutations
   """
   use ExUnit.Case, async: true
 
@@ -22,7 +22,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     :ok
   end
 
-  test "full transaction log pipeline: encode -> write -> read -> stream_mutations" do
+  test "full transaction log pipeline: encode -> write -> read -> mutations" do
     transaction_map = %{
       mutations: [
         {:set, "key1", "value1"},
@@ -63,8 +63,8 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     # This would fail with the old bug where wrapper was returned instead of payload
     assert {:ok, _decoded} = Transaction.decode(read_transaction)
 
-    # CRITICAL: Verify stream_mutations works (this was failing with the bug)
-    assert {:ok, mutations_stream} = Transaction.stream_mutations(read_transaction)
+    # CRITICAL: Verify mutations works (this was failing with the bug)
+    assert {:ok, mutations_stream} = Transaction.mutations(read_transaction)
     mutations_list = Enum.to_list(mutations_stream)
     assert length(mutations_list) == 4
 
@@ -73,16 +73,16 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     assert {:clear, "key3"} in mutations_list
     assert {:clear_range, "range_start", "range_end"} in mutations_list
 
-    assert {:ok, extracted_version} = Transaction.extract_commit_version(read_transaction)
+    assert {:ok, extracted_version} = Transaction.commit_version(read_transaction)
     assert extracted_version == commit_version
 
     assert {:ok, {read_version, read_conflicts}} =
-             Transaction.extract_read_conflicts(read_transaction)
+             Transaction.read_conflicts(read_transaction)
 
     assert read_version == Version.from_integer(100)
     assert read_conflicts == [{"read_key", "read_key\0"}]
 
-    assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(read_transaction)
+    assert {:ok, write_conflicts} = Transaction.write_conflicts(read_transaction)
     assert write_conflicts == [{"key1", "key1\0"}, {"key2", "key2\0"}]
   end
 
@@ -123,11 +123,11 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     |> Enum.with_index(1)
     |> Enum.each(fn {tx, expected_version} ->
       assert {:ok, _decoded} = Transaction.decode(tx)
-      assert {:ok, mutations_stream} = Transaction.stream_mutations(tx)
+      assert {:ok, mutations_stream} = Transaction.mutations(tx)
       mutations = Enum.to_list(mutations_stream)
       assert length(mutations) == 1
 
-      assert {:ok, version} = Transaction.extract_commit_version(tx)
+      assert {:ok, version} = Transaction.commit_version(tx)
       assert version == Version.from_integer(expected_version)
     end)
   end
@@ -160,10 +160,10 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
 
     # Should decode and stream successfully even with empty mutations
     assert {:ok, _decoded} = Transaction.decode(read_transaction)
-    assert {:ok, mutations_stream} = Transaction.stream_mutations(read_transaction)
+    assert {:ok, mutations_stream} = Transaction.mutations(read_transaction)
     assert Enum.to_list(mutations_stream) == []
 
-    assert {:ok, write_conflicts} = Transaction.extract_write_conflicts(read_transaction)
+    assert {:ok, write_conflicts} = Transaction.write_conflicts(read_transaction)
     assert write_conflicts == [{"key1", "key1\0"}]
   end
 
@@ -200,10 +200,10 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     assert decoded.mutations == [{:set, "key", "value"}]
 
     # Should stream mutations successfully (this was the failing operation)
-    assert {:ok, stream} = Transaction.stream_mutations(read_transaction)
+    assert {:ok, stream} = Transaction.mutations(read_transaction)
     assert Enum.to_list(stream) == [{:set, "key", "value"}]
 
-    assert {:ok, commit_version} = Transaction.extract_commit_version(read_transaction)
+    assert {:ok, commit_version} = Transaction.commit_version(read_transaction)
     assert commit_version == version
   end
 end

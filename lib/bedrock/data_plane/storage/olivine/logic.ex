@@ -75,7 +75,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       apply_and_notify_fn = fn transactions ->
         send(main_process_pid, {:apply_transactions, transactions})
         last_transaction = List.last(transactions)
-        Transaction.extract_commit_version!(last_transaction)
+        Transaction.commit_version!(last_transaction)
       end
 
       puller =

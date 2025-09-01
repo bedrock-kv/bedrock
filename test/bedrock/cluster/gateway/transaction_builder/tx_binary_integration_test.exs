@@ -144,13 +144,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
       assert is_binary(mutations_section)
       assert byte_size(mutations_section) > 0
 
-      assert {:ok, stream} = Transaction.stream_mutations(binary_result)
+      assert {:ok, stream} = Transaction.mutations(binary_result)
       mutations = Enum.to_list(stream)
       assert length(mutations) == 2
 
       version = Bedrock.DataPlane.Version.from_integer(12_345)
       assert {:ok, stamped} = Transaction.add_commit_version(binary_result, version)
-      assert {:ok, ^version} = Transaction.extract_commit_version(stamped)
+      assert {:ok, ^version} = Transaction.commit_version(stamped)
 
       # Original transaction data should be preserved
       assert {:ok, decoded} = Transaction.decode(stamped)

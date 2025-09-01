@@ -30,14 +30,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
   defp mock_commit_fn(expected_transaction) do
     fn _proxy, binary_transaction ->
-      decoded_transaction = Transaction.decode!(binary_transaction)
+      {:ok, decoded_transaction} = Transaction.decode(binary_transaction)
       assert decoded_transaction == expected_transaction
       {:ok, 42}
     end
   end
 
   defp decode_transaction(binary_transaction) do
-    Transaction.decode!(binary_transaction)
+    {:ok, decoded_transaction} = Transaction.decode(binary_transaction)
+    decoded_transaction
   end
 
   defp create_expected_transaction(read_version, mutations, write_conflicts, read_conflicts \\ []) do

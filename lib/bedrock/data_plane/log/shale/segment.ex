@@ -111,5 +111,5 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def oldest_version(%{min_version: min_version}), do: min_version
 
   def last_version(%{transactions: []}), do: nil
-  def last_version(%{transactions: [transaction | _]}), do: Transaction.extract_commit_version!(transaction)
+  def last_version(%{transactions: [transaction | _]}), do: Transaction.commit_version!(transaction)
 end

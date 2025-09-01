@@ -187,7 +187,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   ## Pipeline Stages
 
   1. **Conflict Resolution**: Calls resolvers to determine which transactions must be aborted
-  2. **Abort Notification**: Immediately notifies clients of aborted transactions  
+  2. **Abort Notification**: Immediately notifies clients of aborted transactions
   3. **Log Preparation**: Distributes successful transaction mutations to appropriate logs
   4. **Log Persistence**: Pushes transactions to ALL log servers and waits for acknowledgment
   5. **Sequencer Notification**: Reports successful commit version to the sequencer
@@ -474,7 +474,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         ) ::
           {:cont, {:ok, %{Log.id() => [term()]}}} | {:halt, {:error, term()}}
   defp process_transaction_mutations(binary_transaction, storage_teams, logs_by_id, acc) do
-    case Transaction.stream_mutations(binary_transaction) do
+    case Transaction.mutations(binary_transaction) do
       {:ok, mutations_stream} ->
         case process_mutations_for_transaction(mutations_stream, storage_teams, logs_by_id, acc) do
           {:ok, updated_acc} ->

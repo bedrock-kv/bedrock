@@ -84,7 +84,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
 
     with {:ok, stream} <- TransactionStreams.from_segments([segment], target_version),
          [transaction] <- Enum.take(stream, 1),
-         {:ok, ^target_version} <- Transaction.extract_commit_version(transaction) do
+         {:ok, ^target_version} <- Transaction.commit_version(transaction) do
       {:ok, transaction}
     else
       {:ok, different_version} -> {:error, {:wrong_version, different_version}}
@@ -104,7 +104,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   @spec verify_transaction_content(Transaction.encoded(), map()) :: :ok | {:error, term()}
   def verify_transaction_content(encoded_transaction, expected_data) do
     with {:ok, _decoded} <- Transaction.decode(encoded_transaction),
-         {:ok, mutations_stream} <- Transaction.stream_mutations(encoded_transaction) do
+         {:ok, mutations_stream} <- Transaction.mutations(encoded_transaction) do
       mutations_list = Enum.to_list(mutations_stream)
 
       expected_mutations = Enum.map(expected_data, fn {key, value} -> {:set, key, value} end)
@@ -208,7 +208,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   """
   @spec extract_version(Transaction.encoded()) :: Version.t()
   def extract_version(encoded_transaction) do
-    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
     version
   end
 
@@ -268,7 +268,7 @@ defmodule Bedrock.DataPlane.WALTestSupport do
     |> Enum.reduce_while(last_version, fn tx, prev_version ->
       case Log.push(log_pid, tx, prev_version) do
         :ok ->
-          {:ok, version} = Transaction.extract_commit_version(tx)
+          {:ok, version} = Transaction.commit_version(tx)
           {:cont, version}
 
         error ->

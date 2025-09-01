@@ -262,11 +262,11 @@ defmodule Bedrock.DataPlane.TransactionTest do
       }
 
       binary = Transaction.encode(transaction)
-      assert {:ok, nil} = Transaction.extract_commit_version(binary)
+      assert {:ok, nil} = Transaction.commit_version(binary)
 
       version = Bedrock.DataPlane.Version.from_integer(98_765)
       assert {:ok, stamped} = Transaction.add_commit_version(binary, version)
-      assert {:ok, ^version} = Transaction.extract_commit_version(stamped)
+      assert {:ok, ^version} = Transaction.commit_version(stamped)
 
       assert {:ok, decoded} = Transaction.decode(stamped)
       assert decoded == transaction
@@ -285,8 +285,8 @@ defmodule Bedrock.DataPlane.TransactionTest do
       binary_with_version = Transaction.encode(with_version)
       expected_version = Bedrock.DataPlane.Version.from_integer(12_345)
 
-      assert {:ok, ^expected_version} =
-               Transaction.extract_read_version(binary_with_version)
+      assert {:ok, {^expected_version, _conflicts}} =
+               Transaction.read_conflicts(binary_with_version)
 
       # Transaction without read version
       without_version = %{
@@ -297,7 +297,7 @@ defmodule Bedrock.DataPlane.TransactionTest do
       }
 
       binary_without_version = Transaction.encode(without_version)
-      assert {:ok, nil} = Transaction.extract_read_version(binary_without_version)
+      assert {:ok, {nil, []}} = Transaction.read_conflicts(binary_without_version)
     end
 
     test "extracts conflicts" do
@@ -312,9 +312,9 @@ defmodule Bedrock.DataPlane.TransactionTest do
       expected_version = Bedrock.DataPlane.Version.from_integer(12_345)
 
       assert {:ok, {^expected_version, [{"read1", "read2"}]}} =
-               Transaction.extract_read_conflicts(binary)
+               Transaction.read_conflicts(binary)
 
-      assert {:ok, [{"write1", "write2"}]} = Transaction.extract_write_conflicts(binary)
+      assert {:ok, [{"write1", "write2"}]} = Transaction.write_conflicts(binary)
 
       # Empty conflicts
       empty_transaction = %{
@@ -325,8 +325,8 @@ defmodule Bedrock.DataPlane.TransactionTest do
       }
 
       empty_binary = Transaction.encode(empty_transaction)
-      assert {:ok, {nil, []}} = Transaction.extract_read_conflicts(empty_binary)
-      assert {:ok, []} = Transaction.extract_write_conflicts(empty_binary)
+      assert {:ok, {nil, []}} = Transaction.read_conflicts(empty_binary)
+      assert {:ok, []} = Transaction.write_conflicts(empty_binary)
     end
 
     test "streams mutations" do
@@ -343,7 +343,7 @@ defmodule Bedrock.DataPlane.TransactionTest do
       }
 
       binary = Transaction.encode(transaction)
-      assert {:ok, stream} = Transaction.stream_mutations(binary)
+      assert {:ok, stream} = Transaction.mutations(binary)
 
       mutations = Enum.to_list(stream)
       assert mutations == transaction.mutations

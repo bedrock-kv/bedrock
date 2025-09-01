@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
             |> Enum.reverse()
           end)
           |> Stream.filter(fn transaction ->
-            version = Transaction.extract_commit_version!(transaction)
+            version = Transaction.commit_version!(transaction)
             version > target_version
           end)
 
@@ -118,7 +118,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   def until_version(stream, last_version) do
     Stream.transform(stream, last_version, fn
       encoded_transaction, last_version ->
-        case Transaction.extract_commit_version(encoded_transaction) do
+        case Transaction.commit_version(encoded_transaction) do
           {:ok, version} when version <= last_version ->
             {[encoded_transaction], last_version}
 

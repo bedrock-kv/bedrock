@@ -26,8 +26,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Keyspace do
 
   @spec apply_transaction(keyspace :: t(), Transaction.encoded()) :: :ok
   def apply_transaction(keyspace, encoded_transaction) do
-    {:ok, version} = Transaction.extract_commit_version(encoded_transaction)
-    {:ok, mutations_stream} = Transaction.stream_mutations(encoded_transaction)
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
+    {:ok, mutations_stream} = Transaction.mutations(encoded_transaction)
 
     # Convert mutations to key presence indicators
     key_entries =

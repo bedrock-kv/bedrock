@@ -368,12 +368,9 @@ defmodule Bedrock.DataPlane.Transaction do
          acc,
          current_offset
        ) do
-    # Calculate section size including header
-    # tag(1) + size(3) + crc(4)
     section_header_size = 8
     total_section_size = section_header_size + payload_size
 
-    # Call the callback with section info
     case callback_fn.(tag, current_offset, total_section_size, payload, acc) do
       {:ok, new_acc} ->
         next_offset = current_offset + total_section_size
@@ -386,20 +383,34 @@ defmodule Bedrock.DataPlane.Transaction do
 
   defp iterate_sections_data(_, _, _, _, _), do: {:error, :truncated_sections}
 
-  # Fast offset-only parsing using unified iterator
   defp parse_section_offsets(encoded_transaction) do
-    callback = fn
-      tag, offset, size, _payload, acc ->
-        {:ok, [{tag, offset, size} | acc]}
-    end
+    case parse_transaction_header(encoded_transaction) do
+      {:ok, {section_count, sections_data}} ->
+        parse_offsets_only(sections_data, section_count, [], 0)
 
-    case iterate_sections(encoded_transaction, callback, []) do
-      {:ok, offsets} -> {:ok, Enum.reverse(offsets)}
-      error -> error
+      error ->
+        error
     end
   end
 
-  # Unified extract-and-process pattern using optimized iterator
+  defp parse_offsets_only(_data, 0, offsets, _offset), do: {:ok, Enum.reverse(offsets)}
+
+  defp parse_offsets_only(
+         <<tag, payload_size::unsigned-big-24, _stored_crc::unsigned-big-32, _payload::binary-size(payload_size),
+           rest::binary>>,
+         remaining_count,
+         offsets,
+         current_offset
+       ) do
+    section_header_size = 8
+    total_section_size = section_header_size + payload_size
+    next_offset = current_offset + total_section_size
+
+    parse_offsets_only(rest, remaining_count - 1, [{tag, current_offset, total_section_size} | offsets], next_offset)
+  end
+
+  defp parse_offsets_only(_, _, _, _), do: {:error, :truncated_sections}
+
   defp extract_and_process_section(encoded_transaction, target_tag, process_fn, not_found_result) do
     callback = fn
       ^target_tag, _offset, _size, payload, _acc ->
@@ -505,6 +516,41 @@ defmodule Bedrock.DataPlane.Transaction do
         &decode_write_conflicts_payload/1,
         {:ok, []}
       )
+
+  @doc """
+  Extracts both read and write conflicts in a single pass for optimal performance.
+
+  This is more efficient than calling read_conflicts/1 and write_conflicts/1
+  separately as it only parses the transaction once.
+
+  Returns a tuple with read info and write conflicts.
+  """
+  @spec read_write_conflicts(binary()) ::
+          {:ok, {{Bedrock.version() | nil, [Bedrock.key_range()]}, [Bedrock.key_range()]}}
+          | {:error, reason :: term()}
+  def read_write_conflicts(encoded_transaction) do
+    callback = fn
+      @read_conflicts_tag, _offset, _size, payload, {_read_info, write_conflicts} ->
+        case decode_read_conflicts_payload(payload) do
+          {:ok, read_conflicts} -> {:ok, {read_conflicts, write_conflicts}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      @write_conflicts_tag, _offset, _size, payload, {read_info, _write_conflicts} ->
+        case decode_write_conflicts_payload(payload) do
+          {:ok, write_conflicts} -> {:ok, {read_info, write_conflicts}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      _other_tag, _offset, _size, _payload, acc ->
+        {:ok, acc}
+    end
+
+    case iterate_sections(encoded_transaction, callback, {{nil, []}, []}) do
+      {:ok, result} -> {:ok, result}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   Creates a stream of mutations from the MUTATIONS section.
@@ -734,13 +780,22 @@ defmodule Bedrock.DataPlane.Transaction do
 
   # Parse all sections into map using unified iterator
   defp parse_sections(sections_data, section_count) do
-    callback = fn
-      tag, _offset, _size, payload, sections_map ->
-        {:ok, Map.put(sections_map, tag, payload)}
-    end
-
-    iterate_sections_data(sections_data, section_count, callback, %{}, 0)
+    # This function needs to extract all payloads for decode/1, so keep the old efficient approach
+    parse_sections_old(sections_data, section_count, %{})
   end
+
+  defp parse_sections_old(_data, 0, sections_map), do: {:ok, sections_map}
+
+  defp parse_sections_old(
+         <<tag, payload_size::unsigned-big-24, _stored_crc::unsigned-big-32, payload::binary-size(payload_size),
+           rest::binary>>,
+         remaining_count,
+         sections_map
+       ) do
+    parse_sections_old(rest, remaining_count - 1, Map.put(sections_map, tag, payload))
+  end
+
+  defp parse_sections_old(_, _, _), do: {:error, :truncated_sections}
 
   defp build_transaction_from_sections(sections) do
     transaction = %{

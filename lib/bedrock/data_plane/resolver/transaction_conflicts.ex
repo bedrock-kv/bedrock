@@ -70,33 +70,24 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
       read_write_conflict?(tree, read_info)
   end
 
-  # Extract conflicts from binary transaction
+  # Extract conflicts from binary transaction using optimized single-pass approach
   defp extract_conflicts(binary_transaction) when is_binary(binary_transaction) do
-    # Extract write conflicts from binary transaction
-    writes =
-      case Transaction.write_conflicts(binary_transaction) do
-        {:ok, write_conflicts} -> Enum.map(write_conflicts, fn {key, _end_key} -> key end)
-        {:error, _} -> []
-      end
+    case Transaction.read_write_conflicts(binary_transaction) do
+      {:ok, {read_info, write_conflicts}} ->
+        case read_info do
+          {nil, []} ->
+            {nil, write_conflicts}
 
-    # Extract read conflicts from binary transaction
-    read_info =
-      case Transaction.read_conflicts(binary_transaction) do
-        {:ok, {nil, []}} ->
-          nil
+          {read_version, read_conflicts} ->
+            {{read_version, read_conflicts}, write_conflicts}
+        end
 
-        {:ok, {read_version, read_conflicts}} ->
-          read_keys = Enum.map(read_conflicts, fn {key, _end_key} -> key end)
-          {read_version, read_keys}
-
-        {:error, _} ->
-          nil
-      end
-
-    {read_info, writes}
+      {:error, _} ->
+        {nil, []}
+    end
   end
 
-  @spec write_conflict?(Tree.t(), [Bedrock.key() | Bedrock.key_range()], Bedrock.version()) ::
+  @spec write_conflict?(Tree.t(), [Bedrock.key_range()], Bedrock.version()) ::
           boolean()
   def write_conflict?(tree, writes, write_version) do
     predicate = version_lt(write_version)
@@ -105,7 +96,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
   @spec read_write_conflict?(
           Tree.t(),
-          nil | {Bedrock.version(), [Bedrock.key() | Bedrock.key_range()]}
+          nil | {Bedrock.version(), [Bedrock.key_range()]}
         ) ::
           boolean()
   def read_write_conflict?(_, nil), do: false
@@ -121,7 +112,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   @spec apply_transaction(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) :: Tree.t()
   def apply_transaction(tree, transaction, write_version) do
     {_read_info, writes} = extract_conflicts(transaction)
-    Enum.reduce(writes, tree, &Tree.insert(&2, &1, write_version))
+
+    # Use bulk insert for better performance - rebalance only once instead of after each write
+    range_value_pairs = Enum.map(writes, &{&1, write_version})
+    Tree.insert_bulk(tree, range_value_pairs)
   end
 
   @spec remove_old_transactions(Tree.t(), Bedrock.version()) :: Tree.t()

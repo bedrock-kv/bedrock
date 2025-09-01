@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.2.0-rc0",
+      version: "0.2.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -66,9 +66,7 @@ defmodule Bedrock.MixProject do
 
   defp docs do
     [
-      # The main page in the docs
-      main: "MyApp",
-      logo: "path/to/logo.png",
+      main: "Bedrock",
       extras: ["README.md"]
     ]
   end

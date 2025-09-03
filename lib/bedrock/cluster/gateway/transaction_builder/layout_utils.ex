@@ -8,6 +8,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.KeyRange
 
   @doc """
   Extracts the PID of a storage server from the Transaction System Layout.
@@ -62,12 +63,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils do
     LayoutIndex.lookup_range(index, start_key, end_key)
   end
 
-  @doc """
-  Determines if two key ranges overlap.
-
-  Handles the special case where the second range ends with :end (unbounded).
-  """
   @spec ranges_overlap?(Bedrock.key_range(), Bedrock.key_range()) :: boolean()
-  def ranges_overlap?({_start1, end1}, {start2, :end}), do: start2 <= end1
-  def ranges_overlap?({start1, end1}, {start2, end2}), do: start1 < end2 and start2 < end1
+  defdelegate ranges_overlap?(range1, range2), to: KeyRange, as: :overlap?
 end

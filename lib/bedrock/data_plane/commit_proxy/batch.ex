@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
           last_commit_version: Bedrock.version(),
           commit_version: Bedrock.version(),
           n_transactions: non_neg_integer(),
-          buffer: [{index :: non_neg_integer(), reply_fn(), Transaction.encoded()}]
+          buffer: [{index :: non_neg_integer(), reply_fn(), Transaction.encoded(), Task.t()}]
         }
   defstruct started_at: nil,
             finalized_at: nil,
@@ -36,17 +36,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
   end
 
   @spec transactions_in_order(t()) :: [
-          {index :: non_neg_integer(), reply_fn(), Transaction.encoded()}
+          {index :: non_neg_integer(), reply_fn(), Transaction.encoded(), Task.t()}
         ]
   def transactions_in_order(t), do: Enum.reverse(t.buffer)
 
   @spec all_callers(t()) :: [reply_fn()]
   def all_callers(t), do: Enum.map(t.buffer, &elem(&1, 1))
 
-  @spec add_transaction(t(), Transaction.encoded(), reply_fn()) :: t()
-  def add_transaction(t, transaction, reply_fn) when is_binary(transaction) do
+  @spec add_transaction(t(), Transaction.encoded(), reply_fn(), Task.t()) :: t()
+  def add_transaction(t, transaction, reply_fn, task) when is_binary(transaction) do
     index = t.n_transactions
-    %{t | buffer: [{index, reply_fn, transaction} | t.buffer], n_transactions: index + 1}
+    %{t | buffer: [{index, reply_fn, transaction, task} | t.buffer], n_transactions: index + 1}
   end
 
   @spec transaction_count(t()) :: non_neg_integer()

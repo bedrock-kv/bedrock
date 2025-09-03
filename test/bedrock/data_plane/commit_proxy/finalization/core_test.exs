@@ -49,15 +49,19 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       tx1_binary = Transaction.encode(tx1_map)
       tx2_binary = Transaction.encode(tx2_map)
 
+      # Create tasks for testing (simple tasks that return single resolver map)
+      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
+      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
+
       batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 2,
         buffer: [
           # index 0 - will be aborted
-          {0, reply_fn1, tx1_binary},
+          {0, reply_fn1, tx1_binary, task1},
           # index 1 - success
-          {1, reply_fn2, tx2_binary}
+          {1, reply_fn2, tx2_binary, task2}
         ]
       }
 
@@ -163,13 +167,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       binary_transaction1 = Transaction.encode(transaction_map1)
       binary_transaction2 = Transaction.encode(transaction_map2)
 
+      # Create tasks for testing
+      task1 = Task.async(fn -> %{:test_resolver => binary_transaction1} end)
+      task2 = Task.async(fn -> %{:test_resolver => binary_transaction2} end)
+
       batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 2,
         buffer: [
-          {0, reply_fn1, binary_transaction1},
-          {1, reply_fn2, binary_transaction2}
+          {0, reply_fn1, binary_transaction1, task1},
+          {1, reply_fn2, binary_transaction2, task2}
         ]
       }
 
@@ -351,12 +359,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       binary_transaction = Transaction.encode(transaction_map)
 
+      # Create task for testing
+      task = Task.async(fn -> %{:test_resolver => binary_transaction} end)
+
       batch = %Batch{
         commit_version: Bedrock.DataPlane.Version.from_integer(100),
         last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
         n_transactions: 1,
         buffer: [
-          {0, reply_fn, binary_transaction}
+          {0, reply_fn, binary_transaction, task}
         ]
       }
 

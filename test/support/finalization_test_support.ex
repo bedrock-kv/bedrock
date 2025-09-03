@@ -135,6 +135,11 @@ defmodule FinalizationTestSupport do
     ]
   end
 
+  # Helper function to create test resolver task
+  defp create_test_resolver_task(binary) do
+    Task.async(fn -> %{:test_resolver => binary} end)
+  end
+
   @doc """
   Creates a test batch with given parameters.
   """
@@ -159,8 +164,11 @@ defmodule FinalizationTestSupport do
 
     default_binary = Transaction.encode(default_transaction_map)
 
+    # Create a simple task that returns single resolver map (for tests)
+    default_task = create_test_resolver_task(default_binary)
+
     default_transactions = [
-      {0, fn result -> send(self(), {:reply, result}) end, default_binary}
+      {0, fn result -> send(self(), {:reply, result}) end, default_binary, default_task}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
@@ -168,10 +176,18 @@ defmodule FinalizationTestSupport do
     # Ensure buffer contains indexed transactions
     indexed_buffer =
       case buffer do
-        # If buffer already has indexed format {index, reply_fn, binary}, use as-is
-        [{_idx, _reply_fn, _binary} | _] -> buffer
-        # If buffer has old format {reply_fn, binary}, add indices
-        _ -> buffer |> Enum.with_index() |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary} end)
+        # If buffer already has indexed format {index, reply_fn, binary, task}, use as-is
+        [{_idx, _reply_fn, _binary, _task} | _] ->
+          buffer
+
+        # If buffer has old format {reply_fn, binary}, add indices and tasks
+        _ ->
+          buffer
+          |> Enum.with_index()
+          |> Enum.map(fn {{reply_fn, binary}, idx} ->
+            task = create_test_resolver_task(binary)
+            {idx, reply_fn, binary, task}
+          end)
       end
 
     %Bedrock.DataPlane.CommitProxy.Batch{

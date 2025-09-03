@@ -263,19 +263,27 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           keyword()
         ) :: {:ok, MapSet.t(non_neg_integer())} | {:error, term()}
   defp call_all_resolvers_with_map(resolver_transaction_map, epoch, last_version, commit_version, resolvers, opts) do
+    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
     resolvers
-    |> Enum.map(fn {_start_key, ref} ->
-      # Every resolver must have transactions after task processing
-      filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
+    |> async_stream_fn.(
+      fn {_start_key, ref} ->
+        # Every resolver must have transactions after task processing
+        filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
+        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, opts)
+      end,
+      timeout: timeout
+    )
+    |> Enum.reduce_while({:ok, MapSet.new()}, fn
+      {:ok, {:ok, aborted}}, {:ok, acc} ->
+        {:cont, {:ok, Enum.into(aborted, acc)}}
 
-      call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, opts)
-    end)
-    |> Enum.reduce({:ok, MapSet.new()}, fn
-      {:ok, aborted}, {:ok, acc} ->
-        {:ok, Enum.into(aborted, acc)}
+      {:ok, {:error, reason}}, _ ->
+        {:halt, {:error, reason}}
 
-      {:error, reason}, _ ->
-        {:error, reason}
+      {:exit, reason}, _ ->
+        {:halt, {:error, {:resolver_exit, reason}}}
     end)
   end
 

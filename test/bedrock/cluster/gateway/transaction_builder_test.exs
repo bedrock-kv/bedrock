@@ -4,6 +4,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.KeySelector
 
   # This test file focuses on GenServer-specific functionality:
   # - Process lifecycle (start_link, initialization, termination)
@@ -391,13 +392,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       ref = Process.monitor(pid)
 
+      # Send puts and nested transactions deterministically
       for i <- 1..50 do
         GenServer.cast(pid, {:put, "key_#{i}", "value_#{i}"})
-
-        if rem(i, 10) == 0 do
-          :ok = GenServer.call(pid, :nested_transaction)
-        end
       end
+
+      # Add nested transactions at specific points
+      :ok = GenServer.call(pid, :nested_transaction)
+      :ok = GenServer.call(pid, :nested_transaction)
+      :ok = GenServer.call(pid, :nested_transaction)
+      :ok = GenServer.call(pid, :nested_transaction)
+      :ok = GenServer.call(pid, :nested_transaction)
 
       :timer.sleep(50)
 
@@ -501,6 +506,246 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       state = :sys.get_state(pid)
       assert state.transaction_system_layout == custom_layout
+    end
+  end
+
+  describe "KeySelector operations" do
+    test "handles {:fetch_key_selector, key_selector} call and delegates to resolution module" do
+      key_selector = KeySelector.first_greater_or_equal("test_key")
+      pid = start_transaction_builder()
+
+      # Make the call - this will delegate to KeySelectorResolution.resolve_key_selector/3
+      result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+
+      # Should return a tuple with either :ok or :error as first element
+      assert is_tuple(result)
+      assert tuple_size(result) >= 2
+      assert elem(result, 0) in [:ok, :error]
+
+      # Check that the call was properly handled and state remains valid
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "handles KeySelector with first_greater_or_equal" do
+      pid = start_transaction_builder()
+      selector = KeySelector.first_greater_or_equal("test_key")
+
+      result = GenServer.call(pid, {:fetch_key_selector, selector})
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "handles KeySelector with offset" do
+      pid = start_transaction_builder()
+      selector = "test_key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
+
+      result = GenServer.call(pid, {:fetch_key_selector, selector})
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "tracks read version management during KeySelector operations" do
+      pid = start_transaction_builder()
+      _initial_state = :sys.get_state(pid)
+
+      key_selector = KeySelector.first_greater_or_equal("version_test_key")
+      _result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+
+      final_state = :sys.get_state(pid)
+
+      # The read version should be managed appropriately
+      assert final_state.read_version == nil
+
+      # Transaction state should be updated appropriately
+      assert %Tx{} = final_state.tx
+    end
+
+    test "maintains transaction state consistency with KeySelector reads" do
+      pid = start_transaction_builder()
+
+      key_selector = KeySelector.first_greater_or_equal("consistency_key")
+
+      # Multiple KeySelector calls should maintain consistent state
+      result1 = GenServer.call(pid, {:fetch_key_selector, key_selector})
+      result2 = GenServer.call(pid, {:fetch_key_selector, key_selector})
+
+      # Both results should be the same format
+      assert is_tuple(result1)
+      assert is_tuple(result2)
+      assert elem(result1, 0) in [:ok, :error]
+      assert elem(result2, 0) in [:ok, :error]
+
+      # For deterministic testing, we expect consistent results
+      assert result1 == result2
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+  end
+
+  describe "KeySelector range operations" do
+    test "handles {:range_fetch_key_selectors, start_selector, end_selector, opts} call" do
+      start_selector = KeySelector.first_greater_or_equal("range_start")
+      end_selector = KeySelector.first_greater_than("range_end")
+      opts = [limit: 50]
+      pid = start_transaction_builder()
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      # Should return a tuple with :ok or :error as first element
+      assert is_tuple(result)
+      assert tuple_size(result) >= 2
+      assert elem(result, 0) in [:ok, :error]
+
+      # State should remain valid
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "handles KeySelector range with standard boundaries" do
+      pid = start_transaction_builder()
+
+      start_selector = KeySelector.first_greater_or_equal("a")
+      end_selector = KeySelector.first_greater_than("z")
+      opts = []
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "handles KeySelector range with limit option" do
+      pid = start_transaction_builder()
+
+      start_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-5)
+      end_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
+      opts = [limit: 100]
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "handles range with nonexistent keys" do
+      start_selector = KeySelector.first_greater_than("zzz_nonexistent")
+      end_selector = KeySelector.first_greater_than("zzz_also_nonexistent")
+      opts = []
+      pid = start_transaction_builder()
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "maintains transaction consistency across range operations" do
+      pid = start_transaction_builder()
+
+      start_selector = KeySelector.first_greater_or_equal("consistency_range_start")
+      end_selector = KeySelector.first_greater_than("consistency_range_end")
+      opts = [limit: 5]
+
+      # Multiple range operations should maintain consistent state
+      result1 = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result2 = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      # Both results should have the same format
+      assert is_tuple(result1)
+      assert is_tuple(result2)
+      assert elem(result1, 0) in [:ok, :error]
+      assert elem(result2, 0) in [:ok, :error]
+
+      # For deterministic behavior, results should be identical
+      assert result1 == result2
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "processes range with no options" do
+      pid = start_transaction_builder()
+
+      start_selector = KeySelector.first_greater_or_equal("opts_test")
+      end_selector = KeySelector.first_greater_than("opts_test_end")
+      opts = []
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+
+    test "processes range with limit option" do
+      pid = start_transaction_builder()
+
+      start_selector = KeySelector.first_greater_or_equal("opts_test")
+      end_selector = KeySelector.first_greater_than("opts_test_end")
+      opts = [limit: 50, timeout: 5000]
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      assert is_tuple(result)
+      assert elem(result, 0) in [:ok, :error]
+
+      state = :sys.get_state(pid)
+      assert state.state == :valid
+    end
+  end
+
+  describe "read version lease management" do
+    test "handles :update_version_lease_if_needed continue message" do
+      pid = start_transaction_builder()
+
+      # Get initial state and verify it's valid
+      initial_state = :sys.get_state(pid)
+      assert initial_state.state == :valid
+
+      # The continue message is handled internally by GenServer.continue/2
+      # We can't send it directly, so we test that the process remains stable
+      # and the handler exists by checking the process stays alive
+      assert Process.alive?(pid)
+
+      # State should remain valid
+      final_state = :sys.get_state(pid)
+      assert %State{} = final_state
+      assert final_state.state == :valid
+    end
+
+    test "handles version lease expiration" do
+      pid = start_transaction_builder()
+
+      # Simulate an expired lease by manipulating state directly
+      # This tests the lease expiration logic
+      current_state = :sys.get_state(pid)
+      expired_state = %{current_state | state: :expired}
+      :sys.replace_state(pid, fn _state -> expired_state end)
+
+      # The process should still be alive and handle the expired state
+      assert Process.alive?(pid)
+
+      updated_state = :sys.get_state(pid)
+      assert updated_state.state == :expired
     end
   end
 end

@@ -33,6 +33,41 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
 
   def new, do: %__MODULE__{}
 
+  @doc """
+  Merge a storage read result into the transaction state for conflict tracking.
+
+  This function is used after KeySelector resolution to merge the resolved key
+  and value into the transaction's read state, ensuring proper conflict detection.
+  """
+  @spec merge_storage_read(t(), key(), value() | :not_found) :: t()
+  def merge_storage_read(t, key, value) when is_binary(key) do
+    case value do
+      :not_found -> %{t | reads: Map.put(t.reads, key, :clear)}
+      value when is_binary(value) -> %{t | reads: Map.put(t.reads, key, value)}
+    end
+  end
+
+  @doc """
+  Merge storage range read results into the transaction state for conflict tracking.
+
+  This function is used after KeySelector range resolution to merge resolved keys
+  and values into the transaction's read state, and add the range to range_reads.
+  """
+  @spec merge_storage_range_read(t(), key(), key(), [{key(), value()}]) :: t()
+  def merge_storage_range_read(t, resolved_start_key, resolved_end_key, key_values)
+      when is_binary(resolved_start_key) and is_binary(resolved_end_key) do
+    # Add all individual key-value pairs to reads for conflict tracking
+    updated_reads =
+      Enum.reduce(key_values, t.reads, fn {key, value}, acc ->
+        Map.put(acc, key, value)
+      end)
+
+    # Add the resolved range to range_reads for conflict tracking
+    updated_range_reads = add_or_merge(t.range_reads, resolved_start_key, resolved_end_key)
+
+    %{t | reads: updated_reads, range_reads: updated_range_reads}
+  end
+
   @spec get(
           t(),
           key(),

@@ -77,7 +77,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
-  defp end_sentinel, do: "\xff\xff\xff"
+  defp end_sentinel, do: <<0xFF, 0xFF>>
   defp end_sentinel?(key), do: key == end_sentinel()
   defp denormalize_end_key(key), do: if(end_sentinel?(key), do: :end, else: key)
   defp normalize_end_key(:end), do: end_sentinel()

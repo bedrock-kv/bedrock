@@ -720,4 +720,85 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       assert Enum.sort(keys) == keys, "Keys should remain sorted after operations"
     end
   end
+
+  describe "Page binary optimization helpers" do
+    test "search_entries_with_position finds exact key" do
+      # Create test page with known keys
+      key_versions = [
+        {"apple", <<0, 0, 0, 0, 0, 0, 0, 1>>},
+        {"banana", <<0, 0, 0, 0, 0, 0, 0, 2>>},
+        {"cherry", <<0, 0, 0, 0, 0, 0, 0, 3>>}
+      ]
+
+      page = Page.new(1, key_versions)
+
+      # Extract entries binary
+      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+
+      # Test finding exact keys
+      assert {:found, 0} = Page.search_entries_with_position(entries, key_count, "apple")
+      assert {:found, 1} = Page.search_entries_with_position(entries, key_count, "banana")
+      assert {:found, 2} = Page.search_entries_with_position(entries, key_count, "cherry")
+    end
+
+    test "search_entries_with_position finds insertion points" do
+      key_versions = [{"banana", <<0, 0, 0, 0, 0, 0, 0, 1>>}, {"cherry", <<0, 0, 0, 0, 0, 0, 0, 2>>}]
+      page = Page.new(1, key_versions)
+
+      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+
+      # Test insertion points for non-existent keys
+      # Before all
+      assert {:not_found, 0} = Page.search_entries_with_position(entries, key_count, "apple")
+      # Between banana and cherry
+      assert {:not_found, 1} = Page.search_entries_with_position(entries, key_count, "blueberry")
+      # After all
+      assert {:not_found, 2} = Page.search_entries_with_position(entries, key_count, "date")
+    end
+
+    test "search_entries_with_position stops early for sorted data" do
+      key_versions = [
+        {"a", <<0, 0, 0, 0, 0, 0, 0, 1>>},
+        {"c", <<0, 0, 0, 0, 0, 0, 0, 2>>},
+        {"e", <<0, 0, 0, 0, 0, 0, 0, 3>>}
+      ]
+
+      page = Page.new(1, key_versions)
+
+      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+
+      # Should stop at position 1 when looking for "b" (since "c" > "b")
+      assert {:not_found, 1} = Page.search_entries_with_position(entries, key_count, "b")
+    end
+
+    test "decode_entry_at_position extracts correct entries" do
+      key_versions = [
+        {"first", <<1, 1, 1, 1, 1, 1, 1, 1>>},
+        {"second", <<2, 2, 2, 2, 2, 2, 2, 2>>},
+        {"third", <<3, 3, 3, 3, 3, 3, 3, 3>>}
+      ]
+
+      page = Page.new(1, key_versions)
+
+      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+
+      # Test extracting entries at different positions
+      assert {:ok, {"first", <<1, 1, 1, 1, 1, 1, 1, 1>>}} = Page.decode_entry_at_position(entries, 0, key_count)
+      assert {:ok, {"second", <<2, 2, 2, 2, 2, 2, 2, 2>>}} = Page.decode_entry_at_position(entries, 1, key_count)
+      assert {:ok, {"third", <<3, 3, 3, 3, 3, 3, 3, 3>>}} = Page.decode_entry_at_position(entries, 2, key_count)
+    end
+
+    test "decode_entry_at_position handles bounds correctly" do
+      key_versions = [{"only", <<1, 1, 1, 1, 1, 1, 1, 1>>}]
+      page = Page.new(1, key_versions)
+
+      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+
+      # Test out of bounds conditions
+      # Beyond last
+      assert :out_of_bounds = Page.decode_entry_at_position(entries, 1, key_count)
+      # Way beyond
+      assert :out_of_bounds = Page.decode_entry_at_position(entries, 2, key_count)
+    end
+  end
 end

@@ -67,9 +67,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.Internal.Time
+  alias Bedrock.KeySelector
 
   @doc false
   @spec start_link(
@@ -140,8 +143,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     end
   end
 
+  def handle_call({:fetch_key_selector, key_selector}, _from, t) do
+    case do_fetch_key_selector(t, key_selector) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
   def handle_call({:range_batch, start_key, end_key, batch_size, opts}, _from, t) do
     case do_range_batch(t, {start_key, end_key}, batch_size, opts) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
+  def handle_call({:range_fetch_key_selectors, start_selector, end_selector, opts}, _from, t) do
+    case do_range_fetch_key_selectors(t, start_selector, end_selector, opts) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
@@ -163,6 +178,43 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
+
+  @spec do_fetch_key_selector(State.t(), KeySelector.t()) ::
+          {State.t(), {:ok, {binary(), binary()}} | {:error, atom()}}
+  def do_fetch_key_selector(t, %KeySelector{} = key_selector) do
+    # First check if we have this key in our local writes via the resolved key
+    # For now, we simplify and delegate to KeySelectorResolution
+    case KeySelectorResolution.resolve_key_selector(t.layout_index, key_selector, t.read_version || 0) do
+      {:ok, {resolved_key, value}} ->
+        # Merge the resolved key and value into transaction state for conflict tracking
+        updated_tx = Tx.merge_storage_read(t.tx, resolved_key, value)
+        {%{t | tx: updated_tx}, {:ok, {resolved_key, value}}}
+
+      {:error, reason} ->
+        {t, {:error, reason}}
+    end
+  end
+
+  @spec do_range_fetch_key_selectors(State.t(), KeySelector.t(), KeySelector.t(), keyword()) ::
+          {State.t(), {:ok, [{binary(), binary()}]} | {:error, atom()}}
+  def do_range_fetch_key_selectors(t, start_selector, end_selector, opts) do
+    case KeySelectorResolution.resolve_key_selector_range(
+           t.layout_index,
+           start_selector,
+           end_selector,
+           t.read_version || 0,
+           opts
+         ) do
+      {:ok, results} ->
+        # For now, we can't get the resolved boundaries from the current API
+        # A more complete implementation would need to resolve the boundaries first
+        # and then use them for conflict tracking
+        {t, {:ok, results}}
+
+      {:error, reason} ->
+        {t, {:error, reason}}
+    end
+  end
 
   @spec do_rollback(State.t()) :: :stop | State.t()
   def do_rollback(%{stack: []}), do: :stop

@@ -8,15 +8,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   """
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.DataPlane.Storage
   alias Bedrock.KeySelector
 
   @type resolution_result ::
-          {:ok, {resolved_key :: binary(), value :: binary()}}
+          {:ok, Bedrock.key_value()}
           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :clamped}
 
   @type range_resolution_result ::
-          {:ok, [{key :: binary(), value :: binary()}]}
+          {:ok, [Bedrock.key_value()]}
           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :clamped | :invalid_range}
 
   @doc """
@@ -34,38 +36,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
           opts :: [timeout: timeout()]
         ) :: resolution_result()
   def resolve_key_selector(layout_index, %KeySelector{} = key_selector, version, opts \\ []) do
-    resolve_key_selector_with_circuit_breaker(layout_index, key_selector, version, opts, 0)
-  end
-
-  # Maximum number of shard hops before clamping to prevent infinite loops
-  @max_shard_hops 10
-
-  @spec resolve_key_selector_with_circuit_breaker(
-          LayoutIndex.t(),
-          KeySelector.t(),
-          Bedrock.version(),
-          keyword(),
-          non_neg_integer()
-        ) :: resolution_result()
-  defp resolve_key_selector_with_circuit_breaker(_layout_index, _key_selector, _version, _opts, hop_count)
-       when hop_count >= @max_shard_hops do
-    {:error, :clamped}
-  end
-
-  defp resolve_key_selector_with_circuit_breaker(layout_index, %KeySelector{} = key_selector, version, opts, hop_count) do
     with {:ok, storage_pid} <- lookup_storage_server(layout_index, key_selector.key),
          {:ok, {resolved_key, value}} <- call_storage_server(storage_pid, key_selector, version, opts) do
       {:ok, {resolved_key, value}}
     else
       {:partial, keys_available} ->
-        with {:ok, continuation_selector} <- calculate_continuation(layout_index, key_selector, keys_available) do
-          resolve_key_selector_with_circuit_breaker(
-            layout_index,
-            continuation_selector,
-            version,
-            opts,
-            hop_count + 1
-          )
+        case calculate_continuation(layout_index, key_selector, keys_available) do
+          {:ok, continuation_selector} ->
+            resolve_key_selector(layout_index, continuation_selector, version, opts)
+
+          error ->
+            error
         end
 
       error ->
@@ -87,37 +68,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   end
 
   @spec call_storage_server(pid(), KeySelector.t(), Bedrock.version(), keyword()) ::
-          {:ok, {binary(), binary()}} | {:partial, integer()} | {:error, atom()}
+          {:ok, Bedrock.key_value()} | {:partial, integer()} | {:error, atom()}
   defp call_storage_server(storage_pid, key_selector, version, opts) do
-    # Check if we have a mock configured for testing
-    case get_test_mock_response(storage_pid, key_selector, version) do
-      :no_mock -> Storage.fetch(storage_pid, key_selector, version, opts)
-      mock_response -> mock_response
-    end
-  end
-
-  @spec get_test_mock_response(pid(), KeySelector.t(), Bedrock.version()) ::
-          {:ok, {binary(), binary()}} | {:partial, integer()} | {:error, atom()} | :no_mock
-  defp get_test_mock_response(storage_pid, key_selector, version) do
-    # Check if we're in test mode with mock responses configured
-    mock_key = {:test_storage_mock, storage_pid}
-
-    case Process.get(mock_key) do
-      nil -> :no_mock
-      mock_fn -> mock_fn.(key_selector, version)
-    end
-  end
-
-  @spec get_test_range_mock_response(pid(), KeySelector.t(), KeySelector.t(), Bedrock.version(), keyword()) ::
-          {:ok, [{binary(), binary()}]} | {:error, atom()} | :no_mock
-  defp get_test_range_mock_response(storage_pid, start_selector, end_selector, version, opts) do
-    # Check if we're in test mode with range mock responses configured
-    mock_key = {:test_range_storage_mock, storage_pid}
-
-    case Process.get(mock_key) do
-      nil -> :no_mock
-      mock_fn -> mock_fn.(start_selector, end_selector, version, opts)
-    end
+    storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
+    storage_fetch_fn.(storage_pid, key_selector, version, opts)
   end
 
   @spec calculate_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
@@ -133,83 +87,49 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
 
   @spec calculate_forward_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
           {:ok, KeySelector.t()} | {:error, :clamped | :unavailable}
-  defp calculate_forward_continuation(layout_index, key_selector, keys_available) do
-    # Find the next shard boundary after the current key
-    case find_next_shard_boundary(layout_index, key_selector.key, :forward) do
-      {:ok, next_shard_start} ->
-        # Calculate the remaining offset after consuming available keys
-        remaining_offset = key_selector.offset - keys_available
+  defp calculate_forward_continuation(layout_index, %KeySelector{} = key_selector, keys_available) do
+    # Calculate remaining offset after consuming available keys
+    remaining_offset = key_selector.offset - keys_available
 
-        # Create continuation KeySelector at the start of next shard
-        continuation_selector = %KeySelector{
-          key: next_shard_start,
+    # Find the next shard
+    case LayoutIndex.get_next_segment(layout_index, key_selector.key) do
+      {:ok, {{next_start, _next_end}, _pids}} ->
+        # Create continuation selector starting at the next shard
+        continuation = %KeySelector{
+          key: next_start,
           or_equal: true,
           offset: remaining_offset
         }
 
-        {:ok, continuation_selector}
+        {:ok, continuation}
 
-      :not_found ->
+      :end_of_keyspace ->
         {:error, :clamped}
     end
   end
 
   @spec calculate_backward_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
           {:ok, KeySelector.t()} | {:error, :clamped | :unavailable}
-  defp calculate_backward_continuation(layout_index, key_selector, keys_available) do
-    # Find the previous shard boundary before the current key
-    case find_next_shard_boundary(layout_index, key_selector.key, :backward) do
-      {:ok, prev_shard_end} ->
-        # Calculate the remaining offset after consuming available keys
-        remaining_offset = key_selector.offset + keys_available
+  defp calculate_backward_continuation(layout_index, %KeySelector{} = key_selector, keys_available) do
+    # Calculate remaining offset (negative) after consuming available keys
+    remaining_offset = key_selector.offset + keys_available
 
-        # Create continuation KeySelector at the end of previous shard
-        continuation_selector = %KeySelector{
-          key: prev_shard_end,
+    # Find the previous shard
+    case LayoutIndex.get_previous_segment(layout_index, key_selector.key) do
+      {:ok, {{prev_start, _prev_end}, _pids}} ->
+        # For backward continuation, we want to start from within the previous shard
+        # Use the start of the previous shard range
+        continuation = %KeySelector{
+          key: prev_start,
+          # Include the start key
           or_equal: true,
           offset: remaining_offset
         }
 
-        {:ok, continuation_selector}
+        {:ok, continuation}
 
-      :not_found ->
+      :start_of_keyspace ->
         {:error, :clamped}
-    end
-  end
-
-  @spec find_next_shard_boundary(LayoutIndex.t(), binary(), :forward | :backward) ::
-          {:ok, binary()} | :not_found
-  defp find_next_shard_boundary(layout_index, current_key, direction) do
-    # This is a simplified implementation - a real version would use LayoutIndex APIs
-    # to navigate shard boundaries efficiently
-
-    case direction do
-      :forward ->
-        # Find the start key of the next shard
-        find_forward_boundary(layout_index, current_key)
-
-      :backward ->
-        # Find the end key of the previous shard
-        find_backward_boundary(layout_index, current_key)
-    end
-  end
-
-  @spec find_forward_boundary(LayoutIndex.t(), binary()) :: {:ok, binary()} | :not_found
-  defp find_forward_boundary(_layout_index, _current_key) do
-    # Placeholder implementation - would use LayoutIndex to find next shard
-    # For now, simulate behavior for testing
-    case Process.get(:test_next_shard_start) do
-      nil -> :not_found
-      next_start -> {:ok, next_start}
-    end
-  end
-
-  @spec find_backward_boundary(LayoutIndex.t(), binary()) :: {:ok, binary()} | :not_found
-  defp find_backward_boundary(_layout_index, _current_key) do
-    # Placeholder implementation - would use LayoutIndex to find previous shard
-    case Process.get(:test_prev_shard_end) do
-      nil -> :not_found
-      prev_end -> {:ok, prev_end}
     end
   end
 
@@ -236,53 +156,30 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
         version,
         opts \\ []
       ) do
-    {_start_key_range, start_pids} = LayoutIndex.lookup_key!(layout_index, start_selector.key)
-    {_end_key_range, end_pids} = LayoutIndex.lookup_key!(layout_index, end_selector.key)
+    with {:ok, storage_pid} <- lookup_storage_server(layout_index, start_selector.key),
+         {:ok, results} <- call_storage_range_server(storage_pid, start_selector, end_selector, version, opts) do
+      {:ok, results}
+    else
+      {:partial, results, continuation_start_selector} ->
+        # Range spans shards - continue from where we left off
+        case resolve_key_selector_range(layout_index, continuation_start_selector, end_selector, version, opts) do
+          {:ok, more_results} ->
+            {:ok, results ++ more_results}
 
-    # Check if we have storage servers for both keys
-    case {start_pids, end_pids} do
-      {[start_pid | _], [end_pid | _]} when start_pid == end_pid ->
-        # Both selectors resolve to the same storage server - can resolve in one call
-        case get_test_range_mock_response(start_pid, start_selector, end_selector, version, opts) do
-          :no_mock -> Storage.range_fetch(start_pid, start_selector, end_selector, version, opts)
-          mock_response -> mock_response
+          error ->
+            error
         end
 
-      {[_start_pid | _], [_end_pid | _]} ->
-        # Selectors span multiple storage servers - need multi-shard resolution
-        resolve_cross_shard_range(
-          layout_index,
-          start_selector,
-          end_selector,
-          version,
-          opts
-        )
-
-      _ ->
-        {:error, :unavailable}
+      error ->
+        error
     end
-  rescue
-    _ ->
-      {:error, :unavailable}
   end
 
-  # Handle range resolution that spans multiple storage shards
-  @spec resolve_cross_shard_range(
-          LayoutIndex.t(),
-          KeySelector.t(),
-          KeySelector.t(),
-          Bedrock.version(),
-          opts :: [timeout: timeout(), limit: pos_integer()]
-        ) :: range_resolution_result()
-  defp resolve_cross_shard_range(_layout_index, _start_selector, _end_selector, _version, _opts) do
-    # For now, return an error indicating cross-shard ranges are not fully implemented
-    # A complete implementation would:
-    # 1. Resolve the start selector to get the actual start key
-    # 2. Resolve the end selector to get the actual end key
-    # 3. Use LayoutIndex to identify all storage servers in the resolved range
-    # 4. Coordinate range fetches across multiple storage servers
-    # 5. Merge and order the results while respecting the limit
-    {:error, :clamped}
+  @spec call_storage_range_server(pid(), KeySelector.t(), KeySelector.t(), Bedrock.version(), keyword()) ::
+          {:ok, [Bedrock.key_value()]} | {:partial, [Bedrock.key_value()], KeySelector.t()} | {:error, atom()}
+  defp call_storage_range_server(storage_pid, start_selector, end_selector, version, opts) do
+    storage_range_fetch_fn = Keyword.get(opts, :storage_range_fetch_fn, &Storage.range_fetch/5)
+    storage_range_fetch_fn.(storage_pid, start_selector, end_selector, version, opts)
   end
 
   @doc """
@@ -295,4 +192,51 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   def might_cross_shards?(_layout_index, %KeySelector{offset: 0}), do: false
   def might_cross_shards?(_layout_index, %KeySelector{offset: offset}) when abs(offset) <= 10, do: false
   def might_cross_shards?(_layout_index, %KeySelector{offset: _large_offset}), do: true
+
+  @doc """
+  Fetch a KeySelector within a transaction builder context.
+
+  This handles the transaction state management in addition to KeySelector resolution.
+  """
+  @spec do_fetch_key_selector(State.t(), KeySelector.t()) ::
+          {State.t(), {:ok, Bedrock.key_value()} | {:error, atom()}}
+  def do_fetch_key_selector(t, %KeySelector{} = key_selector) do
+    # First check if we have this key in our local writes via the resolved key
+    # For now, we simplify and delegate to KeySelectorResolution
+    case resolve_key_selector(t.layout_index, key_selector, t.read_version || 0) do
+      {:ok, {resolved_key, value}} ->
+        # Merge the resolved key and value into transaction state for conflict tracking
+        updated_tx = Tx.merge_storage_read(t.tx, resolved_key, value)
+        {%{t | tx: updated_tx}, {:ok, {resolved_key, value}}}
+
+      {:error, reason} ->
+        {t, {:error, reason}}
+    end
+  end
+
+  @doc """
+  Fetch a KeySelector range within a transaction builder context.
+
+  This handles the transaction state management in addition to KeySelector range resolution.
+  """
+  @spec do_range_fetch_key_selectors(State.t(), KeySelector.t(), KeySelector.t(), keyword()) ::
+          {State.t(), {:ok, [Bedrock.key_value()]} | {:error, atom()}}
+  def do_range_fetch_key_selectors(t, start_selector, end_selector, opts) do
+    case resolve_key_selector_range(
+           t.layout_index,
+           start_selector,
+           end_selector,
+           t.read_version || 0,
+           opts
+         ) do
+      {:ok, results} ->
+        # For now, we can't get the resolved boundaries from the current API
+        # A more complete implementation would need to resolve the boundaries first
+        # and then use them for conflict tracking
+        {t, {:ok, results}}
+
+      {:error, reason} ->
+        {t, {:error, reason}}
+    end
+  end
 end

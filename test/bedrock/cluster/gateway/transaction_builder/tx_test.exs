@@ -512,4 +512,220 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
              } = decode_commit(tx)
     end
   end
+
+  describe "clear_range edge cases" do
+    test "clear_range with empty range does nothing" do
+      tx =
+        Tx.new()
+        |> Tx.set("key", "value")
+        # empty range
+        |> Tx.clear_range("m", "m")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "m", "m"}, {:set, "key", "value"}],
+               writes: %{"key" => "value"},
+               reads: %{},
+               range_writes: [{"m", "m"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range at range boundaries" do
+      tx =
+        Tx.new()
+        |> Tx.set("a", "val_a")
+        # on boundary
+        |> Tx.set("b", "val_b")
+        |> Tx.set("c", "val_c")
+        # includes "b", excludes "c"
+        |> Tx.clear_range("b", "c")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "b", "c"}, {:set, "c", "val_c"}, {:set, "a", "val_a"}],
+               writes: %{"a" => "val_a", "c" => "val_c"},
+               reads: %{},
+               range_writes: [{"b", "c"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range removes exact key matches" do
+      tx =
+        Tx.new()
+        |> Tx.set("exact_match", "value")
+        # clears exactly this key
+        |> Tx.clear_range("exact_match", "exact_match\0")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "exact_match", "exact_match\0"}],
+               writes: %{},
+               reads: %{},
+               range_writes: [{"exact_match", "exact_match\0"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range with overlapping ranges merges them" do
+      tx =
+        Tx.new()
+        |> Tx.clear_range("a", "f")
+        # overlaps with first range
+        |> Tx.clear_range("d", "j")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "d", "j"}, {:clear_range, "a", "f"}],
+               writes: %{},
+               reads: %{},
+               # merged
+               range_writes: [{"a", "j"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range with adjacent ranges merges them" do
+      tx =
+        Tx.new()
+        |> Tx.clear_range("a", "f")
+        # adjacent: end of first = start of second
+        |> Tx.clear_range("f", "j")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "f", "j"}, {:clear_range, "a", "f"}],
+               writes: %{},
+               reads: %{},
+               # merged
+               range_writes: [{"a", "j"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range with non-overlapping ranges keeps them separate" do
+      tx =
+        Tx.new()
+        |> Tx.clear_range("a", "c")
+        # gap between ranges
+        |> Tx.clear_range("f", "j")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "f", "j"}, {:clear_range, "a", "c"}],
+               writes: %{},
+               reads: %{},
+               # kept separate
+               range_writes: [{"a", "c"}, {"f", "j"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range clears reads in range" do
+      tx =
+        Tx.new()
+        |> then(&%{&1 | reads: %{"inside" => "value", "outside" => "value"}})
+        # "inside" falls in range, "outside" doesn't
+        |> Tx.clear_range("h", "k")
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "h", "k"}],
+               writes: %{},
+               # "inside" cleared
+               reads: %{"inside" => :clear, "outside" => "value"},
+               range_writes: [{"h", "k"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range removes writes by key iteration from gb_trees" do
+      tx =
+        Tx.new()
+        |> Tx.set("apple", "fruit")
+        |> Tx.set("avocado", "fruit")
+        |> Tx.set("banana", "fruit")
+        |> Tx.set("cherry", "fruit")
+        # should remove "banana", "cherry"
+        |> Tx.clear_range("b", "d")
+
+      assert to_test_map(tx) == %{
+               mutations: [
+                 {:clear_range, "b", "d"},
+                 {:set, "avocado", "fruit"},
+                 {:set, "apple", "fruit"}
+               ],
+               # "banana", "cherry" removed
+               writes: %{"apple" => "fruit", "avocado" => "fruit"},
+               reads: %{},
+               range_writes: [{"b", "d"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range with unicode keys" do
+      tx =
+        Tx.new()
+        |> Tx.set("α", "alpha")
+        |> Tx.set("β", "beta")
+        |> Tx.set("γ", "gamma")
+        # clears β but not γ
+        |> Tx.clear_range("β", "γ")
+
+      # "β" should be cleared but "α" and "γ" should remain
+      expected_writes = %{"α" => "alpha", "γ" => "gamma"}
+      assert writes_to_map(tx) == expected_writes
+
+      assert to_test_map(tx) == %{
+               mutations: [{:clear_range, "β", "γ"}, {:set, "γ", "gamma"}, {:set, "α", "alpha"}],
+               writes: expected_writes,
+               reads: %{},
+               range_writes: [{"β", "γ"}],
+               range_reads: []
+             }
+    end
+
+    test "clear_range with binary keys containing null bytes" do
+      key_in_range = "\x00\x05"
+      key_out_range = "\x00\x10"
+
+      tx =
+        Tx.new()
+        |> Tx.set(key_in_range, "in_range")
+        |> Tx.set(key_out_range, "out_range")
+        # clears key_in_range
+        |> Tx.clear_range("\x00\x00", "\x00\x08")
+
+      expected_writes = %{key_out_range => "out_range"}
+      assert writes_to_map(tx) == expected_writes
+    end
+
+    test "clear_range preserves mutations outside range in correct order" do
+      tx =
+        Tx.new()
+        # before range
+        |> Tx.set("alpha", "1")
+        # in range - should be removed
+        |> Tx.set("beta", "2")
+        # in range - should be removed
+        |> Tx.set("gamma", "3")
+        # after range
+        |> Tx.set("zeta", "4")
+        # clear before range
+        |> Tx.clear("alpha")
+        # removes beta, gamma mutations
+        |> Tx.clear_range("b", "h")
+
+      assert %{
+               mutations: [
+                 {:set, "zeta", "4"},
+                 {:clear, "alpha"},
+                 {:clear_range, "b", "h"}
+               ],
+               write_conflicts: write_conflicts,
+               read_conflicts: {nil, []}
+             } = decode_commit(tx)
+
+      # Verify conflicts are in lexicographic order
+      assert write_conflicts == [
+               {"alpha", "alpha\0"},
+               {"b", "h"},
+               {"zeta", "zeta\0"}
+             ]
+    end
+  end
 end

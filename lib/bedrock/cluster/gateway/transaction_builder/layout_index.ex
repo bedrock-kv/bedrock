@@ -75,6 +75,42 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex do
     |> collect_overlapping_segments(start_key, end_key, [])
   end
 
+  @doc """
+  Finds the next segment after the one containing the given key.
+
+  This is useful for cross-shard KeySelector resolution when we need to 
+  continue processing in the next shard.
+  """
+  @spec get_next_segment(t(), binary()) ::
+          {:ok, {{binary(), binary() | :end}, [pid()]}} | :end_of_keyspace
+  def get_next_segment(%__MODULE__{tree: tree}, key) do
+    case segment_for_key(tree, key) do
+      {:ok, {_current_start, current_end}, _current_pids} ->
+        find_segment_starting_at(tree, current_end)
+
+      :not_found ->
+        :end_of_keyspace
+    end
+  end
+
+  @doc """
+  Finds the previous segment before the one containing the given key.
+
+  This is useful for cross-shard KeySelector resolution when we need to
+  continue processing in the previous shard.
+  """
+  @spec get_previous_segment(t(), binary()) ::
+          {:ok, {{binary(), binary() | :end}, [pid()]}} | :start_of_keyspace
+  def get_previous_segment(%__MODULE__{tree: tree}, key) do
+    case segment_for_key(tree, key) do
+      {:ok, {current_start, _current_end}, _current_pids} ->
+        find_segment_ending_before(tree, current_start)
+
+      :not_found ->
+        :start_of_keyspace
+    end
+  end
+
   # Private implementation functions
 
   defp end_sentinel, do: <<0xFF, 0xFF>>
@@ -160,6 +196,53 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex do
     case Map.get(services, storage_id) do
       %{kind: :storage, status: {:up, pid}} -> pid
       _ -> nil
+    end
+  end
+
+  @spec find_segment_starting_at(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
+          {:ok, {{binary(), binary() | :end}, [pid()]}} | :end_of_keyspace
+  defp find_segment_starting_at(tree, boundary_key) do
+    iterator = :gb_trees.iterator_from(boundary_key, tree)
+    find_first_segment_at_boundary(iterator, boundary_key)
+  end
+
+  @spec find_segment_ending_before(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
+          {:ok, {{binary(), binary() | :end}, [pid()]}} | :start_of_keyspace
+  defp find_segment_ending_before(tree, boundary_key) do
+    iterator = :gb_trees.iterator(tree)
+    find_last_segment_before_boundary(iterator, boundary_key, :start_of_keyspace)
+  end
+
+  # Find the first segment that starts at the boundary key
+  defp find_first_segment_at_boundary(iterator, boundary_key) do
+    case :gb_trees.next(iterator) do
+      {tree_end_key, {segment_start, pids}, next_iter} ->
+        if segment_start == boundary_key do
+          segment_end = denormalize_end_key(tree_end_key)
+          {:ok, {{segment_start, segment_end}, pids}}
+        else
+          find_first_segment_at_boundary(next_iter, boundary_key)
+        end
+
+      :none ->
+        :end_of_keyspace
+    end
+  end
+
+  # Find the last segment that ends at or before the boundary key
+  defp find_last_segment_before_boundary(iterator, boundary_key, current_best) do
+    case :gb_trees.next(iterator) do
+      {tree_end_key, {segment_start, pids}, next_iter} ->
+        if tree_end_key <= boundary_key do
+          segment_end = denormalize_end_key(tree_end_key)
+          new_result = {:ok, {{segment_start, segment_end}, pids}}
+          find_last_segment_before_boundary(next_iter, boundary_key, new_result)
+        else
+          find_last_segment_before_boundary(next_iter, boundary_key, current_best)
+        end
+
+      :none ->
+        current_best
     end
   end
 end

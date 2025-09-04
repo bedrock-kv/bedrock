@@ -141,7 +141,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           | {:error, :not_found}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-          | {:error, :clamped}
   def fetch(%State{} = t, %KeySelector{} = key_selector, version, opts) do
     case IndexManager.page_for_key(t.index_manager, key_selector, version) do
       {:ok, resolved_key, page} ->

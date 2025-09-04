@@ -153,8 +153,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
       index_manager = %IndexManager{versions: [{1, index}], current_version: 1}
 
       case IndexManager.page_for_key(index_manager, extreme_selector, 1) do
-        # Circuit breaker activated
-        {:error, :clamped} -> true
         # Legitimately not found
         {:error, :not_found} -> true
         # Somehow resolved (very unlikely but acceptable)

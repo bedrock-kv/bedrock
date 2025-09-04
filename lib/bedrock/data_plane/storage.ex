@@ -61,8 +61,7 @@ defmodule Bedrock.DataPlane.Storage do
              | :not_found
              | :version_too_old
              | :version_too_new
-             | :unavailable
-             | :clamped}
+             | :unavailable}
   def fetch(storage, %KeySelector{} = key_selector, version, opts),
     do: call(storage, {:fetch, key_selector, version, opts}, opts[:timeout] || :infinity)
 
@@ -107,8 +106,7 @@ defmodule Bedrock.DataPlane.Storage do
              | :unavailable
              | :unsupported
              | :not_found
-             | :invalid_range
-             | :clamped}
+             | :invalid_range}
   def range_fetch(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts),
     do: call(storage, {:range_fetch, start_selector, end_selector, version, opts}, opts[:timeout] || :infinity)
 

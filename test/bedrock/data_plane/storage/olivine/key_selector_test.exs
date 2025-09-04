@@ -83,15 +83,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       assert value == "value2"
     end
 
-    test "fetch/4 with KeySelector handles :clamped errors", %{state: state} do
+    test "fetch/4 with KeySelector handles boundary errors", %{state: state} do
       # Test high offset that goes beyond available keys
       high_offset_selector = "key1" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
       version = Version.from_integer(1)
 
       result = Logic.fetch(state, high_offset_selector, version, [])
-      # Can be :clamped or :not_found depending on implementation
-      assert {:error, error} = result
-      assert error in [:clamped, :not_found]
+      assert {:error, :not_found} = result
     end
   end
 
@@ -230,9 +228,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       assert %KeySelector{offset: 999_999} = extreme_selector
 
       result = Logic.fetch(state, extreme_selector, version, [])
-      # Can be :clamped or :not_found depending on implementation
-      assert {:error, error} = result
-      assert error in [:clamped, :not_found]
+      assert {:error, :not_found} = result
     end
 
     test "empty key KeySelector", %{state: state} do
@@ -256,10 +252,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
 
       # Should handle binary keys with special bytes correctly without crashing
       result = Logic.fetch(state, special_selector, version, [])
-      # Since this key doesn't exist and is after all our test keys, should be clamped
-      # Can be :clamped or :not_found depending on implementation
-      assert {:error, error} = result
-      assert error in [:clamped, :not_found]
+      # Since this key doesn't exist and is after all our test keys, should be not found
+      assert {:error, :not_found} = result
     end
   end
 end

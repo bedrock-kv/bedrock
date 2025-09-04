@@ -15,11 +15,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
 
   @type resolution_result ::
           {:ok, Bedrock.key_value()}
-          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :clamped}
+          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable}
 
   @type range_resolution_result ::
           {:ok, [Bedrock.key_value()]}
-          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :clamped | :invalid_range}
+          | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :invalid_range}
 
   @doc """
   Resolve a KeySelector to an actual key and value.

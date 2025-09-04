@@ -317,12 +317,12 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
-              GenServer.reply(from, {:error, :clamped})
+              GenServer.reply(from, {:error, :not_found})
           end
         end)
 
       result = Repo.fetch_key_selector(txn_pid, key_selector)
-      assert result == {:error, :clamped}
+      assert result == {:error, :not_found}
     end
   end
 
@@ -381,7 +381,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
-              GenServer.reply(from, {:error, :clamped})
+              GenServer.reply(from, {:error, :not_found})
           end
         end)
 
@@ -444,7 +444,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
-              GenServer.reply(from, {:error, :clamped})
+              GenServer.reply(from, {:error, :not_found})
           end
         end)
 
@@ -508,12 +508,12 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, []}} ->
-              GenServer.reply(from, {:error, :clamped})
+              GenServer.reply(from, {:error, :not_found})
           end
         end)
 
       result = Repo.range_fetch_key_selectors(txn_pid, start_selector, end_selector)
-      assert result == {:error, :clamped}
+      assert result == {:error, :not_found}
     end
 
     test "passes through options correctly" do

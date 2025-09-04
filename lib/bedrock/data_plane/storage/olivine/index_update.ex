@@ -190,6 +190,33 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     end)
   end
 
+  # Fix page chain links before deleting a page
+  @spec fix_chain_before_delete(Index.t(), Page.id()) :: Index.t()
+  defp fix_chain_before_delete(%Index{page_map: page_map} = index, page_id_to_delete) do
+    case Map.fetch(page_map, page_id_to_delete) do
+      {:ok, page_to_delete} ->
+        deleted_next_id = Page.next_id(page_to_delete)
+        updated_page_map = update_predecessor_chain(page_map, page_id_to_delete, deleted_next_id)
+        %{index | page_map: updated_page_map}
+
+      :error ->
+        index
+    end
+  end
+
+  # Helper to update the predecessor page's next_id
+  @spec update_predecessor_chain(map(), Page.id(), Page.id()) :: map()
+  defp update_predecessor_chain(page_map, page_id_to_delete, deleted_next_id) do
+    Enum.reduce(page_map, page_map, fn {id, page}, acc_map ->
+      if Page.next_id(page) == page_id_to_delete do
+        updated_page = Page.new(Page.id(page), Page.key_versions(page), deleted_next_id)
+        Map.put(acc_map, id, updated_page)
+      else
+        acc_map
+      end
+    end)
+  end
+
   # Helper functions for processing pending operations
 
   @spec process_page_operations(t(), Page.id(), %{Bedrock.key() => {:set, Bedrock.version()} | :clear}) :: t()
@@ -199,9 +226,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
     cond do
       Page.empty?(updated_page) ->
+        # Fix chain before deleting empty page
+        updated_index = fix_chain_before_delete(update_data.index, page_id)
+
         %{
           update_data
-          | index: Index.delete_page(update_data.index, page_id),
+          | index: Index.delete_page(updated_index, page_id),
             page_allocator: PageAllocator.recycle_page_id(update_data.page_allocator, page_id)
         }
 

@@ -257,6 +257,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
           assert current_key > previous_key,
                  "Cross-shard key #{current_key} should be after #{previous_key}"
         end
+
         current_key
       end)
     end

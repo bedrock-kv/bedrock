@@ -45,8 +45,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
           {:ok, continuation_selector} ->
             resolve_key_selector(layout_index, continuation_selector, version, opts)
 
-          error ->
-            error
+          {:error, :start_of_keyspace} ->
+            {:error, :not_found}
+
+          {:error, :end_of_keyspace} ->
+            {:error, :not_found}
         end
 
       error ->
@@ -75,7 +78,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   end
 
   @spec calculate_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
-          {:ok, KeySelector.t()} | {:error, :clamped | :unavailable}
+          {:ok, KeySelector.t()} | {:error, :start_of_keyspace | :end_of_keyspace}
   defp calculate_continuation(layout_index, %KeySelector{} = key_selector, keys_available) do
     # Determine direction and calculate next boundary
     if key_selector.offset >= 0 do
@@ -86,7 +89,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   end
 
   @spec calculate_forward_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
-          {:ok, KeySelector.t()} | {:error, :clamped | :unavailable}
+          {:ok, KeySelector.t()} | {:error, :end_of_keyspace | :unavailable}
   defp calculate_forward_continuation(layout_index, %KeySelector{} = key_selector, keys_available) do
     # Calculate remaining offset after consuming available keys
     remaining_offset = key_selector.offset - keys_available
@@ -104,12 +107,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
         {:ok, continuation}
 
       :end_of_keyspace ->
-        {:error, :clamped}
+        {:error, :end_of_keyspace}
     end
   end
 
   @spec calculate_backward_continuation(LayoutIndex.t(), KeySelector.t(), integer()) ::
-          {:ok, KeySelector.t()} | {:error, :clamped | :unavailable}
+          {:ok, KeySelector.t()} | {:error, :start_of_keyspace | :unavailable}
   defp calculate_backward_continuation(layout_index, %KeySelector{} = key_selector, keys_available) do
     # Calculate remaining offset (negative) after consuming available keys
     remaining_offset = key_selector.offset + keys_available
@@ -129,7 +132,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
         {:ok, continuation}
 
       :start_of_keyspace ->
-        {:error, :clamped}
+        {:error, :start_of_keyspace}
     end
   end
 

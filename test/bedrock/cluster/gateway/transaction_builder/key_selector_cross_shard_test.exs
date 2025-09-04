@@ -80,6 +80,30 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorCrossShardTest d
 
       assert {:ok, {"f", "value_f"}} = result
     end
+
+    test "KeySelector at keyspace boundary returns not_found rather than error" do
+      layout_index = create_mock_layout_index([{"shard1", <<>>, "m"}, {"shard2", "m", :end}])
+
+      storage_fetch_fn = fn
+        :shard1_pid, %KeySelector{key: "a", offset: -5}, _version, _opts ->
+          {:partial, 2}
+
+        pid, selector, _version, _opts ->
+          {:error, {:unexpected_call, pid, selector}}
+      end
+
+      result =
+        KeySelectorResolution.resolve_key_selector(
+          layout_index,
+          "a" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-5),
+          1,
+          storage_fetch_fn: storage_fetch_fn,
+          timeout: 5000
+        )
+
+      # Should return not_found (no more data) rather than clamped (error)
+      assert {:error, :not_found} = result
+    end
   end
 
   describe "cross-shard range KeySelector resolution" do

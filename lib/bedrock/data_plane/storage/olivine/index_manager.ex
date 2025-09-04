@@ -382,63 +382,48 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   # KeySelector Resolution Helper Functions
 
-  # Maximum number of page hops before clamping to prevent infinite loops
-  @max_page_hops 50
-
   @spec resolve_key_selector_in_index(Index.t(), KeySelector.t()) ::
           {:ok, resolved_key :: binary(), Page.t()}
           | {:partial, keys_available :: non_neg_integer()}
-          | {:error, :not_found | :clamped}
-  defp resolve_key_selector_in_index(index, key_selector) do
-    resolve_key_selector_with_circuit_breaker(index, key_selector, 0)
-  end
-
-  @spec resolve_key_selector_with_circuit_breaker(Index.t(), KeySelector.t(), non_neg_integer()) ::
-          {:ok, resolved_key :: binary(), Page.t()}
-          | {:partial, keys_available :: non_neg_integer()}
-          | {:error, :not_found | :clamped}
-  defp resolve_key_selector_with_circuit_breaker(_index, _key_selector, hop_count) when hop_count >= @max_page_hops do
-    {:error, :clamped}
-  end
-
-  defp resolve_key_selector_with_circuit_breaker(
+          | {:error, :not_found}
+  defp resolve_key_selector_in_index(
          index,
-         %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector,
-         hop_count
+         %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector
        ) do
     case Index.page_for_key(index, ref_key) do
       {:ok, page} ->
-        handle_page_resolution(index, page, ref_key, or_equal, offset, key_selector, hop_count)
+        case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
+          {:ok, resolved_key, page} ->
+            {:ok, resolved_key, page}
+
+          {:partial, keys_available} ->
+            handle_cross_page_continuation(index, page, key_selector, keys_available)
+        end
 
       {:error, :not_found} ->
-        handle_gap_resolution(index, key_selector, hop_count)
+        handle_gap_resolution(index, key_selector)
     end
   end
 
-  defp handle_page_resolution(index, page, ref_key, or_equal, offset, key_selector, hop_count) do
-    case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
-      {:ok, resolved_key, page} ->
-        {:ok, resolved_key, page}
+  defp handle_cross_page_continuation(index, page, key_selector, keys_available) do
+    # If no keys were available and we have a negative offset, we've gone beyond the start of keyspace
+    if keys_available == 0 and key_selector.offset < 0 do
+      {:error, :not_found}
+    else
+      case calculate_cross_page_continuation(index, page, key_selector, keys_available) do
+        {:ok, continuation_selector} ->
+          resolve_key_selector_in_index(index, continuation_selector)
 
-      {:partial, keys_available} ->
-        handle_cross_page_continuation(index, page, key_selector, keys_available, hop_count)
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
-  defp handle_cross_page_continuation(index, page, key_selector, keys_available, hop_count) do
-    case calculate_cross_page_continuation(index, page, key_selector, keys_available) do
-      {:ok, continuation_selector} ->
-        resolve_key_selector_with_circuit_breaker(index, continuation_selector, hop_count + 1)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp handle_gap_resolution(index, key_selector, hop_count) do
+  defp handle_gap_resolution(index, key_selector) do
     case resolve_gap_key_selector(index, key_selector) do
       {:ok, continuation_selector} ->
-        resolve_key_selector_with_circuit_breaker(index, continuation_selector, hop_count + 1)
+        resolve_key_selector_in_index(index, continuation_selector)
 
       {:error, reason} ->
         {:error, reason}
@@ -447,7 +432,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   @spec resolve_range_selectors_in_index(Index.t(), KeySelector.t(), KeySelector.t()) ::
           {:ok, {resolved_start :: binary(), resolved_end :: binary()}, [Page.t()]}
-          | {:error, :invalid_range | :not_found | :clamped}
+          | {:error, :invalid_range | :not_found}
   defp resolve_range_selectors_in_index(index, start_selector, end_selector) do
     with {:ok, resolved_start, _start_page} <- resolve_key_selector_in_index(index, start_selector),
          {:ok, resolved_end, _end_page} <- resolve_key_selector_in_index(index, end_selector) do
@@ -540,16 +525,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
       next_page_id ->
         next_page = Index.get_page!(index, next_page_id)
 
+        # Calculate remaining offset after consuming available keys in current page
+        remaining_offset = key_selector.offset - keys_available
+
         case Page.left_key(next_page) do
           nil ->
-            # Empty next page, continue to the page after it with adjusted offset
-            remaining_offset = key_selector.offset - keys_available
-            {:ok, %KeySelector{key: "", or_equal: true, offset: remaining_offset}}
+            # Empty next page, continue with empty key to trigger gap resolution
+            continuation_selector = %KeySelector{
+              key: "",
+              or_equal: true,
+              offset: remaining_offset
+            }
+
+            {:ok, continuation_selector}
 
           first_key_of_next_page ->
-            # Calculate remaining offset after consuming available keys in current page
-            remaining_offset = key_selector.offset - keys_available
-
             # Create continuation KeySelector at the start of next page
             continuation_selector = %KeySelector{
               key: first_key_of_next_page,

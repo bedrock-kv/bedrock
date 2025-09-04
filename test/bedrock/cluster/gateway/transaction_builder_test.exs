@@ -587,6 +587,30 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       state = :sys.get_state(pid)
       assert state.state == :valid
     end
+
+    test "updates read conflict tracking for successful KeySelector fetch" do
+      pid = start_transaction_builder(read_version: 42)
+
+      key_selector = KeySelector.first_greater_or_equal("conflict_test_key")
+      result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+
+      # For successful resolution, check transaction state was updated
+      case result do
+        {:ok, {resolved_key, _value}} ->
+          state = :sys.get_state(pid)
+          committed = Tx.commit(state.tx, 42)
+
+          # Check that the resolved key was added to read conflicts
+          {read_version, read_conflicts} = committed.read_conflicts
+          assert read_version == 42
+          assert resolved_key in Enum.map(read_conflicts, fn {start, _end} -> start end)
+
+        {:error, _reason} ->
+          # For errors, transaction state should not be updated with reads
+          state = :sys.get_state(pid)
+          assert map_size(state.tx.reads) == 0
+      end
+    end
   end
 
   describe "KeySelector range operations" do
@@ -676,6 +700,50 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       state = :sys.get_state(pid)
       assert state.state == :valid
+    end
+
+    test "updates range read conflict tracking for successful KeySelector range fetch" do
+      pid = start_transaction_builder(read_version: 100)
+
+      start_selector = KeySelector.first_greater_or_equal("range_conflict_start")
+      end_selector = KeySelector.first_greater_than("range_conflict_end")
+      opts = [limit: 10]
+
+      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+
+      # For successful resolution, check transaction state was updated
+      case result do
+        {:ok, [_ | _] = key_values} ->
+          state = :sys.get_state(pid)
+          committed = Tx.commit(state.tx, 100)
+
+          # Check that individual keys were added to reads
+          for {key, _value} <- key_values do
+            assert Map.has_key?(state.tx.reads, key)
+          end
+
+          # Check that the range was added to range_reads
+          refute Enum.empty?(state.tx.range_reads)
+          {first_key, _} = hd(key_values)
+          {last_key, _} = List.last(key_values)
+          assert {first_key, last_key} in state.tx.range_reads
+
+          # Check read conflicts include the range
+          {read_version, read_conflicts} = committed.read_conflicts
+          assert read_version == 100
+          assert {first_key, last_key} in read_conflicts
+
+        {:ok, []} ->
+          # Empty results should not add to conflict sets
+          state = :sys.get_state(pid)
+          assert Enum.empty?(state.tx.range_reads)
+
+        {:error, _reason} ->
+          # For errors, transaction state should not be updated
+          state = :sys.get_state(pid)
+          assert map_size(state.tx.reads) == 0
+          assert Enum.empty?(state.tx.range_reads)
+      end
     end
 
     test "processes range with no options" do

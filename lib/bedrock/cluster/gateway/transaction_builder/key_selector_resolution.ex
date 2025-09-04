@@ -233,10 +233,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
            opts
          ) do
       {:ok, results} ->
-        # For now, we can't get the resolved boundaries from the current API
-        # A more complete implementation would need to resolve the boundaries first
-        # and then use them for conflict tracking
-        {t, {:ok, results}}
+        # Track the range read using the first and last keys from the results
+        updated_t =
+          case results do
+            [] ->
+              # Empty results - no range to track
+              t
+
+            [{first_key, _first_value} | _] ->
+              {last_key, _last_value} = List.last(results)
+              updated_tx = Tx.merge_storage_range_read(t.tx, first_key, last_key, results)
+              %{t | tx: updated_tx}
+          end
+
+        {updated_t, {:ok, results}}
 
       {:error, reason} ->
         {t, {:error, reason}}

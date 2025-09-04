@@ -48,7 +48,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
               max_runs: 20
             ) do
         # Single resolver setup
-        resolver_ends = [{"\xFF\xFF\xFF", :single_resolver}]
+        resolver_ends = [{<<0xFF, 0xFF>>, :single_resolver}]
         resolver_refs = [:single_resolver]
 
         sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
@@ -99,7 +99,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
             ) do
         # Create resolvers with predictable boundaries, ending with @end_marker
         intermediate_boundaries = for i <- 1..(num_resolvers - 1), do: "key_#{String.pad_leading("#{i}", 3, "0")}"
-        boundaries = intermediate_boundaries ++ ["\xFF\xFF\xFF"]
+        boundaries = intermediate_boundaries ++ [<<0xFF, 0xFF>>]
 
         resolver_refs = for i <- 0..(num_resolvers - 1), do: :"resolver_#{i}"
 
@@ -158,12 +158,12 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
   describe "edge cases" do
     test "handles :end boundaries correctly" do
       # Resolver that covers from some key to :end
-      resolver_ends = [{"middle_key", :resolver_0}, {"\xFF\xFF\xFF", :resolver_1}]
+      resolver_ends = [{"middle_key", :resolver_0}, {<<0xFF, 0xFF>>, :resolver_1}]
       resolver_refs = [:resolver_0, :resolver_1]
 
       # Conflict that goes beyond middle_key should go to resolver_1
       read_conflicts = {nil, []}
-      write_conflicts = [{"zzzz_key", "\xFF\xFF\xFF"}]
+      write_conflicts = [{"zzzz_key", <<0xFF, 0xFF>>}]
 
       sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
       sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
@@ -178,7 +178,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
     end
 
     test "handles single key conflicts" do
-      resolver_ends = [{"key_b", :resolver_0}, {"\xFF\xFF\xFF", :resolver_1}]
+      resolver_ends = [{"key_b", :resolver_0}, {<<0xFF, 0xFF>>, :resolver_1}]
       resolver_refs = [:resolver_0, :resolver_1]
 
       # Single key conflicts on boundary - put in write conflicts since read needs version

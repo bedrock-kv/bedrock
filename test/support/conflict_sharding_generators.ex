@@ -46,8 +46,8 @@ defmodule ConflictShardingGenerators do
   def gen_sorted_boundary_keys(num_resolvers) do
     gen all(
           raw_keys <- list_of(gen_key(), length: num_resolvers - 1),
-          # Always use \xff\xff\xff as final boundary to cover full keyspace
-          final_boundary <- constant("\xFF\xFF\xFF")
+          # Always use <<0xFF, 0xFF>> as final boundary to cover full keyspace
+          final_boundary <- constant(<<0xFF, 0xFF>>)
         ) do
       # Sort the intermediate keys and add final boundary
       sorted_keys = Enum.sort(raw_keys) ++ [final_boundary]
@@ -58,7 +58,7 @@ defmodule ConflictShardingGenerators do
   end
 
   @doc """
-  Generates a random binary key that is less than \xff\xff\xff.
+  Generates a random binary key that is less than <<0xFF, 0xFF>>.
   """
   def gen_key do
     gen all(
@@ -67,30 +67,30 @@ defmodule ConflictShardingGenerators do
               one_of([
                 # ASCII printable characters
                 string(:printable, min_length: 1, max_length: 10),
-                # Binary data with limited range to stay < \xff\xff\xff
+                # Binary data with limited range to stay < <<0xFF, 0xFF>>
                 binary(min_length: 1, max_length: 8)
               ]),
               min_length: 1,
               max_length: 3
             ),
           key = IO.iodata_to_binary(key_parts),
-          # Ensure key is less than \xff\xff\xff
-          key < "\xFF\xFF\xFF"
+          # Ensure key is less than <<0xFF, 0xFF>>
+          key < <<0xFF, 0xFF>>
         ) do
       key
     end
   end
 
   @doc """
-  Generates a large key for testing boundary conditions, ensuring it's < \xff\xff\xff.
+  Generates a large key for testing boundary conditions, ensuring it's < <<0xFF, 0xFF>>.
   """
   def gen_large_key do
     gen all(
           prefix <- string(:printable, min_length: 1, max_length: 5),
           suffix <- binary(min_length: 8, max_length: 16),
           key = prefix <> suffix,
-          # Ensure key is less than \xff\xff\xff
-          key < "\xFF\xFF\xFF"
+          # Ensure key is less than <<0xFF, 0xFF>>
+          key < <<0xFF, 0xFF>>
         ) do
       key
     end
@@ -139,29 +139,29 @@ defmodule ConflictShardingGenerators do
         ) do
       case end_type do
         :end ->
-          # Use \xff\xff\xff as :end marker
-          {start_key, "\xFF\xFF\xFF"}
+          # Use <<0xFF, 0xFF>> as :end marker
+          {start_key, <<0xFF, 0xFF>>}
 
         :same_as_start ->
-          # Single key range - add small increment but stay < \xff\xff\xff
+          # Single key range - add small increment but stay < <<0xFF, 0xFF>>
           end_key =
-            if start_key <> <<1>> < "\xFF\xFF\xFF" do
+            if start_key <> <<1>> < <<0xFF, 0xFF>> do
               start_key <> <<0>>
             else
-              "\xFF\xFF\xFF"
+              <<0xFF, 0xFF>>
             end
 
           {start_key, end_key}
 
         :generated_end ->
-          # Generate end key that's >= start key but < \xff\xff\xff
+          # Generate end key that's >= start key but < <<0xFF, 0xFF>>
           potential_end = start_key <> <<Enum.random(1..254)>>
 
           end_key =
-            if potential_end < "\xFF\xFF\xFF" do
+            if potential_end < <<0xFF, 0xFF>> do
               potential_end
             else
-              "\xFF\xFF\xFF"
+              <<0xFF, 0xFF>>
             end
 
           {start_key, end_key}
@@ -214,7 +214,7 @@ defmodule ConflictShardingGenerators do
       end,
 
       # Conflicts that span entire keyspace
-      constant({{<<>>, "\xFF\xFF\xFF"}, {<<>>, "\xFF\xFF\xFF"}}),
+      constant({{<<>>, <<0xFF, 0xFF>>}, {<<>>, <<0xFF, 0xFF>>}}),
 
       # Many small adjacent ranges
       gen all(
@@ -401,8 +401,8 @@ defmodule ConflictShardingGenerators do
 
   defp ranges_overlap?({start1, end1}, {start2, end2}) do
     # Handle :end cases
-    actual_end1 = if end1 == "\xFF\xFF\xFF", do: "\xFF\xFF\xFF", else: end1
-    actual_end2 = if end2 == "\xFF\xFF\xFF", do: "\xFF\xFF\xFF", else: end2
+    actual_end1 = if end1 == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: end1
+    actual_end2 = if end2 == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: end2
 
     # Ranges overlap if: start1 < end2 AND start2 < end1
     start1 < actual_end2 and start2 < actual_end1
@@ -428,7 +428,7 @@ defmodule ConflictShardingGenerators do
     # Last resolver always extends to \xFF\xFF\xFF to cover full keyspace
     actual_end_key =
       if resolver_idx == max_resolver_idx do
-        "\xFF\xFF\xFF"
+        <<0xFF, 0xFF>>
       else
         end_key
       end
@@ -444,18 +444,10 @@ defmodule ConflictShardingGenerators do
 
   defp conflict_in_range?({conflict_start, conflict_end}, {range_start, range_end}) do
     # Handle :end cases
-    actual_conflict_end = if conflict_end == "\xFF\xFF\xFF", do: "\xFF\xFF\xFF", else: conflict_end
-    actual_range_end = if range_end == "\xFF\xFF\xFF", do: "\xFF\xFF\xFF", else: range_end
+    actual_conflict_end = if conflict_end == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: conflict_end
+    actual_range_end = if range_end == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: range_end
 
     # Conflict is in range if it's entirely within the range bounds
     conflict_start >= range_start and actual_conflict_end <= actual_range_end
   end
-
-  # This function is no longer needed since we check read/write separately
-  # defp extract_conflicts_from_binary(binary_sections) do
-  #   case Transaction.read_write_conflicts(binary_sections) do
-  #     {:ok, {{_version, read_ranges}, write_ranges}} -> {read_ranges, write_ranges}
-  #     {:error, _} -> {[], []}
-  #   end
-  # end
 end

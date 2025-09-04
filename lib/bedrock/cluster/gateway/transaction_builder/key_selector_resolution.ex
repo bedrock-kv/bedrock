@@ -53,59 +53,24 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
   end
 
   defp resolve_key_selector_with_circuit_breaker(layout_index, %KeySelector{} = key_selector, version, opts, hop_count) do
-    case lookup_storage_server(layout_index, key_selector.key) do
-      {:ok, storage_pid} ->
-        handle_storage_server_response(
-          call_storage_server(storage_pid, key_selector, version, opts),
-          layout_index,
-          key_selector,
-          version,
-          opts,
-          hop_count
-        )
+    with {:ok, storage_pid} <- lookup_storage_server(layout_index, key_selector.key),
+         {:ok, {resolved_key, value}} <- call_storage_server(storage_pid, key_selector, version, opts) do
+      {:ok, {resolved_key, value}}
+    else
+      {:partial, keys_available} ->
+        with {:ok, continuation_selector} <- calculate_continuation(layout_index, key_selector, keys_available) do
+          resolve_key_selector_with_circuit_breaker(
+            layout_index,
+            continuation_selector,
+            version,
+            opts,
+            hop_count + 1
+          )
+        end
 
-      {:error, reason} ->
-        {:error, reason}
+      error ->
+        error
     end
-  end
-
-  @spec handle_storage_server_response(
-          {:ok, {binary(), binary()}} | {:partial, integer()} | {:error, atom()},
-          LayoutIndex.t(),
-          KeySelector.t(),
-          Bedrock.version(),
-          keyword(),
-          non_neg_integer()
-        ) :: resolution_result()
-  defp handle_storage_server_response(
-         {:ok, {resolved_key, value}},
-         _layout_index,
-         _key_selector,
-         _version,
-         _opts,
-         _hop_count
-       ) do
-    {:ok, {resolved_key, value}}
-  end
-
-  defp handle_storage_server_response({:partial, keys_available}, layout_index, key_selector, version, opts, hop_count) do
-    case calculate_continuation(layout_index, key_selector, keys_available) do
-      {:ok, continuation_selector} ->
-        resolve_key_selector_with_circuit_breaker(
-          layout_index,
-          continuation_selector,
-          version,
-          opts,
-          hop_count + 1
-        )
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp handle_storage_server_response(error, _layout_index, _key_selector, _version, _opts, _hop_count) do
-    error
   end
 
   @spec lookup_storage_server(LayoutIndex.t(), binary()) ::
@@ -114,8 +79,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorResolution do
     {_key_range, pids} = LayoutIndex.lookup_key!(layout_index, key)
 
     case pids do
-      [storage_pid | _] -> {:ok, storage_pid}
       [] -> {:error, :unavailable}
+      pids -> {:ok, Enum.random(pids)}
     end
   rescue
     _ -> {:error, :unavailable}

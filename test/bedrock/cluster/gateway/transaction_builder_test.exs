@@ -517,7 +517,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       # Make the call - this will delegate to KeySelectorResolution.resolve_key_selector/3
       result = GenServer.call(pid, {:fetch_key_selector, key_selector})
 
-      # Should return a tuple with either :ok or :error as first element
       assert is_tuple(result)
       assert tuple_size(result) >= 2
       assert elem(result, 0) in [:ok, :error]
@@ -599,7 +598,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
 
-      # Should return a tuple with :ok or :error as first element
       assert is_tuple(result)
       assert tuple_size(result) >= 2
       assert elem(result, 0) in [:ok, :error]

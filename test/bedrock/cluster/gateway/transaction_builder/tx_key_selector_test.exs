@@ -207,16 +207,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx.KeySelectorTest do
                read_conflicts: {100, read_conflicts}
              } = committed
 
-      # Verify mutations are in correct order (reversed from application order)
       assert mutations == [
                {:set, "write_key1", "write_value1"},
                {:set, "write_key2", "write_value2"}
              ]
 
-      # Verify write conflicts include all writes
       assert length(write_conflicts) == 2
 
-      # Verify read conflicts include all reads (individual keys + ranges)
       assert is_list(read_conflicts)
       # At least 3 individual keys + 2 ranges
       assert length(read_conflicts) >= 4

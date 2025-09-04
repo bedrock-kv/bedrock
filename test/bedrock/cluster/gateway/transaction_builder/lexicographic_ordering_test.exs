@@ -122,7 +122,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
 
       %{write_conflicts: conflicts} = Tx.commit(tx)
 
-      # Should be in lexicographic order
       assert conflicts == [
                {"apple", "apple\0"},
                {"banana", "banana\0"},
@@ -138,7 +137,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
       # out of order
       %{read_conflicts: {^read_version, conflicts}} = Tx.commit(tx, read_version)
 
-      # Should be in lexicographic order
       assert conflicts == [
                {"apple", "apple\0"},
                {"banana", "banana\0"},
@@ -156,7 +154,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
 
       %{write_conflicts: conflicts} = Tx.commit(tx)
 
-      # Should be in lexicographic order: individual keys + range
       assert conflicts == [
                {"apple", "apple\0"},
                # range
@@ -183,12 +180,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
 
   describe "KeySelector resolution maintains lexicographic ordering" do
     test "first_greater_than maintains lexicographic progression" do
-      # Test that consecutive first_greater_than calls move forward lexicographically
       keys = ["apple", "banana", "cherry", "date"]
 
       Enum.reduce(keys, nil, fn current_key, previous_key ->
         if previous_key do
-          # Verify current key is lexicographically after previous
           assert current_key > previous_key,
                  "#{current_key} should be lexicographically after #{previous_key}"
         end
@@ -198,7 +193,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
     end
 
     test "first_greater_or_equal maintains lexicographic progression" do
-      # Test with various key types
       keys = ["", "a", "aa", "ab", "b", "ba", "bb"]
 
       Enum.reduce(keys, nil, fn current_key, previous_key ->
@@ -310,7 +304,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         <<255>>
       ]
 
-      # Should already be in order
       assert Enum.sort(keys) == keys
     end
 

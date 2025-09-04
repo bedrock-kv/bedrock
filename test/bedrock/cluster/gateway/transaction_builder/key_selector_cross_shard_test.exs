@@ -101,7 +101,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.KeySelectorCrossShardTest d
           timeout: 5000
         )
 
-      # Should return not_found (no more data) rather than clamped (error)
       assert {:error, :not_found} = result
     end
   end

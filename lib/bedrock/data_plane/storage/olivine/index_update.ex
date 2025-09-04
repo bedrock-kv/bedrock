@@ -190,7 +190,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     end)
   end
 
-  # Fix page chain links before deleting a page
   @spec fix_chain_before_delete(Index.t(), Page.id()) :: Index.t()
   defp fix_chain_before_delete(%Index{page_map: page_map} = index, page_id_to_delete) do
     case Map.fetch(page_map, page_id_to_delete) do
@@ -204,7 +203,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     end
   end
 
-  # Helper to update the predecessor page's next_id
   @spec update_predecessor_chain(map(), Page.id(), Page.id()) :: map()
   defp update_predecessor_chain(page_map, page_id_to_delete, deleted_next_id) do
     Enum.reduce(page_map, page_map, fn {id, page}, acc_map ->
@@ -226,7 +224,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
     cond do
       Page.empty?(updated_page) ->
-        # Fix chain before deleting empty page
         updated_index = fix_chain_before_delete(update_data.index, page_id)
 
         %{

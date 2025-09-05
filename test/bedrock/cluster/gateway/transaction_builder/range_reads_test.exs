@@ -1,22 +1,10 @@
-defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetching
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
-
-  defmodule TestKeyCodec do
-    @moduledoc false
-    def encode_key(key), do: {:ok, key}
-    def decode_key(key), do: {:ok, key}
-  end
-
-  defmodule TestValueCodec do
-    @moduledoc false
-    def encode_value(value), do: {:ok, value}
-    def decode_value(value), do: {:ok, value}
-  end
 
   defp create_test_state(opts) do
     layout =
@@ -33,8 +21,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       gateway: :test_gateway,
       transaction_system_layout: layout,
       layout_index: layout_index,
-      key_codec: TestKeyCodec,
-      value_codec: TestValueCodec,
       read_version: Keyword.get(opts, :read_version),
       read_version_lease_expiration: nil,
       commit_version: nil,
@@ -47,9 +33,27 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
     }
   end
 
-  describe "batch range fetching with do_range_batch/4" do
+  describe "batch range fetching with fetch_range/4" do
     test "returns batch results from single storage team" do
-      # Create state with mock storage function that covers our query range
+      # Create mock async_stream function that simulates storage racing
+      async_stream_fn = fn servers, task_fn, _opts ->
+        servers
+        |> Enum.map(task_fn)
+        |> Enum.map(&{:ok, &1})
+      end
+
+      # Mock storage function using dependency injection
+      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+        # Return test data in the expected format
+        data = [
+          {"a1", "value1"},
+          {"a2", "value2"}
+        ]
+
+        {:ok, {data, false}}
+      end
+
+      # Create state with mock storage configuration
       layout = %{
         sequencer: :test_sequencer,
         storage_teams: [
@@ -64,42 +68,29 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
 
-      # Create mock storage function that tracks calls
-      call_tracker = fn -> [] end |> Agent.start_link() |> elem(1)
+      # Call fetch_range
+      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
 
-      mock_storage_fn = fn _pids, {start_key, end_key}, _version, _batch_size, _timeout ->
-        Agent.update(call_tracker, fn calls ->
-          [{start_key, end_key} | calls]
-        end)
-
-        # Return some test data
-        data = [
-          {"#{start_key}1", "value1"},
-          {"#{start_key}2", "value2"}
-        ]
-
-        {:ok, %{data: data, has_more: false}}
-      end
-
-      opts = [storage_fetch_fn: mock_storage_fn]
-
-      # Call do_range_batch
-      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
-
-      # Should succeed with batch and continuation
-      assert {:ok, data, continuation} = result
-      assert is_list(data)
-      assert continuation == :finished
-
-      # Storage function should have been called
-      calls = Agent.get(call_tracker, & &1)
-      assert length(calls) > 0
-
-      Agent.stop(call_tracker)
+      # Should succeed with tuple format
+      assert {:ok, {data, has_more}} = result
+      assert data == [{"a1", "value1"}, {"a2", "value2"}]
+      assert has_more == false
     end
 
     test "handles single storage team correctly" do
+      async_stream_fn = fn servers, task_fn, _opts ->
+        servers
+        |> Enum.map(task_fn)
+        |> Enum.map(&{:ok, &1})
+      end
+
+      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+        data = [{"key1", "value1"}, {"key2", "value2"}]
+        {:ok, {data, false}}
+      end
+
       layout = %{
         sequencer: :test_sequencer,
         storage_teams: [
@@ -114,24 +105,26 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
 
-      mock_storage_fn = fn _pids, {_start_key, _end_key}, _version, _batch_size, _timeout ->
-        data = [{"key1", "value1"}, {"key2", "value2"}]
-        {:ok, %{data: data, has_more: false}}
-      end
+      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
 
-      opts = [storage_fetch_fn: mock_storage_fn]
-
-      # Call do_range_batch
-      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
-
-      # Should succeed with batch and continuation
-      assert {:ok, data, continuation} = result
+      assert {:ok, {data, has_more}} = result
       assert data == [{"key1", "value1"}, {"key2", "value2"}]
-      assert continuation == :finished
+      assert has_more == false
     end
 
     test "handles storage failures gracefully" do
+      async_stream_fn = fn servers, task_fn, _opts ->
+        servers
+        |> Enum.map(task_fn)
+        |> Enum.map(&{:ok, &1})
+      end
+
+      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+        {:error, :unavailable}
+      end
+
       layout = %{
         sequencer: :test_sequencer,
         storage_teams: [
@@ -146,22 +139,28 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
 
-      # Mock storage function that always fails
-      mock_storage_fn = fn _pids, {_start_key, _end_key}, _version, _batch_size, _timeout ->
-        {:error, :unavailable}
-      end
-
-      opts = [storage_fetch_fn: mock_storage_fn]
-
-      # Call do_range_batch
-      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
 
       # Should return error
       assert {:error, :unavailable} = result
     end
 
     test "respects limit parameter" do
+      async_stream_fn = fn servers, task_fn, _opts ->
+        servers
+        |> Enum.map(task_fn)
+        |> Enum.map(&{:ok, &1})
+      end
+
+      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, opts ->
+        batch_size = Keyword.get(opts, :limit, 10)
+        # Return exactly batch_size items to simulate has_more = true
+        data = Enum.map(1..batch_size, fn i -> {"key#{i}", "value#{i}"} end)
+        {:ok, {data, true}}
+      end
+
       layout = %{
         sequencer: :test_sequencer,
         storage_teams: [
@@ -176,25 +175,35 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
 
-      mock_storage_fn = fn _pids, {_start_key, _end_key}, _version, batch_size, _timeout ->
-        # Return exactly batch_size items to simulate has_more = true
-        data = Enum.map(1..batch_size, fn i -> {"key#{i}", "value#{i}"} end)
-        {:ok, %{data: data, has_more: true}}
-      end
+      # Call with small batch size
+      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 5, opts)
 
-      opts = [storage_fetch_fn: mock_storage_fn]
-
-      # Call do_range_batch with small batch size
-      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 5, opts)
-
-      # Should succeed with continuation indicating more data
-      assert {:ok, data, continuation} = result
+      # Should succeed with has_more indicating more data
+      assert {:ok, {data, has_more}} = result
       assert length(data) == 5
-      assert {:continue_from, _next_key} = continuation
+      assert has_more == true
     end
 
     test "includes tx writes when storage says no more keys but writes exist beyond batch" do
+      async_stream_fn = fn servers, task_fn, _opts ->
+        servers
+        |> Enum.map(task_fn)
+        |> Enum.map(&{:ok, &1})
+      end
+
+      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+        # Storage only returns keys up to "k", then says has_more = false
+        data = [
+          {"a", "storage_value_a"},
+          {"b", "storage_value_b"},
+          {"k", "storage_value_k"}
+        ]
+
+        {:ok, {data, false}}
+      end
+
       layout = %{
         sequencer: :test_sequencer,
         storage_teams: [
@@ -223,26 +232,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeFetchingTest do
       }
 
       state = %{state | tx: tx_with_writes}
-
-      # Mock storage function that returns limited data and says no more keys
-      mock_storage_fn = fn _pids, {_start_key, _end_key}, _version, _batch_size, _timeout ->
-        # Storage only returns keys up to "k", then says has_more = false
-        data = [
-          {"a", "storage_value_a"},
-          {"b", "storage_value_b"},
-          {"k", "storage_value_k"}
-        ]
-
-        {:ok, %{data: data, has_more: false}}
-      end
-
-      opts = [storage_fetch_fn: mock_storage_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
 
       # Query range "a" to "z" - this should include both storage results AND tx writes
-      {_new_state, result} = RangeFetching.do_range_batch(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
 
       # Should succeed and include ALL keys in range: storage keys + tx writes
-      assert {:ok, data, :finished} = result
+      assert {:ok, {data, has_more}} = result
+      assert has_more == false
 
       # Verify complete result includes both storage and tx writes in sorted order
       assert data == [

@@ -9,8 +9,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
           gateway: pid(),
           transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
           layout_index: LayoutIndex.t(),
-          key_codec: module(),
-          value_codec: module(),
           #
           read_version: Bedrock.version() | nil,
           read_version_lease_expiration: integer() | nil,
@@ -26,8 +24,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
             gateway: nil,
             transaction_system_layout: nil,
             layout_index: nil,
-            key_codec: nil,
-            value_codec: nil,
             #
             read_version: nil,
             read_version_lease_expiration: nil,

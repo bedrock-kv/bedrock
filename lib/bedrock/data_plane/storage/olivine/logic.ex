@@ -232,18 +232,38 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   end
 
   defp range_fetch_from_pages(pages, start_key, end_key, limit, load_fn) do
-    pages
-    |> Page.stream_key_versions_in_range(start_key, end_key)
-    |> apply_limit(limit)
-    |> Enum.map(fn {key, version} ->
-      {:ok, value} = load_fn.(key, version)
-      {key, value}
-    end)
-    |> then(&{:ok, &1})
-  end
+    stream = Page.stream_key_versions_in_range(pages, start_key, end_key)
 
-  defp apply_limit(stream, nil), do: stream
-  defp apply_limit(stream, limit) when is_integer(limit) and limit > 0, do: Stream.take(stream, limit)
+    {results, has_more} =
+      case limit do
+        nil ->
+          results =
+            Enum.map(stream, fn {key, version} ->
+              {:ok, value} = load_fn.(key, version)
+              {key, value}
+            end)
+
+          {results, false}
+
+        limit when is_integer(limit) and limit > 0 ->
+          results =
+            stream
+            # Take one extra to check if there are more
+            |> Stream.take(limit + 1)
+            |> Enum.map(fn {key, version} ->
+              {:ok, value} = load_fn.(key, version)
+              {key, value}
+            end)
+
+          if length(results) > limit do
+            {Enum.take(results, limit), true}
+          else
+            {results, false}
+          end
+      end
+
+    {:ok, {results, has_more}}
+  end
 
   @doc """
   Adds a fetch request to the waitlist.

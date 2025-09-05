@@ -169,7 +169,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex do
   defp segment_for_key(_, _key), do: :not_found
 
   defp node_for_key({tree_end_key, {segment_start, pids}, _left, _right}, key)
-       when key >= segment_start and key < tree_end_key,
+       when key >= segment_start and (key < tree_end_key or (key == tree_end_key and tree_end_key == <<0xFF, 0xFF>>)),
        do: {:ok, {segment_start, tree_end_key}, pids}
 
   defp node_for_key({tree_end_key, _, left, _right}, key) when key < tree_end_key, do: node_for_key(left, key)

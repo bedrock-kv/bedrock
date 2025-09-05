@@ -102,7 +102,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       result = Logic.range_fetch(state, start_selector, end_selector, version, [])
       # Range may not find data or could succeed
       case result do
-        {:ok, key_value_pairs} ->
+        {:ok, {key_value_pairs, _has_more}} ->
           assert is_list(key_value_pairs)
           assert Enum.all?(key_value_pairs, fn {k, v} -> is_binary(k) and is_binary(v) end)
           # Should include range keys if data exists
@@ -133,7 +133,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       version = Version.from_integer(1)
 
       result = Logic.range_fetch(state, start_selector, end_selector, version, limit: 2)
-      assert {:ok, results} = result
+      assert {:ok, {results, _has_more}} = result
       assert length(results) <= 2
     end
   end

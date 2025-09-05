@@ -7,18 +7,16 @@ defmodule Bedrock.Cluster.Gateway.Calls do
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Internal.Time
 
-  @spec begin_transaction(State.t(), opts :: [key_codec: module(), value_codec: module()]) ::
+  @spec begin_transaction(State.t(), opts :: []) ::
           {State.t(), {:ok, pid()} | {:error, :unavailable}}
-  def begin_transaction(t, opts \\ []) do
+  def begin_transaction(t, _opts \\ []) do
     t
     |> ensure_current_tsl()
     |> case do
       {:ok, tsl, updated_state} ->
         [
           gateway: self(),
-          transaction_system_layout: tsl,
-          key_codec: Keyword.fetch!(opts, :key_codec),
-          value_codec: Keyword.fetch!(opts, :value_codec)
+          transaction_system_layout: tsl
         ]
         |> TransactionBuilder.start_link()
         |> case do

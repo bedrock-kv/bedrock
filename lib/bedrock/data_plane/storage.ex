@@ -79,9 +79,12 @@ defmodule Bedrock.DataPlane.Storage do
           start_key :: Bedrock.key(),
           end_key :: Bedrock.key(),
           version :: Bedrock.version(),
-          opts :: [timeout: timeout()]
+          opts :: [
+            limit: pos_integer(),
+            timeout: timeout()
+          ]
         ) ::
-          {:ok, [{key :: Bedrock.key(), value :: Bedrock.value()}]}
+          {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
           | {:error,
              :timeout
              | :version_too_old
@@ -96,9 +99,12 @@ defmodule Bedrock.DataPlane.Storage do
           start_selector :: KeySelector.t(),
           end_selector :: KeySelector.t(),
           version :: Bedrock.version(),
-          opts :: [timeout: timeout()]
+          opts :: [
+            limit: pos_integer(),
+            timeout: timeout()
+          ]
         ) ::
-          {:ok, [{key :: Bedrock.key(), value :: Bedrock.value()}]}
+          {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
           | {:error,
              :timeout
              | :version_too_old

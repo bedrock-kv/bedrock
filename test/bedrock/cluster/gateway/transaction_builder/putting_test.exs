@@ -5,20 +5,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
-  defmodule TestKeyCodec do
-    @moduledoc false
-    def encode_key(key) when is_binary(key), do: {:ok, key}
-    def encode_key(:invalid_key), do: :key_error
-    def encode_key(_), do: :key_error
-  end
-
-  defmodule TestValueCodec do
-    @moduledoc false
-    def encode_value(value) when is_binary(value), do: {:ok, value}
-    def encode_value(value) when is_integer(value), do: {:ok, "int:#{value}"}
-    def encode_value(:invalid_value), do: :value_error
-    def encode_value(_), do: {:ok, "encoded"}
-  end
+  # Test codecs removed since we no longer use them
 
   defp mutations_to_writes(mutations) do
     Enum.reduce(mutations, %{}, fn
@@ -31,9 +18,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     %State{
       state: :valid,
       gateway: self(),
-      transaction_system_layout: %{},
-      key_codec: TestKeyCodec,
-      value_codec: TestValueCodec
+      transaction_system_layout: %{}
     }
   end
 
@@ -72,33 +57,29 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
              }
     end
 
-    test "handles integer values with codec encoding" do
+    test "handles binary values" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "number_key", 42)
+      {:ok, new_state} = Putting.do_put(state, "number_key", "42")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
-               "number_key" => "int:42"
+               "number_key" => "42"
              }
     end
 
-    test "handles various value types through codec" do
+    test "handles binary values directly" do
       state = create_test_state()
 
       {:ok, state1} = Putting.do_put(state, "string", "text")
-      {:ok, state2} = Putting.do_put(state1, "number", 123)
-      {:ok, state3} = Putting.do_put(state2, "atom", :test)
-      {:ok, state4} = Putting.do_put(state3, "map", %{a: 1})
+      {:ok, state2} = Putting.do_put(state1, "binary", "data")
 
-      assert mutations_to_writes(Tx.commit(state4.tx).mutations) == %{
+      assert mutations_to_writes(Tx.commit(state2.tx).mutations) == %{
                "string" => "text",
-               "number" => "int:123",
-               "atom" => "encoded",
-               "map" => "encoded"
+               "binary" => "data"
              }
     end
 
-    test "returns :key_error for invalid key" do
+    test "returns :key_error for non-binary key" do
       state = create_test_state()
 
       result = Putting.do_put(state, :invalid_key, "value")
@@ -130,8 +111,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
         state: :valid,
         gateway: self(),
         transaction_system_layout: %{test: "layout"},
-        key_codec: TestKeyCodec,
-        value_codec: TestValueCodec,
         tx: existing_tx,
         stack: [],
         fastest_storage_servers: %{range: :server}
@@ -176,31 +155,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     end
   end
 
-  describe "error propagation" do
-    defmodule FailingKeyCodec do
-      @moduledoc false
-      def encode_key(_), do: :key_error
-    end
+  describe "error handling" do
+    test "validates key is binary" do
+      state = create_test_state()
 
-    defmodule FailingValueCodec do
-      @moduledoc false
-      def encode_value(_), do: :value_error
-    end
-
-    test "propagates key encoding errors" do
-      state = %{create_test_state() | key_codec: FailingKeyCodec}
-
-      result = Putting.do_put(state, "any_key", "value")
+      result = Putting.do_put(state, :invalid_key, "value")
 
       assert result == :key_error
     end
 
-    test "propagates value encoding errors" do
-      state = %{create_test_state() | value_codec: FailingValueCodec}
+    test "accepts any value when key is binary" do
+      state = create_test_state()
 
-      result = Putting.do_put(state, "key", "any_value")
+      {:ok, new_state} = Putting.do_put(state, "key", "value")
 
-      assert result == :value_error
+      assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"key" => "value"}
     end
   end
 end

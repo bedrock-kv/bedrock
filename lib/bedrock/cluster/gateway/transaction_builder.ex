@@ -60,10 +60,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   use GenServer
 
   import __MODULE__.Committing, only: [do_commit: 1]
-  import __MODULE__.Fetching, only: [do_fetch: 2]
-  import __MODULE__.KeySelectorResolution, only: [do_fetch_key_selector: 2, do_range_fetch_key_selectors: 4]
+  import __MODULE__.PointReads, only: [fetch_key: 2, fetch_key_selector: 2]
   import __MODULE__.Putting, only: [do_put: 3]
-  import __MODULE__.RangeFetching, only: [do_range_batch: 4]
+  import __MODULE__.RangeReads, only: [fetch_range: 4, fetch_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
 
@@ -77,34 +76,59 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
           opts :: [
             gateway: Gateway.ref(),
             transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
-            key_codec: module(),
-            value_codec: module()
+            read_version: non_neg_integer() | nil,
+            time_fn: (-> integer())
           ]
         ) ::
           {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
-    key_codec = Keyword.fetch!(opts, :key_codec)
-    value_codec = Keyword.fetch!(opts, :value_codec)
-    GenServer.start_link(__MODULE__, {gateway, transaction_system_layout, key_codec, value_codec})
+    read_version = Keyword.get(opts, :read_version)
+    time_fn = Keyword.get(opts, :time_fn, &Time.monotonic_now_in_ms/0)
+
+    GenServer.start_link(
+      __MODULE__,
+      {gateway, transaction_system_layout, read_version, time_fn}
+    )
   end
 
   @impl true
   def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, transaction_system_layout, key_codec, value_codec}) do
+  def handle_continue(:initialization, {gateway, transaction_system_layout}) do
+    handle_continue(
+      :initialization,
+      {gateway, transaction_system_layout, nil, &Time.monotonic_now_in_ms/0}
+    )
+  end
+
+  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version}) do
+    handle_continue(
+      :initialization,
+      {gateway, transaction_system_layout, read_version, &Time.monotonic_now_in_ms/0}
+    )
+  end
+
+  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version, time_fn}) do
     # Build the layout index once during initialization for O(log n) lookups
     layout_index = LayoutUtils.build_layout_index(transaction_system_layout)
+
+    # For tests, if read_version is provided, set a far-future lease expiration
+    read_version_lease_expiration =
+      if read_version == nil,
+        # 60 seconds from now
+        do: nil,
+        else: time_fn.() + 60_000
 
     noreply(%State{
       state: :valid,
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       layout_index: layout_index,
-      key_codec: key_codec,
-      value_codec: value_codec
+      read_version: read_version,
+      read_version_lease_expiration: read_version_lease_expiration
     })
   end
 
@@ -136,25 +160,27 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   end
 
   def handle_call({:fetch, key}, _from, t) do
-    case do_fetch(t, key) do
+    case fetch_key(t, key) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
 
   def handle_call({:fetch_key_selector, key_selector}, _from, t) do
-    case do_fetch_key_selector(t, key_selector) do
+    case fetch_key_selector(t, key_selector) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
 
   def handle_call({:range_batch, start_key, end_key, batch_size, opts}, _from, t) do
-    case do_range_batch(t, {start_key, end_key}, batch_size, opts) do
+    case fetch_range(t, {start_key, end_key}, batch_size, opts) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
 
   def handle_call({:range_fetch_key_selectors, start_selector, end_selector, opts}, _from, t) do
-    case do_range_fetch_key_selectors(t, start_selector, end_selector, opts) do
+    batch_size = Keyword.get(opts, :limit, 10_000)
+
+    case fetch_range_selectors(t, start_selector, end_selector, batch_size, opts) do
       {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end

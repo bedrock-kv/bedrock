@@ -15,17 +15,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   # For end-to-end transaction flows, see transaction_builder_integration_test.exs
   # For individual module testing, see the respective module test files
 
-  defmodule TestKeyCodec do
-    @moduledoc false
-    def encode_key(key) when is_binary(key), do: {:ok, key}
-    def encode_key(_), do: :key_error
-  end
-
-  defmodule TestValueCodec do
-    @moduledoc false
-    def encode_value(value), do: {:ok, value}
-    def decode_value(value), do: {:ok, value}
-  end
+  # Test codecs removed since we no longer use them
 
   def create_test_transaction_system_layout do
     %{
@@ -45,11 +35,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   def start_transaction_builder(opts \\ []) do
+    # For tests with read_version, provide a deterministic time function
+    time_fn =
+      if Keyword.has_key?(opts, :read_version) do
+        # Fixed timestamp for deterministic tests
+        fn -> 1_000_000_000 end
+      else
+        &Bedrock.Internal.Time.monotonic_now_in_ms/0
+      end
+
     default_opts = [
       gateway: self(),
       transaction_system_layout: create_test_transaction_system_layout(),
-      key_codec: TestKeyCodec,
-      value_codec: TestValueCodec
+      time_fn: time_fn
     ]
 
     opts = Keyword.merge(default_opts, opts)
@@ -65,8 +63,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       assert %State{} = state
       assert state.state == :valid
       assert state.gateway == self()
-      assert state.key_codec == TestKeyCodec
-      assert state.value_codec == TestValueCodec
       assert state.stack == []
       assert %Tx{} = state.tx
     end
@@ -106,16 +102,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       }
 
       pid =
-        start_transaction_builder(
-          transaction_system_layout: custom_layout,
-          key_codec: TestKeyCodec,
-          value_codec: TestValueCodec
-        )
+        start_transaction_builder(transaction_system_layout: custom_layout)
 
       state = :sys.get_state(pid)
       assert state.transaction_system_layout == custom_layout
-      assert state.key_codec == TestKeyCodec
-      assert state.value_codec == TestValueCodec
     end
   end
 
@@ -298,8 +288,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       assert %State{} = state
       assert state.state == :valid
       assert state.gateway == self()
-      assert state.key_codec == TestKeyCodec
-      assert state.value_codec == TestValueCodec
       assert state.read_version == nil
       assert state.commit_version == nil
       assert state.stack == []
@@ -333,8 +321,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       assert state.state == :valid
       assert state.transaction_system_layout == custom_layout
-      assert state.key_codec == TestKeyCodec
-      assert state.value_codec == TestValueCodec
       assert state.gateway == self()
     end
 
@@ -447,34 +433,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "GenServer configuration and customization" do
-    test "custom codecs are applied and preserved" do
-      defmodule CustomKeyCodec do
-        @moduledoc false
-        def encode_key(key), do: {:ok, "custom_#{key}"}
-      end
-
-      defmodule CustomValueCodec do
-        @moduledoc false
-        def encode_value(value), do: {:ok, "encoded_#{value}"}
-        def decode_value(value), do: {:ok, value}
-      end
-
-      pid =
-        start_transaction_builder(
-          key_codec: CustomKeyCodec,
-          value_codec: CustomValueCodec
-        )
+    test "transaction builder works without codecs" do
+      pid = start_transaction_builder()
 
       state = :sys.get_state(pid)
-      assert state.key_codec == CustomKeyCodec
-      assert state.value_codec == CustomValueCodec
+      assert state.state == :valid
+      assert state.gateway == self()
 
       GenServer.cast(pid, {:put, "test", "value"})
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
       mutations = Tx.commit(final_state.tx).mutations
-      assert [{:set, "custom_test", "encoded_value"}] = mutations
+      assert [{:set, "test", "value"}] = mutations
     end
 
     test "transaction system layout is preserved" do
@@ -512,7 +483,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "KeySelector operations" do
     test "handles {:fetch_key_selector, key_selector} call and delegates to resolution module" do
       key_selector = KeySelector.first_greater_or_equal("test_key")
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       # Make the call - this will delegate to KeySelectorResolution.resolve_key_selector/3
       result = GenServer.call(pid, {:fetch_key_selector, key_selector})
@@ -527,7 +498,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "handles KeySelector with first_greater_or_equal" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
       selector = KeySelector.first_greater_or_equal("test_key")
 
       result = GenServer.call(pid, {:fetch_key_selector, selector})
@@ -539,7 +510,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "handles KeySelector with offset" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
       selector = "test_key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
 
       result = GenServer.call(pid, {:fetch_key_selector, selector})
@@ -551,7 +522,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "tracks read version management during KeySelector operations" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
       _initial_state = :sys.get_state(pid)
 
       key_selector = KeySelector.first_greater_or_equal("version_test_key")
@@ -560,14 +531,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       final_state = :sys.get_state(pid)
 
       # The read version should be managed appropriately
-      assert final_state.read_version == nil
+      assert final_state.read_version == 42
 
       # Transaction state should be updated appropriately
       assert %Tx{} = final_state.tx
     end
 
     test "maintains transaction state consistency with KeySelector reads" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       key_selector = KeySelector.first_greater_or_equal("consistency_key")
 
@@ -618,7 +589,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       start_selector = KeySelector.first_greater_or_equal("range_start")
       end_selector = KeySelector.first_greater_than("range_end")
       opts = [limit: 50]
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
 
@@ -632,7 +603,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "handles KeySelector range with standard boundaries" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       start_selector = KeySelector.first_greater_or_equal("a")
       end_selector = KeySelector.first_greater_than("z")
@@ -648,7 +619,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "handles KeySelector range with limit option" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       start_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-5)
       end_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
@@ -667,7 +638,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       start_selector = KeySelector.first_greater_than("zzz_nonexistent")
       end_selector = KeySelector.first_greater_than("zzz_also_nonexistent")
       opts = []
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
 
@@ -679,7 +650,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "maintains transaction consistency across range operations" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       start_selector = KeySelector.first_greater_or_equal("consistency_range_start")
       end_selector = KeySelector.first_greater_than("consistency_range_end")
@@ -747,7 +718,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "processes range with no options" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       start_selector = KeySelector.first_greater_or_equal("opts_test")
       end_selector = KeySelector.first_greater_than("opts_test_end")
@@ -763,7 +734,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
 
     test "processes range with limit option" do
-      pid = start_transaction_builder()
+      pid = start_transaction_builder(read_version: 42)
 
       start_selector = KeySelector.first_greater_or_equal("opts_test")
       end_selector = KeySelector.first_greater_than("opts_test_end")

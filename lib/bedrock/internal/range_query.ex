@@ -84,18 +84,24 @@ defmodule Bedrock.Internal.RangeQuery do
            {:range_batch, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
            timeout
          ) do
-      {:ok, [], _continuation} ->
+      {:ok, {[], _has_more}} ->
         # No more data
         {:halt, %{state | finished: true}}
 
-      {:ok, batch, :finished} when is_list(batch) ->
+      {:ok, {batch, false}} when is_list(batch) ->
         # Got final batch - no more data after this
         new_state = %{state | finished: true, items_returned: state.items_returned + length(batch)}
         output = if mode == :individual, do: batch, else: [batch]
         {output, new_state}
 
-      {:ok, batch, {:continue_from, next_key}} when is_list(batch) ->
-        # Got partial batch - more data available from next_key
+      {:ok, {batch, true}} when is_list(batch) ->
+        # Got partial batch - more data available, calculate next key
+        next_key =
+          batch
+          |> List.last()
+          |> elem(0)
+          |> Bedrock.Key.next_key_after()
+
         new_state = %{state | current_key: next_key, items_returned: state.items_returned + length(batch)}
         output = if mode == :individual, do: batch, else: [batch]
         {output, new_state}

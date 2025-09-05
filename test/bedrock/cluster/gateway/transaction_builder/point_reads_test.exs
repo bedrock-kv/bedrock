@@ -313,7 +313,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
       result = StorageRacing.race_storage_servers(state, "key1", operation_fn, [])
-      assert {:ok, "value1", %State{}} = result
+      assert {:ok, {"value1", {"", "zzz"}}, %State{}} = result
     end
 
     test "handles all servers returning errors" do
@@ -356,7 +356,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
       result = StorageRacing.race_storage_servers(state, "key1", operation_fn, [])
-      assert {:ok, :success_value, %State{}} = result
+      assert {:ok, {:success_value, {"", "zzz"}}, %State{}} = result
     end
   end
 

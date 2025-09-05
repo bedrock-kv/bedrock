@@ -182,7 +182,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           Bedrock.version(),
           opts :: [reply_fn: function(), limit: pos_integer()]
         ) ::
-          {:ok, [{Bedrock.key(), Bedrock.value()}]}
+          {:ok, {[{Bedrock.key(), Bedrock.value()}], more :: boolean()}}
           | {:ok, pid()}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
@@ -210,7 +210,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           Bedrock.version(),
           opts :: [reply_fn: function(), limit: pos_integer()]
         ) ::
-          {:ok, [{Bedrock.key(), Bedrock.value()}]}
+          {:ok, {[{Bedrock.key(), Bedrock.value()}], more :: boolean()}}
           | {:ok, pid()}
           | {:error, :version_too_old}
           | {:error, :version_too_new}

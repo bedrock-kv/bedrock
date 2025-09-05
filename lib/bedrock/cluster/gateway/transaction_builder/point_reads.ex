@@ -116,16 +116,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
     |> ensure_read_version!(opts)
     |> StorageRacing.race_storage_servers(racing_key, operation_fn, opts)
     |> case do
-      {:ok, {:ok, {key, value}}, final_state} ->
+      {:ok, {{:ok, {key, value}}, _shard_range}, final_state} ->
         {:ok, %{final_state | tx: Tx.merge_storage_read(final_state.tx, key, value)}, {key, value}}
 
-      {:ok, {:error, :not_found}, final_state} when merge_key != :no_merge ->
+      {:ok, {{:error, :not_found}, _shard_range}, final_state} when merge_key != :no_merge ->
         {:error, :not_found, %{final_state | tx: Tx.merge_storage_read(final_state.tx, merge_key, :not_found)}}
 
-      {:ok, {:error, :not_found}, final_state} ->
+      {:ok, {{:error, :not_found}, _shard_range}, final_state} ->
         {:error, :not_found, final_state}
 
-      {:ok, {:error, reason}, final_state} ->
+      {:ok, {{:error, reason}, _shard_range}, final_state} ->
         {:error, reason, final_state}
 
       {:error, reason, state} ->

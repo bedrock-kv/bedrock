@@ -26,7 +26,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
   - `opts`: Options (currently unused but kept for compatibility)
 
   ## Returns
-  - `{:ok, result, updated_state}` - Result with potentially updated cache
+  - `{:ok, {result, key_range}, updated_state}` - Result with shard key range and potentially updated cache
   - `{:error, reason, state}` - All servers failed or unavailable
   """
   @spec race_storage_servers(
@@ -35,7 +35,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
           operation_fn :: (pid(), State.t() -> {:ok, any()} | {:error, any()}),
           opts :: keyword()
         ) ::
-          {:ok, any(), State.t()} | {:error, :timeout, State.t()} | {:error, :unavailable, State.t()}
+          {:ok, {any(), Bedrock.key_range()}, State.t()}
+          | {:error, :timeout, State.t()}
+          | {:error, :unavailable, State.t()}
   def race_storage_servers(%State{} = state, key, operation_fn, opts \\ []) do
     case LayoutUtils.storage_servers_for_key(state.layout_index, key) do
       {key_range, storage_pids} when storage_pids != [] ->
@@ -56,11 +58,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
         | fastest_storage_servers: Map.put(state.fastest_storage_servers, key_range, winning_server)
       }
 
-      {:ok, result, updated_state}
+      {:ok, {result, key_range}, updated_state}
     else
       {:ok, fastest_server} ->
         case operation_fn.(fastest_server, state) do
-          {:ok, result} -> {:ok, result, state}
+          {:ok, result} -> {:ok, {result, key_range}, state}
           {:error, reason} -> {:error, reason, state}
         end
 

@@ -51,8 +51,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
     |> ensure_read_version!(opts)
     |> StorageRacing.race_storage_servers(min_key, operation_fn, opts)
     |> case do
-      {:ok, {results, has_more}, state} ->
-        {updated_tx, batch_results} = Tx.merge_storage_range_with_writes(state.tx, results)
+      {:ok, {{results, has_more}, shard_range}, state} ->
+        {updated_tx, batch_results} =
+          Tx.merge_storage_range_with_writes(
+            state.tx,
+            results,
+            has_more,
+            {min_key, max_key_ex},
+            shard_range
+          )
+
         {%{state | tx: updated_tx}, {:ok, {batch_results, has_more}}}
 
       {:error, reason, state} ->
@@ -91,8 +99,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
     |> ensure_read_version!(opts)
     |> StorageRacing.race_storage_servers(start_selector.key, operation_fn, opts)
     |> case do
-      {:ok, {results, has_more}, state} ->
-        {updated_tx, batch_results} = Tx.merge_storage_range_with_writes(state.tx, results)
+      {:ok, {{results, has_more}, shard_range}, state} ->
+        # For KeySelectors, we use the selector keys as the query range bounds
+        # since the actual range is resolved at the storage level
+        {updated_tx, batch_results} =
+          Tx.merge_storage_range_with_writes(
+            state.tx,
+            results,
+            has_more,
+            {start_selector.key, end_selector.key},
+            shard_range
+          )
+
         {%{state | tx: updated_tx}, {:ok, {batch_results, has_more}}}
 
       {:error, reason, state} ->

@@ -8,7 +8,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   """
 
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.KeyRange
 
   @type key :: binary()
   @type value :: binary()
@@ -66,6 +65,227 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
 
     %{t | reads: updated_reads, range_reads: updated_range_reads}
   end
+
+  @doc """
+  Enhanced version of merge_storage_range_with_writes that handles pending writes
+  correctly based on shard boundaries and has_more flag.
+
+  When has_more = false, this indicates the storage server has given us all data
+  in its authoritative range, so we should include pending writes beyond the
+  storage results up to the boundary of the query range and shard range.
+  """
+  @spec merge_storage_range_with_writes(
+          t(),
+          [{key(), value()}],
+          has_more :: boolean(),
+          query_range :: {key(), key()},
+          shard_range :: Bedrock.key_range()
+        ) :: {t(), [{key(), value()}]}
+  def merge_storage_range_with_writes(tx, storage_results, has_more, query_range, shard_range) do
+    {query_start, query_end} = query_range
+    {shard_start, shard_end} = shard_range
+
+    # Calculate the effective range to scan for pending writes
+    effective_start = max(query_start, shard_start)
+
+    effective_end =
+      case shard_end do
+        # Unbounded shard, use query end
+        :end -> query_end
+        shard_end_key -> min(query_end, shard_end_key)
+      end
+
+    case {storage_results, has_more} do
+      {[], false} ->
+        # Empty storage and no more data - scan all pending writes in effective range
+        scan_pending_writes(tx, effective_start, effective_end)
+
+      {[], true} ->
+        # Empty storage but more data available - just return empty with conflict tracking
+        {add_range_conflict(tx, effective_start, effective_end), []}
+
+      {[{_first_key, _} | _], false} ->
+        # Have storage data and no more data - merge storage with writes within storage bounds,
+        # then scan for additional writes beyond storage up to effective_end
+        {last_key, _} = List.last(storage_results)
+
+        # First merge storage results with overlapping writes (bounded)
+        {tx_after_merge, merged_results} = merge_storage_with_bounded_writes(tx, storage_results, effective_end)
+
+        # Then scan for additional pending writes beyond the merged range
+        scan_start = next_key(last_key)
+
+        {tx_final, additional_writes} =
+          if scan_start < effective_end do
+            scan_pending_writes(tx_after_merge, scan_start, effective_end)
+          else
+            {tx_after_merge, []}
+          end
+
+        final_results = merged_results ++ additional_writes
+        {tx_final, final_results}
+
+      {storage_results, true} ->
+        # Have storage data and more available - only merge overlapping writes within storage bounds
+        # Cannot include ANY writes beyond the last storage key because storage might have
+        # more data between last storage key and our next write
+        [{_first_key, _} | _] = storage_results
+        {last_key, _} = List.last(storage_results)
+        # Use exact next_key boundary - no writes beyond this point
+        merge_storage_with_bounded_writes(tx, storage_results, next_key(last_key))
+    end
+  end
+
+  # Helper functions for the enhanced merge_storage_range_with_writes
+
+  defp scan_pending_writes(tx, start_key, end_key) when start_key >= end_key do
+    # Empty range - just add conflict tracking
+    {add_range_conflict(tx, start_key, end_key), []}
+  end
+
+  defp scan_pending_writes(tx, start_key, end_key) do
+    # Scan transaction writes in the specified range
+    tx_iterator = :gb_trees.iterator_from(start_key, tx.writes)
+    writes_in_range = collect_writes_in_range(tx_iterator, end_key, [])
+
+    # Add read conflict tracking
+    updated_tx =
+      case writes_in_range do
+        [] ->
+          # No writes found, still need to track the range for conflicts
+          add_range_conflict(tx, start_key, end_key)
+
+        [{first_write_key, _} | _] ->
+          # Add individual writes to reads and track range
+          updated_reads =
+            Enum.reduce(writes_in_range, tx.reads, fn {key, value}, acc ->
+              Map.put(acc, key, value)
+            end)
+
+          {last_write_key, _} = List.last(writes_in_range)
+          updated_range_reads = add_or_merge(tx.range_reads, first_write_key, next_key(last_write_key))
+          %{tx | reads: updated_reads, range_reads: updated_range_reads}
+      end
+
+    {updated_tx, writes_in_range}
+  end
+
+  defp collect_writes_in_range(iterator, end_key, acc) do
+    case :gb_trees.next(iterator) do
+      {key, value, next_iterator} when key < end_key ->
+        collect_writes_in_range(next_iterator, end_key, [{key, value} | acc])
+
+      _ ->
+        Enum.reverse(acc)
+    end
+  end
+
+  defp add_range_conflict(tx, start_key, end_key) when start_key < end_key do
+    updated_range_reads = add_or_merge(tx.range_reads, start_key, end_key)
+    %{tx | range_reads: updated_range_reads}
+  end
+
+  # Empty range
+  defp add_range_conflict(tx, _start_key, _end_key), do: tx
+
+  # Helper function to check if ranges overlap
+  defp ranges_overlap?({start1, end1}, {start2, end2}) do
+    start1 < end2 and start2 < end1
+  end
+
+  # Merge storage data with transaction writes, but only within the specified boundary
+  defp merge_storage_with_bounded_writes(tx, storage_results, max_boundary) do
+    [{first_key, _} | _] = storage_results
+    {last_key, _} = List.last(storage_results)
+
+    # Boundary for merging is the minimum of next_key(last_storage) and max_boundary
+    merge_boundary = min(next_key(last_key), max_boundary)
+
+    # Get overlapping clear ranges
+    data_range = {first_key, merge_boundary}
+
+    tx_clear_ranges =
+      Enum.filter(tx.mutations, fn
+        {:clear_range, s, e} -> ranges_overlap?(data_range, {s, e})
+        _ -> false
+      end)
+
+    # Merge storage with transaction writes only up to the boundary
+    tx_iterator = :gb_trees.iterator_from(first_key, tx.writes)
+
+    {acc, _tx_iterator} =
+      merge_ordered_results_bounded(storage_results, tx_iterator, tx_clear_ranges, [], merge_boundary)
+
+    merged_results =
+      acc
+      |> filter_cleared_keys(tx_clear_ranges)
+      |> Enum.reverse()
+
+    # Add conflict tracking
+    updated_tx =
+      case merged_results do
+        [] ->
+          tx
+
+        [{actual_first_key, _} | _] ->
+          {actual_last_key, _} = List.last(merged_results)
+
+          updated_reads =
+            Enum.reduce(merged_results, tx.reads, fn {key, value}, acc ->
+              Map.put(acc, key, value)
+            end)
+
+          updated_range_reads = add_or_merge(tx.range_reads, actual_first_key, next_key(actual_last_key))
+
+          %{tx | reads: updated_reads, range_reads: updated_range_reads}
+      end
+
+    {updated_tx, merged_results}
+  end
+
+  # Bounded version of merge_ordered_results that stops at a boundary
+  defp merge_ordered_results_bounded([], tx_iterator, clear_ranges, acc, boundary) do
+    case :gb_trees.next(tx_iterator) do
+      {tx_key, tx_value, iterator} when tx_key < boundary ->
+        merge_ordered_results_bounded([], iterator, clear_ranges, [{tx_key, tx_value} | acc], boundary)
+
+      _ ->
+        {acc, tx_iterator}
+    end
+  end
+
+  defp merge_ordered_results_bounded(storage_list, tx_iterator, clear_ranges, acc, boundary) do
+    case :gb_trees.next(tx_iterator) do
+      {tx_key, tx_value, iterator} when tx_key < boundary ->
+        merge_with_tx_write_bounded({tx_key, tx_value}, iterator, storage_list, clear_ranges, acc, boundary)
+
+      _ ->
+        {Enum.reverse(storage_list, acc), tx_iterator}
+    end
+  end
+
+  defp merge_with_tx_write_bounded(
+         {tx_key, _tx_value} = tx_kv,
+         iterator,
+         [{storage_key, _storage_value} = storage_kv | storage_rest] = storage_list,
+         clear_ranges,
+         acc,
+         boundary
+       ) do
+    cond do
+      tx_key < storage_key ->
+        merge_ordered_results_bounded(storage_list, iterator, clear_ranges, [tx_kv | acc], boundary)
+
+      tx_key == storage_key ->
+        merge_ordered_results_bounded(storage_rest, iterator, clear_ranges, [tx_kv | acc], boundary)
+
+      true ->
+        merge_with_tx_write_bounded(tx_kv, iterator, storage_rest, clear_ranges, [storage_kv | acc], boundary)
+    end
+  end
+
+  defp merge_with_tx_write_bounded({_tx_key, _tx_value} = tx_kv, iterator, [], clear_ranges, acc, boundary),
+    do: merge_ordered_results_bounded([], iterator, clear_ranges, [tx_kv | acc], boundary)
 
   @doc """
   Get the repeatable read value for a key within the transaction.
@@ -338,114 +558,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
 
   defp next_key(k), do: k <> <<0>>
 
-  @doc """
-  Merge storage results with transaction writes for a given range.
+  # Old 2-argument version removed - use the 5-argument version instead
 
-  Returns a new transaction with the merged results and updated read conflicts
-  for the bounds of the data.
-  """
-  @spec merge_storage_range_with_writes(t(), [{key(), value()}]) :: {t(), [{key(), value()}]}
-  def merge_storage_range_with_writes(tx, []), do: {tx, []}
-
-  def merge_storage_range_with_writes(tx, [{first_key, _} | _] = storage_results) do
-    # Get actual data bounds from storage results
-    {last_key, _} = List.last(storage_results)
-    data_range = {first_key, next_key(last_key)}
-
-    # Get overlapping clear ranges from transaction mutations
-    tx_clear_ranges =
-      Enum.filter(tx.mutations, fn
-        {:clear_range, s, e} -> KeyRange.overlaps?(data_range, {s, e})
-        _ -> false
-      end)
-
-    # Merge storage results with transaction writes in the data range
-    tx_iterator = :gb_trees.iterator_from(first_key, tx.writes)
-    {acc, tx_iterator} = merge_ordered_results(storage_results, tx_iterator, tx_clear_ranges, [])
-
-    merged_results =
-      acc
-      |> filter_cleared_keys(tx_clear_ranges)
-      |> append_remaining_tx_writes(tx_iterator, next_key(last_key))
-      |> Enum.reverse()
-
-    # Update transaction with read conflicts based on the actual bounds of the merged data
-    updated_tx =
-      case merged_results do
-        [] ->
-          tx
-
-        [{actual_first_key, _} | _] ->
-          {actual_last_key, _} = List.last(merged_results)
-
-          # Add individual key-value pairs to reads for conflict tracking
-          updated_reads =
-            Enum.reduce(merged_results, tx.reads, fn {key, value}, acc ->
-              Map.put(acc, key, value)
-            end)
-
-          # Add the actual range bounds to range_reads for conflict tracking
-          updated_range_reads = add_or_merge(tx.range_reads, actual_first_key, next_key(actual_last_key))
-
-          %{tx | reads: updated_reads, range_reads: updated_range_reads}
-      end
-
-    {updated_tx, merged_results}
-  end
-
-  # Private helper functions for merge_storage_range_with_writes
-
-  defp merge_ordered_results([], tx_iterator, clear_ranges, acc) do
-    case :gb_trees.next(tx_iterator) do
-      {tx_key, tx_value, iterator} ->
-        merge_ordered_results([], iterator, clear_ranges, [{tx_key, tx_value} | acc])
-
-      :none ->
-        {acc, tx_iterator}
-    end
-  end
-
-  defp merge_ordered_results(storage_list, tx_iterator, clear_ranges, acc) do
-    case :gb_trees.next(tx_iterator) do
-      {tx_key, tx_value, iterator} ->
-        merge_with_tx_write({tx_key, tx_value}, iterator, storage_list, clear_ranges, acc)
-
-      :none ->
-        {Enum.reverse(storage_list, acc), tx_iterator}
-    end
-  end
-
-  defp merge_with_tx_write(
-         {tx_key, _tx_value} = tx_kv,
-         iterator,
-         [{storage_key, _storage_value} = storage_kv | storage_rest] = storage_list,
-         clear_ranges,
-         acc
-       ) do
-    cond do
-      tx_key < storage_key ->
-        merge_ordered_results(storage_list, iterator, clear_ranges, [tx_kv | acc])
-
-      tx_key == storage_key ->
-        merge_ordered_results(storage_rest, iterator, clear_ranges, [tx_kv | acc])
-
-      true ->
-        merge_with_tx_write(tx_kv, iterator, storage_rest, clear_ranges, [storage_kv | acc])
-    end
-  end
-
-  defp merge_with_tx_write({_tx_key, _tx_value} = tx_kv, iterator, [], clear_ranges, acc),
-    do: merge_ordered_results([], iterator, clear_ranges, [tx_kv | acc])
-
-  defp append_remaining_tx_writes(acc, tx_iterator, end_key) do
-    case :gb_trees.next(tx_iterator) do
-      {tx_key, tx_value, iterator} when tx_key < end_key ->
-        append_remaining_tx_writes([{tx_key, tx_value} | acc], iterator, end_key)
-
-      _ ->
-        acc
-    end
-  end
+  # Helper functions needed by the new implementation
 
   defp filter_cleared_keys(key_value_pairs, clear_ranges) do
     Enum.reject(key_value_pairs, fn {key, _value} ->

@@ -190,7 +190,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:range_batch, "key_a", "key_z", 100, []}} ->
-              GenServer.reply(from, {:ok, [{"key_b", "value_b"}, {"key_c", "value_c"}], :finished})
+              GenServer.reply(from, {:ok, {[{"key_b", "value_b"}, {"key_c", "value_c"}], false}})
           end
         end)
 
@@ -206,13 +206,13 @@ defmodule Bedrock.Internal.RepoSimpleTest do
           receive do
             {:"$gen_call", from, {:range_batch, "key_a", "key_z", 2, []}} ->
               # Return first batch with continuation
-              GenServer.reply(from, {:ok, [{"key_b", "value_b"}], {:continue_from, "key_c"}})
+              GenServer.reply(from, {:ok, {[{"key_b", "value_b"}], true}})
           end
 
           receive do
-            {:"$gen_call", from, {:range_batch, "key_c", "key_z", 2, []}} ->
+            {:"$gen_call", from, {:range_batch, "key_b\x00", "key_z", 2, []}} ->
               # Return final batch
-              GenServer.reply(from, {:ok, [{"key_c", "value_c"}], :finished})
+              GenServer.reply(from, {:ok, {[{"key_c", "value_c"}], false}})
           end
         end)
 
@@ -227,7 +227,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:range_batch, "key_a", "key_z", 10, []}} ->
-              GenServer.reply(from, {:ok, [], :finished})
+              GenServer.reply(from, {:ok, {[], false}})
           end
         end)
 
@@ -242,7 +242,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:range_batch, "key_a", "key_z", 2, [limit: 2]}} ->
-              GenServer.reply(from, {:ok, [{"key_b", "value_b"}, {"key_c", "value_c"}], :finished})
+              GenServer.reply(from, {:ok, {[{"key_b", "value_b"}, {"key_c", "value_c"}], false}})
           end
         end)
 
@@ -557,7 +557,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
           # Third call for the actual range_batch operation
           receive do
             {:"$gen_call", from, {:range_batch, "resolved_stream_a", "resolved_stream_z", 100, []}} ->
-              GenServer.reply(from, {:ok, [{"stream_b", "value_b"}], :finished})
+              GenServer.reply(from, {:ok, {[{"stream_b", "value_b"}], false}})
           end
         end)
 
@@ -625,7 +625,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
 
           receive do
             {:"$gen_call", from, {:range_batch, "opts_start_resolved", "opts_end_resolved", 5, [limit: 20]}} ->
-              GenServer.reply(from, {:ok, [{"opts_result", "opts_value"}], :finished})
+              GenServer.reply(from, {:ok, {[{"opts_result", "opts_value"}], false}})
           end
         end)
 
@@ -654,7 +654,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
 
           receive do
             {:"$gen_call", from, {:range_batch, "complex_resolved", "complex_z_resolved", 100, []}} ->
-              GenServer.reply(from, {:ok, [{"complex_middle", "complex_value"}], :finished})
+              GenServer.reply(from, {:ok, {[{"complex_middle", "complex_value"}], false}})
           end
         end)
 

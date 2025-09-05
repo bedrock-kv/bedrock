@@ -377,6 +377,47 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
   defp search_entries_for_key(_, _, _), do: :not_found
 
+  @spec search_entries_with_position(binary(), non_neg_integer(), Bedrock.key()) ::
+          {:found, pos :: non_neg_integer()} | {:not_found, insertion_point :: non_neg_integer()}
+  def search_entries_with_position(data, count, target_key),
+    do: search_entries_with_position(data, count, target_key, 0)
+
+  defp search_entries_with_position(_data, 0, _target_key, pos), do: {:not_found, pos}
+
+  defp search_entries_with_position(
+         <<_version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
+         count,
+         target_key,
+         pos
+       ) do
+    cond do
+      key == target_key -> {:found, pos}
+      key > target_key -> {:not_found, pos}
+      true -> search_entries_with_position(rest, count - 1, target_key, pos + 1)
+    end
+  end
+
+  defp search_entries_with_position(_, _, _, pos), do: {:not_found, pos}
+
+  @spec decode_entry_at_position(binary(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, {key :: binary(), version :: binary()}} | :out_of_bounds
+  def decode_entry_at_position(_entries_data, position, key_count) when position >= key_count, do: :out_of_bounds
+
+  def decode_entry_at_position(entries_data, 0, _key_count) do
+    <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), _rest::binary>> = entries_data
+    {:ok, {key, version}}
+  end
+
+  def decode_entry_at_position(
+        <<_version::binary-size(8), key_len::unsigned-big-16, _key::binary-size(key_len), rest::binary>>,
+        position,
+        key_count
+      ) do
+    decode_entry_at_position(rest, position - 1, key_count)
+  end
+
+  def decode_entry_at_position(_, _, _), do: :out_of_bounds
+
   # Alias for backward compatibility with tests
 
   @spec stream_key_versions_in_range(Enumerable.t(t()), Bedrock.key(), Bedrock.key()) ::

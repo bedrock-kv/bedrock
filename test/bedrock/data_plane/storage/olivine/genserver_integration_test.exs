@@ -306,7 +306,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
         result = GenServer.call(pid, {:range_fetch, "start", "end", v0, []}, 1_000)
 
         assert result in [
-                 {:ok, []},
+                 {:ok, {[], false}},
                  {:error, :not_found},
                  {:error, :version_too_old}
                ]
@@ -636,7 +636,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
         # Should return valid response
         assert result in [
-                 {:ok, []},
+                 {:ok, {[], false}},
                  {:error, :not_found},
                  {:error, :version_too_old},
                  {:error, :timeout}

@@ -25,7 +25,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
 
     test "returns error when coordinator is unavailable", %{base_state: base_state} do
       state = %{base_state | known_coordinator: :unavailable}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, result} = Calls.begin_transaction(state, opts)
 
@@ -33,30 +33,48 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       assert result == {:error, :unavailable}
     end
 
-    test "raises when required key_codec option is missing", %{tsl: tsl, base_state: base_state} do
+    test "works without any options", %{tsl: tsl, base_state: base_state} do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, value_codec: TestValueCodec)
+      {updated_state, result} = Calls.begin_transaction(state, [])
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
-    test "raises when required value_codec option is missing", %{tsl: tsl, base_state: base_state} do
+    test "ignores any provided options", %{tsl: tsl, base_state: base_state} do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, key_codec: TestKeyCodec)
+      {updated_state, result} = Calls.begin_transaction(state, some_option: :value)
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
-    test "raises when both key_codec and value_codec options are missing", %{
+    test "works with empty options list", %{
       tsl: tsl,
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, [])
+      {updated_state, result} = Calls.begin_transaction(state, [])
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
@@ -65,7 +83,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       # Since we can't easily mock TransactionBuilder.start_link in this environment,
       # we test that the function reaches the point where it would call start_link
@@ -90,7 +108,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     } do
       # No cached TSL and unavailable coordinator
       state = %{base_state | known_coordinator: :unavailable, transaction_system_layout: nil}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, result} = Calls.begin_transaction(state, opts)
 
@@ -104,7 +122,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, _result} = Calls.begin_transaction(state, opts)
 
@@ -363,7 +381,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       }
 
       # Test begin_transaction with this state
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
       {_updated_state1, result1} = Calls.begin_transaction(base_state, opts)
 
       # Should not return :unavailable since coordinator and TSL are available

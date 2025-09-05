@@ -37,10 +37,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
+  alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.KeySelector
 
   @type page_id :: Page.id()
   @type page :: Page.t()
@@ -105,7 +107,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   def page_for_key(index_manager, _key, version) when index_manager.current_version < version,
     do: {:error, :version_too_new}
 
-  def page_for_key(index_manager, key, version) do
+  def page_for_key(index_manager, key, version) when is_binary(key) do
     index_manager.versions
     |> find_best_index_for_fetch(version)
     |> case do
@@ -117,6 +119,23 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
+  @spec page_for_key(t(), KeySelector.t(), Bedrock.version()) ::
+          {:ok, resolved_key :: binary(), Page.t()}
+          | {:partial, keys_available :: non_neg_integer()}
+          | {:error, :not_found | :version_too_new | :version_too_old}
+  def page_for_key(index_manager, %KeySelector{} = _key_selector, version) when index_manager.current_version < version,
+    do: {:error, :version_too_new}
+
+  def page_for_key(index_manager, %KeySelector{} = key_selector, version) do
+    case find_best_index_for_fetch(index_manager.versions, version) do
+      nil ->
+        {:error, :version_too_old}
+
+      index ->
+        resolve_key_selector_in_index(index, key_selector)
+    end
+  end
+
   @spec pages_for_range(t(), start_key :: Bedrock.key(), end_key :: Bedrock.key(), Bedrock.version()) ::
           {:ok, [Page.t()]}
           | {:error, :version_too_new}
@@ -124,13 +143,30 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   def pages_for_range(index_manager, _start_key, _end_key, version) when index_manager.current_version < version,
     do: {:error, :version_too_new}
 
-  def pages_for_range(index_manager, start_key, end_key, version) do
+  def pages_for_range(index_manager, start_key, end_key, version) when is_binary(start_key) and is_binary(end_key) do
     case find_best_index_for_fetch(index_manager.versions, version) do
       nil ->
         {:error, :version_too_old}
 
       index ->
         Index.pages_for_range(index, start_key, end_key)
+    end
+  end
+
+  @spec pages_for_range(t(), KeySelector.t(), KeySelector.t(), Bedrock.version()) ::
+          {:ok, {resolved_start :: binary(), resolved_end :: binary()}, [Page.t()]}
+          | {:error, :version_too_new | :version_too_old | :invalid_range}
+  def pages_for_range(index_manager, %KeySelector{} = _start_selector, %KeySelector{} = _end_selector, version)
+      when index_manager.current_version < version,
+      do: {:error, :version_too_new}
+
+  def pages_for_range(index_manager, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version) do
+    case find_best_index_for_fetch(index_manager.versions, version) do
+      nil ->
+        {:error, :version_too_old}
+
+      index ->
+        resolve_range_selectors_in_index(index, start_selector, end_selector)
     end
   end
 
@@ -341,6 +377,361 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
       find_first_valid_version(rest, target_version)
     else
       data
+    end
+  end
+
+  # KeySelector Resolution Helper Functions
+
+  @spec resolve_key_selector_in_index(Index.t(), KeySelector.t()) ::
+          {:ok, resolved_key :: binary(), Page.t()}
+          | {:partial, keys_available :: non_neg_integer()}
+          | {:error, :not_found}
+  defp resolve_key_selector_in_index(
+         index,
+         %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector
+       ) do
+    case Index.page_for_key(index, ref_key) do
+      {:ok, page} ->
+        case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
+          {:ok, resolved_key, page} ->
+            {:ok, resolved_key, page}
+
+          {:partial, keys_available} ->
+            handle_cross_page_continuation(index, page, key_selector, keys_available)
+        end
+
+      {:error, :not_found} ->
+        handle_gap_resolution(index, key_selector)
+    end
+  end
+
+  defp handle_cross_page_continuation(index, page, key_selector, keys_available) do
+    # If no keys were available and we have a negative offset, we've gone beyond the start of keyspace
+    if keys_available == 0 and key_selector.offset < 0 do
+      {:error, :not_found}
+    else
+      case calculate_cross_page_continuation(index, page, key_selector, keys_available) do
+        {:ok, continuation_selector} ->
+          resolve_key_selector_in_index(index, continuation_selector)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp handle_gap_resolution(index, key_selector) do
+    case resolve_gap_key_selector(index, key_selector) do
+      {:ok, continuation_selector} ->
+        resolve_key_selector_in_index(index, continuation_selector)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @spec resolve_range_selectors_in_index(Index.t(), KeySelector.t(), KeySelector.t()) ::
+          {:ok, {resolved_start :: binary(), resolved_end :: binary()}, [Page.t()]}
+          | {:error, :invalid_range | :not_found}
+  defp resolve_range_selectors_in_index(index, start_selector, end_selector) do
+    with {:ok, resolved_start, _start_page} <- resolve_key_selector_in_index(index, start_selector),
+         {:ok, resolved_end, _end_page} <- resolve_key_selector_in_index(index, end_selector) do
+      if resolved_start <= resolved_end do
+        {:ok, pages} = Index.pages_for_range(index, resolved_start, resolved_end)
+        {:ok, {resolved_start, resolved_end}, pages}
+      else
+        {:error, :invalid_range}
+      end
+    end
+  end
+
+  @spec resolve_key_selector_in_page(Page.t(), binary(), boolean(), integer()) ::
+          {:ok, resolved_key :: binary(), Page.t()}
+          | {:partial, keys_available :: non_neg_integer()}
+          | {:error, :not_found}
+  defp resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
+    # Extract header info once for efficient binary operations
+    <<_id::unsigned-big-32, _next::unsigned-big-32, key_count::unsigned-big-16, _offset::unsigned-big-32,
+      _reserved::unsigned-big-16, entries::binary>> = page
+
+    # Use optimized binary search that stops early when key > ref_key
+    case Page.search_entries_with_position(entries, key_count, ref_key) do
+      {:found, pos} ->
+        target_pos = calculate_target_position_found(pos, or_equal, offset)
+        resolve_at_position_optimized(entries, target_pos, key_count, page)
+
+      {:not_found, insertion_pos} ->
+        target_pos = calculate_target_position_not_found(insertion_pos, or_equal, offset)
+        resolve_at_position_optimized(entries, target_pos, key_count, page)
+    end
+  end
+
+  # Helper functions for calculating target positions
+  defp calculate_target_position_found(pos, or_equal, offset) do
+    if or_equal do
+      pos + offset
+    else
+      # For greater_than, we need the next position, then apply offset
+      pos + 1 + offset
+    end
+  end
+
+  defp calculate_target_position_not_found(insertion_pos, or_equal, offset) do
+    if offset >= 0 do
+      # Forward selector: insertion_pos is correct starting point
+      insertion_pos + offset
+    else
+      # Backward selector: want position before insertion point
+      if or_equal do
+        # last_less_or_equal: position before insertion point
+        insertion_pos - 1 + offset
+      else
+        # last_less_than: same as less_or_equal when key not found
+        insertion_pos - 1 + offset
+      end
+    end
+  end
+
+  defp resolve_at_position_optimized(entries, pos, key_count, page) when pos >= 0 and pos < key_count do
+    case Page.decode_entry_at_position(entries, pos, key_count) do
+      {:ok, {key, _version}} -> {:ok, key, page}
+      :out_of_bounds -> {:partial, key_count}
+    end
+  end
+
+  defp resolve_at_position_optimized(_entries, pos, _key_count, _page) when pos < 0, do: {:partial, 0}
+  defp resolve_at_position_optimized(_entries, _pos, key_count, _page), do: {:partial, key_count}
+
+  # Cross-page continuation helper functions
+
+  @spec calculate_cross_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+          {:ok, KeySelector.t()} | {:error, :not_found}
+  defp calculate_cross_page_continuation(index, current_page, key_selector, keys_available) do
+    if key_selector.offset >= 0 do
+      calculate_forward_page_continuation(index, current_page, key_selector, keys_available)
+    else
+      calculate_backward_page_continuation(index, current_page, key_selector, keys_available)
+    end
+  end
+
+  @spec calculate_forward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+          {:ok, KeySelector.t()} | {:error, :not_found}
+  defp calculate_forward_page_continuation(index, current_page, key_selector, keys_available) do
+    case Page.next_id(current_page) do
+      0 ->
+        # No next page - we've hit the end of the index
+        {:error, :not_found}
+
+      next_page_id ->
+        next_page = Index.get_page!(index, next_page_id)
+
+        # Calculate remaining offset after consuming available keys in current page
+        remaining_offset = key_selector.offset - keys_available
+
+        case Page.left_key(next_page) do
+          nil ->
+            # Empty next page, continue with empty key to trigger gap resolution
+            continuation_selector = %KeySelector{
+              key: "",
+              or_equal: true,
+              offset: remaining_offset
+            }
+
+            {:ok, continuation_selector}
+
+          first_key_of_next_page ->
+            # Create continuation KeySelector at the start of next page
+            continuation_selector = %KeySelector{
+              key: first_key_of_next_page,
+              or_equal: true,
+              offset: remaining_offset
+            }
+
+            {:ok, continuation_selector}
+        end
+    end
+  end
+
+  @spec calculate_backward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+          {:ok, KeySelector.t()} | {:error, :not_found}
+  defp calculate_backward_page_continuation(index, current_page, key_selector, keys_available) do
+    # Find the page whose next_id points to current page (previous page)
+    case find_previous_page(index, Page.id(current_page)) do
+      {:ok, previous_page} ->
+        case Page.right_key(previous_page) do
+          nil ->
+            # Empty previous page, this shouldn't happen in a well-formed index
+            {:error, :not_found}
+
+          last_key_of_prev_page ->
+            # Calculate remaining offset after consuming available keys in current page
+            # For backward traversal, we add the consumed keys to make the offset more negative
+            remaining_offset = key_selector.offset + keys_available
+
+            # Create continuation KeySelector at the end of previous page
+            continuation_selector = %KeySelector{
+              key: last_key_of_prev_page,
+              or_equal: true,
+              offset: remaining_offset
+            }
+
+            {:ok, continuation_selector}
+        end
+
+      {:error, :not_found} ->
+        # No previous page - we've hit the beginning of the index
+        {:error, :not_found}
+    end
+  end
+
+  @spec find_previous_page(Index.t(), Page.id()) :: {:ok, Page.t()} | {:error, :not_found}
+  defp find_previous_page(%Index{page_map: page_map}, target_page_id) do
+    # Search through all pages to find the one whose next_id points to our target
+    page_map
+    |> Enum.find_value(fn {_page_id, page} ->
+      if Page.next_id(page) == target_page_id, do: page
+    end)
+    |> case do
+      nil -> {:error, :not_found}
+      page -> {:ok, page}
+    end
+  end
+
+  @spec resolve_gap_key_selector(Index.t(), KeySelector.t()) ::
+          {:ok, KeySelector.t()} | {:error, :not_found}
+  defp resolve_gap_key_selector(index, %KeySelector{key: ref_key, offset: offset}) do
+    case find_bounding_pages_for_gap(index, ref_key) do
+      {:ok, :before_all_pages} -> handle_before_all_pages_gap(index, offset)
+      {:ok, :after_all_pages} -> handle_after_all_pages_gap(index, offset)
+      {:ok, {:between_pages, _left_page, right_page}} -> handle_between_pages_gap(right_page, offset)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp handle_before_all_pages_gap(index, offset) do
+    if offset >= 0 do
+      case find_first_page(index) do
+        {:ok, _first_page, first_key} ->
+          {:ok, %KeySelector{key: first_key, or_equal: true, offset: offset}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:error, :not_found}
+    end
+  end
+
+  defp handle_after_all_pages_gap(index, offset) do
+    if offset < 0 do
+      case find_last_page(index) do
+        {:ok, _last_page, last_key} ->
+          {:ok, %KeySelector{key: last_key, or_equal: true, offset: offset}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:error, :not_found}
+    end
+  end
+
+  defp handle_between_pages_gap(right_page, offset) do
+    case Page.left_key(right_page) do
+      nil ->
+        {:error, :not_found}
+
+      first_key_of_right when offset >= 0 ->
+        {:ok, %KeySelector{key: first_key_of_right, or_equal: true, offset: offset}}
+
+      _first_key_of_right ->
+        {:error, :not_found}
+    end
+  end
+
+  @spec find_bounding_pages_for_gap(Index.t(), binary()) ::
+          {:ok, :before_all_pages | :after_all_pages | {:between_pages, Page.t(), Page.t()}}
+          | {:error, :not_found}
+  defp find_bounding_pages_for_gap(%Index{tree: tree} = index, ref_key) do
+    # Use the tree to find the insertion point
+    page_id = Tree.page_for_insertion(tree, ref_key)
+    page = Index.get_page!(index, page_id)
+
+    case {Page.left_key(page), Page.right_key(page)} do
+      {nil, nil} ->
+        # Empty page
+        {:ok, :before_all_pages}
+
+      {first_key, _last_key} when ref_key < first_key ->
+        # Key comes before this page - find previous page
+        case find_previous_page(index, page_id) do
+          {:ok, prev_page} -> {:ok, {:between_pages, prev_page, page}}
+          {:error, :not_found} -> {:ok, :before_all_pages}
+        end
+
+      {_first_key, last_key} when ref_key > last_key ->
+        # Key comes after this page
+        case Page.next_id(page) do
+          0 ->
+            {:ok, :after_all_pages}
+
+          next_page_id ->
+            next_page = Index.get_page!(index, next_page_id)
+            {:ok, {:between_pages, page, next_page}}
+        end
+
+      _ ->
+        # This shouldn't happen since page_for_key already failed
+        {:error, :not_found}
+    end
+  end
+
+  @spec find_first_page(Index.t()) :: {:ok, Page.t(), binary()} | {:error, :not_found}
+  defp find_first_page(%Index{page_map: page_map}) when page_map == %{}, do: {:error, :not_found}
+
+  defp find_first_page(%Index{page_map: page_map}) do
+    # Start with page 0 and follow the chain to find the first non-empty page
+    case Map.get(page_map, 0) do
+      nil -> {:error, :not_found}
+      page -> find_first_non_empty_page(page_map, page)
+    end
+  end
+
+  defp find_first_non_empty_page(page_map, page) do
+    case Page.left_key(page) do
+      nil -> try_next_page(page_map, page)
+      first_key -> {:ok, page, first_key}
+    end
+  end
+
+  defp try_next_page(page_map, page) do
+    case Page.next_id(page) do
+      0 -> {:error, :not_found}
+      next_id -> get_and_check_next_page(page_map, next_id)
+    end
+  end
+
+  defp get_and_check_next_page(page_map, next_id) do
+    case Map.get(page_map, next_id) do
+      nil -> {:error, :not_found}
+      next_page -> find_first_non_empty_page(page_map, next_page)
+    end
+  end
+
+  @spec find_last_page(Index.t()) :: {:ok, Page.t(), binary()} | {:error, :not_found}
+  defp find_last_page(%Index{page_map: page_map}) when page_map == %{}, do: {:error, :not_found}
+
+  defp find_last_page(%Index{page_map: page_map}) do
+    # Find the page with next_id = 0 (last in chain)
+    page_map
+    |> Enum.find_value(fn {_page_id, page} ->
+      if Page.next_id(page) == 0 and Page.right_key(page) != nil do
+        {page, Page.right_key(page)}
+      end
+    end)
+    |> case do
+      nil -> {:error, :not_found}
+      {page, last_key} -> {:ok, page, last_key}
     end
   end
 end

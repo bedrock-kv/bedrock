@@ -15,6 +15,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.WaitingList
+  alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
@@ -110,13 +111,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   When reply_fn is provided in opts, returns :ok immediately and delivers results via callback.
   When reply_fn is not provided, returns results synchronously (primarily for testing).
   """
+  def fetch(state, key_or_selector, version, opts \\ [])
+
   @spec fetch(State.t(), Bedrock.key(), Bedrock.version(), opts :: [reply_fn: function()]) ::
           {:ok, binary()}
           | {:ok, pid()}
           | {:error, :not_found}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-  def fetch(%State{} = t, key, version, opts \\ []) do
+  def fetch(%State{} = t, key, version, opts) when is_binary(key) do
     t.index_manager
     |> IndexManager.page_for_key(key, version)
     |> case do
@@ -129,6 +132,31 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
 
       error ->
         error
+    end
+  end
+
+  @spec fetch(State.t(), KeySelector.t(), Bedrock.version(), opts :: [reply_fn: function()]) ::
+          {:ok, {resolved_key :: binary(), value :: binary()}}
+          | {:ok, pid()}
+          | {:error, :not_found}
+          | {:error, :version_too_old}
+          | {:error, :version_too_new}
+  def fetch(%State{} = t, %KeySelector{} = key_selector, version, opts) do
+    case IndexManager.page_for_key(t.index_manager, key_selector, version) do
+      {:ok, resolved_key, page} ->
+        load_fn = Database.value_loader(t.database)
+        fetch_task = fn -> fetch_resolved_key_selector(page, resolved_key, load_fn) end
+        do_now_or_async_with_reply(opts[:reply_fn], fetch_task)
+
+      error ->
+        error
+    end
+  end
+
+  defp fetch_resolved_key_selector(page, resolved_key, load_fn) do
+    case fetch_from_page(page, resolved_key, load_fn) do
+      {:ok, value} -> {:ok, {resolved_key, value}}
+      error -> error
     end
   end
 
@@ -145,6 +173,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   When reply_fn is provided in opts, returns :ok immediately and delivers results via callback.
   When reply_fn is not provided, returns results synchronously (primarily for testing).
   """
+  def range_fetch(t, start_key_or_selector, end_key_or_selector, version, opts \\ [])
+
   @spec range_fetch(
           State.t(),
           Bedrock.key(),
@@ -152,11 +182,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           Bedrock.version(),
           opts :: [reply_fn: function(), limit: pos_integer()]
         ) ::
-          {:ok, [{Bedrock.key(), Bedrock.value()}]}
+          {:ok, {[{Bedrock.key(), Bedrock.value()}], more :: boolean()}}
           | {:ok, pid()}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-  def range_fetch(t, start_key, end_key, version, opts \\ []) do
+  def range_fetch(t, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key) do
     t.index_manager
     |> IndexManager.pages_for_range(start_key, end_key, version)
     |> case do
@@ -173,19 +203,69 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     end
   end
 
-  defp range_fetch_from_pages(pages, start_key, end_key, limit, load_fn) do
-    pages
-    |> Page.stream_key_versions_in_range(start_key, end_key)
-    |> apply_limit(limit)
-    |> Enum.map(fn {key, version} ->
-      {:ok, value} = load_fn.(key, version)
-      {key, value}
-    end)
-    |> then(&{:ok, &1})
+  @spec range_fetch(
+          State.t(),
+          KeySelector.t(),
+          KeySelector.t(),
+          Bedrock.version(),
+          opts :: [reply_fn: function(), limit: pos_integer()]
+        ) ::
+          {:ok, {[{Bedrock.key(), Bedrock.value()}], more :: boolean()}}
+          | {:ok, pid()}
+          | {:error, :version_too_old}
+          | {:error, :version_too_new}
+          | {:error, :not_found}
+          | {:error, :invalid_range}
+  def range_fetch(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts) do
+    case IndexManager.pages_for_range(t.index_manager, start_selector, end_selector, version) do
+      {:ok, {resolved_start_key, resolved_end_key}, pages} ->
+        load_fn = Database.value_loader(t.database)
+        limit = opts[:limit]
+
+        do_now_or_async_with_reply(opts[:reply_fn], fn ->
+          range_fetch_from_pages(pages, resolved_start_key, resolved_end_key, limit, load_fn)
+        end)
+
+      error ->
+        error
+    end
   end
 
-  defp apply_limit(stream, nil), do: stream
-  defp apply_limit(stream, limit) when is_integer(limit) and limit > 0, do: Stream.take(stream, limit)
+  defp range_fetch_from_pages(pages, start_key, end_key, limit, load_fn) do
+    stream = Page.stream_key_versions_in_range(pages, start_key, end_key)
+
+    {results, has_more} =
+      case limit do
+        nil ->
+          results =
+            Enum.map(stream, fn {key, version} ->
+              {:ok, value} = load_fn.(key, version)
+              {key, value}
+            end)
+
+          {results, false}
+
+        limit when is_integer(limit) and limit > 0 ->
+          # Use reduce_while to process only up to limit + early termination detection
+          {results, has_more} =
+            stream
+            |> Stream.with_index()
+            |> Enum.reduce_while({[], false}, &process_indexed_item(&1, &2, limit, load_fn))
+
+          {Enum.reverse(results), has_more}
+      end
+
+    {:ok, {results, has_more}}
+  end
+
+  defp process_indexed_item({{key, version}, index}, {acc, _}, limit, load_fn) do
+    if index < limit do
+      {:ok, value} = load_fn.(key, version)
+      {:cont, {[{key, value} | acc], false}}
+    else
+      {:halt, {acc, true}}
+    end
+  end
 
   @doc """
   Adds a fetch request to the waitlist.
@@ -214,7 +294,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     updated_state
   end
 
-  defp run_fetch_and_notify(t, reply_fn, {key, version}) do
+  defp run_fetch_and_notify(t, reply_fn, {key, version}) when is_binary(key) do
     case fetch(t, key, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
@@ -225,8 +305,31 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     end
   end
 
-  defp run_fetch_and_notify(t, reply_fn, {start_key, end_key, version}) do
+  defp run_fetch_and_notify(t, reply_fn, {start_key, end_key, version})
+       when is_binary(start_key) and is_binary(end_key) do
     case range_fetch(t, start_key, end_key, version, reply_fn: reply_fn) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      error ->
+        reply_fn.(error)
+        :ok
+    end
+  end
+
+  defp run_fetch_and_notify(t, reply_fn, {%KeySelector{} = key_selector, version}) do
+    case fetch(t, key_selector, version, reply_fn: reply_fn) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      error ->
+        reply_fn.(error)
+        :ok
+    end
+  end
+
+  defp run_fetch_and_notify(t, reply_fn, {%KeySelector{} = start_selector, %KeySelector{} = end_selector, version}) do
+    case range_fetch(t, start_selector, end_selector, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
 

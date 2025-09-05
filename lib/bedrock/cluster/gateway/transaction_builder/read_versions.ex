@@ -10,6 +10,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
   @type gateway_fn() :: (pid(), Bedrock.version() ->
                            {:ok, Bedrock.interval_in_ms()} | {:error, atom()})
   @type time_fn() :: (-> integer())
+  @type next_read_version_fn() :: (State.t() ->
+                                     {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
+                                     | {:error, atom()})
 
   @spec next_read_version(State.t()) ::
           {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
@@ -51,4 +54,44 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersions do
       {:ok, %{t | read_version_lease_expiration: now + lease_will_expire_in_ms}}
     end
   end
+
+  @doc """
+  Ensures a read version is available on the transaction state.
+
+  If no read version exists, acquires one with proper lease management.
+  This is the shared logic used across all fetch operations.
+  """
+  @spec ensure_read_version!(
+          State.t(),
+          opts :: [
+            next_read_version_fn: next_read_version_fn(),
+            time_fn: time_fn()
+          ]
+        ) :: State.t()
+  def ensure_read_version!(%{read_version: nil} = t, opts) do
+    next_read_version_fn = Keyword.get(opts, :next_read_version_fn, &next_read_version/1)
+    time_fn = Keyword.get(opts, :time_fn, &Time.monotonic_now_in_ms/0)
+
+    case next_read_version_fn.(t) do
+      {:ok, read_version, read_version_lease_expiration_in_ms} ->
+        read_version_lease_expiration =
+          time_fn.() + read_version_lease_expiration_in_ms
+
+        Map.merge(t, %{
+          read_version: read_version,
+          read_version_lease_expiration: read_version_lease_expiration
+        })
+
+      {:error, :unavailable} ->
+        raise "No read version available"
+
+      {:error, :lease_expired} ->
+        raise "Read version lease expired"
+
+      {:error, reason} ->
+        raise "Failed to acquire read version: #{inspect(reason)}"
+    end
+  end
+
+  def ensure_read_version!(t, _opts), do: t
 end

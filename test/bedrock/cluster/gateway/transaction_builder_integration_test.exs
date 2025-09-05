@@ -36,9 +36,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
   def start_transaction_builder(opts \\ []) do
     default_opts = [
       gateway: self(),
-      transaction_system_layout: create_test_transaction_system_layout(),
-      key_codec: TestKeyCodec,
-      value_codec: TestValueCodec
+      transaction_system_layout: create_test_transaction_system_layout()
     ]
 
     opts = Keyword.merge(default_opts, opts)
@@ -228,7 +226,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert_receive {:DOWN, ^ref, :process, ^pid, reason}
 
       assert match?(
-               {%RuntimeError{message: "No read version available for fetching key: " <> _}, _},
+               {%RuntimeError{message: "No read version available"}, _},
                reason
              )
     end
@@ -293,37 +291,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
     end
   end
 
-  describe "codec integration across operations" do
-    test "custom codecs work end-to-end" do
-      defmodule CustomKeyCodec do
-        @moduledoc false
-        def encode_key(key), do: {:ok, "encoded_#{key}"}
-      end
-
-      defmodule CustomValueCodec do
-        @moduledoc false
-        def encode_value(value), do: {:ok, "encoded_#{value}"}
-        def decode_value(value), do: {:ok, value}
-      end
-
-      pid =
-        start_transaction_builder(
-          key_codec: CustomKeyCodec,
-          value_codec: CustomValueCodec
-        )
-
-      GenServer.cast(pid, {:put, "test_key", "test_value"})
-      :timer.sleep(10)
-
-      result = GenServer.call(pid, {:fetch, "test_key"})
-      assert result == {:ok, "encoded_test_value"}
-
-      state = :sys.get_state(pid)
-      commit_result = Tx.commit(state.tx)
-      assert commit_result.mutations == [{:set, "encoded_test_key", "encoded_test_value"}]
-    end
-  end
-
   describe "configuration preservation" do
     test "transaction system layout preserved across operations" do
       custom_layout = %{
@@ -342,30 +309,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
       state = :sys.get_state(pid)
       assert state.transaction_system_layout == custom_layout
-    end
-
-    test "codec configuration preserved across nested transactions" do
-      defmodule PersistentKeyCodec do
-        @moduledoc false
-        def encode_key(key), do: {:ok, "persistent_#{key}"}
-      end
-
-      pid = start_transaction_builder(key_codec: PersistentKeyCodec)
-
-      GenServer.cast(pid, {:put, "base", "value"})
-      :ok = GenServer.call(pid, :nested_transaction)
-      GenServer.cast(pid, {:put, "nested", "value"})
-      :timer.sleep(10)
-
-      state = :sys.get_state(pid)
-      assert state.key_codec == PersistentKeyCodec
-
-      commit_result = Tx.commit(state.tx)
-
-      assert commit_result.mutations == [
-               {:set, "persistent_base", "value"},
-               {:set, "persistent_nested", "value"}
-             ]
     end
   end
 end

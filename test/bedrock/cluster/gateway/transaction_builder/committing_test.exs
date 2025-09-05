@@ -20,8 +20,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         storage_teams: [],
         services: %{}
       },
-      key_codec: TestKeyCodec,
-      value_codec: TestValueCodec,
       read_version: read_version,
       tx: tx,
       stack: []

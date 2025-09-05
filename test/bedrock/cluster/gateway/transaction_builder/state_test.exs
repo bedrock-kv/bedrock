@@ -11,8 +11,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert state.state == nil
       assert state.gateway == nil
       assert state.transaction_system_layout == nil
-      assert state.key_codec == nil
-      assert state.value_codec == nil
       assert state.read_version == nil
       assert state.read_version_lease_expiration == nil
       assert state.commit_version == nil
@@ -37,8 +35,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         state: :valid,
         gateway: self(),
         transaction_system_layout: layout,
-        key_codec: TestKeyCodec,
-        value_codec: TestValueCodec,
         read_version: 12_345,
         read_version_lease_expiration: 67_890,
         commit_version: 11_111,
@@ -52,8 +48,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert state.state == :valid
       assert state.gateway == self()
       assert state.transaction_system_layout == layout
-      assert state.key_codec == TestKeyCodec
-      assert state.value_codec == TestValueCodec
       assert state.read_version == 12_345
       assert state.read_version_lease_expiration == 67_890
       assert state.commit_version == 11_111
@@ -93,8 +87,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         state: :valid,
         gateway: self(),
         transaction_system_layout: %{test: "layout"},
-        key_codec: TestKeyCodec,
-        value_codec: TestValueCodec,
         read_version: 12_345,
         tx: Tx.set(Tx.new(), "key", "value"),
         stack: [Tx.new()],
@@ -108,8 +100,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
       assert committed_state.gateway == original_state.gateway
       assert committed_state.transaction_system_layout == original_state.transaction_system_layout
-      assert committed_state.key_codec == original_state.key_codec
-      assert committed_state.value_codec == original_state.value_codec
       assert committed_state.read_version == original_state.read_version
       assert committed_state.tx == original_state.tx
       assert committed_state.stack == original_state.stack

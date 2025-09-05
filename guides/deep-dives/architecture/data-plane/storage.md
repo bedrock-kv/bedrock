@@ -48,7 +48,7 @@ During recovery, storage servers report their current state to the Director: wha
 
 Storage servers integrate with the transaction system at several key points. [Transaction Builder](../../../glossary.md#transaction-builder) are their primary consumers, using "horse racing" to query multiple storage replicas in parallel and take the first successful response. The storage system also supports conflict detection indirectly by maintaining the version history that Resolvers need. Version leasing creates another integration point with the Gateway, ensuring that transactions only read at versions that are guaranteed to be available across all storage servers they'll access.
 
-For the complete transaction flow, see **[Transaction Processing Deep Dive](../../transactions.md)**.
+For the complete transaction flow, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ## Related Components
 

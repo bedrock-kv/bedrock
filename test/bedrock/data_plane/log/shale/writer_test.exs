@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.DataPlane.Log.Shale.Writer
 
   @test_file "test_segment.log"
@@ -14,7 +15,7 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
     assert {:ok, %Writer{fd: fd, write_offset: 4, bytes_remaining: 1004}} =
              Writer.open(@test_file)
 
-    assert not is_nil(fd)
+    assert fd
   end
 
   test "close/1 successfully closes the file descriptor" do
@@ -29,14 +30,16 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
   test "append/2 returns :segment_full error when there is not enough space" do
     {:ok, writer} = Writer.open(@test_file)
     large_transaction = :binary.copy(<<0>>, 1016)
-    assert {:error, :segment_full} = Writer.append(writer, large_transaction)
+    commit_version = <<1::unsigned-big-64>>
+    assert {:error, :segment_full} = Writer.append(writer, large_transaction, commit_version)
   end
 
   test "append/2 successfully appends a transaction and updates the writer struct" do
     {:ok, writer} = Writer.open(@test_file)
     transaction = <<1, 2, 3, 4>>
+    commit_version = <<1::unsigned-big-64>>
 
-    assert {:ok, %Writer{write_offset: 8, bytes_remaining: 1000}} =
-             Writer.append(writer, transaction)
+    assert {:ok, %Writer{write_offset: 24, bytes_remaining: 984}} =
+             Writer.append(writer, transaction, commit_version)
   end
 end

@@ -43,11 +43,11 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
         }
 
   @spec new(coordinators :: [node()]) :: t()
+  #
   def new(coordinators),
     do: %{
       nodes: coordinators,
       desired_coordinators: length(coordinators),
-      #
       ping_rate_in_hz: 10,
       retransmission_rate_in_hz: 20,
       desired_replication_factor: 1,
@@ -58,6 +58,5 @@ defmodule Bedrock.ControlPlane.Config.Parameters do
     }
 
   @spec put_desired_replication_factor(t(), replication_factor()) :: t()
-  def put_desired_replication_factor(t, replication_factor),
-    do: %{t | desired_replication_factor: replication_factor}
+  def put_desired_replication_factor(t, replication_factor), do: %{t | desired_replication_factor: replication_factor}
 end

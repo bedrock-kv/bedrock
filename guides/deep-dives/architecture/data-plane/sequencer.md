@@ -6,15 +6,15 @@ The Sequencer serves as the authoritative source of version numbers in Bedrock, 
 
 ## The Need for Global Ordering
 
-Distributed [MVCC](../../glossary.md#multi-version-concurrency-control) systems require a global timeline to determine transaction ordering and detect conflicts. Without a central authority for version assignment, different nodes might assign conflicting version numbers, leading to inconsistent conflict detection and potential data corruption. The Sequencer solves this by serving as the single source of truth for version assignment across the entire cluster.
+Distributed [MVCC](../../../glossary.md#multi-version-concurrency-control) systems require a global timeline to determine transaction ordering and detect conflicts. Without a central authority for version assignment, different nodes might assign conflicting version numbers, leading to inconsistent conflict detection and potential data corruption. The Sequencer solves this by serving as the single source of truth for version assignment across the entire cluster.
 
-Version numbers serve two distinct purposes in Bedrock. [Read versions](../../glossary.md#read-version) establish consistent snapshots that transactions use to read data at a specific point in time. [Commit versions](../../glossary.md#commit-version) establish the final ordering of transactions and enable conflict detection by providing reference points for when changes become visible.
+Version numbers serve two distinct purposes in Bedrock. [Read versions](../../../glossary.md#read-version) establish consistent snapshots that transactions use to read data at a specific point in time. [Commit versions](../../../glossary.md#commit-version) establish the final ordering of transactions and enable conflict detection by providing reference points for when changes become visible.
 
 ## Version Assignment and Lamport Clock Semantics
 
-The Sequencer tracks three distinct version counters to implement proper [Lamport clock](../../glossary.md#lamport-clock) semantics. The [known committed version](../../glossary.md#known-committed-version) represents the highest version confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. [Read version](../../glossary.md#read-version) requests return this value, ensuring transactions see a consistent snapshot of committed data.
+The Sequencer tracks three distinct version counters to implement proper [Lamport clock](../../../glossary.md#lamport-clock) semantics. The [known committed version](../../../glossary.md#known-committed-version) represents the highest version confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. [Read version](../../../glossary.md#read-version) requests return this value, ensuring transactions see a consistent snapshot of committed data.
 
-[Commit version](../../glossary.md#commit-version) assignment implements the Lamport clock mechanism by returning a version pair: the [last commit version](../../glossary.md#last-commit-version) and the newly assigned commit version. This pair forms the Lamport clock chain {last_commit_version, next_commit_version} that enables conflict detection—Resolvers can determine causality relationships between transactions based on these version boundaries. Each assignment updates the last commit version to the value just handed to the commit proxy.
+[Commit version](../../../glossary.md#commit-version) assignment implements the Lamport clock mechanism by returning a version pair: the [last commit version](../../../glossary.md#last-commit-version) and the newly assigned commit version. This pair forms the Lamport clock chain {last_commit_version, next_commit_version} that enables conflict detection—Resolvers can determine causality relationships between transactions based on these version boundaries. Each assignment updates the last commit version to the value just handed to the commit proxy.
 
 Commit success reporting advances the known committed version when commit proxies confirm successful persistence to logs. This feedback loop ensures the readable horizon advances only when transactions are durably committed, maintaining strict consistency between version assignment and data visibility.
 
@@ -44,7 +44,7 @@ Sequencer serves as the **global version authority** with these specific respons
 - **Consistency Coordination**: Ensures read versions only reflect durably committed transactions through feedback loops
 - **Recovery Integration**: Accepts initial version state from Director to maintain correct version progression
 
-> **Complete Flow**: For the full transaction processing sequence showing Sequencer's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+> **Complete Flow**: For the full transaction processing sequence showing Sequencer's role in context, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ## Related Components
 

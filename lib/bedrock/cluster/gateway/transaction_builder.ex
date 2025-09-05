@@ -57,102 +57,146 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   TransactionBuilder process.
   """
 
-  alias Bedrock.Cluster.Gateway
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
-  alias Bedrock.Internal.Time
+  use GenServer
 
   import __MODULE__.Committing, only: [do_commit: 1]
-  import __MODULE__.Fetching, only: [do_fetch: 2]
+  import __MODULE__.PointReads, only: [fetch_key: 2, fetch_key_selector: 2]
   import __MODULE__.Putting, only: [do_put: 3]
+  import __MODULE__.RangeReads, only: [fetch_range: 4, fetch_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
+  import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.Internal.Time
 
   @doc false
   @spec start_link(
           opts :: [
             gateway: Gateway.ref(),
             transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
-            key_codec: module(),
-            value_codec: module()
+            read_version: non_neg_integer() | nil,
+            time_fn: (-> integer())
           ]
         ) ::
           {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
-    key_codec = Keyword.fetch!(opts, :key_codec)
-    value_codec = Keyword.fetch!(opts, :value_codec)
-    GenServer.start_link(__MODULE__, {gateway, transaction_system_layout, key_codec, value_codec})
+    read_version = Keyword.get(opts, :read_version)
+    time_fn = Keyword.get(opts, :time_fn, &Time.monotonic_now_in_ms/0)
+
+    GenServer.start_link(
+      __MODULE__,
+      {gateway, transaction_system_layout, read_version, time_fn}
+    )
   end
 
-  use GenServer
-  import Bedrock.Internal.GenServer.Replies
+  @impl true
+  def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def init(arg),
-    do: {:ok, arg, {:continue, :initialization}}
+  def handle_continue(:initialization, {gateway, transaction_system_layout}) do
+    handle_continue(
+      :initialization,
+      {gateway, transaction_system_layout, nil, &Time.monotonic_now_in_ms/0}
+    )
+  end
 
-  @impl true
-  def handle_continue(
-        :initialization,
-        {gateway, transaction_system_layout, key_codec, value_codec}
-      ) do
-    %State{
+  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version}) do
+    handle_continue(
+      :initialization,
+      {gateway, transaction_system_layout, read_version, &Time.monotonic_now_in_ms/0}
+    )
+  end
+
+  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version, time_fn}) do
+    # Build the layout index once during initialization for O(log n) lookups
+    layout_index = LayoutUtils.build_layout_index(transaction_system_layout)
+
+    # For tests, if read_version is provided, set a far-future lease expiration
+    read_version_lease_expiration =
+      if read_version == nil,
+        # 60 seconds from now
+        do: nil,
+        else: time_fn.() + 60_000
+
+    noreply(%State{
       state: :valid,
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
-      key_codec: key_codec,
-      value_codec: value_codec
-    }
-    |> noreply()
+      layout_index: layout_index,
+      read_version: read_version,
+      read_version_lease_expiration: read_version_lease_expiration
+    })
   end
 
-  def handle_continue(:stop, t), do: t |> stop(:normal)
+  def handle_continue(:stop, t), do: stop(t, :normal)
 
-  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version),
-    do: t |> noreply()
+  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version), do: noreply(t)
 
   def handle_continue(:update_version_lease_if_needed, t) do
     now = Time.monotonic_now_in_ms()
     ms_remaining = t.read_version_lease_expiration - now
 
     cond do
-      ms_remaining <= 0 -> %{t | state: :expired} |> noreply()
+      ms_remaining <= 0 -> noreply(%{t | state: :expired})
       ms_remaining < t.lease_renewal_threshold -> t |> renew_read_version_lease() |> noreply()
-      true -> t |> noreply()
+      true -> noreply(t)
     end
   end
 
   @impl true
   def handle_call(:nested_transaction, _from, t) do
-    %{t | stack: [{t.reads, t.writes} | t.stack], reads: %{}, writes: %{}}
-    |> reply(:ok)
+    reply(%{t | stack: [t.tx | t.stack]}, :ok)
   end
 
   def handle_call(:commit, _from, t) do
     case do_commit(t) do
-      {:ok, t} -> t |> reply({:ok, t.commit_version}, continue: :stop)
-      {:error, _reason} = error -> t |> reply(error)
+      {:ok, t} -> reply(t, {:ok, t.commit_version}, continue: :stop)
+      {:error, _reason} = error -> reply(t, error)
     end
   end
 
   def handle_call({:fetch, key}, _from, t) do
-    case do_fetch(t, key) do
-      {t, result} -> t |> reply(result, continue: :update_version_lease_if_needed)
+    case fetch_key(t, key) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
+  def handle_call({:fetch_key_selector, key_selector}, _from, t) do
+    case fetch_key_selector(t, key_selector) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
+  def handle_call({:range_batch, start_key, end_key, batch_size, opts}, _from, t) do
+    case fetch_range(t, {start_key, end_key}, batch_size, opts) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+    end
+  end
+
+  def handle_call({:range_fetch_key_selectors, start_selector, end_selector, opts}, _from, t) do
+    batch_size = Keyword.get(opts, :limit, 10_000)
+
+    case fetch_range_selectors(t, start_selector, end_selector, batch_size, opts) do
+      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
     end
   end
 
   @impl true
   def handle_cast({:put, key, value}, t) do
     case do_put(t, key, value) do
-      {:ok, t} -> t |> noreply()
+      {:ok, t} -> noreply(t)
       :key_error -> raise KeyError, "key must be a binary"
     end
   end
 
   def handle_cast(:rollback, t) do
     case do_rollback(t) do
-      :stop -> t |> noreply(continue: :stop)
-      t -> t |> noreply()
+      :stop -> noreply(t, continue: :stop)
+      t -> noreply(t)
     end
   end
 
@@ -161,5 +205,5 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @spec do_rollback(State.t()) :: :stop | State.t()
   def do_rollback(%{stack: []}), do: :stop
-  def do_rollback(%{stack: [_ | stack]} = t), do: %{t | stack: stack}
+  def do_rollback(%{stack: [tx | stack]} = t), do: %{t | tx: tx, stack: stack}
 end

@@ -1,12 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Server do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.Service.Worker
+  use GenServer
 
   import Bedrock.ControlPlane.Director.Nodes,
     only: [
@@ -23,8 +18,15 @@ defmodule Bedrock.ControlPlane.Director.Server do
       try_to_recover: 1
     ]
 
-  use GenServer
   import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.ServiceDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.Service.Worker
+
   require Logger
 
   @doc false
@@ -54,18 +56,14 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, old_transaction_system_layout, epoch, coordinator, services,
-            node_capabilities}
+           {cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init(
-        {cluster, config, old_transaction_system_layout, epoch, coordinator, services,
-         node_capabilities}
-      ) do
+  def init({cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}) do
     state = %State{
       epoch: epoch,
       cluster: cluster,
@@ -106,15 +104,15 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @impl true
   def handle_info({[:alias | ref], result}, t) when is_reference(ref) do
     Logger.warning("Director received unexpected Task reply: #{inspect(result)}")
-    t |> noreply()
+    noreply(t)
   end
 
   @impl true
 
   def handle_call(:fetch_transaction_system_layout, _from, t) do
     case t.transaction_system_layout do
-      nil -> t |> reply({:error, :unavailable})
-      transaction_system_layout -> t |> reply({:ok, transaction_system_layout})
+      nil -> reply(t, {:error, :unavailable})
+      transaction_system_layout -> reply(t, {:ok, transaction_system_layout})
     end
   end
 
@@ -125,8 +123,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   def handle_call({:request_to_rejoin, node, capabilities, running_services}, _from, t) do
-    {:ok, updated_t} =
-      t |> request_to_rejoin(node, capabilities, running_services |> Map.values(), now())
+    {:ok, updated_t} = request_to_rejoin(t, node, capabilities, Map.values(running_services), now())
 
     updated_t
     |> try_to_recover()
@@ -145,8 +142,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> noreply()
   end
 
-  def handle_cast({:pong, _from}, t),
-    do: t |> noreply()
+  def handle_cast({:pong, _from}, t), do: noreply(t)
 
   def handle_cast({:node_added_worker, node, worker_info}, %State{} = t) do
     t
@@ -172,7 +168,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   # Catch-all for unexpected cast messages (e.g., from old incarnations)
   def handle_cast(message, %State{} = t) do
     Logger.debug("Director ignoring unexpected cast message: #{inspect(message)}")
-    t |> noreply()
+    noreply(t)
   end
 
   @impl true
@@ -186,8 +182,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
           %{Worker.id() => ServiceDescriptor.t()}
-  def get_services_from_transaction_system_layout(%{services: services}),
-    do: services || %{}
+  def get_services_from_transaction_system_layout(%{services: services}), do: services || %{}
 
   def get_services_from_transaction_system_layout(_), do: %{}
 
@@ -195,8 +190,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
           State.t()
   def add_services_to_directory(t, service_infos) do
     new_services =
-      service_infos
-      |> Map.new(fn {service_id, kind, {otp_name, node}} ->
+      Map.new(service_infos, fn {service_id, kind, {otp_name, node}} ->
         {service_id, {kind, {otp_name, node}}}
       end)
 
@@ -207,7 +201,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def try_to_recover_if_stalled(%{state: :recovery} = t) do
     # If we're in recovery state, new services might resolve insufficient_nodes
     # So we should retry recovery
-    t |> try_to_recover()
+    try_to_recover(t)
   end
 
   def try_to_recover_if_stalled(t) do

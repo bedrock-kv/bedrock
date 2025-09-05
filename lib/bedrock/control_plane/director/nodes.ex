@@ -24,15 +24,14 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   directory.
   """
 
+  use Bedrock.Internal.TimerManagement
+
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.Internal.TimerManagement
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
-
-  use TimerManagement
 
   @type worker_creation_error ::
           {:node_lacks_capability, node(), :log | :storage}
@@ -57,7 +56,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
           State.t()
   def node_added_worker(t, node, info, _at) do
     # Simply add the running service without node tracking
-    t |> add_running_service(node, info)
+    add_running_service(t, node, info)
   end
 
   @spec ping_all_coordinators(State.t()) :: State.t()
@@ -114,15 +113,9 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
         ) ::
           State.t()
   def add_running_services(t, node, service_infos) do
-    t
-    |> Map.update!(:services, fn services ->
-      service_infos
-      |> Enum.reduce(services, fn service_info, services ->
-        services
-        |> Map.put(
-          service_info[:id],
-          {service_info[:kind], {service_info[:otp_name], node}}
-        )
+    Map.update!(t, :services, fn services ->
+      Enum.reduce(service_infos, services, fn service_info, services ->
+        Map.put(services, service_info[:id], {service_info[:kind], {service_info[:otp_name], node}})
       end)
     end)
   end
@@ -130,26 +123,18 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   @spec add_running_service(State.t(), node(), service_info :: Director.running_service_info()) ::
           State.t()
   def add_running_service(t, node, service_info) do
-    t
-    |> Map.update!(:services, fn services ->
-      services
-      |> Map.put(
-        service_info[:id],
-        {service_info[:kind], {service_info[:otp_name], node}}
-      )
+    Map.update!(t, :services, fn services ->
+      Map.put(services, service_info[:id], {service_info[:kind], {service_info[:otp_name], node}})
     end)
   end
 
   @spec node_down(State.t(), node()) :: State.t()
   def node_down(t, node) do
-    t
-    |> Map.update!(:services, fn services ->
-      services
-      |> Enum.map(fn
+    Map.update!(t, :services, fn services ->
+      Map.new(services, fn
         {id, %{last_seen: {_, ^node}} = service} -> {id, %{service | status: :down}}
         id_and_service -> id_and_service
       end)
-      |> Map.new()
     end)
   end
 

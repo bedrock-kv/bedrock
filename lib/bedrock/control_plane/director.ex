@@ -30,10 +30,10 @@ defmodule Bedrock.ControlPlane.Director do
   providing full knowledge of available cluster resources and the ability to
   create new services when vacancies must be filled during recovery.
   """
+  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
-
-  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   @type ref :: pid() | atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.Director do
   @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_in_ms :: timeout_in_ms()) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout | :unknown}
   def fetch_transaction_system_layout(director, timeout_in_ms \\ 5_000),
-    do: director |> call(:fetch_transaction_system_layout, timeout_in_ms)
+    do: call(director, :fetch_transaction_system_layout, timeout_in_ms)
 
   @doc """
   Sends a 'pong' message to the specified cluster director from the given node.
@@ -63,8 +63,7 @@ defmodule Bedrock.ControlPlane.Director do
   - `:ok`: Indicates the message was successfully sent.
   """
   @spec send_pong(director :: ref(), from_node :: node()) :: :ok
-  def send_pong(director, from_node),
-    do: director |> cast({:pong, from_node})
+  def send_pong(director, from_node), do: cast(director, {:pong, from_node})
 
   @doc """
   Sends a 'ping' message to the specified cluster director from the given node.
@@ -72,8 +71,7 @@ defmodule Bedrock.ControlPlane.Director do
   'pong' message if it is alive and the read version is acceptable.
   """
   @spec send_ping(director :: ref(), minimum_read_version :: Bedrock.version()) :: :ok
-  def send_ping(director, minimum_read_version),
-    do: director |> cast({:ping, self(), minimum_read_version})
+  def send_ping(director, minimum_read_version), do: cast(director, {:ping, self(), minimum_read_version})
 
   @doc """
   Requests a foreman on a specific node to create a new worker.
@@ -99,8 +97,7 @@ defmodule Bedrock.ControlPlane.Director do
           {:ok, running_service_info()}
           | {:error, :worker_creation_failed | :node_unavailable | :timeout}
   def request_worker_creation(director, node, worker_id, kind, timeout_in_ms \\ 10_000) do
-    director
-    |> call({:request_worker_creation, node, worker_id, kind}, timeout_in_ms)
+    call(director, {:request_worker_creation, node, worker_id, kind}, timeout_in_ms)
   end
 
   @doc """
@@ -119,8 +116,7 @@ defmodule Bedrock.ControlPlane.Director do
           director :: ref(),
           service_infos :: [{String.t(), atom(), {atom(), node()}}]
         ) :: :ok
-  def notify_services_registered(director, service_infos),
-    do: director |> cast({:service_registered, service_infos})
+  def notify_services_registered(director, service_infos), do: cast(director, {:service_registered, service_infos})
 
   @doc """
   Notifies the director that node capabilities have been updated.
@@ -139,5 +135,5 @@ defmodule Bedrock.ControlPlane.Director do
           node_capabilities :: %{Bedrock.Cluster.capability() => [node()]}
         ) :: :ok
   def notify_capabilities_updated(director, node_capabilities),
-    do: director |> cast({:capabilities_updated, node_capabilities})
+    do: cast(director, {:capabilities_updated, node_capabilities})
 end

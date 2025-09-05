@@ -20,13 +20,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   detailed explanation of the recovery flow and rationale.
   """
 
-  require Logger
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
 
-  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+  require Logger
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -36,13 +36,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
         context.available_services
       )
 
-    lock_old_system_services(old_system_services, recovery_attempt.epoch, context)
+    old_system_services
+    |> lock_old_system_services(recovery_attempt.epoch, context)
     |> case do
       {:error, :newer_epoch_exists} = error ->
         {recovery_attempt, error}
 
-      {:ok, locked_service_ids, log_recovery_info_by_id, storage_recovery_info_by_id,
-       transaction_services, service_pids} ->
+      {:ok, locked_service_ids, log_recovery_info_by_id, storage_recovery_info_by_id, transaction_services,
+       service_pids} ->
         updated_recovery_attempt =
           recovery_attempt
           |> Map.update!(:log_recovery_info_by_id, &Map.merge(log_recovery_info_by_id, &1))
@@ -54,8 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           |> Map.update!(:transaction_services, &Map.merge(transaction_services, &1))
           |> Map.update!(:service_pids, &Map.merge(service_pids, &1))
 
-        {updated_recovery_attempt,
-         Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase}
     end
   end
 
@@ -67,8 +67,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           Bedrock.epoch(),
           map()
         ) ::
-          {:ok, locked_ids :: MapSet.t(Worker.id()),
-           new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
+          {:ok, locked_ids :: MapSet.t(Worker.id()), new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
            new_storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()},
            transaction_services :: %{
              Worker.id() => %{
@@ -95,8 +94,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
       {:ok, {_, _, {:error, :newer_epoch_exists} = error}}, _ ->
         {:halt, error}
 
-      {:ok, {id, service, {:ok, pid, info}}},
-      {locked_ids, info_by_id, transaction_services, service_pids} ->
+      {:ok, {id, service, {:ok, pid, info}}}, {locked_ids, info_by_id, transaction_services, service_pids} ->
         {:cont,
          {MapSet.put(locked_ids, id), Map.put(info_by_id, id, info),
           Map.put(transaction_services, id, %{
@@ -117,14 +115,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
         error
 
       {locked_ids, info_by_id, transaction_services, service_pids} ->
-        grouped_recovery_info = info_by_id |> Enum.group_by(&Map.get(elem(&1, 1), :kind))
+        grouped_recovery_info = Enum.group_by(info_by_id, &Map.get(elem(&1, 1), :kind))
         new_log_recovery_info_by_id = grouped_recovery_info |> Map.get(:log, []) |> Map.new()
 
         new_storage_recovery_info_by_id =
           grouped_recovery_info |> Map.get(:storage, []) |> Map.new()
 
-        {:ok, locked_ids, new_log_recovery_info_by_id, new_storage_recovery_info_by_id,
-         transaction_services, service_pids}
+        {:ok, locked_ids, new_log_recovery_info_by_id, new_storage_recovery_info_by_id, transaction_services,
+         service_pids}
     end
   end
 
@@ -141,11 +139,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
   @spec lock_service_impl({atom(), {atom(), node()}}, Bedrock.epoch()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl({:log, name}, epoch),
-    do: Log.lock_for_recovery(name, epoch)
+  defp lock_service_impl({:log, name}, epoch), do: Log.lock_for_recovery(name, epoch)
 
-  defp lock_service_impl({:storage, name}, epoch),
-    do: Storage.lock_for_recovery(name, epoch)
+  defp lock_service_impl({:storage, name}, epoch), do: Storage.lock_for_recovery(name, epoch)
 
   defp lock_service_impl(_, _), do: {:error, :unavailable}
 
@@ -155,9 +151,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           %{Worker.id() => {atom(), {atom(), node()}}}
   defp extract_old_system_services(old_layout, available_services) do
     old_service_ids =
-      (Map.keys(Map.get(old_layout, :logs, %{})) ++
-         Enum.flat_map(Map.get(old_layout, :storage_teams, []), & &1.storage_ids))
-      |> MapSet.new()
+      MapSet.new(
+        Map.keys(Map.get(old_layout, :logs, %{})) ++
+          Enum.flat_map(Map.get(old_layout, :storage_teams, []), & &1.storage_ids)
+      )
 
     available_services
     |> Enum.filter(fn {service_id, _} ->

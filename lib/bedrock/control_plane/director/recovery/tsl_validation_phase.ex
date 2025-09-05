@@ -44,9 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   recovery attempt (this is a pure validation phase).
   """
   @impl true
-  def execute(%RecoveryAttempt{} = recovery_attempt, %{
-        old_transaction_system_layout: %{} = tsl_to_validate
-      }) do
+  def execute(%RecoveryAttempt{} = recovery_attempt, %{old_transaction_system_layout: %{} = tsl_to_validate}) do
     case TSLTypeValidator.validate_type_safety(tsl_to_validate) do
       :ok ->
         trace_recovery_tsl_validation_success()

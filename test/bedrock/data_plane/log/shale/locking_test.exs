@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Log.Shale.LockingTest do
   use ExUnit.Case
-  alias Bedrock.DataPlane.Log.Shale.{Locking, State}
+
+  alias Bedrock.DataPlane.Log.Shale.Locking
+  alias Bedrock.DataPlane.Log.Shale.State
 
   describe "lock_for_recovery/3" do
     test "returns error when a newer epoch exists" do

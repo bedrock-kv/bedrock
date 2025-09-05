@@ -1,6 +1,6 @@
 # Transaction Builder
 
-The [Transaction Builder](../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../glossary.md#read-version) acquisition to final [commit](../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [storage](../../glossary.md#storage) server selection.
+The [Transaction Builder](../../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../../glossary.md#read-version) acquisition to final [commit](../../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [storage](../../../glossary.md#storage) server selection.
 
 **Location**: [`lib/bedrock/cluster/gateway/transaction_builder.ex`](../../../lib/bedrock/cluster/gateway/transaction_builder.ex)
 
@@ -12,7 +12,7 @@ Transaction Builder exemplifies Bedrock's embedded distributed approach by bring
 
 The Transaction Builder represents a fundamental departure from traditional distributed database architectures. Instead of applications sending transaction requests to remote database servers, the Transaction Builder embeds transaction management logic directly within application processes. This local-first approach means transaction state, caching, and coordination logic run co-located with application code.
 
-This embedded design enables transaction performance characteristics impossible in client-server architectures. [Read-your-writes consistency](../../glossary.md#read-your-writes-consistency) requires no network round-trips because the write cache operates in local memory. Transaction state management happens at memory speeds rather than network speeds. Performance optimizations like [storage server](../../glossary.md#storage-server) selection and caching develop organically within each transaction's local context.
+This embedded design enables transaction performance characteristics impossible in client-server architectures. [Read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) requires no network round-trips because the write cache operates in local memory. Transaction state management happens at memory speeds rather than network speeds. Performance optimizations like [storage server](../../../glossary.md#storage-server) selection and caching develop organically within each transaction's local context.
 
 The per-process model also enables sophisticated local optimizations. Each Transaction Builder can maintain its own performance characteristics, learning which storage servers respond fastest for its particular access patterns. This localized learning creates transaction coordination that adapts to application-specific usage patterns rather than relying on global optimization heuristics.
 
@@ -36,9 +36,9 @@ This design also enables new programming paradigms. Applications can create hund
 
 Most databases handle multiple transactions within shared processes, but Bedrock takes a different approach. Each transaction gets its own dedicated process that exists for the entire transaction lifetime. This design choice enables several important capabilities that would be difficult to achieve with shared processes.
 
-First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../glossary.md#version) [leases](../../glossary.md#lease), and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which storage servers are fastest for its particular access patterns.
+First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../../glossary.md#version) [leases](../../../glossary.md#lease), and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which storage servers are fastest for its particular access patterns.
 
-The per-process model also simplifies error handling and [recovery](../../glossary.md#recovery). If something goes wrong with one transaction, it can fail independently without affecting other transactions. The process can maintain leases, handle timeouts, and coordinate complex multi-step operations without worrying about other transactions.
+The per-process model also simplifies error handling and [recovery](../../../glossary.md#recovery). If something goes wrong with one transaction, it can fail independently without affecting other transactions. The process can maintain leases, handle timeouts, and coordinate complex multi-step operations without worrying about other transactions.
 
 ## Read-Your-Writes: The Local Cache
 
@@ -50,11 +50,11 @@ This local caching also provides significant performance benefits. Repeated read
 
 ## Storage Server Selection and Performance Optimization
 
-Transaction Builder maintains knowledge about which storage servers handle which [key ranges](../../glossary.md#key-range), enabling it to route read requests efficiently. This mapping is derived from the [transaction system layout](../../glossary.md#transaction-system-layout) and is kept current as the cluster configuration changes.
+Transaction Builder maintains knowledge about which storage servers handle which [key ranges](../../../glossary.md#key-range), enabling it to route read requests efficiently. This mapping is derived from the [transaction system layout](../../../glossary.md#transaction-system-layout) and is kept current as the cluster configuration changes.
 
 When a read operation needs data from storage servers, Transaction Builder faces a performance challenge: which storage server should it contact? Key ranges are typically served by multiple storage servers for redundancy, but these servers might have different response times due to load, network conditions, hardware differences, or physical location—servers in different data centers or regions can have significantly different network latencies.
 
-Transaction Builder solves this through "[horse racing](../../glossary.md#horse-racing)"—simultaneously querying multiple storage servers that have the needed data and using the first successful response. This approach minimizes read latency by automatically adapting to current network and server conditions without requiring complex load balancing logic.
+Transaction Builder solves this through "[horse racing](../../../glossary.md#horse-racing)"—simultaneously querying multiple storage servers that have the needed data and using the first successful response. This approach minimizes read latency by automatically adapting to current network and server conditions without requiring complex load balancing logic.
 
 The system also learns from these races. Transaction Builder caches information about which storage servers are fastest for different key ranges, enabling it to optimize future reads by preferring servers that have performed well recently. For subsequent reads to the same key range, it will try the cached fastest server first, falling back to horse racing if that server fails or performs poorly.
 
@@ -62,11 +62,11 @@ This creates a feedback loop where read performance improves over the lifetime o
 
 ## Version Management and Leasing
 
-Transaction Builder uses lazy read version acquisition to minimize the [conflict](../../glossary.md#conflict) detection window and ensure transactions see the latest committed data. Rather than acquiring a read version when the transaction begins, it waits until the first read operation to obtain a version. This optimization is crucial because the span from read version to [commit version](../../glossary.md#commit-version) defines the window where this transaction could conflict with others—delaying the read version acquisition shortens that conflict window significantly. It also ensures that the transaction sees the most recent committed state available at the time of its first read, rather than potentially stale data from when the transaction was created.
+Transaction Builder uses lazy read version acquisition to minimize the [conflict](../../../glossary.md#conflict) detection window and ensure transactions see the latest committed data. Rather than acquiring a read version when the transaction begins, it waits until the first read operation to obtain a version. This optimization is crucial because the span from read version to [commit version](../../../glossary.md#commit-version) defines the window where this transaction could conflict with others—delaying the read version acquisition shortens that conflict window significantly. It also ensures that the transaction sees the most recent committed state available at the time of its first read, rather than potentially stale data from when the transaction was created.
 
-When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../glossary.md#sequencer) and coordinates with the [Gateway](../../glossary.md#gateway) to obtain a lease for that version. This lease serves a crucial system-wide coordination function: it holds the window of readable versions open by preventing the system from garbage collecting data that active transactions might need.
+When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../../glossary.md#sequencer) and coordinates with the [Gateway](../../../glossary.md#gateway) to obtain a lease for that version. This lease serves a crucial system-wide coordination function: it holds the window of readable versions open by preventing the system from garbage collecting data that active transactions might need.
 
-The lease mechanism works by tracking all outstanding read version leases across the system. The oldest read version that's currently leased becomes the system's [minimum read version](../../glossary.md#minimum-read-version)—storage servers cannot garbage collect any data at or after this version because some transaction might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
+The lease mechanism works by tracking all outstanding read version leases across the system. The oldest read version that's currently leased becomes the system's [minimum read version](../../../glossary.md#minimum-read-version)—storage servers cannot garbage collect any data at or after this version because some transaction might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
 
 Transaction Builder actively monitors lease expiration and renews leases when necessary, ensuring that its read version remains valid throughout the transaction's lifetime. If a lease cannot be renewed due to system policy limits, the transaction expires rather than risk reading inconsistent data. This lease management happens automatically in the background, balancing transaction needs with system resource management.
 
@@ -80,7 +80,7 @@ When a nested transaction "commits," it's not a real distributed commit—it's a
 
 If a nested transaction is rolled back, both its reads and writes are discarded entirely. This is crucial because those reads "didn't really happen" from the perspective of the overall transaction—none of that data was used to produce any writes that survived into the final transaction state. Therefore, those discarded reads won't be included in the conflict detection when the top-level transaction eventually commits.
 
-Only the final, top-level transaction (after all nested commits and rollbacks are resolved) is sent to the [commit proxy](../../glossary.md#commit-proxy) as a single, flattened transaction for distributed processing.
+Only the final, top-level transaction (after all nested commits and rollbacks are resolved) is sent to the [commit proxy](../../../glossary.md#commit-proxy) as a single, flattened transaction for distributed processing.
 
 This approach provides significant performance benefits. Nested transactions require no network traffic, no coordination with other cluster components, and consume no distributed system resources. All nested transaction operations are purely local to the Transaction Builder process, dramatically reducing overhead compared to systems that treat each nested transaction as a separate distributed operation.
 
@@ -105,7 +105,7 @@ Transaction Builder serves as the **per-transaction coordinator** with these spe
 - **Nested Transaction Support**: Local state stacking for nested transaction semantics without distributed overhead
 - **Commit Coordination**: Transaction preparation and handoff to Commit Proxy for distributed processing
 
-> **Complete Flow**: For the full transaction processing sequence showing Transaction Builder's role in context, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+> **Complete Flow**: For the full transaction processing sequence showing Transaction Builder's role in context, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ## Related Components
 

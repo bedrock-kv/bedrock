@@ -1,5 +1,6 @@
 defmodule Bedrock.Internal.Time.IntervalTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.Internal.Time.Interval
 
   describe "from/2" do

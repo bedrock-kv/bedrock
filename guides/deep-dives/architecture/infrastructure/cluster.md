@@ -201,5 +201,5 @@ The Cluster interface provides several fault tolerance features:
 
 - [Coordinator](../control-plane/coordinator.md) - Primary cluster service accessed through Cluster interface
 - [Gateway](gateway.md) - Client interface managed by Cluster
-- [Cluster Startup](../../deep-dives/cluster-startup.md) - Cluster initialization process
-- [Recovery](../../deep-dives/recovery.md) - Cluster interface role in recovery coordination
+- [Cluster Startup](../../../deep-dives/cluster-startup.md) - Cluster initialization process
+- [Recovery](../../../deep-dives/recovery.md) - Cluster interface role in recovery coordination

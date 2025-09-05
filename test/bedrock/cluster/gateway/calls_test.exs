@@ -25,7 +25,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
 
     test "returns error when coordinator is unavailable", %{base_state: base_state} do
       state = %{base_state | known_coordinator: :unavailable}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, result} = Calls.begin_transaction(state, opts)
 
@@ -33,30 +33,48 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       assert result == {:error, :unavailable}
     end
 
-    test "raises when required key_codec option is missing", %{tsl: tsl, base_state: base_state} do
+    test "works without any options", %{tsl: tsl, base_state: base_state} do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, value_codec: TestValueCodec)
+      {updated_state, result} = Calls.begin_transaction(state, [])
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
-    test "raises when required value_codec option is missing", %{tsl: tsl, base_state: base_state} do
+    test "ignores any provided options", %{tsl: tsl, base_state: base_state} do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, key_codec: TestKeyCodec)
+      {updated_state, result} = Calls.begin_transaction(state, some_option: :value)
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
-    test "raises when both key_codec and value_codec options are missing", %{
+    test "works with empty options list", %{
       tsl: tsl,
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
 
-      assert_raise KeyError, fn ->
-        Calls.begin_transaction(state, [])
+      {updated_state, result} = Calls.begin_transaction(state, [])
+
+      assert updated_state == state
+
+      case result do
+        {:ok, _pid} -> :ok
+        {:error, reason} when reason != :unavailable -> :ok
+        other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
@@ -65,7 +83,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       # Since we can't easily mock TransactionBuilder.start_link in this environment,
       # we test that the function reaches the point where it would call start_link
@@ -90,7 +108,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     } do
       # No cached TSL and unavailable coordinator
       state = %{base_state | known_coordinator: :unavailable, transaction_system_layout: nil}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, result} = Calls.begin_transaction(state, opts)
 
@@ -104,7 +122,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       base_state: base_state
     } do
       state = %{base_state | transaction_system_layout: tsl}
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
 
       {updated_state, _result} = Calls.begin_transaction(state, opts)
 
@@ -133,9 +151,11 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       state = %{base_state | minimum_read_version: 100}
       read_version = 50
 
-      result = Calls.renew_read_version_lease(state, read_version)
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
 
       assert result == {:error, :lease_expired}
+      # State should be unchanged
+      assert updated_state == state
     end
 
     test "allows renewal when read_version equals minimum_read_version", %{
@@ -171,16 +191,18 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     end
 
     test "successfully renews lease when deadline is valid", %{base_state: base_state} do
-      now = :erlang.monotonic_time(:millisecond)
+      # Fixed time for deterministic test
+      now = 1_000_000
       future_deadline = now + 10_000
       read_version = 100
+      time_fn = fn -> now end
 
       state = %{
         base_state
         | deadline_by_version: %{read_version => future_deadline}
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
       assert {:ok, renewal_interval} = result
       assert renewal_interval == 5_000
@@ -189,15 +211,9 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
       assert new_deadline > now
 
-      # New deadline should be roughly now + 10 + renewal_interval_in_ms
-      # Calculate the actual interval and verify it's within expected range
-      actual_interval = new_deadline - now
-      # 10ms + renewal_interval_in_ms
-      expected_interval = 10 + 5_000
-
-      # Allow small timing variance (±10ms)
-      assert actual_interval >= expected_interval
-      assert actual_interval <= expected_interval + 10
+      # New deadline should be exactly now + 10 + renewal_interval_in_ms
+      expected_deadline = now + 10 + 5_000
+      assert new_deadline == expected_deadline
     end
 
     test "handles version not in deadline_by_version map", %{base_state: base_state} do
@@ -251,8 +267,9 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     } do
       # Test the specific calculation: now + 10 + renewal_deadline_in_ms
       custom_renewal_interval = 3_000
-      now = :erlang.monotonic_time(:millisecond)
-      future_deadline = now + 20_000
+      # Use deterministic time for testing
+      current_time = 1_000_000
+      future_deadline = current_time + 20_000
       read_version = 100
 
       state = %{
@@ -261,21 +278,16 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           lease_renewal_interval_in_ms: custom_renewal_interval
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      time_fn = fn -> current_time end
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
       assert {:ok, ^custom_renewal_interval} = result
 
       # Verify the calculation: new_lease_deadline_in_ms = now + 10 + renewal_deadline_in_ms
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
+      expected_deadline = current_time + 10 + custom_renewal_interval
 
-      # Calculate the actual interval between now and new_deadline
-      actual_interval = new_deadline - now
-      expected_interval = 10 + custom_renewal_interval
-
-      # Allow for small timing differences since we can't control exact timing
-      # The interval should be roughly expected_interval ± 5ms
-      assert actual_interval >= expected_interval - 5
-      assert actual_interval <= expected_interval + 5
+      assert new_deadline == expected_deadline
     end
 
     test "handles boundary case when deadline exactly equals current time", %{
@@ -324,8 +336,10 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
     end
 
     test "handles large renewal intervals", %{base_state: base_state} do
-      now = :erlang.monotonic_time(:millisecond)
-      future_deadline = now + 100_000
+      # Mock time to avoid timing-sensitive test failures
+      # Fixed time point
+      mock_now = 1_000_000
+      future_deadline = mock_now + 100_000
       read_version = 500
       # 1 minute
       large_interval = 60_000
@@ -336,18 +350,20 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           lease_renewal_interval_in_ms: large_interval
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
+      # Use mocked time function
+      mock_time_fn = fn -> mock_now end
+
+      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, mock_time_fn)
       assert {:ok, ^large_interval} = result
 
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
 
-      # Calculate the actual interval and verify it's within expected range
-      actual_interval = new_deadline - now
+      # Calculate the actual interval and verify it matches expected exactly
+      actual_interval = new_deadline - mock_now
       expected_interval = 10 + large_interval
 
-      # Allow timing variance (±10ms)
-      assert actual_interval >= expected_interval - 10
-      assert actual_interval <= expected_interval + 10
+      # With mocked time, this should be exact
+      assert actual_interval == expected_interval
     end
   end
 
@@ -365,7 +381,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       }
 
       # Test begin_transaction with this state
-      opts = [key_codec: TestKeyCodec, value_codec: TestValueCodec]
+      opts = []
       {_updated_state1, result1} = Calls.begin_transaction(base_state, opts)
 
       # Should not return :unavailable since coordinator and TSL are available

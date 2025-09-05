@@ -9,6 +9,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       try_to_resolve_transaction: 3
     ]
 
+  alias Bedrock.DataPlane.Transaction
+
   # Generate a random alphanumeric string of length 5 or less.
   def key_generator do
     string(:alphanumeric, min_length: 1, max_length: 5)
@@ -17,10 +19,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
   # Generate a range where the start is always less than the end. If we happen
   # to generate the same value, we just return the value.
   def range_generator do
-    key_generator()
-    |> StreamData.bind(fn v1 ->
-      key_generator()
-      |> StreamData.map(fn
+    StreamData.bind(key_generator(), fn v1 ->
+      StreamData.map(key_generator(), fn
         v2 when v1 > v2 -> {v2, v1}
         v2 when v1 == v2 -> v1
         v2 -> {v1, v2}
@@ -50,7 +50,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
           ) do
       initial_tree = nil
 
-      # Generate transactions with read and write sets. The write_version is
+      # Generate binary transactions with read and write conflicts. The write_version is
       # used to generate the read version for each transaction. The read
       # version is used to detect conflicts between reads and writes, and must
       # be some number that is lower than the index of the transaction.
@@ -58,7 +58,38 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         reads_and_writes
         |> Enum.with_index()
         |> Enum.map(fn {{reads, writes}, index} ->
-          {{rem(write_version, index + 1) - 1, reads}, writes}
+          read_version = rem(write_version, index + 1) - 1
+          read_version_binary = if read_version >= 0, do: Bedrock.DataPlane.Version.from_integer(read_version)
+
+          # Convert read keys/ranges to conflicts
+          read_conflicts =
+            Enum.map(reads, fn
+              key when is_binary(key) -> {key, key <> "\0"}
+              {start_key, end_key} -> {start_key, end_key}
+            end)
+
+          # Convert write keys/ranges to conflicts
+          write_conflicts =
+            Enum.map(writes, fn
+              key when is_binary(key) -> {key, key <> "\0"}
+              {start_key, end_key} -> {start_key, end_key}
+            end)
+
+          # Create transaction map
+          transaction_map = %{
+            mutations:
+              Enum.map(writes, fn
+                key when is_binary(key) -> {:set, key, "value"}
+                # Use start key for ranges
+                {start_key, _end_key} -> {:set, start_key, "value"}
+              end),
+            read_conflicts: read_conflicts,
+            write_conflicts: write_conflicts,
+            read_version: read_version_binary
+          }
+
+          # Encode to binary
+          Transaction.encode(transaction_map)
         end)
 
       {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
@@ -78,7 +109,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
         # The transactions up to the failed index should not include the one
         # that has failed (since we're not supposed to have processed it yet.)
-        assert index not in failed_indexes
+        refute index in failed_indexes
 
         # Pull out the transaction that failed.
         failed_transaction = Enum.at(transactions, index)

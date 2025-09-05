@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-
   import RecoveryTestSupport
+
+  alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
 
   describe "execute/2 with valid data" do
     test "succeeds with existing transaction system layout and transitions to monitoring" do
@@ -35,15 +35,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> Map.put(:transaction_system_layout, transaction_system_layout)
 
       context =
-        recovery_context()
-        |> Map.put(:commit_transaction_fn, fn _proxy, _transaction ->
+        Map.put(recovery_context(), :commit_transaction_fn, fn _proxy, _transaction ->
           # Mock successful transaction
           {:ok, 1}
         end)
 
       {result, next_phase} = PersistencePhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
+      assert next_phase == :completed
       assert result.transaction_system_layout == transaction_system_layout
     end
 
@@ -70,8 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> Map.put(:transaction_system_layout, transaction_system_layout)
 
       context =
-        recovery_context()
-        |> Map.put(:commit_transaction_fn, fn _proxy, _transaction ->
+        Map.put(recovery_context(), :commit_transaction_fn, fn _proxy, _transaction ->
           # Mock failed transaction
           {:error, :timeout}
         end)

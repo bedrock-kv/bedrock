@@ -86,7 +86,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       assert all_supported_info
              |> Map.keys()
-             |> Enum.sort() == supported_info |> Enum.sort()
+             |> Enum.sort() == Enum.sort(supported_info)
     end
   end
 end

@@ -10,12 +10,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   use ExUnit.Case, async: true
 
+  import RecoveryTestSupport
+
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
-
-  import RecoveryTestSupport
 
   describe "Selective Service Locking" do
     test "epoch 1: no services locked initially, services locked during recruitment" do
@@ -53,7 +53,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         TSLValidationPhase.execute(recovery_attempt, context)
 
       # Should proceed to LockingPhase since TSL validation passed
-      assert validation_next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
+      assert validation_next_phase == LockingPhase
     end
 
     test "epoch 2: only old system services locked initially" do
@@ -98,7 +98,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         TSLValidationPhase.execute(recovery_attempt, context)
 
       # Should proceed to LockingPhase since TSL validation passed
-      assert validation_next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
+      assert validation_next_phase == LockingPhase
     end
 
     test "log recruitment phase should lock newly assigned services" do
@@ -142,7 +142,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       {result, next_phase} = LogRecruitmentPhase.execute(recovery_attempt, context)
 
       # Should have recruited kilvu2af and added it to transaction_services
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
+      assert next_phase == StorageRecruitmentPhase
       assert "kilvu2af" in Map.keys(result.transaction_services)
 
       # Most importantly: kilvu2af should have been locked during recruitment
@@ -248,7 +248,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       # Should lock only old system services
       assert lock_result.locked_service_ids == MapSet.new(["bwecaxvz", "gb6cddk5"])
-      assert Map.keys(lock_result.transaction_services) |> Enum.sort() == ["bwecaxvz", "gb6cddk5"]
+      assert lock_result.transaction_services |> Map.keys() |> Enum.sort() == ["bwecaxvz", "gb6cddk5"]
 
       # Services should have proper status format
       assert %{status: {:up, _}, kind: :log} = lock_result.transaction_services["bwecaxvz"]
@@ -373,8 +373,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       leaked_messages = collect_all_messages([])
 
       task_reply_messages =
-        leaked_messages
-        |> Enum.filter(fn
+        Enum.filter(leaked_messages, fn
           {[:alias | ref], _result} when is_reference(ref) -> true
           _ -> false
         end)
@@ -434,14 +433,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   end
 
   defp find_service_id_by_location(available_services, location) do
-    available_services
-    |> Enum.find_value(fn {id, {_kind, desc_location}} ->
+    Enum.find_value(available_services, fn {id, {_kind, desc_location}} ->
       match_service_location(desc_location, location, id)
     end)
   end
 
   defp match_service_location(desc_location, target_location, id) do
-    if desc_location == target_location, do: id, else: nil
+    if desc_location == target_location, do: id
   end
 
   # Reuse existing test helpers
@@ -467,7 +465,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
     worker_info_fn = fn {worker_ref, _node}, _fields, _opts ->
       # Extract worker_id and kind from the ref
-      [worker_id, kind_str] = worker_ref |> String.split("_ref_")
+      [worker_id, kind_str] = String.split(worker_ref, "_ref_")
       kind = String.to_atom(kind_str)
 
       {:ok,
@@ -515,11 +513,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   end
 
   defp with_mocked_log_recovery(context) do
-    copy_log_data_fn = fn _new_log_id,
-                          _old_log_id,
-                          _first_version,
-                          _last_version,
-                          _service_pids ->
+    copy_log_data_fn = fn _new_log_id, _old_log_id, _first_version, _last_version, _service_pids ->
       {:ok, spawn(fn -> :ok end)}
     end
 
@@ -530,7 +524,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
     foreman_all_fn = fn _foreman_ref, _opts -> {:ok, []} end
 
     remove_workers_fn = fn _foreman_ref, worker_ids, _opts ->
-      worker_ids |> Enum.map(&{&1, :ok}) |> Map.new()
+      Map.new(worker_ids, &{&1, :ok})
     end
 
     monitor_fn = fn pid -> Process.monitor(pid) end

@@ -75,8 +75,8 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       }
 
       # Report commit version 103
-      {:noreply, state1} =
-        Server.handle_cast({:report_successful_commit, Version.from_integer(103)}, initial_state)
+      {:reply, :ok, state1} =
+        Server.handle_call({:report_successful_commit, Version.from_integer(103)}, self(), initial_state)
 
       assert state1.known_committed_version_int == 103
       # unchanged
@@ -84,15 +84,15 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       assert state1.last_commit_version_int == 104
 
       # Report older commit version 102 - should not decrease known_committed_version
-      {:noreply, state2} =
-        Server.handle_cast({:report_successful_commit, Version.from_integer(102)}, state1)
+      {:reply, :ok, state2} =
+        Server.handle_call({:report_successful_commit, Version.from_integer(102)}, self(), state1)
 
       # unchanged (monotonic)
       assert state2.known_committed_version_int == 103
 
       # Report newer commit version 104
-      {:noreply, state3} =
-        Server.handle_cast({:report_successful_commit, Version.from_integer(104)}, state2)
+      {:reply, :ok, state3} =
+        Server.handle_call({:report_successful_commit, Version.from_integer(104)}, self(), state2)
 
       # updated
       assert state3.known_committed_version_int == 104
@@ -124,11 +124,11 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       assert state.last_commit_version_int < state.next_commit_version_int
 
       # Report some commits (out of order)
-      {:noreply, state} =
-        Server.handle_cast({:report_successful_commit, Version.from_integer(102)}, state)
+      {:reply, :ok, state} =
+        Server.handle_call({:report_successful_commit, Version.from_integer(102)}, self(), state)
 
-      {:noreply, state} =
-        Server.handle_cast({:report_successful_commit, Version.from_integer(101)}, state)
+      {:reply, :ok, state} =
+        Server.handle_call({:report_successful_commit, Version.from_integer(101)}, self(), state)
 
       assert state.next_commit_version_int >= 104
       assert state.last_commit_version_int >= 103

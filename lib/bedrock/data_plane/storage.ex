@@ -1,10 +1,11 @@
 defmodule Bedrock.DataPlane.Storage do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.Service.Worker
-
   import Bedrock.Internal.GenServer.Calls
+
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.KeySelector
+  alias Bedrock.Service.Worker
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
@@ -28,8 +29,10 @@ defmodule Bedrock.DataPlane.Storage do
   def recovery_info, do: [:kind, :durable_version, :oldest_durable_version]
 
   @doc """
-  Returns the value for the given key/version.
+  Returns the value for the given key/version, or resolved key-value for KeySelector/version.
   """
+  def fetch(storage, key_or_selector, version, opts \\ [])
+
   @spec fetch(
           storage_ref :: ref(),
           key :: Bedrock.key(),
@@ -43,8 +46,75 @@ defmodule Bedrock.DataPlane.Storage do
              | :version_too_old
              | :version_too_new
              | :unavailable}
-  def fetch(storage, key, version, opts \\ []) when is_binary(key),
+  def fetch(storage, key, version, opts) when is_binary(key),
     do: call(storage, {:fetch, key, version, opts}, opts[:timeout] || :infinity)
+
+  @spec fetch(
+          storage_ref :: ref(),
+          key_selector :: KeySelector.t(),
+          version :: Bedrock.version(),
+          opts :: [timeout: timeout()]
+        ) ::
+          {:ok, {resolved_key :: Bedrock.key(), value :: Bedrock.value()}}
+          | {:error,
+             :timeout
+             | :not_found
+             | :version_too_old
+             | :version_too_new
+             | :unavailable}
+  def fetch(storage, %KeySelector{} = key_selector, version, opts),
+    do: call(storage, {:fetch, key_selector, version, opts}, opts[:timeout] || :infinity)
+
+  @doc """
+  Returns key-value pairs for keys in the given range at the specified version.
+
+  Range is [start_key, end_key) - includes start_key, excludes end_key.
+  Supports both binary keys and KeySelectors for range boundaries.
+  Only supported by Olivine storage engine; Basalt returns {:error, :unsupported}.
+  """
+  def range_fetch(storage, start_key_or_selector, end_key_or_selector, version, opts \\ [])
+
+  @spec range_fetch(
+          storage_ref :: ref(),
+          start_key :: Bedrock.key(),
+          end_key :: Bedrock.key(),
+          version :: Bedrock.version(),
+          opts :: [
+            limit: pos_integer(),
+            timeout: timeout()
+          ]
+        ) ::
+          {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
+          | {:error,
+             :timeout
+             | :version_too_old
+             | :version_too_new
+             | :unavailable
+             | :unsupported}
+  def range_fetch(storage, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key),
+    do: call(storage, {:range_fetch, start_key, end_key, version, opts}, opts[:timeout] || :infinity)
+
+  @spec range_fetch(
+          storage_ref :: ref(),
+          start_selector :: KeySelector.t(),
+          end_selector :: KeySelector.t(),
+          version :: Bedrock.version(),
+          opts :: [
+            limit: pos_integer(),
+            timeout: timeout()
+          ]
+        ) ::
+          {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
+          | {:error,
+             :timeout
+             | :version_too_old
+             | :version_too_new
+             | :unavailable
+             | :unsupported
+             | :not_found
+             | :invalid_range}
+  def range_fetch(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts),
+    do: call(storage, {:range_fetch, start_selector, end_selector, version, opts}, opts[:timeout] || :infinity)
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions
@@ -92,8 +162,7 @@ defmodule Bedrock.DataPlane.Storage do
   @spec info(storage :: ref(), [fact_name()], opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           {:ok,
            %{
-             fact_name() =>
-               Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
+             fact_name() => Bedrock.value() | Bedrock.version() | [key_range()] | non_neg_integer() | Path.t()
            }}
           | {:error, :unavailable}
   defdelegate info(storage, fact_names, opts \\ []), to: Worker

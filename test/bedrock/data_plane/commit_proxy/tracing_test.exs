@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
 
   alias Bedrock.DataPlane.CommitProxy.Tracing
@@ -7,6 +8,7 @@ defmodule Bedrock.DataPlane.CommitProxy.TracingTest do
 
   # Define a mock cluster for testing
   defmodule TestCluster do
+    @moduledoc false
     def name, do: :test_cluster
   end
 

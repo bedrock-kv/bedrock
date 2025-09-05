@@ -1,14 +1,13 @@
 defmodule Bedrock.Cluster.Gateway.Discovery do
   @moduledoc false
 
-  alias Bedrock.Cluster.Gateway.State
-  alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.Internal.TimerManagement
-  alias Bedrock.Service.Foreman
+  use Bedrock.Internal.TimerManagement
 
   import Bedrock.Cluster.Gateway.Telemetry
 
-  use TimerManagement
+  alias Bedrock.Cluster.Gateway.State
+  alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Service.Foreman
 
   @doc """
   Find the leader coordinator. This implements enhanced two-phase discovery:
@@ -101,7 +100,8 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
 
   defp try_local_coordinator_first(coordinator_nodes, cluster) do
     if Node.self() in coordinator_nodes do
-      cluster.otp_name(:coordinator)
+      :coordinator
+      |> cluster.otp_name()
       |> try_direct_coordinator_call(cluster)
     else
       {:error, :not_local}
@@ -122,7 +122,7 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
         {:error, :unavailable}
 
       {responses, _failures} ->
-        responses |> select_leader_from_responses()
+        select_leader_from_responses(responses)
     end
   end
 
@@ -135,14 +135,12 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
   end
 
   defp filter_valid_leaders(responses) do
-    responses
-    |> Enum.filter(fn
+    Enum.filter(responses, fn
       {_node, {:pong, _epoch, leader_pid}} -> !is_nil(leader_pid)
     end)
   end
 
-  defp select_highest_epoch_leader([]),
-    do: {:error, :unavailable}
+  defp select_highest_epoch_leader([]), do: {:error, :unavailable}
 
   defp select_highest_epoch_leader(leader_responses) do
     leader_responses
@@ -150,13 +148,12 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     |> extract_leader_info()
   end
 
-  defp extract_leader_info({_node, {:pong, best_epoch, best_leader}}),
-    do: {:ok, {best_leader, best_epoch}}
+  defp extract_leader_info({_node, {:pong, best_epoch, best_leader}}), do: {:ok, {best_leader, best_epoch}}
 
   @spec change_coordinator(State.t(), {Coordinator.ref(), Bedrock.epoch()} | :unavailable) ::
           State.t()
   def change_coordinator(t, coordinator) when t.known_coordinator == coordinator, do: t
-  def change_coordinator(t, :unavailable), do: t |> Map.put(:known_coordinator, :unavailable)
+  def change_coordinator(t, :unavailable), do: Map.put(t, :known_coordinator, :unavailable)
 
   @spec change_coordinator(State.t(), Coordinator.ref()) :: State.t()
   def change_coordinator(t, coordinator_ref) do

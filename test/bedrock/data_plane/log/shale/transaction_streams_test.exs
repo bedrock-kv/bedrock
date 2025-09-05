@@ -3,10 +3,11 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
 
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
-  describe "from_segments/2 with unloaded transactions" do
-    test "demonstrates the fix - no longer crashes with enumerable error" do
+  describe "TransactionStreams.from_segments/2 with unloaded segments" do
+    test "handles nil transactions gracefully without enumerable protocol errors" do
       # Create a segment with nil transactions (simulating unloaded state)
       segment = %Segment{
         path: "nonexistent_path_for_test",
@@ -28,15 +29,22 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       # Protocol.UndefinedError with "protocol Enumerable not implemented for type Atom"
     end
 
-    test "processes segments with loaded transactions normally" do
+    test "processes segments with pre-loaded transactions correctly" do
       # Create a segment with pre-loaded transactions (reversed order as stored)
+      transaction_1 =
+        TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
+          "key1" => "value1"
+        })
+
+      transaction_2 =
+        TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
+          "key2" => "value2"
+        })
+
       segment = %Segment{
         path: "test_path",
         min_version: Version.from_integer(1),
-        transactions: [
-          <<2::unsigned-big-64, "transaction_2"::binary>>,
-          <<1::unsigned-big-64, "transaction_1"::binary>>
-        ]
+        transactions: [transaction_2, transaction_1]
       }
 
       # This should work normally
@@ -49,7 +57,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       assert length(transactions) == 1
       # The stream returns the remaining transactions after the target version
       # Since target_version=1 matches the first transaction, we get the rest
-      assert <<2::unsigned-big-64, "transaction_2"::binary>> = hd(transactions)
+      assert TransactionTestSupport.extract_log_version(hd(transactions)) ==
+               Version.from_integer(2)
     end
   end
 end

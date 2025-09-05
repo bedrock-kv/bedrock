@@ -8,16 +8,24 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   proper causality relationships for distributed MVCC conflict detection.
   """
 
-  alias Bedrock.DataPlane.Sequencer.State
-  alias Bedrock.DataPlane.Version
-
   use GenServer
 
+  import Bedrock.DataPlane.Sequencer.Telemetry,
+    only: [
+      emit_next_read_version: 1,
+      emit_next_commit_version: 3,
+      emit_successful_commit: 2
+    ]
+
   import Bedrock.Internal.GenServer.Replies
+
+  alias Bedrock.DataPlane.Sequencer.State
+  alias Bedrock.DataPlane.Version
 
   @doc false
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
+    cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     otp_name = opts[:otp_name] || raise "Missing :name option"
@@ -26,7 +34,7 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
       opts[:last_committed_version] || raise "Missing :last_committed_version option"
 
     %{
-      id: __MODULE__,
+      id: {__MODULE__, cluster, epoch},
       start:
         {GenServer, :start_link,
          [
@@ -41,29 +49,38 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @impl true
   @spec init({pid(), Bedrock.epoch(), Bedrock.version()}) :: {:ok, State.t()}
   def init({director, epoch, known_committed_version}) do
+    # Monitor the Director - if it dies, this sequencer should terminate
+    Process.monitor(director)
+
     epoch_start_monotonic_us = System.monotonic_time(:microsecond)
     epoch_baseline_version_int = Version.to_integer(known_committed_version)
 
-    %State{
-      director: director,
-      epoch: epoch,
-      next_commit_version_int: epoch_baseline_version_int + 1,
-      last_commit_version_int: epoch_baseline_version_int,
-      known_committed_version_int: epoch_baseline_version_int,
-      epoch_baseline_version_int: epoch_baseline_version_int,
-      epoch_start_monotonic_us: epoch_start_monotonic_us
-    }
-    |> then(&{:ok, &1})
+    then(
+      %State{
+        director: director,
+        epoch: epoch,
+        next_commit_version_int: epoch_baseline_version_int + 1,
+        last_commit_version_int: epoch_baseline_version_int,
+        known_committed_version_int: epoch_baseline_version_int,
+        epoch_baseline_version_int: epoch_baseline_version_int,
+        epoch_start_monotonic_us: epoch_start_monotonic_us
+      },
+      &{:ok, &1}
+    )
   end
 
   @impl true
-  @spec handle_call(:next_read_version | :next_commit_version, GenServer.from(), State.t()) ::
-          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()},
-           State.t()}
+  @spec handle_call(
+          :next_read_version | :next_commit_version | {:report_successful_commit, Bedrock.version()},
+          GenServer.from(),
+          State.t()
+        ) ::
+          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()} | :ok, State.t()}
   def handle_call(:next_read_version, _from, t) do
     # Convert to Version.t() only at return
     read_version = Version.from_integer(t.known_committed_version_int)
-    t |> reply({:ok, read_version})
+    emit_next_read_version(read_version)
+    reply(t, {:ok, read_version})
   end
 
   @impl true
@@ -90,18 +107,32 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     last_commit_version = Version.from_integer(t.last_commit_version_int)
     commit_version = Version.from_integer(commit_version_int)
 
-    updated_state |> reply({:ok, last_commit_version, commit_version})
+    emit_next_commit_version(last_commit_version, commit_version, elapsed_us)
+    reply(updated_state, {:ok, last_commit_version, commit_version})
   end
 
   @impl true
-  @spec handle_cast({:report_successful_commit, Bedrock.version()}, State.t()) ::
-          {:noreply, State.t()}
-  def handle_cast({:report_successful_commit, commit_version}, t) do
+  @spec handle_call({:report_successful_commit, Bedrock.version()}, GenServer.from(), State.t()) ::
+          {:reply, :ok, State.t()}
+  def handle_call({:report_successful_commit, commit_version}, _from, t) do
     # Convert incoming Version.t() to integer for comparison
     commit_version_int = Version.to_integer(commit_version)
     updated_known_committed_int = max(t.known_committed_version_int, commit_version_int)
 
-    %{t | known_committed_version_int: updated_known_committed_int}
-    |> noreply([])
+    known_committed_version = Version.from_integer(updated_known_committed_int)
+    emit_successful_commit(commit_version, known_committed_version)
+
+    reply(%{t | known_committed_version_int: updated_known_committed_int}, :ok)
+  end
+
+  @impl true
+  @spec handle_info({:DOWN, reference(), :process, pid(), term()}, State.t()) :: {:stop, :normal, State.t()}
+  def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
+    # Director has died - this sequencer should terminate gracefully
+    {:stop, :normal, t}
+  end
+
+  def handle_info(_msg, t) do
+    {:noreply, t}
   end
 end

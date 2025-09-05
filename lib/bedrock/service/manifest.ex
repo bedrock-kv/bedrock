@@ -33,20 +33,18 @@ defmodule Bedrock.Service.Manifest do
           :ok | {:error, File.posix()}
   def write_to_file(manifest, path_to_manifest) do
     {:ok, json} =
-      %{
+      Jason.encode(%{
         cluster: manifest.cluster,
         id: manifest.id,
         worker: manifest.worker |> Module.split() |> Enum.join("."),
         params: manifest.params
-      }
-      |> Jason.encode()
+      })
 
-    path_to_manifest |> write_file_contents(json)
+    write_file_contents(path_to_manifest, json)
   end
 
   @spec write_file_contents(Path.t(), String.t()) :: :ok | {:error, File.posix()}
-  defp write_file_contents(path_to_manifest, json),
-    do: File.write(path_to_manifest, json)
+  defp write_file_contents(path_to_manifest, json), do: File.write(path_to_manifest, json)
 
   @spec load_from_file(path_to_manifest :: Path.t()) ::
           {:ok, t()}
@@ -63,8 +61,8 @@ defmodule Bedrock.Service.Manifest do
              | :worker_module_does_not_implement_behaviour
              | :invalid_params}
   def load_from_file(path_to_manifest) do
-    with {:ok, file_contents} <- path_to_manifest |> load_file_contents(),
-         {:ok, json} <- file_contents |> Jason.decode(),
+    with {:ok, file_contents} <- load_file_contents(path_to_manifest),
+         {:ok, json} <- Jason.decode(file_contents),
          true <- is_map(json) || {:error, :manifest_is_not_a_dictionary},
          {:ok, cluster} <- cluster_from_json(json["cluster"]),
          {:ok, id} <- id_from_json(json["id"]),
@@ -82,7 +80,8 @@ defmodule Bedrock.Service.Manifest do
 
   @spec load_file_contents(String.t()) :: {:ok, String.t()} | {:error, :manifest_does_not_exist}
   defp load_file_contents(path) do
-    File.read(path)
+    path
+    |> File.read()
     |> case do
       {:ok, _file_contents} = result -> result
       {:error, :enoent} -> {:error, :manifest_does_not_exist}
@@ -113,12 +112,10 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
-  defp worker_from_json(_),
-    do: {:error, :invalid_worker_name}
+  defp worker_from_json(_), do: {:error, :invalid_worker_name}
 
   @spec parse_worker_name(String.t()) :: {:ok, module()} | {:error, :invalid_worker_name}
-  defp parse_worker_name(worker_name),
-    do: {:ok, worker_name |> String.split(".") |> Module.concat()}
+  defp parse_worker_name(worker_name), do: {:ok, worker_name |> String.split(".") |> Module.concat()}
 
   @spec check_module_is_storage_worker(module()) ::
           :ok | {:error, :worker_module_does_not_implement_behaviour}

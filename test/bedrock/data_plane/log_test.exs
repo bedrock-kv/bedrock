@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.LogTest do
   import Bedrock.Test.GenServerTestHelpers
 
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   describe "recovery_info/0" do
@@ -21,12 +21,9 @@ defmodule Bedrock.DataPlane.LogTest do
       transaction = Log.initial_transaction()
       zero_version = Version.zero()
 
-      # Transaction is a tuple {version, key_values_map}
-      expected_transaction = Transaction.new(zero_version, %{})
+      # Transaction should be encoded Transaction format
+      expected_transaction = TransactionTestSupport.new_log_transaction(zero_version, %{})
       assert transaction == expected_transaction
-
-      # Verify it's the expected structure
-      assert {^zero_version, %{}} = transaction
     end
   end
 
@@ -83,7 +80,11 @@ defmodule Bedrock.DataPlane.LogTest do
                :minimum_durable_version
              ]
 
-      assert Log.initial_transaction() == {Version.zero(), %{}}
+      # Check that initial_transaction returns properly encoded Transaction
+      initial_tx = Log.initial_transaction()
+      assert is_binary(initial_tx)
+      assert TransactionTestSupport.extract_log_version(initial_tx) == Version.zero()
+      assert TransactionTestSupport.extract_log_writes(initial_tx) == %{}
 
       # recover_from would need a real GenServer process to test fully
       # but we already tested it in the dedicated test above

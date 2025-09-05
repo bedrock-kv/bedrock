@@ -1,26 +1,24 @@
 defmodule Bedrock.DataPlane.Log.Telemetry do
+  @moduledoc false
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.Telemetry
 
   @spec trace_metadata() :: map()
   def trace_metadata, do: Process.get(:trace_metadata, %{})
 
   @spec trace_metadata(metadata :: map()) :: map()
-  def trace_metadata(metadata),
-    do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
+  def trace_metadata(metadata), do: Process.put(:trace_metadata, Enum.into(metadata, trace_metadata()))
 
   @spec trace_started() :: :ok
-  def trace_started,
-    do: Telemetry.execute([:bedrock, :log, :started], %{}, trace_metadata())
+  def trace_started, do: Telemetry.execute([:bedrock, :log, :started], %{}, trace_metadata())
 
   @spec trace_lock_for_recovery(epoch :: Bedrock.epoch()) :: :ok
   def trace_lock_for_recovery(epoch) do
     Telemetry.execute(
       [:bedrock, :log, :lock_for_recovery],
       %{},
-      Map.merge(trace_metadata(), %{
-        epoch: epoch
-      })
+      Map.put(trace_metadata(), :epoch, epoch)
     )
   end
 
@@ -41,15 +39,12 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
-  @spec trace_push_transaction(expected_version :: Bedrock.version(), n_keys :: non_neg_integer()) ::
-          :ok
-  def trace_push_transaction(expected_version, n_keys) do
+  @spec trace_push_transaction(transaction :: Transaction.encoded()) :: :ok
+  def trace_push_transaction(transaction) when is_binary(transaction) do
     Telemetry.execute(
       [:bedrock, :log, :push],
-      %{n_keys: n_keys},
-      Map.merge(trace_metadata(), %{
-        expected_version: expected_version
-      })
+      %{},
+      Map.put(trace_metadata(), :transaction, transaction)
     )
   end
 

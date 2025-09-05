@@ -17,9 +17,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  require Logger
-
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
+  require Logger
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -31,14 +31,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
     |> extract_pids_to_monitor()
     |> monitor_all_pids(monitor_fn)
 
-    {recovery_attempt, :completed}
+    {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
   end
 
   @spec extract_pids_to_monitor(map()) :: [pid()]
   defp extract_pids_to_monitor(layout) do
     resolver_pids =
-      layout.resolvers
-      |> Enum.map(fn {_start_key, pid} -> pid end)
+      Enum.map(layout.resolvers, fn {_start_key, pid} -> pid end)
 
     service_pids =
       layout.services

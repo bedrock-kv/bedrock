@@ -57,6 +57,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   Transitions to `PersistencePhase` to commit layout through system transaction.
   """
 
+  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
+
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry
+
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
@@ -66,10 +70,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
-
-  use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
-
-  import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   @doc """
   Executes TSL construction with validation, building, and unlocking phases.
@@ -116,7 +116,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
 
-      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MonitoringPhase}
     else
       {:error, reason} ->
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
@@ -156,8 +156,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   end
 
   defp extract_service_ids(recovery_attempt) do
-    [extract_log_service_ids(recovery_attempt), extract_storage_service_ids(recovery_attempt)]
-    |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+    Enum.reduce(
+      [extract_log_service_ids(recovery_attempt), extract_storage_service_ids(recovery_attempt)],
+      MapSet.new(),
+      &MapSet.union/2
+    )
   end
 
   defp extract_log_service_ids(recovery_attempt) do
@@ -210,13 +213,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
           map()
         ) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
-  defp unlock_services(
-         recovery_attempt,
-         transaction_system_layout,
-         lock_token,
-         context
-       )
-       when is_binary(lock_token) do
+  defp unlock_services(recovery_attempt, transaction_system_layout, lock_token, context) when is_binary(lock_token) do
     with :ok <-
            unlock_commit_proxies(
              recovery_attempt.proxies,
@@ -234,8 +231,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
 
   @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
-  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context)
-       when is_list(proxies) do
+  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context) when is_list(proxies) do
     unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/3)
 
     proxies
@@ -253,7 +249,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t(), map()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
-    durable_version = recovery_attempt.durable_version
+    # Use the latest version from logs (high end of version vector) instead of conservative durable_version
+    # This prevents storage from purging committed data it already has
+    {_first, latest_log_version} = recovery_attempt.version_vector
     unlock_fn = Map.get(context, :unlock_storage_fn, &Storage.unlock_after_recovery/3)
 
     transaction_system_layout.storage_teams
@@ -266,7 +264,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
     end)
     |> Task.async_stream(
       fn {storage_id, storage_pid} ->
-        {storage_id, unlock_fn.(storage_pid, durable_version, transaction_system_layout)}
+        {storage_id, unlock_fn.(storage_pid, latest_log_version, transaction_system_layout)}
       end,
       ordered: false,
       timeout: 5000
@@ -342,8 +340,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
 
     # Check that all log IDs have corresponding services in transaction_services
     missing_services =
-      log_ids
-      |> Enum.reject(fn log_id ->
+      Enum.reject(log_ids, fn log_id ->
         case Map.get(transaction_services, log_id) do
           %{status: {:up, pid}} when is_pid(pid) ->
             trace_recovery_log_service_status(log_id, :found, %{status: {:up, pid}})

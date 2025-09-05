@@ -1,4 +1,5 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
+  @moduledoc false
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Telemetry
@@ -150,12 +151,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
           %{any() => any()},
           %{any() => any()}
         ) :: :ok
-  def trace_recovery_log_recruitment_completed(
-        log_ids,
-        service_pids,
-        available_services,
-        updated_services
-      ) do
+  def trace_recovery_log_recruitment_completed(log_ids, service_pids, available_services, updated_services) do
     Telemetry.execute([:bedrock, :recovery, :log_recruitment_completed], %{}, %{
       log_ids: log_ids,
       service_pids: service_pids,

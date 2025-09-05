@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @moduledoc false
 
-  alias Bedrock.DataPlane.Log.Transaction
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @opaque t :: :dets.tab_name()
@@ -15,7 +15,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
       access: :read_write,
       auto_save: :infinity,
       type: :set,
-      file: file_path |> String.to_charlist()
+      file: String.to_charlist(file_path)
     )
   end
 
@@ -23,15 +23,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   Closes a persistent key-value store.
   """
   @spec close(t()) :: :ok
-  def close(dets),
-    do: :dets.close(dets)
+  def close(dets), do: :dets.close(dets)
 
   @doc """
   Returns the last version of the key-value store.
   """
   @spec oldest_version(t()) :: Bedrock.version()
   def oldest_version(pkv) do
-    fetch(pkv, :oldest_version)
+    pkv
+    |> fetch(:oldest_version)
     |> case do
       {:error, :not_found} -> Version.zero()
       {:ok, version} -> version
@@ -43,7 +43,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   """
   @spec last_version(t()) :: Bedrock.version()
   def last_version(pkv) do
-    fetch(pkv, :last_version)
+    pkv
+    |> fetch(:last_version)
     |> case do
       {:error, :not_found} -> Version.zero()
       {:ok, version} -> version
@@ -54,18 +55,32 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   Apply a transaction to the key-value store, atomically. The transaction must
   be applied in order.
   """
-  @spec apply_transaction(pkv :: t(), Transaction.t()) ::
+  @spec apply_transaction(pkv :: t(), Transaction.encoded()) ::
           :ok
           | {:error, :version_too_new}
           | {:error, :version_too_old}
-  @spec apply_transaction(t(), Transaction.t()) ::
+  @spec apply_transaction(t(), Transaction.encoded()) ::
           :ok | {:error, :version_too_new} | {:error, :version_too_old}
-  def apply_transaction(pkv, transaction) do
-    version = Transaction.version(transaction)
+  def apply_transaction(pkv, encoded_transaction) do
+    {:ok, version} = Transaction.commit_version(encoded_transaction)
     last_version = last_version(pkv)
 
+    # Extract mutations and convert to key-value writes
+    writes =
+      case Transaction.mutations(encoded_transaction) do
+        {:ok, mutations_stream} ->
+          Enum.reduce(mutations_stream, [], fn
+            {:set, key, value}, acc -> [{key, value} | acc]
+            # Treat as single key clear
+            {:clear_range, key, _end}, acc -> [{key, nil} | acc]
+          end)
+
+        {:error, :section_not_found} ->
+          # No mutations section means no mutations
+          []
+      end
+
     with :ok <- check_version(version, last_version),
-         writes <- Transaction.key_values(transaction) |> Enum.to_list(),
          :ok <- :dets.insert(pkv, [{:last_version, version} | writes]) do
       :dets.sync(pkv)
     end
@@ -131,7 +146,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   end
 
   @spec info(t(), :size_in_bytes) :: non_neg_integer() | :undefined
-  def info(pkv, :size_in_bytes), do: pkv |> :dets.info(:file_size)
+  def info(pkv, :size_in_bytes), do: :dets.info(pkv, :file_size)
 
   @spec info(t(), atom()) :: :undefined
   def info(_pkv, _query), do: :undefined
@@ -153,8 +168,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PersistentKeyValues do
   @spec stream_keys(pkv :: t()) :: Enumerable.t()
   @spec stream_keys(t()) :: Enumerable.t(binary())
   def stream_keys(pkv) do
-    Stream.resource(
-      fn -> :dets.first(pkv) end,
+    fn -> :dets.first(pkv) end
+    |> Stream.resource(
       fn
         :"$end_of_table" -> {:halt, :ok}
         key -> {[key], :dets.next(pkv, key)}

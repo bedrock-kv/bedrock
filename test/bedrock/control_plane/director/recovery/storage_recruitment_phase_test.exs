@@ -1,11 +1,14 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
   alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
 
   # Mock cluster for testing
   defmodule TestCluster do
+    @moduledoc false
     def otp_name(_component), do: :test_otp_name
   end
 
@@ -45,7 +48,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           end)
         )
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+      assert next_phase == LogReplayPhase
       assert is_list(result.storage_teams)
       assert length(result.storage_teams) == 2
 
@@ -126,7 +129,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           end)
         )
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+      assert next_phase == LogReplayPhase
       assert result.storage_teams == recovery_attempt.storage_teams
     end
 
@@ -158,7 +161,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
           end)
         )
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+      assert next_phase == LogReplayPhase
       assert result.storage_teams == []
     end
 
@@ -207,7 +210,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhaseTest do
 
       {result, next_phase} = StorageRecruitmentPhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+      assert next_phase == LogReplayPhase
 
       # Verify that storage services have been collected
       assert Map.has_key?(result, :transaction_services)

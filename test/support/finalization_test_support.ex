@@ -3,6 +3,9 @@ defmodule FinalizationTestSupport do
   Shared test utilities and fixtures for finalization tests.
   """
 
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
+
   # Mock cluster module for testing
   defmodule TestCluster do
     @moduledoc false
@@ -12,6 +15,59 @@ defmodule FinalizationTestSupport do
     def otp_name(component) when is_atom(component) do
       :"test_cluster_#{component}"
     end
+  end
+
+  # Fake sequencer for testing finalization without self-calls
+  defmodule FakeSequencer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts \\ []) do
+      GenServer.start_link(__MODULE__, :ok, opts)
+    end
+
+    def init(:ok), do: {:ok, %{}}
+
+    def handle_call({:report_successful_commit, _commit_version}, _from, state) do
+      {:reply, :ok, state}
+    end
+  end
+
+  # Fake resolver for testing conflict resolution without self-calls
+  defmodule FakeResolver do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts \\ []) do
+      GenServer.start_link(__MODULE__, :ok, opts)
+    end
+
+    def init(:ok), do: {:ok, %{}}
+
+    def handle_call(
+          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries},
+          _from,
+          state
+        ) do
+      # Return no conflicts (empty list) for simple test scenarios
+      {:reply, {:ok, []}, state}
+    end
+  end
+
+  @doc """
+  Creates a fake sequencer that handles synchronous report_successful_commit calls.
+  Uses start_supervised! for proper test lifecycle management.
+  """
+  def create_fake_sequencer do
+    ExUnit.Callbacks.start_supervised!(FakeSequencer)
+  end
+
+  @doc """
+  Creates a fake resolver that handles resolve_transactions calls without conflicts.
+  Uses start_supervised! for proper test lifecycle management.
+  """
+  def create_fake_resolver do
+    ExUnit.Callbacks.start_supervised!(FakeResolver)
   end
 
   @doc """
@@ -83,17 +139,46 @@ defmodule FinalizationTestSupport do
   Creates a test batch with given parameters.
   """
   def create_test_batch(commit_version, last_commit_version, transactions \\ []) do
+    # Ensure versions are in proper Bedrock.version() binary format
+    commit_version =
+      if is_integer(commit_version),
+        do: Version.from_integer(commit_version),
+        else: commit_version
+
+    last_commit_version =
+      if is_integer(last_commit_version),
+        do: Version.from_integer(last_commit_version),
+        else: last_commit_version
+
+    # Create binary transaction using Transaction encoding
+    default_transaction_map = %{
+      mutations: [{:set, <<"key1">>, <<"value1">>}],
+      write_conflicts: [{<<"key1">>, <<"key1\0">>}],
+      read_conflicts: nil
+    }
+
+    default_binary = Transaction.encode(default_transaction_map)
+
     default_transactions = [
-      {fn result -> send(self(), {:reply, result}) end, {nil, %{<<"key1">> => <<"value1">>}}}
+      {0, fn result -> send(self(), {:reply, result}) end, default_binary}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
 
+    # Ensure buffer contains indexed transactions
+    indexed_buffer =
+      case buffer do
+        # If buffer already has indexed format {index, reply_fn, binary}, use as-is
+        [{_idx, _reply_fn, _binary} | _] -> buffer
+        # If buffer has old format {reply_fn, binary}, add indices
+        _ -> buffer |> Enum.with_index() |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary} end)
+      end
+
     %Bedrock.DataPlane.CommitProxy.Batch{
       commit_version: commit_version,
       last_commit_version: last_commit_version,
-      n_transactions: length(buffer),
-      buffer: buffer
+      n_transactions: length(indexed_buffer),
+      buffer: indexed_buffer
     }
   end
 
@@ -123,8 +208,7 @@ defmodule FinalizationTestSupport do
   """
   def mock_async_stream_with_responses(responses) do
     fn logs, _fun, _opts ->
-      logs
-      |> Enum.map(fn {log_id, _service_descriptor} ->
+      Enum.map(logs, fn {log_id, _service_descriptor} ->
         process_log_response(log_id, responses)
       end)
     end

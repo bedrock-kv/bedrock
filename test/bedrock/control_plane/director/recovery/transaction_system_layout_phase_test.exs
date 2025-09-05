@@ -1,9 +1,9 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase
-
   import RecoveryTestSupport
+
+  alias Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase
 
   describe "execute/2" do
     test "successfully unlocks services and transitions to persistence phase" do
@@ -31,8 +31,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
 
       {result, next_phase} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-      assert result.transaction_system_layout != nil
+      assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
+      assert result.transaction_system_layout
       assert result.transaction_system_layout.epoch == recovery_attempt.epoch
       assert result.transaction_system_layout.sequencer == recovery_attempt.sequencer
       assert result.transaction_system_layout.proxies == recovery_attempt.proxies
@@ -66,9 +66,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         TransactionSystemLayoutPhase.execute(recovery_attempt, context)
 
       assert next_phase_or_stall ==
-               {:stalled,
-                {:recovery_system_failed,
-                 {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}
+               {:stalled, {:recovery_system_failed, {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}
     end
 
     test "fails when storage server unlocking fails" do
@@ -102,9 +100,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         TransactionSystemLayoutPhase.execute(recovery_attempt, context)
 
       assert next_phase_or_stall ==
-               {:stalled,
-                {:recovery_system_failed,
-                 {:unlock_failed, {:storage_unlock_failed, :unavailable}}}}
+               {:stalled, {:recovery_system_failed, {:unlock_failed, {:storage_unlock_failed, :unavailable}}}}
     end
 
     test "builds transaction system layout with correct service descriptors" do

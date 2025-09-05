@@ -7,6 +7,7 @@
     "file_column_width": 80
   },
   "skip_files": [
+    "test/support",
     ".github"
   ]
 }

@@ -17,7 +17,7 @@ defmodule Bedrock.Internal.TimerManagement do
 
   def cancel_all_timers(%{} = t) do
     update_in(t.timers, fn timers ->
-      timers |> Enum.each(&Process.cancel_timer(&1 |> elem(1)))
+      Enum.each(timers, &(&1 |> elem(1) |> Process.cancel_timer()))
       %{}
     end)
   end

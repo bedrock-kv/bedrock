@@ -20,6 +20,7 @@ Bedrock provides strict ACID guarantees using MVCC[^1] with per-transaction proc
 - **Local caching**: Immediate read-your-writes visibility
 - **Batching**: Multiple transactions processed together with intra-batch conflict detection
 - **Horse racing**: Parallel queries to storage replicas
+- **Binary format**: Efficient Transaction encoding with tagged sections and CRC validation
 
 ## Basic Usage
 
@@ -54,7 +55,10 @@ end)  # Only this commits to distributed system
 1. **Start**: Gateway creates dedicated Transaction Builder process[^2]
 2. **Read**: First read gets consistent version from Sequencer[^3]  
 3. **Write**: Changes accumulate locally (immediate visibility within transaction)
-4. **Commit**: Distributed coordination checks conflicts and ensures durability
+4. **Commit**: Distributed coordination with validation, conflict resolution, and durability
+   - **Validation**: Transaction format and conflict summary validation
+   - **Timeout handling**: Version ordering with configurable timeout (30s default)
+   - **Conflict detection**: MVCC-based read/write conflict resolution
 5. **Complete**: Client gets result, transaction process terminates
 
 > **Complete Flow**: For detailed sequence diagrams and component interactions, see **[Transaction Processing Deep Dive](../deep-dives/transactions.md)**.
@@ -66,6 +70,8 @@ end)  # Only this commits to distributed system
 - **[Commit Proxy](../deep-dives/architecture/data-plane/commit-proxy.md)**: Transaction batching and orchestration  
 - **[Resolver](../deep-dives/architecture/data-plane/resolver.md)**: MVCC conflict detection using interval trees
 - **[Log Servers](../deep-dives/architecture/data-plane/log.md)**: Durable storage with universal acknowledgment
+
+> **Binary Format**: Transactions use Transaction encoding with tagged binary sections for efficient processing. See the [deep dive](../deep-dives/transactions.md#bedrocktransaction-format) for technical details.
 
 [^1]: Multi-Version Concurrency Control - see [Glossary](../glossary.md#multi-version-concurrency-control)  
 [^2]: [Transaction Builder](../deep-dives/architecture/infrastructure/transaction-builder.md)  

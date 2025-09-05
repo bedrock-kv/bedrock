@@ -1,69 +1,66 @@
 defmodule Bedrock.Repo do
+  alias Bedrock.KeyCodec.BinaryKeyCodec
+  alias Bedrock.ValueCodec.BinaryValueCodec
+
   @spec builtin_key_codecs() :: %{(:default | :binary | :tuple) => module()}
-  def builtin_key_codecs,
-    do: %{
-      default: Bedrock.KeyCodec.BinaryKeyCodec,
-      binary: Bedrock.KeyCodec.BinaryKeyCodec,
-      tuple: Bedrock.KeyCodec.TupleKeyCodec
-    }
+  def builtin_key_codecs, do: %{default: BinaryKeyCodec, binary: BinaryKeyCodec, tuple: Bedrock.KeyCodec.TupleKeyCodec}
 
   @spec builtin_value_codecs() :: %{(:default | :raw | :bert) => module()}
   def builtin_value_codecs,
-    do: %{
-      default: Bedrock.ValueCodec.BinaryValueCodec,
-      raw: Bedrock.ValueCodec.BinaryValueCodec,
-      bert: Bedrock.ValueCodec.BertValueCodec
-    }
+    do: %{default: BinaryValueCodec, raw: BinaryValueCodec, bert: Bedrock.ValueCodec.BertValueCodec}
 
   defmacro __using__(opts) do
     cluster = Keyword.fetch!(opts, :cluster)
 
     quote do
+      alias Bedrock.Internal.Repo
+      alias Bedrock.Internal.TransactionManager
+      alias Bedrock.Subspace
+
       @cluster unquote(cluster)
-      @key_codecs Map.merge(
-                    Bedrock.Repo.builtin_key_codecs(),
-                    Map.new(unquote(opts[:key_codecs] || []))
-                  )
-      @value_codecs Map.merge(
-                      Bedrock.Repo.builtin_value_codecs(),
-                      Map.new(unquote(opts[:value_codecs] || []))
-                    )
 
-      @opaque transaction :: Bedrock.Internal.Repo.transaction()
-
-      defp key_codec(name),
-        do: @key_codecs[name] || raise(ArgumentError, "Unknown key codec: #{inspect(name)}")
-
-      defp value_codec(name),
-        do: @value_codecs[name] || raise(ArgumentError, "Unknown value codec: #{inspect(name)}")
+      @opaque t :: Repo.transaction()
 
       @spec transaction(
-              (transaction() -> result),
+              (t() -> result),
               opts :: [
-                key_codec: atom() | module(),
-                value_codec: atom() | module(),
                 retry_count: non_neg_integer(),
                 timeout_in_ms: Bedrock.timeout_in_ms()
               ]
             ) :: result
-            when result: term()
-      def transaction(fun, opts \\ []) do
-        Bedrock.Internal.Repo.transaction(
-          @cluster,
-          fun,
-          opts
-          |> Keyword.put(:key_codec, key_codec(opts[:key_codec] || :default))
-          |> Keyword.put(:value_codec, value_codec(opts[:value_codec] || :default))
-        )
-      end
+            when result: t()
+      def transaction(fun, opts \\ []), do: TransactionManager.transaction(@cluster, fun, opts)
 
-      defdelegate nested_transaction(t), to: Bedrock.Internal.Repo
-      defdelegate fetch(t, key), to: Bedrock.Internal.Repo
-      defdelegate fetch!(t, key), to: Bedrock.Internal.Repo
-      defdelegate get(t, key), to: Bedrock.Internal.Repo
-      defdelegate put(t, key, value), to: Bedrock.Internal.Repo
-      defdelegate commit(t, opts \\ []), to: Bedrock.Internal.Repo
-      defdelegate rollback(t), to: Bedrock.Internal.Repo
+      defdelegate fetch(t, key), to: Repo
+      defdelegate fetch!(t, key), to: Repo
+      defdelegate get(t, key), to: Repo
+
+      @spec range_fetch(t(), Subspace.t() | KeyRange.t()) :: {:ok, Enumerable.t(Bedrock.key_value())}
+      @spec range_fetch(t(), Subspace.t() | KeyRange.t(), opts :: keyword()) :: {:ok, Enumerable.t(Bedrock.key_value())}
+
+      def range_fetch(t, subspace_or_range, opts \\ [])
+      def range_fetch(t, %Subspace{} = subspace, opts), do: range_fetch(t, Subspace.range(subspace), opts)
+      def range_fetch(t, {start_key, end_key}, opts), do: range_fetch(t, start_key, end_key, opts)
+
+      @spec range_fetch(t(), min_key :: binary(), max_key_ex :: binary(), opts :: keyword()) ::
+              {:ok, Enumerable.t(Bedrock.key_value())}
+      defdelegate range_fetch(t, start_key, end_key, opts), to: Repo
+
+      @spec range_stream(t(), Subspace.t() | KeyRange.t(), opts :: keyword()) ::
+              {:ok, Enumerable.t(Bedrock.key_value())}
+      def range_stream(t, subspace_or_range, opts \\ [])
+      def range_stream(t, %Subspace{} = subspace, opts), do: range_stream(t, Subspace.range(subspace), opts)
+      def range_stream(t, {start_key, end_key}, opts), do: range_stream(t, start_key, end_key, opts)
+
+      @spec range_stream(t(), min_key :: binary(), max_key_ex :: binary(), opts :: keyword()) ::
+              {:ok, Enumerable.t(Bedrock.key_value())}
+      defdelegate range_stream(t, start_key, end_key, opts), to: Repo
+
+      @spec put(t(), key :: binary(), value :: binary()) :: t()
+      def put(t, key, value) when is_binary(key) and is_binary(value), do: Repo.put(t, key, value)
+
+      defdelegate commit(t, opts \\ []), to: Repo
+      defdelegate rollback(t), to: Repo
     end
   end
 end

@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.1.2",
+      version: "0.2.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -16,9 +16,12 @@ defmodule Bedrock.MixProject do
         dialyzer: :dev
       ],
       elixirc_paths: elixirc_paths(Mix.env()),
-      dialyzer: dialyzer()
+      dialyzer: dialyzer(),
+      aliases: aliases()
     ]
   end
+
+  defp aliases, do: [quality: ["format --check-formatted", "credo --strict", "dialyzer"]]
 
   defp dialyzer do
     [
@@ -38,13 +41,11 @@ defmodule Bedrock.MixProject do
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-    [
-      {:bedrock_raft, git: "https://github.com/jallum/bedrock_raft.git", tag: "0.9.5"},
-      {:gearbox, "~> 0.3"},
+    add_deps_for_dev_and_test([
+      {:bedrock_raft, git: "https://github.com/jallum/bedrock_raft.git", tag: "0.9.6"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"}
-    ]
-    |> add_deps_for_dev_and_test()
+    ])
   end
 
   def add_deps_for_dev_and_test(deps) do
@@ -58,15 +59,14 @@ defmodule Bedrock.MixProject do
         {:mox, "~> 1.1", only: :test},
         {:excoveralls, "~> 0.18", only: :test},
         {:benchee, "~> 1.3", only: :dev},
-        {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true}
+        {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
+        {:styler, "~> 1.0", only: [:dev, :test], runtime: false}
       ]
   end
 
   defp docs do
     [
-      # The main page in the docs
-      main: "MyApp",
-      logo: "path/to/logo.png",
+      main: "Bedrock",
       extras: ["README.md"]
     ]
   end

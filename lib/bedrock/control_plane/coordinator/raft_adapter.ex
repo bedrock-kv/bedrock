@@ -19,8 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   def ignored_event(_event, _from), do: :ok
 
   @impl true
-  def leadership_changed(leadership),
-    do: send(self(), {:raft, :leadership_changed, leadership})
+  def leadership_changed(leadership), do: send(self(), {:raft, :leadership_changed, leadership})
 
   @impl true
   def send_event(to, event) do
@@ -34,7 +33,8 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
 
   @spec set_timer(atom(), pos_integer(), non_neg_integer()) :: (-> :ok | {:error, :badarg})
   defp set_timer(name, min_ms, jitter) do
-    determine_timeout(min_ms, min_ms + jitter)
+    min_ms
+    |> determine_timeout(min_ms + jitter)
     |> :timer.send_after({:raft, :timer, name})
     |> case do
       {:ok, ref} ->

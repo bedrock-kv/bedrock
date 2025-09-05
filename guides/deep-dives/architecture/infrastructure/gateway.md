@@ -1,6 +1,6 @@
 # Gateway Component Deep Dive
 
-The [Gateway](../../glossary.md#gateway) is the client-facing interface component that manages [transaction](../../glossary.md#transaction) coordination, [read version](../../glossary.md#read-version) [leasing](../../glossary.md#lease), and serves as the entry point for all client operations in the Bedrock system.
+The [Gateway](../../../glossary.md#gateway) is the client-facing interface component that manages [transaction](../../../glossary.md#transaction) coordination, [read version](../../../glossary.md#read-version) [leasing](../../../glossary.md#lease), and serves as the entry point for all client operations in the Bedrock system.
 
 ## Overview
 
@@ -16,7 +16,7 @@ The Gateway represents a fundamental shift in how distributed databases interfac
 
 The Gateway implements Bedrock's core embedded distributed principle: processing within application boundaries rather than across network boundaries. When applications initiate transactions, they're not making network calls to remote database servers—instead, they're invoking local Gateway processes that coordinate distributed operations on their behalf.
 
-This local-first approach transforms transaction semantics. Applications experience sub-microsecond transaction initiation times because Gateway processes are co-located within the same memory space. [Read version](../../glossary.md#read-version) [leasing](../../glossary.md#lease) and resource coordination happen locally, eliminating the network latency that dominates traditional distributed database operations.
+This local-first approach transforms transaction semantics. Applications experience sub-microsecond transaction initiation times because Gateway processes are co-located within the same memory space. [Read version](../../../glossary.md#read-version) [leasing](../../../glossary.md#lease) and resource coordination happen locally, eliminating the network latency that dominates traditional distributed database operations.
 
 The Gateway's transaction management also enables new programming patterns. Because transaction coordination is local, applications can initiate hundreds or thousands of concurrent transactions with minimal overhead, supporting fine-grained transactional workflows that would be prohibitively expensive in client-server architectures.
 
@@ -26,7 +26,7 @@ One of the Gateway's most important architectural contributions is how it levera
 
 The Gateway eliminates these scenarios by creating unified failure domains. When an application fails, its embedded Gateway fails with it, ensuring there are no orphaned transactions or leaked resources. This unified failure approach dramatically simplifies both application error handling and distributed system recovery protocols.
 
-The Gateway's [worker advertisement](../../glossary.md#worker-advertisement) functionality exemplifies this design. Rather than maintaining separate service discovery systems, the Gateway leverages the fact that it knows directly when local workers start or stop—because they're all part of the same failure domain. This knowledge enables more efficient and reliable cluster coordination than traditional service discovery mechanisms.
+The Gateway's [worker advertisement](../../../glossary.md#worker-advertisement) functionality exemplifies this design. Rather than maintaining separate service discovery systems, the Gateway leverages the fact that it knows directly when local workers start or stop—because they're all part of the same failure domain. This knowledge enables more efficient and reliable cluster coordination than traditional service discovery mechanisms.
 
 ### Embedded Distributed Advantages
 
@@ -34,20 +34,20 @@ The Gateway's embedded architecture enables capabilities impossible in client-se
 
 The embedded approach also transforms operational characteristics. The Gateway ensures that transaction capabilities are always available when applications start—there's no separate database service to connect to or dependency to manage. Applications and their transaction coordination deploy and scale together as single units, eliminating the operational complexity of coordinating application and database infrastructure.
 
-This design also enables sophisticated performance optimizations. The Gateway can learn from application transaction patterns, pre-warm [transaction system layouts](../../glossary.md#transaction-system-layout) for frequently used data ranges, and coordinate with local storage workers to optimize data placement for application access patterns.
+This design also enables sophisticated performance optimizations. The Gateway can learn from application transaction patterns, pre-warm [transaction system layouts](../../../glossary.md#transaction-system-layout) for frequently used data ranges, and coordinate with local storage workers to optimize data placement for application access patterns.
 
 ## Core Responsibilities
 
 ### 1. Transaction Lifecycle Management
 
-- **Transaction Initiation**: Creates new [Transaction Builder](../../glossary.md#transaction-builder) processes for each transaction
+- **Transaction Initiation**: Creates new [Transaction Builder](../../../glossary.md#transaction-builder) processes for each transaction
 - **Resource Coordination**: Manages the lifecycle of transaction-related resources
 - **Client Interface**: Provides the primary API surface for client operations
 
 ### 2. Read Version Leasing
 
 - **Version Leasing**: Manages read version leases with expiration times
-- **[Lease Renewal](../../glossary.md#lease-renewal)**: Handles automatic lease renewal for long-running transactions
+- **[Lease Renewal](../../../glossary.md#lease-renewal)**: Handles automatic lease renewal for long-running transactions
 - **Lease Tracking**: Maintains lease state and expiration monitoring
 
 ### 3. Worker Advertisement
@@ -70,7 +70,7 @@ This design also enables sophisticated performance optimizations. The Gateway ca
 **Process**:
 
 1. Creates a new Transaction Builder process via `start_link/1`
-2. Passes gateway reference and [transaction system layout](../../glossary.md#transaction-system-layout) to builder
+2. Passes gateway reference and [transaction system layout](../../../glossary.md#transaction-system-layout) to builder
 3. Returns the transaction builder PID for subsequent operations
 
 **Usage**:
@@ -107,13 +107,13 @@ This design also enables sophisticated performance optimizations. The Gateway ca
 @spec advertise_worker(gateway :: ref(), worker :: pid()) :: :ok
 ```
 
-**Purpose**: Handles dynamic [worker](../../glossary.md#worker) registration for cluster membership.
+**Purpose**: Handles dynamic [worker](../../../glossary.md#worker) registration for cluster membership.
 
 **Process**:
 
 1. Receives worker PID from newly started workers
 2. Interrogates worker for capability information
-3. Forwards worker details to cluster [director](../../glossary.md#director)
+3. Forwards worker details to cluster [director](../../../glossary.md#director)
 4. Always returns `:ok` (asynchronous operation)
 
 ## Implementation Details
@@ -150,7 +150,7 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 **Downstream Dependencies**:
 
 - **Transaction Builder**: Creates and manages transaction processes
-- **[Sequencer](../../glossary.md#sequencer)**: Coordinates read version assignments through builders
+- **[Sequencer](../../../glossary.md#sequencer)**: Coordinates read version assignments through builders
 
 ## Performance Characteristics
 
@@ -169,7 +169,7 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 ### Optimization Strategies
 
 - **Process Pooling**: Could implement transaction builder pooling
-- **Lease [Batching](../../glossary.md#batching)**: [Batch](../../glossary.md#batch) lease renewals for multiple transactions
+- **Lease [Batching](../../../glossary.md#batching)**: [Batch](../../../glossary.md#batch) lease renewals for multiple transactions
 - **State Caching**: Cache frequently accessed transaction system layout
 
 ## Error Handling
@@ -188,7 +188,7 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 {:error, :lease_expired} # Read version lease has expired
 ```
 
-**[Recovery](../../glossary.md#recovery) Behavior**:
+**[Recovery](../../../glossary.md#recovery) Behavior**:
 
 - **Process Failures**: Gateway process restart loses active leases
 - **Network Partitions**: Lease renewals fail, causing transaction aborts
@@ -242,7 +242,7 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 
 ### Potential Improvements
 
-1. **Connection Pooling**: Manage persistent connections to [data plane](../../glossary.md#data-plane) components
+1. **Connection Pooling**: Manage persistent connections to [data plane](../../../glossary.md#data-plane) components
 2. **Lease Optimization**: Predictive lease renewal based on transaction patterns
 3. **Load Balancing**: Intelligent routing of transactions to less loaded components
 4. **Caching**: Cache transaction system layout and worker information
@@ -268,7 +268,7 @@ The Gateway serves as the **entry point** in Bedrock's core transaction processi
 3. **Resource Management**: Gateway manages transaction lifecycle and ensures clean resource cleanup
 4. **Error Propagation**: Transaction failures propagate back through Gateway to clients
 
-For the complete transaction flow, see **[Transaction Processing Deep Dive](../../deep-dives/transactions.md)**.
+For the complete transaction flow, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
 ### Service Registration Workflow Role
 

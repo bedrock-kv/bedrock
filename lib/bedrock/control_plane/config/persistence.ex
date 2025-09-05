@@ -50,8 +50,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   """
   @spec decode_from_storage(encoded_config(), module()) :: Config.t()
   def decode_from_storage(encoded_config, cluster) do
-    encoded_config
-    |> decode_transaction_system_layout(cluster)
+    decode_transaction_system_layout(encoded_config, cluster)
   end
 
   @doc """
@@ -104,9 +103,8 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
   # Remove state that shouldn't be persisted
   @spec remove_ephemeral_state(Config.t()) :: Config.t()
   defp remove_ephemeral_state(config) do
-    config
+    Map.delete(config, :recovery_attempt)
     # Recovery state is ephemeral
-    |> Map.delete(:recovery_attempt)
   end
 
   # Encode transaction_system_layout field within config
@@ -192,8 +190,7 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     proxies = layout[:proxies] || []
 
     decoded_proxies =
-      proxies
-      |> Enum.map(fn
+      Enum.map(proxies, fn
         {otp_name, node} when is_atom(otp_name) and is_atom(node) ->
           otp_reference_to_pid({otp_name, node})
 
@@ -211,12 +208,10 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     services = layout[:services] || %{}
 
     encoded_services =
-      services
-      |> Enum.map(fn {service_id, service_descriptor} ->
+      Map.new(services, fn {service_id, service_descriptor} ->
         encoded_descriptor = encode_service_status(service_descriptor, cluster, service_id)
         {service_id, encoded_descriptor}
       end)
-      |> Map.new()
 
     Map.put(layout, :services, encoded_services)
   end
@@ -227,12 +222,10 @@ defmodule Bedrock.ControlPlane.Config.Persistence do
     services = layout[:services] || %{}
 
     decoded_services =
-      services
-      |> Enum.map(fn {service_id, service_descriptor} ->
+      Map.new(services, fn {service_id, service_descriptor} ->
         decoded_descriptor = decode_service_status(service_descriptor)
         {service_id, decoded_descriptor}
       end)
-      |> Map.new()
 
     Map.put(layout, :services, decoded_services)
   end

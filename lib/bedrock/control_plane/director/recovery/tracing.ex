@@ -3,9 +3,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   import Bedrock.Internal.Time.Interval, only: [humanize: 1]
 
-  require Logger
-
   alias Bedrock.DataPlane.Version
+
+  require Logger
 
   @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_director_recovery"
@@ -53,8 +53,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
           :telemetry.event_metadata(),
           any()
         ) :: any()
-  def handler([:bedrock, :recovery, event], measurements, metadata, _),
-    do: trace(event, measurements, metadata)
+  def handler([:bedrock, :recovery, event], measurements, metadata, _), do: trace(event, measurements, metadata)
 
   @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster, epoch: epoch, attempt: attempt}) do
@@ -66,8 +65,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   def trace(:stalled, _, %{elapsed: elapsed, reason: reason}),
     do: error("Recovery stalled after #{humanize(elapsed)}: #{inspect(reason)}")
 
-  def trace(:completed, _, %{elapsed: elapsed}),
-    do: info("Recovery completed in #{humanize(elapsed)}!")
+  def trace(:completed, _, %{elapsed: elapsed}), do: info("Recovery completed in #{humanize(elapsed)}!")
 
   def trace(:services_locked, %{n_services: n_services, n_reporting: n_reporting}, _),
     do: info("Services #{n_reporting}/#{n_services} reporting")
@@ -86,9 +84,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         info("Creating #{n_log_vacancies} log vacancies")
 
       {n_log_vacancies, n_storage_team_vacancies} ->
-        info(
-          "Creating #{n_log_vacancies} log vacancies and #{n_storage_team_vacancies} storage team vacancies"
-        )
+        info("Creating #{n_log_vacancies} log vacancies and #{n_storage_team_vacancies} storage team vacancies")
     end
   end
 
@@ -107,17 +103,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         info("All teams degraded (#{degraded |> Enum.sort() |> Enum.join(", ")})")
 
       {healthy, degraded} ->
-        info(
-          "Healthy teams are #{healthy |> Enum.join(", ")}, with some teams degraded (#{degraded |> Enum.join(", ")})"
-        )
+        info("Healthy teams are #{Enum.join(healthy, ", ")}, with some teams degraded (#{Enum.join(degraded, ", ")})")
     end
   end
 
-  def trace(:all_log_vacancies_filled, _, _),
-    do: info("All log vacancies filled")
+  def trace(:all_log_vacancies_filled, _, _), do: info("All log vacancies filled")
 
-  def trace(:all_storage_team_vacancies_filled, _, _),
-    do: info("All storage team vacancies filled")
+  def trace(:all_storage_team_vacancies_filled, _, _), do: info("All storage team vacancies filled")
 
   def trace(:replaying_old_logs, _, %{
         old_log_ids: old_log_ids,
@@ -131,16 +123,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         info("No logs to replay")
 
       _ ->
-        info(
-          "Replaying logs: {#{old_log_ids |> Enum.join(", ")}} -> {#{new_log_ids |> Enum.join(", ")}}"
-        )
+        info("Replaying logs: {#{Enum.join(old_log_ids, ", ")}} -> {#{Enum.join(new_log_ids, ", ")}}")
     end
   end
 
-  def trace(:suitable_logs_chosen, _, %{
-        suitable_logs: suitable_logs,
-        log_version_vector: log_version_vector
-      }) do
+  def trace(:suitable_logs_chosen, _, %{suitable_logs: suitable_logs, log_version_vector: log_version_vector}) do
     info("Suitable logs chosen for copying: #{Enum.map_join(suitable_logs, ", ", &inspect/1)}")
 
     info("Version vector: #{inspect(log_version_vector)}")
@@ -165,10 +152,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
     """)
   end
 
-  def trace(:log_validation_started, _, %{
-        log_ids: log_ids,
-        available_services: available_services
-      }) do
+  def trace(:log_validation_started, _, %{log_ids: log_ids, available_services: available_services}) do
     debug("""
     Starting log validation: #{length(log_ids)} logs to validate
       Log IDs: #{inspect(log_ids)}
@@ -198,13 +182,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   def trace(:layout_persist_failed, _, %{reason: reason}),
     do: error("Failed to persist new transaction system layout: #{inspect(reason)}")
 
-  def trace(:tsl_validation_success, _, _),
-    do: info("TSL type safety validation passed")
+  def trace(:tsl_validation_success, _, _), do: info("TSL type safety validation passed")
 
-  def trace(:tsl_validation_failed, _, %{
-        transaction_system_layout: tsl,
-        validation_error: validation_error
-      }) do
+  def trace(:tsl_validation_failed, _, %{transaction_system_layout: tsl, validation_error: validation_error}) do
     error("""
     TSL type safety validation failed during recovery - this indicates data corruption.
 

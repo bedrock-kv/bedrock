@@ -9,16 +9,14 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   necessary.
   """
   @spec check_out(server(), new_path :: String.t()) :: :ok | {:error, term()}
-  def check_out(segment_recycler, new_path),
-    do: GenServer.call(segment_recycler, {:check_out, new_path})
+  def check_out(segment_recycler, new_path), do: GenServer.call(segment_recycler, {:check_out, new_path})
 
   @doc """
   Return a segment to the recycler. The recycler will attempt to delete the
   segment if it has too many on-hand.
   """
   @spec check_in(server(), path :: String.t()) :: :ok
-  def check_in(segment_recycler, segment),
-    do: GenServer.call(segment_recycler, {:check_in, segment})
+  def check_in(segment_recycler, segment), do: GenServer.call(segment_recycler, {:check_in, segment})
 
   @spec child_spec(term()) :: Supervisor.child_spec()
   def child_spec(args) do
@@ -83,9 +81,10 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
             max_available :: pos_integer()
           ) :: {:ok, State.t()} | {:error, atom()}
     def new(path_to_dir, size, min_available, max_available) do
-      with true <- File.dir?(path_to_dir) || {:error, :path_is_not_a_directory},
-           segments <- find_existing_preallocated_files(path_to_dir),
-           highest_id <- find_highest_id(segments) do
+      if File.dir?(path_to_dir) do
+        segments = find_existing_preallocated_files(path_to_dir)
+        highest_id = find_highest_id(segments)
+
         {:ok,
          %State{
            path: path_to_dir,
@@ -95,6 +94,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
            min_available: min_available,
            max_available: max_available
          }}
+      else
+        {:error, :path_is_not_a_directory}
       end
     end
 
@@ -105,7 +106,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
             max_available :: pos_integer()
           ) :: State.t()
     def new!(path_to_dir, size, min_available, max_available) do
-      new(path_to_dir, size, min_available, max_available)
+      path_to_dir
+      |> new(size, min_available, max_available)
       |> case do
         {:ok, t} -> t
         {:error, reason} -> raise reason
@@ -114,8 +116,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     @spec find_existing_preallocated_files(dir_path :: binary()) ::
             [path_to_file :: String.t()]
-    def find_existing_preallocated_files(path),
-      do: Path.wildcard(Path.join(path, "#{unused_file_prefix()}.*"))
+    def find_existing_preallocated_files(path), do: Path.wildcard(Path.join(path, "#{unused_file_prefix()}.*"))
 
     @spec check_out(State.t(), new_name :: String.t()) ::
             {:ok, State.t()}
@@ -131,8 +132,9 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
     @spec check_in(State.t(), path_to_file :: String.t()) ::
             {:ok, State.t()} | {:error, :file_is_not_closed}
     def check_in(t, path_to_file) do
-      with new_path_to_file <- Path.join(t.path, generate_unused_file_name(t.next_id)),
-           :ok <- File.rename(path_to_file, new_path_to_file) do
+      new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
+
+      with :ok <- File.rename(path_to_file, new_path_to_file) do
         {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}
       end
     end
@@ -153,8 +155,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
                Path.join(t.path, generate_unused_file_name(t.next_id)),
                t.size
              ) do
-        %{t | segments: [segment | t.segments], next_id: t.next_id + 1}
-        |> create_new_segments(n - 1)
+        create_new_segments(%{t | segments: [segment | t.segments], next_id: t.next_id + 1}, n - 1)
       end
     end
 
@@ -188,7 +189,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     @impl GenServer
     def init({path, segment_size, min_available, max_available}) do
-      Logic.new(path, segment_size, min_available, max_available)
+      path
+      |> Logic.new(segment_size, min_available, max_available)
       |> case do
         {:ok, state} -> {:ok, state, {:continue, :ensure_min_available}}
         {:error, reason} -> {:stop, reason}
@@ -197,7 +199,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     @impl GenServer
     def handle_call({:check_out, new_path}, _from, state) do
-      Logic.check_out(state, new_path)
+      state
+      |> Logic.check_out(new_path)
       |> case do
         {:ok, state} ->
           {:reply, :ok, state, {:continue, :ensure_min_available}}
@@ -209,7 +212,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     @impl GenServer
     def handle_call({:check_in, segment}, _from, state) do
-      Logic.check_in(state, segment)
+      state
+      |> Logic.check_in(segment)
       |> case do
         {:ok, state} -> {:reply, :ok, state}
         {:error, reason} -> {:reply, {:error, reason}, state}

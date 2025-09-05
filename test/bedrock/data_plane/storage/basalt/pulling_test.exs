@@ -1,8 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
   use ExUnit.Case, async: false
 
-  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   describe "start_pulling/6" do
@@ -242,7 +242,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
   describe "mark_log_as_failed/2" do
     test "adds log to failed_logs with timeout" do
-      state = %{failed_logs: %{}}
+      state = %{failed_logs: %{}, start_after: Version.zero()}
       log_id = "test_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -257,7 +257,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "preserves existing failed logs" do
       existing_timestamp = System.monotonic_time(:millisecond) + 5000
-      state = %{failed_logs: %{"existing_log" => existing_timestamp}}
+      state = %{failed_logs: %{"existing_log" => existing_timestamp}, start_after: Version.zero()}
       log_id = "new_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -269,7 +269,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "updates existing failed log timestamp" do
       old_timestamp = System.monotonic_time(:millisecond) - 1000
-      state = %{failed_logs: %{"test_log" => old_timestamp}}
+      state = %{failed_logs: %{"test_log" => old_timestamp}, start_after: Version.zero()}
       log_id = "test_log"
 
       new_state = Pulling.mark_log_as_failed(state, log_id)
@@ -285,7 +285,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         failed_logs: %{
           "log1" => System.monotonic_time(:millisecond) + 5000,
           "log2" => System.monotonic_time(:millisecond) + 10_000
-        }
+        },
+        start_after: Version.zero()
       }
 
       new_state = Pulling.reset_failed_logs(state)
@@ -295,14 +296,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
 
     test "preserves other state fields" do
       state = %{
-        start_after: 100,
+        start_after: Version.from_integer(100),
         logs: %{"log1" => []},
         failed_logs: %{"log1" => 12_345}
       }
 
       new_state = Pulling.reset_failed_logs(state)
 
-      assert new_state.start_after == 100
+      assert new_state.start_after == Version.from_integer(100)
       assert new_state.logs == %{"log1" => []}
       assert new_state.failed_logs == %{}
     end
@@ -323,8 +324,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       transaction2 = {Version.from_integer(2), %{"key2" => "value2"}}
 
       encoded_txns = [
-        EncodedTransaction.encode(transaction1),
-        EncodedTransaction.encode(transaction2)
+        TransactionTestSupport.new_log_transaction(
+          elem(transaction1, 0),
+          elem(transaction1, 1)
+        ),
+        TransactionTestSupport.new_log_transaction(
+          elem(transaction2, 0),
+          elem(transaction2, 1)
+        )
       ]
 
       # Mock log server process
@@ -359,10 +366,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
       # Should receive the applied transactions
       assert_receive {:applied_transactions, transactions}, 1000
 
-      # Verify the transactions were decoded correctly
+      # Verify the transactions are in Transaction binary format
       assert length(transactions) == 2
-      assert {Version.from_integer(1), %{"key1" => "value1"}} in transactions
-      assert {Version.from_integer(2), %{"key2" => "value2"}} in transactions
+      # Decode and verify each transaction
+      [tx1, tx2] = transactions
+      assert TransactionTestSupport.extract_log_version(tx1) == Version.from_integer(1)
+      assert TransactionTestSupport.extract_log_writes(tx1) == %{"key1" => "value1"}
+      assert TransactionTestSupport.extract_log_version(tx2) == Version.from_integer(2)
+      assert TransactionTestSupport.extract_log_writes(tx2) == %{"key2" => "value2"}
 
       # Clean up
       Process.exit(loop_pid, :kill)

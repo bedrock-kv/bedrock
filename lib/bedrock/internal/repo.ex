@@ -1,76 +1,25 @@
 defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls
 
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Internal.RangeQuery
+  alias Bedrock.KeySelector
 
   @opaque transaction :: pid()
   @type key :: term()
   @type value :: term()
 
-  @spec transaction(
-          cluster :: module(),
-          (transaction() -> result),
-          opts :: [
-            key_codec: module(),
-            value_codec: module(),
-            retry_count: pos_integer(),
-            timeout_in_ms: Bedrock.timeout_in_ms()
-          ]
-        ) :: result
-        when result: term()
-  def transaction(cluster, fun, opts \\ []) do
-    with {:ok, gateway} <- cluster.fetch_gateway(),
-         {:ok, txn} <- Gateway.begin_transaction(gateway, opts) do
-      result =
-        try do
-          fun.(txn)
-        rescue
-          exception ->
-            rollback(txn)
-            reraise exception, __STACKTRACE__
-        end
-
-      if :ok == result || (is_tuple(result) and :ok == elem(result, 0)) do
-        handle_commit_result(txn, result, cluster, fun, opts)
-      else
-        rollback(txn)
-        result
-      end
-    end
+  @spec nested_transaction(transaction(), function()) :: term()
+  def nested_transaction(txn, fun) do
+    call(txn, :nested_transaction, :infinity)
+    fun.(txn)
+  rescue
+    exception ->
+      rollback(txn)
+      reraise exception, __STACKTRACE__
   end
-
-  @spec handle_commit_result(transaction(), term(), module(), function(), keyword()) :: term()
-  defp handle_commit_result(txn, result, cluster, fun, opts) do
-    txn
-    |> commit()
-    |> case do
-      {:ok, _} ->
-        result
-
-      {:error, reason} when reason in [:timeout, :aborted, :unavailable] ->
-        handle_commit_retry(cluster, fun, opts, reason)
-    end
-  end
-
-  @spec handle_commit_retry(module(), function(), keyword(), atom()) :: term()
-  defp handle_commit_retry(cluster, fun, opts, reason) do
-    retry_count = opts[:retry_count] || 0
-
-    if retry_count > 0 do
-      opts = Keyword.put(opts, :retry_count, retry_count - 1)
-      transaction(cluster, fun, opts)
-    else
-      raise "Transaction failed: #{inspect(reason)}"
-    end
-  end
-
-  @spec nested_transaction(transaction()) ::
-          {:ok, transaction()} | {:error, :unavailable | :timeout | :unknown}
-  def nested_transaction(t), do: call(t, :nested_transaction, :infinity)
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
-  def fetch(t, key),
-    do: call(t, {:fetch, key}, :infinity)
+  def fetch(t, key), do: call(t, {:fetch, key}, :infinity)
 
   @spec fetch!(transaction(), key()) :: value()
   def fetch!(t, key) do
@@ -88,6 +37,84 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
+  @spec fetch_key_selector(transaction(), KeySelector.t()) ::
+          {:ok, {resolved_key :: key(), value()}}
+          | {:error, atom()}
+  def fetch_key_selector(t, %KeySelector{} = key_selector) do
+    call(t, {:fetch_key_selector, key_selector}, :infinity)
+  end
+
+  @spec fetch_key_selector!(transaction(), KeySelector.t()) :: {resolved_key :: key(), value()}
+  def fetch_key_selector!(t, %KeySelector{} = key_selector) do
+    case fetch_key_selector(t, key_selector) do
+      {:error, _} -> raise "KeySelector not found: #{inspect(key_selector)}"
+      {:ok, {resolved_key, value}} -> {resolved_key, value}
+    end
+  end
+
+  @spec get_key_selector(transaction(), KeySelector.t()) ::
+          nil | {resolved_key :: key(), value()}
+  def get_key_selector(t, %KeySelector{} = key_selector) do
+    case fetch_key_selector(t, key_selector) do
+      {:error, _} -> nil
+      {:ok, {resolved_key, value}} -> {resolved_key, value}
+    end
+  end
+
+  @spec range_fetch(transaction(), start_key :: key(), end_key :: key(), opts :: [limit: pos_integer()]) ::
+          {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
+  def range_fetch(t, start_key, end_key, opts \\ []) do
+    {:ok, t |> range_stream(start_key, end_key, opts) |> Enum.to_list()}
+  rescue
+    RuntimeError -> {:error, :unavailable}
+  end
+
+  @spec range_stream(
+          transaction(),
+          start_key :: key(),
+          end_key :: key(),
+          opts :: [
+            batch_size: pos_integer(),
+            timeout: pos_integer(),
+            limit: pos_integer(),
+            mode: :individual | :batch
+          ]
+        ) :: Enumerable.t({any(), any()})
+  def range_stream(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
+
+  @spec range_fetch_key_selectors(
+          transaction(),
+          start_selector :: KeySelector.t(),
+          end_selector :: KeySelector.t(),
+          opts :: [limit: pos_integer()]
+        ) ::
+          {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
+  def range_fetch_key_selectors(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts \\ []) do
+    call(t, {:range_fetch_key_selectors, start_selector, end_selector, opts}, :infinity)
+  end
+
+  @spec range_stream_key_selectors(
+          transaction(),
+          start_selector :: KeySelector.t(),
+          end_selector :: KeySelector.t(),
+          opts :: [
+            batch_size: pos_integer(),
+            timeout: pos_integer(),
+            limit: pos_integer(),
+            mode: :individual | :batch
+          ]
+        ) :: Enumerable.t({any(), any()})
+  def range_stream_key_selectors(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts \\ []) do
+    # For now, resolve and delegate to normal range_stream
+    # A more sophisticated implementation would handle KeySelector streaming directly
+    with {:ok, {resolved_start, _}} <- fetch_key_selector(t, start_selector),
+         {:ok, {resolved_end, _}} <- fetch_key_selector(t, end_selector) do
+      range_stream(t, resolved_start, resolved_end, opts)
+    else
+      _ -> raise RuntimeError, "Failed to resolve KeySelectors for streaming"
+    end
+  end
+
   @spec put(transaction(), key(), value()) :: transaction()
   def put(t, key, value) do
     cast(t, {:put, key, value})
@@ -97,12 +124,10 @@ defmodule Bedrock.Internal.Repo do
   @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
           {:ok, Bedrock.version()}
           | {:error, :unavailable | :timeout | :unknown}
-  def commit(t, opts \\ []),
-    do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
+  def commit(t, opts \\ []), do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
 
   @spec rollback(transaction()) :: :ok
-  def rollback(t),
-    do: cast(t, :rollback)
+  def rollback(t), do: cast(t, :rollback)
 
   @spec default_timeout_in_ms() :: pos_integer()
   def default_timeout_in_ms, do: 1_000

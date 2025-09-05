@@ -28,7 +28,7 @@ For comprehensive technical coverage:
 - **[Architecture Analysis](deep-dives/architecture.md)** - Complete architectural patterns and design principles
 - **[Control Plane Overview](quick-reads/control-plane.md)** - How cluster coordination and consensus work
 - **[Data Plane Overview](quick-reads/data-plane.md)** - Transaction processing and data persistence
-- **[Storage Implementations](deep-dives/architecture/implementations)** - Available storage engines and their
+- **[Storage Implementations](deep-dives/architecture/implementations/README.md)** - Available storage engines and their
 - **[Transaction System Layout](quick-reads/transaction-system-layout.md)** - The big picture of how components work together
 - **[Transaction Processing](deep-dives/transactions.md)** - Full details of MVCC implementation and commit protocols
 - **[Cluster Startup](deep-dives/cluster-startup.md)** - Bootstrap processes and system initialization

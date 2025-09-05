@@ -1,10 +1,10 @@
 defmodule Bedrock.ControlPlane.Coordinator.DirectorMonitoringTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.ControlPlane.Coordinator.DirectorManagement
   alias Bedrock.ControlPlane.Coordinator.State
-
-  import ExUnit.CaptureLog
 
   describe "director management" do
     test "handle_director_failure processes failure for current director" do

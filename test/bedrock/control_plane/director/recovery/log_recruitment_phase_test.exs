@@ -1,13 +1,14 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   use ExUnit.Case, async: true
+
   import ExUnit.CaptureLog
+  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
 
-  import RecoveryTestSupport
-
   # Mock cluster module for testing
   defmodule TestCluster do
+    @moduledoc false
     def name, do: "test_cluster"
     def otp_name(:foreman), do: :test_foreman
   end
@@ -24,12 +25,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       }
 
       context =
-        create_test_context(
+        [
           old_transaction_system_layout: %{
             logs: %{{:log, 1} => %{}, {:log, 2} => %{}},
             storage_teams: []
           }
-        )
+        ]
+        |> create_test_context()
         |> Map.merge(%{
           cluster_config: %{
             transaction_system_layout: %{logs: %{{:log, 1} => %{}, {:log, 2} => %{}}}
@@ -59,12 +61,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       }
 
       context =
-        create_test_context(
+        [
           old_transaction_system_layout: %{
             logs: %{{:log, 1} => %{}},
             storage_teams: []
           }
-        )
+        ]
+        |> create_test_context()
         |> Map.merge(%{
           cluster_config: %{
             transaction_system_layout: %{logs: %{{:log, 1} => %{}}}
@@ -240,12 +243,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       }
 
       context =
-        create_test_context(
+        [
           old_transaction_system_layout: %{
             logs: %{{:log, 1} => %{}},
             storage_teams: []
           }
-        )
+        ]
+        |> create_test_context()
         |> Map.merge(%{
           available_services: %{},
           cluster_config: %{

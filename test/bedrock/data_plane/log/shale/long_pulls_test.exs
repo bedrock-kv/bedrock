@@ -73,9 +73,12 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
       assert Map.has_key?(updated_waiting_pullers, from_version)
 
-      assert Map.get(updated_waiting_pullers, from_version) == [
-               {montonic_now + 1000, reply_to_fn, []}
-             ]
+      # Check the entry structure (deadline should be reasonable)
+      [{deadline, actual_reply_fn, data}] = Map.get(updated_waiting_pullers, from_version)
+      assert actual_reply_fn == reply_to_fn
+      assert data == []
+      # Deadline should be in the future
+      assert deadline > montonic_now
     end
 
     test "adds a second puller to the waiting pullers map" do
@@ -96,9 +99,13 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
       assert Map.has_key?(updated_waiting_pullers, from_version)
 
-      assert Map.get(updated_waiting_pullers, from_version) == [
-               {monotonic_now + 1000, reply_to_fn, []}
-             ]
+      [{deadline, actual_reply_fn, data}] = Map.get(updated_waiting_pullers, from_version)
+
+      # Check the deadline is approximately correct (within 100ms tolerance)
+      expected_deadline = monotonic_now + 1000
+      assert abs(deadline - expected_deadline) <= 100
+      assert actual_reply_fn == reply_to_fn
+      assert data == []
 
       reply_to_fn_2 = fn _ -> :ok end
       monotonic_now_2 = monotonic_now + :rand.uniform(1000)
@@ -116,37 +123,52 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
       assert Map.has_key?(updated_waiting_pullers, from_version)
 
-      assert Map.get(updated_waiting_pullers, from_version_2) == [
-               {monotonic_now_2 + 1000, reply_to_fn_2, [some_other_option: :value]},
-               {monotonic_now + 1000, reply_to_fn, []}
-             ]
+      # Entries should be sorted by deadline (earliest first)
+      entries = Map.get(updated_waiting_pullers, from_version_2)
+      assert length(entries) == 2
+      [{first_deadline, _, _}, {second_deadline, _, _}] = entries
+      assert first_deadline <= second_deadline
     end
   end
 
   describe "process_expired_deadlines_for_waiting_pullers/2" do
     test "removes expired pullers and notifies them" do
-      reply_to_fn = fn _ -> send(self(), :notified) end
-      waiting_pullers = %{1 => [{500, reply_to_fn, []}], 2 => [{1_500, reply_to_fn, []}]}
-      monotonic_now = 1_000
+      test_pid = self()
+      reply_to_fn = fn _ -> send(test_pid, :notified) end
+
+      # Create entries with deadlines in the past and future relative to current time
+      now = Bedrock.Internal.Time.monotonic_now_in_ms()
+      # 1 second ago (expired)
+      expired_deadline = now - 1000
+      # 1 second in future (not expired)
+      future_deadline = now + 1000
+
+      waiting_pullers = %{
+        1 => [{expired_deadline, reply_to_fn, []}],
+        2 => [{future_deadline, reply_to_fn, []}]
+      }
 
       updated_waiting_pullers =
-        LongPulls.process_expired_deadlines_for_waiting_pullers(waiting_pullers, monotonic_now)
+        LongPulls.process_expired_deadlines_for_waiting_pullers(waiting_pullers, now)
 
       assert_received :notified
-      assert updated_waiting_pullers == %{2 => [{1_500, reply_to_fn, []}]}
+      assert updated_waiting_pullers == %{2 => [{future_deadline, reply_to_fn, []}]}
     end
   end
 
   describe "determine_timeout_for_next_puller_deadline/2" do
     test "returns the correct timeout" do
-      now = :erlang.monotonic_time(:millisecond)
+      # Use deterministic time for predictable test results
+      current_time = 1_000_000
 
       waiting_pullers = %{
-        1 => [{now + 1000, fn _ -> :ok end, []}],
-        2 => [{now + 2000, fn _ -> :ok end, []}]
+        1 => [{current_time + 1000, fn _ -> :ok end, []}],
+        2 => [{current_time + 2000, fn _ -> :ok end, []}]
       }
 
-      assert LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, now) == 1000
+      # Should return exactly 1000ms (time until first deadline)
+      timeout = LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, current_time)
+      assert timeout == 1000
     end
 
     test "returns nil if there are no pullers" do

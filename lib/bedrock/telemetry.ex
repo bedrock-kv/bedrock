@@ -1,4 +1,5 @@
 defmodule Bedrock.Telemetry do
+  @moduledoc false
   @spec execute(
           event_name :: [:bedrock | :storage | :log | :coordinator | atom()],
           measurements :: %{atom() => number()},

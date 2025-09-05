@@ -1,14 +1,11 @@
 defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Coordinator.State
-  alias Bedrock.ControlPlane.Director
-
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
       put_director: 2,
       put_config: 2,
+      put_leader_startup_state: 2,
       convert_to_capability_map: 1
     ]
 
@@ -17,72 +14,84 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       trace_director_changed: 1,
       trace_director_failure_detected: 2,
       trace_director_launch: 2,
-      trace_director_shutdown: 2
+      trace_director_shutdown: 2,
+      trace_recovery_retry_attempt: 1,
+      trace_recovery_failed: 1
     ]
+
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.ControlPlane.Director
 
   require Logger
 
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
-    t = t |> maybe_put_default_config()
+    t = maybe_put_default_config(t)
 
     trace_director_launch(t.epoch, t.transaction_system_layout)
 
-    {:ok, new_director} = start_director_with_monitoring!(t)
+    case start_director_with_monitoring(t) do
+      {:ok, new_director} ->
+        trace_director_changed(new_director)
+        put_director(t, new_director)
 
-    trace_director_changed(new_director)
-
-    t
-    |> put_director(new_director)
+      {:error, reason} ->
+        Logger.warning("Failed to start director: #{inspect(reason)}")
+        trace_recovery_failed(reason)
+        t
+    end
   end
 
   def try_to_start_director(t), do: t
 
   @spec maybe_put_default_config(State.t()) :: State.t()
-  defp maybe_put_default_config(%{config: nil} = t),
-    do: t |> put_config(Config.new(Bedrock.Raft.known_peers(t.raft)))
+  defp maybe_put_default_config(%{config: nil} = t), do: put_config(t, Config.new(Bedrock.Raft.known_peers(t.raft)))
 
   defp maybe_put_default_config(t), do: t
 
-  @spec start_director_with_monitoring!(State.t()) ::
-          {:ok, pid()} | no_return()
-  defp start_director_with_monitoring!(t) do
-    t.supervisor_otp_name
-    |> DynamicSupervisor.start_child(
-      {Director,
-       [
-         cluster: t.cluster,
-         config: t.config,
-         old_transaction_system_layout: t.transaction_system_layout,
-         epoch: t.epoch,
-         coordinator: self(),
-         services: t.service_directory,
-         node_capabilities: convert_to_capability_map(t.node_capabilities)
-       ]}
-    )
-    |> case do
+  @spec start_director_with_monitoring(State.t()) ::
+          {:ok, pid()} | {:error, term()}
+  defp start_director_with_monitoring(t) do
+    case DynamicSupervisor.start_child(
+           t.supervisor_otp_name,
+           {Director,
+            [
+              cluster: t.cluster,
+              config: t.config,
+              old_transaction_system_layout: t.transaction_system_layout,
+              epoch: t.epoch,
+              coordinator: self(),
+              services: t.service_directory,
+              node_capabilities: convert_to_capability_map(t.node_capabilities)
+            ]}
+         ) do
       {:ok, director_pid} ->
         Process.monitor(director_pid)
         {:ok, director_pid}
 
       {:error, reason} ->
-        raise "Failed to start director: #{inspect(reason)}"
+        {:error, reason}
     end
   end
 
   @spec handle_director_failure(State.t(), director_pid :: pid(), reason :: term()) :: State.t()
-  def handle_director_failure(t, director_pid, reason)
-      when t.director == director_pid and t.leader_node == t.my_node do
+  def handle_director_failure(t, director_pid, reason) when t.director == director_pid and t.leader_node == t.my_node do
     trace_director_failure_detected(t.director, reason)
     Logger.warning("Director #{inspect(t.director)} failed with reason: #{inspect(reason)}")
 
-    updated_t = t |> put_director(:unavailable)
+    updated_t = put_director(t, :unavailable)
 
-    # Only attempt restart if we have necessary state (not in tests)
-    if t.raft != nil and t.supervisor_otp_name != nil do
+    # Only attempt restart if we have necessary state (not in tests) and we're in a state that allows recovery
+    if t.raft != nil and t.supervisor_otp_name != nil and t.leader_startup_state == :leader_ready do
+      trace_recovery_retry_attempt(:director_failure)
       try_to_start_director(updated_t)
     else
-      updated_t
+      # Mark as recovery failed if we can't retry
+      case t.leader_startup_state do
+        :leader_ready -> put_leader_startup_state(updated_t, :recovery_failed)
+        _ -> updated_t
+      end
     end
   end
 
@@ -109,7 +118,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
         :ok
     end
 
-    t |> put_director(:unavailable)
+    put_director(t, :unavailable)
   end
 
   def shutdown_director_if_running(t), do: t
@@ -127,7 +136,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       {:error, _reason} -> :ok
     end
 
-    t |> put_director(:unavailable)
+    put_director(t, :unavailable)
   end
 
   def cleanup_director_on_leadership_loss(t), do: t

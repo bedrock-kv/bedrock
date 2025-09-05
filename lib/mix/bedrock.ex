@@ -76,7 +76,7 @@ defmodule Mix.Bedrock do
 
   @spec check_implements_behaviour!(Cluster.t()) :: Cluster.t()
   defp check_implements_behaviour!(module) do
-    unless implements?(module, Cluster) do
+    if !implements?(module, Cluster) do
       Mix.raise(
         "Module #{inspect(module)} is not a Cluster. " <>
           "Please configure your app accordingly or pass a cluster with the -c option."
@@ -88,7 +88,8 @@ defmodule Mix.Bedrock do
 
   @spec implements?(Cluster.t(), behaviour :: module()) :: boolean()
   defp implements?(module, behaviour) do
-    module.__info__(:attributes)
+    :attributes
+    |> module.__info__()
     |> Keyword.get(:behaviour, [])
     |> Enum.member?(behaviour)
   end

@@ -1,8 +1,4 @@
 defmodule Mix.Tasks.Bedrock do
-  use Mix.Task
-
-  alias Mix.Tasks.Help
-
   @shortdoc "Prints Bedrock help information"
 
   @moduledoc """
@@ -11,6 +7,10 @@ defmodule Mix.Tasks.Bedrock do
       $ mix bedrock
 
   """
+
+  use Mix.Task
+
+  alias Mix.Tasks.Help
 
   @spec run([String.t()]) :: :ok
   def run(argv) do

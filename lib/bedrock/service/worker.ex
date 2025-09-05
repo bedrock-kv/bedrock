@@ -17,7 +17,7 @@ defmodule Bedrock.Service.Worker do
   @type otp_name :: atom()
 
   @spec random_id() :: binary()
-  def random_id, do: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
+  def random_id, do: 5 |> :crypto.strong_rand_bytes() |> Base.encode32(case: :lower)
 
   @spec info(
           worker_ref :: ref(),
@@ -25,16 +25,14 @@ defmodule Bedrock.Service.Worker do
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
           {:ok, facts :: %{fact_name() => fact_value()}} | {:error, :unavailable}
-  def info(worker, fact_names, opts \\ []),
-    do: call(worker, {:info, fact_names}, opts[:timeout_in_ms] || :infinity)
+  def info(worker, fact_names, opts \\ []), do: call(worker, {:info, fact_names}, opts[:timeout_in_ms] || :infinity)
 
   @spec lock_for_recovery(
           worker_ref :: ref(),
           recovery_epoch :: Bedrock.epoch(),
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
-          {:ok, worker_pid :: pid(),
-           recovery_info :: [kind: :log | :storage, version: Bedrock.version()]}
+          {:ok, worker_pid :: pid(), recovery_info :: [kind: :log | :storage, version: Bedrock.version()]}
           | {:error, :newer_epoch_exists}
           | {:error, :timeout}
   def lock_for_recovery(worker, epoch, opts \\ []),

@@ -1,7 +1,4 @@
 defmodule Mix.Tasks.Bedrock.Status do
-  use Mix.Task
-  import Mix.Bedrock
-
   @shortdoc "Prints status information"
 
   @moduledoc """
@@ -26,15 +23,13 @@ defmodule Mix.Tasks.Bedrock.Status do
 
   """
 
-  defp switches,
-    do: [
-      cluster: [:string, :keep]
-    ]
+  use Mix.Task
 
-  defp aliases,
-    do: [
-      c: :cluster
-    ]
+  import Mix.Bedrock
+
+  defp switches, do: [cluster: [:string, :keep]]
+
+  defp aliases, do: [c: :cluster]
 
   @spec run([String.t()]) :: :ok
   def run(argv) do
@@ -48,15 +43,15 @@ defmodule Mix.Tasks.Bedrock.Status do
       |> parse_clusters()
 
     {:ok, _pid} =
-      Supervisor.start_link(clusters, strategy: :one_for_one)
+      clusters
+      |> Supervisor.start_link(strategy: :one_for_one)
       |> case do
         {:ok, pid} -> {:ok, pid}
         {:error, {:already_started, pid}} -> {:ok, pid}
       end
 
     for cluster <- clusters do
-      cluster.config()
-      |> case do
+      case cluster.config() do
         {:ok, config} -> config
         {:error, reason} -> IO.puts("Error: #{reason}")
       end

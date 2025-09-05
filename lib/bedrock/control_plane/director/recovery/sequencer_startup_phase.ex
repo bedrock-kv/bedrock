@@ -51,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
                                                                {:ok, pid()} | {:error, term()})
   defp get_starter_function(recovery_attempt, context) do
     Map.get(context, :start_supervised_fn, fn child_spec, _node ->
-      starter_fn = recovery_attempt.cluster.otp_name(:sup) |> Shared.starter_for()
+      starter_fn = :sup |> recovery_attempt.cluster.otp_name() |> Shared.starter_for()
       starter_fn.(child_spec, node())
     end)
   end
@@ -61,6 +61,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
     {_first_version, last_committed_version} = recovery_attempt.version_vector
 
     Sequencer.child_spec(
+      cluster: recovery_attempt.cluster,
       director: self(),
       epoch: recovery_attempt.epoch,
       last_committed_version: last_committed_version,

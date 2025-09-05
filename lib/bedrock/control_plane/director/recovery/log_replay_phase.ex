@@ -28,18 +28,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   for detailed explanation of the migration strategy and robustness approach.
   """
 
-  alias Bedrock.DataPlane.Log
-
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.DataPlane.Log
+
   @impl true
   def execute(recovery_attempt, context) do
-    replay_old_logs_into_new_logs(
-      recovery_attempt.old_log_ids_to_copy,
+    # Only copy transactions from durable_version onwards (what storage actually needs)
+    # instead of copying from the beginning of the version vector
+    {_original_first, last_version} = recovery_attempt.version_vector
+    optimized_version_vector = {recovery_attempt.durable_version, last_version}
+
+    recovery_attempt.old_log_ids_to_copy
+    |> replay_old_logs_into_new_logs(
       Map.keys(recovery_attempt.logs),
-      recovery_attempt.version_vector,
+      optimized_version_vector,
       recovery_attempt,
       context
     )
@@ -61,9 +66,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           context :: map()
         ) ::
           :ok
-          | {:error,
-             {:failed_to_copy_some_logs,
-              [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}}
+          | {:error, {:failed_to_copy_some_logs, [{reason :: term(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}}
   def replay_old_logs_into_new_logs(
         old_log_ids,
         new_log_ids,
@@ -78,7 +81,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     |> pair_with_old_log_ids(old_log_ids)
     |> Task.async_stream(
       fn {new_log_id, old_log_id} ->
-        copy_log_data_fn.(new_log_id, old_log_id, first_version, last_version, service_pids)
+        new_log_id
+        |> copy_log_data_fn.(old_log_id, first_version, last_version, service_pids)
         |> then(&{new_log_id, &1})
       end,
       ordered: false,
@@ -130,9 +134,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   @spec pair_with_old_log_ids([Log.id()], [Log.id()]) ::
           Enumerable.t({Log.id(), Log.id() | :none})
-  def pair_with_old_log_ids(new_log_ids, []),
-    do: new_log_ids |> Stream.zip([:none] |> Stream.cycle())
+  def pair_with_old_log_ids(new_log_ids, []), do: Stream.zip(new_log_ids, Stream.cycle([:none]))
 
-  def pair_with_old_log_ids(new_log_ids, old_log_ids),
-    do: new_log_ids |> Stream.zip(old_log_ids |> Stream.cycle())
+  def pair_with_old_log_ids(new_log_ids, old_log_ids), do: Stream.zip(new_log_ids, Stream.cycle(old_log_ids))
 end

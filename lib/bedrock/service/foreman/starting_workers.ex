@@ -1,15 +1,15 @@
 defmodule Bedrock.Service.Foreman.StartingWorkers do
   @moduledoc false
-  alias Bedrock.Cluster
-  alias Bedrock.Service.Foreman.WorkerInfo
-  alias Bedrock.Service.Manifest
-  alias Bedrock.Service.Worker
-
   import Bedrock.Service.Foreman.WorkerInfo,
     only: [put_health: 2, put_manifest: 2, put_otp_name: 2]
 
   import Bedrock.Service.Foreman.WorkingDirectory,
     only: [initialize_working_directory: 2, read_and_validate_manifest: 3]
+
+  alias Bedrock.Cluster
+  alias Bedrock.Service.Foreman.WorkerInfo
+  alias Bedrock.Service.Manifest
+  alias Bedrock.Service.Worker
 
   @spec worker_info_from_path(Path.t(), otp_namer :: (Worker.id() -> Worker.otp_name())) ::
           [WorkerInfo.t()]
@@ -29,12 +29,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   @spec worker_info_for_id(Worker.id(), Path.t(), (Worker.id() -> Worker.otp_name())) ::
           WorkerInfo.t()
   def worker_info_for_id(id, path, otp_namer),
-    do: %WorkerInfo{
-      id: id,
-      path: path,
-      otp_name: otp_namer.(id),
-      health: :stopped
-    }
+    do: %WorkerInfo{id: id, path: path, otp_name: otp_namer.(id), health: :stopped}
 
   @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t()) :: [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster) do
@@ -42,7 +37,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> Task.async_stream(&try_to_start_worker(&1, cluster))
     |> Enum.map(fn
       {:ok, worker_info} -> worker_info
-      {:error, reason} -> worker_info |> put_health({:failed_to_start, reason})
+      {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
     end)
     |> Enum.to_list()
   end
@@ -89,14 +84,15 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   @spec build_child_spec(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp build_child_spec(%{error: nil} = op) do
-    op.manifest.worker.child_spec(
+    [
       cluster: op.cluster,
       path: op.path,
       id: op.id,
       otp_name: op.otp_name,
       foreman: op.cluster.otp_name(:foreman),
       params: op.manifest.params
-    )
+    ]
+    |> op.manifest.worker.child_spec()
     |> Map.put(:restart, :transient)
     |> then(&%{op | child_spec: &1})
   end
@@ -140,7 +136,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
     case initialize_working_directory(working_directory, manifest) do
       :ok -> worker_info
-      {:error, reason} -> worker_info |> put_health({:failed_to_start, reason})
+      {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
     end
   end
 end

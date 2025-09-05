@@ -1,10 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   @moduledoc false
+  import Bedrock.DataPlane.Log.Shale.TransactionStreams
+
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.Log.Transaction
-
-  import Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Transaction
 
   @spec pull(
           t :: State.t(),
@@ -12,12 +12,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           opts :: [
             limit: pos_integer(),
             last_version: Bedrock.version(),
-            key_range: Bedrock.key_range(),
-            exclude_values: boolean(),
             recovery: boolean()
           ]
         ) ::
-          {:ok, State.t(), [Transaction.t()]}
+          {:ok, State.t(), [Transaction.encoded()]}
           | {:waiting_for, Bedrock.version()}
           | {:error, :not_ready}
           | {:error, :not_locked}
@@ -25,11 +23,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:error, :version_too_old}
   def pull(t, from_version, opts \\ [])
 
-  def pull(t, from_version, _) when from_version >= t.last_version,
-    do: {:waiting_for, from_version}
+  def pull(t, from_version, _) when from_version >= t.last_version, do: {:waiting_for, from_version}
 
-  def pull(t, from_version, _) when from_version < t.oldest_version,
-    do: {:error, :version_too_old}
+  def pull(t, from_version, _) when from_version < t.oldest_version, do: {:error, :version_too_old}
 
   def pull(t, from_version, opts) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
@@ -44,11 +40,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         transaction_stream
         |> until_version(last_version)
         |> at_most(determine_pull_limit(opts[:limit], t))
-        |> filter_keys_in_range(opts[:key_range])
-        |> exclude_values(opts[:exclude_values] || false)
         |> Enum.to_list()
 
       {:ok, %{t | active_segment: active_segment, segments: remaining_segments}, transactions}
+    else
+      {:error, :not_found} ->
+        # No transactions found after from_version due to version gaps.
+        # For recovery operations, return the error directly since recovery is synchronous.
+        # For regular pulls, wait for new transactions like we do for future versions.
+        if opts[:recovery] do
+          {:error, :not_found}
+        else
+          {:waiting_for, from_version}
+        end
+
+      error ->
+        error
     end
   end
 
@@ -57,21 +64,20 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
   def ensure_necessary_segments_are_loaded(_, []), do: {:error, :version_too_old}
 
   def ensure_necessary_segments_are_loaded(nil, [segment | remaining_segments]) do
-    with segment <- Segment.ensure_transactions_are_loaded(segment) do
-      {:ok, [segment | remaining_segments]}
-    end
+    segment = Segment.ensure_transactions_are_loaded(segment)
+    {:ok, [segment | remaining_segments]}
   end
 
   def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments])
       when segment.min_version <= last_version do
-    with segment <- Segment.ensure_transactions_are_loaded(segment) do
-      {:ok, [segment | remaining_segments]}
-    end
+    segment = Segment.ensure_transactions_are_loaded(segment)
+    {:ok, [segment | remaining_segments]}
   end
 
   def ensure_necessary_segments_are_loaded(last_version, [segment | remaining_segments]) do
-    with segment <- Segment.ensure_transactions_are_loaded(segment),
-         {:ok, remaining_segments} <-
+    segment = Segment.ensure_transactions_are_loaded(segment)
+
+    with {:ok, remaining_segments} <-
            ensure_necessary_segments_are_loaded(last_version, remaining_segments) do
       {:ok, [segment | remaining_segments]}
     end
@@ -91,9 +97,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         ) :: {:ok, Bedrock.version()} | {:error, :invalid_last_version}
   def check_last_version(nil, _), do: {:ok, nil}
 
-  def check_last_version(last_version, from_version)
-      when last_version >= from_version,
-      do: {:ok, last_version}
+  def check_last_version(last_version, from_version) when last_version >= from_version, do: {:ok, last_version}
 
   def check_last_version(_, _), do: {:error, :invalid_last_version}
 

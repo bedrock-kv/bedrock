@@ -1,24 +1,19 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
   use ExUnit.Case, async: true
+
   import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
+  alias Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
   alias Bedrock.DataPlane.Version
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
       recovery_attempt =
-        recovery_attempt()
-        |> with_log_recovery_info(%{
-          {:log, 1} => %{
-            oldest_version: Version.from_integer(10),
-            last_version: Version.from_integer(50)
-          },
-          {:log, 2} => %{
-            oldest_version: Version.from_integer(5),
-            last_version: Version.from_integer(45)
-          }
+        with_log_recovery_info(recovery_attempt(), %{
+          {:log, 1} => %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)},
+          {:log, 2} => %{oldest_version: Version.from_integer(5), last_version: Version.from_integer(45)}
         })
 
       # Quorum = 2
@@ -44,7 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
           }
         })
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
+      assert next_phase == VacancyCreationPhase
       assert is_list(result.old_log_ids_to_copy)
       assert is_tuple(result.version_vector)
       assert length(result.old_log_ids_to_copy) > 0
@@ -102,7 +97,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
           }
         })
 
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
+      assert next_phase == VacancyCreationPhase
       assert result.old_log_ids_to_copy == [{:log, 1}]
       assert result.version_vector == {Version.from_integer(10), Version.from_integer(50)}
     end
@@ -368,33 +363,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
   describe "valid_range?/1" do
     test "allows valid ranges where newest >= oldest" do
-      assert LogRecoveryPlanningPhase.valid_range?(
-               {[], {Version.from_integer(10), Version.from_integer(50)}}
-             ) == true
+      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.from_integer(50)}}) == true
 
-      assert LogRecoveryPlanningPhase.valid_range?(
-               {[], {Version.from_integer(10), Version.from_integer(10)}}
-             ) == true
+      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.from_integer(10)}}) == true
     end
 
     test "rejects invalid ranges where newest < oldest" do
-      assert LogRecoveryPlanningPhase.valid_range?(
-               {[], {Version.from_integer(50), Version.from_integer(10)}}
-             ) == false
+      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(50), Version.from_integer(10)}}) == false
     end
 
     test "handles special case with oldest = 0" do
-      assert LogRecoveryPlanningPhase.valid_range?(
-               {[], {Version.zero(), Version.from_integer(50)}}
-             ) == true
+      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.from_integer(50)}}) == true
 
       assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.zero()}}) == true
     end
 
     test "handles special case with newest = 0" do
-      assert LogRecoveryPlanningPhase.valid_range?(
-               {[], {Version.from_integer(10), Version.zero()}}
-             ) == false
+      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.zero()}}) == false
 
       assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.zero()}}) == true
     end
@@ -608,14 +593,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
       expected = %{
         "tag_a" => [
-          {{:log, 2},
-           %{oldest_version: Version.from_integer(15), last_version: Version.from_integer(45)}},
-          {{:log, 1},
-           %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
+          {{:log, 2}, %{oldest_version: Version.from_integer(15), last_version: Version.from_integer(45)}},
+          {{:log, 1}, %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
         ],
         "tag_b" => [
-          {{:log, 1},
-           %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
+          {{:log, 1}, %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
         ]
       }
 

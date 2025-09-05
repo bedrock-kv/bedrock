@@ -1,6 +1,6 @@
 # Shale
 
-[Shale](../../glossary.md#shale) is Bedrock's disk-based [log](../../glossary.md#log) storage engine that provides durable [transaction](../../glossary.md#transaction) persistence. It implements the Log interface using local storage with write-ahead logging, segment files for large transactions, and efficient streaming capabilities.
+[Shale](../../../glossary.md#shale) is Bedrock's disk-based [log](../../../glossary.md#log) storage engine that provides durable [transaction](../../../glossary.md#transaction) persistence. It implements the Log interface using local storage with write-ahead logging, segment files for large transactions, and efficient streaming capabilities.
 
 **Location**: [`lib/bedrock/data_plane/log/shale.ex`](../../../lib/bedrock/data_plane/log/shale.ex)
 
@@ -113,7 +113,7 @@ This integration allows Shale to focus on its core responsibility—durable tran
 - **[Log System](../data-plane/log.md)**: General log system concepts and interface
 - **[Commit Proxy](../data-plane/commit-proxy.md)**: Pushes committed transactions to Shale
 - **[Storage](../data-plane/storage.md)**: Pulls transactions from Shale for local updates
-- **Director**: Control plane component that coordinates Shale recovery processes
+- **[Director](../../control-plane/director.md)**: Control plane component that coordinates Shale recovery processes
 
 ## Code References
 

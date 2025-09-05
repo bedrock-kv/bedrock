@@ -20,8 +20,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | {:failed_to_start, :resolver | :commit_proxy | :sequencer, node(),
              reason :: :timeout | :already_started | {:error, start_error()}}
           | {:failed_to_playback_logs, %{(log_pid :: pid()) => reason :: playback_error()}}
-          | {:failed_to_copy_some_logs,
-             [{reason :: copy_error(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
+          | {:failed_to_copy_some_logs, [{reason :: copy_error(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:need_log_workers, pos_integer()}
           | {:need_storage_workers, pos_integer()}
           | {:insufficient_replication, [Bedrock.range_tag()]}

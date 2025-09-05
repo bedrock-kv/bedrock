@@ -273,7 +273,7 @@ Foreman coordinates the **complete worker lifecycle**:
 - **Dynamic Scaling**: Supports runtime worker creation and removal for cluster capacity management
 - **Operational Simplicity**: Single-node worker management eliminates complex distributed coordination
 
-For detailed recovery process documentation, see **[Recovery Deep Dive](../../deep-dives/recovery.md)**.
+For detailed recovery process documentation, see **[Recovery Deep Dive](../../../deep-dives/recovery.md)**.
 
 ## See Also
 
@@ -282,4 +282,4 @@ For detailed recovery process documentation, see **[Recovery Deep Dive](../../de
 - **[Coordinator](../control-plane/coordinator.md)**: Receives service information through Gateway from Foreman
 - **[Storage](../data-plane/storage.md)**: Storage workers created and managed by Foreman
 - **[Log](../data-plane/log.md)**: Log workers created and managed by Foreman
-- **[Recovery](../../deep-dives/recovery.md)**: Foreman role in cluster recovery infrastructure provisioning
+- **[Recovery](../../../deep-dives/recovery.md)**: Foreman role in cluster recovery infrastructure provisioning

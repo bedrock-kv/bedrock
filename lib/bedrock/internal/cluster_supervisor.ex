@@ -1,25 +1,26 @@
 defmodule Bedrock.Internal.ClusterSupervisor do
   @moduledoc false
+  use Supervisor
+
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Gateway
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.ControlPlane.Director
-  alias Bedrock.Internal.Tracing.RaftTelemetry
-  alias Bedrock.Service.Foreman
-
   alias Bedrock.ControlPlane.Coordinator.Tracing, as: CoordinatorTracing
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
+  alias Bedrock.DataPlane.Resolver.Tracing, as: ResolverTracing
+  alias Bedrock.DataPlane.Sequencer.Tracing, as: SequencerTracing
   alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
+  alias Bedrock.Internal.Tracing.RaftTelemetry
+  alias Bedrock.Service.Foreman
   alias Cluster.Gateway.Tracing, as: GatewayTracing
 
   require Logger
-
-  use Supervisor
 
   @doc false
   @spec child_spec(
@@ -41,9 +42,9 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     path_to_descriptor =
       opts[:path_to_descriptor] || path_to_descriptor(cluster, otp_app, static_config)
 
-    descriptor =
+    with_result =
       with :ok <- check_node_is_in_a_cluster(node),
-           {:ok, descriptor} <- path_to_descriptor |> Descriptor.read_from_file(),
+           {:ok, descriptor} <- Descriptor.read_from_file(path_to_descriptor),
            :ok <- check_descriptor_is_for_cluster(descriptor, cluster_name) do
         descriptor
       else
@@ -62,7 +63,9 @@ defmodule Bedrock.Internal.ClusterSupervisor do
         {:error, _reason} ->
           nil
       end
-      |> case do
+
+    descriptor =
+      case with_result do
         nil ->
           Logger.warning("Bedrock: Creating a default single-node configuration")
           Descriptor.new(cluster_name, [node])
@@ -92,11 +95,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   @spec check_descriptor_is_for_cluster(Descriptor.t(), cluster_name :: String.t()) ::
           :ok | {:error, :descriptor_not_for_this_cluster}
   defp check_descriptor_is_for_cluster(descriptor, cluster_name),
-    do:
-      if(descriptor.cluster_name == cluster_name,
-        do: :ok,
-        else: {:error, :descriptor_not_for_this_cluster}
-      )
+    do: if(descriptor.cluster_name == cluster_name, do: :ok, else: {:error, :descriptor_not_for_this_cluster})
 
   @doc false
   @impl Supervisor
@@ -107,13 +106,15 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     config
     |> Keyword.get(:trace, [])
     |> Enum.each(fn
-      :coordinator -> start_tracing(CoordinatorTracing)
       :commit_proxy -> start_tracing(CommitProxyTracing)
-      :log -> start_tracing(LogTracing)
-      :storage -> start_tracing(StorageTracing)
+      :coordinator -> start_tracing(CoordinatorTracing)
       :gateway -> start_tracing(GatewayTracing)
+      :log -> start_tracing(LogTracing)
       :raft -> start_tracing(RaftTelemetry)
       :recovery -> start_tracing(RecoveryTracing)
+      :resolver -> start_tracing(ResolverTracing)
+      :sequencer -> start_tracing(SequencerTracing)
+      :storage -> start_tracing(StorageTracing)
       unsupported -> Logger.warning("Unsupported tracing module: #{inspect(unsupported)}")
     end)
 
@@ -121,7 +122,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
         {Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
-        {Cluster.Gateway,
+        {Gateway,
          [
            cluster: cluster,
            descriptor: descriptor,
@@ -175,8 +176,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   defp module_for_capability(:storage), do: Foreman
   defp module_for_capability(:log), do: Foreman
 
-  defp module_for_capability(capability),
-    do: raise("Unknown capability: #{inspect(capability)}")
+  defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")
 
   defp start_tracing(module) do
     case module.start() do
@@ -194,7 +194,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec config!(Cluster.t()) :: Config.t()
   def config!(module) do
-    fetch_config(module)
+    module
+    |> fetch_config()
     |> case do
       {:ok, config} -> config
       {:error, _} -> raise "No configuration available"
@@ -211,7 +212,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec transaction_system_layout!(Cluster.t()) :: TransactionSystemLayout.t()
   def transaction_system_layout!(module) do
-    fetch_transaction_system_layout(module)
+    module
+    |> fetch_transaction_system_layout()
     |> case do
       {:ok, layout} -> layout
       {:error, _} -> raise "No transaction system layout available"
@@ -220,8 +222,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec director!(Cluster.t()) :: Director.ref()
   def director!(module) do
-    module.fetch_director()
-    |> case do
+    case module.fetch_director() do
       {:ok, director} -> director
       {:error, _} -> raise "No director available"
     end
@@ -246,7 +247,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec coordinator!(Cluster.t()) :: Coordinator.ref()
   def coordinator!(module) do
-    fetch_coordinator(module)
+    module
+    |> fetch_coordinator()
     |> case do
       {:ok, coordinator} -> coordinator
       {:error, _} -> raise "No coordinator available"
@@ -275,7 +277,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec try_disk_descriptor(Cluster.t()) :: {:ok, [node()]} | {:error, :unavailable}
   defp try_disk_descriptor(module) do
-    case module.path_to_descriptor() |> Descriptor.read_from_file() do
+    case Descriptor.read_from_file(module.path_to_descriptor()) do
       {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
       {:error, _reason} -> {:error, :unavailable}
     end
@@ -283,7 +285,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec coordinator_nodes!(Cluster.t()) :: [node()]
   def coordinator_nodes!(module) do
-    fetch_coordinator_nodes(module)
+    module
+    |> fetch_coordinator_nodes()
     |> case do
       {:ok, coordinator_nodes} -> coordinator_nodes
       {:error, _} -> raise "No coordinator nodes available"
@@ -312,7 +315,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
         ) ::
           [Cluster.capability()]
   def node_capabilities(module, otp_app, static_config) do
-    node_config(module, otp_app, static_config)
+    module
+    |> node_config(otp_app, static_config)
     |> Keyword.get(:capabilities, [])
   end
 
@@ -322,7 +326,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
           static_config :: Keyword.t() | nil
         ) :: non_neg_integer()
   def coordinator_ping_timeout_in_ms(module, otp_app, static_config) do
-    node_config(module, otp_app, static_config)
+    module
+    |> node_config(otp_app, static_config)
     |> Keyword.get(:coordinator_ping_timeout_in_ms, 300)
   end
 
@@ -332,7 +337,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
           static_config :: Keyword.t() | nil
         ) :: non_neg_integer()
   def gateway_ping_timeout_in_ms(module, otp_app, static_config) do
-    node_config(module, otp_app, static_config)
+    module
+    |> node_config(otp_app, static_config)
     |> Keyword.get(:gateway_ping_timeout_in_ms, 300)
   end
 
@@ -342,7 +348,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
           static_config :: Keyword.t() | nil
         ) :: Path.t()
   def path_to_descriptor(module, otp_app, static_config) do
-    node_config(module, otp_app, static_config)
+    module
+    |> node_config(otp_app, static_config)
     |> Keyword.get(
       :path_to_descriptor,
       case otp_app do

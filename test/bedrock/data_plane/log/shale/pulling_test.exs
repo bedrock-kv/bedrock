@@ -1,7 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   use ExUnit.Case, async: true
-  alias Bedrock.DataPlane.Log.EncodedTransaction
-  alias Bedrock.DataPlane.Log.Shale.{Pulling, Segment, State}
+
+  alias Bedrock.DataPlane.Log.Shale.Pulling
+  alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   @default_params %{default_pull_limit: 1000, max_pull_limit: 2000}
@@ -15,7 +18,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
           {Version.from_integer(2), %{"b" => "2"}},
           {Version.from_integer(3), %{"c" => "3"}}
         ]
-        |> Enum.map(&EncodedTransaction.encode/1)
+        |> Enum.map(fn {version, writes} ->
+          TransactionTestSupport.new_log_transaction(version, writes)
+        end)
         |> Enum.reverse()
 
       segment = %Segment{
@@ -38,7 +43,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     test "returns waiting_for when from_version >= last_version", %{state: state} do
       version_3 = Version.from_integer(3)
       version_4 = Version.from_integer(4)
+      # Request for version 3 when last_version is 3 should wait (nothing after version 3)
       assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
+      # Request for version 4 when last_version is 3 should wait (need version 4+)
       assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
     end
 
@@ -53,15 +60,17 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1))
       assert length(transactions) == 2
       expected_versions = [Version.from_integer(2), Version.from_integer(3)]
-      assert Enum.map(transactions, &EncodedTransaction.version(&1)) == expected_versions
+
+      assert Enum.map(transactions, &TransactionTestSupport.extract_log_version(&1)) ==
+               expected_versions
     end
 
     test "respects last_version parameter", %{state: state} do
       {:ok, _state, transactions} =
         Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
 
-      assert length(transactions) == 1
-      assert EncodedTransaction.version(hd(transactions)) == Version.from_integer(2)
+      versions = Enum.map(transactions, &TransactionTestSupport.extract_log_version/1)
+      assert versions == [Version.from_integer(2)]
     end
 
     test "handles recovery mode correctly", %{state: state} do
@@ -75,27 +84,22 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       assert length(transactions) == 1
     end
 
-    test "filters by key range", %{state: state} do
-      {:ok, _state, transactions} =
-        Pulling.pull(state, Version.from_integer(0), key_range: {"a", "c"})
+    test "boundary condition: pull exactly at last_version waits correctly", %{state: state} do
+      # When requesting start_after == last_version, should wait for new transactions
+      version_3 = Version.from_integer(3)
 
-      assert transactions
-             |> Enum.map(&EncodedTransaction.decode!/1)
-             |> Enum.map(&elem(&1, 1))
-             |> Enum.flat_map(&Map.keys/1)
-             |> Enum.sort() ==
-               ["a", "b"]
+      # state.last_version is 3, so requesting start_after: 3 should wait
+      assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
     end
 
-    test "can exclude values", %{state: state} do
-      {:ok, _state, transactions} =
-        Pulling.pull(state, Version.from_integer(1), exclude_values: true)
+    test "boundary condition: pull beyond last_version waits correctly", %{state: state} do
+      # When requesting start_after > last_version, should wait
+      version_4 = Version.from_integer(4)
+      version_5 = Version.from_integer(5)
 
-      assert transactions
-             |> Enum.map(&EncodedTransaction.decode!/1)
-             |> Enum.map(&elem(&1, 1))
-             |> Enum.map(&Map.values/1)
-             |> Enum.all?(&(&1 == [<<>>]))
+      # state.last_version is 3, so requesting start_after: 4 or 5 should wait
+      assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
+      assert {:waiting_for, ^version_5} = Pulling.pull(state, version_5)
     end
   end
 

@@ -43,8 +43,7 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
       send(director_pid, {:simulate_component_failure, failed_component, :test_failure})
 
       # Director should exit immediately
-      assert_receive {:director_exited,
-                      {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
+      assert_receive {:director_exited, {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
 
       assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid,
                       {:shutdown, {:component_failure, ^failed_component, :test_failure}}}

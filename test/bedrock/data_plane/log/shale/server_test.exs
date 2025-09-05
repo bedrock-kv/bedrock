@@ -2,17 +2,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Cluster
-  alias Bedrock.DataPlane.Log.EncodedTransaction
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: tmp_dir} do
     cluster = Cluster
-    otp_name = :"test_log_#{:rand.uniform(10000)}"
-    id = "test_log_#{:rand.uniform(10000)}"
+    otp_name = :"test_log_#{:rand.uniform(10_000)}"
+    id = "test_log_#{:rand.uniform(10_000)}"
     foreman = self()
     path = Path.join(tmp_dir, "log_segments")
 
@@ -92,15 +92,14 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "GenServer lifecycle" do
     test "starts successfully with valid options", %{server_opts: opts} do
-      assert {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      assert pid = start_supervised!(Server.child_spec(opts))
       assert Process.alive?(pid)
       if Process.alive?(pid), do: GenServer.stop(pid)
     end
 
     test "initializes with correct state", %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
-      # Allow initialization to complete
       :sys.get_state(pid)
 
       state = :sys.get_state(pid)
@@ -132,12 +131,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles initialization continue properly", %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
-      # Wait for initialization to complete
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       if Process.alive?(pid), do: GenServer.stop(pid)
@@ -146,18 +144,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - basic operations" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
-      # Wait for initialization
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
+        assert state.segment_recycler
       end)
 
       {:ok, server: pid}
@@ -190,11 +181,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - lock_for_recovery" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -209,21 +200,19 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     test "handles lock_for_recovery request", %{server: pid} do
       epoch = 1
 
-      # This should work when called from a director-like process
       result = GenServer.call(pid, {:lock_for_recovery, epoch})
 
-      # Result depends on the current state and epoch validation
       assert is_tuple(result)
     end
   end
 
   describe "handle_call/3 - push operations" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -245,28 +234,24 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles push with valid transaction format", %{server: pid} do
-      # Create a minimally valid encoded transaction using the proper structure
-      # Start with version 0 to match server's initial last_version
-      transaction = {0, %{"test_key" => "test_value"}}
-      encoded_bytes = EncodedTransaction.encode(transaction)
-      # Match server's initial last_version
+      encoded_bytes =
+        TransactionTestSupport.new_log_transaction(0, %{"test_key" => "test_value"})
+
       expected_version = 0
 
       result = GenServer.call(pid, {:push, encoded_bytes, expected_version}, 1000)
 
-      # Should either succeed or fail gracefully based on server state (likely locked)
-      # Returns :ok on success or {:error, reason} on failure
       assert result == :ok or match?({:error, _}, result)
     end
   end
 
   describe "handle_call/3 - pull operations" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -284,7 +269,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       result = GenServer.call(pid, {:pull, from_version, opts})
 
-      # Should return transactions or indicate waiting
       assert is_tuple(result)
     end
 
@@ -303,18 +287,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       result = GenServer.call(pid, {:pull, from_version, opts})
 
-      # Should indicate waiting or empty result
       assert is_tuple(result)
     end
   end
 
   describe "handle_call/3 - recover_from operations" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -331,7 +314,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       first_version = Version.from_integer(1)
       last_version = Version.from_integer(10)
 
-      # This will timeout as recovery requires specific server state and protocol
       catch_exit do
         GenServer.call(pid, {:recover_from, source_log, first_version, last_version}, 500)
       end
@@ -340,10 +322,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     test "handles recover_from with invalid version range", %{server: pid} do
       source_log = self()
       first_version = Version.from_integer(10)
-      # Invalid: first > last
       last_version = Version.from_integer(1)
 
-      # This will also timeout as recovery requires specific server state and protocol
       catch_exit do
         GenServer.call(pid, {:recover_from, source_log, first_version, last_version}, 500)
       end
@@ -352,11 +332,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_continue/2" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -369,8 +349,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles notify_waiting_pullers continue", %{server: pid} do
-      # This tests the internal continue handling
-      # We can't easily test this directly, but we can verify the server handles it
       state = :sys.get_state(pid)
       assert state.waiting_pullers == %{}
     end
@@ -378,11 +356,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_info/2" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -395,10 +373,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles timeout message", %{server: pid} do
-      # Send a timeout message
       send(pid, :timeout)
-
-      # Server should still be alive and functioning
       assert Process.alive?(pid)
       assert :pong = GenServer.call(pid, :ping)
     end
@@ -411,7 +386,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       foreman: foreman
     } do
       invalid_path = "/nonexistent/path/that/should/not/exist"
-      otp_name = :"test_log_error_#{:rand.uniform(10000)}"
+      otp_name = :"test_log_error_#{:rand.uniform(10_000)}"
 
       opts = [
         cluster: cluster,
@@ -421,13 +396,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         path: invalid_path
       ]
 
-      # Server starts but exits during initialization when SegmentRecycler
-      # discovers the path is not a directory
       Process.flag(:trap_exit, true)
-      assert {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
 
-      # Should receive exit signal due to path_is_not_a_directory error
-      assert_receive {:EXIT, ^pid, :path_is_not_a_directory}, 1000
+      spec = Server.child_spec(opts)
+      {GenServer, :start_link, [module, init_args, gen_opts]} = spec.start
+      {:ok, pid} = GenServer.start_link(module, init_args, gen_opts)
+
+      assert_receive {:EXIT, ^pid, :path_is_not_a_directory}, 2000
 
       refute Process.alive?(pid)
     end
@@ -435,11 +410,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "concurrent operations" do
     setup %{server_opts: opts} do
-      {:ok, pid} = GenServer.start_link(Server, opts_to_init_args(opts))
+      pid = start_supervised!(Server.child_spec(opts))
 
       eventually(fn ->
         state = :sys.get_state(pid)
-        assert state.segment_recycler != nil
+        assert state.segment_recycler
       end)
 
       on_exit(fn ->
@@ -474,12 +449,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
                match?({:ok, %{id: _, kind: _}}, result)
              end)
     end
-  end
-
-  # Helper functions
-
-  defp opts_to_init_args(opts) do
-    {opts[:cluster], opts[:otp_name], opts[:id], opts[:foreman], opts[:path]}
   end
 
   defp eventually(assertion_fn, timeout \\ 1000, interval \\ 50) do

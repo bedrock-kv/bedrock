@@ -24,11 +24,11 @@ defmodule Bedrock.Cluster.PubSub do
   """
   @spec publish(cluster :: Cluster.t(), topic :: atom(), message :: term()) :: :ok
   def publish(cluster, topic, message) do
-    cluster.otp_name(:pub_sub)
+    :pub_sub
+    |> cluster.otp_name()
     |> Registry.dispatch(topic, fn
       handlers ->
-        handlers
-        |> Enum.each(fn
+        Enum.each(handlers, fn
           {pid, _} ->
             send(pid, message)
         end)
@@ -42,7 +42,8 @@ defmodule Bedrock.Cluster.PubSub do
   """
   @spec subscribe(cluster :: Cluster.t(), topic :: atom()) :: :ok
   def subscribe(cluster, topic) do
-    cluster.otp_name(:pub_sub)
+    :pub_sub
+    |> cluster.otp_name()
     |> Registry.register(topic, self())
 
     :ok
@@ -55,7 +56,8 @@ defmodule Bedrock.Cluster.PubSub do
   """
   @spec unsubscribe(cluster :: Cluster.t(), topic :: atom()) :: :ok
   def unsubscribe(cluster, topic) do
-    cluster.otp_name(:pub_sub)
+    :pub_sub
+    |> cluster.otp_name()
     |> Registry.unregister_match(topic, self())
   end
 end

@@ -2,13 +2,22 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.Transaction
 
   describe "resolve_transactions with injectable functions" do
     test "calls timeout function with correct attempt numbers and returns error" do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
-      transaction_summaries = [{nil, [<<1>>]}]
+
+      transaction_summaries = [
+        Transaction.encode(%{
+          mutations: [{:set, <<1>>, "value"}],
+          read_conflicts: [],
+          write_conflicts: [{<<1>>, <<1, 0>>}]
+        })
+      ]
+
       opts = []
 
       test_pid = self()
@@ -21,12 +30,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       end
 
       # Test that function goes through all retry attempts
-      opts_with_functions =
-        opts
-        |> Keyword.put(:timeout_fn, timeout_fn)
+      opts_with_functions = Keyword.put(opts, :timeout_fn, timeout_fn)
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -74,18 +82,25 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
-      transaction_summaries = [{nil, [<<1>>]}]
+
+      transaction_summaries = [
+        Transaction.encode(%{
+          mutations: [{:set, <<1>>, "value"}],
+          read_conflicts: [],
+          write_conflicts: [{<<1>>, <<1, 0>>}]
+        })
+      ]
+
       opts = []
 
       # Short timeout for faster test
       timeout_fn = fn _attempt -> 100 end
 
-      opts_with_functions =
-        opts
-        |> Keyword.put(:timeout_fn, timeout_fn)
+      opts_with_functions = Keyword.put(opts, :timeout_fn, timeout_fn)
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -96,11 +111,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       assert result == {:error, {:resolver_unavailable, :unavailable}}
 
       # Should receive telemetry for retry attempts and final failure
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1},
-                      %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 1, attempts_used: 1}, %{reason: :unavailable}}
 
-      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2},
-                      %{reason: :unavailable}}
+      assert_receive {:telemetry, :retry, %{attempts_remaining: 0, attempts_used: 2}, %{reason: :unavailable}}
 
       assert_receive {:telemetry, :max_retries, %{total_attempts: 3}, %{reason: :unavailable}}
 
@@ -112,7 +125,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
-      transaction_summaries = [{nil, [<<1>>]}]
+
+      transaction_summaries = [
+        Transaction.encode(%{
+          mutations: [{:set, <<1>>, "value"}],
+          read_conflicts: [],
+          write_conflicts: [{<<1>>, <<1, 0>>}]
+        })
+      ]
 
       test_pid = self()
 
@@ -132,6 +152,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
 
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -150,11 +171,19 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       resolvers = [{<<0>>, :test_resolver}]
       last_version = 100
       commit_version = 101
-      transaction_summaries = [{nil, [<<1>>]}]
+
+      transaction_summaries = [
+        Transaction.encode(%{
+          mutations: [{:set, <<1>>, "value"}],
+          read_conflicts: [],
+          write_conflicts: [{<<1>>, <<1, 0>>}]
+        })
+      ]
 
       # With no injection, should use defaults and eventually return error
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -205,6 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # Call resolve_transactions with our specific version numbers
       result =
         Finalization.resolve_transactions(
+          1,
           resolvers,
           last_version,
           commit_version,
@@ -224,9 +254,61 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationResolutionTest do
       # This test proves resolve_transactions accepts and uses the exact last_version
       # provided by the sequencer without any calculations
     end
+
+    test "uses injected resolver_call_fn for dependency injection" do
+      resolvers = [{<<0>>, :test_resolver_1}, {<<128>>, :test_resolver_2}]
+      last_version = Bedrock.DataPlane.Version.from_integer(100)
+      commit_version = Bedrock.DataPlane.Version.from_integer(101)
+
+      transaction_summaries = [
+        Transaction.encode(%{
+          mutations: [{:set, "key1", "value"}],
+          read_conflicts: [],
+          write_conflicts: [{"key1", "key1\0"}]
+        })
+      ]
+
+      test_pid = self()
+
+      # Mock resolver call function that tracks calls and returns specific results
+      mock_resolver_call_fn = fn resolver_ref, epoch, last_ver, commit_ver, summaries, opts ->
+        send(test_pid, {:resolver_called, resolver_ref, epoch, last_ver, commit_ver, length(summaries), opts})
+
+        case resolver_ref do
+          # Abort transaction 0
+          :test_resolver_1 -> {:ok, [0]}
+          # No aborts
+          :test_resolver_2 -> {:ok, []}
+        end
+      end
+
+      opts = [resolver_fn: mock_resolver_call_fn]
+
+      result =
+        Finalization.resolve_transactions(
+          1,
+          resolvers,
+          last_version,
+          commit_version,
+          transaction_summaries,
+          opts
+        )
+
+      # Should return MapSet with index 0 aborted (from resolver_1)
+      assert {:ok, aborted_set} = result
+      assert MapSet.member?(aborted_set, 0)
+      assert MapSet.size(aborted_set) == 1
+
+      # Verify both resolvers were called with correct parameters
+      assert_receive {:resolver_called, :test_resolver_1, 1, ^last_version, ^commit_version, 1, opts1}
+      assert_receive {:resolver_called, :test_resolver_2, 1, ^last_version, ^commit_version, 1, opts2}
+
+      # Verify timeout was passed through to both calls
+      assert Keyword.has_key?(opts1, :timeout)
+      assert Keyword.has_key?(opts2, :timeout)
+    end
   end
 
-  # Telemetry handler functions
   def handle_retry_telemetry(_event, measurements, metadata, config) do
     test_pid = config || Process.get(:test_pid)
     send(test_pid, {:telemetry, :retry, measurements, metadata})

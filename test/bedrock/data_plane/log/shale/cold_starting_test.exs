@@ -1,5 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
   use ExUnit.Case, async: true
+
   alias Bedrock.DataPlane.Log.Shale.ColdStarting
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Version

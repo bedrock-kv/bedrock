@@ -1,4 +1,5 @@
 defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
+  @moduledoc false
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Telemetry
 
@@ -37,8 +38,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
           logs_count: map_size(old_transaction_system_layout[:logs] || %{}),
           storage_teams_count: length(old_transaction_system_layout[:storage_teams] || [])
         }
-      else
-        nil
       end
 
     Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{
@@ -113,6 +112,33 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
       [:bedrock, :control_plane, :coordinator, :leader_ready],
       %{service_count: service_count},
       %{}
+    )
+  end
+
+  @spec trace_recovery_capability_change_detected() :: :ok
+  def trace_recovery_capability_change_detected do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_capability_change],
+      %{},
+      %{}
+    )
+  end
+
+  @spec trace_recovery_retry_attempt(reason :: :capability_change | :leadership_change | :director_failure) :: :ok
+  def trace_recovery_retry_attempt(reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_retry_attempt],
+      %{},
+      %{reason: reason}
+    )
+  end
+
+  @spec trace_recovery_failed(reason :: term()) :: :ok
+  def trace_recovery_failed(reason) do
+    Telemetry.execute(
+      [:bedrock, :control_plane, :coordinator, :recovery_failed],
+      %{},
+      %{reason: reason}
     )
   end
 end

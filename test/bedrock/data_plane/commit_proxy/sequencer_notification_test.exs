@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
 
   describe "sequencer notification" do
@@ -11,14 +12,15 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       mock_sequencer =
         spawn(fn ->
           receive do
-            {:"$gen_cast", {:report_successful_commit, version}} ->
+            {:"$gen_call", from, {:report_successful_commit, version}} ->
+              GenServer.reply(from, :ok)
               send(test_pid, {:sequencer_notified, version})
           after
             1000 -> :timeout
           end
         end)
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: 100,
         last_commit_version: 99,
         n_transactions: 0,
@@ -35,7 +37,8 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
 
       # Mock all the finalization functions to just return :ok
       opts = [
-        resolver_fn: fn _, _, _, _, _ -> {:ok, []} end,
+        epoch: 1,
+        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
         batch_log_push_fn: fn _, _, _, _, _ -> :ok end
       ]
 
@@ -50,12 +53,12 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       Process.exit(mock_sequencer, :kill)
     end
 
-    test "sequencer notification uses cast so invalid refs don't crash immediately" do
-      # This test documents the current behavior - GenServer.cast always returns :ok
-      # even for invalid refs, so sequencer notification doesn't crash the commit proxy.
+    test "sequencer notification uses call so invalid refs return error" do
+      # This test documents the current behavior - GenServer.call returns {:error, :unavailable}
+      # for invalid refs, so sequencer notification returns an error but doesn't crash the commit proxy.
       # In a real system, the sequencer would be a valid reference.
 
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         commit_version: 100,
         last_commit_version: 99,
         n_transactions: 0,
@@ -72,14 +75,14 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       }
 
       opts = [
-        resolver_fn: fn _, _, _, _, _ -> {:ok, []} end,
+        epoch: 1,
+        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
         batch_log_push_fn: fn _, _, _, _, _ -> :ok end
       ]
 
-      # GenServer.cast doesn't fail for invalid refs, so this succeeds
-      # The real error handling happens at the OTP supervisor level
+      # GenServer.call returns error for invalid refs, so this returns error
       result = Finalization.finalize_batch(batch, transaction_system_layout, opts)
-      assert {:ok, 0, 0} = result
+      assert {:error, :unavailable} = result
     end
   end
 end

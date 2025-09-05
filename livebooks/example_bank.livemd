@@ -2,8 +2,7 @@
 
 ```elixir
 Mix.install([
-#  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
-  {:bedrock, path: "/Users/j5n/Workspace/bedrock"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
   {:kino, "~> 0.16.0"}
 ])
 ```
@@ -67,10 +66,10 @@ end
 defmodule Example.Bank do
   alias Example.Repo
   alias Bedrock.Subspace
-  
+
   # Define subspaces for different data categories
   @accounts_space Subspace.new({"accounts"})
-  @transactions_space Subspace.new({"transactions"}) 
+  @transactions_space Subspace.new({"transactions"})
   @metadata_space Subspace.new({"metadata"})
 
   @doc """
@@ -83,13 +82,13 @@ defmodule Example.Bank do
   """
   def create_account(tx, account, balance, opts \\ []) when is_binary(account) and is_integer(balance) do
     account_type = Keyword.get(opts, :type, "checking")
-    
+
     tx
     |> fetch_balance(account)
     |> case do
       {:error, :account_not_found} ->
         timestamp = System.system_time(:second)
-        
+
         # Write to multiple subspaces atomically
         set_balance(tx, account, balance)
         set_account_metadata(tx, account, %{
@@ -98,7 +97,7 @@ defmodule Example.Bank do
           status: "active"
         })
         record_transaction(tx, account, balance, "account_creation", timestamp)
-        
+
         {:ok, balance}
       {:ok, existing_balance} ->
         if opts[:on_exists] == :raise do
@@ -119,15 +118,15 @@ defmodule Example.Bank do
   def move_money(tx, amount, from_account, to_account) when is_integer(amount) and amount > 0 do
     timestamp = System.system_time(:millisecond)
     |> IO.inspect()
-    
+
     with :ok <- check_sufficient_balance_for_transfer(tx, from_account, amount),
          {:ok, new_balance1} <- adjust_balance(tx, from_account, -amount),
          {:ok, new_balance2} <- adjust_balance(tx, to_account, amount) do
-      
+
       # Record transaction history for both accounts
       record_transaction(tx, from_account, -amount, "transfer_out", timestamp, %{to: to_account})
       record_transaction(tx, to_account, amount, "transfer_in", timestamp, %{from: from_account})
-      
+
       {:ok, new_balance1, new_balance2}
     end
   end
@@ -142,15 +141,15 @@ defmodule Example.Bank do
   def list_accounts(tx, opts \\ []) do
     limit = Keyword.get(opts, :limit, 1000)
     {start_key, end_key} = Subspace.range(@accounts_space)
-    
-    accounts = 
-      tx 
+
+    accounts =
+      tx
       |> Repo.range_stream(start_key, end_key, limit: limit)
-      |> Enum.map(fn {key, balance} -> 
+      |> Enum.map(fn {key, balance} ->
         {account} = Subspace.unpack(@accounts_space, key)
         {account, :binary.decode_unsigned(balance)}
       end)
-    
+
     {:ok, accounts}
   end
 
@@ -163,11 +162,11 @@ defmodule Example.Bank do
   """
   def get_transaction_history(tx, account, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
-    
+
     # Create range for all transactions for this account
     account_tx_space = transaction_space(account)
-    
-    transactions = 
+
+    transactions =
       tx
       |> Repo.range_stream(account_tx_space, limit: limit)
       |> Stream.map(fn {key, tx_data} ->
@@ -177,7 +176,7 @@ defmodule Example.Bank do
         |> :erlang.binary_to_term()
         |> Map.put(:timestamp, timestamp)
       end)
-    
+
     {:ok, transactions}
   end
 
@@ -208,7 +207,7 @@ defmodule Example.Bank do
   """
   def list_accounts_by_type(tx, account_type, opts \\ []) do
     with {:ok, all_accounts} <- list_accounts(tx, opts) do
-      matching_accounts = 
+      matching_accounts =
         all_accounts
         |> Enum.filter(fn {account, _balance} ->
           case get_account_info(tx, account) do
@@ -216,7 +215,7 @@ defmodule Example.Bank do
             _ -> false
           end
         end)
-      
+
       {:ok, matching_accounts}
     end
   end
@@ -236,9 +235,9 @@ defmodule Example.Bank do
       {:ok, accounts} ->
         total_balance = accounts |> Stream.map(fn {_, balance} -> balance end) |> Enum.sum()
         account_count = length(accounts)
-        
+
         # Get account type breakdown
-        type_breakdown = 
+        type_breakdown =
           accounts
           |> Stream.map(fn {account, balance} ->
             case get_account_info(tx, account) do
@@ -249,9 +248,9 @@ defmodule Example.Bank do
           |> Enum.group_by(fn {type, _} -> type end, fn {_, balance} -> balance end)
           |> Enum.map(fn {type, balances} -> {type, %{count: length(balances), total: Enum.sum(balances)}} end)
           |> Enum.into(%{})
-        
+
         avg_balance = if account_count > 0, do: total_balance / account_count, else: 0.0
-        
+
         {:ok, %{
           total_accounts: account_count,
           total_balance: total_balance,
@@ -268,7 +267,7 @@ defmodule Example.Bank do
   defp balance_key(account), do: Subspace.pack(@accounts_space, {account})
   defp metadata_key(account), do: Subspace.pack(@metadata_space, {account})
   defp transaction_key(account, timestamp), do: account |> transaction_space() |> Subspace.pack({timestamp})
-  
+
   defp check_sufficient_balance_for_transfer(tx, account, amount) do
     with {:ok, balance} <- fetch_balance(tx, account) do
       if can_withdraw?(amount, balance) do
@@ -294,10 +293,10 @@ defmodule Example.Bank do
     end
   end
 
-  defp set_balance(tx, account, amount) when amount >= 0, 
+  defp set_balance(tx, account, amount) when amount >= 0,
     do: Repo.put(tx, balance_key(account), :binary.encode_unsigned(amount))
 
-  defp set_account_metadata(tx, account, %{} = metadata), 
+  defp set_account_metadata(tx, account, %{} = metadata),
     do: Repo.put(tx, metadata_key(account), :erlang.term_to_binary(metadata))
 
   defp record_transaction(tx, account, amount, type, timestamp, extra \\ %{}) do
@@ -312,7 +311,7 @@ defmodule Example.Bank do
   defp can_withdraw?(amount, balance), do: balance >= amount
 end
 
-alias Example.Bank  
+alias Example.Bank
 alias Example.Repo
 ```
 
@@ -323,13 +322,13 @@ Repo.transaction(fn tx ->
   {:ok, tina_balance} = Bank.create_account(tx, "tina", 2500, type: "savings")
   {:ok, alice_balance} = Bank.create_account(tx, "alice", 750, type: "checking")
   {:ok, bob_balance} = Bank.create_account(tx, "bob", 5000, type: "business")
-  
+
   IO.puts("=== Created Accounts ===")
   IO.puts("Jim (checking): $#{jim_balance}")
-  IO.puts("Tina (savings): $#{tina_balance}")  
+  IO.puts("Tina (savings): $#{tina_balance}")
   IO.puts("Alice (checking): $#{alice_balance}")
   IO.puts("Bob (business): $#{bob_balance}")
-  
+
   {:ok, %{jim: jim_balance, tina: tina_balance, alice: alice_balance, bob: bob_balance}}
 end)
 ```
@@ -358,7 +357,7 @@ end)
 # Demonstrate subspace-based account information retrieval
 Repo.transaction(fn tx ->
   IO.puts("=== Account Information ===")
-  
+
   ["jim", "tina", "alice", "bob"]
   |> Enum.each(fn account ->
     case Bank.get_account_info(tx, account) do
@@ -378,15 +377,15 @@ end)
 # List all accounts using subspace range operations
 Repo.transaction(fn tx ->
   case Bank.list_accounts(tx) do
-    {:ok, accounts} -> 
+    {:ok, accounts} ->
       IO.puts("=== All Accounts (Subspace Range Query) ===")
-      Enum.each(accounts, fn {account, balance} -> 
+      Enum.each(accounts, fn {account, balance} ->
         IO.puts("  #{account}: $#{balance}")
       end)
       accounts
-    {:error, reason} -> 
+    {:error, reason} ->
       IO.puts("Error listing accounts: #{inspect(reason)}")
-  end  
+  end
 end)
 ```
 
@@ -399,13 +398,13 @@ Repo.transaction(fn tx ->
       Enum.each(transactions, fn tx_data ->
         date = DateTime.from_unix!(tx_data.timestamp, :millisecond) |> DateTime.to_string()
         amount_str = if tx_data.amount > 0, do: "+$#{tx_data.amount}", else: "$#{tx_data.amount}"
-        
+
         extra_info = case tx_data do
           %{from: from_account} -> " (from #{from_account})"
           %{to: to_account} -> " (to #{to_account})"
           _ -> ""
         end
-        
+
         IO.puts("  #{date}: #{amount_str} - #{tx_data.type}#{extra_info}")
       end)
       transactions
@@ -424,13 +423,13 @@ Repo.transaction(fn tx ->
       Enum.each(checking_accounts, fn {account, balance} ->
         IO.puts("  #{account}: $#{balance}")
       end)
-      
+
       IO.puts("\n=== Business Accounts ===")
       {:ok, business_accounts} = Bank.list_accounts_by_type(tx, "business")
       Enum.each(business_accounts, fn {account, balance} ->
         IO.puts("  #{account}: $#{balance}")
       end)
-      
+
       {:ok, %{checking: checking_accounts, business: business_accounts}}
     {:error, reason} ->
       IO.puts("Error filtering accounts: #{reason}")
@@ -447,16 +446,16 @@ Repo.transaction(fn tx ->
       IO.puts("Total Accounts: #{summary.total_accounts}")
       IO.puts("Total Balance: $#{summary.total_balance}")
       IO.puts("Average Balance: $#{summary.average_balance}")
-      
+
       IO.puts("\n=== By Account Type ===")
       Enum.each(summary.by_type, fn {type, stats} ->
         IO.puts("  #{String.capitalize(type)}: #{stats.count} accounts, $#{stats.total} total")
       end)
-      
+
       summary
     {:error, reason} ->
       IO.puts("Error getting summary: #{inspect(reason)}")
-  end  
+  end
 end)
 ```
 
@@ -464,18 +463,18 @@ end)
 # Demonstrate atomic multi-subspace operations with rollback
 Repo.transaction(fn tx ->
   IO.puts("=== Testing Multi-Subspace Rollback ===")
-  
+
   # This transaction will create data across all three subspaces, then roll back
   Bank.create_account(tx, "temp_user", 1000, type: "temporary")
   Bank.move_money(tx, 100, "jim", "temp_user")
-  
+
   # Show that the changes are visible within the transaction
-  {:ok, info} = Bank.get_account_info(tx, "temp_user") 
+  {:ok, info} = Bank.get_account_info(tx, "temp_user")
   {:ok, history} = Bank.get_transaction_history(tx, "temp_user")
-  
+
   IO.puts("Temp account created with balance: $#{info.balance}")
   IO.puts("Transaction history entries: #{history |> Enum.count()}")
-  
+
   # Rollback by returning error
   {:rollback, "Intentionally rolled back to demonstrate atomicity"}
 end)
@@ -485,11 +484,11 @@ end)
 # Verify rollback worked - temp_user should not exist
 Repo.transaction(fn tx ->
   case Bank.get_account_info(tx, "temp_user") do
-    {:ok, _info} -> 
+    {:ok, _info} ->
       IO.puts("❌ Rollback failed - temp_user still exists")
-    {:error, :account_not_found} -> 
+    {:error, :account_not_found} ->
       IO.puts("✅ Rollback successful - temp_user was properly removed")
-      
+
       # Also verify Jim's balance wasn't affected
       {:ok, jim_info} = Bank.get_account_info(tx, "jim")
       IO.puts("Jim's balance unchanged: $#{jim_info.balance}")

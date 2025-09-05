@@ -296,12 +296,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
     end
 
     test "returns first successful response" do
-      async_stream_fn = fn servers, fun, _opts ->
-        servers
-        |> Enum.map(fun)
-        |> Enum.map(&{:ok, &1})
-      end
-
       operation_fn = fn
         :pid1, _state -> {:ok, "value1"}
         :pid2, _state -> {:error, :timeout}
@@ -317,19 +311,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
-      opts = [async_stream_fn: async_stream_fn]
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, opts)
+      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, [])
       assert {:ok, "value1", %State{}} = result
     end
 
     test "handles all servers returning errors" do
-      async_stream_fn = fn servers, fun, _opts ->
-        servers
-        |> Enum.map(fun)
-        |> Enum.map(&{:ok, &1})
-      end
-
       operation_fn = fn
         :pid1, _state -> {:error, :timeout}
         :pid2, _state -> {:error, :not_found}
@@ -345,20 +332,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
-      opts = [async_stream_fn: async_stream_fn]
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, opts)
-      # Returns first error encountered
-      assert result == {:error, :timeout, state}
+      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, [])
+      # Returns meaningful error over timeout
+      assert result == {:error, :not_found, state}
     end
 
     test "prioritizes success over errors" do
-      async_stream_fn = fn servers, fun, _opts ->
-        servers
-        |> Enum.map(fun)
-        |> Enum.map(&{:ok, &1})
-      end
-
       operation_fn = fn
         :pid1, _state -> {:error, :timeout}
         :pid2, _state -> {:ok, :success_value}
@@ -374,10 +354,99 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
-      opts = [async_stream_fn: async_stream_fn]
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, opts)
+      result = StorageRacing.race_storage_servers(state, "key1", operation_fn, [])
       assert {:ok, :success_value, %State{}} = result
+    end
+  end
+
+  describe "StorageRacing.determine_winner/1" do
+    test "prioritizes success over all errors" do
+      results = [
+        {:error, :timeout},
+        {:ok, :server1, "success_value"},
+        {:error, :not_found}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:ok, :server1, "success_value"}
+    end
+
+    test "prioritizes meaningful errors over timeout" do
+      results = [
+        {:error, :timeout},
+        {:error, :not_found}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:error, :not_found}
+    end
+
+    test "prioritizes meaningful errors over unsupported" do
+      results = [
+        {:error, :unsupported},
+        {:error, :version_too_old}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:error, :version_too_old}
+    end
+
+    test "returns timeout when only timeout and unsupported" do
+      results = [
+        {:error, :unsupported},
+        {:error, :timeout}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:error, :timeout}
+    end
+
+    test "returns exit timeout as error timeout" do
+      results = [
+        {:exit, :timeout},
+        {:error, :unsupported}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:error, :timeout}
+    end
+
+    test "returns first success when multiple successes" do
+      results = [
+        {:ok, :server1, "value1"},
+        {:ok, :server2, "value2"}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:ok, :server1, "value1"}
+    end
+
+    test "returns unavailable for empty results" do
+      results = []
+
+      assert StorageRacing.determine_winner(results) == {:error, :unavailable}
+    end
+
+    test "handles mixed results correctly" do
+      results = [
+        {:error, :timeout},
+        {:error, :unsupported},
+        {:exit, :timeout},
+        {:error, :not_found}
+      ]
+
+      assert StorageRacing.determine_winner(results) == {:error, :not_found}
+    end
+
+    test "short circuits on success in stream" do
+      # Create a stream that would error after the success
+      stream =
+        Stream.resource(
+          fn -> :start end,
+          fn
+            :start -> {[{:ok, :server1, "success"}], :after_success}
+            :after_success -> raise "Should not be evaluated!"
+          end,
+          fn _ -> :ok end
+        )
+
+      # Should return success without evaluating the error function
+      assert StorageRacing.determine_winner(stream) == {:ok, :server1, "success"}
     end
   end
 

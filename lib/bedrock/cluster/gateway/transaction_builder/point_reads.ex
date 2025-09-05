@@ -17,7 +17,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
 
   @type storage_fetch_fn() :: (pid(), KeySelector.t() | binary(), Bedrock.version(), keyword() ->
                                  {:ok, binary()} | {:error, atom()})
-  @type async_stream_fn() :: (list(), function(), keyword() -> Enumerable.t())
 
   @doc """
   Fetch a regular key within the transaction context.
@@ -36,8 +35,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
           State.t(),
           key :: Bedrock.key(),
           opts :: [
-            storage_fetch_fn: storage_fetch_fn(),
-            async_stream_fn: async_stream_fn()
+            storage_fetch_fn: storage_fetch_fn()
           ]
         ) ::
           {State.t(),
@@ -75,8 +73,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
           State.t(),
           KeySelector.t(),
           opts :: [
-            storage_fetch_fn: storage_fetch_fn(),
-            async_stream_fn: async_stream_fn()
+            storage_fetch_fn: storage_fetch_fn()
           ]
         ) ::
           {State.t(),

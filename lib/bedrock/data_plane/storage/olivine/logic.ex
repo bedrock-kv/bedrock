@@ -246,23 +246,25 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           {results, false}
 
         limit when is_integer(limit) and limit > 0 ->
-          results =
+          # Use reduce_while to process only up to limit + early termination detection
+          {results, has_more} =
             stream
-            # Take one extra to check if there are more
-            |> Stream.take(limit + 1)
-            |> Enum.map(fn {key, version} ->
-              {:ok, value} = load_fn.(key, version)
-              {key, value}
-            end)
+            |> Stream.with_index()
+            |> Enum.reduce_while({[], false}, &process_indexed_item(&1, &2, limit, load_fn))
 
-          if length(results) > limit do
-            {Enum.take(results, limit), true}
-          else
-            {results, false}
-          end
+          {Enum.reverse(results), has_more}
       end
 
     {:ok, {results, has_more}}
+  end
+
+  defp process_indexed_item({{key, version}, index}, {acc, _}, limit, load_fn) do
+    if index < limit do
+      {:ok, value} = load_fn.(key, version)
+      {:cont, {[{key, value} | acc], false}}
+    else
+      {:halt, {acc, true}}
+    end
   end
 
   @doc """

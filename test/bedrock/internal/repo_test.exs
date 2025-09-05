@@ -209,8 +209,10 @@ defmodule Bedrock.Internal.RepoSimpleTest do
               GenServer.reply(from, {:ok, {[{"key_b", "value_b"}], true}})
           end
 
+          expected_next_key = Bedrock.Key.next_key_after("key_b")
+
           receive do
-            {:"$gen_call", from, {:range_batch, "key_b\x00", "key_z", 2, []}} ->
+            {:"$gen_call", from, {:range_batch, ^expected_next_key, "key_z", 2, []}} ->
               # Return final batch
               GenServer.reply(from, {:ok, {[{"key_c", "value_c"}], false}})
           end

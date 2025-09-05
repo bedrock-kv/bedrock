@@ -27,15 +27,13 @@ defmodule Bedrock.Internal.RangeQuery do
   - `:batch_size` - Number of items to fetch per batch (default: 100)
   - `:timeout` - Timeout per batch request (default: 5000)
   - `:limit` - Maximum total items to return
-  - `:mode` - `:individual` to emit individual items, `:batch` to emit batches (default: `:individual`)
   """
   def stream(txn_pid, start_key, end_key, opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 100)
     timeout = Keyword.get(opts, :timeout, 5000)
-    mode = Keyword.get(opts, :mode, :individual)
 
     # Filter out stream-specific options, keep only TransactionBuilder options
-    txn_opts = Keyword.drop(opts, [:batch_size, :timeout, :mode])
+    txn_opts = Keyword.drop(opts, [:batch_size, :timeout])
 
     # Initial state tracks the current position in the range
     initial_state = %{
@@ -45,34 +43,47 @@ defmodule Bedrock.Internal.RangeQuery do
       txn_opts: txn_opts,
       finished: false,
       items_returned: 0,
-      limit: opts[:limit]
+      limit: opts[:limit],
+      current_batch: [],
+      has_more: true
     }
 
     Stream.resource(
-      # Start function
       fn -> initial_state end,
-
-      # Next function - fetch next batch from current position
       fn state ->
         if state.finished or limit_reached?(state) do
           {:halt, state}
         else
-          fetch_next_batch(state, batch_size, timeout, mode)
+          emit_next_row(state, batch_size, timeout)
         end
       end,
-
-      # After function - no cleanup needed
       fn _state -> :ok end
     )
   end
 
-  # Check if we've hit the limit
   defp limit_reached?(%{limit: nil}), do: false
   defp limit_reached?(%{limit: limit, items_returned: returned}), do: returned >= limit
 
-  # Fetch the next batch starting from current_key
-  defp fetch_next_batch(state, batch_size, timeout, mode) do
-    # Apply limit to batch size if needed
+  defp emit_next_row(state, batch_size, timeout) do
+    case state.current_batch do
+      [] -> fetch_and_emit_first_row(state, batch_size, timeout)
+      [row | remaining_rows] -> emit_row_from_buffer(state, row, remaining_rows)
+    end
+  end
+
+  defp emit_row_from_buffer(state, {key, _} = row, remaining_rows) do
+    new_state = %{
+      state
+      | current_batch: remaining_rows,
+        current_key: Bedrock.Key.next_key_after(key),
+        items_returned: state.items_returned + 1,
+        finished: remaining_rows == [] and not state.has_more
+    }
+
+    {[row], new_state}
+  end
+
+  defp fetch_and_emit_first_row(state, batch_size, timeout) do
     effective_batch_size =
       case state.limit do
         nil -> batch_size
@@ -84,30 +95,13 @@ defmodule Bedrock.Internal.RangeQuery do
            {:range_batch, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
            timeout
          ) do
-      {:ok, {[], _has_more}} ->
-        # No more data
+      {:ok, {[], _}} ->
         {:halt, %{state | finished: true}}
 
-      {:ok, {batch, false}} when is_list(batch) ->
-        # Got final batch - no more data after this
-        new_state = %{state | finished: true, items_returned: state.items_returned + length(batch)}
-        output = if mode == :individual, do: batch, else: [batch]
-        {output, new_state}
-
-      {:ok, {batch, true}} when is_list(batch) ->
-        # Got partial batch - more data available, calculate next key
-        next_key =
-          batch
-          |> List.last()
-          |> elem(0)
-          |> Bedrock.Key.next_key_after()
-
-        new_state = %{state | current_key: next_key, items_returned: state.items_returned + length(batch)}
-        output = if mode == :individual, do: batch, else: [batch]
-        {output, new_state}
+      {:ok, {[first_row | rest], has_more}} ->
+        emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
 
       {:error, reason} ->
-        # Error
         raise "Range query failed: #{inspect(reason)}"
     end
   end

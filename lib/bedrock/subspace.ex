@@ -112,6 +112,7 @@ defmodule Bedrock.Subspace do
   Returns a tuple of {start_key, end_key} suitable for range operations.
   """
   @spec range(t()) :: {binary(), binary()}
+  def range(%__MODULE__{prefix: <<>>}), do: {<<>>, <<0xFF>>}
   def range(%__MODULE__{prefix: prefix}), do: {prefix <> <<0x00>>, prefix <> <<0xFF>>}
 
   @doc """

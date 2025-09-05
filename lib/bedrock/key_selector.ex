@@ -34,7 +34,7 @@ defmodule Bedrock.KeySelector do
   strictly greater than the given key.
   """
   @spec first_greater_than(binary()) :: t()
-  def first_greater_than(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: false, offset: 0}
+  def first_greater_than(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: true, offset: 1}
 
   @doc """
   Creates a KeySelector that resolves to the lexicographically largest key
@@ -117,7 +117,7 @@ defmodule Bedrock.KeySelector do
     ~s{first_greater_or_equal(#{inspect(key)})}
   end
 
-  def to_string(%__MODULE__{key: key, or_equal: false, offset: 1}) do
+  def to_string(%__MODULE__{key: key, or_equal: true, offset: 1}) do
     ~s{first_greater_than(#{inspect(key)})}
   end
 

@@ -195,20 +195,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
   describe "error propagation through system" do
     @tag :capture_log
-    test "codec errors propagate through put operations" do
-      defmodule FailingKeyCodec do
-        @moduledoc false
-        def encode_key(_), do: :key_error
-      end
-
-      # This test validates fail-fast behavior - codec errors should crash TransactionBuilder
-      pid = start_transaction_builder(key_codec: FailingKeyCodec)
+    test "invalid key type causes process crash" do
+      # This test validates fail-fast behavior - invalid keys should crash TransactionBuilder
+      pid = start_transaction_builder()
       ref = Process.monitor(pid)
 
-      # Put with invalid key should cause process to crash
+      # Ensure process is fully initialized before sending problematic message
+      :sys.get_state(pid)
+
+      # Put with invalid key type should cause process to crash
       GenServer.cast(pid, {:set_key, :invalid_key, "value"})
 
-      # Process should crash with KeyError due to codec validation
+      # Process should crash with KeyError due to binary validation
       assert_receive {:DOWN, ^ref, :process, ^pid, reason}
       assert match?({%KeyError{message: "key must be a binary"}, _}, reason)
     end

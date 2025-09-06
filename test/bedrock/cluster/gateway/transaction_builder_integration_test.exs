@@ -51,7 +51,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       :timer.sleep(10)
 
       result = GenServer.call(pid, {:get, "test_key"})
-      assert result == {:ok, "test_value"}
+      assert result == {:ok, {"test_key", "test_value"}}
 
       state = :sys.get_state(pid)
 
@@ -74,9 +74,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "key3", "value3"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "key1"}) == {:ok, "value1"}
-      assert GenServer.call(pid, {:get, "key2"}) == {:ok, "value2"}
-      assert GenServer.call(pid, {:get, "key3"}) == {:ok, "value3"}
+      assert GenServer.call(pid, {:get, "key1"}) == {:ok, {"key1", "value1"}}
+      assert GenServer.call(pid, {:get, "key2"}) == {:ok, {"key2", "value2"}}
+      assert GenServer.call(pid, {:get, "key3"}) == {:ok, {"key3", "value3"}}
 
       state = :sys.get_state(pid)
       commit_result = Tx.commit(state.tx)
@@ -94,12 +94,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "key", "initial_value"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "key"}) == {:ok, "initial_value"}
+      assert GenServer.call(pid, {:get, "key"}) == {:ok, {"key", "initial_value"}}
 
       GenServer.cast(pid, {:set_key, "key", "updated_value"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "key"}) == {:ok, "updated_value"}
+      assert GenServer.call(pid, {:get, "key"}) == {:ok, {"key", "updated_value"}}
 
       state = :sys.get_state(pid)
       commit_result = Tx.commit(state.tx)
@@ -123,8 +123,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "base_key", "overwritten_value"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "base_key"}) == {:ok, "overwritten_value"}
-      assert GenServer.call(pid, {:get, "nested_key"}) == {:ok, "nested_value"}
+      assert GenServer.call(pid, {:get, "base_key"}) == {:ok, {"base_key", "overwritten_value"}}
+      assert GenServer.call(pid, {:get, "nested_key"}) == {:ok, {"nested_key", "nested_value"}}
 
       state = :sys.get_state(pid)
       assert length(state.stack) == 1
@@ -149,8 +149,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "persistent_key", "modified_value"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "persistent_key"}) == {:ok, "modified_value"}
-      assert GenServer.call(pid, {:get, "temporary_key"}) == {:ok, "temporary_value"}
+      assert GenServer.call(pid, {:get, "persistent_key"}) == {:ok, {"persistent_key", "modified_value"}}
+      assert GenServer.call(pid, {:get, "temporary_key"}) == {:ok, {"temporary_key", "temporary_value"}}
 
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
@@ -158,7 +158,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       state = :sys.get_state(pid)
       assert state.stack == []
 
-      assert GenServer.call(pid, {:get, "persistent_key"}) == {:ok, "persistent_value"}
+      assert GenServer.call(pid, {:get, "persistent_key"}) == {:ok, {"persistent_key", "persistent_value"}}
 
       assert Process.alive?(pid)
     end
@@ -177,9 +177,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "level2", "value2"})
       :timer.sleep(10)
 
-      assert GenServer.call(pid, {:get, "level0"}) == {:ok, "value0"}
-      assert GenServer.call(pid, {:get, "level1"}) == {:ok, "value1"}
-      assert GenServer.call(pid, {:get, "level2"}) == {:ok, "value2"}
+      assert GenServer.call(pid, {:get, "level0"}) == {:ok, {"level0", "value0"}}
+      assert GenServer.call(pid, {:get, "level1"}) == {:ok, {"level1", "value1"}}
+      assert GenServer.call(pid, {:get, "level2"}) == {:ok, {"level2", "value2"}}
 
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
@@ -188,8 +188,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert length(state.stack) == 1
 
       # Level 2 operations should be gone, but level 0 and 1 should remain
-      assert GenServer.call(pid, {:get, "level0"}) == {:ok, "value0"}
-      assert GenServer.call(pid, {:get, "level1"}) == {:ok, "value1"}
+      assert GenServer.call(pid, {:get, "level0"}) == {:ok, {"level0", "value0"}}
+      assert GenServer.call(pid, {:get, "level1"}) == {:ok, {"level1", "value1"}}
     end
   end
 
@@ -258,9 +258,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert length(state.stack) == 2
       assert Process.alive?(pid)
 
-      assert GenServer.call(pid, {:get, "key1"}) == {:ok, "value1"}
-      assert GenServer.call(pid, {:get, "key2"}) == {:ok, "value2"}
-      assert GenServer.call(pid, {:get, "key3"}) == {:ok, "value3"}
+      assert GenServer.call(pid, {:get, "key1"}) == {:ok, {"key1", "value1"}}
+      assert GenServer.call(pid, {:get, "key2"}) == {:ok, {"key2", "value2"}}
+      assert GenServer.call(pid, {:get, "key3"}) == {:ok, {"key3", "value3"}}
     end
 
     test "timeout handling maintains state consistency" do

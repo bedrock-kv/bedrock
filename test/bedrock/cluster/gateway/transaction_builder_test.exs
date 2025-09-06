@@ -188,7 +188,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       :timer.sleep(10)
 
       result = GenServer.call(pid, {:get, "test_key"})
-      assert result == {:ok, "test_value"}
+      assert result == {:ok, {"test_key", "test_value"}}
     end
 
     test ":commit call returns error for empty transaction" do
@@ -296,7 +296,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
              ]
 
       result = GenServer.call(pid, {:get, "key1"})
-      assert result == {:ok, "updated_value"}
+      assert result == {:ok, {"key1", "updated_value"}}
     end
 
     @tag :capture_log

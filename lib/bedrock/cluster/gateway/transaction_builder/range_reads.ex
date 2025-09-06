@@ -13,6 +13,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.Key
   alias Bedrock.KeySelector
 
   @type next_read_version_fn() :: (State.t() ->
@@ -26,46 +27,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   This function handles version initialization, storage team coordination,
   and result processing for range queries with regular keys.
   """
-  @spec get_range(
-          State.t(),
-          Bedrock.key_range(),
-          batch_size :: pos_integer(),
-          opts :: keyword()
-        ) ::
+  @spec get_range(State.t(), Bedrock.key_range(), batch_size :: pos_integer(), opts :: keyword()) ::
           {State.t(), {:ok, {[{binary(), Bedrock.value()}], more :: boolean()}} | {:error, atom()}}
-  def get_range(state, {min_key, max_key_ex} = _range, batch_size, opts \\ []) do
+  def get_range(state, {min_key, max_key_ex} = range, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
-
-    operation_fn = fn storage_server, state ->
-      storage_get_range_fn.(
-        storage_server,
-        min_key,
-        max_key_ex,
-        state.read_version,
-        limit: batch_size,
-        timeout: state.fetch_timeout_in_ms
-      )
-    end
 
     state
     |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(min_key, operation_fn)
-    |> case do
-      {:ok, {{results, has_more}, shard_range}, state} ->
-        {updated_tx, batch_results} =
-          Tx.merge_storage_range_with_writes(
-            state.tx,
-            results,
-            has_more,
-            {min_key, max_key_ex},
-            shard_range
-          )
-
-        {%{state | tx: updated_tx}, {:ok, {batch_results, has_more}}}
-
-      {:error, reason, state} ->
-        {state, {:error, reason}}
-    end
+    |> execute_range_query(
+      min_key,
+      &storage_get_range_fn.(&1, min_key, max_key_ex, &2, limit: batch_size, timeout: &3),
+      fn _results -> range end
+    )
   end
 
   @doc """
@@ -81,40 +54,53 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
           opts :: keyword()
         ) ::
           {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
-  def get_range_selectors(state, start_selector, end_selector, batch_size, opts) do
+  def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
-
-    operation_fn = fn storage_server, state ->
-      storage_get_range_fn.(
-        storage_server,
-        start_selector,
-        end_selector,
-        state.read_version,
-        limit: batch_size,
-        timeout: state.fetch_timeout_in_ms
-      )
-    end
 
     state
     |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(start_selector.key, operation_fn)
+    |> execute_range_query(
+      start_selector.key,
+      &storage_get_range_fn.(&1, start_selector, end_selector, &2, limit: batch_size, timeout: &3),
+      &range_from_batch/1
+    )
+  end
+
+  # Private helper functions
+
+  @spec execute_range_query(
+          State.t(),
+          racing_key :: binary(),
+          operation_fn :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()}),
+          range_fn :: ([Bedrock.key_value()] -> Bedrock.key_range())
+        ) ::
+          {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
+  defp execute_range_query(state, racing_key, operation_fn, range_fn) do
+    state
+    |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
-      {:ok, {{results, has_more}, shard_range}, state} ->
-        # For KeySelectors, we use the selector keys as the query range bounds
-        # since the actual range is resolved at the storage level
+      {state, {:ok, {{[], false}, _shard_range}}} ->
+        {state, {:ok, {[], false}}}
+
+      {state, {:ok, {{results, has_more}, shard_range}}} ->
         {updated_tx, batch_results} =
           Tx.merge_storage_range_with_writes(
             state.tx,
             results,
             has_more,
-            {start_selector.key, end_selector.key},
+            range_fn.(results),
             shard_range
           )
 
         {%{state | tx: updated_tx}, {:ok, {batch_results, has_more}}}
 
-      {:error, reason, state} ->
+      {state, {:error, reason}} ->
         {state, {:error, reason}}
     end
   end
+
+  defp range_from_batch([{min_key, _value} | rest]),
+    do: {min_key, rest |> List.last() |> elem(0) |> Key.next_key_after()}
+
+  defp range_from_batch(_), do: raise("Batch results cannot be empty")
 end

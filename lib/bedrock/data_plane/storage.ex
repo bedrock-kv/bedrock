@@ -1,9 +1,10 @@
 defmodule Bedrock.DataPlane.Storage do
   @moduledoc false
 
-  import Bedrock.Internal.GenServer.Calls
+  # Removed: import Bedrock.Internal.GenServer.Calls
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
 
@@ -39,15 +40,43 @@ defmodule Bedrock.DataPlane.Storage do
           version :: Bedrock.version(),
           opts :: [timeout: timeout()]
         ) ::
-          {:ok, value :: Bedrock.value()}
-          | {:error,
-             :timeout
-             | :not_found
-             | :version_too_old
-             | :version_too_new
-             | :unavailable}
-  def get(storage, key, version, opts) when is_binary(key),
-    do: call(storage, {:get, key, version, opts}, opts[:timeout] || :infinity)
+          {:ok, value :: Bedrock.value() | nil}
+          | {:error, :version_too_old | :version_too_new}
+          | {:failure, :timeout | :unavailable, ref()}
+  def get(storage, key, version, opts) when is_binary(key) do
+    timeout = opts[:timeout] || :infinity
+    start_time = System.monotonic_time()
+
+    try do
+      result = GenServer.call(storage, {:get, key, version, opts}, timeout)
+
+      Telemetry.emit_storage_operation(
+        :get_success,
+        %{duration: System.monotonic_time() - start_time},
+        %{storage_id: storage, key: key, version: version, result: elem(result, 0)}
+      )
+
+      result
+    catch
+      :exit, {:timeout, _} ->
+        Telemetry.emit_storage_operation(
+          :get_timeout,
+          %{duration: System.monotonic_time() - start_time, timeout_ms: timeout},
+          %{storage_id: storage, key: key, version: version}
+        )
+
+        {:failure, :timeout, storage}
+
+      :exit, reason ->
+        Telemetry.emit_storage_operation(
+          :get_unavailable,
+          %{duration: System.monotonic_time() - start_time},
+          %{storage_id: storage, key: key, version: version, exit_reason: reason}
+        )
+
+        {:failure, :unavailable, storage}
+    end
+  end
 
   @spec get(
           storage_ref :: ref(),
@@ -55,15 +84,43 @@ defmodule Bedrock.DataPlane.Storage do
           version :: Bedrock.version(),
           opts :: [timeout: timeout()]
         ) ::
-          {:ok, {resolved_key :: Bedrock.key(), value :: Bedrock.value()}}
-          | {:error,
-             :timeout
-             | :not_found
-             | :version_too_old
-             | :version_too_new
-             | :unavailable}
-  def get(storage, %KeySelector{} = key_selector, version, opts),
-    do: call(storage, {:get, key_selector, version, opts}, opts[:timeout] || :infinity)
+          {:ok, {resolved_key :: Bedrock.key(), value :: Bedrock.value()} | nil}
+          | {:error, :version_too_old | :version_too_new | :decode_error}
+          | {:failure, :timeout | :unavailable, ref()}
+  def get(storage, %KeySelector{} = key_selector, version, opts) do
+    timeout = opts[:timeout] || :infinity
+    start_time = System.monotonic_time()
+
+    try do
+      result = GenServer.call(storage, {:get, key_selector, version, opts}, timeout)
+
+      Telemetry.emit_storage_operation(
+        :get_success,
+        %{duration: System.monotonic_time() - start_time},
+        %{storage_id: storage, key_selector: key_selector.key, version: version, result: elem(result, 0)}
+      )
+
+      result
+    catch
+      :exit, {:timeout, _} ->
+        Telemetry.emit_storage_operation(
+          :get_timeout,
+          %{duration: System.monotonic_time() - start_time, timeout_ms: timeout},
+          %{storage_id: storage, key_selector: key_selector.key, version: version}
+        )
+
+        {:failure, :timeout, storage}
+
+      :exit, reason ->
+        Telemetry.emit_storage_operation(
+          :get_unavailable,
+          %{duration: System.monotonic_time() - start_time},
+          %{storage_id: storage, key_selector: key_selector.key, version: version, exit_reason: reason}
+        )
+
+        {:failure, :unavailable, storage}
+    end
+  end
 
   @doc """
   Returns key-value pairs for keys in the given range at the specified version.
@@ -85,14 +142,42 @@ defmodule Bedrock.DataPlane.Storage do
           ]
         ) ::
           {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
-          | {:error,
-             :timeout
-             | :version_too_old
-             | :version_too_new
-             | :unavailable
-             | :unsupported}
-  def get_range(storage, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key),
-    do: call(storage, {:get_range, start_key, end_key, version, opts}, opts[:timeout] || :infinity)
+          | {:error, :version_too_old | :version_too_new | :unsupported}
+          | {:failure, :timeout | :unavailable, ref()}
+  def get_range(storage, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key) do
+    timeout = opts[:timeout] || :infinity
+    start_time = System.monotonic_time()
+
+    try do
+      result = GenServer.call(storage, {:get_range, start_key, end_key, version, opts}, timeout)
+
+      Telemetry.emit_storage_operation(
+        :get_range_success,
+        %{duration: System.monotonic_time() - start_time},
+        %{storage_id: storage, start_key: start_key, end_key: end_key, version: version, result: elem(result, 0)}
+      )
+
+      result
+    catch
+      :exit, {:timeout, _} ->
+        Telemetry.emit_storage_operation(
+          :get_range_timeout,
+          %{duration: System.monotonic_time() - start_time, timeout_ms: timeout},
+          %{storage_id: storage, start_key: start_key, end_key: end_key, version: version}
+        )
+
+        {:failure, :timeout, storage}
+
+      :exit, reason ->
+        Telemetry.emit_storage_operation(
+          :get_range_unavailable,
+          %{duration: System.monotonic_time() - start_time},
+          %{storage_id: storage, start_key: start_key, end_key: end_key, version: version, exit_reason: reason}
+        )
+
+        {:failure, :unavailable, storage}
+    end
+  end
 
   @spec get_range(
           storage_ref :: ref(),
@@ -105,16 +190,54 @@ defmodule Bedrock.DataPlane.Storage do
           ]
         ) ::
           {:ok, {[{key :: Bedrock.key(), value :: Bedrock.value()}], more :: boolean()}}
-          | {:error,
-             :timeout
-             | :version_too_old
-             | :version_too_new
-             | :unavailable
-             | :unsupported
-             | :not_found
-             | :invalid_range}
-  def get_range(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts),
-    do: call(storage, {:get_range, start_selector, end_selector, version, opts}, opts[:timeout] || :infinity)
+          | {:error, :version_too_old | :version_too_new | :unsupported | :not_found | :invalid_range}
+          | {:failure, :timeout | :unavailable, ref()}
+  def get_range(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts) do
+    timeout = opts[:timeout] || :infinity
+    start_time = System.monotonic_time()
+
+    try do
+      result = GenServer.call(storage, {:get_range, start_selector, end_selector, version, opts}, timeout)
+
+      Telemetry.emit_storage_operation(
+        :get_range_success,
+        %{duration: System.monotonic_time() - start_time},
+        %{
+          storage_id: storage,
+          start_selector: start_selector.key,
+          end_selector: end_selector.key,
+          version: version,
+          result: elem(result, 0)
+        }
+      )
+
+      result
+    catch
+      :exit, {:timeout, _} ->
+        Telemetry.emit_storage_operation(
+          :get_range_timeout,
+          %{duration: System.monotonic_time() - start_time, timeout_ms: timeout},
+          %{storage_id: storage, start_selector: start_selector.key, end_selector: end_selector.key, version: version}
+        )
+
+        {:failure, :timeout, storage}
+
+      :exit, reason ->
+        Telemetry.emit_storage_operation(
+          :get_range_unavailable,
+          %{duration: System.monotonic_time() - start_time},
+          %{
+            storage_id: storage,
+            start_selector: start_selector.key,
+            end_selector: end_selector.key,
+            version: version,
+            exit_reason: reason
+          }
+        )
+
+        {:failure, :unavailable, storage}
+    end
+  end
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions
@@ -147,13 +270,40 @@ defmodule Bedrock.DataPlane.Storage do
           durable_version :: Bedrock.version(),
           TransactionSystemLayout.t(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
-        ) :: :ok | {:error, :timeout | :unavailable}
+        ) :: :ok | {:error, :unavailable} | {:failure, :timeout, ref()}
   def unlock_after_recovery(storage, durable_version, transaction_system_layout, opts \\ []) do
-    call(
-      storage,
-      {:unlock_after_recovery, durable_version, transaction_system_layout},
-      opts[:timeout_in_ms] || :infinity
-    )
+    timeout = opts[:timeout_in_ms] || :infinity
+    start_time = System.monotonic_time()
+
+    try do
+      result = GenServer.call(storage, {:unlock_after_recovery, durable_version, transaction_system_layout}, timeout)
+
+      Telemetry.emit_storage_operation(
+        :unlock_after_recovery_success,
+        %{duration: System.monotonic_time() - start_time},
+        %{storage_id: storage, durable_version: durable_version}
+      )
+
+      result
+    catch
+      :exit, {:timeout, _} ->
+        Telemetry.emit_storage_operation(
+          :unlock_after_recovery_timeout,
+          %{duration: System.monotonic_time() - start_time, timeout_ms: timeout},
+          %{storage_id: storage, durable_version: durable_version}
+        )
+
+        {:failure, :timeout, storage}
+
+      :exit, reason ->
+        Telemetry.emit_storage_operation(
+          :unlock_after_recovery_unavailable,
+          %{duration: System.monotonic_time() - start_time},
+          %{storage_id: storage, durable_version: durable_version, exit_reason: reason}
+        )
+
+        {:failure, :unavailable, storage}
+    end
   end
 
   @doc """

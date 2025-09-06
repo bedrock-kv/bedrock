@@ -22,8 +22,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
   ## Parameters
   - `key`: The key to look up storage servers and cache by
   - `state`: Transaction builder state with layout and cache
-  - `operation_fn`: Function to run `(pid(), State.t() -> {:ok, any()} | {:error, any()})`
-  - `opts`: Options (currently unused but kept for compatibility)
+  - `operation_fn`: Function to run `(pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()} | {:failure, atom(), pid()})`
 
   ## Returns
   - `{:ok, {result, key_range}, updated_state}` - Result with shard key range and potentially updated cache
@@ -32,95 +31,92 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
   @spec race_storage_servers(
           state :: State.t(),
           key :: binary(),
-          operation_fn :: (pid(), State.t() -> {:ok, any()} | {:error, any()}),
-          opts :: keyword()
+          operation_fn :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() ->
+                             {:ok, any()} | {:error, any()} | {:failure, atom(), pid()})
         ) ::
-          {:ok, {any(), Bedrock.key_range()}, State.t()}
-          | {:error, :timeout, State.t()}
-          | {:error, :unavailable, State.t()}
-  def race_storage_servers(%State{} = state, key, operation_fn, opts \\ []) do
-    case LayoutIndex.lookup_key!(state.layout_index, key) do
-      {key_range, storage_pids} when storage_pids != [] ->
-        race_and_save_winner(key_range, storage_pids, state, operation_fn, opts)
-
+          {State.t(), {:ok, {any(), Bedrock.key_range()}} | {:error, atom()}}
+  def race_storage_servers(%State{} = state, key, operation_fn) do
+    state.layout_index
+    |> LayoutIndex.lookup_key!(key)
+    |> case do
       {_key_range, []} ->
-        {:error, :unavailable, state}
+        {state, {:error, :unavailable}}
+
+      {key_range, storage_pids} ->
+        state.fastest_storage_servers
+        |> Map.get(key_range)
+        |> try_fastest_server(state, key_range, storage_pids, operation_fn)
     end
   rescue
-    RuntimeError -> {:error, :unavailable, state}
+    RuntimeError -> {state, {:error, :unavailable}}
   end
 
-  defp race_and_save_winner(key_range, storage_pids, state, operation_fn, opts) do
-    with :error <- Map.fetch(state.fastest_storage_servers, key_range),
-         {:ok, winning_server, result} <- run_race(storage_pids, state, operation_fn, opts) do
-      updated_state = %{
-        state
-        | fastest_storage_servers: Map.put(state.fastest_storage_servers, key_range, winning_server)
-      }
+  # Private helper functions
 
-      {:ok, {result, key_range}, updated_state}
-    else
-      {:ok, fastest_server} ->
-        case operation_fn.(fastest_server, state) do
-          {:ok, result} -> {:ok, {result, key_range}, state}
-          {:error, reason} -> {:error, reason, state}
-        end
+  defp try_fastest_server(nil, state, key_range, all_servers, operation_fn),
+    do: race_all_servers(state, key_range, all_servers, operation_fn)
 
-      {:error, reason} ->
-        {:error, reason, state}
+  defp try_fastest_server(fastest_server, state, key_range, all_servers, operation_fn) do
+    fastest_server
+    |> operation_fn.(state.read_version, state.fetch_timeout_in_ms)
+    |> case do
+      {:ok, result} -> {state, {:ok, {result, key_range}}}
+      {:error, reason} when reason in [:version_too_old, :version_too_new, :decode_error] -> {state, {:error, reason}}
+      _ -> race_all_servers(state, key_range, :lists.delete(fastest_server, all_servers), operation_fn)
     end
   end
 
-  # Find the best result based on priority:
-  # 1. Any success result (short-circuits immediately)
-  # 2. Any meaningful error (not timeout/unsupported)
-  # 3. Timeout or unsupported
-  # 4. No results -> unavailable
-  defp run_race(storage_pids, state, operation_fn, _opts) do
+  defp race_all_servers(state, _key_range, [], _operation_fn), do: {state, {:error, :unavailable}}
+
+  defp race_all_servers(state, key_range, servers, operation_fn) do
+    case run_race(servers, state, operation_fn) do
+      {:ok, winning_server, result} ->
+        updated_state = %{
+          state
+          | fastest_storage_servers: Map.put(state.fastest_storage_servers, key_range, winning_server)
+        }
+
+        {updated_state, {:ok, {result, key_range}}}
+
+      {:error, reason} ->
+        {state, {:error, reason}}
+
+      {:failure, reasons_by_server} when map_size(reasons_by_server) == 0 ->
+        {state, {:error, :unavailable}}
+
+      {:failure, reasons_by_server} ->
+        reason = if :timeout in Map.values(reasons_by_server), do: :timeout, else: hd(Map.values(reasons_by_server))
+        {state, {:error, reason}}
+    end
+  end
+
+  defp run_race(storage_pids, state, operation_fn) do
     storage_pids
     |> Task.async_stream(
       fn storage_server ->
-        case operation_fn.(storage_server, state) do
+        case operation_fn.(storage_server, state.read_version, state.fetch_timeout_in_ms) do
           {:ok, result} -> {:ok, storage_server, result}
-          {:error, _} = error -> error
+          {:error, reason} -> {:failure, reason, storage_server}
+          {:failure, reason, server} -> {:failure, reason, server}
         end
       end,
       ordered: false,
-      timeout: state.fetch_timeout_in_ms
+      timeout: state.fetch_timeout_in_ms,
+      zip_input_on_exit: true
     )
-    |> Stream.map(&elem(&1, 1))
-    |> determine_winner()
+    |> Enum.map(fn
+      {:ok, result} -> result
+      {:exit, {reason, storage_server}} -> {:failure, reason, storage_server}
+    end)
+    |> Enum.reduce_while({:failure, %{}}, fn
+      {:ok, server, result}, _ ->
+        {:halt, {:ok, server, result}}
+
+      {:failure, reason, _server}, _ when reason in [:version_too_old, :version_too_new, :decode_error] ->
+        {:halt, {:error, reason}}
+
+      {:failure, reason, server}, {:failure, failures} ->
+        {:cont, {:failure, Map.put(failures, server, reason)}}
+    end)
   end
-
-  def determine_winner(stream), do: stream |> collect_results() |> determine_outcome()
-
-  defp collect_results(stream), do: Enum.reduce_while(stream, {nil, [], []}, &process_result/2)
-
-  defp process_result({:ok, storage_server, result}, _acc), do: {:halt, {{:ok, storage_server, result}, [], []}}
-
-  defp process_result({:error, reason} = error, {success, meaningful_errors, fallback_errors}) do
-    if fallback_error?(reason) do
-      {:cont, {success, meaningful_errors, [error | fallback_errors]}}
-    else
-      {:cont, {success, [error | meaningful_errors], fallback_errors}}
-    end
-  end
-
-  defp process_result({:exit, :timeout}, {success, meaningful_errors, fallback_errors}),
-    do: {:cont, {success, meaningful_errors, [{:error, :timeout} | fallback_errors]}}
-
-  defp process_result(_other, acc), do: {:cont, acc}
-
-  def determine_outcome({success, meaningful_errors, fallback_errors}),
-    do: success || best_error(meaningful_errors, fallback_errors)
-
-  defp fallback_error?(reason) when reason in [:timeout, :unsupported], do: true
-  defp fallback_error?(_), do: false
-
-  defp best_error([error | _], _), do: error
-  defp best_error(_, []), do: {:error, :unavailable}
-  defp best_error(_, fallback_errors), do: Enum.find(fallback_errors, &timeout_error?/1) || List.first(fallback_errors)
-
-  defp timeout_error?({:error, :timeout}), do: true
-  defp timeout_error?(_), do: false
 end

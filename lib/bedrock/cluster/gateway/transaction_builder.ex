@@ -138,7 +138,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   def handle_call({:get, key}, _from, t) do
     case get_key(t, key) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
+      {t, {:error, _} = error} -> reply(t, error, continue: :update_version_lease_if_needed)
+      {t, {:ok, {^key, value}}} -> reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
     end
   end
 

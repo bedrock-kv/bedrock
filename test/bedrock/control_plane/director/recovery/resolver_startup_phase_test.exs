@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
         # Verify start args contain correct parameters
         assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
         # last_version=100, epoch=42
-        assert {_lock_token, 100, 42, _director} = start_args
+        assert {_lock_token, 100, 42, _director, 1000, 6000} = start_args
         # Verify node assignment (order may vary due to non-deterministic iteration)
         assert node in [:node1, :node2]
       end)
@@ -142,7 +142,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       captured_child_spec = Agent.get(agent, & &1)
       assert %{start: {GenServer, :start_link, [_, start_args]}} = captured_child_spec
-      assert {"special_lock_token", 200, 7, _director} = start_args
+      assert {"special_lock_token", 200, 7, _director, 1000, 6000} = start_args
     end
   end
 

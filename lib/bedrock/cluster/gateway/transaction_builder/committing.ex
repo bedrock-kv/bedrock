@@ -6,11 +6,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
 
-  @spec do_commit(State.t()) :: {:ok, State.t()} | {:error, term()}
-  @spec do_commit(State.t(), opts :: keyword()) :: {:ok, State.t()} | {:error, term()}
-  def do_commit(t, opts \\ [])
+  @spec commit(State.t()) :: {:ok, State.t()} | {:error, term()}
+  @spec commit(State.t(), opts :: keyword()) :: {:ok, State.t()} | {:error, term()}
+  def commit(t, opts \\ [])
 
-  def do_commit(%{stack: []} = t, opts) do
+  def commit(%{stack: []} = t, opts) do
     commit_fn = Keyword.get(opts, :commit_fn, &CommitProxy.commit/2)
 
     transaction = prepare_transaction_for_commit(t.read_version, t.tx)
@@ -21,9 +21,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
     end
   end
 
-  def do_commit(%{stack: [_tx | stack]} = t, _opts) do
-    {:ok, %{t | stack: stack}}
-  end
+  def commit(%{stack: [_tx | stack]} = t, _opts), do: {:ok, %{t | stack: stack}}
 
   @spec prepare_transaction_for_commit(
           read_version :: Bedrock.version() | nil,

@@ -52,21 +52,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       assert length(captured_calls) == 2
 
       # Check each resolver child spec
-      captured_calls
-      |> Enum.with_index()
-      |> Enum.each(fn {{child_spec, node}, index} ->
+      Enum.each(captured_calls, fn {child_spec, node} ->
         # Verify child spec has correct tuple-based ID format
         assert %{id: {Server, TestCluster, _key_range, 42}} = child_spec
-
         # Verify start args contain correct parameters
         assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
         # last_version=100, epoch=42
         assert {_lock_token, 100, 42, _director} = start_args
-
-        # Verify round-robin distribution
-        expected_node = if index == 0, do: :node1, else: :node2
-        assert node == expected_node
+        # Verify node assignment (order may vary due to non-deterministic iteration)
+        assert node in [:node1, :node2]
       end)
+
+      # Verify all nodes are used (order may vary due to non-deterministic iteration)
+      nodes_used = Enum.map(captured_calls, fn {_child_spec, node} -> node end)
+      assert Enum.sort(nodes_used) == [:node1, :node2]
     end
 
     test "stalls when no coordination capable nodes available" do
@@ -178,10 +177,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       # Should be sorted by start_key
       assert [{"", _pid1}, {"m", _pid2}, {"z", _pid3}] = resolvers
 
-      # Verify round-robin node distribution
+      # Verify all nodes are used (order may vary due to non-deterministic iteration)
       captured_calls = agent |> Agent.get(& &1) |> Enum.reverse()
       nodes_used = Enum.map(captured_calls, fn {_child_spec, node} -> node end)
-      assert nodes_used == [:node1, :node2, :node3]
+      assert Enum.sort(nodes_used) == [:node1, :node2, :node3]
     end
 
     test "handles empty resolver list" do

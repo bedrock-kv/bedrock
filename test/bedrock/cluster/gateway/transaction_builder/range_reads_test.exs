@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
@@ -14,7 +14,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
         services: %{}
       })
 
-    layout_index = LayoutUtils.build_layout_index(layout)
+    layout_index = LayoutIndex.build_index(layout)
 
     %State{
       state: :valid,
@@ -43,7 +43,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       end
 
       # Mock storage function using dependency injection
-      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+      storage_get_range_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
         # Return test data in the expected format
         data = [
           {"a1", "value1"},
@@ -68,10 +68,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
-      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_get_range_fn: storage_get_range_fn]
 
       # Call fetch_range
-      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
 
       # Should succeed with tuple format
       assert {:ok, {data, has_more}} = result
@@ -86,7 +86,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
         |> Enum.map(&{:ok, &1})
       end
 
-      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+      storage_get_range_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
         data = [{"key1", "value1"}, {"key2", "value2"}]
         {:ok, {data, false}}
       end
@@ -105,9 +105,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
-      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_get_range_fn: storage_get_range_fn]
 
-      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
 
       assert {:ok, {data, has_more}} = result
       assert data == [{"key1", "value1"}, {"key2", "value2"}]
@@ -121,7 +121,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
         |> Enum.map(&{:ok, &1})
       end
 
-      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+      storage_get_range_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
         {:error, :unavailable}
       end
 
@@ -139,9 +139,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
-      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_get_range_fn: storage_get_range_fn]
 
-      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
 
       # Should return error
       assert {:error, :unavailable} = result
@@ -154,7 +154,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
         |> Enum.map(&{:ok, &1})
       end
 
-      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, opts ->
+      storage_get_range_fn = fn _server, _min_key, _max_key, _read_version, opts ->
         batch_size = Keyword.get(opts, :limit, 10)
         # Return exactly batch_size items to simulate has_more = true
         data = Enum.map(1..batch_size, fn i -> {"key#{i}", "value#{i}"} end)
@@ -175,10 +175,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       }
 
       state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
-      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_get_range_fn: storage_get_range_fn]
 
       # Call with small batch size
-      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 5, opts)
+      {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 5, opts)
 
       # Should succeed with has_more indicating more data
       assert {:ok, {data, has_more}} = result
@@ -193,7 +193,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
         |> Enum.map(&{:ok, &1})
       end
 
-      storage_range_fetch_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
+      storage_get_range_fn = fn _server, _min_key, _max_key, _read_version, _opts ->
         # Storage only returns keys up to "k", then says has_more = false
         data = [
           {"a", "storage_value_a"},
@@ -232,10 +232,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       }
 
       state = %{state | tx: tx_with_writes}
-      opts = [async_stream_fn: async_stream_fn, storage_range_fetch_fn: storage_range_fetch_fn]
+      opts = [async_stream_fn: async_stream_fn, storage_get_range_fn: storage_get_range_fn]
 
       # Query range "a" to "z" - this should include both storage results AND tx writes
-      {_new_state, result} = RangeReads.fetch_range(state, {"a", "z"}, 10, opts)
+      {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
 
       # Should succeed and include ALL keys in range: storage keys + tx writes
       assert {:ok, {data, has_more}} = result

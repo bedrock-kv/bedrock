@@ -49,7 +49,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   end
 
   @impl true
-  def handle_call({:fetch, key, version, _opts}, from, %State{} = t) do
+  def handle_call({:get, key, version, _opts}, from, %State{} = t) do
     case Logic.try_fetch_or_waitlist(t, key, version, from) do
       {:ok, value, new_state} -> reply(new_state, {:ok, value})
       {:error, reason, new_state} -> reply(new_state, {:error, reason})
@@ -58,7 +58,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.Server do
   end
 
   @impl true
-  def handle_call({:range_fetch, _start_key, _end_key, _version, _opts}, _from, %State{} = t) do
+  def handle_call({:get_range, _start_key, _end_key, _version, _opts}, _from, %State{} = t) do
     reply(t, {:error, :unsupported})
   end
 

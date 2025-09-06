@@ -14,12 +14,7 @@ end
 ```elixir
 # Basic transaction
 Repo.transaction(fn repo ->
-  value = Repo.fetch(repo, key)
+  value = Repo.get(repo, key)
   Repo.put(repo, key, new_value)
-end)
-
-# Read-only transaction (no commit phase)
-Repo.snapshot(fn repo ->
-  Repo.fetch(repo, key)
 end)
 ```

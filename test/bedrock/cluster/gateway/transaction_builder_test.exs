@@ -34,24 +34,81 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     }
   end
 
+  def create_test_transaction_system_layout_with_mock_sequencer(read_version) do
+    # Create mock sequencer process with receive loop
+    mock_sequencer =
+      spawn_link(fn ->
+        mock_sequencer_loop(read_version)
+      end)
+
+    %{
+      sequencer: mock_sequencer,
+      proxies: [:test_proxy1, :test_proxy2],
+      storage_teams: [
+        %{
+          key_range: {"", :end},
+          storage_ids: ["storage1", "storage2"]
+        }
+      ],
+      services: %{
+        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+      }
+    }
+  end
+
+  defp mock_sequencer_loop(read_version) do
+    receive do
+      {:"$gen_call", from, :next_read_version} ->
+        GenServer.reply(from, {:ok, read_version})
+        mock_sequencer_loop(read_version)
+    end
+  end
+
+  defp create_mock_gateway do
+    spawn_link(fn ->
+      mock_gateway_loop()
+    end)
+  end
+
+  defp mock_gateway_loop do
+    receive do
+      {:"$gen_call", from, {:renew_read_version_lease, _read_version}} ->
+        GenServer.reply(from, {:ok, 60_000})
+        mock_gateway_loop()
+    end
+  end
+
   def start_transaction_builder(opts \\ []) do
+    read_version = Keyword.get(opts, :read_version)
+
     # For tests with read_version, provide a deterministic time function
     time_fn =
-      if Keyword.has_key?(opts, :read_version) do
+      if read_version do
         # Fixed timestamp for deterministic tests
         fn -> 1_000_000_000 end
       else
         &Bedrock.Internal.Time.monotonic_now_in_ms/0
       end
 
+    # Create gateway and transaction system layout with mocks if read_version specified
+    {gateway, transaction_system_layout} =
+      if read_version do
+        mock_gateway = create_mock_gateway()
+        {mock_gateway, create_test_transaction_system_layout_with_mock_sequencer(read_version)}
+      else
+        {self(), create_test_transaction_system_layout()}
+      end
+
     default_opts = [
-      gateway: self(),
-      transaction_system_layout: create_test_transaction_system_layout(),
+      gateway: gateway,
+      transaction_system_layout: transaction_system_layout,
       time_fn: time_fn
     ]
 
-    opts = Keyword.merge(default_opts, opts)
-    start_supervised!({TransactionBuilder, opts})
+    process_opts = Keyword.delete(opts, :read_version)
+    final_opts = Keyword.merge(default_opts, process_opts)
+    start_supervised!({TransactionBuilder, final_opts})
   end
 
   describe "GenServer process lifecycle" do
@@ -127,10 +184,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test ":fetch call with cached key" do
       pid = start_transaction_builder()
 
-      GenServer.cast(pid, {:put, "test_key", "test_value"})
+      GenServer.cast(pid, {:set_key, "test_key", "test_value"})
       :timer.sleep(10)
 
-      result = GenServer.call(pid, {:fetch, "test_key"})
+      result = GenServer.call(pid, {:get, "test_key"})
       assert result == {:ok, "test_value"}
     end
 
@@ -167,13 +224,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "GenServer cast handling" do
-    test "{:put, key, value} cast updates transaction state" do
+    test "{:set_key, key, value} cast updates transaction state" do
       pid = start_transaction_builder()
 
       initial_state = :sys.get_state(pid)
       initial_mutations = Tx.commit(initial_state.tx).mutations
 
-      GenServer.cast(pid, {:put, "test_key", "test_value"})
+      GenServer.cast(pid, {:set_key, "test_key", "test_value"})
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
@@ -209,9 +266,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "multiple put casts accumulate in transaction" do
       pid = start_transaction_builder()
 
-      GenServer.cast(pid, {:put, "key1", "value1"})
-      GenServer.cast(pid, {:put, "key2", "value2"})
-      GenServer.cast(pid, {:put, "key3", "value3"})
+      GenServer.cast(pid, {:set_key, "key1", "value1"})
+      GenServer.cast(pid, {:set_key, "key2", "value2"})
+      GenServer.cast(pid, {:set_key, "key3", "value3"})
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
@@ -227,8 +284,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "put cast with same key overwrites in mutations but not state" do
       pid = start_transaction_builder()
 
-      GenServer.cast(pid, {:put, "key1", "value1"})
-      GenServer.cast(pid, {:put, "key1", "updated_value"})
+      GenServer.cast(pid, {:set_key, "key1", "value1"})
+      GenServer.cast(pid, {:set_key, "key1", "updated_value"})
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
@@ -238,7 +295,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
                {:set, "key1", "updated_value"}
              ]
 
-      result = GenServer.call(pid, {:fetch, "key1"})
+      result = GenServer.call(pid, {:get, "key1"})
       assert result == {:ok, "updated_value"}
     end
 
@@ -312,9 +369,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       pid = start_transaction_builder(transaction_system_layout: custom_layout)
 
-      GenServer.cast(pid, {:put, "key", "value"})
+      GenServer.cast(pid, {:set_key, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
-      GenServer.cast(pid, {:put, "key2", "value2"})
+      GenServer.cast(pid, {:set_key, "key2", "value2"})
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
@@ -330,13 +387,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       initial_state = :sys.get_state(pid)
       assert Enum.empty?(initial_state.stack)
 
-      GenServer.cast(pid, {:put, "base", "value"})
+      GenServer.cast(pid, {:set_key, "base", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
 
       nested_state = :sys.get_state(pid)
       assert length(nested_state.stack) == 1
 
-      GenServer.cast(pid, {:put, "nested", "value"})
+      GenServer.cast(pid, {:set_key, "nested", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
 
       double_nested_state = :sys.get_state(pid)
@@ -352,14 +409,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "transaction state accumulates properly" do
       pid = start_transaction_builder()
 
-      GenServer.cast(pid, {:put, "key1", "value1"})
+      GenServer.cast(pid, {:set_key, "key1", "value1"})
       :timer.sleep(5)
 
       state1 = :sys.get_state(pid)
       mutations1 = Tx.commit(state1.tx).mutations
       assert length(mutations1) == 1
 
-      GenServer.cast(pid, {:put, "key2", "value2"})
+      GenServer.cast(pid, {:set_key, "key2", "value2"})
       :timer.sleep(5)
 
       state2 = :sys.get_state(pid)
@@ -380,7 +437,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       # Send puts and nested transactions deterministically
       for i <- 1..50 do
-        GenServer.cast(pid, {:put, "key_#{i}", "value_#{i}"})
+        GenServer.cast(pid, {:set_key, "key_#{i}", "value_#{i}"})
       end
 
       # Add nested transactions at specific points
@@ -440,7 +497,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       assert state.state == :valid
       assert state.gateway == self()
 
-      GenServer.cast(pid, {:put, "test", "value"})
+      GenServer.cast(pid, {:set_key, "test", "value"})
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
@@ -470,7 +527,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       pid = start_transaction_builder(transaction_system_layout: custom_layout)
 
-      GenServer.cast(pid, {:put, "key", "value"})
+      GenServer.cast(pid, {:set_key, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
       GenServer.cast(pid, :rollback)
       :timer.sleep(10)
@@ -481,12 +538,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "KeySelector operations" do
-    test "handles {:fetch_key_selector, key_selector} call and delegates to resolution module" do
+    test "handles {:get_key_selector, key_selector} call and delegates to resolution module" do
       key_selector = KeySelector.first_greater_or_equal("test_key")
       pid = start_transaction_builder(read_version: 42)
 
       # Make the call - this will delegate to KeySelectorResolution.resolve_key_selector/3
-      result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+      result = GenServer.call(pid, {:get_key_selector, key_selector})
 
       assert is_tuple(result)
       assert tuple_size(result) >= 2
@@ -501,7 +558,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder(read_version: 42)
       selector = KeySelector.first_greater_or_equal("test_key")
 
-      result = GenServer.call(pid, {:fetch_key_selector, selector})
+      result = GenServer.call(pid, {:get_key_selector, selector})
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
 
@@ -513,7 +570,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder(read_version: 42)
       selector = "test_key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
 
-      result = GenServer.call(pid, {:fetch_key_selector, selector})
+      result = GenServer.call(pid, {:get_key_selector, selector})
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
 
@@ -526,7 +583,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       _initial_state = :sys.get_state(pid)
 
       key_selector = KeySelector.first_greater_or_equal("version_test_key")
-      _result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+      _result = GenServer.call(pid, {:get_key_selector, key_selector})
 
       final_state = :sys.get_state(pid)
 
@@ -543,8 +600,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       key_selector = KeySelector.first_greater_or_equal("consistency_key")
 
       # Multiple KeySelector calls should maintain consistent state
-      result1 = GenServer.call(pid, {:fetch_key_selector, key_selector})
-      result2 = GenServer.call(pid, {:fetch_key_selector, key_selector})
+      result1 = GenServer.call(pid, {:get_key_selector, key_selector})
+      result2 = GenServer.call(pid, {:get_key_selector, key_selector})
 
       # Both results should be the same format
       assert is_tuple(result1)
@@ -563,7 +620,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder(read_version: 42)
 
       key_selector = KeySelector.first_greater_or_equal("conflict_test_key")
-      result = GenServer.call(pid, {:fetch_key_selector, key_selector})
+      result = GenServer.call(pid, {:get_key_selector, key_selector})
 
       # For successful resolution, check transaction state was updated
       case result do
@@ -585,13 +642,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "KeySelector range operations" do
-    test "handles {:range_fetch_key_selectors, start_selector, end_selector, opts} call" do
+    test "handles {:get_range_selectors, start_selector, end_selector, opts} call" do
       start_selector = KeySelector.first_greater_or_equal("range_start")
       end_selector = KeySelector.first_greater_than("range_end")
       opts = [limit: 50]
       pid = start_transaction_builder(read_version: 42)
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert tuple_size(result) >= 2
@@ -609,7 +666,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       end_selector = KeySelector.first_greater_than("z")
       opts = []
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
@@ -625,7 +682,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       end_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
       opts = [limit: 100]
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
@@ -640,7 +697,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       opts = []
       pid = start_transaction_builder(read_version: 42)
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
@@ -657,8 +714,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       opts = [limit: 5]
 
       # Multiple range operations should maintain consistent state
-      result1 = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
-      result2 = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result1 = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
+      result2 = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       # Both results should have the same format
       assert is_tuple(result1)
@@ -680,7 +737,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       end_selector = KeySelector.first_greater_than("range_conflict_end")
       opts = [limit: 10]
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       # For successful resolution, check transaction state was updated
       case result do
@@ -724,7 +781,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       end_selector = KeySelector.first_greater_than("opts_test_end")
       opts = []
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]
@@ -740,7 +797,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       end_selector = KeySelector.first_greater_than("opts_test_end")
       opts = [limit: 50, timeout: 5000]
 
-      result = GenServer.call(pid, {:range_fetch_key_selectors, start_selector, end_selector, opts})
+      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
 
       assert is_tuple(result)
       assert elem(result, 0) in [:ok, :error]

@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
 
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
 
-  @type t :: t()
+  @type t :: :gb_trees.tree()
 
   @type page_id :: Page.id()
   @type page :: Page.t()

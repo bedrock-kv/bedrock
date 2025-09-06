@@ -19,7 +19,7 @@ defmodule Bedrock.Internal.Repo do
   end
 
   @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
-  def fetch(t, key), do: call(t, {:fetch, key}, :infinity)
+  def fetch(t, key), do: call(t, {:get, key}, :infinity)
 
   @spec fetch!(transaction(), key()) :: value()
   def fetch!(t, key) do
@@ -41,7 +41,7 @@ defmodule Bedrock.Internal.Repo do
           {:ok, {resolved_key :: key(), value()}}
           | {:error, atom()}
   def fetch_key_selector(t, %KeySelector{} = key_selector) do
-    call(t, {:fetch_key_selector, key_selector}, :infinity)
+    call(t, {:get_key_selector, key_selector}, :infinity)
   end
 
   @spec fetch_key_selector!(transaction(), KeySelector.t()) :: {resolved_key :: key(), value()}
@@ -82,6 +82,19 @@ defmodule Bedrock.Internal.Repo do
         ) :: Enumerable.t({any(), any()})
   def range_stream(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
 
+  @spec range(
+          transaction(),
+          start_key :: key(),
+          end_key :: key(),
+          opts :: [
+            batch_size: pos_integer(),
+            timeout: pos_integer(),
+            limit: pos_integer(),
+            mode: :individual | :batch
+          ]
+        ) :: Enumerable.t({any(), any()})
+  def range(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
+
   @spec range_fetch_key_selectors(
           transaction(),
           start_selector :: KeySelector.t(),
@@ -90,7 +103,7 @@ defmodule Bedrock.Internal.Repo do
         ) ::
           {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
   def range_fetch_key_selectors(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts \\ []) do
-    call(t, {:range_fetch_key_selectors, start_selector, end_selector, opts}, :infinity)
+    call(t, {:get_range_selectors, start_selector, end_selector, opts}, :infinity)
   end
 
   @spec range_stream_key_selectors(
@@ -117,7 +130,7 @@ defmodule Bedrock.Internal.Repo do
 
   @spec put(transaction(), key(), value()) :: transaction()
   def put(t, key, value) do
-    cast(t, {:put, key, value})
+    cast(t, {:set_key, key, value})
     t
   end
 

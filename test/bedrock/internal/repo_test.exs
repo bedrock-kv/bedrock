@@ -40,7 +40,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   end
 
   describe "fetch/2" do
-    test "delegates to GenServer call with {:fetch, key} message" do
+    test "delegates to GenServer call with {:get, key} message" do
       txn_pid = self()
       key = "test_key"
 
@@ -48,14 +48,14 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         Repo.fetch(txn_pid, key)
       end)
 
-      assert_receive {:"$gen_call", _from, {:fetch, "test_key"}}
+      assert_receive {:"$gen_call", _from, {:get, "test_key"}}
     end
 
     test "returns success result" do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch, key}} ->
+            {:"$gen_call", from, {:get, key}} ->
               GenServer.reply(from, {:ok, "value_for_#{key}"})
           end
         end)
@@ -70,7 +70,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch, "success_key"}} ->
+            {:"$gen_call", from, {:get, "success_key"}} ->
               GenServer.reply(from, {:ok, "success_value"})
           end
         end)
@@ -83,7 +83,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch, "error_key"}} ->
+            {:"$gen_call", from, {:get, "error_key"}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -99,7 +99,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch, "get_key"}} ->
+            {:"$gen_call", from, {:get, "get_key"}} ->
               GenServer.reply(from, {:ok, "get_value"})
           end
         end)
@@ -112,7 +112,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch, "missing_get_key"}} ->
+            {:"$gen_call", from, {:get, "missing_get_key"}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -131,7 +131,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       result = Repo.put(txn_pid, key, value)
 
       assert result == txn_pid
-      assert_receive {:"$gen_cast", {:put, "put_key", "put_value"}}
+      assert_receive {:"$gen_cast", {:set_key, "put_key", "put_value"}}
     end
   end
 
@@ -172,7 +172,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   end
 
   describe "range_fetch/4" do
-    test "delegates to GenServer call with {:range_batch, start_key, end_key, batch_size, opts} message" do
+    test "delegates to GenServer call with {:get_range, start_key, end_key, batch_size, opts} message" do
       txn_pid = self()
       start_key = "key_a"
       end_key = "key_z"
@@ -182,14 +182,14 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         Repo.range_fetch(txn_pid, start_key, end_key, opts)
       end)
 
-      assert_receive {:"$gen_call", _from, {:range_batch, "key_a", "key_z", 100, [limit: 100]}}
+      assert_receive {:"$gen_call", _from, {:get_range, "key_a", "key_z", 100, [limit: 100]}}
     end
 
     test "returns success result with key-value pairs" do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_batch, "key_a", "key_z", 100, []}} ->
+            {:"$gen_call", from, {:get_range, "key_a", "key_z", 100, []}} ->
               GenServer.reply(from, {:ok, {[{"key_b", "value_b"}, {"key_c", "value_c"}], false}})
           end
         end)
@@ -204,7 +204,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_batch, "key_a", "key_z", 2, []}} ->
+            {:"$gen_call", from, {:get_range, "key_a", "key_z", 2, []}} ->
               # Return first batch with continuation
               GenServer.reply(from, {:ok, {[{"key_b", "value_b"}], true}})
           end
@@ -212,7 +212,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
           expected_next_key = Bedrock.Key.next_key_after("key_b")
 
           receive do
-            {:"$gen_call", from, {:range_batch, ^expected_next_key, "key_z", 2, []}} ->
+            {:"$gen_call", from, {:get_range, ^expected_next_key, "key_z", 2, []}} ->
               # Return final batch
               GenServer.reply(from, {:ok, {[{"key_c", "value_c"}], false}})
           end
@@ -228,7 +228,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_batch, "key_a", "key_z", 10, []}} ->
+            {:"$gen_call", from, {:get_range, "key_a", "key_z", 10, []}} ->
               GenServer.reply(from, {:ok, {[], false}})
           end
         end)
@@ -243,7 +243,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_batch, "key_a", "key_z", 2, [limit: 2]}} ->
+            {:"$gen_call", from, {:get_range, "key_a", "key_z", 2, [limit: 2]}} ->
               GenServer.reply(from, {:ok, {[{"key_b", "value_b"}, {"key_c", "value_c"}], false}})
           end
         end)
@@ -256,7 +256,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   end
 
   describe "fetch_key_selector/2" do
-    test "delegates to GenServer call with {:fetch_key_selector, key_selector} message" do
+    test "delegates to GenServer call with {:get_key_selector, key_selector} message" do
       txn_pid = self()
       key_selector = KeySelector.first_greater_or_equal("test_key")
 
@@ -264,7 +264,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         Repo.fetch_key_selector(txn_pid, key_selector)
       end)
 
-      assert_receive {:"$gen_call", _from, {:fetch_key_selector, ^key_selector}}
+      assert_receive {:"$gen_call", _from, {:get_key_selector, ^key_selector}}
     end
 
     test "returns success result with resolved key-value pair" do
@@ -273,7 +273,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:ok, {"resolved_key", "resolved_value"}})
           end
         end)
@@ -288,7 +288,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -303,7 +303,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :version_too_old})
           end
         end)
@@ -318,7 +318,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -335,7 +335,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:ok, {"success_resolved_key", "success_value"}})
           end
         end)
@@ -350,7 +350,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -366,7 +366,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :version_too_new})
           end
         end)
@@ -382,7 +382,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -400,7 +400,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:ok, {"get_resolved_key", "get_value"}})
           end
         end)
@@ -415,7 +415,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -430,7 +430,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :version_too_old})
           end
         end)
@@ -445,7 +445,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^key_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^key_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -456,7 +456,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   end
 
   describe "range_fetch_key_selectors/4" do
-    test "delegates to GenServer call with {:range_fetch_key_selectors, start_selector, end_selector, opts} message" do
+    test "delegates to GenServer call with {:get_range_selectors, start_selector, end_selector, opts} message" do
       txn_pid = self()
       start_selector = KeySelector.first_greater_or_equal("range_a")
       end_selector = KeySelector.first_greater_than("range_z")
@@ -466,7 +466,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         Repo.range_fetch_key_selectors(txn_pid, start_selector, end_selector, opts)
       end)
 
-      assert_receive {:"$gen_call", _from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, ^opts}}
+      assert_receive {:"$gen_call", _from, {:get_range_selectors, ^start_selector, ^end_selector, ^opts}}
     end
 
     test "returns success result with resolved key-value pairs" do
@@ -476,7 +476,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, []}} ->
+            {:"$gen_call", from, {:get_range_selectors, ^start_selector, ^end_selector, []}} ->
               GenServer.reply(from, {:ok, [{"key_b", "value_b"}, {"key_c", "value_c"}]})
           end
         end)
@@ -493,7 +493,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, []}} ->
+            {:"$gen_call", from, {:get_range_selectors, ^start_selector, ^end_selector, []}} ->
               GenServer.reply(from, {:error, :invalid_range})
           end
         end)
@@ -509,7 +509,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, []}} ->
+            {:"$gen_call", from, {:get_range_selectors, ^start_selector, ^end_selector, []}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -526,7 +526,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:range_fetch_key_selectors, ^start_selector, ^end_selector, ^opts}} ->
+            {:"$gen_call", from, {:get_range_selectors, ^start_selector, ^end_selector, ^opts}} ->
               GenServer.reply(from, {:ok, [{"opt_key", "opt_value"}]})
           end
         end)
@@ -546,19 +546,19 @@ defmodule Bedrock.Internal.RepoSimpleTest do
         spawn(fn ->
           # First call to resolve start_selector
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^start_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^start_selector}} ->
               GenServer.reply(from, {:ok, {"resolved_stream_a", "start_value"}})
           end
 
           # Second call to resolve end_selector
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^end_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^end_selector}} ->
               GenServer.reply(from, {:ok, {"resolved_stream_z", "end_value"}})
           end
 
           # Third call for the actual range_batch operation
           receive do
-            {:"$gen_call", from, {:range_batch, "resolved_stream_a", "resolved_stream_z", 100, []}} ->
+            {:"$gen_call", from, {:get_range, "resolved_stream_a", "resolved_stream_z", 100, []}} ->
               GenServer.reply(from, {:ok, {[{"stream_b", "value_b"}], false}})
           end
         end)
@@ -576,7 +576,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^start_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^start_selector}} ->
               GenServer.reply(from, {:error, :not_found})
           end
         end)
@@ -593,12 +593,12 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^start_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^start_selector}} ->
               GenServer.reply(from, {:ok, {"resolved_good_start", "start_value"}})
           end
 
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^end_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^end_selector}} ->
               GenServer.reply(from, {:error, :version_too_new})
           end
         end)
@@ -616,17 +616,17 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^start_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^start_selector}} ->
               GenServer.reply(from, {:ok, {"opts_start_resolved", "start_val"}})
           end
 
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^end_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^end_selector}} ->
               GenServer.reply(from, {:ok, {"opts_end_resolved", "end_val"}})
           end
 
           receive do
-            {:"$gen_call", from, {:range_batch, "opts_start_resolved", "opts_end_resolved", 5, [limit: 20]}} ->
+            {:"$gen_call", from, {:get_range, "opts_start_resolved", "opts_end_resolved", 5, [limit: 20]}} ->
               GenServer.reply(from, {:ok, {[{"opts_result", "opts_value"}], false}})
           end
         end)
@@ -645,17 +645,17 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^start_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^start_selector}} ->
               GenServer.reply(from, {:ok, {"complex_resolved", "complex_start"}})
           end
 
           receive do
-            {:"$gen_call", from, {:fetch_key_selector, ^end_selector}} ->
+            {:"$gen_call", from, {:get_key_selector, ^end_selector}} ->
               GenServer.reply(from, {:ok, {"complex_z_resolved", "complex_end"}})
           end
 
           receive do
-            {:"$gen_call", from, {:range_batch, "complex_resolved", "complex_z_resolved", 100, []}} ->
+            {:"$gen_call", from, {:get_range, "complex_resolved", "complex_z_resolved", 100, []}} ->
               GenServer.reply(from, {:ok, {[{"complex_middle", "complex_value"}], false}})
           end
         end)

@@ -34,10 +34,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
 
   @impl true
 
-  def handle_call({:fetch, key, version, opts}, from, %State{} = t) do
+  def handle_call({:get, key, version, opts}, from, %State{} = t) do
     fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
 
-    case Logic.fetch(t, key, version, fetch_opts) do
+    case Logic.get(t, key, version, fetch_opts) do
       {:ok, task_pid} ->
         t
         |> State.add_active_task(task_pid)
@@ -57,10 +57,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     end
   end
 
-  def handle_call({:range_fetch, start_key, end_key, version, opts}, from, %State{} = t) do
+  def handle_call({:get_range, start_key, end_key, version, opts}, from, %State{} = t) do
     fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
 
-    case Logic.range_fetch(t, start_key, end_key, version, fetch_opts) do
+    case Logic.get_range(t, start_key, end_key, version, fetch_opts) do
       {:ok, task_pid} ->
         t
         |> State.add_active_task(task_pid)

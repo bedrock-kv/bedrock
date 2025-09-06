@@ -24,7 +24,7 @@ defmodule Bedrock.Internal.RangeQueryTest do
       failing_pid =
         spawn(fn ->
           receive do
-            {:range_batch, _, _, _, _} ->
+            {:get_range, _, _, _, _} ->
               send(test_pid, :should_not_be_called)
               exit(:should_not_be_called)
           after

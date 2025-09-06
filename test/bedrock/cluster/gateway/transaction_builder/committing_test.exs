@@ -73,7 +73,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       commit_fn = mock_commit_fn(expected_transaction)
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -95,7 +95,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       commit_fn = mock_commit_fn(expected_transaction)
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -124,7 +124,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
 
       commit_fn = mock_commit_fn(expected_transaction)
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -160,7 +160,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -207,7 +207,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -230,7 +230,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       }
 
       # For nested commits, no external commit should happen - it should just pop the stack
-      {:ok, result_state} = Committing.do_commit(state)
+      {:ok, result_state} = Committing.commit(state)
 
       assert result_state.stack == []
       assert result_state.state == :valid
@@ -249,7 +249,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
           }
       }
 
-      result = Committing.do_commit(state)
+      result = Committing.commit(state)
 
       assert {:error, :unavailable} = result
     end
@@ -264,7 +264,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:error, :timeout}
       end
 
-      result = Committing.do_commit(state, commit_fn: failing_commit_fn)
+      result = Committing.commit(state, commit_fn: failing_commit_fn)
 
       assert {:error, :timeout} = result
     end
@@ -295,7 +295,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -334,7 +334,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -378,7 +378,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -410,7 +410,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -439,7 +439,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -468,7 +468,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -502,7 +502,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -545,7 +545,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -574,7 +574,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, result_state} = Committing.do_commit(state, commit_fn: commit_fn)
+      {:ok, result_state} = Committing.commit(state, commit_fn: commit_fn)
 
       assert result_state.state == :committed
       assert result_state.commit_version == 42
@@ -599,7 +599,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, _} = Committing.do_commit(state1, commit_fn: commit_fn1)
+      {:ok, _} = Committing.commit(state1, commit_fn: commit_fn1)
 
       # Scenario 2: read_version with reads (should remain unchanged)
       tx2 = Tx.set(Tx.new(), "wkey", "wval")
@@ -626,7 +626,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
         {:ok, 42}
       end
 
-      {:ok, _} = Committing.do_commit(state2, commit_fn: commit_fn2)
+      {:ok, _} = Committing.commit(state2, commit_fn: commit_fn2)
 
       assert true
     end

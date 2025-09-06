@@ -117,7 +117,6 @@ defmodule Example.Bank do
   """
   def move_money(tx, amount, from_account, to_account) when is_integer(amount) and amount > 0 do
     timestamp = System.system_time(:millisecond)
-    |> IO.inspect()
 
     with :ok <- check_sufficient_balance_for_transfer(tx, from_account, amount),
          {:ok, new_balance1} <- adjust_balance(tx, from_account, -amount),
@@ -144,7 +143,7 @@ defmodule Example.Bank do
 
     accounts =
       tx
-      |> Repo.range_stream(start_key, end_key, limit: limit)
+      |> Repo.range(start_key, end_key, limit: limit)
       |> Enum.map(fn {key, balance} ->
         {account} = Subspace.unpack(@accounts_space, key)
         {account, :binary.decode_unsigned(balance)}
@@ -165,10 +164,11 @@ defmodule Example.Bank do
 
     # Create range for all transactions for this account
     account_tx_space = transaction_space(account)
+    {start_key, end_key} = Subspace.range(account_tx_space)
 
     transactions =
       tx
-      |> Repo.range_stream(account_tx_space, limit: limit)
+      |> Repo.range(start_key, end_key, limit: limit)
       |> Stream.map(fn {key, tx_data} ->
         {timestamp} = Subspace.unpack(account_tx_space, key)
 
@@ -288,7 +288,8 @@ defmodule Example.Bank do
   defp adjust_balance(tx, account, amount) do
     with {:ok, balance} <- fetch_balance(tx, account) do
       new_balance = balance + amount
-      set_balance(tx, account, new_balance)
+      set_balance(tx, account, new_balance
+      )
       {:ok, new_balance}
     end
   end

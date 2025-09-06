@@ -35,26 +35,38 @@ defmodule Bedrock.Repo do
       defdelegate fetch!(t, key), to: Repo
       defdelegate get(t, key), to: Repo
 
-      @spec range_fetch(t(), Subspace.t() | KeyRange.t()) :: {:ok, Enumerable.t(Bedrock.key_value())}
-      @spec range_fetch(t(), Subspace.t() | KeyRange.t(), opts :: keyword()) :: {:ok, Enumerable.t(Bedrock.key_value())}
+      @doc """
+      Lazy range query that returns an enumerable stream of key-value pairs.
 
-      def range_fetch(t, subspace_or_range, opts \\ [])
-      def range_fetch(t, %Subspace{} = subspace, opts), do: range_fetch(t, Subspace.range(subspace), opts)
-      def range_fetch(t, {start_key, end_key}, opts), do: range_fetch(t, start_key, end_key, opts)
+      Like FoundationDB's get_range(), this function returns an Enumerable that lazily
+      fetches results as needed. For eager collection, pipe to Enum.to_list/1.
 
-      @spec range_fetch(t(), min_key :: binary(), max_key_ex :: binary(), opts :: keyword()) ::
-              {:ok, Enumerable.t(Bedrock.key_value())}
-      defdelegate range_fetch(t, start_key, end_key, opts), to: Repo
+      ## Examples
 
-      @spec range_stream(t(), Subspace.t() | KeyRange.t(), opts :: keyword()) ::
-              {:ok, Enumerable.t(Bedrock.key_value())}
-      def range_stream(t, subspace_or_range, opts \\ [])
-      def range_stream(t, %Subspace{} = subspace, opts), do: range_stream(t, Subspace.range(subspace), opts)
-      def range_stream(t, {start_key, end_key}, opts), do: range_stream(t, start_key, end_key, opts)
+          # Lazy iteration (memory efficient)
+          transaction fn tx ->
+            tx
+            |> Repo.range(start_key, end_key, limit: 100)
+            |> Enum.take(10)  # Only fetches what's needed
+          end
 
-      @spec range_stream(t(), min_key :: binary(), max_key_ex :: binary(), opts :: keyword()) ::
-              {:ok, Enumerable.t(Bedrock.key_value())}
-      defdelegate range_stream(t, start_key, end_key, opts), to: Repo
+          # Collect all results
+          transaction fn tx ->
+            results =
+              tx
+              |> Repo.range(start_key, end_key)
+              |> Enum.to_list()
+          end
+
+      """
+      @spec range(t(), Subspace.t() | KeyRange.t(), opts :: keyword()) :: Enumerable.t(Bedrock.key_value())
+      def range(t, subspace_or_range, opts \\ [])
+      def range(t, %Subspace{} = subspace, opts), do: range(t, Subspace.range(subspace), opts)
+      def range(t, {start_key, end_key}, opts), do: range(t, start_key, end_key, opts)
+
+      @spec range(t(), min_key :: binary(), max_key_ex :: binary(), opts :: keyword()) ::
+              Enumerable.t(Bedrock.key_value())
+      defdelegate range(t, start_key, end_key, opts), to: Repo
 
       @spec put(t(), key :: binary(), value :: binary()) :: t()
       def put(t, key, value) when is_binary(key) and is_binary(value), do: Repo.put(t, key, value)

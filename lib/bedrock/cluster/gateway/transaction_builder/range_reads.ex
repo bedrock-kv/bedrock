@@ -26,18 +26,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   This function handles version initialization, storage team coordination,
   and result processing for range queries with regular keys.
   """
-  @spec fetch_range(
+  @spec get_range(
           State.t(),
           Bedrock.key_range(),
           batch_size :: pos_integer(),
           opts :: keyword()
         ) ::
           {State.t(), {:ok, {[{binary(), Bedrock.value()}], more :: boolean()}} | {:error, atom()}}
-  def fetch_range(state, {min_key, max_key_ex} = _range, batch_size, opts \\ []) do
-    storage_range_fetch_fn = Keyword.get(opts, :storage_range_fetch_fn, &Storage.range_fetch/5)
+  def get_range(state, {min_key, max_key_ex} = _range, batch_size, opts \\ []) do
+    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
     operation_fn = fn storage_server, state ->
-      storage_range_fetch_fn.(
+      storage_get_range_fn.(
         storage_server,
         min_key,
         max_key_ex,
@@ -49,7 +49,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
 
     state
     |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(min_key, operation_fn, opts)
+    |> StorageRacing.race_storage_servers(min_key, operation_fn)
     |> case do
       {:ok, {{results, has_more}, shard_range}, state} ->
         {updated_tx, batch_results} =
@@ -73,7 +73,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
 
   This handles the transaction state management in addition to KeySelector range resolution.
   """
-  @spec fetch_range_selectors(
+  @spec get_range_selectors(
           State.t(),
           KeySelector.t(),
           KeySelector.t(),
@@ -81,11 +81,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
           opts :: keyword()
         ) ::
           {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
-  def fetch_range_selectors(state, start_selector, end_selector, batch_size, opts) do
-    storage_range_fetch_fn = Keyword.get(opts, :storage_range_fetch_fn, &Storage.range_fetch/5)
+  def get_range_selectors(state, start_selector, end_selector, batch_size, opts) do
+    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
     operation_fn = fn storage_server, state ->
-      storage_range_fetch_fn.(
+      storage_get_range_fn.(
         storage_server,
         start_selector,
         end_selector,
@@ -97,7 +97,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
 
     state
     |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(start_selector.key, operation_fn, opts)
+    |> StorageRacing.race_storage_servers(start_selector.key, operation_fn)
     |> case do
       {:ok, {{results, has_more}, shard_range}, state} ->
         # For KeySelectors, we use the selector keys as the query range bounds

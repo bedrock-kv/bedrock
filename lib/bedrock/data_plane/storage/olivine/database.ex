@@ -108,12 +108,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   end
 
   @doc """
-  Unified value fetch that handles both lookaside buffer and DETS storage.
+  Unified value load that handles both lookaside buffer and DETS storage.
   Routes between hot (ETS) and cold (DETS) storage based on version vs durable_version.
   """
-  @spec fetch_value(t(), key :: Bedrock.key(), version :: Bedrock.version()) ::
+  @spec load_value(t(), key :: Bedrock.key(), version :: Bedrock.version()) ::
           {:ok, Bedrock.value()} | {:error, :not_found}
-  def fetch_value(database, key, version) do
+  def load_value(database, key, version) do
     if version > database.durable_version do
       case :ets.lookup(database.buffer, {version, key}) do
         [{_key_version, value}] -> {:ok, value}

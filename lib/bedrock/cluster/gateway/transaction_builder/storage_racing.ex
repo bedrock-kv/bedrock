@@ -10,7 +10,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
   with the winning server for future caching.
   """
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
 
   @doc """
@@ -39,7 +39,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
           | {:error, :timeout, State.t()}
           | {:error, :unavailable, State.t()}
   def race_storage_servers(%State{} = state, key, operation_fn, opts \\ []) do
-    case LayoutUtils.storage_servers_for_key(state.layout_index, key) do
+    case LayoutIndex.lookup_key!(state.layout_index, key) do
       {key_range, storage_pids} when storage_pids != [] ->
         race_and_save_winner(key_range, storage_pids, state, operation_fn, opts)
 

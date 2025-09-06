@@ -12,65 +12,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     end
   end
 
-  describe "maybe_update_layout_from_transaction/2" do
-    test "extracts transaction system layout from system transaction" do
-      state = %State{
-        cluster: TestCluster,
-        director: self(),
-        epoch: 1,
-        max_latency_in_ms: 10,
-        max_per_batch: 5,
-        empty_transaction_timeout_ms: 1000,
-        transaction_system_layout: nil,
-        batch: nil
-      }
-
-      layout = %{sequencer: self(), resolvers: [], logs: %{}}
-      encoded_layout = :erlang.term_to_binary(layout)
-
-      transaction = {nil, %{"\xff/system/transaction_system_layout" => encoded_layout}}
-
-      result = Server.maybe_update_layout_from_transaction(state, transaction)
-      assert result.transaction_system_layout == layout
-    end
-
-    test "returns state unchanged when no layout in transaction" do
-      state = %State{
-        cluster: TestCluster,
-        director: self(),
-        epoch: 1,
-        max_latency_in_ms: 10,
-        max_per_batch: 5,
-        empty_transaction_timeout_ms: 1000,
-        transaction_system_layout: nil,
-        batch: nil
-      }
-
-      transaction = {nil, %{"some_key" => "some_value"}}
-
-      result = Server.maybe_update_layout_from_transaction(state, transaction)
-      assert result == state
-    end
-
-    test "returns state unchanged for non-map writes" do
-      state = %State{
-        cluster: TestCluster,
-        director: self(),
-        epoch: 1,
-        max_latency_in_ms: 10,
-        max_per_batch: 5,
-        empty_transaction_timeout_ms: 1000,
-        transaction_system_layout: nil,
-        batch: nil
-      }
-
-      transaction = {nil, "not_a_map"}
-
-      result = Server.maybe_update_layout_from_transaction(state, transaction)
-      assert result == state
-    end
-  end
-
   describe "error handling integration" do
     test "commit proxy server handles director failures without crashing batching logic" do
       # This test verifies that our fix prevents the KeyError we encountered

@@ -121,7 +121,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       {:ok, state} = Logic.startup(:test_storage, self(), "test", test_dir)
 
       # Test sync path without reply_fn
-      result = Logic.fetch(state, "nonexistent_key", 1, [])
+      result = Logic.get(state, "nonexistent_key", 1, [])
       assert {:error, _} = result
 
       Logic.shutdown(state)
@@ -136,7 +136,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       end
 
       # When fetch fails immediately (like version_too_old), async path isn't taken
-      result = Logic.fetch(state, "async_key", 1, reply_fn: reply_fn)
+      result = Logic.get(state, "async_key", 1, reply_fn: reply_fn)
       # Should return error immediately, not task pid
       assert {:error, _} = result
 
@@ -154,7 +154,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       end
 
       # KeySelector fetch that fails immediately returns error, not task
-      result = Logic.fetch(state, key_selector, 1, reply_fn: reply_fn)
+      result = Logic.get(state, key_selector, 1, reply_fn: reply_fn)
       assert {:error, _} = result
 
       Logic.shutdown(state)
@@ -166,7 +166,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       {:ok, state} = Logic.startup(:test_storage, self(), "test", test_dir)
 
       # Test range fetch on empty data - expect specific error for empty database
-      assert {:error, :version_too_old} = Logic.range_fetch(state, "range_key1", "range_key3", 1, [])
+      assert {:error, :version_too_old} = Logic.get_range(state, "range_key1", "range_key3", 1, [])
 
       Logic.shutdown(state)
     end
@@ -180,7 +180,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       end
 
       # Range fetch that fails immediately returns error, not task
-      result = Logic.range_fetch(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
+      result = Logic.get_range(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
       assert {:error, _} = result
 
       Logic.shutdown(state)
@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       {:ok, state} = Logic.startup(:test_storage, self(), "test", test_dir)
 
       # Test that limit parameter is passed through (tests opts handling)
-      assert {:error, :version_too_old} = Logic.range_fetch(state, "limit_key1", "limit_key9", 1, limit: 2)
+      assert {:error, :version_too_old} = Logic.get_range(state, "limit_key1", "limit_key9", 1, limit: 2)
 
       Logic.shutdown(state)
     end
@@ -201,7 +201,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       {:ok, state} = Logic.startup(:test_storage, self(), "test", test_dir)
 
       # Test basic error path
-      result = Logic.fetch(state, "nonexistent_key", 1, [])
+      result = Logic.get(state, "nonexistent_key", 1, [])
       assert {:error, _} = result
 
       Logic.shutdown(state)
@@ -213,7 +213,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       # Create a KeySelector that should fail
       key_selector = KeySelector.first_greater_or_equal("test_key")
 
-      result = Logic.fetch(state, key_selector, 1, [])
+      result = Logic.get(state, key_selector, 1, [])
       # Should return an error for empty database
       assert {:error, _} = result
 
@@ -224,8 +224,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       {:ok, state} = Logic.startup(:test_storage, self(), "test", test_dir)
 
       # Test with various versions that might trigger different error paths
-      result1 = Logic.fetch(state, "key", 0, [])
-      result2 = Logic.fetch(state, "key", 999_999, [])
+      result1 = Logic.get(state, "key", 0, [])
+      result2 = Logic.get(state, "key", 999_999, [])
 
       # Both should be errors due to empty database
       assert {:error, _} = result1

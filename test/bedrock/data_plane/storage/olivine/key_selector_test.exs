@@ -65,7 +65,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       opts = []
       version = Version.from_integer(1)
 
-      result = Logic.fetch(state, key_selector, version, opts)
+      result = Logic.get(state, key_selector, version, opts)
       assert {:ok, {resolved_key, value}} = result
       assert resolved_key == "test:key"
       assert value == "test:value"
@@ -77,7 +77,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       offset_selector = KeySelector.add(base_selector, 1)
       version = Version.from_integer(1)
 
-      result = Logic.fetch(state, offset_selector, version, [])
+      result = Logic.get(state, offset_selector, version, [])
       assert {:ok, {resolved_key, value}} = result
       assert resolved_key == "key2"
       assert value == "value2"
@@ -88,7 +88,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       high_offset_selector = "key1" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
       version = Version.from_integer(1)
 
-      result = Logic.fetch(state, high_offset_selector, version, [])
+      result = Logic.get(state, high_offset_selector, version, [])
       assert {:error, :not_found} = result
     end
   end
@@ -99,7 +99,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       end_selector = KeySelector.first_greater_than("range:z")
       version = Version.from_integer(1)
 
-      result = Logic.range_fetch(state, start_selector, end_selector, version, [])
+      result = Logic.get_range(state, start_selector, end_selector, version, [])
       # Range may not find data or could succeed
       case result do
         {:ok, {key_value_pairs, _has_more}} ->
@@ -121,7 +121,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       end_selector = KeySelector.first_greater_or_equal("a")
       version = Version.from_integer(1)
 
-      result = Logic.range_fetch(state, start_selector, end_selector, version, [])
+      result = Logic.get_range(state, start_selector, end_selector, version, [])
       # Can be :invalid_range or :not_found depending on implementation
       assert {:error, error} = result
       assert error in [:invalid_range, :not_found]
@@ -132,7 +132,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       end_selector = KeySelector.first_greater_than("range")
       version = Version.from_integer(1)
 
-      result = Logic.range_fetch(state, start_selector, end_selector, version, limit: 2)
+      result = Logic.get_range(state, start_selector, end_selector, version, limit: 2)
       assert {:ok, {results, _has_more}} = result
       assert length(results) <= 2
     end
@@ -227,7 +227,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       # Should handle gracefully without crashing
       assert %KeySelector{offset: 999_999} = extreme_selector
 
-      result = Logic.fetch(state, extreme_selector, version, [])
+      result = Logic.get(state, extreme_selector, version, [])
       assert {:error, :not_found} = result
     end
 
@@ -238,7 +238,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       assert %KeySelector{key: "", or_equal: true, offset: 0} = empty_key_selector
 
       # Should handle empty keys appropriately - should find the first key
-      result = Logic.fetch(state, empty_key_selector, version, [])
+      result = Logic.get(state, empty_key_selector, version, [])
       assert {:ok, {resolved_key, _value}} = result
       assert is_binary(resolved_key)
     end
@@ -251,7 +251,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
       assert %KeySelector{key: ^special_key} = special_selector
 
       # Should handle binary keys with special bytes correctly without crashing
-      result = Logic.fetch(state, special_selector, version, [])
+      result = Logic.get(state, special_selector, version, [])
       # Since this key doesn't exist and is after all our test keys, should be not found
       assert {:error, :not_found} = result
     end

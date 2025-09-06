@@ -15,15 +15,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
   alias Bedrock.DataPlane.Storage
   alias Bedrock.KeySelector
 
-  @type storage_fetch_fn() :: (pid(), KeySelector.t() | binary(), Bedrock.version(), keyword() ->
-                                 {:ok, binary()} | {:error, atom()})
+  @type storage_get_fn() :: (pid(), KeySelector.t() | binary(), Bedrock.version(), keyword() ->
+                               {:ok, binary()} | {:error, atom()})
 
   @doc """
-  Fetch a regular key within the transaction context.
+  Get a regular key within the transaction context.
 
   Expects pre-encoded keys and returns raw values.
   """
-  @spec fetch_key(State.t(), key :: Bedrock.key()) ::
+  @spec get_key(State.t(), key :: Bedrock.key(), opts :: [storage_get_fn: storage_get_fn()]) ::
           {State.t(),
            {:ok, Bedrock.value()}
            | {:error, :not_found}
@@ -31,23 +31,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
            | {:error, :version_too_new}
            | {:error, :unavailable}
            | {:error, :timeout}}
-  @spec fetch_key(
-          State.t(),
-          key :: Bedrock.key(),
-          opts :: [
-            storage_fetch_fn: storage_fetch_fn()
-          ]
-        ) ::
-          {State.t(),
-           {:ok, Bedrock.value()}
-           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}}
-  def fetch_key(t, key, opts \\ []) do
+  def get_key(t, key, opts \\ []) do
     case Tx.repeatable_read(t.tx, key) do
       nil ->
-        operation_fn = fn storage_server, state ->
-          storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
-          wrap_storage_fetch_result(storage_fetch_fn, storage_server, key, state)
-        end
+        operation_fn = get_key_operation(key, opts)
 
         case fetch_as_key_value(t, key, key, operation_fn, opts) do
           {:ok, new_state, {_key, raw_value}} ->
@@ -66,16 +53,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
   end
 
   @doc """
-  Fetch a KeySelector within the transaction context.
+  Get a KeySelector within the transaction context.
   """
-  @spec fetch_key_selector(State.t(), KeySelector.t()) :: {State.t(), {:ok, Bedrock.key_value()} | {:error, atom()}}
-  @spec fetch_key_selector(
-          State.t(),
-          KeySelector.t(),
-          opts :: [
-            storage_fetch_fn: storage_fetch_fn()
-          ]
-        ) ::
+  @spec get_key_selector(State.t(), KeySelector.t(), opts :: [storage_get_fn: storage_get_fn()]) ::
           {State.t(),
            {:ok, Bedrock.key_value()}
            | {:error, :not_found}
@@ -84,15 +64,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
            | {:error, :decode_error}
            | {:error, :unavailable}
            | {:error, :timeout}}
-  def fetch_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
-    operation_fn = fn storage_server, state ->
-      storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
-
-      case storage_fetch_fn.(storage_server, key_selector, state.read_version, timeout: state.fetch_timeout_in_ms) do
-        {:ok, {resolved_key, value}} -> {:ok, {:ok, {resolved_key, value}}}
-        {:error, reason} -> {:ok, {:error, reason}}
-      end
-    end
+  def get_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
+    operation_fn = get_key_selector_operation(key_selector, opts)
 
     case fetch_as_key_value(t, key_selector.key, :no_merge, operation_fn, opts) do
       {:ok, new_state, {resolved_key, value}} -> {new_state, {:ok, {resolved_key, value}}}
@@ -101,6 +74,31 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
   end
 
   # Private helper functions
+
+  @spec get_key_operation(binary(), keyword()) :: (pid(), State.t() -> {:ok, any()} | {:error, any()})
+  defp get_key_operation(key, opts) do
+    storage_get_fn = Keyword.get(opts, :storage_get_fn, &Storage.get/4)
+
+    fn storage_server, state ->
+      case storage_get_fn.(storage_server, key, state.read_version, timeout: state.fetch_timeout_in_ms) do
+        {:ok, raw_value} -> {:ok, {:ok, {key, raw_value}}}
+        {:error, reason} when reason in [:not_found, :version_too_old, :version_too_new] -> {:ok, {:error, reason}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @spec get_key_selector_operation(KeySelector.t(), keyword()) :: (pid(), State.t() -> {:ok, any()} | {:error, any()})
+  defp get_key_selector_operation(key_selector, opts) do
+    storage_get_fn = Keyword.get(opts, :storage_get_fn, &Storage.get/4)
+
+    fn storage_server, state ->
+      case storage_get_fn.(storage_server, key_selector, state.read_version, timeout: state.fetch_timeout_in_ms) do
+        {:ok, {resolved_key, value}} -> {:ok, {:ok, {resolved_key, value}}}
+        {:error, reason} -> {:ok, {:error, reason}}
+      end
+    end
+  end
 
   @spec fetch_as_key_value(
           State.t(),
@@ -114,7 +112,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
   defp fetch_as_key_value(state, racing_key, merge_key, operation_fn, opts) do
     state
     |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(racing_key, operation_fn, opts)
+    |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
       {:ok, {{:ok, {key, value}}, _shard_range}, final_state} ->
         {:ok, %{final_state | tx: Tx.merge_storage_read(final_state.tx, key, value)}, {key, value}}
@@ -130,15 +128,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
 
       {:error, reason, state} ->
         {:error, reason, state}
-    end
-  end
-
-  # Helper function to avoid deep nesting in fetch_key operation_fn
-  defp wrap_storage_fetch_result(storage_fetch_fn, storage_server, key, state) do
-    case storage_fetch_fn.(storage_server, key, state.read_version, timeout: state.fetch_timeout_in_ms) do
-      {:ok, raw_value} -> {:ok, {:ok, {key, raw_value}}}
-      {:error, reason} when reason in [:not_found, :version_too_old, :version_too_new] -> {:ok, {:error, reason}}
-      {:error, reason} -> {:error, reason}
     end
   end
 end

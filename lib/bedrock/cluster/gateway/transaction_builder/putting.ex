@@ -4,8 +4,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Putting do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
-  @spec do_put(State.t(), Bedrock.key(), nil) :: {:ok, State.t()} | :key_error
-  def do_put(t, key, nil) do
+  @spec set_key(State.t(), Bedrock.key(), nil) :: {:ok, State.t()} | :key_error
+  def set_key(t, key, nil) do
     if is_binary(key) do
       t.tx
       |> Tx.clear(key)
@@ -15,8 +15,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Putting do
     end
   end
 
-  @spec do_put(State.t(), Bedrock.key(), Bedrock.value()) :: {:ok, State.t()} | :key_error
-  def do_put(t, key, value) do
+  @spec set_key(State.t(), Bedrock.key(), Bedrock.value()) :: {:ok, State.t()} | :key_error
+  def set_key(t, key, value) do
     if is_binary(key) do
       t.tx
       |> Tx.set(key, value)

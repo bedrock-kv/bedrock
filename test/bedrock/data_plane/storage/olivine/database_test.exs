@@ -242,7 +242,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
     setup context, do: with_db(context, "unified_values.dets", :unified_test)
 
     @tag :tmp_dir
-    test "fetch_value/3 returns values from lookaside buffer for recent versions", %{db: db} do
+    test "load_value/3 returns values from lookaside buffer for recent versions", %{db: db} do
       key = <<"test_key">>
       value = <<"test_value">>
       version = Version.from_integer(1000)
@@ -251,11 +251,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, key, version, value)
 
       # Should be able to fetch it
-      assert {:ok, ^value} = Database.fetch_value(db, key, version)
+      assert {:ok, ^value} = Database.load_value(db, key, version)
     end
 
     @tag :tmp_dir
-    test "fetch_value/3 returns values from DETS for durable versions", %{db: db} do
+    test "load_value/3 returns values from DETS for durable versions", %{db: db} do
       key = <<"durable_key">>
       value = <<"durable_value">>
 
@@ -263,11 +263,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, key, value)
 
       # Should be able to fetch from DETS storage
-      assert {:ok, ^value} = Database.fetch_value(db, key, Version.zero())
+      assert {:ok, ^value} = Database.load_value(db, key, Version.zero())
     end
 
     @tag :tmp_dir
-    test "fetch_value/3 routes correctly based on durable version", %{db: db} do
+    test "load_value/3 routes correctly based on durable version", %{db: db} do
       key = <<"routing_key">>
       hot_value = <<"hot_value">>
       cold_value = <<"cold_value">>
@@ -280,10 +280,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, key, hot_version, hot_value)
 
       # Fetch at durable version should get cold value
-      assert {:ok, ^cold_value} = Database.fetch_value(db, key, Version.zero())
+      assert {:ok, ^cold_value} = Database.load_value(db, key, Version.zero())
 
       # Fetch at hot version should get hot value
-      assert {:ok, ^hot_value} = Database.fetch_value(db, key, hot_version)
+      assert {:ok, ^hot_value} = Database.load_value(db, key, hot_version)
     end
 
     @tag :tmp_dir
@@ -295,8 +295,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, key, version1, <<"value1">>)
       :ok = Database.store_value(db, key, version2, <<"value2">>)
 
-      assert {:ok, <<"value1">>} = Database.fetch_value(db, key, version1)
-      assert {:ok, <<"value2">>} = Database.fetch_value(db, key, version2)
+      assert {:ok, <<"value1">>} = Database.load_value(db, key, version1)
+      assert {:ok, <<"value2">>} = Database.load_value(db, key, version2)
     end
 
     @tag :tmp_dir
@@ -308,7 +308,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, key, version, <<"second">>)
 
       # Should have the last value (last write wins)
-      assert {:ok, <<"second">>} = Database.fetch_value(db, key, version)
+      assert {:ok, <<"second">>} = Database.load_value(db, key, version)
     end
   end
 
@@ -472,12 +472,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       {:ok, updated_db} = Database.advance_durable_version(db, v2, [v1, v2])
 
       # v1 and v2 should be cleaned from lookaside buffer but still accessible through DETS
-      # Since v1 and v2 are now <= durable_version, fetch_value should route to DETS
-      assert {:ok, <<"value1">>} = Database.fetch_value(updated_db, <<"key1">>, v1)
-      assert {:ok, <<"value2">>} = Database.fetch_value(updated_db, <<"key2">>, v2)
+      # Since v1 and v2 are now <= durable_version, load_value should route to DETS
+      assert {:ok, <<"value1">>} = Database.load_value(updated_db, <<"key1">>, v1)
+      assert {:ok, <<"value2">>} = Database.load_value(updated_db, <<"key2">>, v2)
 
       # v3 should still be in lookaside buffer
-      assert {:ok, <<"value3">>} = Database.fetch_value(updated_db, <<"key3">>, v3)
+      assert {:ok, <<"value3">>} = Database.load_value(updated_db, <<"key3">>, v3)
 
       # But persisted data should be accessible via DETS
       assert {:ok, <<"value1">>} = Database.load_value(updated_db, <<"key1">>)

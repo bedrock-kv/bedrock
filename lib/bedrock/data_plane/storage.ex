@@ -31,9 +31,9 @@ defmodule Bedrock.DataPlane.Storage do
   @doc """
   Returns the value for the given key/version, or resolved key-value for KeySelector/version.
   """
-  def fetch(storage, key_or_selector, version, opts \\ [])
+  def get(storage, key_or_selector, version, opts \\ [])
 
-  @spec fetch(
+  @spec get(
           storage_ref :: ref(),
           key :: Bedrock.key(),
           version :: Bedrock.version(),
@@ -46,10 +46,10 @@ defmodule Bedrock.DataPlane.Storage do
              | :version_too_old
              | :version_too_new
              | :unavailable}
-  def fetch(storage, key, version, opts) when is_binary(key),
-    do: call(storage, {:fetch, key, version, opts}, opts[:timeout] || :infinity)
+  def get(storage, key, version, opts) when is_binary(key),
+    do: call(storage, {:get, key, version, opts}, opts[:timeout] || :infinity)
 
-  @spec fetch(
+  @spec get(
           storage_ref :: ref(),
           key_selector :: KeySelector.t(),
           version :: Bedrock.version(),
@@ -62,8 +62,8 @@ defmodule Bedrock.DataPlane.Storage do
              | :version_too_old
              | :version_too_new
              | :unavailable}
-  def fetch(storage, %KeySelector{} = key_selector, version, opts),
-    do: call(storage, {:fetch, key_selector, version, opts}, opts[:timeout] || :infinity)
+  def get(storage, %KeySelector{} = key_selector, version, opts),
+    do: call(storage, {:get, key_selector, version, opts}, opts[:timeout] || :infinity)
 
   @doc """
   Returns key-value pairs for keys in the given range at the specified version.
@@ -72,9 +72,9 @@ defmodule Bedrock.DataPlane.Storage do
   Supports both binary keys and KeySelectors for range boundaries.
   Only supported by Olivine storage engine; Basalt returns {:error, :unsupported}.
   """
-  def range_fetch(storage, start_key_or_selector, end_key_or_selector, version, opts \\ [])
+  def get_range(storage, start_key_or_selector, end_key_or_selector, version, opts \\ [])
 
-  @spec range_fetch(
+  @spec get_range(
           storage_ref :: ref(),
           start_key :: Bedrock.key(),
           end_key :: Bedrock.key(),
@@ -91,10 +91,10 @@ defmodule Bedrock.DataPlane.Storage do
              | :version_too_new
              | :unavailable
              | :unsupported}
-  def range_fetch(storage, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key),
-    do: call(storage, {:range_fetch, start_key, end_key, version, opts}, opts[:timeout] || :infinity)
+  def get_range(storage, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key),
+    do: call(storage, {:get_range, start_key, end_key, version, opts}, opts[:timeout] || :infinity)
 
-  @spec range_fetch(
+  @spec get_range(
           storage_ref :: ref(),
           start_selector :: KeySelector.t(),
           end_selector :: KeySelector.t(),
@@ -113,8 +113,8 @@ defmodule Bedrock.DataPlane.Storage do
              | :unsupported
              | :not_found
              | :invalid_range}
-  def range_fetch(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts),
-    do: call(storage, {:range_fetch, start_selector, end_selector, version, opts}, opts[:timeout] || :infinity)
+  def get_range(storage, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts),
+    do: call(storage, {:get_range, start_selector, end_selector, version, opts}, opts[:timeout] || :infinity)
 
   @doc """
   Request that the storage service lock itself and stop pulling new transactions

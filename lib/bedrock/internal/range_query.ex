@@ -92,7 +92,7 @@ defmodule Bedrock.Internal.RangeQuery do
 
     case GenServer.call(
            state.txn_pid,
-           {:range_batch, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
+           {:get_range, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
            timeout
          ) do
       {:ok, {[], _}} ->

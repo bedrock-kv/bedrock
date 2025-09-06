@@ -247,34 +247,4 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     |> Batch.all_callers()
     |> Enum.each(fn reply_fn -> reply_fn.({:error, :abort}) end)
   end
-
-  @doc """
-  Updates the transaction system layout if the transaction contains system layout information.
-
-  This function extracts transaction system layout from system transactions that contain
-  the layout key and updates the commit proxy's state accordingly.
-  """
-  @spec maybe_update_layout_from_transaction(State.t(), Bedrock.transaction()) :: State.t()
-  def maybe_update_layout_from_transaction(state, {_reads, writes}) when is_map(writes) do
-    layout_key = "\xff/system/transaction_system_layout"
-
-    case Map.get(writes, layout_key) do
-      nil ->
-        state
-
-      encoded_layout when is_binary(encoded_layout) ->
-        try do
-          layout = :erlang.binary_to_term(encoded_layout)
-          %{state | transaction_system_layout: layout}
-        rescue
-          _ ->
-            state
-        end
-
-      _ ->
-        state
-    end
-  end
-
-  def maybe_update_layout_from_transaction(state, _transaction), do: state
 end

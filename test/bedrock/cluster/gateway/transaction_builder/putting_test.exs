@@ -26,7 +26,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "successfully puts a binary key and value" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "test_key", "test_value")
+      {:ok, new_state} = Putting.set_key(state, "test_key", "test_value")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "test_key" => "test_value"
@@ -36,9 +36,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "successfully puts multiple key-value pairs" do
       state = create_test_state()
 
-      {:ok, state1} = Putting.do_put(state, "key1", "value1")
-      {:ok, state2} = Putting.do_put(state1, "key2", "value2")
-      {:ok, state3} = Putting.do_put(state2, "key3", "value3")
+      {:ok, state1} = Putting.set_key(state, "key1", "value1")
+      {:ok, state2} = Putting.set_key(state1, "key2", "value2")
+      {:ok, state3} = Putting.set_key(state2, "key3", "value3")
 
       assert mutations_to_writes(Tx.commit(state3.tx).mutations) == %{
                "key1" => "value1",
@@ -50,7 +50,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "overwrites existing key with new value" do
       state = create_test_state(%{"existing_key" => "old_value"})
 
-      {:ok, new_state} = Putting.do_put(state, "existing_key", "new_value")
+      {:ok, new_state} = Putting.set_key(state, "existing_key", "new_value")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "existing_key" => "new_value"
@@ -60,7 +60,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "handles binary values" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "number_key", "42")
+      {:ok, new_state} = Putting.set_key(state, "number_key", "42")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                "number_key" => "42"
@@ -70,8 +70,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "handles binary values directly" do
       state = create_test_state()
 
-      {:ok, state1} = Putting.do_put(state, "string", "text")
-      {:ok, state2} = Putting.do_put(state1, "binary", "data")
+      {:ok, state1} = Putting.set_key(state, "string", "text")
+      {:ok, state2} = Putting.set_key(state1, "binary", "data")
 
       assert mutations_to_writes(Tx.commit(state2.tx).mutations) == %{
                "string" => "text",
@@ -82,7 +82,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "returns :key_error for non-binary key" do
       state = create_test_state()
 
-      result = Putting.do_put(state, :invalid_key, "value")
+      result = Putting.set_key(state, :invalid_key, "value")
 
       assert result == :key_error
     end
@@ -90,7 +90,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "handles empty string key and value" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "", "")
+      {:ok, new_state} = Putting.set_key(state, "", "")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"" => ""}
     end
@@ -98,7 +98,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "handles unicode keys and values" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "键名", "值")
+      {:ok, new_state} = Putting.set_key(state, "键名", "值")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"键名" => "值"}
     end
@@ -116,7 +116,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
         fastest_storage_servers: %{range: :server}
       }
 
-      {:ok, new_state} = Putting.do_put(original_state, "new_key", "new_value")
+      {:ok, new_state} = Putting.set_key(original_state, "new_key", "new_value")
 
       # Verify writes were updated - should have both existing and new values
       result_writes = mutations_to_writes(Tx.commit(new_state.tx).mutations)
@@ -135,7 +135,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
       large_key = String.duplicate("k", 1000)
       large_value = String.duplicate("v", 10_000)
 
-      {:ok, new_state} = Putting.do_put(state, large_key, large_value)
+      {:ok, new_state} = Putting.set_key(state, large_key, large_value)
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                large_key => large_value
@@ -147,7 +147,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
       binary_key = "\x00\x01\xFF\x02"
       binary_value = "\xFF\x00\x01\x02"
 
-      {:ok, new_state} = Putting.do_put(state, binary_key, binary_value)
+      {:ok, new_state} = Putting.set_key(state, binary_key, binary_value)
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{
                binary_key => binary_value
@@ -159,7 +159,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "validates key is binary" do
       state = create_test_state()
 
-      result = Putting.do_put(state, :invalid_key, "value")
+      result = Putting.set_key(state, :invalid_key, "value")
 
       assert result == :key_error
     end
@@ -167,7 +167,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PuttingTest do
     test "accepts any value when key is binary" do
       state = create_test_state()
 
-      {:ok, new_state} = Putting.do_put(state, "key", "value")
+      {:ok, new_state} = Putting.set_key(state, "key", "value")
 
       assert mutations_to_writes(Tx.commit(new_state.tx).mutations) == %{"key" => "value"}
     end

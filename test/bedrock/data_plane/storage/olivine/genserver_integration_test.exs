@@ -267,7 +267,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       wait_for_health_report(worker_id, pid)
 
-      result = GenServer.call(pid, {:fetch, "nonexistent", Version.zero(), []}, @timeout)
+      result = GenServer.call(pid, {:get, "nonexistent", Version.zero(), []}, @timeout)
 
       assert result in [
                {:error, :not_found},
@@ -275,7 +275,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
              ]
 
       v0 = Version.zero()
-      result2 = GenServer.call(pid, {:fetch, "test:key", v0, []}, @timeout)
+      result2 = GenServer.call(pid, {:get, "test:key", v0, []}, @timeout)
 
       assert result2 in [
                {:error, :not_found},
@@ -303,7 +303,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       v0 = Version.zero()
 
       try do
-        result = GenServer.call(pid, {:range_fetch, "start", "end", v0, []}, 1_000)
+        result = GenServer.call(pid, {:get_range, "start", "end", v0, []}, 1_000)
 
         assert result in [
                  {:ok, {[], false}},
@@ -497,7 +497,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       end
 
       # Interleave different types of calls
-      fetch_result1 = GenServer.call(pid, {:fetch, "test", Version.zero(), []}, @timeout)
+      fetch_result1 = GenServer.call(pid, {:get, "test", Version.zero(), []}, @timeout)
 
       assert fetch_result1 in [
                {:error, :not_found},
@@ -505,7 +505,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
              ]
 
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
-      fetch_result2 = GenServer.call(pid, {:fetch, "another_test", Version.zero(), []}, @timeout)
+      fetch_result2 = GenServer.call(pid, {:get, "another_test", Version.zero(), []}, @timeout)
 
       assert fetch_result2 in [
                {:error, :not_found},
@@ -561,7 +561,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
   describe "Integration with Bedrock Storage Interface" do
     @tag :tmp_dir
-    test "Storage.fetch/4 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
+    test "Storage.get/4 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
       worker_id = random_id()
       otp_name = :"olivine_storage_fetch_#{System.unique_integer([:positive])}"
 
@@ -583,7 +583,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       # Test with timeout option (use shorter timeout for MVP)
       try do
-        result = Storage.fetch(pid, "test:key", v0, timeout: 1_000)
+        result = Storage.get(pid, "test:key", v0, timeout: 1_000)
 
         case result do
           {:ok, value} when is_binary(value) -> :ok
@@ -600,7 +600,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       end
 
       # Test without options
-      result2 = Storage.fetch(pid, "another:key", v0)
+      result2 = Storage.get(pid, "another:key", v0)
 
       case result2 do
         {:ok, value} when is_binary(value) -> :ok
@@ -611,7 +611,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
     end
 
     @tag :tmp_dir
-    test "Storage.range_fetch/5 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
+    test "Storage.get_range/5 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
       worker_id = random_id()
       otp_name = :"olivine_storage_range_#{System.unique_integer([:positive])}"
 
@@ -632,7 +632,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       # Test range fetch via Storage interface (may timeout in MVP)
       try do
-        result = Storage.range_fetch(pid, "start:key", "end:key", v0, timeout: 1_000)
+        result = Storage.get_range(pid, "start:key", "end:key", v0, timeout: 1_000)
 
         # Should return valid response
         assert result in [

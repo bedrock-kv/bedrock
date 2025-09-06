@@ -206,9 +206,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       # Put with invalid key type should cause process to crash
       GenServer.cast(pid, {:set_key, :invalid_key, "value"})
 
-      # Process should crash with KeyError due to binary validation
+      # Process should crash with function_clause due to guard validation
       assert_receive {:DOWN, ^ref, :process, ^pid, reason}
-      assert match?({%KeyError{message: "key must be a binary"}, _}, reason)
+      assert match?({:function_clause, _}, reason)
     end
 
     @tag :capture_log

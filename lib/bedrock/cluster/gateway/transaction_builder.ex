@@ -71,6 +71,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Internal.Time
+  alias Bedrock.KeySelector
 
   @doc false
   @spec start_link(
@@ -125,57 +126,62 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   end
 
   @impl true
-  def handle_call(:nested_transaction, _from, t) do
-    reply(%{t | stack: [t.tx | t.stack]}, :ok)
-  end
+  def handle_call(:nested_transaction, _from, t), do: reply(%{t | stack: [t.tx | t.stack]}, :ok)
 
   def handle_call(:commit, _from, t) do
-    case commit(t) do
+    t
+    |> commit()
+    |> then(fn
       {:ok, t} -> reply(t, {:ok, t.commit_version}, continue: :stop)
       {:error, _reason} = error -> reply(t, error)
-    end
+    end)
   end
 
-  def handle_call({:get, key}, _from, t) do
-    case get_key(t, key) do
+  def handle_call({:get, key}, _from, t) when is_binary(key) do
+    t
+    |> get_key(key)
+    |> then(fn
       {t, {:error, _} = error} -> reply(t, error, continue: :update_version_lease_if_needed)
       {t, {:ok, {^key, value}}} -> reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
-    end
+    end)
   end
 
-  def handle_call({:get_key_selector, key_selector}, _from, t) do
-    case get_key_selector(t, key_selector) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+  def handle_call({:get_key_selector, %KeySelector{} = key_selector}, _from, t) do
+    t
+    |> get_key_selector(key_selector)
+    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
   end
 
-  def handle_call({:get_range, start_key, end_key, batch_size, opts}, _from, t) do
-    case get_range(t, {start_key, end_key}, batch_size, opts) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+  def handle_call({:get_range, start_key, end_key, batch_size, opts}, _from, t)
+      when is_binary(start_key) and is_binary(end_key) do
+    t
+    |> get_range({start_key, end_key}, batch_size, opts)
+    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
   end
 
-  def handle_call({:get_range_selectors, start_selector, end_selector, opts}, _from, t) do
+  def handle_call(
+        {:get_range_selectors, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts},
+        _from,
+        t
+      ) do
     batch_size = Keyword.get(opts, :limit, 10_000)
 
-    case get_range_selectors(t, start_selector, end_selector, batch_size, opts) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+    t
+    |> get_range_selectors(start_selector, end_selector, batch_size, opts)
+    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
   end
 
   @impl true
-  def handle_cast({:set_key, key, value}, t) do
-    case set_key(t, key, value) do
-      {:ok, t} -> noreply(t)
-      :key_error -> raise KeyError, "key must be a binary"
-    end
-  end
+  def handle_cast({:set_key, key, value}, t) when is_binary(key) and is_binary(value),
+    do: t |> set_key(key, value) |> noreply()
 
   def handle_cast(:rollback, t) do
-    case rollback(t) do
+    t
+    |> rollback()
+    |> then(fn
       :stop -> noreply(t, continue: :stop)
       t -> noreply(t)
-    end
+    end)
   end
 
   @impl true

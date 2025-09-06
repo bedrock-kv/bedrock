@@ -33,9 +33,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                           Bedrock.epoch(),
                           Bedrock.version(),
                           Bedrock.version(),
-                          [Resolver.transaction_summary()],
+                          [Transaction.encoded()],
                           keyword() ->
-                            {:ok, [non_neg_integer()]} | {:error, term()})
+                            {:ok, [non_neg_integer()]}
+                            | {:error, term()}
+                            | {:failure, :timeout, Resolver.ref()}
+                            | {:failure, :unavailable, Resolver.ref()})
 
   @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
                                 last_commit_version :: Bedrock.version(),
@@ -328,7 +331,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           attempts_used + 1
         )
 
+      {:failure, reason, _ref} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
+        Tracing.emit_resolver_retry(max_attempts - attempts_used - 2, attempts_used + 1, reason)
+
+        call_resolver_with_retry(
+          ref,
+          epoch,
+          last_version,
+          commit_version,
+          filtered_transactions,
+          opts,
+          attempts_used + 1
+        )
+
       {:error, reason} when reason in [:timeout, :unavailable] ->
+        Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
+        {:error, {:resolver_unavailable, reason}}
+
+      {:failure, reason, _ref} when reason in [:timeout, :unavailable] ->
         Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
         {:error, {:resolver_unavailable, reason}}
 

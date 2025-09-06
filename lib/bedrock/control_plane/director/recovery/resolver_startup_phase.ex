@@ -157,7 +157,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
         ) ::
           Supervisor.child_spec()
   def child_spec_for_resolver(epoch, key_range, lock_token, last_committed_version, director, cluster) do
-    Resolver.child_spec(
+    Resolver.Server.child_spec(
       lock_token: lock_token,
       epoch: epoch,
       key_range: key_range,

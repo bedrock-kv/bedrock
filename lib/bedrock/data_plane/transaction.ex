@@ -630,6 +630,24 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
+  # Constant header-only transaction for version advancement (no sections at all)
+  @empty_transaction <<
+    @magic_number::unsigned-big-32,
+    @format_version,
+    0x00,
+    0::unsigned-big-16
+  >>
+
+  @doc """
+  Returns a minimal header-only transaction with no sections for version advancement.
+
+  This is more efficient than encoding an empty transaction map as it contains
+  only the transaction header with zero sections, making it the smallest possible
+  valid transaction binary.
+  """
+  @spec empty_transaction() :: encoded()
+  def empty_transaction, do: @empty_transaction
+
   # ============================================================================
   # DYNAMIC OPCODE CONSTRUCTION
   # ============================================================================
@@ -669,7 +687,8 @@ defmodule Bedrock.DataPlane.Transaction do
   # ENCODING IMPLEMENTATION
   # ============================================================================
 
-  defp encode_overall_header(section_count) do
+  @doc false
+  def encode_overall_header(section_count) do
     <<
       @magic_number::unsigned-big-32,
       @format_version,
@@ -678,7 +697,8 @@ defmodule Bedrock.DataPlane.Transaction do
     >>
   end
 
-  defp encode_section(tag, payload) do
+  @doc false
+  def encode_section(tag, payload) do
     payload_size = byte_size(payload)
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
     section_crc = :erlang.crc32(section_content)
@@ -768,10 +788,18 @@ defmodule Bedrock.DataPlane.Transaction do
     ])
   end
 
-  defp encode_conflict_range({start_key, end_key}) do
+  @doc false
+  def encode_conflict_range({start_key, end_key}) do
     start_len = byte_size(start_key)
-    end_len = byte_size(end_key)
-    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
+
+    # Handle :end case for ConflictSharding
+    {end_key_binary, end_len} =
+      case end_key do
+        :end -> {"\xFF\xFF\xFF", 3}
+        key -> {key, byte_size(key)}
+      end
+
+    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key_binary::binary>>
   end
 
   # ============================================================================

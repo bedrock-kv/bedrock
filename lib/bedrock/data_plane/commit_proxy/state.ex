@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
 
   @type mode :: :locked | :running
 
@@ -10,6 +11,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           cluster: module(),
           director: pid(),
           transaction_system_layout: TransactionSystemLayout.t() | nil,
+          precomputed_layout: LayoutOptimization.precomputed_layout() | nil,
           epoch: Bedrock.epoch(),
           batch: Batch.t() | nil,
           max_latency_in_ms: non_neg_integer(),
@@ -21,6 +23,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   defstruct cluster: nil,
             director: nil,
             transaction_system_layout: nil,
+            precomputed_layout: nil,
             epoch: nil,
             batch: nil,
             max_latency_in_ms: nil,

@@ -6,6 +6,8 @@ defmodule Bedrock.Key do
   utilities for key manipulation and ordering operations.
   """
 
+  @type t :: binary()
+
   @doc """
   Returns the next possible key after the given key in lexicographic order.
 
@@ -17,7 +19,7 @@ defmodule Bedrock.Key do
 
       iex> Bedrock.Key.next_key_after("abc")
       "abc\\0"
-      
+
       iex> Bedrock.Key.next_key_after("")
       "\\0"
 

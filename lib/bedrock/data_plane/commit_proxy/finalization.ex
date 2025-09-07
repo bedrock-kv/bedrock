@@ -17,31 +17,28 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   import Bitwise, only: [<<<: 2]
 
-  alias __MODULE__.ResolutionPlan
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
-
-  defguard key_in_range?(key, min_key, max_key_ex)
-           when key >= min_key and (max_key_ex == :end or key < max_key_ex)
-
-  # ============================================================================
-  # Type Definitions
-  # ============================================================================
+  alias Bedrock.KeyRange
 
   @type resolver_fn() :: (Resolver.ref(),
                           Bedrock.epoch(),
                           Bedrock.version(),
                           Bedrock.version(),
-                          [Resolver.transaction_summary()],
+                          [Transaction.encoded()],
                           keyword() ->
-                            {:ok, [non_neg_integer()]} | {:error, term()})
+                            {:ok, [non_neg_integer()]}
+                            | {:error, term()}
+                            | {:failure, :timeout, Resolver.ref()}
+                            | {:failure, :unavailable, Resolver.ref()})
 
   @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
                                 last_commit_version :: Bedrock.version(),
@@ -91,44 +88,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Data Structures
   # ============================================================================
 
-  defmodule ResolutionPlan do
-    @moduledoc """
-    Configuration and data for resolver conflict resolution operations.
-    Encapsulates all parameters needed for calling resolvers with retry logic.
-    """
-
-    alias Bedrock.DataPlane.CommitProxy.Finalization
-
-    @enforce_keys [:epoch, :last_version, :commit_version, :resolver_data_list, :resolvers]
-    defstruct [
-      :epoch,
-      :last_version,
-      :commit_version,
-      :resolver_data_list,
-      :resolvers,
-      timeout_fn: &Finalization.default_timeout_fn/1,
-      resolver_fn: &Resolver.resolve_transactions/6,
-      max_attempts: 3
-    ]
-
-    @type t :: %__MODULE__{
-            epoch: Bedrock.epoch(),
-            last_version: Bedrock.version(),
-            commit_version: Bedrock.version(),
-            resolver_data_list: [Resolver.transaction_summary()],
-            resolvers: [{start_key :: Bedrock.key(), Resolver.ref()}],
-            timeout_fn: (non_neg_integer() -> non_neg_integer()),
-            resolver_fn: (Resolver.ref(),
-                          Bedrock.epoch(),
-                          Bedrock.version(),
-                          Bedrock.version(),
-                          [Resolver.transaction_summary()],
-                          keyword() ->
-                            {:ok, [non_neg_integer()]} | {:error, term()}),
-            max_attempts: non_neg_integer()
-          }
-  end
-
   defmodule FinalizationPlan do
     @moduledoc """
     Pipeline state for transaction finalization using unified transaction storage
@@ -158,7 +117,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     ]
 
     @type t :: %__MODULE__{
-            transactions: %{non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded()}},
+            transactions: %{
+              non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t()}
+            },
             transaction_count: non_neg_integer(),
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
@@ -214,6 +175,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           TransactionSystemLayout.t(),
           opts :: [
             epoch: Bedrock.epoch(),
+            precomputed: LayoutOptimization.precomputed_layout() | nil,
             resolver_fn: resolver_fn(),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
@@ -235,37 +197,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> notify_sequencer(transaction_system_layout.sequencer, opts)
     |> notify_successes(opts)
     |> extract_result_or_handle_error(opts)
-  end
-
-  @doc """
-  Legacy function for testing resolver calls independently.
-
-  This function provides backwards compatibility for existing tests that test
-  the resolver resolution logic in isolation.
-  """
-  @spec resolve_transactions(
-          Bedrock.epoch(),
-          [{start_key :: Bedrock.key(), Resolver.ref()}],
-          last_version :: Bedrock.version(),
-          commit_version :: Bedrock.version(),
-          [Resolver.transaction_summary()],
-          keyword()
-        ) :: {:ok, MapSet.t(non_neg_integer())} | {:error, term()}
-  def resolve_transactions(epoch, resolvers, last_version, commit_version, transaction_summaries, opts \\ []) do
-    timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
-    resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/6)
-    max_attempts = Keyword.get(opts, :max_attempts, 3)
-
-    call_all_resolvers_with_retry(%ResolutionPlan{
-      epoch: epoch,
-      last_version: last_version,
-      commit_version: commit_version,
-      resolver_data_list: transaction_summaries,
-      resolvers: resolvers,
-      timeout_fn: timeout_fn,
-      resolver_fn: resolver_fn,
-      max_attempts: max_attempts
-    })
   end
 
   # ============================================================================
@@ -293,33 +224,31 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           FinalizationPlan.t()
   def resolve_conflicts(%FinalizationPlan{stage: :ready_for_resolution} = plan, layout, opts) do
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
-    timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
-    resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/6)
-    max_attempts = Keyword.get(opts, :max_attempts, 3)
 
-    # Extract conflict sections from transactions
-    resolver_data_list =
+    resolver_transaction_map =
       if plan.transaction_count == 0 do
-        []
+        Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end)
       else
-        for idx <- 0..(plan.transaction_count - 1) do
-          {_idx, _reply_fn, binary} = Map.fetch!(plan.transactions, idx)
-          Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
-        end
+        maps =
+          for idx <- 0..(plan.transaction_count - 1) do
+            {_idx, _reply_fn, _transaction, task} = Map.fetch!(plan.transactions, idx)
+            Task.await(task, 5000)
+          end
+
+        Map.new(layout.resolvers, fn {_key, ref} ->
+          transactions = Enum.map(maps, &Map.fetch!(&1, ref))
+          {ref, transactions}
+        end)
       end
 
-    %ResolutionPlan{
-      epoch: epoch,
-      last_version: plan.last_commit_version,
-      commit_version: plan.commit_version,
-      resolver_data_list: resolver_data_list,
-      resolvers: layout.resolvers,
-      timeout_fn: timeout_fn,
-      resolver_fn: resolver_fn,
-      max_attempts: max_attempts
-    }
-    |> call_all_resolvers_with_retry()
-    |> case do
+    case call_all_resolvers_with_map(
+           resolver_transaction_map,
+           epoch,
+           plan.last_commit_version,
+           plan.commit_version,
+           layout.resolvers,
+           opts
+         ) do
       {:ok, aborted_set} ->
         split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, aborted_set, opts)
 
@@ -328,41 +257,98 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec call_all_resolvers_with_retry(ResolutionPlan.t()) :: {:ok, MapSet.t(non_neg_integer())} | {:error, term()}
-  defp call_all_resolvers_with_retry(%ResolutionPlan{} = resolution_plan) do
-    resolution_plan.resolvers
-    |> Enum.map(fn {start_key, ref} ->
-      call_resolver_with_retry(ref, start_key, resolution_plan)
-    end)
-    |> Enum.reduce({:ok, MapSet.new()}, fn
-      {:ok, aborted}, {:ok, acc} ->
-        {:ok, Enum.into(aborted, acc)}
+  @spec call_all_resolvers_with_map(
+          %{Resolver.ref() => [Transaction.encoded()]},
+          Bedrock.epoch(),
+          Bedrock.version(),
+          Bedrock.version(),
+          [{start_key :: Bedrock.key(), Resolver.ref()}],
+          keyword()
+        ) :: {:ok, MapSet.t(non_neg_integer())} | {:error, term()}
+  defp call_all_resolvers_with_map(resolver_transaction_map, epoch, last_version, commit_version, resolvers, opts) do
+    async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
+    timeout = Keyword.get(opts, :timeout, 5_000)
 
-      {:error, reason}, _ ->
-        {:error, reason}
+    resolvers
+    |> async_stream_fn.(
+      fn {_start_key, ref} ->
+        # Every resolver must have transactions after task processing
+        filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
+        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, opts)
+      end,
+      timeout: timeout
+    )
+    |> Enum.reduce_while({:ok, MapSet.new()}, fn
+      {:ok, {:ok, aborted}}, {:ok, acc} ->
+        {:cont, {:ok, Enum.into(aborted, acc)}}
+
+      {:ok, {:error, reason}}, _ ->
+        {:halt, {:error, reason}}
+
+      {:exit, reason}, _ ->
+        {:halt, {:error, {:resolver_exit, reason}}}
     end)
   end
 
   @spec call_resolver_with_retry(
           Resolver.ref(),
-          start_key :: Bedrock.key(),
-          ResolutionPlan.t(),
-          attempts_used :: non_neg_integer()
+          Bedrock.epoch(),
+          Bedrock.version(),
+          Bedrock.version(),
+          [Transaction.encoded()],
+          keyword(),
+          non_neg_integer()
         ) :: {:ok, [non_neg_integer()]} | {:error, term()}
-  defp call_resolver_with_retry(ref, start_key, %ResolutionPlan{} = plan, attempts_used \\ 0) do
-    timeout_in_ms = plan.timeout_fn.(attempts_used)
+  defp call_resolver_with_retry(
+         ref,
+         epoch,
+         last_version,
+         commit_version,
+         filtered_transactions,
+         opts,
+         attempts_used \\ 0
+       ) do
+    timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
+    resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/6)
+    max_attempts = Keyword.get(opts, :max_attempts, 3)
 
-    case plan.resolver_fn.(ref, plan.epoch, plan.last_version, plan.commit_version, plan.resolver_data_list,
-           timeout: timeout_in_ms
-         ) do
+    timeout_in_ms = timeout_fn.(attempts_used)
+
+    case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, timeout: timeout_in_ms) do
       {:ok, _} = success ->
         success
 
-      {:error, reason} when reason in [:timeout, :unavailable] and attempts_used < plan.max_attempts - 1 ->
-        Tracing.emit_resolver_retry(plan.max_attempts - attempts_used - 2, attempts_used + 1, reason)
-        call_resolver_with_retry(ref, start_key, plan, attempts_used + 1)
+      {:error, reason} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
+        Tracing.emit_resolver_retry(max_attempts - attempts_used - 2, attempts_used + 1, reason)
+
+        call_resolver_with_retry(
+          ref,
+          epoch,
+          last_version,
+          commit_version,
+          filtered_transactions,
+          opts,
+          attempts_used + 1
+        )
+
+      {:failure, reason, _ref} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
+        Tracing.emit_resolver_retry(max_attempts - attempts_used - 2, attempts_used + 1, reason)
+
+        call_resolver_with_retry(
+          ref,
+          epoch,
+          last_version,
+          commit_version,
+          filtered_transactions,
+          opts,
+          attempts_used + 1
+        )
 
       {:error, reason} when reason in [:timeout, :unavailable] ->
+        Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
+        {:error, {:resolver_unavailable, reason}}
+
+      {:failure, reason, _ref} when reason in [:timeout, :unavailable] ->
         Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
         {:error, {:resolver_unavailable, reason}}
 
@@ -383,7 +369,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # Reply to aborted transactions
     aborted_set
     |> Enum.map(fn idx ->
-      {_idx, reply_fn, _binary} = Map.fetch!(plan.transactions, idx)
+      {_idx, reply_fn, _binary, _task} = Map.fetch!(plan.transactions, idx)
       reply_fn
     end)
     |> abort_reply_fn.()
@@ -450,14 +436,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   @spec process_transaction_for_logs(
-          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded()}},
+          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t()}},
           FinalizationPlan.t(),
           %{Log.id() => [Bedrock.range_tag()]},
           %{Log.id() => [term()]}
         ) ::
           {:cont, {:ok, %{Log.id() => [term()]}}}
           | {:halt, {:error, term()}}
-  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary}}, plan, logs_by_id, acc) do
+  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, logs_by_id, acc) do
     if MapSet.member?(plan.replied_indices, idx) do
       # Skip transactions that were already replied to (aborted)
       {:cont, {:ok, acc}}
@@ -483,6 +469,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:error, reason} ->
             {:halt, {:error, reason}}
         end
+
+      {:error, :section_not_found} ->
+        {:cont, {:ok, acc}}
 
       {:error, reason} ->
         {:halt, {:error, {:mutation_extraction_failed, reason}}}
@@ -554,7 +543,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def key_or_range_to_tags(key, storage_teams) do
     tags =
       for %{tag: tag, key_range: {min_key, max_key_ex}} <- storage_teams,
-          key_in_range?(key, min_key, max_key_ex) do
+          KeyRange.contains?({min_key, max_key_ex}, key) do
         tag
       end
 
@@ -742,7 +731,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     {successful_reply_fns, successful_indices} =
       plan.transactions
       |> Enum.reject(fn {idx, _entry} -> MapSet.member?(plan.replied_indices, idx) end)
-      |> Enum.map(fn {idx, {_tx_idx, reply_fn, _binary}} -> {reply_fn, idx} end)
+      |> Enum.map(fn {idx, {_tx_idx, reply_fn, _binary, _task}} -> {reply_fn, idx} end)
       |> Enum.unzip()
 
     success_reply_fn.(successful_reply_fns, plan.commit_version)
@@ -777,7 +766,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     pending_reply_fns =
       plan.transactions
       |> Enum.reject(fn {idx, _entry} -> MapSet.member?(plan.replied_indices, idx) end)
-      |> Enum.map(fn {_idx, {_tx_idx, reply_fn, _binary}} -> reply_fn end)
+      |> Enum.map(fn {_idx, {_tx_idx, reply_fn, _binary, _task}} -> reply_fn end)
 
     abort_reply_fn.(pending_reply_fns)
 

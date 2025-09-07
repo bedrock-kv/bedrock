@@ -39,9 +39,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
       start_batch_if_needed: 1,
-      add_transaction_to_batch: 3,
+      add_transaction_to_batch: 4,
       apply_finalization_policy: 1,
-      single_transaction_batch: 2
+      single_transaction_batch: 2,
+      create_resolver_task: 2
     ]
 
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 3]
@@ -58,6 +59,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.CommitProxy.Batch
+  # ConflictSharding moved to Batching module
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
@@ -135,7 +138,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
   def handle_call({:recover_from, lock_token, transaction_system_layout}, _from, %{mode: :locked} = t) do
     if lock_token == t.lock_token do
-      reply(%{t | transaction_system_layout: transaction_system_layout, mode: :running}, :ok)
+      # Precompute expensive static structures once at boot
+      precomputed_layout = LayoutOptimization.precompute_from_layout(transaction_system_layout)
+
+      reply(
+        %{
+          t
+          | transaction_system_layout: transaction_system_layout,
+            precomputed_layout: precomputed_layout,
+            mode: :running
+        },
+        :ok
+      )
     else
       reply(t, {:error, :unauthorized})
     end
@@ -153,8 +167,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         exit(reason)
 
       updated_t ->
+        # Start resolver assignment task
+        task = create_resolver_task(transaction, updated_t.precomputed_layout)
+
         updated_t
-        |> add_transaction_to_batch(transaction, reply_fn(from))
+        |> add_transaction_to_batch(transaction, reply_fn(from), task)
         |> apply_finalization_policy()
         |> case do
           {t, nil} -> noreply(t, timeout: 0)
@@ -169,7 +186,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec handle_info(:timeout, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, term()}}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
-    empty_transaction = Transaction.encode(%{mutations: []})
+    empty_transaction = Transaction.empty_transaction()
 
     case single_transaction_batch(t, empty_transaction) do
       {:ok, batch} ->
@@ -198,7 +215,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_continue({:finalize, batch}, t) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
-    case :timer.tc(fn -> finalize_batch(batch, t.transaction_system_layout, epoch: t.epoch) end) do
+    case :timer.tc(fn ->
+           finalize_batch(batch, t.transaction_system_layout, epoch: t.epoch, precomputed: t.precomputed_layout)
+         end) do
       {n_usec, {:ok, n_aborts, n_oks}} ->
         trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
         maybe_set_empty_transaction_timeout(t)
@@ -232,6 +251,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
   def reply_fn(from), do: &GenServer.reply(from, &1)
+
+  # Moved to Batching module to avoid duplication
 
   @spec maybe_set_empty_transaction_timeout(State.t()) :: {:noreply, State.t()}
   defp maybe_set_empty_transaction_timeout(%{mode: :running} = t),

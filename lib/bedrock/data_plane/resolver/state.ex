@@ -19,7 +19,10 @@ defmodule Bedrock.DataPlane.Resolver.State do
           mode: mode(),
           lock_token: Bedrock.lock_token(),
           epoch: Bedrock.epoch(),
-          director: pid()
+          director: pid(),
+          sweep_interval_ms: pos_integer(),
+          version_retention_ms: pos_integer(),
+          last_sweep_time: integer()
         }
   defstruct tree: nil,
             oldest_version: nil,
@@ -28,5 +31,8 @@ defmodule Bedrock.DataPlane.Resolver.State do
             mode: :running,
             lock_token: nil,
             epoch: nil,
-            director: nil
+            director: nil,
+            sweep_interval_ms: nil,
+            version_retention_ms: nil,
+            last_sweep_time: nil
 end

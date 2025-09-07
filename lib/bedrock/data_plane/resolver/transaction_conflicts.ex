@@ -9,7 +9,6 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   Each transaction is checked against the interval tree to determine if its reads
   or writes conflict with previously committed transactions at later versions.
   """
-  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Tree
   alias Bedrock.DataPlane.Transaction
 
@@ -32,7 +31,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
   Transactions are rolled back in the order they are processed when conflicts are detected.
   """
-  @spec resolve(Tree.t(), [Resolver.transaction_summary()], write_version :: Bedrock.version()) ::
+  @spec resolve(Tree.t(), [Transaction.encoded()], write_version :: Bedrock.version()) ::
           {Tree.t(), aborted :: [non_neg_integer()]}
   def resolve(tree, [], _), do: {tree, []}
 
@@ -52,7 +51,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     {tree, failed_indexes}
   end
 
-  @spec try_to_resolve_transaction(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) ::
+  @spec try_to_resolve_transaction(Tree.t(), Transaction.encoded(), Bedrock.version()) ::
           {:ok, Tree.t()} | :abort
   def try_to_resolve_transaction(tree, transaction, write_version) do
     if conflict?(tree, transaction, write_version) do
@@ -62,7 +61,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     end
   end
 
-  @spec conflict?(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) :: boolean()
+  @spec conflict?(Tree.t(), Transaction.encoded(), Bedrock.version()) :: boolean()
   def conflict?(tree, transaction, write_version) do
     {read_info, writes} = extract_conflicts(transaction)
 
@@ -109,7 +108,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   @spec version_lt(Bedrock.version()) :: (Bedrock.version() -> boolean())
   def version_lt(version), do: &(&1 > version)
 
-  @spec apply_transaction(Tree.t(), Resolver.transaction_summary(), Bedrock.version()) :: Tree.t()
+  @spec apply_transaction(Tree.t(), Transaction.encoded(), Bedrock.version()) :: Tree.t()
   def apply_transaction(tree, transaction, write_version) do
     {_read_info, writes} = extract_conflicts(transaction)
 

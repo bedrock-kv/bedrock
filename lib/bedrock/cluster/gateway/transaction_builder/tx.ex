@@ -24,6 +24,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
           | {:clear_range, start :: binary(), end_ex :: binary()}
           | {:atomic, atom(), key(), binary()}
 
+  @type fetch_fn :: (key(), term() -> {{:ok, value()} | {:error, term()}, term()})
+
   @type t :: %__MODULE__{
           mutations: [mutation()],
           writes:
@@ -62,13 +64,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   # Primary Transaction Operations
   # =============================================================================
 
-  @spec get(
-          t(),
-          key(),
-          fetch_fn :: (key(), state -> {{:ok, value()} | {:error, reason}, state}),
-          state :: any()
-        ) :: {t(), {:ok, value()} | {:error, reason}, state}
-        when reason: term(), state: term()
+  @spec get(t(), key(), fetch_fn(), state) :: {t(), {:ok, value()} | {:error, :not_found}, state}
+        when state: term()
   def get(t, k, fetch_fn, state) when is_binary(k) do
     case get_write(t, k) || get_read(t, k) do
       nil -> fetch_and_record(t, k, fetch_fn, state)

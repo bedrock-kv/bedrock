@@ -15,8 +15,8 @@ defmodule Bedrock.DirectoryTest do
 
       assert directory.repo_module == MockRepo
       # Now these are Subspace objects with tuple encoding
-      assert Subspace.key(directory.content_subspace) == Bedrock.Tuple.pack({"_content"})
-      assert Subspace.key(directory.node_subspace) == Bedrock.Tuple.pack({"_node"})
+      assert Subspace.key(directory.content_subspace) == Bedrock.Key.pack({"_content"})
+      assert Subspace.key(directory.node_subspace) == Bedrock.Key.pack({"_node"})
       assert directory.allow_manual_prefixes == false
     end
 
@@ -25,8 +25,8 @@ defmodule Bedrock.DirectoryTest do
 
       assert directory.repo_module == MockRepo
       # Now these are Subspace objects with tuple encoding
-      assert Subspace.key(directory.content_subspace) == Bedrock.Tuple.pack({"custom_content"})
-      assert Subspace.key(directory.node_subspace) == Bedrock.Tuple.pack({"custom_node"})
+      assert Subspace.key(directory.content_subspace) == Bedrock.Key.pack({"custom_content"})
+      assert Subspace.key(directory.node_subspace) == Bedrock.Key.pack({"custom_node"})
       assert directory.allow_manual_prefixes == true
     end
   end

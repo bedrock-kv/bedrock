@@ -156,9 +156,9 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Compare and clear - clear if values match"
   # Both empty, clear
-  def compare_and_clear(<<>>, <<>>), do: nil
+  def compare_and_clear(<<>>, <<>>), do: <<>>
   # Match, clear
-  def compare_and_clear(ex, op) when ex == op, do: nil
+  def compare_and_clear(ex, op) when ex == op, do: <<>>
   # No match, keep existing
   def compare_and_clear(ex, _op), do: ex
 

@@ -17,6 +17,8 @@ defmodule Bedrock.HCA do
   - https://github.com/foundationdb-beam/erlfdb/blob/main/src/erlfdb_hca.erl
   """
 
+  alias Bedrock.Key
+
   defstruct [:counters_subspace, :recent_subspace, :repo_module, :random_fn]
 
   @type t :: %__MODULE__{
@@ -224,12 +226,12 @@ defmodule Bedrock.HCA do
   defp clear_previous_window(hca, txn, start) do
     # Clear counter data for this window start
     counter_start = encode_counter_key(hca, start)
-    counter_end = next_key(counter_start)
+    counter_end = Key.key_after(counter_start)
     hca.repo_module.clear_range(txn, counter_start, counter_end, no_write_conflict: true)
 
     # Clear recent allocation data for this window start
     recent_start = encode_recent_key(hca, start)
-    recent_end = next_key(recent_start)
+    recent_end = Key.key_after(recent_start)
     hca.repo_module.clear_range(txn, recent_start, recent_end, no_write_conflict: true)
   end
 
@@ -257,16 +259,8 @@ defmodule Bedrock.HCA do
     hca.recent_subspace <> <<candidate::64-big>>
   end
 
-  # Helper function to generate next key for ranges
-  defp next_key(key) do
-    key <> <<0>>
-  end
-
-  # Add write conflict for a specific key - now using Bedrock's native conflict API
   defp add_write_conflict_key(hca, txn, key) do
-    # Equivalent to erlfdb:add_write_conflict_key/2
-    # This adds write conflict tracking without actually writing to the key
-    hca.repo_module.add_write_conflict_range(txn, key, next_key(key))
+    hca.repo_module.add_write_conflict_range(txn, key, Key.key_after(key))
   end
 
   @doc """

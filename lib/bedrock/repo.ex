@@ -719,51 +719,27 @@ defmodule Bedrock.Repo do
       # Atomic Operations
 
       @impl true
-      def add(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
-
       def add(t, key, value), do: Repo.atomic(t, :add, key, <<value::64-little>>)
 
       @impl true
-      def min(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
-
       def min(t, key, value), do: Repo.atomic(t, :min, key, <<value::64-little>>)
 
       @impl true
-      def max(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
-
       def max(t, key, value), do: Repo.atomic(t, :max, key, <<value::64-little>>)
 
       @impl true
-      def bit_and(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
-
       def bit_and(t, key, value), do: Repo.atomic(t, :bit_and, key, value)
 
       @impl true
-      def bit_or(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
-
       def bit_or(t, key, value), do: Repo.atomic(t, :bit_or, key, value)
 
       @impl true
-      def bit_xor(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
-
       def bit_xor(t, key, value), do: Repo.atomic(t, :bit_xor, key, value)
 
       @impl true
-      def byte_min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
-
       def byte_min(t, key, value), do: Repo.atomic(t, :byte_min, key, value)
 
       @impl true
-      def byte_max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
-
       def byte_max(t, key, value), do: Repo.atomic(t, :byte_max, key, value)
 
       @impl true
@@ -777,6 +753,9 @@ defmodule Bedrock.Repo do
       def compare_and_clear(t, key, expected), do: Repo.atomic(t, :compare_and_clear, key, expected)
 
       @impl true
+      def atomic(t, op, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       defdelegate atomic(t, op, key, value), to: Repo
     end
   end

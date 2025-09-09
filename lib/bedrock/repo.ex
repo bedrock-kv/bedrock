@@ -370,7 +370,7 @@ defmodule Bedrock.Repo do
       end
 
   """
-  @callback add(t(), Key.t(), value :: integer()) :: t()
+  @callback add(t(), Key.t(), value :: binary()) :: t()
 
   @doc """
   Atomically sets the key to the minimum of the existing value and the provided value.
@@ -405,7 +405,7 @@ defmodule Bedrock.Repo do
       end
 
   """
-  @callback min(t(), Key.t(), value :: integer()) :: t()
+  @callback min(t(), Key.t(), value :: binary()) :: t()
 
   @doc """
   Atomically sets the key to the maximum of the existing value and the provided value.
@@ -440,7 +440,7 @@ defmodule Bedrock.Repo do
       end
 
   """
-  @callback max(t(), Key.t(), value :: integer()) :: t()
+  @callback max(t(), Key.t(), value :: binary()) :: t()
 
   @doc """
   Atomically performs bitwise AND on the key with the provided value.
@@ -719,13 +719,13 @@ defmodule Bedrock.Repo do
       # Atomic Operations
 
       @impl true
-      def add(t, key, value), do: Repo.atomic(t, :add, key, <<value::64-little>>)
+      def add(t, key, value), do: Repo.atomic(t, :add, key, value)
 
       @impl true
-      def min(t, key, value), do: Repo.atomic(t, :min, key, <<value::64-little>>)
+      def min(t, key, value), do: Repo.atomic(t, :min, key, value)
 
       @impl true
-      def max(t, key, value), do: Repo.atomic(t, :max, key, <<value::64-little>>)
+      def max(t, key, value), do: Repo.atomic(t, :max, key, value)
 
       @impl true
       def bit_and(t, key, value), do: Repo.atomic(t, :bit_and, key, value)

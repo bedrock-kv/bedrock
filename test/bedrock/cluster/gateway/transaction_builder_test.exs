@@ -4,6 +4,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.KeySelector
 
   # This test file focuses on GenServer-specific functionality:
@@ -228,13 +229,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
 
       initial_state = :sys.get_state(pid)
-      initial_mutations = Tx.commit(initial_state.tx).mutations
+      binary_result = Tx.commit(initial_state.tx, nil)
+      {:ok, decoded} = Transaction.decode(binary_result)
+      initial_mutations = decoded.mutations
 
       GenServer.cast(pid, {:set_key, "test_key", "test_value"})
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
-      final_mutations = Tx.commit(final_state.tx).mutations
+
+      final_mutations =
+        final_state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
 
       assert final_mutations == initial_mutations ++ [{:set, "test_key", "test_value"}]
     end
@@ -272,7 +277,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
-      mutations = Tx.commit(state.tx).mutations
+      mutations = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
 
       assert mutations == [
                {:set, "key1", "value1"},
@@ -289,7 +294,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       :timer.sleep(10)
 
       state = :sys.get_state(pid)
-      commit_result = Tx.commit(state.tx)
+      commit_result = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert commit_result.mutations == [
                {:set, "key1", "updated_value"}
@@ -413,14 +418,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       :timer.sleep(5)
 
       state1 = :sys.get_state(pid)
-      mutations1 = Tx.commit(state1.tx).mutations
+      mutations1 = state1.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
       assert length(mutations1) == 1
 
       GenServer.cast(pid, {:set_key, "key2", "value2"})
       :timer.sleep(5)
 
       state2 = :sys.get_state(pid)
-      mutations2 = Tx.commit(state2.tx).mutations
+      mutations2 = state2.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
       assert length(mutations2) == 2
 
       assert mutations2 == [
@@ -501,7 +506,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       :timer.sleep(10)
 
       final_state = :sys.get_state(pid)
-      mutations = Tx.commit(final_state.tx).mutations
+      mutations = final_state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
       assert [{:set, "test", "value"}] = mutations
     end
 

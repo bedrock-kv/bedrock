@@ -67,7 +67,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       assert result == {:ok, {"cached_key", "cached_value"}}
       # Transaction state should be unchanged when reading from writes
-      assert Tx.commit(new_state.tx) == Tx.commit(state.tx)
+      assert Tx.commit(new_state.tx, nil) == Tx.commit(state.tx, nil)
     end
 
     test "fetches value from storage when not cached" do
@@ -103,7 +103,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       # Should get writes value, not reads value
       assert result == {:ok, {"key", "new_value"}}
       # Transaction unchanged since value came from writes cache
-      assert Tx.commit(new_state.tx) == Tx.commit(state.tx)
+      # Use a valid read version since both transactions have read conflicts
+      read_version = Bedrock.DataPlane.Version.from_integer(12_345)
+      assert Tx.commit(new_state.tx, read_version) == Tx.commit(state.tx, read_version)
     end
 
     test "fetches from storage when not in cache" do
@@ -438,7 +440,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       assert result == {:ok, {"stack_key", "stack_value"}}
       # Transaction unchanged since it hit reads cache
-      assert Tx.commit(new_state.tx) == Tx.commit(state.tx)
+      # Use a valid read version since both transactions have read conflicts
+      read_version = Bedrock.DataPlane.Version.from_integer(12_345)
+      assert Tx.commit(new_state.tx, read_version) == Tx.commit(state.tx, read_version)
     end
   end
 

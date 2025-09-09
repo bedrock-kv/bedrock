@@ -60,10 +60,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   use GenServer
 
   import __MODULE__.Committing, only: [commit: 1]
-  import __MODULE__.PointReads, only: [get_key: 2, get_key_selector: 2]
-  import __MODULE__.Putting, only: [set_key: 3]
+
+  import __MODULE__.Mutations,
+    only: [
+      set_key: 4,
+      add_read_conflict_key: 2,
+      add_write_conflict_range: 3
+    ]
+
+  import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 2]
   import __MODULE__.RangeReads, only: [get_range: 4, get_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
+  import __MODULE__.Tx, only: [clear_range: 4]
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster.Gateway
@@ -137,9 +145,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     end)
   end
 
-  def handle_call({:get, key}, _from, t) when is_binary(key) do
+  def handle_call({:get, key}, from, t) when is_binary(key) do
+    handle_call({:get, key, []}, from, t)
+  end
+
+  def handle_call({:get, key, opts}, _from, t) when is_binary(key) and is_list(opts) do
     t
-    |> get_key(key)
+    |> get_key(key, opts)
     |> then(fn
       {t, {:error, _} = error} -> reply(t, error, continue: :update_version_lease_if_needed)
       {t, {:ok, {^key, value}}} -> reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
@@ -173,7 +185,23 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @impl true
   def handle_cast({:set_key, key, value}, t) when is_binary(key) and is_binary(value),
-    do: t |> set_key(key, value) |> noreply()
+    do: t |> set_key(key, value, []) |> noreply()
+
+  def handle_cast({:set_key, key, value, opts}, t) when is_binary(key) and is_binary(value),
+    do: t |> set_key(key, value, opts) |> noreply()
+
+  def handle_cast({:atomic, op, key, value}, t) when is_atom(op) and is_binary(key) and is_binary(value) do
+    noreply(%{t | tx: __MODULE__.Tx.atomic_operation(t.tx, key, op, value)})
+  end
+
+  def handle_cast({:clear_range, start_key, end_key, opts}, t) when is_binary(start_key) and is_binary(end_key),
+    do: t |> clear_range(start_key, end_key, opts) |> noreply()
+
+  def handle_cast({:add_read_conflict_key, key}, t) when is_binary(key),
+    do: t |> add_read_conflict_key(key) |> noreply()
+
+  def handle_cast({:add_write_conflict_range, start_key, end_key}, t) when is_binary(start_key) and is_binary(end_key),
+    do: t |> add_write_conflict_range(start_key, end_key) |> noreply()
 
   def handle_cast(:rollback, t) do
     t

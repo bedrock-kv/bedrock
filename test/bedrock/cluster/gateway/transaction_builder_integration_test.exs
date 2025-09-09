@@ -3,6 +3,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.Transaction
 
   defmodule TestKeyCodec do
     @moduledoc false
@@ -55,7 +56,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
       state = :sys.get_state(pid)
 
-      assert Tx.commit(state.tx) == %{
+      assert state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) == %{
                mutations: [{:set, "test_key", "test_value"}],
                write_conflicts: [{"test_key", "test_key\0"}],
                read_conflicts: {nil, []}
@@ -79,7 +80,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert GenServer.call(pid, {:get, "key3"}) == {:ok, "value3"}
 
       state = :sys.get_state(pid)
-      commit_result = Tx.commit(state.tx)
+      commit_result = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert commit_result.mutations == [
                {:set, "key1", "value1"},
@@ -102,7 +103,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       assert GenServer.call(pid, {:get, "key"}) == {:ok, "updated_value"}
 
       state = :sys.get_state(pid)
-      commit_result = Tx.commit(state.tx)
+      commit_result = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert commit_result.mutations == [
                {:set, "key", "updated_value"}
@@ -129,7 +130,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
       state = :sys.get_state(pid)
       assert length(state.stack) == 1
 
-      commit_result = Tx.commit(state.tx)
+      commit_result = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert commit_result.mutations == [
                {:set, "nested_key", "nested_value"},

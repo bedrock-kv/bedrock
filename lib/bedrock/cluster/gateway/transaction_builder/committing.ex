@@ -29,7 +29,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
         ) ::
           Transaction.encoded()
   defp prepare_transaction_for_commit(read_version, tx) do
-    Tx.commit_binary(tx, read_version)
+    Tx.commit(tx, read_version)
   end
 
   @spec select_commit_proxy(Bedrock.ControlPlane.Config.TransactionSystemLayout.t()) ::

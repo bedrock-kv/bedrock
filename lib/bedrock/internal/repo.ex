@@ -18,69 +18,33 @@ defmodule Bedrock.Internal.Repo do
       reraise exception, __STACKTRACE__
   end
 
-  @spec fetch(transaction(), key()) :: {:ok, value()} | {:error, atom()} | :error
-  def fetch(t, key), do: call(t, {:get, key}, :infinity)
+  @spec rollback(transaction()) :: :ok
+  def rollback(t), do: cast(t, :rollback)
 
-  @spec fetch!(transaction(), key()) :: value()
-  def fetch!(t, key) do
-    case fetch(t, key) do
-      {:error, _} -> raise "Key not found: #{inspect(key)}"
+  @spec add_read_conflict_key(transaction(), key()) :: transaction()
+  def add_read_conflict_key(t, key) do
+    cast(t, {:add_read_conflict_key, key})
+    t
+  end
+
+  @spec add_write_conflict_range(transaction(), key(), key()) :: transaction()
+  def add_write_conflict_range(t, start_key, end_key) do
+    cast(t, {:add_write_conflict_range, start_key, end_key})
+    t
+  end
+
+  @spec get(transaction(), key(), opts :: keyword()) :: nil | value()
+  def get(t, key, opts \\ []) do
+    case call(t, {:get, key, opts}, :infinity) do
       {:ok, value} -> value
+      {:error, :not_found} -> nil
     end
   end
 
-  @spec get(transaction(), key()) :: nil | value()
-  def get(t, key) do
-    case fetch(t, key) do
-      {:error, _} -> nil
-      {:ok, value} -> value
-    end
-  end
-
-  @spec fetch_key_selector(transaction(), KeySelector.t()) ::
-          {:ok, {resolved_key :: key(), value()}}
-          | {:error, atom()}
-  def fetch_key_selector(t, %KeySelector{} = key_selector) do
-    call(t, {:get_key_selector, key_selector}, :infinity)
-  end
-
-  @spec fetch_key_selector!(transaction(), KeySelector.t()) :: {resolved_key :: key(), value()}
-  def fetch_key_selector!(t, %KeySelector{} = key_selector) do
-    case fetch_key_selector(t, key_selector) do
-      {:error, _} -> raise "KeySelector not found: #{inspect(key_selector)}"
-      {:ok, {resolved_key, value}} -> {resolved_key, value}
-    end
-  end
-
-  @spec get_key_selector(transaction(), KeySelector.t()) ::
-          nil | {resolved_key :: key(), value()}
-  def get_key_selector(t, %KeySelector{} = key_selector) do
-    case fetch_key_selector(t, key_selector) do
-      {:error, _} -> nil
-      {:ok, {resolved_key, value}} -> {resolved_key, value}
-    end
-  end
-
-  @spec range_fetch(transaction(), start_key :: key(), end_key :: key(), opts :: [limit: pos_integer()]) ::
-          {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
-  def range_fetch(t, start_key, end_key, opts \\ []) do
-    {:ok, t |> range_stream(start_key, end_key, opts) |> Enum.to_list()}
-  rescue
-    RuntimeError -> {:error, :unavailable}
-  end
-
-  @spec range_stream(
-          transaction(),
-          start_key :: key(),
-          end_key :: key(),
-          opts :: [
-            batch_size: pos_integer(),
-            timeout: pos_integer(),
-            limit: pos_integer(),
-            mode: :individual | :batch
-          ]
-        ) :: Enumerable.t({any(), any()})
-  def range_stream(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
+  @spec select(transaction(), KeySelector.t()) :: nil | {resolved_key :: key(), value()}
+  @spec select(transaction(), KeySelector.t(), opts :: keyword()) :: nil | {resolved_key :: key(), value()}
+  def select(t, %KeySelector{} = key_selector, opts \\ []),
+    do: call(t, {:get_key_selector, key_selector, opts}, :infinity)
 
   @spec range(
           transaction(),
@@ -90,47 +54,95 @@ defmodule Bedrock.Internal.Repo do
             batch_size: pos_integer(),
             timeout: pos_integer(),
             limit: pos_integer(),
-            mode: :individual | :batch
+            mode: :individual | :batch,
+            snapshot: boolean()
           ]
         ) :: Enumerable.t({any(), any()})
   def range(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
 
-  @spec range_fetch_key_selectors(
+  @spec clear_range(
           transaction(),
-          start_selector :: KeySelector.t(),
-          end_selector :: KeySelector.t(),
-          opts :: [limit: pos_integer()]
-        ) ::
-          {:ok, [{key(), value()}]} | {:error, :not_supported | :unavailable | :timeout}
-  def range_fetch_key_selectors(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts \\ []) do
-    call(t, {:get_range_selectors, start_selector, end_selector, opts}, :infinity)
-  end
-
-  @spec range_stream_key_selectors(
-          transaction(),
-          start_selector :: KeySelector.t(),
-          end_selector :: KeySelector.t(),
+          start_key :: key(),
+          end_key :: key(),
           opts :: [
-            batch_size: pos_integer(),
-            timeout: pos_integer(),
-            limit: pos_integer(),
-            mode: :individual | :batch
+            no_write_conflict: boolean()
           ]
-        ) :: Enumerable.t({any(), any()})
-  def range_stream_key_selectors(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts \\ []) do
-    # For now, resolve and delegate to normal range_stream
-    # A more sophisticated implementation would handle KeySelector streaming directly
-    with {:ok, {resolved_start, _}} <- fetch_key_selector(t, start_selector),
-         {:ok, {resolved_end, _}} <- fetch_key_selector(t, end_selector) do
-      range_stream(t, resolved_start, resolved_end, opts)
-    else
-      _ -> raise RuntimeError, "Failed to resolve KeySelectors for streaming"
-    end
+        ) :: transaction()
+  def clear_range(t, start_key, end_key, opts \\ []) do
+    cast(t, {:clear_range, start_key, end_key, opts})
+    t
   end
 
-  @spec put(transaction(), key(), value()) :: transaction()
-  def put(t, key, value) do
-    cast(t, {:set_key, key, value})
+  @spec clear(transaction(), key()) :: transaction()
+  @spec clear(transaction(), key(), opts :: [no_write_conflict: boolean()]) :: transaction()
+  def clear(t, key, opts \\ []) do
+    cast(t, {:clear, key, opts})
+    t
+  end
+
+  @spec put(transaction(), key(), value(), opts :: [no_write_conflict: boolean()]) :: transaction()
+  def put(t, key, value, opts \\ []) do
+    cast(t, {:set_key, key, value, opts})
+    t
+  end
+
+  @spec add(transaction(), key(), integer()) :: transaction()
+  def add(t, key, value) do
+    cast(t, {:atomic, :add, key, value})
+    t
+  end
+
+  @spec min(transaction(), key(), integer()) :: transaction()
+  def min(t, key, value) do
+    cast(t, {:atomic, :min, key, value})
+    t
+  end
+
+  @spec max(transaction(), key(), integer()) :: transaction()
+  def max(t, key, value) do
+    cast(t, {:atomic, :max, key, value})
+    t
+  end
+
+  @spec bit_and(transaction(), key(), binary()) :: transaction()
+  def bit_and(t, key, value) do
+    cast(t, {:atomic, :bit_and, key, value})
+    t
+  end
+
+  @spec bit_or(transaction(), key(), binary()) :: transaction()
+  def bit_or(t, key, value) do
+    cast(t, {:atomic, :bit_or, key, value})
+    t
+  end
+
+  @spec bit_xor(transaction(), key(), binary()) :: transaction()
+  def bit_xor(t, key, value) do
+    cast(t, {:atomic, :bit_xor, key, value})
+    t
+  end
+
+  @spec byte_min(transaction(), key(), binary()) :: transaction()
+  def byte_min(t, key, value) do
+    cast(t, {:atomic, :byte_min, key, value})
+    t
+  end
+
+  @spec byte_max(transaction(), key(), binary()) :: transaction()
+  def byte_max(t, key, value) do
+    cast(t, {:atomic, :byte_max, key, value})
+    t
+  end
+
+  @spec append_if_fits(transaction(), key(), binary()) :: transaction()
+  def append_if_fits(t, key, value) do
+    cast(t, {:atomic, :append_if_fits, key, value})
+    t
+  end
+
+  @spec compare_and_clear(transaction(), key(), binary()) :: transaction()
+  def compare_and_clear(t, key, expected) do
+    cast(t, {:atomic, :compare_and_clear, key, expected})
     t
   end
 
@@ -138,9 +150,6 @@ defmodule Bedrock.Internal.Repo do
           {:ok, Bedrock.version()}
           | {:error, :unavailable | :timeout | :unknown}
   def commit(t, opts \\ []), do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
-
-  @spec rollback(transaction()) :: :ok
-  def rollback(t), do: cast(t, :rollback)
 
   @spec default_timeout_in_ms() :: pos_integer()
   def default_timeout_in_ms, do: 1_000

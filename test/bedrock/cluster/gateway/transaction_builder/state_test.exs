@@ -3,6 +3,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.Transaction
 
   describe "struct creation and defaults" do
     test "creates state with default values" do
@@ -15,7 +16,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert state.read_version_lease_expiration == nil
       assert state.commit_version == nil
 
-      assert Tx.commit(state.tx) == %{
+      assert state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) == %{
                mutations: [],
                write_conflicts: [],
                read_conflicts: {nil, []}
@@ -55,7 +56,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert length(state.stack) == 1
       [stacked_tx] = state.stack
 
-      assert Tx.commit(stacked_tx) == %{
+      assert stacked_tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) == %{
                mutations: [],
                write_conflicts: [],
                read_conflicts: {nil, []}
@@ -336,7 +337,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       updated_state = %{initial_state | tx: new_tx}
 
       assert updated_state.state == :valid
-      assert Tx.commit(updated_state.tx).mutations == [{:set, "key", "value"}]
+      binary_result = Tx.commit(updated_state.tx, nil)
+      {:ok, decoded} = Transaction.decode(binary_result)
+      assert decoded.mutations == [{:set, "key", "value"}]
     end
 
     test "state changes during commit operations" do

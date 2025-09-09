@@ -1,4 +1,18 @@
 defmodule Bedrock.DataPlane.TransactionTest do
+  @moduledoc """
+  Unit tests for Transaction encoding/decoding functionality.
+
+  These tests focus on specific examples and edge cases, complementing the
+  comprehensive property-based tests in `TransactionPropertyTest`.
+
+  For extensive property-based testing of the 16-bit instruction encoding
+  system, see `Bedrock.DataPlane.TransactionPropertyTest` which tests:
+  - Round-trip encoding properties for all mutation types
+  - Length encoding optimization across all valid ranges [0, 131071]
+  - Size optimization ensuring minimal encoding variants
+  - Error handling for invalid/corrupted data
+  - Streaming consistency and section extraction properties
+  """
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Transaction
@@ -269,7 +283,8 @@ defmodule Bedrock.DataPlane.TransactionTest do
       assert {:ok, ^version} = Transaction.commit_version(stamped)
 
       assert {:ok, decoded} = Transaction.decode(stamped)
-      assert decoded == transaction
+      expected_with_version = Map.put(transaction, :commit_version, version)
+      assert decoded == expected_with_version
     end
   end
 

@@ -235,7 +235,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.CommittingTest do
       assert result_state.stack == []
       assert result_state.state == :valid
 
-      commit_result = Tx.commit(result_state.tx)
+      binary_result = Tx.commit(result_state.tx, nil)
+      {:ok, commit_result} = Transaction.decode(binary_result)
       assert commit_result.mutations == [{:set, "current_write", "val"}]
     end
 

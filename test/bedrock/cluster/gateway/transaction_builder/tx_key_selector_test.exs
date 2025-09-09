@@ -2,6 +2,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx.KeySelectorTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.Transaction
 
   describe "merge_storage_read/3" do
     test "merges single key-value pair into transaction reads" do
@@ -152,14 +153,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx.KeySelectorTest do
         |> Tx.merge_storage_read("conflict_key", "conflict_value")
         |> Tx.set("write_key", "write_value")
 
-      # Commit without read_version to test conflict generation
-      committed = Tx.commit(tx)
+      # Commit with proper read_version since there are read conflicts
+      read_version = Bedrock.DataPlane.Version.from_integer(12_345)
+      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
       assert %{
                mutations: mutations,
                write_conflicts: write_conflicts,
-               # No read conflicts when read_version is nil
-               read_conflicts: {nil, []}
+               # Read conflicts should be present with proper read_version
+               read_conflicts: {^read_version, [{"conflict_key", "conflict_key\0"}]}
              } = committed
 
       # Check mutations include our write
@@ -176,12 +178,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx.KeySelectorTest do
         |> Tx.set("write_key", "write_value")
 
       # Commit with read_version to enable read conflict tracking
-      committed = Tx.commit(tx, 42)
+      read_version = <<0, 0, 0, 0, 0, 0, 0, 42>>
+      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
       assert %{
                mutations: _mutations,
                write_conflicts: _write_conflicts,
-               read_conflicts: {42, read_conflicts}
+               read_conflicts: {^read_version, read_conflicts}
              } = committed
 
       # Check read conflicts include individual keys and range
@@ -199,12 +202,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx.KeySelectorTest do
         |> Tx.merge_storage_range_read("range2_a", "range2_z", [])
         |> Tx.set("write_key2", "write_value2")
 
-      committed = Tx.commit(tx, 100)
+      read_version = <<0, 0, 0, 0, 0, 0, 0, 100>>
+      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
       assert %{
                mutations: mutations,
                write_conflicts: write_conflicts,
-               read_conflicts: {100, read_conflicts}
+               read_conflicts: {^read_version, read_conflicts}
              } = committed
 
       assert mutations == [

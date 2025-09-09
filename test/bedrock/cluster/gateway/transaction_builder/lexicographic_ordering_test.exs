@@ -2,6 +2,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
   use ExUnit.Case, async: true
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.DataPlane.Transaction
 
   describe "add_or_merge maintains lexicographic ordering" do
     test "inserting ranges in lexicographic order preserves order" do
@@ -120,7 +121,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         |> Tx.set("apple", "fruit")
         |> Tx.set("banana", "fruit")
 
-      %{write_conflicts: conflicts} = Tx.commit(tx)
+      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert conflicts == [
                {"apple", "apple\0"},
@@ -135,7 +136,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
       tx = then(Tx.new(), &%{&1 | reads: %{"zebra" => "animal", "apple" => "fruit", "banana" => "fruit"}})
 
       # out of order
-      %{read_conflicts: {^read_version, conflicts}} = Tx.commit(tx, read_version)
+      %{read_conflicts: {^read_version, conflicts}} =
+        tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
       assert conflicts == [
                {"apple", "apple\0"},
@@ -152,7 +154,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         |> Tx.clear_range("banana", "mango")
         |> Tx.set("apple", "fruit")
 
-      %{write_conflicts: conflicts} = Tx.commit(tx)
+      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       assert conflicts == [
                {"apple", "apple\0"},
@@ -171,7 +173,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         # overlaps both
         |> Tx.clear_range("d", "n")
 
-      %{write_conflicts: conflicts} = Tx.commit(tx)
+      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
 
       # All ranges should merge into one
       assert conflicts == [{"a", "p"}]

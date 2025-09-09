@@ -99,8 +99,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
     end
   end
 
-  defp range_from_batch([{min_key, _value} | rest]),
-    do: {min_key, rest |> List.last() |> elem(0) |> Key.next_key_after()}
+  defp range_from_batch([{min_key, _value} | rest]), do: {min_key, rest |> List.last() |> elem(0) |> Key.key_after()}
 
   defp range_from_batch(_), do: raise("Batch results cannot be empty")
 end

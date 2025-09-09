@@ -86,63 +86,9 @@ defmodule Bedrock.Internal.Repo do
     t
   end
 
-  @spec add(transaction(), key(), integer()) :: transaction()
-  def add(t, key, value) do
-    cast(t, {:atomic, :add, key, value})
-    t
-  end
-
-  @spec min(transaction(), key(), integer()) :: transaction()
-  def min(t, key, value) do
-    cast(t, {:atomic, :min, key, value})
-    t
-  end
-
-  @spec max(transaction(), key(), integer()) :: transaction()
-  def max(t, key, value) do
-    cast(t, {:atomic, :max, key, value})
-    t
-  end
-
-  @spec bit_and(transaction(), key(), binary()) :: transaction()
-  def bit_and(t, key, value) do
-    cast(t, {:atomic, :bit_and, key, value})
-    t
-  end
-
-  @spec bit_or(transaction(), key(), binary()) :: transaction()
-  def bit_or(t, key, value) do
-    cast(t, {:atomic, :bit_or, key, value})
-    t
-  end
-
-  @spec bit_xor(transaction(), key(), binary()) :: transaction()
-  def bit_xor(t, key, value) do
-    cast(t, {:atomic, :bit_xor, key, value})
-    t
-  end
-
-  @spec byte_min(transaction(), key(), binary()) :: transaction()
-  def byte_min(t, key, value) do
-    cast(t, {:atomic, :byte_min, key, value})
-    t
-  end
-
-  @spec byte_max(transaction(), key(), binary()) :: transaction()
-  def byte_max(t, key, value) do
-    cast(t, {:atomic, :byte_max, key, value})
-    t
-  end
-
-  @spec append_if_fits(transaction(), key(), binary()) :: transaction()
-  def append_if_fits(t, key, value) do
-    cast(t, {:atomic, :append_if_fits, key, value})
-    t
-  end
-
-  @spec compare_and_clear(transaction(), key(), binary()) :: transaction()
-  def compare_and_clear(t, key, expected) do
-    cast(t, {:atomic, :compare_and_clear, key, expected})
+  @spec atomic(transaction(), atom(), key(), binary()) :: transaction()
+  def atomic(t, op, key, value) do
+    cast(t, {:atomic, op, key, value})
     t
   end
 

@@ -604,6 +604,21 @@ defmodule Bedrock.Repo do
   """
   @callback compare_and_clear(t(), Key.t(), expected :: binary()) :: t()
 
+  @doc """
+  Performs an atomic operation on a key with the provided value.
+
+  This is the low-level atomic operation interface. Most users should use the specific
+  atomic operation functions (add, min, max, etc.) instead of calling this directly.
+
+  ## Examples
+
+      # These are equivalent:
+      add(tx, "counter", 5)
+      atomic(tx, :add, "counter", <<5::64-little>>)
+
+  """
+  @callback atomic(t(), operation :: atom(), Key.t(), value :: binary()) :: t()
+
   defmacro __using__(opts) do
     cluster = Keyword.fetch!(opts, :cluster)
 
@@ -704,59 +719,62 @@ defmodule Bedrock.Repo do
       def add(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
 
-      def add(t, key, value), do: Repo.add(t, key, value)
+      def add(t, key, value), do: Repo.atomic(t, :add, key, <<value::64-little>>)
 
       @impl true
       def min(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
 
-      def min(t, key, value), do: Repo.min(t, key, value)
+      def min(t, key, value), do: Repo.atomic(t, :min, key, <<value::64-little>>)
 
       @impl true
       def max(t, key, value) when not is_binary(key) or not is_integer(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be integer")
 
-      def max(t, key, value), do: Repo.max(t, key, value)
+      def max(t, key, value), do: Repo.atomic(t, :max, key, <<value::64-little>>)
 
       @impl true
       def bit_and(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_and(t, key, value), do: Repo.bit_and(t, key, value)
+      def bit_and(t, key, value), do: Repo.atomic(t, :bit_and, key, value)
 
       @impl true
       def bit_or(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_or(t, key, value), do: Repo.bit_or(t, key, value)
+      def bit_or(t, key, value), do: Repo.atomic(t, :bit_or, key, value)
 
       @impl true
       def bit_xor(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_xor(t, key, value), do: Repo.bit_xor(t, key, value)
+      def bit_xor(t, key, value), do: Repo.atomic(t, :bit_xor, key, value)
 
       @impl true
       def byte_min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def byte_min(t, key, value), do: Repo.byte_min(t, key, value)
+      def byte_min(t, key, value), do: Repo.atomic(t, :byte_min, key, value)
 
       @impl true
       def byte_max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def byte_max(t, key, value), do: Repo.byte_max(t, key, value)
+      def byte_max(t, key, value), do: Repo.atomic(t, :byte_max, key, value)
 
       @impl true
-      def append_if_fits(t, key, value), do: Repo.append_if_fits(t, key, value)
+      def append_if_fits(t, key, value), do: Repo.atomic(t, :append_if_fits, key, value)
 
       @impl true
       def compare_and_clear(t, key, expected)
           when not is_binary(key) or not is_binary(expected) or byte_size(key) > 16_384,
           do: raise(ArgumentError, "key must be binary and no larger than 16KiB, expected must be binary")
 
-      def compare_and_clear(t, key, expected), do: Repo.compare_and_clear(t, key, expected)
+      def compare_and_clear(t, key, expected), do: Repo.atomic(t, :compare_and_clear, key, expected)
+
+      @impl true
+      defdelegate atomic(t, op, key, value), to: Repo
     end
   end
 end

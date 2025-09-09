@@ -85,7 +85,7 @@ defmodule Bedrock.Repo do
       transaction(fn tx ->
         # Add conflict on a counter key without reading it
         tx = add_read_conflict_key(tx, "global_counter")
-        
+
         # Do other operations that depend on the counter not changing
         put(tx, "dependent_data", compute_based_on_counter())
       end)
@@ -108,7 +108,7 @@ defmodule Bedrock.Repo do
       transaction(fn tx ->
         # Reserve the entire user namespace
         tx = add_write_conflict_range(tx, "user:", "user;")
-        
+
         # Now we can safely assume no other transaction is modifying users
         put(tx, "user:123", user_data)
       end)
@@ -250,7 +250,7 @@ defmodule Bedrock.Repo do
       transaction(fn tx ->
         # Clear all user data using key range
         clear_range(tx, "user:", "user;")
-        
+
         # Clear using subspace
         user_space = Subspace.new("users")
         clear_range(tx, user_space)
@@ -341,8 +341,9 @@ defmodule Bedrock.Repo do
   @doc """
   Atomically adds a value to the existing integer stored at the given key.
 
-  If the key does not exist, it is treated as having an initial value of 0. The value must be a 64-bit signed
-  integer. If the existing value is not a 64-bit signed integer, it will be treated as 0 for the computation.
+  If the key does not exist, it is treated as having an initial value of 0. The value must be an integer
+  (which will be encoded as little-endian binary). Existing values are interpreted as variable-length
+  little-endian integers, with empty binaries treated as 0 for the computation.
 
   This operation is performed atomically at the storage layer, providing
   strong consistency guarantees even under high contention.
@@ -375,8 +376,9 @@ defmodule Bedrock.Repo do
   Atomically sets the key to the minimum of the existing value and the provided value.
 
   If the key does not exist, it is treated as having an initial value of 0, so the result will be
-  `min(0, value)`. The value must be a 64-bit signed integer. If the existing value is not a 64-bit
-  signed integer, it will be treated as 0 for the computation.
+  `min(0, value)`. The value must be an integer (which will be encoded as little-endian binary).
+  Existing values are interpreted as variable-length little-endian integers, with empty binaries
+  treated as 0 for the computation.
 
   This operation is performed atomically at the storage layer, providing
   strong consistency guarantees even under high contention.
@@ -409,8 +411,9 @@ defmodule Bedrock.Repo do
   Atomically sets the key to the maximum of the existing value and the provided value.
 
   If the key does not exist, it is treated as having an initial value of 0, so the result will be
-  `max(0, value)`. The value must be a 64-bit signed integer. If the existing value is not a 64-bit
-  signed integer, it will be treated as 0 for the computation.
+  `max(0, value)`. The value must be an integer (which will be encoded as little-endian binary).
+  Existing values are interpreted as variable-length little-endian integers, with empty binaries
+  treated as 0 for the computation.
 
   This operation is performed atomically at the storage layer, providing
   strong consistency guarantees even under high contention.

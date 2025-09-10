@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
@@ -36,24 +36,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         storage_teams: []
       }
 
-      context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
-        |> with_multiple_nodes()
-        |> with_mocked_service_locking()
-        |> with_mocked_worker_creation()
-        |> with_mocked_supervision()
-        |> with_mocked_transactions()
-        |> with_mocked_log_recovery()
-        |> with_mocked_worker_management()
+      context = create_full_mocked_context(available_services, old_transaction_system_layout)
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
-      {_validated_attempt, validation_next_phase} =
-        TSLValidationPhase.execute(recovery_attempt, context)
-
       # Should proceed to LockingPhase since TSL validation passed
-      assert validation_next_phase == LockingPhase
+      assert {_validated_attempt, LockingPhase} =
+               TSLValidationPhase.execute(recovery_attempt, context)
     end
 
     test "epoch 2: only old system services locked initially" do
@@ -87,18 +75,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
-        |> with_multiple_nodes()
+        available_services
+        |> create_basic_context(old_transaction_system_layout)
         |> with_mocked_service_locking()
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
-      {_validated_attempt, validation_next_phase} =
-        TSLValidationPhase.execute(recovery_attempt, context)
-
       # Should proceed to LockingPhase since TSL validation passed
-      assert validation_next_phase == LockingPhase
+      assert {_validated_attempt, LockingPhase} =
+               TSLValidationPhase.execute(recovery_attempt, context)
     end
 
     test "log recruitment phase should lock newly assigned services" do
@@ -131,19 +115,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         storage_teams: []
       }
 
-      context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
-        |> with_multiple_nodes()
-        |> with_mocked_service_locking_that_tracks_calls()
+      context = create_tracking_context(available_services, old_transaction_system_layout)
 
       # Execute log recruitment phase
-      {result, next_phase} = LogRecruitmentPhase.execute(recovery_attempt, context)
+      # Should have recruited kilvu2af and proceed to StorageRecruitmentPhase
+      assert {%{transaction_services: transaction_services}, StorageRecruitmentPhase} =
+               LogRecruitmentPhase.execute(recovery_attempt, context)
 
-      # Should have recruited kilvu2af and added it to transaction_services
-      assert next_phase == StorageRecruitmentPhase
-      assert "kilvu2af" in Map.keys(result.transaction_services)
+      assert "kilvu2af" in Map.keys(transaction_services)
 
       # Most importantly: kilvu2af should have been locked during recruitment
       locked_services = get_locked_services_from_context(context)
@@ -185,19 +164,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"]}]
       }
 
-      context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
-        |> with_multiple_nodes()
-        |> with_mocked_service_locking_that_tracks_calls()
+      context = create_tracking_context(available_services, old_transaction_system_layout)
 
       # Execute storage recruitment phase
-      {result, next_phase} = StorageRecruitmentPhase.execute(recovery_attempt, context)
+      # Should have recruited ukawgc4e and proceed to LogReplayPhase
+      assert {%{transaction_services: transaction_services}, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase} =
+               StorageRecruitmentPhase.execute(recovery_attempt, context)
 
-      # Should have recruited ukawgc4e and added it to transaction_services
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
-      assert "ukawgc4e" in Map.keys(result.transaction_services)
+      assert "ukawgc4e" in Map.keys(transaction_services)
 
       # Most importantly: ukawgc4e should have been locked during recruitment
       # and gb6cddk5 should NOT have been locked again (excluded from recruitment)
@@ -236,23 +210,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"], key_range: {"", :end}}]
       }
 
-      context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
-        |> with_multiple_nodes()
-        |> with_mocked_service_locking_that_tracks_calls()
+      context = create_tracking_context(available_services, old_transaction_system_layout)
 
-      # 1. Test selective locking phase
-      {lock_result, _next_phase} = LockingPhase.execute(recovery_attempt, context)
+      # 1. Test selective locking phase - should lock only old system services
+      assert {lock_result, _next_phase} = LockingPhase.execute(recovery_attempt, context)
 
-      # Should lock only old system services
       assert lock_result.locked_service_ids == MapSet.new(["bwecaxvz", "gb6cddk5"])
       assert lock_result.transaction_services |> Map.keys() |> Enum.sort() == ["bwecaxvz", "gb6cddk5"]
 
       # Services should have proper status format
-      assert %{status: {:up, _}, kind: :log} = lock_result.transaction_services["bwecaxvz"]
-      assert %{status: {:up, _}, kind: :storage} = lock_result.transaction_services["gb6cddk5"]
+      assert_service_has_proper_format(lock_result.transaction_services, "bwecaxvz", :log)
+      assert_service_has_proper_format(lock_result.transaction_services, "gb6cddk5", :storage)
 
       # 2. Test log recruitment phase
       log_recovery_attempt = %{
@@ -260,11 +228,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         | logs: %{{:vacancy, 1} => [0, 1]}
       }
 
-      {log_result, _next_phase} = LogRecruitmentPhase.execute(log_recovery_attempt, context)
-
       # Should recruit kilvu2af (excluding bwecaxvz from old system)
+      assert {log_result, _next_phase} =
+               LogRecruitmentPhase.execute(log_recovery_attempt, context)
+
       assert "kilvu2af" in Map.keys(log_result.transaction_services)
-      assert %{status: {:up, _}, kind: :log} = log_result.transaction_services["kilvu2af"]
+      assert_service_has_proper_format(log_result.transaction_services, "kilvu2af", :log)
 
       # 3. Test storage recruitment phase
       storage_recovery_attempt = %{
@@ -272,33 +241,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         | storage_teams: [%{tag: 0, storage_ids: [{:vacancy, 1}]}]
       }
 
-      {storage_result, _next_phase} =
-        StorageRecruitmentPhase.execute(storage_recovery_attempt, context)
-
       # Should recruit ukawgc4e (excluding gb6cddk5 from old system)
+      assert {storage_result, _next_phase} =
+               StorageRecruitmentPhase.execute(storage_recovery_attempt, context)
+
       assert "ukawgc4e" in Map.keys(storage_result.transaction_services)
-      assert %{status: {:up, _}, kind: :storage} = storage_result.transaction_services["ukawgc4e"]
+      assert_service_has_proper_format(storage_result.transaction_services, "ukawgc4e", :storage)
 
       # Final verification: all services locked with proper format
-      locked_services = get_locked_services_from_context(context)
-      # old system log
-      assert "bwecaxvz" in locked_services
-      # old system storage
-      assert "gb6cddk5" in locked_services
-      # recruited log
-      assert "kilvu2af" in locked_services
-      # recruited storage
-      assert "ukawgc4e" in locked_services
+      assert_services_locked(context, ["bwecaxvz", "gb6cddk5", "kilvu2af", "ukawgc4e"])
 
       # Verify all services have the required fields for persistence phase
       final_services = storage_result.transaction_services
       assert map_size(final_services) == 4
 
       Enum.each(final_services, fn {_id, service} ->
-        assert Map.has_key?(service, :status)
-        assert Map.has_key?(service, :kind)
-        assert Map.has_key?(service, :last_seen)
-        assert match?({:up, _}, service.status)
+        assert %{status: {:up, _}, kind: _, last_seen: _} = service
       end)
     end
   end
@@ -347,22 +305,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         "slow_storage" => {:storage, {:slow_storage, :node2}}
       }
 
+      old_layout = %{
+        logs: %{"slow_log" => [0, 1]},
+        storage_teams: [%{storage_ids: ["slow_storage"]}]
+      }
+
       context =
-        create_test_context()
-        |> Map.put(:available_services, available_services)
-        |> Map.put(:old_transaction_system_layout, %{
-          logs: %{"slow_log" => [0, 1]},
-          storage_teams: [%{storage_ids: ["slow_storage"]}]
-        })
+        available_services
+        |> create_basic_context(old_layout)
         |> Map.put(:lock_service_fn, mock_lock_service_fn)
-        |> with_multiple_nodes()
 
-      # Execute locking phase - this will use Task.async_stream internally
-      {lock_phase_result, next_phase} = LockingPhase.execute(recovery_attempt, context)
+      # Execute locking phase - should successfully lock both services despite slow operations
+      assert {%{locked_service_ids: locked_ids, transaction_services: services}, next_phase} =
+               LockingPhase.execute(recovery_attempt, context)
 
-      # Should successfully lock both services despite slow operations
-      assert lock_phase_result.locked_service_ids == MapSet.new(["slow_log", "slow_storage"])
-      assert map_size(lock_phase_result.transaction_services) == 2
+      assert locked_ids == MapSet.new(["slow_log", "slow_storage"])
+      assert map_size(services) == 2
       # Should proceed to the next phase in the recovery sequence
       assert is_atom(next_phase)
 
@@ -440,6 +398,43 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   defp match_service_location(desc_location, target_location, id) do
     if desc_location == target_location, do: id
+  end
+
+  # Common context setup helpers
+  defp create_basic_context(available_services, old_layout) do
+    create_test_context()
+    |> Map.put(:available_services, available_services)
+    |> Map.put(:old_transaction_system_layout, old_layout)
+    |> with_multiple_nodes()
+  end
+
+  defp create_full_mocked_context(available_services, old_layout) do
+    available_services
+    |> create_basic_context(old_layout)
+    |> with_mocked_service_locking()
+    |> with_mocked_worker_creation()
+    |> with_mocked_supervision()
+    |> with_mocked_transactions()
+    |> with_mocked_log_recovery()
+    |> with_mocked_worker_management()
+  end
+
+  defp create_tracking_context(available_services, old_layout) do
+    available_services
+    |> create_basic_context(old_layout)
+    |> with_mocked_service_locking_that_tracks_calls()
+  end
+
+  # Service verification helpers
+  defp assert_service_has_proper_format(services, service_id, expected_kind) do
+    assert %{status: {:up, _}, kind: ^expected_kind, last_seen: _} = services[service_id]
+  end
+
+  defp assert_services_locked(context, expected_service_ids) do
+    locked_services = get_locked_services_from_context(context)
+
+    assert Enum.all?(expected_service_ids, &(&1 in locked_services)),
+           "Expected services #{inspect(expected_service_ids)} to be locked, got: #{inspect(locked_services)}"
   end
 
   # Reuse existing test helpers

@@ -1,4 +1,4 @@
-defmodule ConflictShardingGenerators do
+defmodule Bedrock.Test.Common.ConflictShardingGenerators do
   @moduledoc """
   StreamData generators for property testing the conflict sharding functionality.
 

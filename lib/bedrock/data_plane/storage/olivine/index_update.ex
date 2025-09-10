@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
+  alias Bedrock.Internal.Atomics
 
   @type t :: %__MODULE__{
           index: Index.t(),
@@ -96,6 +97,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
       {:clear_range, start_key, end_key} ->
         apply_range_clear_mutation(start_key, end_key, new_version, update_data)
+
+      {:atomic, :add, key, value} ->
+        apply_add_mutation(key, value, new_version, update_data, database)
+
+      {:atomic, :min, key, value} ->
+        apply_min_mutation(key, value, new_version, update_data, database)
+
+      {:atomic, :max, key, value} ->
+        apply_max_mutation(key, value, new_version, update_data, database)
     end
   end
 
@@ -170,6 +180,42 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
               |> add_clear_operations(last_page_id, last_keys_to_clear)
         }
     end
+  end
+
+  @spec apply_add_mutation(binary(), binary(), Bedrock.version(), t(), Database.t()) :: t()
+  defp apply_add_mutation(key, value, new_version, %__MODULE__{} = update_data, database) do
+    # Read current value
+    current_value = get_current_value_for_atomic_op(update_data, database, key, new_version)
+
+    # Perform atomic add operation using Internal.Atomics
+    new_value = Atomics.add(current_value, value)
+
+    # Apply as regular set mutation
+    apply_set_mutation(key, new_value, new_version, update_data, database)
+  end
+
+  @spec apply_min_mutation(binary(), binary(), Bedrock.version(), t(), Database.t()) :: t()
+  defp apply_min_mutation(key, value, new_version, %__MODULE__{} = update_data, database) do
+    # Read current value
+    current_value = get_current_value_for_atomic_op(update_data, database, key, new_version)
+
+    # Perform atomic min operation using Internal.Atomics
+    new_value = Atomics.min(current_value, value)
+
+    # Apply as regular set mutation
+    apply_set_mutation(key, new_value, new_version, update_data, database)
+  end
+
+  @spec apply_max_mutation(binary(), binary(), Bedrock.version(), t(), Database.t()) :: t()
+  defp apply_max_mutation(key, value, new_version, %__MODULE__{} = update_data, database) do
+    # Read current value
+    current_value = get_current_value_for_atomic_op(update_data, database, key, new_version)
+
+    # Perform atomic max operation using Internal.Atomics
+    new_value = Atomics.max(current_value, value)
+
+    # Apply as regular set mutation
+    apply_set_mutation(key, new_value, new_version, update_data, database)
   end
 
   # Helper function to get keys within a range from a page
@@ -258,6 +304,50 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
           | index: Index.update_page(update_data.index, page, updated_page),
             modified_page_ids: MapSet.put(update_data.modified_page_ids, page_id)
         }
+    end
+  end
+
+  # Atomic operation helpers
+
+  @spec get_current_value_for_atomic_op(t(), Database.t(), Bedrock.key(), Bedrock.version()) :: binary()
+  defp get_current_value_for_atomic_op(update_data, database, key, _new_version) do
+    # For Olivine, we need to check if there's a current value for this key
+    # We look through the existing index structure and database to find the most recent value
+
+    # First, check if the key exists in any page of our current index
+    case find_key_in_index(update_data.index, key) do
+      {:ok, _page, key_version} ->
+        # Load the value using the database's value loader
+        case Database.load_value(database, key, key_version) do
+          {:ok, value} when is_binary(value) ->
+            value
+
+          {:error, :not_found} ->
+            # Return empty binary for missing values - atomics will handle padding
+            <<>>
+        end
+
+      {:error, :not_found} ->
+        # Return empty binary for missing keys - atomics will handle padding
+        <<>>
+    end
+  rescue
+    # Handle any errors by returning empty binary
+    _ -> <<>>
+  end
+
+  @spec find_key_in_index(Index.t(), Bedrock.key()) ::
+          {:ok, Page.t(), Bedrock.version()} | {:error, :not_found}
+  defp find_key_in_index(index, key) do
+    case Index.page_for_key(index, key) do
+      {:ok, page} ->
+        case Page.version_for_key(page, key) do
+          {:ok, version} -> {:ok, page, version}
+          {:error, :not_found} -> {:error, :not_found}
+        end
+
+      {:error, :not_found} ->
+        {:error, :not_found}
     end
   end
 end

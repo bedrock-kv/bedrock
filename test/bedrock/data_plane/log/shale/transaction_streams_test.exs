@@ -3,17 +3,26 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
 
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  # Helper functions for common test setup
+  defp create_test_transaction(version, data) do
+    TransactionTestSupport.new_log_transaction(Version.from_integer(version), data)
+  end
+
+  defp create_test_segment(path, min_version, transactions \\ nil) do
+    %Segment{
+      path: path,
+      min_version: Version.from_integer(min_version),
+      transactions: transactions
+    }
+  end
 
   describe "TransactionStreams.from_segments/2 with unloaded segments" do
     test "handles nil transactions gracefully without enumerable protocol errors" do
       # Create a segment with nil transactions (simulating unloaded state)
-      segment = %Segment{
-        path: "nonexistent_path_for_test",
-        min_version: Version.from_integer(1),
-        transactions: nil
-      }
+      segment = create_test_segment("nonexistent_path_for_test", 1)
 
       # Before the fix, this would crash with:
       # "protocol Enumerable not implemented for type Atom. Got value: nil"
@@ -31,34 +40,18 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
 
     test "processes segments with pre-loaded transactions correctly" do
       # Create a segment with pre-loaded transactions (reversed order as stored)
-      transaction_1 =
-        TransactionTestSupport.new_log_transaction(Version.from_integer(1), %{
-          "key1" => "value1"
-        })
+      transaction_1 = create_test_transaction(1, %{"key1" => "value1"})
+      transaction_2 = create_test_transaction(2, %{"key2" => "value2"})
 
-      transaction_2 =
-        TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
-          "key2" => "value2"
-        })
-
-      segment = %Segment{
-        path: "test_path",
-        min_version: Version.from_integer(1),
-        transactions: [transaction_2, transaction_1]
-      }
+      segment = create_test_segment("test_path", 1, [transaction_2, transaction_1])
 
       # This should work normally
-      result = TransactionStreams.from_segments([segment], Version.from_integer(1))
+      assert {:ok, stream} = TransactionStreams.from_segments([segment], Version.from_integer(1))
 
-      assert {:ok, stream} = result
-
-      # Convert stream to list to verify content
-      transactions = Enum.to_list(stream)
-      assert length(transactions) == 1
-      # The stream returns the remaining transactions after the target version
+      # Convert stream to list to verify content - should get remaining transactions after target version
       # Since target_version=1 matches the first transaction, we get the rest
-      assert TransactionTestSupport.extract_log_version(hd(transactions)) ==
-               Version.from_integer(2)
+      assert [transaction] = Enum.to_list(stream)
+      assert TransactionTestSupport.extract_log_version(transaction) == Version.from_integer(2)
     end
   end
 end

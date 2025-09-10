@@ -4,92 +4,88 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
   alias Bedrock.ControlPlane.Coordinator.Durability
   alias Bedrock.ControlPlane.Coordinator.State
 
-  describe "service directory processing" do
-    test "process_command handles register_services" do
-      initial_state = %State{
-        service_directory: %{},
-        director: :unavailable
-      }
+  # Helper function to create initial state
+  defp initial_state(service_directory \\ %{}) do
+    %State{service_directory: service_directory, director: :unavailable}
+  end
 
+  describe "register_services command" do
+    test "registers multiple services to empty directory" do
       services = [
         {"service_1", :storage, {:worker1, :node1@host}},
         {"service_2", :log, {:worker2, :node2@host}}
       ]
 
       command = {:register_services, %{services: services}}
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(initial_state(), command)
 
-      expected_directory = %{
-        "service_1" => {:storage, {:worker1, :node1@host}},
-        "service_2" => {:log, {:worker2, :node2@host}}
-      }
-
-      assert result_state.service_directory == expected_directory
+      assert %State{
+               service_directory: %{
+                 "service_1" => {:storage, {:worker1, :node1@host}},
+                 "service_2" => {:log, {:worker2, :node2@host}}
+               }
+             } = result_state
     end
 
-    test "process_command handles register_services with existing services" do
-      initial_state = %State{
-        service_directory: %{
-          "existing_service" => {:storage, {:existing_worker, :existing_node@host}}
-        },
-        director: :unavailable
+    test "adds new service to existing directory" do
+      existing_directory = %{
+        "existing_service" => {:storage, {:existing_worker, :existing_node@host}}
       }
 
       services = [{"new_service", :log, {:new_worker, :new_node@host}}]
       command = {:register_services, %{services: services}}
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(initial_state(existing_directory), command)
 
-      expected_directory = %{
-        "existing_service" => {:storage, {:existing_worker, :existing_node@host}},
-        "new_service" => {:log, {:new_worker, :new_node@host}}
-      }
-
-      assert result_state.service_directory == expected_directory
+      assert %State{
+               service_directory: %{
+                 "existing_service" => {:storage, {:existing_worker, :existing_node@host}},
+                 "new_service" => {:log, {:new_worker, :new_node@host}}
+               }
+             } = result_state
     end
 
-    test "process_command handles register_services overwrites existing service" do
-      initial_state = %State{
-        service_directory: %{"service_1" => {:storage, {:old_worker, :old_node@host}}},
-        director: :unavailable
-      }
+    test "overwrites existing service with same id" do
+      existing_directory = %{"service_1" => {:storage, {:old_worker, :old_node@host}}}
 
       services = [{"service_1", :log, {:new_worker, :new_node@host}}]
       command = {:register_services, %{services: services}}
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(initial_state(existing_directory), command)
 
-      expected_directory = %{"service_1" => {:log, {:new_worker, :new_node@host}}}
-      assert result_state.service_directory == expected_directory
+      assert %State{
+               service_directory: %{"service_1" => {:log, {:new_worker, :new_node@host}}}
+             } = result_state
     end
+  end
 
-    test "process_command handles deregister_services" do
-      initial_state = %State{
-        service_directory: %{
-          "service_1" => {:storage, {:worker1, :node1@host}},
-          "service_2" => {:log, {:worker2, :node2@host}}
-        },
-        director: :unavailable
+  describe "deregister_services command" do
+    test "removes specified service from directory" do
+      existing_directory = %{
+        "service_1" => {:storage, {:worker1, :node1@host}},
+        "service_2" => {:log, {:worker2, :node2@host}}
       }
 
       command = {:deregister_services, %{service_ids: ["service_1"]}}
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(initial_state(existing_directory), command)
 
-      expected_directory = %{"service_2" => {:log, {:worker2, :node2@host}}}
-      assert result_state.service_directory == expected_directory
+      assert %State{
+               service_directory: %{"service_2" => {:log, {:worker2, :node2@host}}}
+             } = result_state
     end
 
-    test "process_command handles deregister_services with non-existent service" do
-      initial_state = %State{
-        service_directory: %{"service_1" => {:storage, {:worker, :node@host}}},
-        director: :unavailable
-      }
+    test "ignores non-existent service ids" do
+      existing_directory = %{"service_1" => {:storage, {:worker, :node@host}}}
 
       command = {:deregister_services, %{service_ids: ["non_existent"]}}
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(initial_state(existing_directory), command)
 
-      assert result_state.service_directory == %{"service_1" => {:storage, {:worker, :node@host}}}
+      assert %State{
+               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+             } = result_state
     end
+  end
 
-    test "process_command does not automatically notify director when services change" do
+  describe "director notifications" do
+    test "does not automatically notify director when services change" do
       director_pid =
         spawn(fn ->
           receive do
@@ -101,36 +97,32 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
           end
         end)
 
-      initial_state = %State{
-        service_directory: %{},
-        director: director_pid
-      }
-
+      test_state = %State{service_directory: %{}, director: director_pid}
       services = [{"service_1", :storage, {:worker, :node@host}}]
       command = {:register_services, %{services: services}}
 
       # Process the command (this should NOT send notification)
-      result_state = Durability.process_command(initial_state, command)
+      result_state = Durability.process_command(test_state, command)
 
       # Verify the service was added but no notification was sent
-      assert result_state.service_directory == %{"service_1" => {:storage, {:worker, :node@host}}}
+      assert %State{
+               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+             } = result_state
 
       # Give director process time to fail if notification was sent
       Process.sleep(60)
     end
 
-    test "process_command does not crash when director is unavailable" do
-      initial_state = %State{
-        service_directory: %{},
-        director: :unavailable
-      }
-
+    test "does not crash when director is unavailable" do
       services = [{"service_1", :storage, {:worker, :node@host}}]
       command = {:register_services, %{services: services}}
 
       # This should not crash
-      result_state = Durability.process_command(initial_state, command)
-      assert result_state.service_directory == %{"service_1" => {:storage, {:worker, :node@host}}}
+      result_state = Durability.process_command(initial_state(), command)
+
+      assert %State{
+               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+             } = result_state
     end
   end
 end

@@ -60,12 +60,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   use GenServer
 
   import __MODULE__.Committing, only: [commit: 1]
-  import __MODULE__.PointReads, only: [get_key: 2, get_key_selector: 2]
-  import __MODULE__.Putting, only: [set_key: 3]
+  import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 2]
   import __MODULE__.RangeReads, only: [get_range: 4, get_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
 
+  alias __MODULE__.Tx
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
@@ -137,9 +137,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     end)
   end
 
-  def handle_call({:get, key}, _from, t) when is_binary(key) do
+  def handle_call({:get, key}, from, t) when is_binary(key) do
+    handle_call({:get, key, []}, from, t)
+  end
+
+  def handle_call({:get, key, opts}, _from, t) when is_binary(key) and is_list(opts) do
     t
-    |> get_key(key)
+    |> get_key(key, opts)
     |> then(fn
       {t, {:error, _} = error} -> reply(t, error, continue: :update_version_lease_if_needed)
       {t, {:ok, {^key, value}}} -> reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
@@ -173,7 +177,24 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @impl true
   def handle_cast({:set_key, key, value}, t) when is_binary(key) and is_binary(value),
-    do: t |> set_key(key, value) |> noreply()
+    do: noreply(%{t | tx: Tx.set(t.tx, key, value, [])})
+
+  def handle_cast({:set_key, key, nil, opts}, t) when is_binary(key), do: noreply(%{t | tx: Tx.clear(t.tx, key, opts)})
+
+  def handle_cast({:set_key, key, value, opts}, t) when is_binary(key) and is_binary(value),
+    do: noreply(%{t | tx: Tx.set(t.tx, key, value, opts)})
+
+  def handle_cast({:atomic, op, key, value}, t) when is_atom(op) and is_binary(key) and is_binary(value),
+    do: noreply(%{t | tx: Tx.atomic_operation(t.tx, key, op, value)})
+
+  def handle_cast({:clear_range, start_key, end_key, opts}, t) when is_binary(start_key) and is_binary(end_key),
+    do: noreply(%{t | tx: Tx.clear_range(t.tx, start_key, end_key, opts)})
+
+  def handle_cast({:add_read_conflict_key, key}, t) when is_binary(key),
+    do: noreply(%{t | tx: Tx.add_read_conflict_key(t.tx, key)})
+
+  def handle_cast({:add_write_conflict_range, start_key, end_key}, t) when is_binary(start_key) and is_binary(end_key),
+    do: noreply(%{t | tx: Tx.add_write_conflict_range(t.tx, start_key, end_key)})
 
   def handle_cast(:rollback, t) do
     t

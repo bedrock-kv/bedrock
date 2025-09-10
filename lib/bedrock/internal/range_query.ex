@@ -75,7 +75,7 @@ defmodule Bedrock.Internal.RangeQuery do
     new_state = %{
       state
       | current_batch: remaining_rows,
-        current_key: Bedrock.Key.next_key_after(key),
+        current_key: Bedrock.Key.key_after(key),
         items_returned: state.items_returned + 1,
         finished: remaining_rows == [] and not state.has_more
     }

@@ -9,64 +9,56 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
     @moduledoc false
   end
 
+  # Helper function to start sequencer server with common configuration
+  defp start_sequencer(initial_version, epoch \\ 1, otp_name \\ :test_sequencer) do
+    start_supervised!(
+      {Server,
+       [
+         cluster: TestCluster,
+         director: self(),
+         epoch: epoch,
+         last_committed_version: initial_version,
+         otp_name: otp_name
+       ]}
+    )
+  end
+
+  # Helper to get next commit version as integer
+  defp next_commit_version_int(pid) do
+    {:ok, _read, commit} = GenServer.call(pid, :next_commit_version)
+    Version.to_integer(commit)
+  end
+
+  # Helper to get next read version as integer
+  defp next_read_version_int(pid) do
+    {:ok, read} = GenServer.call(pid, :next_read_version)
+    Version.to_integer(read)
+  end
+
   describe "microsecond-based versioning" do
     test "versions progress based on monotonic time" do
       # Start with a known baseline
       initial_version = Version.from_integer(1000)
+      pid = start_sequencer(initial_version)
 
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             cluster: TestCluster,
-             director: self(),
-             epoch: 1,
-             last_committed_version: initial_version,
-             otp_name: :test_sequencer
-           ]}
-        )
-
-      # Get first version
-      {:ok, _read1, commit1} = GenServer.call(pid, :next_commit_version)
-      commit1_int = Version.to_integer(commit1)
-
-      # Version should be >= baseline + 1 (time has passed since init)
+      # Get first version - should be >= baseline + 1 (time has passed since init)
+      commit1_int = next_commit_version_int(pid)
       assert commit1_int >= 1001
 
       # Wait a bit to ensure time advances
       Process.sleep(1)
 
-      # Get second version
-      {:ok, _read2, commit2} = GenServer.call(pid, :next_commit_version)
-      commit2_int = Version.to_integer(commit2)
-
-      # Second version should be larger (time advanced)
+      # Get second version - should be larger (time advanced)
+      commit2_int = next_commit_version_int(pid)
       assert commit2_int > commit1_int
-
-      GenServer.stop(pid)
     end
 
     test "versions always progress monotonically even with rapid requests" do
       initial_version = Version.from_integer(2000)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             cluster: TestCluster,
-             director: self(),
-             epoch: 1,
-             last_committed_version: initial_version,
-             otp_name: :test_sequencer
-           ]}
-        )
+      pid = start_sequencer(initial_version)
 
       # Make rapid requests
-      versions =
-        Enum.map(1..10, fn _ ->
-          {:ok, _read, commit} = GenServer.call(pid, :next_commit_version)
-          Version.to_integer(commit)
-        end)
+      versions = Enum.map(1..10, fn _ -> next_commit_version_int(pid) end)
 
       # All versions should be unique and increasing
       assert versions == Enum.sort(versions)
@@ -74,73 +66,37 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
 
       # Each version should advance by at least 1
       version_pairs = Enum.zip(versions, Enum.drop(versions, 1))
-
-      Enum.each(version_pairs, fn {v1, v2} ->
-        assert v2 > v1
-      end)
-
-      GenServer.stop(pid)
+      Enum.each(version_pairs, fn {v1, v2} -> assert v2 > v1 end)
     end
 
     test "initialization preserves baseline from previous epoch" do
       # Simulate recovery with large version from previous epoch
       previous_epoch_version = Version.from_integer(1_000_000)
+      pid = start_sequencer(previous_epoch_version, 2, :test_sequencer_epoch2)
 
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             cluster: TestCluster,
-             director: self(),
-             epoch: 2,
-             last_committed_version: previous_epoch_version,
-             otp_name: :test_sequencer_epoch2
-           ]}
-        )
-
-      # First version should be >= previous epoch version
-      {:ok, _read, commit} = GenServer.call(pid, :next_commit_version)
-      commit_int = Version.to_integer(commit)
-
+      # First version should be >= previous epoch version + 1
+      commit_int = next_commit_version_int(pid)
       assert commit_int >= 1_000_001
-
-      GenServer.stop(pid)
     end
 
     test "read versions track committed versions correctly" do
       initial_version = Version.from_integer(5000)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             cluster: TestCluster,
-             director: self(),
-             epoch: 1,
-             last_committed_version: initial_version,
-             otp_name: :test_sequencer
-           ]}
-        )
+      pid = start_sequencer(initial_version)
 
       # Initial read version should be the baseline
-      {:ok, read_v1} = GenServer.call(pid, :next_read_version)
-      assert Version.to_integer(read_v1) == 5000
+      assert next_read_version_int(pid) == 5000
 
       # Get a commit version
-      {:ok, _last, commit_v1} = GenServer.call(pid, :next_commit_version)
+      assert {:ok, _last, commit_v1} = GenServer.call(pid, :next_commit_version)
 
       # Read version should still be baseline (commit not reported yet)
-      {:ok, read_v2} = GenServer.call(pid, :next_read_version)
-      assert Version.to_integer(read_v2) == 5000
+      assert next_read_version_int(pid) == 5000
 
       # Report the commit
-      :ok = GenServer.call(pid, {:report_successful_commit, commit_v1})
+      assert :ok = GenServer.call(pid, {:report_successful_commit, commit_v1})
 
-      # Now read version should advance
-      {:ok, read_v3} = GenServer.call(pid, :next_read_version)
-      assert Version.to_integer(read_v3) == Version.to_integer(commit_v1)
-
-      GenServer.stop(pid)
+      # Now read version should advance to match the committed version
+      assert next_read_version_int(pid) == Version.to_integer(commit_v1)
     end
   end
 end

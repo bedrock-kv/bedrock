@@ -3,85 +3,69 @@ defmodule Bedrock.ControlPlane.Coordinator.CommandsTest do
 
   alias Bedrock.ControlPlane.Coordinator.Commands
 
+  # Test data
+  @valid_services [
+    {"service_1", :storage, {:worker1, :node1@host}},
+    {"service_2", :log, {:worker2, :node2@host}}
+  ]
+
+  @valid_service_ids ["service_1", "service_2"]
+
   describe "register_services/1" do
     test "creates valid register_services command" do
-      services = [
-        {"service_1", :storage, {:worker1, :node1@host}},
-        {"service_2", :log, {:worker2, :node2@host}}
-      ]
-
-      command = Commands.register_services(services)
-
-      assert {:register_services, %{services: ^services}} = command
+      assert {:register_services, %{services: @valid_services}} =
+               Commands.register_services(@valid_services)
     end
 
-    test "validates service info format" do
-      # Valid service info
+    test "accepts valid service info format" do
       assert {:register_services, _} =
                Commands.register_services([{"svc", :storage, {:worker, :node@host}}])
+    end
 
-      # Invalid service ID (not string)
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{:invalid_id, :storage, {:worker, :node@host}}])
-      end
+    test "rejects invalid service info with descriptive errors" do
+      invalid_services = [
+        {[:invalid_id, :storage, {:worker, :node@host}], "service ID must be string"},
+        {["service", "invalid_kind", {:worker, :node@host}], "kind must be atom"},
+        {["service", :storage, "invalid_ref"], "worker ref must be {name, node} tuple"},
+        {["service", :storage, {"invalid_name", :node@host}], "worker name must be atom"},
+        {["service", :storage, {:worker, "invalid_node"}], "worker node must be atom"},
+        {["service", :storage], "incomplete service tuple"}
+      ]
 
-      # Invalid kind (not atom)
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{"service", "invalid_kind", {:worker, :node@host}}])
-      end
-
-      # Invalid worker ref (not {name, node})
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{"service", :storage, "invalid_ref"}])
-      end
-
-      # Invalid worker ref (name not atom)
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{"service", :storage, {"invalid_name", :node@host}}])
-      end
-
-      # Invalid worker ref (node not atom)
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{"service", :storage, {:worker, "invalid_node"}}])
-      end
-
-      # Invalid tuple structure
-      assert_raise ArgumentError, ~r/Invalid service info/, fn ->
-        Commands.register_services([{"service", :storage}])
+      for {service_list, _description} <- invalid_services do
+        assert_raise ArgumentError, ~r/Invalid service info/, fn ->
+          Commands.register_services([service_list])
+        end
       end
     end
 
     test "handles empty service list" do
-      command = Commands.register_services([])
-      assert {:register_services, %{services: []}} = command
+      assert {:register_services, %{services: []}} = Commands.register_services([])
     end
   end
 
   describe "deregister_services/1" do
     test "creates valid deregister_services command" do
-      service_ids = ["service_1", "service_2"]
-      command = Commands.deregister_services(service_ids)
-
-      assert {:deregister_services, %{service_ids: ^service_ids}} = command
+      assert {:deregister_services, %{service_ids: @valid_service_ids}} =
+               Commands.deregister_services(@valid_service_ids)
     end
 
-    test "validates service IDs are strings" do
-      # Valid service IDs
+    test "accepts valid service IDs" do
       assert {:deregister_services, _} = Commands.deregister_services(["service_1", "service_2"])
+    end
 
-      # Invalid service ID (not string)
-      assert_raise ArgumentError, ~r/Invalid service ID/, fn ->
-        Commands.deregister_services([:invalid_id])
-      end
+    test "rejects non-string service IDs" do
+      invalid_ids = [[:invalid_id], [123], [:atom, "mixed"]]
 
-      assert_raise ArgumentError, ~r/Invalid service ID/, fn ->
-        Commands.deregister_services([123])
+      for invalid_list <- invalid_ids do
+        assert_raise ArgumentError, ~r/Invalid service ID/, fn ->
+          Commands.deregister_services(invalid_list)
+        end
       end
     end
 
     test "handles empty service ID list" do
-      command = Commands.deregister_services([])
-      assert {:deregister_services, %{service_ids: []}} = command
+      assert {:deregister_services, %{service_ids: []}} = Commands.deregister_services([])
     end
   end
 end

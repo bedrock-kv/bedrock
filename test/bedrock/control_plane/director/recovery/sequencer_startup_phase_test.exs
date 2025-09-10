@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
   alias Bedrock.DataPlane.Sequencer.Server
@@ -13,36 +13,39 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
     def otp_name(:sequencer), do: :test_sequencer
   end
 
+  # Helper functions for common setup patterns
+  defp create_recovery_attempt(cluster, epoch, version_vector, sequencer \\ nil) do
+    recovery_attempt()
+    |> with_cluster(cluster)
+    |> with_epoch(epoch)
+    |> with_version_vector(version_vector)
+    |> with_sequencer(sequencer)
+  end
+
+  defp create_capture_agent do
+    {:ok, agent} = Agent.start_link(fn -> nil end)
+    agent
+  end
+
   describe "execute/1" do
     test "transitions to error state when sequencer creation fails" do
       # This test verifies that the phase properly handles failures
       # We can't easily mock the DynamicSupervisor call, but we can test
       # that the phase structure is correct for error handling
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_cluster(TestCluster)
-        |> with_epoch(1)
-        |> with_version_vector({0, 100})
-        |> with_sequencer(nil)
+      recovery_attempt = create_recovery_attempt(TestCluster, 1, {0, 100})
 
       # The actual execution will fail because TestCluster.otp_name(:sup)
       # doesn't point to a real supervisor, but now it should return an error
       # instead of exiting thanks to our try-catch fix
-      {result, next_phase_or_error} =
-        SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
-
-      # Should be error due to supervisor not existing - halts recovery
-      assert {:error, {:failed_to_start, :sequencer, _, {:supervisor_exit, _}}} =
-               next_phase_or_error
-
-      assert result.sequencer == nil
+      assert {%{sequencer: nil}, {:error, {:failed_to_start, :sequencer, _, {:supervisor_exit, _}}}} =
+               SequencerStartupPhase.execute(recovery_attempt, %{node_tracking: nil})
     end
   end
 
   describe "execute/1 with mocked starter functions" do
     test "transitions to next phase when sequencer starts successfully" do
-      agent = fn -> nil end |> Agent.start_link() |> elem(1)
+      agent = create_capture_agent()
       sequencer_pid = spawn(fn -> :ok end)
 
       start_supervised_fn = fn child_spec, node ->
@@ -50,35 +53,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
         {:ok, sequencer_pid}
       end
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_cluster(TestCluster)
-        |> with_epoch(42)
-        |> with_version_vector({10, 100})
-        |> with_sequencer(nil)
-
+      recovery_attempt = create_recovery_attempt(TestCluster, 42, {10, 100})
       context = %{start_supervised_fn: start_supervised_fn}
 
-      {result, next_phase} = SequencerStartupPhase.execute(recovery_attempt, context)
-
-      # Should transition to next phase
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
-      assert result.sequencer == sequencer_pid
+      # Should transition to next phase with sequencer set
+      assert {%{sequencer: ^sequencer_pid}, Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase} =
+               SequencerStartupPhase.execute(recovery_attempt, context)
 
       # Verify the child spec passed to start_supervised_fn
-      {captured_child_spec, captured_node} = Agent.get(agent, & &1)
+      assert {
+               %{
+                 id: {Server, TestCluster, 42},
+                 start: {GenServer, :start_link, [Server, {_director, 42, 100}, [name: :test_sequencer]]}
+               },
+               captured_node
+             } = Agent.get(agent, & &1)
 
       # Should be called on current node
       assert captured_node == node()
-
-      # Verify child spec has correct tuple-based ID format
-      assert %{id: {Server, TestCluster, 42}} = captured_child_spec
-
-      # Verify start args contain correct parameters
-      assert %{start: {GenServer, :start_link, [Server, start_args, opts]}} = captured_child_spec
-      # epoch 42, last_committed_version 100
-      assert {_director, 42, 100} = start_args
-      assert [name: :test_sequencer] = opts
     end
 
     test "returns error when starter function fails" do
@@ -86,45 +78,29 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
         {:error, :startup_failed}
       end
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_cluster(TestCluster)
-        |> with_epoch(1)
-        |> with_version_vector({0, 100})
-        |> with_sequencer(nil)
-
+      recovery_attempt = create_recovery_attempt(TestCluster, 1, {0, 100})
       context = %{start_supervised_fn: start_supervised_fn}
 
-      {result, error} = SequencerStartupPhase.execute(recovery_attempt, context)
-
-      assert {:error, {:failed_to_start, :sequencer, _, :startup_failed}} = error
-      assert result.sequencer == nil
+      assert {%{sequencer: nil}, {:error, {:failed_to_start, :sequencer, _, :startup_failed}}} =
+               SequencerStartupPhase.execute(recovery_attempt, context)
     end
 
     test "uses correct last committed version from version vector" do
-      agent = fn -> nil end |> Agent.start_link() |> elem(1)
+      agent = create_capture_agent()
 
       start_supervised_fn = fn child_spec, _node ->
         Agent.update(agent, fn _ -> child_spec end)
         {:ok, spawn(fn -> :ok end)}
       end
 
-      recovery_attempt =
-        recovery_attempt()
-        |> with_cluster(TestCluster)
-        |> with_epoch(5)
-        # last_committed_version should be 250
-        |> with_version_vector({25, 250})
-        |> with_sequencer(nil)
-
+      recovery_attempt = create_recovery_attempt(TestCluster, 5, {25, 250})
       context = %{start_supervised_fn: start_supervised_fn}
 
       {_result, _next_phase} = SequencerStartupPhase.execute(recovery_attempt, context)
 
-      captured_child_spec = Agent.get(agent, & &1)
-      assert %{start: {GenServer, :start_link, [_, start_args, _]}} = captured_child_spec
-      # epoch 5, last_committed_version 250
-      assert {_director, 5, 250} = start_args
+      # Verify epoch 5 and last_committed_version 250 are used
+      assert %{start: {GenServer, :start_link, [_, {_director, 5, 250}, _]}} =
+               Agent.get(agent, & &1)
     end
   end
 end

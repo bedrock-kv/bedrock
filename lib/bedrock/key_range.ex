@@ -12,6 +12,31 @@ defmodule Bedrock.KeyRange do
   @type t :: {Key.t(), Key.t() | :end}
 
   @doc """
+  Returns a range tuple {start, end} for all keys that start with the given prefix.
+
+  The end key is computed using `strinc/1` to create a tight upper bound,
+  ensuring the range includes only keys with the exact prefix.
+
+  ## Examples
+
+      iex> Bedrock.Key.from_prefix("user")
+      {"user", "uses"}
+
+      iex> Bedrock.Key.from_prefix("prefix/")
+      {"prefix/", "prefix0"}
+
+  ## Errors
+
+  Raises an `ArgumentError` if the prefix contains only 0xFF bytes.
+
+      iex> Bedrock.Key.from_prefix(<<0xFF>>)
+      ** (ArgumentError) Key must contain at least one byte not equal to 0xFF
+
+  """
+  @spec from_prefix(binary()) :: {binary(), binary()}
+  def from_prefix(prefix) when is_binary(prefix), do: {prefix, Key.strinc(prefix)}
+
+  @doc """
   Check if two key ranges overlap.
 
   Returns true if the ranges have any keys in common.

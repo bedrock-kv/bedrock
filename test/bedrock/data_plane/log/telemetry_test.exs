@@ -2,8 +2,10 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Telemetry
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  @base_metadata %{cluster: :test_cluster, id: "test_log", otp_name: :test_otp}
 
   setup do
     # Capture telemetry events
@@ -20,7 +22,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
     )
 
     # Set trace metadata for the process
-    Telemetry.trace_metadata(cluster: :test_cluster, id: "test_log", otp_name: :test_otp)
+    Telemetry.trace_metadata(@base_metadata)
 
     on_exit(fn ->
       :telemetry.detach("test-log-telemetry")
@@ -29,7 +31,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
     :ok
   end
 
-  describe "trace_push_transaction/2" do
+  describe "trace_push_transaction/1" do
     test "emits push telemetry event with correct data" do
       encoded_transaction =
         TransactionTestSupport.new_log_transaction(
@@ -39,13 +41,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
       Telemetry.trace_push_transaction(encoded_transaction)
 
-      assert_receive {:telemetry, [:bedrock, :log, :push], %{},
-                      %{
-                        cluster: :test_cluster,
-                        id: "test_log",
-                        otp_name: :test_otp,
-                        transaction: ^encoded_transaction
-                      }}
+      assert_telemetry_received([:bedrock, :log, :push], %{transaction: encoded_transaction})
     end
   end
 
@@ -56,15 +52,18 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
       Telemetry.trace_push_out_of_order(expected_version, current_version)
 
-      assert_receive {:telemetry, [:bedrock, :log, :push_out_of_order], %{},
-                      %{
-                        expected_version: ^expected_version,
-                        current_version: ^current_version,
-                        cluster: :test_cluster,
-                        id: "test_log",
-                        otp_name: :test_otp
-                      }}
+      assert_telemetry_received([:bedrock, :log, :push_out_of_order], %{
+        expected_version: expected_version,
+        current_version: current_version
+      })
     end
+  end
+
+  # Helper functions
+
+  defp assert_telemetry_received(event, extra_metadata) do
+    expected_metadata = Map.merge(@base_metadata, extra_metadata)
+    assert_receive {:telemetry, ^event, %{}, ^expected_metadata}
   end
 
   def handle_telemetry(event, measurements, metadata, test_pid) do

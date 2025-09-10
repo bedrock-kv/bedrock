@@ -46,8 +46,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
-  alias Bedrock.DataPlane.Storage.Olivine.PageTestHelpers
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
   # Generators
 
@@ -171,30 +171,24 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   property "tree maintains sorted order invariant" do
     check all(pages <- non_overlapping_pages_generator()) do
       if length(pages) > 0 do
-        tree =
-          Enum.reduce(pages, :gb_trees.empty(), fn page, tree_acc ->
-            if Page.empty?(page) do
-              tree_acc
-            else
-              Tree.add_page_to_tree(tree_acc, page)
-            end
-          end)
+        tree = build_tree_from_pages(pages)
 
         tree_entries = extract_tree_entries(tree)
 
         last_keys = Enum.map(tree_entries, fn {last_key, _} -> last_key end)
         assert length(last_keys) == length(Enum.uniq(last_keys)), "All tree keys should be unique"
 
-        Enum.each(tree_entries, fn {last_key, {_page_id, first_key}} ->
-          assert first_key <= last_key, "Page range should be valid: first_key <= last_key"
-        end)
+        # Validate all page ranges are valid (first_key <= last_key)
+        assert Enum.all?(tree_entries, fn {last_key, {_page_id, first_key}} -> first_key <= last_key end),
+               "All page ranges should be valid: first_key <= last_key"
 
-        Enum.each(pages, fn page ->
-          Enum.each(Page.keys(page), fn key ->
-            found_page_id = Tree.page_for_key(tree, key)
-            assert found_page_id == Page.id(page), "Key '#{key}' should find page #{Page.id(page)}"
-          end)
-        end)
+        # Verify all page keys can be found by tree search
+        assert Enum.all?(pages, fn page ->
+                 Enum.all?(Page.keys(page), fn key ->
+                   Tree.page_for_key(tree, key) == Page.id(page)
+                 end)
+               end),
+               "All keys should be found in their respective pages"
       end
     end
   end
@@ -202,19 +196,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   property "page_for_key returns correct page for keys in range" do
     check all(pages <- non_overlapping_pages_generator()) do
       if length(pages) > 0 do
-        tree =
-          Enum.reduce(pages, :gb_trees.empty(), fn page, tree_acc ->
-            Tree.add_page_to_tree(tree_acc, page)
-          end)
+        tree = build_tree_from_pages(pages)
 
-        Enum.each(pages, fn page ->
-          Enum.each(Page.keys(page), fn key ->
-            found_page_id = Tree.page_for_key(tree, key)
-
-            assert found_page_id == Page.id(page),
-                   "Key '#{key}' should be found in page #{Page.id(page)}, but found in #{inspect(found_page_id)}"
-          end)
-        end)
+        # Verify page_for_key returns correct page for each key
+        assert Enum.all?(pages, fn page ->
+                 Enum.all?(Page.keys(page), fn key ->
+                   Tree.page_for_key(tree, key) == Page.id(page)
+                 end)
+               end),
+               "All keys should map to their correct pages"
       end
     end
   end
@@ -225,17 +215,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
             test_key <- binary_key_generator()
           ) do
       if length(pages) > 0 do
-        tree =
-          Enum.reduce(pages, :gb_trees.empty(), fn page, tree_acc ->
-            Tree.add_page_to_tree(tree_acc, page)
-          end)
+        tree = build_tree_from_pages(pages)
 
         found_page_id = Tree.page_for_insertion(tree, test_key)
-        assert is_integer(found_page_id), "page_for_insertion should always return a page_id"
-        assert found_page_id >= 0, "page_id should be non-negative"
-
         page_ids = Enum.map(pages, &Page.id/1)
-        assert found_page_id in page_ids, "Returned page_id should exist in the tree"
+
+        assert is_integer(found_page_id) and found_page_id >= 0 and found_page_id in page_ids,
+               "page_for_insertion should return a valid non-negative page_id that exists in tree"
       end
     end
   end
@@ -243,10 +229,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   property "find_rightmost_page returns page with highest last_key" do
     check all(pages <- non_overlapping_pages_generator()) do
       if length(pages) > 0 do
-        tree =
-          Enum.reduce(pages, :gb_trees.empty(), fn page, tree_acc ->
-            Tree.add_page_to_tree(tree_acc, page)
-          end)
+        tree = build_tree_from_pages(pages)
 
         rightmost_page_id = Tree.find_rightmost_page(tree)
         assert is_integer(rightmost_page_id), "find_rightmost_page should return a page_id"
@@ -270,21 +253,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
       if not Page.empty?(page) do
         updated_page = Page.apply_operations(page, %{new_key => {:set, new_version}})
 
-        assert PageTestHelpers.keys_are_sorted(updated_page),
-               "Keys should remain sorted after insertion"
+        # Validate page invariants after operation
+        assert PageTestHelpers.keys_are_sorted(updated_page) and
+                 Page.key_count(updated_page) == length(Page.key_versions(updated_page)) and
+                 Page.has_key?(updated_page, new_key),
+               "Page should maintain sorted order, key/version count consistency, and contain new key"
 
-        assert Page.key_count(updated_page) == length(Page.key_versions(updated_page)),
-               "Number of keys and versions should match"
+        expected_count = if Page.has_key?(page, new_key), do: Page.key_count(page), else: Page.key_count(page) + 1
 
-        assert Page.has_key?(updated_page, new_key), "New key should be present in the page"
-
-        if Page.has_key?(page, new_key) do
-          assert Page.key_count(updated_page) == Page.key_count(page),
-                 "Page size shouldn't change when updating existing key"
-        else
-          assert Page.key_count(updated_page) == Page.key_count(page) + 1,
-                 "Page size should increase by 1 when adding new key"
-        end
+        assert Page.key_count(updated_page) == expected_count,
+               "Page size should be #{expected_count} after #{if Page.has_key?(page, new_key), do: "updating", else: "adding"} key"
       end
     end
   end
@@ -305,10 +283,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
         tree_entries = extract_tree_entries(updated_tree)
 
         if length(tree_entries) > 0 do
-          {last_key, {found_page_id, first_key}} = List.first(tree_entries)
-          assert found_page_id == Page.id(page), "Page ID should be preserved"
-          assert first_key == List.first(new_keys), "First key should be updated"
-          assert last_key == List.last(new_keys), "Last key should be updated"
+          expected_page_id = Page.id(page)
+          expected_first_key = List.first(new_keys)
+          expected_last_key = List.last(new_keys)
+
+          assert [{^expected_last_key, {^expected_page_id, ^expected_first_key}}] = tree_entries
         end
       end
     end
@@ -333,13 +312,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
 
           {left_page, right_page} = Page.split_page(oversized_page, mid_point, new_page_id)
 
-          assert not Page.empty?(left_page), "Left page should have keys"
-          assert not Page.empty?(right_page), "Right page should have keys"
-          assert Page.key_count(left_page) <= 256, "Left page should not exceed max size"
-          assert Page.key_count(right_page) <= 256, "Right page should not exceed max size"
+          # Validate both pages are non-empty and properly sized
+          refute Page.empty?(left_page), "Left page should have keys"
+          refute Page.empty?(right_page), "Right page should have keys"
 
-          assert PageTestHelpers.keys_are_sorted(left_page), "Left page keys should be sorted"
-          assert PageTestHelpers.keys_are_sorted(right_page), "Right page keys should be sorted"
+          assert Page.key_count(left_page) <= 256 and Page.key_count(right_page) <= 256,
+                 "Split pages should not exceed max size"
+
+          # Validate both pages maintain sorted order
+          assert PageTestHelpers.keys_are_sorted(left_page) and PageTestHelpers.keys_are_sorted(right_page),
+                 "Both split pages should maintain sorted key order"
 
           all_new_keys = Page.keys(left_page) ++ Page.keys(right_page)
           assert Enum.sort(all_new_keys) == Enum.sort(all_keys), "All keys should be preserved"
@@ -393,25 +375,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
         assert PageTestHelpers.keys_are_sorted(updated_page),
                "Keys should remain sorted after applying operations"
 
-        # Additional check: verify all keys are unique
+        # Verify key uniqueness and right_key consistency
         keys = Page.keys(updated_page)
+        assert length(keys) == length(Enum.uniq(keys)), "All keys should be unique"
 
-        assert length(keys) == length(Enum.uniq(keys)),
-               "All keys should be unique after applying operations"
-
-        # Critical check: verify right_key returns the actual last key
         if not Page.empty?(updated_page) do
-          expected_last_key = List.last(keys)
-          actual_last_key = Page.right_key(updated_page)
-
-          assert actual_last_key == expected_last_key,
-                 "right_key should return '#{expected_last_key}', but returned '#{actual_last_key}'"
+          assert Page.right_key(updated_page) == List.last(keys),
+                 "right_key should return the actual last key"
         end
       end
     end
   end
 
-  property "right_key works correctly after last key changes" do
+  property "right_key works correctly with key modifications and clears" do
     check all(
             page <- page_generator(),
             new_last_key <- binary_key_generator()
@@ -419,21 +395,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
       if not Page.empty?(page) do
         original_last_key = Page.right_key(page)
 
-        # Test case 1: Add a key that becomes the new last key
+        # Test adding a key that becomes the new last key
         if new_last_key > original_last_key do
-          operations = %{new_last_key => {:set, Version.from_integer(1)}}
-          updated_page = Page.apply_operations(page, operations)
+          updated_page = Page.apply_operations(page, %{new_last_key => {:set, Version.from_integer(1)}})
 
           assert Page.right_key(updated_page) == new_last_key,
-                 "After adding '#{new_last_key}', right_key should return it"
+                 "right_key should return new largest key '#{new_last_key}'"
         end
 
-        # Test case 2: Clear all keys
-        clear_operations =
-          page
-          |> Page.keys()
-          |> Map.new(&{&1, :clear})
-
+        # Test clearing all keys - should handle empty page gracefully
+        clear_operations = page |> Page.keys() |> Map.new(&{&1, :clear})
         cleared_page = Page.apply_operations(page, clear_operations)
 
         if Page.empty?(cleared_page) do
@@ -441,7 +412,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
           try do
             Page.right_key(cleared_page)
           rescue
-            e -> flunk("right_key should handle empty page, but raised: #{inspect(e)}")
+            e -> flunk("right_key should handle empty page gracefully, but raised: #{inspect(e)}")
           end
         end
       end
@@ -455,22 +426,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
         empty_page = Page.new(1, [])
         result_page = Page.apply_operations(empty_page, operations)
 
+        # Verify right_key returns the lexicographically largest non-cleared key
         if not Page.empty?(result_page) do
-          # Get all operations that weren't clears
-          non_clear_ops = Enum.reject(operations, fn {_key, op} -> op == :clear end)
+          case operations |> Enum.reject(fn {_key, op} -> op == :clear end) |> Enum.map(&elem(&1, 0)) |> Enum.sort() do
+            # No non-clear operations
+            [] ->
+              :ok
 
-          if length(non_clear_ops) > 0 do
-            # The last key should be the lexicographically largest key from operations
-            expected_last_key =
-              non_clear_ops
-              |> Enum.map(fn {key, _op} -> key end)
-              |> Enum.sort()
-              |> List.last()
+            keys ->
+              expected_last_key = List.last(keys)
 
-            actual_last_key = Page.right_key(result_page)
-
-            assert actual_last_key == expected_last_key,
-                   "right_key should return '#{expected_last_key}' but returned '#{actual_last_key}'"
+              assert Page.right_key(result_page) == expected_last_key,
+                     "right_key should return '#{expected_last_key}' but returned '#{Page.right_key(result_page)}'"
           end
         end
       end
@@ -478,6 +445,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   end
 
   # Helper functions
+
+  defp build_tree_from_pages(pages) do
+    Enum.reduce(pages, :gb_trees.empty(), fn page, tree_acc ->
+      if Page.empty?(page) do
+        tree_acc
+      else
+        Tree.add_page_to_tree(tree_acc, page)
+      end
+    end)
+  end
 
   defp extract_tree_entries({0, _}), do: []
   defp extract_tree_entries({_size, tree_node}), do: extract_entries_from_node(tree_node, [])

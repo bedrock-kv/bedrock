@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
   alias Bedrock.ControlPlane.Director.Server
 
   describe "component failure handling" do
-    test "director exits immediately on component failure" do
+    test "terminates with shutdown reason when component fails" do
       # Spawn a test director process
       test_process = self()
 
@@ -38,15 +38,15 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
       monitor_ref = Process.monitor(director_pid)
 
       # Simulate component failure
-      failed_component = spawn(fn -> :ok end)
+      failed_component_pid = spawn(fn -> :ok end)
+      failure_reason = :test_failure
+      expected_shutdown_reason = {:shutdown, {:component_failure, failed_component_pid, failure_reason}}
 
-      send(director_pid, {:simulate_component_failure, failed_component, :test_failure})
+      send(director_pid, {:simulate_component_failure, failed_component_pid, failure_reason})
 
-      # Director should exit immediately
-      assert_receive {:director_exited, {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
-
-      assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid,
-                      {:shutdown, {:component_failure, ^failed_component, :test_failure}}}
+      # Director should exit immediately with proper shutdown reason
+      assert_receive {:director_exited, ^expected_shutdown_reason}
+      assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid, ^expected_shutdown_reason}
     end
   end
 end

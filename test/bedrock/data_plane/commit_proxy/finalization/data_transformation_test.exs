@@ -5,6 +5,73 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   alias Bedrock.DataPlane.CommitProxy.Finalization
   alias Bedrock.DataPlane.Transaction
 
+  # Helper functions for creating test data
+  defp create_storage_teams do
+    [
+      %{tag: 0, key_range: {<<>>, <<"m">>}, storage_ids: ["storage_1"]},
+      %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
+      %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
+    ]
+  end
+
+  defp create_overlapping_storage_teams do
+    [
+      %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
+      %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
+    ]
+  end
+
+  defp create_binary_storage_teams do
+    [
+      %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
+      %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
+      %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
+    ]
+  end
+
+  defp create_transaction(mutations, write_conflicts, read_conflicts \\ {nil, []}) do
+    %{
+      mutations: mutations,
+      write_conflicts: write_conflicts,
+      read_conflicts: read_conflicts
+    }
+  end
+
+  defp create_batch(transactions, commit_version) do
+    %Batch{
+      commit_version: Bedrock.DataPlane.Version.from_integer(commit_version),
+      last_commit_version: Bedrock.DataPlane.Version.from_integer(commit_version - 1),
+      n_transactions: length(transactions),
+      buffer:
+        transactions
+        |> Enum.with_index()
+        |> Enum.reverse()
+        |> Enum.map(fn {{reply_fn, tx}, idx} -> {idx, reply_fn, tx} end)
+    }
+  end
+
+  defp default_layout do
+    %{
+      storage_teams: [],
+      logs: %{}
+    }
+  end
+
+  defp create_ordered_transactions(count) do
+    for idx <- 1..count do
+      key = "key_#{idx}"
+      value = "val_#{idx}"
+
+      {fn _ -> :ok end,
+       Transaction.encode(
+         create_transaction(
+           [{:set, key, value}],
+           [{key, key <> "\0"}]
+         )
+       )}
+    end
+  end
+
   describe "mutation_to_key_or_range/1" do
     test "extracts key from set mutation" do
       mutation = {:set, <<"hello">>, <<"world">>}
@@ -24,13 +91,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
   describe "key_or_range_to_tags/2" do
     setup do
-      storage_teams = [
-        %{tag: 0, key_range: {<<>>, <<"m">>}, storage_ids: ["storage_1"]},
-        %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-        %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
-      ]
-
-      %{storage_teams: storage_teams}
+      %{storage_teams: create_storage_teams()}
     end
 
     test "maps single key to tags", %{storage_teams: storage_teams} do
@@ -42,13 +103,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     test "maps range to intersecting tags", %{storage_teams: storage_teams} do
       range = {<<"a">>, <<"s">>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert Enum.sort(tags) == [0, 1]
+      assert [0, 1] = Enum.sort(tags)
     end
 
     test "maps range that spans all storage teams", %{storage_teams: storage_teams} do
       range = {<<>>, :end}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert Enum.sort(tags) == [0, 1, 2]
+      assert [0, 1, 2] = Enum.sort(tags)
     end
 
     test "maps range within single storage team", %{storage_teams: storage_teams} do
@@ -58,34 +119,27 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles overlapping storage teams" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-        %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
-      ]
+      storage_teams = create_overlapping_storage_teams()
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
-      assert Enum.sort(tags) == [0, 1]
+      assert [0, 1] = Enum.sort(tags)
 
       range = {<<"i">>, <<"j">>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert Enum.sort(tags) == [0, 1]
+      assert [0, 1] = Enum.sort(tags)
     end
 
     test "maps key to multiple tags when overlapping (binary keys)" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
-        %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
-        %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
-      ]
+      storage_teams = create_binary_storage_teams()
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x90>>, storage_teams)
-      assert Enum.sort(tags) == [0, 1, 2]
+      assert [0, 1, 2] = Enum.sort(tags)
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x50>>, storage_teams)
-      assert Enum.sort(tags) == [0, 2]
+      assert [0, 2] = Enum.sort(tags)
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x85>>, storage_teams)
-      assert Enum.sort(tags) == [0, 1, 2]
+      assert [0, 1, 2] = Enum.sort(tags)
     end
 
     test "returns empty list for key with no matching teams" do
@@ -98,18 +152,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "handles boundary conditions correctly" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
-        %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
-        %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
-      ]
+      storage_teams = create_binary_storage_teams()
 
       # Boundary inclusive behavior at key range edges
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x80>>, storage_teams)
-      assert Enum.sort(tags) == [0, 1, 2]
+      assert [0, 1, 2] = Enum.sort(tags)
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x40>>, storage_teams)
-      assert Enum.sort(tags) == [0, 2]
+      assert [0, 2] = Enum.sort(tags)
     end
   end
 
@@ -122,14 +172,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         "log4" => [4]
       }
 
-      result = Finalization.find_logs_for_tags([1, 2], logs_by_id)
-      assert Enum.sort(result) == ["log1", "log2", "log3"]
-
-      result = Finalization.find_logs_for_tags([0], logs_by_id)
-      assert result == ["log1"]
-
-      result = Finalization.find_logs_for_tags([4], logs_by_id)
-      assert result == ["log4"]
+      assert ["log1", "log2", "log3"] = Enum.sort(Finalization.find_logs_for_tags([1, 2], logs_by_id))
+      assert ["log1"] = Finalization.find_logs_for_tags([0], logs_by_id)
+      assert ["log4"] = Finalization.find_logs_for_tags([4], logs_by_id)
     end
 
     test "handles empty tag list" do
@@ -138,8 +183,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         "log2" => [1, 2]
       }
 
-      result = Finalization.find_logs_for_tags([], logs_by_id)
-      assert result == []
+      assert [] = Finalization.find_logs_for_tags([], logs_by_id)
     end
 
     test "handles tags with no matching logs" do
@@ -148,8 +192,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         "log2" => [1, 2]
       }
 
-      result = Finalization.find_logs_for_tags([5, 6], logs_by_id)
-      assert result == []
+      assert [] = Finalization.find_logs_for_tags([5, 6], logs_by_id)
     end
   end
 
@@ -187,15 +230,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         logs: %{}
       }
 
-      result = Finalization.create_finalization_plan(batch, layout)
+      assert %{stage: :ready_for_resolution, transactions: transactions} =
+               Finalization.create_finalization_plan(batch, layout)
 
-      assert result.stage == :ready_for_resolution
-      assert map_size(result.transactions) == 2
+      assert map_size(transactions) == 2
 
       # Extract conflict sections from the transactions (simulating what resolve_conflicts does)
       conflict_binaries =
         Enum.map(0..1, fn idx ->
-          {_idx, _reply_fn, binary} = Map.fetch!(result.transactions, idx)
+          {_idx, _reply_fn, binary} = Map.fetch!(transactions, idx)
           Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
         end)
 
@@ -204,228 +247,119 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       # Verify the first binary contains both read and write conflicts
       [conflict_binary1, conflict_binary2] = conflict_binaries
 
-      assert {:ok, {read_version1, read_conflicts1}} = Transaction.read_conflicts(conflict_binary1)
-      assert read_version1 == Bedrock.DataPlane.Version.from_integer(100)
-      assert read_conflicts1 == [{<<"read_key">>, <<"read_key\0">>}]
+      version_100 = Bedrock.DataPlane.Version.from_integer(100)
+      assert {:ok, {^version_100, [{<<"read_key">>, <<"read_key\0">>}]}} = Transaction.read_conflicts(conflict_binary1)
 
-      assert {:ok, write_conflicts1} = Transaction.write_conflicts(conflict_binary1)
-      assert write_conflicts1 == [{<<"write_key1">>, <<"write_key1\0">>}]
+      assert {:ok, [{<<"write_key1">>, <<"write_key1\0">>}]} = Transaction.write_conflicts(conflict_binary1)
 
       # Verify the second binary has no read version but has write conflicts
-      assert {:ok, {read_version2, _read_conflicts2}} = Transaction.read_conflicts(conflict_binary2)
-      assert read_version2 == nil
+      assert {:ok, {nil, _read_conflicts2}} = Transaction.read_conflicts(conflict_binary2)
 
-      assert {:ok, write_conflicts2} = Transaction.write_conflicts(conflict_binary2)
-      assert write_conflicts2 == [{<<"write_key2">>, <<"write_key2\0">>}]
+      assert {:ok, [{<<"write_key2">>, <<"write_key2\0">>}]} = Transaction.write_conflicts(conflict_binary2)
     end
 
     test "handles empty transaction list" do
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(200),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(199),
-        n_transactions: 0,
-        buffer: []
-      }
+      batch = create_batch([], 200)
 
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
+      assert %{transactions: transactions, stage: :ready_for_resolution} =
+               Finalization.create_finalization_plan(batch, default_layout())
 
-      result = Finalization.create_finalization_plan(batch, layout)
-      assert map_size(result.transactions) == 0
-      assert result.stage == :ready_for_resolution
+      assert map_size(transactions) == 0
     end
 
     test "handles transactions with no reads" do
-      transaction_map = %{
-        mutations: [{:set, <<"key">>, <<"value">>}],
-        write_conflicts: [{<<"key">>, <<"key\0">>}],
-        read_conflicts: {nil, []}
-      }
+      transaction_map =
+        create_transaction(
+          [{:set, <<"key">>, <<"value">>}],
+          [{<<"key">>, <<"key\0">>}]
+        )
 
-      binary_transaction = Transaction.encode(transaction_map)
+      batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(200),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(199),
-        n_transactions: 1,
-        # Single transaction, no reversal needed
-        buffer: [{0, fn _ -> :ok end, binary_transaction}]
-      }
+      assert %{transactions: transactions} = Finalization.create_finalization_plan(batch, default_layout())
 
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
-
-      result = Finalization.create_finalization_plan(batch, layout)
-
-      assert map_size(result.transactions) == 1
-      {_idx, _reply_fn, binary} = Map.fetch!(result.transactions, 0)
+      assert map_size(transactions) == 1
+      {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
       conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
       assert is_binary(conflict_binary)
 
       # Should have no read version but have write conflicts
-      assert {:ok, {read_version, _read_conflicts}} = Transaction.read_conflicts(conflict_binary)
-      assert read_version == nil
-
-      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
-      assert write_conflicts == [{<<"key">>, <<"key\0">>}]
+      assert {:ok, {nil, _read_conflicts}} = Transaction.read_conflicts(conflict_binary)
+      assert {:ok, [{<<"key">>, <<"key\0">>}]} = Transaction.write_conflicts(conflict_binary)
     end
 
     test "handles transactions with no writes" do
-      transaction_map = %{
-        mutations: [],
-        write_conflicts: [],
-        read_conflicts: {Bedrock.DataPlane.Version.from_integer(100), [{<<"read_key">>, <<"read_key\0">>}]}
-      }
+      version_100 = Bedrock.DataPlane.Version.from_integer(100)
 
-      binary_transaction = Transaction.encode(transaction_map)
+      transaction_map =
+        create_transaction(
+          [],
+          [],
+          {version_100, [{<<"read_key">>, <<"read_key\0">>}]}
+        )
 
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(200),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(199),
-        n_transactions: 1,
-        # Single transaction, no reversal needed
-        buffer: [{0, fn _ -> :ok end, binary_transaction}]
-      }
+      batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
+      assert %{transactions: transactions} = Finalization.create_finalization_plan(batch, default_layout())
 
-      result = Finalization.create_finalization_plan(batch, layout)
-
-      assert map_size(result.transactions) == 1
-      {_idx, _reply_fn, binary} = Map.fetch!(result.transactions, 0)
+      assert map_size(transactions) == 1
+      {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
       conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
       assert is_binary(conflict_binary)
 
       # Should have read version and read conflicts but no write conflicts
-      assert {:ok, {read_version, read_conflicts}} = Transaction.read_conflicts(conflict_binary)
-      assert read_version == Bedrock.DataPlane.Version.from_integer(100)
-      assert read_conflicts == [{<<"read_key">>, <<"read_key\0">>}]
-
-      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
-      assert write_conflicts == []
+      version_100 = Bedrock.DataPlane.Version.from_integer(100)
+      assert {:ok, {^version_100, [{<<"read_key">>, <<"read_key\0">>}]}} = Transaction.read_conflicts(conflict_binary)
+      assert {:ok, []} = Transaction.write_conflicts(conflict_binary)
     end
 
     test "extracts write conflicts in consistent order" do
-      transaction_map = %{
-        mutations: [
-          {:set, <<"z_key">>, <<"value1">>},
-          {:set, <<"a_key">>, <<"value2">>},
-          {:set, <<"m_key">>, <<"value3">>}
-        ],
-        write_conflicts: [
-          {<<"z_key">>, <<"z_key\0">>},
-          {<<"a_key">>, <<"a_key\0">>},
-          {<<"m_key">>, <<"m_key\0">>}
-        ],
-        read_conflicts: {nil, []}
-      }
+      transaction_map =
+        create_transaction(
+          [
+            {:set, <<"z_key">>, <<"value1">>},
+            {:set, <<"a_key">>, <<"value2">>},
+            {:set, <<"m_key">>, <<"value3">>}
+          ],
+          [
+            {<<"z_key">>, <<"z_key\0">>},
+            {<<"a_key">>, <<"a_key\0">>},
+            {<<"m_key">>, <<"m_key\0">>}
+          ]
+        )
 
-      binary_transaction = Transaction.encode(transaction_map)
+      batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(200),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(199),
-        n_transactions: 1,
-        # Single transaction, no reversal needed
-        buffer: [{0, fn _ -> :ok end, binary_transaction}]
-      }
+      assert %{transactions: transactions} = Finalization.create_finalization_plan(batch, default_layout())
 
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
-
-      result = Finalization.create_finalization_plan(batch, layout)
-
-      assert map_size(result.transactions) == 1
-      {_idx, _reply_fn, binary} = Map.fetch!(result.transactions, 0)
+      assert map_size(transactions) == 1
+      {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
       conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
       assert is_binary(conflict_binary)
 
       # Write conflicts must maintain transaction ordering for consistency
-      assert {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
-
       expected_conflicts = [
         {<<"z_key">>, <<"z_key\0">>},
         {<<"a_key">>, <<"a_key\0">>},
         {<<"m_key">>, <<"m_key\0">>}
       ]
 
-      assert write_conflicts == expected_conflicts
+      assert {:ok, ^expected_conflicts} = Transaction.write_conflicts(conflict_binary)
     end
   end
 
   describe "transaction ordering" do
     test "maintains transaction order in resolver data" do
       # Create transactions with identifiable keys to verify ordering
-      transactions = [
-        {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"key_1">>, <<"val_1">>}],
-           write_conflicts: [{<<"key_1">>, <<"key_1\0">>}],
-           read_conflicts: {nil, []}
-         })},
-        {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"key_2">>, <<"val_2">>}],
-           write_conflicts: [{<<"key_2">>, <<"key_2\0">>}],
-           read_conflicts: {nil, []}
-         })},
-        {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"key_3">>, <<"val_3">>}],
-           write_conflicts: [{<<"key_3">>, <<"key_3\0">>}],
-           read_conflicts: {nil, []}
-         })},
-        {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"key_4">>, <<"val_4">>}],
-           write_conflicts: [{<<"key_4">>, <<"key_4\0">>}],
-           read_conflicts: {nil, []}
-         })}
-      ]
+      transactions = create_ordered_transactions(4)
+      batch = create_batch(transactions, 100)
 
-      # Create batch and finalization plan (simulating normal flow)
-      # Buffer needs to be in reverse order because transactions_in_order expects it
-      # (transactions are prepended during normal operation)
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(100),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
-        n_transactions: 4,
-        buffer:
-          transactions
-          |> Enum.with_index()
-          |> Enum.reverse()
-          |> Enum.map(fn {{reply_fn, tx}, idx} -> {idx, reply_fn, tx} end)
-      }
-
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
-
-      plan = Finalization.create_finalization_plan(batch, layout)
+      assert %{transactions: transactions} = Finalization.create_finalization_plan(batch, default_layout())
 
       # Verify transactions map contains all transactions
-      assert map_size(plan.transactions) == 4
+      assert map_size(transactions) == 4
 
       # Extract write conflicts from each transaction in order and verify order
-      write_conflicts_by_position =
-        for idx <- 0..3 do
-          {_idx, _reply_fn, binary} = Map.fetch!(plan.transactions, idx)
-          conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
-          {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
-          {idx, write_conflicts}
-        end
-
-      # Verify the entire list maintains correct order
       expected_order = [
         {0, [{<<"key_1">>, <<"key_1\0">>}]},
         {1, [{<<"key_2">>, <<"key_2\0">>}]},
@@ -433,58 +367,55 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         {3, [{<<"key_4">>, <<"key_4\0">>}]}
       ]
 
-      assert write_conflicts_by_position == expected_order
+      write_conflicts_by_position =
+        for idx <- 0..3 do
+          {_idx, _reply_fn, binary} = Map.fetch!(transactions, idx)
+          conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
+          {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
+          {idx, write_conflicts}
+        end
+
+      assert ^expected_order = write_conflicts_by_position
     end
 
     test "transaction indices match resolver data positions" do
       # Verify that transaction index N corresponds to resolver_data[N]
       transactions = [
         {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"tx_0">>, <<"value">>}],
-           write_conflicts: [{<<"tx_0">>, <<"tx_0\0">>}],
-           read_conflicts: {nil, []}
-         })},
+         Transaction.encode(
+           create_transaction(
+             [{:set, "tx_0", "value"}],
+             [{"tx_0", "tx_0\0"}]
+           )
+         )},
         {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"tx_1">>, <<"value">>}],
-           write_conflicts: [{<<"tx_1">>, <<"tx_1\0">>}],
-           read_conflicts: {nil, []}
-         })},
+         Transaction.encode(
+           create_transaction(
+             [{:set, "tx_1", "value"}],
+             [{"tx_1", "tx_1\0"}]
+           )
+         )},
         {fn _ -> :ok end,
-         Transaction.encode(%{
-           mutations: [{:set, <<"tx_2">>, <<"value">>}],
-           write_conflicts: [{<<"tx_2">>, <<"tx_2\0">>}],
-           read_conflicts: {nil, []}
-         })}
+         Transaction.encode(
+           create_transaction(
+             [{:set, "tx_2", "value"}],
+             [{"tx_2", "tx_2\0"}]
+           )
+         )}
       ]
 
-      batch = %Batch{
-        commit_version: Bedrock.DataPlane.Version.from_integer(100),
-        last_commit_version: Bedrock.DataPlane.Version.from_integer(99),
-        n_transactions: 3,
-        # Buffer expects reverse order - add indices
-        buffer:
-          transactions
-          |> Enum.with_index()
-          |> Enum.reverse()
-          |> Enum.map(fn {{reply_fn, tx}, idx} -> {idx, reply_fn, tx} end)
-      }
+      batch = create_batch(transactions, 100)
 
-      layout = %{
-        storage_teams: [],
-        logs: %{}
-      }
-
-      plan = Finalization.create_finalization_plan(batch, layout)
+      assert %{transactions: transactions} = Finalization.create_finalization_plan(batch, default_layout())
 
       # For each transaction index, verify the corresponding transaction data
       Enum.each(0..2, fn idx ->
-        {_idx, _reply_fn, binary} = Map.fetch!(plan.transactions, idx)
+        {_idx, _reply_fn, binary} = Map.fetch!(transactions, idx)
         conflict_binary = Transaction.extract_sections!(binary, [:read_conflicts, :write_conflicts])
-        {:ok, write_conflicts} = Transaction.write_conflicts(conflict_binary)
         expected_key = "tx_#{idx}"
-        assert [{^expected_key, _}] = write_conflicts, "Transaction #{idx} should be at position #{idx}"
+
+        assert {:ok, [{^expected_key, _}]} = Transaction.write_conflicts(conflict_binary),
+               "Transaction #{idx} should be at position #{idx}"
       end)
     end
   end
@@ -499,19 +430,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "key_or_range_to_tags distributes keys to multiple tags for overlapping teams" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-        %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
-      ]
+      storage_teams = create_overlapping_storage_teams()
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
-      assert Enum.sort(tags) == [0, 1]
+      assert [0, 1] = Enum.sort(tags)
 
       assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"india">>, storage_teams)
-      assert Enum.sort(tags) == [0, 1]
+      assert [0, 1] = Enum.sort(tags)
 
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"apple">>, storage_teams)
-      assert tags == [0]
+      assert {:ok, [0]} = Finalization.key_or_range_to_tags(<<"apple">>, storage_teams)
     end
   end
 end

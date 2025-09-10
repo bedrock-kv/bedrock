@@ -1,11 +1,11 @@
 defmodule Bedrock.DataPlane.LogTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.GenServerTestHelpers
+  import Bedrock.Test.Common.GenServerTestHelpers
 
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   describe "recovery_info/0" do
     test "returns list of fact names for recovery" do
@@ -46,11 +46,7 @@ defmodule Bedrock.DataPlane.LogTest do
       end)
 
       # Use our helper macro to assert on the exact call message format
-      assert_call_received({:recover_from, actual_source, actual_first, actual_last}) do
-        assert actual_source == :source_log_ref
-        assert actual_first == 100
-        assert actual_last == 200
-      end
+      assert_call_received({:recover_from, :source_log_ref, 100, 200})
     end
 
     test "handles unavailable log" do
@@ -62,32 +58,17 @@ defmodule Bedrock.DataPlane.LogTest do
       end)
 
       # Use our helper macro to assert on the exact call message format
-      assert_call_received({:recover_from, actual_source, actual_first, actual_last}) do
-        assert actual_source == nil
-        assert actual_first == 0
-        assert actual_last == 50
-      end
+      assert_call_received({:recover_from, nil, 0, 50})
     end
   end
 
   describe "module structure" do
-    test "public functions work correctly" do
-      # Test that we can call the functions that provide coverage
-      assert Log.recovery_info() == [
-               :kind,
-               :last_version,
-               :oldest_version,
-               :minimum_durable_version
-             ]
-
-      # Check that initial_transaction returns properly encoded Transaction
+    test "initial_transaction returns properly encoded Transaction with zero version and empty writes" do
       initial_tx = Log.initial_transaction()
-      assert is_binary(initial_tx)
-      assert TransactionTestSupport.extract_log_version(initial_tx) == Version.zero()
-      assert TransactionTestSupport.extract_log_writes(initial_tx) == %{}
 
-      # recover_from would need a real GenServer process to test fully
-      # but we already tested it in the dedicated test above
+      assert is_binary(initial_tx)
+      assert Version.zero() == TransactionTestSupport.extract_log_version(initial_tx)
+      assert %{} == TransactionTestSupport.extract_log_writes(initial_tx)
     end
   end
 end

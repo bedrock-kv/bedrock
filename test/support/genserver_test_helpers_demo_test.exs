@@ -1,70 +1,51 @@
 defmodule Bedrock.Test.GenServerTestHelpersDemoTest do
   @moduledoc """
   Demonstration tests showing how to use the GenServer test helper macros.
-  These tests show the proper patterns for testing GenServer calls and casts.
+  These tests show the proper patterns for testing GenServer calls and casts
+  with pattern matching and timeout handling.
   """
 
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.GenServerTestHelpers
+  import Bedrock.Test.Common.GenServerTestHelpers
+
+  # Helpers to simulate message sending in separate processes
+  defp send_cast_message(test_pid, message) do
+    spawn(fn -> GenServer.cast(test_pid, message) end)
+  end
+
+  defp send_call_message(test_pid, message) do
+    spawn(fn -> send(test_pid, {:"$gen_call", {self(), make_ref()}, message}) end)
+  end
 
   describe "GenServer test helper macros" do
-    test "assert_cast_received demonstrates cast message testing" do
-      # Simulate a GenServer that sends a cast to our test process
-      test_pid = self()
+    setup do
+      [test_pid: self()]
+    end
 
-      # Spawn a process that will send a cast message
-      spawn(fn ->
-        GenServer.cast(test_pid, {:worker_health, "worker_1", {:ok, self()}})
-      end)
+    test "assert_cast_received demonstrates cast message testing", %{test_pid: test_pid} do
+      send_cast_message(test_pid, {:worker_health, "worker_1", {:ok, self()}})
 
-      # Use our helper macro to assert on the exact cast message
-      assert_cast_received({:worker_health, worker_id, health_status}) do
-        assert worker_id == "worker_1"
-        assert {:ok, pid} = health_status
+      # Use pattern matching to assert on exact message structure
+      assert_cast_received({:worker_health, "worker_1", {:ok, pid}}) do
         assert is_pid(pid)
       end
     end
 
-    test "assert_call_received with timeout demonstrates call message testing" do
-      # Simulate a process sending us a call message
-      test_pid = self()
+    test "assert_call_received with timeout demonstrates call message testing", %{test_pid: test_pid} do
+      send_call_message(test_pid, {:recover_from, :log_1, 100, 200})
 
-      spawn(fn ->
-        # Send a call message to our test process
-        send(test_pid, {:"$gen_call", {self(), make_ref()}, {:recover_from, :log_1, 100, 200}})
-      end)
-
-      # Use our helper macro to assert on the exact call message with timeout
-      assert_call_received({:recover_from, source, first, last}, 200) do
-        assert source == :log_1
-        assert first == 100
-        assert last == 200
-      end
+      # Use pattern matching to assert on exact message structure with timeout
+      assert_call_received({:recover_from, :log_1, 100, 200}, 200)
     end
 
-    test "simple assert_cast_received without assertions" do
-      test_pid = self()
+    test "demonstrates simple message pattern matching", %{test_pid: test_pid} do
+      # Test both cast and call message patterns
+      send_cast_message(test_pid, {:notification, "test_message"})
+      assert_cast_received({:notification, "test_message"})
 
-      spawn(fn ->
-        GenServer.cast(test_pid, {:notification, "test_message"})
-      end)
-
-      # Simple usage without additional assertions
-      message = assert_cast_received({:notification, _content})
-      assert message == {:notification, "test_message"}
-    end
-
-    test "simple assert_call_received without assertions" do
-      test_pid = self()
-
-      spawn(fn ->
-        send(test_pid, {:"$gen_call", {self(), make_ref()}, {:fetch_data, :user_id_123}})
-      end)
-
-      # Simple usage without additional assertions
-      message = assert_call_received({:fetch_data, _user_id})
-      assert message == {:fetch_data, :user_id_123}
+      send_call_message(test_pid, {:fetch_data, :user_id_123})
+      assert_call_received({:fetch_data, :user_id_123})
     end
   end
 end

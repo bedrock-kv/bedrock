@@ -4,8 +4,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   alias Bedrock.DataPlane.Log.Shale.Pulling
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @default_params %{default_pull_limit: 1000, max_pull_limit: 2000}
 
@@ -57,17 +57,16 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
     end
 
     test "returns transactions within version range", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1))
+      assert {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1))
       assert length(transactions) == 2
-      expected_versions = [Version.from_integer(2), Version.from_integer(3)]
 
-      assert Enum.map(transactions, &TransactionTestSupport.extract_log_version(&1)) ==
-               expected_versions
+      versions = Enum.map(transactions, &TransactionTestSupport.extract_log_version/1)
+      assert versions == [Version.from_integer(2), Version.from_integer(3)]
     end
 
     test "respects last_version parameter", %{state: state} do
-      {:ok, _state, transactions} =
-        Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
+      assert {:ok, _state, transactions} =
+               Pulling.pull(state, Version.from_integer(1), last_version: Version.from_integer(2))
 
       versions = Enum.map(transactions, &TransactionTestSupport.extract_log_version/1)
       assert versions == [Version.from_integer(2)]
@@ -75,29 +74,25 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
 
     test "handles recovery mode correctly", %{state: state} do
       locked_state = %{state | mode: :locked}
-      assert {:error, :not_ready} = Pulling.pull(locked_state, Version.from_integer(1))
-      assert {:ok, _, _} = Pulling.pull(locked_state, Version.from_integer(1), recovery: true)
+      version_1 = Version.from_integer(1)
+
+      assert {:error, :not_ready} = Pulling.pull(locked_state, version_1)
+      assert {:ok, _, _} = Pulling.pull(locked_state, version_1, recovery: true)
     end
 
     test "respects pull limits", %{state: state} do
-      {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1), limit: 1)
+      assert {:ok, _state, transactions} = Pulling.pull(state, Version.from_integer(1), limit: 1)
       assert length(transactions) == 1
     end
 
-    test "boundary condition: pull exactly at last_version waits correctly", %{state: state} do
-      # When requesting start_after == last_version, should wait for new transactions
+    test "boundary conditions: pull at or beyond last_version waits correctly", %{state: state} do
+      # When requesting at or beyond last_version, should wait for new transactions
       version_3 = Version.from_integer(3)
-
-      # state.last_version is 3, so requesting start_after: 3 should wait
-      assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
-    end
-
-    test "boundary condition: pull beyond last_version waits correctly", %{state: state} do
-      # When requesting start_after > last_version, should wait
       version_4 = Version.from_integer(4)
       version_5 = Version.from_integer(5)
 
-      # state.last_version is 3, so requesting start_after: 4 or 5 should wait
+      # state.last_version is 3, so requesting at/beyond should wait
+      assert {:waiting_for, ^version_3} = Pulling.pull(state, version_3)
       assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
       assert {:waiting_for, ^version_5} = Pulling.pull(state, version_5)
     end
@@ -114,9 +109,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
   describe "determine_pull_limit/2" do
     test "respects default and max limits" do
       state = %State{params: @default_params}
-      assert Pulling.determine_pull_limit(nil, state) == 1000
-      assert Pulling.determine_pull_limit(500, state) == 500
-      assert Pulling.determine_pull_limit(3000, state) == 2000
+      assert 1000 = Pulling.determine_pull_limit(nil, state)
+      assert 500 = Pulling.determine_pull_limit(500, state)
+      assert 2000 = Pulling.determine_pull_limit(3000, state)
     end
   end
 end

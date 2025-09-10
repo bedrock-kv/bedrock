@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.TransactionTestSupport do
+defmodule Bedrock.Test.DataPlane.TransactionTestSupport do
   @moduledoc """
   Test support utilities for creating Transaction instances.
 

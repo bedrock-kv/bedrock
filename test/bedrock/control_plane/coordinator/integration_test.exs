@@ -4,6 +4,23 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.State
 
+  # Helper functions for test setup
+  defp build_state(opts) do
+    defaults = [
+      leader_node: Node.self(),
+      my_node: Node.self(),
+      epoch: 1
+    ]
+
+    opts = Keyword.merge(defaults, opts)
+    struct!(State, opts)
+  end
+
+  defp simulate_ping_response(%State{} = state) do
+    leader = if state.leader_node == state.my_node, do: self()
+    {:pong, state.epoch, leader}
+  end
+
   describe "service registration integration" do
     test "handles register_services call" do
       services = [{"test_service", :storage, {:worker, :node@host}}]
@@ -21,20 +38,12 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
       assert {:deregister_services, %{service_ids: ^service_ids}} = command
     end
 
-    test "ping handler returns correct format" do
-      leader_pid = self()
+    test "ping handler returns correct format when leader" do
       epoch = 42
+      leader_pid = self()
 
-      # Test when this node is the leader
-      state = %State{
-        leader_node: Node.self(),
-        my_node: Node.self(),
-        epoch: epoch
-      }
-
-      # Simulate the ping handler logic
-      leader = if state.leader_node == state.my_node, do: self()
-      response = {:pong, state.epoch, leader}
+      state = build_state(leader_node: Node.self(), epoch: epoch)
+      response = simulate_ping_response(state)
 
       assert {:pong, ^epoch, ^leader_pid} = response
     end
@@ -42,16 +51,8 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
     test "ping handler returns nil leader when not leader" do
       epoch = 42
 
-      # Test when this node is not the leader
-      state = %State{
-        leader_node: :other_node,
-        my_node: Node.self(),
-        epoch: epoch
-      }
-
-      # Simulate the ping handler logic
-      leader = if state.leader_node == state.my_node, do: self()
-      response = {:pong, state.epoch, leader}
+      state = build_state(leader_node: :other_node, epoch: epoch)
+      response = simulate_ping_response(state)
 
       assert {:pong, ^epoch, nil} = response
     end
@@ -74,9 +75,8 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
         services: services
       ]
 
-      # Test that all required fields are present
-      assert Keyword.has_key?(expected_args, :services)
-      assert Keyword.get(expected_args, :services) == services
+      # Verify services are correctly included in startup args
+      assert expected_args[:services] == services
     end
   end
 end

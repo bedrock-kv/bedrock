@@ -70,7 +70,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     tx = build_monolithic_keys(tx, epoch, encoded_config, encoded_layout)
     tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
 
-    Tx.commit_binary(tx)
+    Tx.commit(tx, nil)
   end
 
   @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map(), map()) :: Tx.t()

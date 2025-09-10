@@ -26,7 +26,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
 
   Expects pre-encoded keys and returns raw values.
   """
-  @spec get_key(State.t(), key :: Bedrock.key(), opts :: [storage_get_key_fn: storage_get_key_fn()]) ::
+  @spec get_key(
+          State.t(),
+          key :: Bedrock.key(),
+          opts :: [storage_get_key_fn: storage_get_key_fn(), snapshot: boolean()]
+        ) ::
           {State.t(),
            {:ok, {Bedrock.key(), Bedrock.value()}}
            | {:error, :not_found}
@@ -47,7 +51,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
             {:ok, raw_value} -> {:ok, {key, raw_value}}
             {:error, reason} -> {:error, reason}
             {:failure, reason, storage_id} -> {:failure, reason, storage_id}
-          end
+          end,
+          opts
         )
 
       :clear ->
@@ -86,36 +91,44 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
         {:ok, {resolved_key, value}} -> {:ok, {resolved_key, value}}
         {:error, reason} -> {:error, reason}
         {:failure, reason, storage_id} -> {:failure, reason, storage_id}
-      end
+      end,
+      opts
     )
   end
 
   # Private helper functions
 
-  @spec get_value_from_storage(
-          State.t(),
-          racing_key :: binary(),
-          operation_fn :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()})
-        ) ::
-          {State.t(), {:ok, {binary(), binary()}} | {:error, atom()}}
-  defp get_value_from_storage(state, racing_key, operation_fn) do
+  defp get_value_from_storage(state, racing_key, operation_fn, opts) do
+    snapshot = Keyword.get(opts, :snapshot, false)
+
     state
     |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
-      # Key selector returned nil (not found)
-      {final_state, {:ok, {nil, _shard_range}}} ->
-        {final_state, {:error, :not_found}}
-
-      # Regular key returned nil (not found)
-      {final_state, {:ok, {{key, nil}, _shard_range}}} ->
-        {%{final_state | tx: Tx.merge_storage_read(final_state.tx, key, :not_found)}, {:error, :not_found}}
-
-      # Regular key or key selector returned value
-      {final_state, {:ok, {{key, value}, _shard_range}}} ->
-        {%{final_state | tx: Tx.merge_storage_read(final_state.tx, key, value)}, {:ok, {key, value}}}
-
       {state, {:error, reason}} ->
         {state, {:error, reason}}
+
+      {state, {:ok, {nil, _shard_range}}} ->
+        {state, {:error, :not_found}}
+
+      {state, {:ok, {{key, nil}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.merge_storage_read(state.tx, key, :not_found)}
+          end
+
+        {state, {:error, :not_found}}
+
+      {state, {:ok, {{key, value}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.merge_storage_read(state.tx, key, value)}
+          end
+
+        {state, {:ok, {key, value}}}
     end
   end
 end

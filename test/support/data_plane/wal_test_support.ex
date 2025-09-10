@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.WALTestSupport do
+defmodule Bedrock.Test.DataPlane.WALTestSupport do
   @moduledoc """
   Test support utilities specifically for WAL (Write-Ahead Log) testing.
 
@@ -15,8 +15,8 @@ defmodule Bedrock.DataPlane.WALTestSupport do
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @doc """
   Creates a test WAL file with multiple transactions at specified versions.

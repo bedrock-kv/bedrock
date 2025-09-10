@@ -27,12 +27,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndexTest do
     }
   end
 
+  defp build_simple_index, do: LayoutIndex.build_index(create_simple_layout())
+
   describe "build_index/1" do
     test "builds index from overlapping storage teams" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
-
-      assert %LayoutIndex{tree: tree} = index
+      assert %LayoutIndex{tree: tree} = build_simple_index()
       refute :gb_trees.is_empty(tree)
     end
 
@@ -51,9 +50,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndexTest do
       }
 
       index = LayoutIndex.build_index(layout)
-      result = LayoutIndex.lookup_key!(index, "m")
 
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "m")
       assert :up_pid in pids
       refute :down_server in pids
     end
@@ -61,31 +59,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndexTest do
 
   describe "lookup_key/2" do
     test "finds storage servers for key in segmented range" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
+      index = build_simple_index()
 
       # Test key "c" - should be in segment with only pid1
-      result = LayoutIndex.lookup_key!(index, "c")
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "c")
       assert :pid1 in pids
       refute :pid2 in pids
 
       # Test key "e" - should be in overlapping segment with pid1 and pid2
-      result = LayoutIndex.lookup_key!(index, "e")
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "e")
       assert :pid1 in pids and :pid2 in pids
 
       # Test key "j" - should be in overlapping segment with pid2 and pid3
-      result = LayoutIndex.lookup_key!(index, "j")
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "j")
       assert :pid2 in pids and :pid3 in pids
     end
 
     test "raises for key outside any range" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
+      index = build_simple_index()
 
-      # Test key "z" - outside all ranges
       assert_raise RuntimeError, ~r/No segment found containing key/, fn ->
         LayoutIndex.lookup_key!(index, "z")
       end
@@ -94,45 +86,35 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndexTest do
 
   describe "lookup_range/3" do
     test "finds all segments overlapping with query range" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
+      index = build_simple_index()
 
-      # Query range "a" to "p" should cover all segments
       result = LayoutIndex.lookup_range(index, "a", "p")
-
-      # Should return multiple segments
       assert length(result) > 1
 
       # All our PIDs should appear somewhere
-      all_pids = result |> Enum.flat_map(fn {_, pids} -> pids end) |> Enum.uniq()
-      assert :pid1 in all_pids
-      assert :pid2 in all_pids
-      assert :pid3 in all_pids
+      all_pids = result |> Enum.flat_map(&elem(&1, 1)) |> Enum.uniq()
+
+      for expected_pid <- [:pid1, :pid2, :pid3] do
+        assert expected_pid in all_pids
+      end
     end
 
     test "returns empty list for range outside all segments" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
+      index = build_simple_index()
 
-      # Query range "x" to "z" - outside all ranges
-      result = LayoutIndex.lookup_range(index, "x", "z")
-      assert result == []
+      assert [] = LayoutIndex.lookup_range(index, "x", "z")
     end
   end
 
   describe "segmentation behavior" do
     test "creates non-overlapping segments from overlapping ranges" do
-      layout = create_simple_layout()
-      index = LayoutIndex.build_index(layout)
-
-      # Get all segments by doing a very wide range query
+      index = build_simple_index()
       all_segments = LayoutIndex.lookup_range(index, "", "~")
 
       # Verify segments don't overlap - each segment end should be <= next segment start
-      sorted_segments = Enum.sort_by(all_segments, fn {{start, _}, _} -> start end)
-
       segments_valid =
-        sorted_segments
+        all_segments
+        |> Enum.sort_by(fn {{start, _}, _} -> start end)
         |> Enum.chunk_every(2, 1, :discard)
         |> Enum.all?(fn [{{_start1, end1}, _}, {{start2, _end2}, _}] ->
           end1 <= start2 or end1 == :end

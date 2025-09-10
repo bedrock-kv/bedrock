@@ -10,7 +10,7 @@ defmodule Bedrock.Subspace do
 
   Based on the pattern from other FoundationDB language bindings (Go, Rust, C++).
   """
-  alias Bedrock.Tuple
+  alias Bedrock.Key
 
   # Define the subspace struct
   defstruct [:prefix]
@@ -24,7 +24,7 @@ defmodule Bedrock.Subspace do
   def new(prefix) when is_binary(prefix), do: %__MODULE__{prefix: prefix}
 
   @spec new(tuple()) :: t()
-  def new(tuple) when is_tuple(tuple), do: %__MODULE__{prefix: Tuple.pack(tuple)}
+  def new(tuple) when is_tuple(tuple), do: %__MODULE__{prefix: Key.pack(tuple)}
 
   @doc """
   Create a subspace that contains all keys in the database.
@@ -38,7 +38,7 @@ defmodule Bedrock.Subspace do
   """
   @spec create(t(), tuple()) :: t()
   def create(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
-    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Tuple.to_iolist(tuple)])}
+    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])}
 
   @doc """
   Add an item to the subspace, creating a new subspace.
@@ -46,7 +46,7 @@ defmodule Bedrock.Subspace do
   """
   @spec add(t(), term()) :: t()
   def add(%__MODULE__{prefix: prefix}, item),
-    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Tuple.to_iolist({item})])}
+    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist({item})])}
 
   @doc """
   Create a nested subspace by extending this subspace with the given tuple.
@@ -72,7 +72,7 @@ defmodule Bedrock.Subspace do
   """
   @spec pack(t(), tuple()) :: binary()
   def pack(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
-    do: :erlang.iolist_to_binary([prefix | Tuple.to_iolist(tuple)])
+    do: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])
 
   # @doc """
   # Pack a tuple with version stamp within this subspace.
@@ -88,7 +88,7 @@ defmodule Bedrock.Subspace do
   @spec unpack(t(), binary()) :: tuple()
   def unpack(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
     case key do
-      <<^prefix::binary, remaining_key::binary>> -> Tuple.unpack(remaining_key)
+      <<^prefix::binary, remaining_key::binary>> -> Key.unpack(remaining_key)
       _ -> raise(ArgumentError, "Key does not belong to this subspace")
     end
   end
@@ -120,7 +120,7 @@ defmodule Bedrock.Subspace do
   Returns a tuple of {start_key, end_key} suitable for range operations.
   """
   @spec range(t(), tuple() | binary()) :: {binary(), binary()}
-  def range(%__MODULE__{prefix: prefix}, key) when is_tuple(key), do: new_range(prefix, Tuple.to_iolist(key))
+  def range(%__MODULE__{prefix: prefix}, key) when is_tuple(key), do: new_range(prefix, Key.to_iolist(key))
   def range(%__MODULE__{prefix: prefix}, key) when is_binary(key), do: new_range(prefix, key)
 
   defp new_range(prefix, key),

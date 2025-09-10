@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
   alias Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase
@@ -23,14 +23,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
+      assert {%{logs: logs, storage_teams: storage_teams}, VersionDeterminationPhase} =
+               VacancyCreationPhase.execute(recovery_attempt, context)
 
-      assert next_phase == VersionDeterminationPhase
-      assert is_map(result.logs)
-      assert is_list(result.storage_teams)
-      # Should have vacancies created for both logs and storage
-      assert map_size(result.logs) > 0
-      assert length(result.storage_teams) > 0
+      assert is_map(logs) and map_size(logs) > 0
+      assert is_list(storage_teams) and length(storage_teams) > 0
     end
 
     test "handles empty logs and storage teams" do
@@ -46,11 +43,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           }
         })
 
-      {result, next_phase} = VacancyCreationPhase.execute(recovery_attempt, context)
-
-      assert next_phase == VersionDeterminationPhase
-      assert result.logs == %{}
-      assert result.storage_teams == []
+      assert {%{logs: %{}, storage_teams: []}, VersionDeterminationPhase} =
+               VacancyCreationPhase.execute(recovery_attempt, context)
     end
   end
 
@@ -61,18 +55,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         {:log, 2} => ["tag_b"]
       }
 
-      {:ok, updated_logs, n_vacancies} = VacancyCreationPhase.create_vacancies_for_logs(logs, 3)
-
       # Creates 2 unique tag groups (tag_a, tag_b)
       # Each group gets desired_logs vacancies = 3
       # Total: 2 * 3 = 6 vacancies created
+      assert {:ok, updated_logs, 6} = VacancyCreationPhase.create_vacancies_for_logs(logs, 3)
       assert map_size(updated_logs) == 6
-      # n_vacancies = map_size(updated_logs) = 6
-      assert n_vacancies == 6
-
-      # Check that vacancies are properly structured
-      vacancy_keys = Map.keys(updated_logs)
-      assert Enum.all?(vacancy_keys, fn {type, _} -> type == :vacancy end)
+      assert Enum.all?(Map.keys(updated_logs), fn {type, _} -> type == :vacancy end)
     end
 
     test "handles logs with same tags correctly" do
@@ -82,21 +70,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         {:log, 2} => ["tag_a"]
       }
 
-      {:ok, updated_logs, n_vacancies} = VacancyCreationPhase.create_vacancies_for_logs(logs, 2)
-
       # Since both logs have the same tags, they create 1 unique group
       # The group gets desired_logs vacancies = 2
       # Total: 1 * 2 = 2 vacancies
+      assert {:ok, updated_logs, 2} = VacancyCreationPhase.create_vacancies_for_logs(logs, 2)
       assert map_size(updated_logs) == 2
-      # n_vacancies = map_size(updated_logs) = 2
-      assert n_vacancies == 2
     end
 
     test "handles empty logs" do
-      {:ok, updated_logs, n_vacancies} = VacancyCreationPhase.create_vacancies_for_logs(%{}, 3)
-
-      assert n_vacancies == 0
-      assert updated_logs == %{}
+      assert {:ok, %{}, 0} = VacancyCreationPhase.create_vacancies_for_logs(%{}, 3)
     end
 
     test "creates vacancies with correct tag structure" do
@@ -104,30 +86,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         {:log, 1} => ["tag_a", "tag_b"]
       }
 
-      {:ok, updated_logs, _} = VacancyCreationPhase.create_vacancies_for_logs(logs, 2)
-
       # Should have 2 vacancies, each with the sorted tags ["tag_a", "tag_b"]
+      assert {:ok, updated_logs, _} = VacancyCreationPhase.create_vacancies_for_logs(logs, 2)
       assert map_size(updated_logs) == 2
-
-      values = Map.values(updated_logs)
-      assert Enum.all?(values, fn tags -> tags == ["tag_a", "tag_b"] end)
+      assert Enum.all?(Map.values(updated_logs), &(&1 == ["tag_a", "tag_b"]))
     end
   end
 
   describe "create_vacancies_for_storage_teams/2" do
     test "handles complex storage team vacancy scenarios" do
-      # The logic appears more complex than expected, let me test what actually works
       storage_teams = [
         %{tag: "tag_1", storage_ids: ["storage_1"]}
       ]
 
-      {:ok, updated_teams, n_vacancies} =
-        VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 3)
+      assert {:ok, updated_teams, n_vacancies} =
+               VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 3)
 
-      # Just verify the function works without errors
-      assert is_list(updated_teams)
-      assert is_integer(n_vacancies)
-      assert n_vacancies >= 0
+      assert is_list(updated_teams) and is_integer(n_vacancies) and n_vacancies >= 0
     end
 
     test "returns original teams when no vacancies needed" do
@@ -138,21 +113,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         %{tag: "tag_2", storage_ids: ["storage_3", "storage_4"]}
       ]
 
-      {:ok, updated_teams, n_vacancies} =
-        VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 2)
+      assert {:ok, updated_teams, n_vacancies} =
+               VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 2)
 
-      # Basic checks that function works
-      assert is_integer(n_vacancies)
-      assert is_list(updated_teams)
-      assert length(updated_teams) == 2
+      assert is_integer(n_vacancies) and is_list(updated_teams) and length(updated_teams) == 2
     end
 
     test "handles empty storage teams" do
-      {:ok, updated_teams, n_vacancies} =
-        VacancyCreationPhase.create_vacancies_for_storage_teams([], 3)
-
-      assert n_vacancies == 0
-      assert updated_teams == []
+      assert {:ok, [], 0} = VacancyCreationPhase.create_vacancies_for_storage_teams([], 3)
     end
 
     test "correctly handles teams with excess members" do
@@ -161,13 +129,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         %{tag: "tag_1", storage_ids: ["s1", "s2", "s3"]}
       ]
 
-      {:ok, updated_teams, n_vacancies} =
-        VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 2)
-
-      # No vacancies needed
-      assert n_vacancies == 0
-      # Should be unchanged
-      assert updated_teams == storage_teams
+      # No vacancies needed - should be unchanged
+      assert {:ok, ^storage_teams, 0} =
+               VacancyCreationPhase.create_vacancies_for_storage_teams(storage_teams, 2)
     end
   end
 
@@ -186,17 +150,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
       # storage_2 should be in tags ["tag_1"]
       # storage_3 should be in tags ["tag_2"]
       # storage_4 should be in tags ["tag_3"]
-
+      expected_keys = [["tag_1"], ["tag_1", "tag_2"], ["tag_2"], ["tag_3"]]
       assert is_map(rosters)
-      assert Map.has_key?(rosters, ["tag_1"])
-      assert Map.has_key?(rosters, ["tag_1", "tag_2"])
-      assert Map.has_key?(rosters, ["tag_2"])
-      assert Map.has_key?(rosters, ["tag_3"])
+      assert Enum.all?(expected_keys, &Map.has_key?(rosters, &1))
     end
 
     test "handles empty storage teams" do
-      rosters = VacancyCreationPhase.tag_set_rosters_from_storage_teams([])
-      assert rosters == %{}
+      assert %{} = VacancyCreationPhase.tag_set_rosters_from_storage_teams([])
     end
 
     test "handles single storage team" do
@@ -204,10 +164,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         %{tag: "tag_1", storage_ids: ["storage_1", "storage_2"]}
       ]
 
-      rosters = VacancyCreationPhase.tag_set_rosters_from_storage_teams(storage_teams)
-
-      assert Map.keys(rosters) == [["tag_1"]]
-      assert rosters[["tag_1"]] == ["storage_1", "storage_2"]
+      assert %{["tag_1"] => ["storage_1", "storage_2"]} =
+               VacancyCreationPhase.tag_set_rosters_from_storage_teams(storage_teams)
     end
   end
 
@@ -218,15 +176,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         ["tag_2"] => ["storage_2", "storage_3"]
       }
 
-      {expanded_rosters, n_vacancies} =
-        VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 2)
+      assert {expanded_rosters, n_vacancies} =
+               VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 2)
 
-      # Just verify basic functionality
-      assert is_map(expanded_rosters)
-      assert is_integer(n_vacancies)
-      assert n_vacancies >= 0
-      assert Map.has_key?(expanded_rosters, ["tag_1"])
-      assert Map.has_key?(expanded_rosters, ["tag_2"])
+      assert is_map(expanded_rosters) and is_integer(n_vacancies) and n_vacancies >= 0
+      assert Map.has_key?(expanded_rosters, ["tag_1"]) and Map.has_key?(expanded_rosters, ["tag_2"])
     end
 
     test "handles rosters that don't need vacancies" do
@@ -235,19 +189,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         ["tag_1"] => ["storage_1", "storage_2", "storage_3"]
       }
 
-      {expanded_rosters, n_vacancies} =
-        VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 2)
-
-      assert n_vacancies == 0
-      assert expanded_rosters == rosters
+      assert {^rosters, 0} =
+               VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 2)
     end
 
     test "handles empty rosters" do
-      {expanded_rosters, n_vacancies} =
-        VacancyCreationPhase.expand_rosters_and_add_vacancies(%{}, 3)
-
-      assert n_vacancies == 0
-      assert expanded_rosters == %{}
+      assert {%{}, 0} = VacancyCreationPhase.expand_rosters_and_add_vacancies(%{}, 3)
     end
 
     test "generates vacancy IDs when needed" do
@@ -256,22 +203,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         ["tag_2"] => ["storage_2"]
       }
 
-      {expanded_rosters, n_vacancies} =
-        VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 3)
-
-      # Basic checks
-      assert is_integer(n_vacancies)
-      assert is_map(expanded_rosters)
+      assert {expanded_rosters, 2} =
+               VacancyCreationPhase.expand_rosters_and_add_vacancies(rosters, 3)
 
       # Check that when vacancies are needed, some are created in the rosters
       all_vacancies =
         expanded_rosters
         |> Map.values()
         |> List.flatten()
-        |> Enum.filter(fn id -> match?({:vacancy, _}, id) end)
+        |> Enum.filter(&match?({:vacancy, _}, &1))
 
-      # With 2 existing storages and needing 3 total, we expect some vacancies
-      assert n_vacancies == 2
+      # With 2 existing storages and needing 3 total, we expect 4 vacancies total
       assert length(all_vacancies) == 4
     end
   end
@@ -294,13 +236,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
           expanded_rosters
         )
 
-      assert length(updated_teams) == 2
-
-      tag_1_team = Enum.find(updated_teams, fn team -> team.tag == "tag_1" end)
-      assert tag_1_team.storage_ids == [{:vacancy, 0}, "storage_1"]
-
-      tag_2_team = Enum.find(updated_teams, fn team -> team.tag == "tag_2" end)
-      assert tag_2_team.storage_ids == [{:vacancy, 1}, "storage_2"]
+      assert [
+               %{tag: "tag_1", storage_ids: [{:vacancy, 0}, "storage_1"]},
+               %{tag: "tag_2", storage_ids: [{:vacancy, 1}, "storage_2"]}
+             ] = Enum.sort_by(updated_teams, & &1.tag)
     end
 
     test "sorts storage IDs in expanded rosters" do
@@ -313,15 +252,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         ["tag_1"] => [{:vacancy, 0}, "storage_1"]
       }
 
-      updated_teams =
-        VacancyCreationPhase.apply_expanded_roster_to_storage_teams(
-          storage_teams,
-          expanded_rosters
-        )
-
-      tag_1_team = Enum.find(updated_teams, fn team -> team.tag == "tag_1" end)
-      # Should be sorted: vacancy comes before string
-      assert tag_1_team.storage_ids == [{:vacancy, 0}, "storage_1"]
+      assert [
+               %{tag: "tag_1", storage_ids: [{:vacancy, 0}, "storage_1"]}
+             ] =
+               VacancyCreationPhase.apply_expanded_roster_to_storage_teams(
+                 storage_teams,
+                 expanded_rosters
+               )
     end
 
     test "handles teams with no roster updates" do
@@ -329,18 +266,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhaseTest do
         %{tag: "tag_1", storage_ids: ["storage_1", "storage_2"]}
       ]
 
-      expanded_rosters = %{}
-
-      updated_teams =
-        VacancyCreationPhase.apply_expanded_roster_to_storage_teams(
-          storage_teams,
-          expanded_rosters
-        )
-
-      assert length(updated_teams) == 1
-      tag_1_team = List.first(updated_teams)
       # No roster found in expanded_rosters
-      assert tag_1_team.storage_ids == nil
+      assert [%{tag: "tag_1", storage_ids: nil}] =
+               VacancyCreationPhase.apply_expanded_roster_to_storage_teams(
+                 storage_teams,
+                 %{}
+               )
     end
   end
 end

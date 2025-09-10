@@ -16,9 +16,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   alias Bedrock.Key
   alias Bedrock.KeySelector
 
-  @type next_read_version_fn() :: (State.t() ->
-                                     {:ok, Bedrock.version(), Bedrock.interval_in_ms()}
-                                     | {:error, atom()})
+  @type next_read_version_fn() :: (State.t() -> {:ok, Bedrock.version(), Bedrock.interval_in_ms()} | {:error, atom()})
+  @type operation_fn() :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()})
+  @type range_fn :: ([Bedrock.key_value()] -> Bedrock.key_range())
   @type time_fn() :: (-> integer())
 
   @doc """
@@ -68,12 +68,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
 
   # Private helper functions
 
-  @spec execute_range_query(
-          State.t(),
-          racing_key :: binary(),
-          operation_fn :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()}),
-          range_fn :: ([Bedrock.key_value()] -> Bedrock.key_range())
-        ) ::
+  @spec execute_range_query(State.t(), racing_key :: binary(), operation_fn(), range_fn()) ::
           {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
   defp execute_range_query(state, racing_key, operation_fn, range_fn) do
     state
@@ -99,8 +94,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
     end
   end
 
-  defp range_from_batch([{min_key, _value} | rest]),
-    do: {min_key, rest |> List.last() |> elem(0) |> Key.next_key_after()}
-
+  defp range_from_batch([{min_key, _value} | rest]), do: {min_key, rest |> List.last() |> elem(0) |> Key.key_after()}
   defp range_from_batch(_), do: raise("Batch results cannot be empty")
 end

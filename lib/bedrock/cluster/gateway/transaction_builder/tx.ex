@@ -7,7 +7,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   produce the final mutation list and conflict ranges for resolution.
   """
 
+  import Bedrock.DataPlane.Version, only: [is_version: 1]
+
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.Atomics
+  alias Bedrock.Key
+  alias Bedrock.KeyRange
 
   @type key :: binary()
   @type value :: binary()
@@ -17,10 +22,28 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
           {:set, key(), value()}
           | {:clear, key()}
           | {:clear_range, start :: binary(), end_ex :: binary()}
+          | {:atomic, atom(), key(), binary()}
+
+  @type fetch_fn :: (key(), term() -> {{:ok, value()} | {:error, term()}, term()})
 
   @type t :: %__MODULE__{
           mutations: [mutation()],
-          writes: :gb_trees.tree(key(), value() | :clear),
+          writes:
+            :gb_trees.tree(
+              key(),
+              value()
+              | :clear
+              | {:add, binary()}
+              | {:min, binary()}
+              | {:max, binary()}
+              | {:bit_and, binary()}
+              | {:bit_or, binary()}
+              | {:bit_xor, binary()}
+              | {:byte_min, binary()}
+              | {:byte_max, binary()}
+              | {:append_if_fits, binary()}
+              | {:compare_and_clear, binary()}
+            ),
           reads: %{key() => value() | :clear},
           range_writes: [range()],
           range_reads: [range()]
@@ -31,7 +54,77 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
             range_writes: [],
             range_reads: []
 
+  # =============================================================================
+  # Constructor Functions
+  # =============================================================================
+
   def new, do: %__MODULE__{}
+
+  # =============================================================================
+  # Primary Transaction Operations
+  # =============================================================================
+
+  @spec get(t(), key(), fetch_fn(), state) :: {t(), {:ok, value()} | {:error, :not_found}, state}
+        when state: term()
+  def get(t, k, fetch_fn, state) when is_binary(k) do
+    case get_write(t, k) || get_read(t, k) do
+      nil -> fetch_and_record(t, k, fetch_fn, state)
+      :clear -> {t, {:error, :not_found}, state}
+      value -> {t, {:ok, value}, state}
+    end
+  end
+
+  def set(t, k, v, opts \\ []) when is_binary(k) and is_binary(v) do
+    no_write_conflict = Keyword.get(opts, :no_write_conflict, false)
+
+    t
+    |> remove_ops_in_range(k, Key.key_after(k))
+    |> put_write(k, v)
+    |> add_write_conflict_key_unless(k, no_write_conflict)
+    |> record_mutation({:set, k, v})
+  end
+
+  def clear(t, k, opts \\ []) when is_binary(k) do
+    no_write_conflict = Keyword.get(opts, :no_write_conflict, false)
+
+    t
+    |> remove_ops_in_range(k, Key.key_after(k))
+    |> put_clear(k)
+    |> add_write_conflict_key_unless(k, no_write_conflict)
+    |> record_mutation({:clear, k})
+  end
+
+  def clear_range(t, s, e, opts \\ [])
+
+  # Empty range - just record the mutation without doing anything else
+  def clear_range(t, s, e, _opts) when s >= e, do: t
+
+  def clear_range(t, s, e, opts) when is_binary(s) and is_binary(e) do
+    no_write_conflict = Keyword.get(opts, :no_write_conflict, false)
+
+    t
+    |> remove_ops_in_range(s, e)
+    |> remove_writes_in_range(s, e)
+    |> clear_reads_in_range(s, e)
+    |> add_write_conflict_range_unless(s, e, no_write_conflict)
+    |> record_mutation({:clear_range, s, e})
+  end
+
+  # Generic atomic operation implementation
+  @spec atomic_operation(t(), key(), atom(), binary()) :: t()
+  def atomic_operation(t, k, operation, value) when is_binary(k) and is_binary(value) do
+    t
+    |> remove_ops_in_range(k, Key.key_after(k))
+    |> put_atomic(k, operation, value)
+    |> record_mutation({:atomic, operation, k, value})
+  end
+
+  @spec record_mutation(t(), mutation()) :: t()
+  defp record_mutation(t, op), do: %{t | mutations: [op | t.mutations]}
+
+  # =============================================================================
+  # Storage Integration Functions
+  # =============================================================================
 
   @doc """
   Merge a storage read result into the transaction state for conflict tracking.
@@ -113,7 +206,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
         {tx_after_merge, merged_results} = merge_storage_with_bounded_writes(tx, storage_results, effective_end)
 
         # Then scan for additional pending writes beyond the merged range
-        scan_start = next_key(last_key)
+        scan_start = Key.key_after(last_key)
 
         {tx_final, additional_writes} =
           if scan_start < effective_end do
@@ -131,10 +224,307 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
         # more data between last storage key and our next write
         [{_first_key, _} | _] = storage_results
         {last_key, _} = List.last(storage_results)
-        # Use exact next_key boundary - no writes beyond this point
-        merge_storage_with_bounded_writes(tx, storage_results, next_key(last_key))
+        # Use exact Key.key_after boundary - no writes beyond this point
+        merge_storage_with_bounded_writes(tx, storage_results, Key.key_after(last_key))
     end
   end
+
+  # =============================================================================
+  # Conflict Tracking Functions
+  # =============================================================================
+
+  @doc """
+  Add a read conflict range to the transaction.
+
+  This function adds the specified range to the transaction's read conflict tracking.
+  Overlapping and adjacent ranges are automatically merged for efficiency.
+
+  ## Parameters
+    - `t` - The transaction
+    - `start_key` - The inclusive start key of the range
+    - `end_key` - The exclusive end key of the range
+
+  ## Examples
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_read_conflict_range(tx, "a", "z")
+      iex> tx.range_reads
+      [{"a", "z"}]
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_read_conflict_range(tx, "a", "m")
+      iex> tx = Tx.add_read_conflict_range(tx, "k", "z")
+      iex> tx.range_reads
+      [{"a", "z"}]
+  """
+  @spec add_read_conflict_range(t(), key(), key()) :: t()
+  def add_read_conflict_range(t, start_key, end_key) when is_binary(start_key) and is_binary(end_key) do
+    %{t | range_reads: add_or_merge(t.range_reads, start_key, end_key)}
+  end
+
+  @doc """
+  Add a write conflict range to the transaction.
+
+  This function adds the specified range to the transaction's write conflict tracking.
+  Overlapping and adjacent ranges are automatically merged for efficiency.
+
+  ## Parameters
+    - `t` - The transaction
+    - `start_key` - The inclusive start key of the range
+    - `end_key` - The exclusive end key of the range
+
+  ## Examples
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_write_conflict_range(tx, "a", "z")
+      iex> tx.range_writes
+      [{"a", "z"}]
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_write_conflict_range(tx, "a", "m")
+      iex> tx = Tx.add_write_conflict_range(tx, "k", "z")
+      iex> tx.range_writes
+      [{"a", "z"}]
+  """
+  @spec add_write_conflict_range(t(), key(), key()) :: t()
+  def add_write_conflict_range(t, start_key, end_key)
+      when is_binary(start_key) and is_binary(end_key) and start_key < end_key do
+    %{t | range_writes: add_or_merge(t.range_writes, start_key, end_key)}
+  end
+
+  # Empty range - don't add any conflict
+  def add_write_conflict_range(t, _start_key, _end_key), do: t
+
+  @doc """
+  Add a single key read conflict to the transaction.
+
+  This is a convenience function that adds a read conflict for a single key by
+  converting it to a single-key range (key to Key.key_after(key)).
+
+  ## Parameters
+    - `t` - The transaction
+    - `key` - The key to add as a read conflict
+
+  ## Examples
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_read_conflict_key(tx, "my_key")
+      iex> tx.range_reads
+      [{"my_key", "my_key\\0"}]
+  """
+  @spec add_read_conflict_key(t(), key()) :: t()
+  def add_read_conflict_key(t, key) when is_binary(key), do: add_read_conflict_range(t, key, Key.key_after(key))
+
+  @doc """
+  Add a single key write conflict to the transaction.
+
+  This is a convenience function that adds a write conflict for a single key by
+  converting it to a single-key range (key to Key.key_after(key)).
+
+  ## Parameters
+    - `t` - The transaction
+    - `key` - The key to add as a write conflict
+
+  ## Examples
+
+      iex> tx = Tx.new()
+      iex> tx = Tx.add_write_conflict_key(tx, "my_key")
+      iex> tx.range_writes
+      [{"my_key", "my_key\\0"}]
+  """
+  @spec add_write_conflict_key(t(), key()) :: t()
+  def add_write_conflict_key(t, key) when is_binary(key), do: add_write_conflict_range(t, key, Key.key_after(key))
+
+  def add_write_conflict_key_unless(t, key, false), do: add_write_conflict_key(t, key)
+  def add_write_conflict_key_unless(t, _key, true), do: t
+
+  def add_write_conflict_range_unless(t, min_key, max_key_ex, false),
+    do: add_write_conflict_range(t, min_key, max_key_ex)
+
+  def add_write_conflict_range_unless(t, _min_key, _max_key_ex, true), do: t
+
+  # =============================================================================
+  # Transaction Finalization
+  # =============================================================================
+
+  @doc """
+  Get the repeatable read value for a key within the transaction.
+
+  Checks both writes and reads, returning the value if the key has been
+  accessed in this transaction, or nil if the key is unknown to the transaction.
+  This ensures repeatable read semantics - the same key returns the same value
+  throughout the transaction.
+  """
+  @spec repeatable_read(t(), key()) :: value() | :clear | nil
+  def repeatable_read(t, key) do
+    case :gb_trees.lookup(key, t.writes) do
+      {:value, {op, operand}} ->
+        base_value = get_current_binary_value(t, key)
+        apply_atomic_operation(op, base_value, operand)
+
+      {:value, v} ->
+        v
+
+      :none ->
+        Map.get(t.reads, key)
+    end
+  end
+
+  @spec commit(t(), Bedrock.version() | nil) :: Transaction.encoded()
+  def commit(%__MODULE__{reads: reads, range_reads: range_reads}, nil) when reads != %{} or range_reads != [] do
+    raise ArgumentError, "cannot commit transaction with read conflicts but nil read_version"
+  end
+
+  def commit(t, read_version) when is_nil(read_version) or is_version(read_version) do
+    # Write conflicts are only those explicitly added during operations
+    write_conflicts = t.range_writes
+
+    read_conflicts =
+      t.reads
+      |> Map.keys()
+      |> Enum.reduce(t.range_reads, fn k, acc -> add_or_merge(acc, k, Key.key_after(k)) end)
+
+    # Read conflicts tuple: nil when no conflicts, {version, conflicts} when conflicts exist
+    read_conflicts_tuple =
+      case read_conflicts do
+        [] -> nil
+        non_empty -> {read_version, non_empty}
+      end
+
+    Transaction.encode(%{
+      mutations: Enum.reverse(t.mutations),
+      write_conflicts: write_conflicts,
+      read_conflicts: read_conflicts_tuple
+    })
+  end
+
+  # =============================================================================
+  # Private Helper Functions - Data Access
+  # =============================================================================
+
+  @spec get_write(t(), k :: binary()) :: binary() | :clear | nil
+  defp get_write(t, k) do
+    case :gb_trees.lookup(k, t.writes) do
+      {:value, v} -> v
+      :none -> nil
+    end
+  end
+
+  @spec get_read(t(), k :: binary()) :: binary() | :clear | nil
+  defp get_read(t, k), do: Map.get(t.reads, k)
+
+  @spec put_clear(t(), k :: binary()) :: t()
+  defp put_clear(t, k), do: %{t | writes: :gb_trees.enter(k, :clear, t.writes)}
+
+  @spec put_write(t(), k :: binary(), v :: binary()) :: t()
+  defp put_write(t, k, v), do: %{t | writes: :gb_trees.enter(k, v, t.writes)}
+
+  @spec put_atomic(t(), binary(), atom(), binary()) :: t()
+  defp put_atomic(t, k, op, value), do: %{t | writes: :gb_trees.enter(k, {op, value}, t.writes)}
+
+  @spec get_current_binary_value(t(), key()) :: binary()
+  defp get_current_binary_value(t, key) do
+    case Map.get(t.reads, key) do
+      nil ->
+        # Key not found - return empty binary for atomic operations
+        <<>>
+
+      :clear ->
+        # Key was cleared - return empty binary for atomic operations
+        <<>>
+
+      value when is_binary(value) ->
+        # Return the existing binary value
+        value
+    end
+  end
+
+  defp fetch_and_record(t, k, fetch_fn, state) do
+    {result, new_state} = fetch_fn.(k, state)
+
+    case result do
+      {:ok, v} ->
+        {%{t | reads: Map.put(t.reads, k, v)}, result, new_state}
+
+      {:error, :not_found} ->
+        {%{t | reads: Map.put(t.reads, k, :clear)}, result, new_state}
+
+      result ->
+        {t, result, new_state}
+    end
+  end
+
+  # =============================================================================
+  # Private Helper Functions - Range Processing
+  # =============================================================================
+
+  defp remove_ops_in_range(t, s, e), do: %{t | mutations: Enum.reject(t.mutations, &key_in_range?(&1, s, e))}
+
+  defp key_in_range?({:set, k, _}, s, e), do: k >= s && k < e
+  defp key_in_range?({:clear, k}, s, e), do: k >= s && k < e
+  defp key_in_range?({:atomic, _op, k, _}, s, e), do: k >= s && k < e
+  defp key_in_range?(_, _s, _e), do: false
+
+  defp remove_writes_in_range(t, s, e) do
+    # Directly fold over keys in range, deleting as we go
+    new_writes =
+      s
+      |> :gb_trees.iterator_from(t.writes)
+      |> gb_trees_delete_range(e, t.writes)
+
+    %{t | writes: new_writes}
+  end
+
+  defp gb_trees_delete_range(iterator, end_key, tree) do
+    case :gb_trees.next(iterator) do
+      {key, _value, next_iterator} when key < end_key ->
+        gb_trees_delete_range(next_iterator, end_key, :gb_trees.delete_any(key, tree))
+
+      _ ->
+        tree
+    end
+  end
+
+  defp clear_reads_in_range(t, s, e) do
+    updated_reads =
+      t.reads
+      |> Enum.filter(fn {k, _v} -> k >= s and k < e end)
+      |> Enum.reduce(t.reads, fn {k, _v}, acc -> Map.put(acc, k, :clear) end)
+
+    %{t | reads: updated_reads}
+  end
+
+  # =============================================================================
+  # Private Helper Functions - Atomic Operations
+  # =============================================================================
+
+  # Centralized atomic operation dispatch
+  @spec apply_atomic_operation(atom(), binary(), binary()) :: binary()
+  defp apply_atomic_operation(:add, base_value, operand), do: Atomics.add(base_value, operand)
+  defp apply_atomic_operation(:min, base_value, operand), do: Atomics.min(base_value, operand)
+  defp apply_atomic_operation(:max, base_value, operand), do: Atomics.max(base_value, operand)
+  defp apply_atomic_operation(:bit_and, base_value, operand), do: Atomics.bit_and(base_value, operand)
+  defp apply_atomic_operation(:bit_or, base_value, operand), do: Atomics.bit_or(base_value, operand)
+  defp apply_atomic_operation(:bit_xor, base_value, operand), do: Atomics.bit_xor(base_value, operand)
+  defp apply_atomic_operation(:byte_min, base_value, operand), do: Atomics.byte_min(base_value, operand)
+  defp apply_atomic_operation(:byte_max, base_value, operand), do: Atomics.byte_max(base_value, operand)
+  defp apply_atomic_operation(:append_if_fits, base_value, operand), do: Atomics.append_if_fits(base_value, operand)
+
+  defp apply_atomic_operation(:compare_and_clear, base_value, expected),
+    do: Atomics.compare_and_clear(base_value, expected) || <<>>
+
+  # Apply atomic operation to storage value for range queries
+  # storage_value is the value from storage servers (nil if not found)
+  @doc false
+  def apply_atomic_to_storage_value({op, operand}, storage_value),
+    do: apply_atomic_operation(op, storage_value || <<>>, operand)
+
+  @doc false
+  def apply_atomic_to_storage_value(value, _storage_value), do: value
+
+  # =============================================================================
+  # Private Helper Functions - Storage Merging
+  # =============================================================================
 
   # Helper functions for the enhanced merge_storage_range_with_writes
 
@@ -144,9 +534,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   end
 
   defp scan_pending_writes(tx, start_key, end_key) do
-    # Scan transaction writes in the specified range
+    # Scan transaction writes in the specified range using the same merge logic
     tx_iterator = :gb_trees.iterator_from(start_key, tx.writes)
-    writes_in_range = collect_writes_in_range(tx_iterator, end_key, [])
+    {writes_in_range_reversed, _} = merge_ordered_results_bounded([], tx_iterator, [], [], end_key)
+    writes_in_range = Enum.reverse(writes_in_range_reversed)
 
     # Add read conflict tracking
     updated_tx =
@@ -163,21 +554,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
             end)
 
           {last_write_key, _} = List.last(writes_in_range)
-          updated_range_reads = add_or_merge(tx.range_reads, first_write_key, next_key(last_write_key))
+          updated_range_reads = add_or_merge(tx.range_reads, first_write_key, Key.key_after(last_write_key))
           %{tx | reads: updated_reads, range_reads: updated_range_reads}
       end
 
     {updated_tx, writes_in_range}
-  end
-
-  defp collect_writes_in_range(iterator, end_key, acc) do
-    case :gb_trees.next(iterator) do
-      {key, value, next_iterator} when key < end_key ->
-        collect_writes_in_range(next_iterator, end_key, [{key, value} | acc])
-
-      _ ->
-        Enum.reverse(acc)
-    end
   end
 
   defp add_range_conflict(tx, start_key, end_key) when start_key < end_key do
@@ -188,25 +569,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   # Empty range
   defp add_range_conflict(tx, _start_key, _end_key), do: tx
 
-  # Helper function to check if ranges overlap
-  defp ranges_overlap?({start1, end1}, {start2, end2}) do
-    start1 < end2 and start2 < end1
-  end
-
   # Merge storage data with transaction writes, but only within the specified boundary
   defp merge_storage_with_bounded_writes(tx, storage_results, max_boundary) do
     [{first_key, _} | _] = storage_results
     {last_key, _} = List.last(storage_results)
 
-    # Boundary for merging is the minimum of next_key(last_storage) and max_boundary
-    merge_boundary = min(next_key(last_key), max_boundary)
+    # Boundary for merging is the minimum of Key.key_after(last_storage) and max_boundary
+    merge_boundary = min(Key.key_after(last_key), max_boundary)
 
     # Get overlapping clear ranges
     data_range = {first_key, merge_boundary}
 
     tx_clear_ranges =
       Enum.filter(tx.mutations, fn
-        {:clear_range, s, e} -> ranges_overlap?(data_range, {s, e})
+        {:clear_range, s, e} -> KeyRange.overlap?(data_range, {s, e})
         _ -> false
       end)
 
@@ -235,7 +611,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
               Map.put(acc, key, value)
             end)
 
-          updated_range_reads = add_or_merge(tx.range_reads, actual_first_key, next_key(actual_last_key))
+          updated_range_reads = add_or_merge(tx.range_reads, actual_first_key, Key.key_after(actual_last_key))
 
           %{tx | reads: updated_reads, range_reads: updated_range_reads}
       end
@@ -247,7 +623,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   defp merge_ordered_results_bounded([], tx_iterator, clear_ranges, acc, boundary) do
     case :gb_trees.next(tx_iterator) do
       {tx_key, tx_value, iterator} when tx_key < boundary ->
-        merge_ordered_results_bounded([], iterator, clear_ranges, [{tx_key, tx_value} | acc], boundary)
+        # Apply atomic operations to storage values (nil here means no storage value)
+        final_value = apply_atomic_to_storage_value(tx_value, nil)
+        merge_ordered_results_bounded([], iterator, clear_ranges, [{tx_key, final_value} | acc], boundary)
 
       _ ->
         {acc, tx_iterator}
@@ -265,302 +643,51 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
   end
 
   defp merge_with_tx_write_bounded(
-         {tx_key, _tx_value} = tx_kv,
+         {tx_key, tx_value},
          iterator,
-         [{storage_key, _storage_value} = storage_kv | storage_rest] = storage_list,
+         [{storage_key, storage_value} = storage_kv | storage_rest] = storage_list,
          clear_ranges,
          acc,
          boundary
        ) do
     cond do
       tx_key < storage_key ->
-        merge_ordered_results_bounded(storage_list, iterator, clear_ranges, [tx_kv | acc], boundary)
+        # TX key comes first, apply atomic to nil (no storage value)
+        final_value = apply_atomic_to_storage_value(tx_value, nil)
+        merge_ordered_results_bounded(storage_list, iterator, clear_ranges, [{tx_key, final_value} | acc], boundary)
 
       tx_key == storage_key ->
-        merge_ordered_results_bounded(storage_rest, iterator, clear_ranges, [tx_kv | acc], boundary)
+        # Same key, apply atomic to storage value
+        final_value = apply_atomic_to_storage_value(tx_value, storage_value)
+        merge_ordered_results_bounded(storage_rest, iterator, clear_ranges, [{tx_key, final_value} | acc], boundary)
 
       true ->
-        merge_with_tx_write_bounded(tx_kv, iterator, storage_rest, clear_ranges, [storage_kv | acc], boundary)
+        # Storage key comes first, keep it and continue
+        merge_with_tx_write_bounded(
+          {tx_key, tx_value},
+          iterator,
+          storage_rest,
+          clear_ranges,
+          [storage_kv | acc],
+          boundary
+        )
     end
   end
 
-  defp merge_with_tx_write_bounded({_tx_key, _tx_value} = tx_kv, iterator, [], clear_ranges, acc, boundary),
-    do: merge_ordered_results_bounded([], iterator, clear_ranges, [tx_kv | acc], boundary)
-
-  @doc """
-  Get the repeatable read value for a key within the transaction.
-
-  Checks both writes and reads, returning the value if the key has been
-  accessed in this transaction, or nil if the key is unknown to the transaction.
-  This ensures repeatable read semantics - the same key returns the same value
-  throughout the transaction.
-  """
-  @spec repeatable_read(t(), key()) :: value() | :clear | nil
-  def repeatable_read(t, key) do
-    case :gb_trees.lookup(key, t.writes) do
-      {:value, v} -> v
-      :none -> Map.get(t.reads, key)
-    end
+  defp merge_with_tx_write_bounded({tx_key, tx_value}, iterator, [], clear_ranges, acc, boundary) do
+    # No more storage values, apply atomic to nil
+    final_value = apply_atomic_to_storage_value(tx_value, nil)
+    merge_ordered_results_bounded([], iterator, clear_ranges, [{tx_key, final_value} | acc], boundary)
   end
 
-  @doc """
-  Record a successful read in the transaction cache.
-  """
-  @spec record_read(t(), key(), value()) :: t()
-  def record_read(t, key, value) do
-    %{t | reads: Map.put(t.reads, key, value)}
-  end
-
-  @doc """
-  Record a not_found read in the transaction cache.
-  """
-  @spec record_not_found(t(), key()) :: t()
-  def record_not_found(t, key) do
-    %{t | reads: Map.put(t.reads, key, :clear)}
-  end
-
-  @doc """
-  Perform a transactional fetch with caching and recording.
-
-  If the key is already cached (read or written), returns the cached value.
-  Otherwise, calls the fetch function and records the result appropriately.
-  """
-  @spec fetch_with_cache(t(), key(), (key() -> {:ok, value()} | {:error, atom()})) ::
-          {t(), {:ok, value()} | {:error, atom()}}
-  def fetch_with_cache(t, key, fetch_fn) do
-    case repeatable_read(t, key) do
-      nil ->
-        case fetch_fn.(key) do
-          {:ok, value} ->
-            {record_read(t, key, value), {:ok, value}}
-
-          {:error, :not_found} ->
-            {record_not_found(t, key), {:error, :not_found}}
-
-          {:error, reason} ->
-            {t, {:error, reason}}
-        end
-
-      :clear ->
-        {t, {:error, :not_found}}
-
-      value ->
-        {t, {:ok, value}}
-    end
-  end
-
-  @doc """
-  Perform a transactional fetch with caching, recording, and external state management.
-
-  If the key is already cached (read or written), returns the cached value with original state.
-  Otherwise, calls the fetch function and records the result, returning the updated state.
-  """
-  @spec fetch(t(), key(), state, (key(), state -> {state, {:ok, value()} | {:error, atom()}})) ::
-          {t(), {:ok, value()} | {:error, atom()}, state}
-        when state: any()
-  def fetch(t, key, state, fetch_fn) do
-    case repeatable_read(t, key) do
-      nil ->
-        case fetch_fn.(key, state) do
-          {new_state, {:ok, value}} ->
-            {record_read(t, key, value), {:ok, value}, new_state}
-
-          {new_state, {:error, :not_found}} ->
-            {record_not_found(t, key), {:error, :not_found}, new_state}
-
-          {new_state, {:error, reason}} ->
-            {t, {:error, reason}, new_state}
-        end
-
-      :clear ->
-        {t, {:error, :not_found}, state}
-
-      value ->
-        {t, {:ok, value}, state}
-    end
-  end
-
-  @spec get(
-          t(),
-          key(),
-          fetch_fn :: (key(), state -> {{:ok, value()} | {:error, reason}, state}),
-          state :: any()
-        ) :: {t(), {:ok, value()} | {:error, reason}, state}
-        when reason: term(), state: term()
-  def get(t, k, fetch_fn, state) when is_binary(k) do
-    case get_write(t, k) || get_read(t, k) do
-      nil -> fetch_and_record(t, k, fetch_fn, state)
-      :clear -> {t, {:error, :not_found}, state}
-      value -> {t, {:ok, value}, state}
-    end
-  end
-
-  def set(t, k, v) when is_binary(k) and is_binary(v) do
-    t
-    |> remove_ops_in_range(k, next_key(k))
-    |> put_write(k, v)
-    |> record_mutation({:set, k, v})
-  end
-
-  def clear(t, k) when is_binary(k) do
-    t
-    |> remove_ops_in_range(k, next_key(k))
-    |> put_clear(k)
-    |> record_mutation({:clear, k})
-  end
-
-  def clear_range(t, s, e) when is_binary(s) and is_binary(e) do
-    t
-    |> remove_ops_in_range(s, e)
-    |> remove_writes_in_range(s, e)
-    |> clear_reads_in_range(s, e)
-    |> add_write_range(s, e)
-    |> record_mutation({:clear_range, s, e})
-  end
-
-  @doc """
-  Commits the transaction and returns the transaction map format.
-
-  This is useful for testing and cases where the raw transaction structure
-  is needed without binary encoding.
-  """
-  def commit(t, read_version \\ nil) do
-    write_conflicts =
-      t.writes
-      |> :gb_trees.keys()
-      |> Enum.reduce(t.range_writes, fn k, acc -> add_or_merge(acc, k, next_key(k)) end)
-
-    read_conflicts =
-      t.reads
-      |> Map.keys()
-      |> Enum.reduce(t.range_reads, fn k, acc -> add_or_merge(acc, k, next_key(k)) end)
-
-    # Enforce read_version/read_conflicts coupling: if no reads, ignore read_version
-    read_conflicts_tuple =
-      case read_conflicts do
-        [] -> {nil, []}
-        non_empty when read_version != nil -> {read_version, non_empty}
-        _non_empty when read_version == nil -> {nil, []}
-      end
-
-    %{
-      mutations: Enum.reverse(t.mutations),
-      write_conflicts: write_conflicts,
-      read_conflicts: read_conflicts_tuple
-    }
-  end
-
-  @doc """
-  Commits the transaction and returns binary encoded format.
-
-  This is useful for commit proxy operations and other cases where
-  efficient binary format is preferred.
-  """
-  def commit_binary(t, read_version \\ nil), do: t |> commit(read_version) |> Transaction.encode()
-
-  defp remove_ops_in_range(t, s, e) do
-    %{
-      t
-      | mutations:
-          Enum.reject(t.mutations, fn
-            {:set, k, _} -> k >= s && k < e
-            {:clear, k} -> k >= s && k < e
-            _ -> false
-          end)
-    }
-  end
-
-  defp remove_writes_in_range(t, s, e) do
-    # Get all keys in range and delete them
-    keys_to_remove =
-      s
-      |> :gb_trees.iterator_from(t.writes)
-      |> gb_trees_range_keys(e, [])
-
-    new_writes =
-      Enum.reduce(keys_to_remove, t.writes, fn k, tree ->
-        :gb_trees.delete_any(k, tree)
-      end)
-
-    %{t | writes: new_writes}
-  end
-
-  # Helper function to collect keys in range from gb_trees iterator
-  defp gb_trees_range_keys(iterator, end_key, acc) do
-    case :gb_trees.next(iterator) do
-      {key, _value, next_iterator} when key < end_key ->
-        gb_trees_range_keys(next_iterator, end_key, [key | acc])
-
-      _ ->
-        Enum.reverse(acc)
-    end
-  end
-
-  defp clear_reads_in_range(t, s, e) do
-    %{
-      t
-      | reads:
-          Map.new(t.reads, fn
-            {k, _} when k >= s and k < e -> {k, :clear}
-            kv -> kv
-          end)
-    }
-  end
-
-  defp add_write_range(t, s, e) do
-    %{
-      t
-      | range_writes: add_or_merge(t.range_writes, s, e)
-    }
-  end
+  # =============================================================================
+  # Private Helper Functions - Utility
+  # =============================================================================
 
   def add_or_merge([], s, e), do: [{s, e}]
   def add_or_merge([{hs, he} | rest], s, e) when e < hs, do: [{s, e}, {hs, he} | rest]
   def add_or_merge([{hs, he} | rest], s, e) when he < s, do: [{hs, he} | add_or_merge(rest, s, e)]
   def add_or_merge([{hs, he} | rest], s, e), do: add_or_merge(rest, min(hs, s), max(he, e))
-
-  @spec get_write(t(), k :: binary()) :: binary() | :clear | nil
-  defp get_write(t, k) do
-    case :gb_trees.lookup(k, t.writes) do
-      {:value, v} -> v
-      :none -> nil
-    end
-  end
-
-  @spec get_read(t(), k :: binary()) :: binary() | :clear | nil
-  defp get_read(t, k), do: Map.get(t.reads, k)
-
-  @spec put_clear(t(), k :: binary()) :: t()
-  defp put_clear(t, k), do: %{t | writes: :gb_trees.enter(k, :clear, t.writes)}
-
-  @spec put_write(t(), k :: binary(), v :: binary()) :: t()
-  defp put_write(t, k, v), do: %{t | writes: :gb_trees.enter(k, v, t.writes)}
-
-  defp fetch_and_record(t, k, fetch_fn, state) do
-    {result, new_state} = fetch_fn.(k, state)
-
-    case result do
-      {:ok, v} ->
-        {%{t | reads: Map.put(t.reads, k, v)}, result, new_state}
-
-      {:error, :not_found} ->
-        {%{t | reads: Map.put(t.reads, k, :clear)}, result, new_state}
-
-      result ->
-        {t, result, new_state}
-    end
-  end
-
-  @spec record_mutation(t(), mutation()) :: t()
-  defp record_mutation(t, op) do
-    %{t | mutations: [op | t.mutations]}
-  end
-
-  defp next_key(k), do: k <> <<0>>
-
-  # Old 2-argument version removed - use the 5-argument version instead
-
-  # Helper functions needed by the new implementation
 
   defp filter_cleared_keys(key_value_pairs, clear_ranges) do
     Enum.reject(key_value_pairs, fn {key, _value} ->
@@ -573,6 +700,4 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Tx do
       key >= start_range and key < end_range
     end)
   end
-
-  # Helper function to reduce nesting in get_range
 end

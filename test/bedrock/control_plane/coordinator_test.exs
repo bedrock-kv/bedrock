@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.CoordinatorTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.GenServerTestHelpers
+  import Bedrock.Test.Common.GenServerTestHelpers
 
   alias Bedrock.ControlPlane.Coordinator
 
@@ -60,14 +60,11 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     end
 
     test "fetch_config/1 with default timeout", %{coordinator: coordinator} do
-      result = Coordinator.fetch_config(coordinator)
-      assert {:ok, config} = result
-      assert config.coordinators == [:node1]
+      assert {:ok, %{coordinators: [:node1]}} = Coordinator.fetch_config(coordinator)
     end
 
     test "fetch_config/2 with custom timeout", %{coordinator: coordinator} do
-      result = Coordinator.fetch_config(coordinator, 1000)
-      assert {:ok, config} = result
+      assert {:ok, config} = Coordinator.fetch_config(coordinator, 1000)
       assert is_map(config)
     end
 
@@ -81,98 +78,52 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       end)
 
       # Use our helper macro to assert on the exact call message format
-      assert_call_received({:update_config, actual_config}) do
-        assert actual_config == config
-        assert actual_config.coordinators == [:node1]
-        assert actual_config.parameters == nil
-        assert actual_config.policies == nil
-      end
+      assert_call_received({:update_config, %{coordinators: [:node1], parameters: nil, policies: nil}})
     end
 
     test "update_config/3 with custom timeout", %{coordinator: coordinator} do
       config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      result = Coordinator.update_config(coordinator, config, 2000)
-      assert {:ok, :txn_123} = result
+      assert {:ok, :txn_123} = Coordinator.update_config(coordinator, config, 2000)
     end
 
     test "fetch_transaction_system_layout/1 with default timeout", %{coordinator: coordinator} do
-      result = Coordinator.fetch_transaction_system_layout(coordinator)
-      assert {:ok, layout} = result
-      assert layout.id == "layout_1"
-      assert layout.epoch == 1
+      assert {:ok, %{id: "layout_1", epoch: 1}} =
+               Coordinator.fetch_transaction_system_layout(coordinator)
     end
 
     test "fetch_transaction_system_layout/2 with custom timeout", %{coordinator: coordinator} do
-      result = Coordinator.fetch_transaction_system_layout(coordinator, 1500)
-      assert {:ok, layout} = result
+      assert {:ok, layout} = Coordinator.fetch_transaction_system_layout(coordinator, 1500)
       assert is_map(layout)
     end
 
     test "update_transaction_system_layout/2 with default timeout", %{coordinator: coordinator} do
-      layout = %{
-        id: "test_layout",
-        epoch: 2,
-        director: nil,
-        sequencer: nil,
-        rate_keeper: nil,
-        proxies: [],
-        resolvers: [],
-        logs: %{},
-        storage_teams: [],
-        services: %{}
-      }
-
-      result = Coordinator.update_transaction_system_layout(coordinator, layout)
-      assert {:ok, :txn_456} = result
+      layout = create_test_layout()
+      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout)
     end
 
     test "update_transaction_system_layout/3 with custom timeout", %{coordinator: coordinator} do
-      layout = %{
-        id: "test_layout",
-        epoch: 2,
-        director: nil,
-        sequencer: nil,
-        rate_keeper: nil,
-        proxies: [],
-        resolvers: [],
-        logs: %{},
-        storage_teams: [],
-        services: %{}
-      }
-
-      result = Coordinator.update_transaction_system_layout(coordinator, layout, 3000)
-      assert {:ok, :txn_456} = result
+      layout = create_test_layout()
+      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout, 3000)
     end
 
     test "register_services/2 with default timeout", %{coordinator: coordinator} do
-      services = [
-        {"service_1", :log, {:log_server, :node1}},
-        {"service_2", :storage, {:storage_server, :node2}}
-      ]
-
-      result = Coordinator.register_services(coordinator, services)
-      assert {:ok, :txn_789} = result
+      services = create_test_services()
+      assert {:ok, :txn_789} = Coordinator.register_services(coordinator, services)
     end
 
     test "register_services/3 with custom timeout", %{coordinator: coordinator} do
       services = [{"service_1", :log, {:log_server, :node1}}]
-
-      result = Coordinator.register_services(coordinator, services, 2500)
-      assert {:ok, :txn_789} = result
+      assert {:ok, :txn_789} = Coordinator.register_services(coordinator, services, 2500)
     end
 
     test "deregister_services/2 with default timeout", %{coordinator: coordinator} do
       service_ids = ["service_1", "service_2"]
-
-      result = Coordinator.deregister_services(coordinator, service_ids)
-      assert {:ok, :txn_abc} = result
+      assert {:ok, :txn_abc} = Coordinator.deregister_services(coordinator, service_ids)
     end
 
     test "deregister_services/3 with custom timeout", %{coordinator: coordinator} do
       service_ids = ["service_1"]
-
-      result = Coordinator.deregister_services(coordinator, service_ids, 1800)
-      assert {:ok, :txn_abc} = result
+      assert {:ok, :txn_abc} = Coordinator.deregister_services(coordinator, service_ids, 1800)
     end
 
     test "register_gateway/4 with default timeout", %{coordinator: coordinator} do
@@ -180,10 +131,8 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       compact_services = [{:log, :log_server}, {:storage, :storage_server}]
       capabilities = [:can_host_logs, :can_host_storage]
 
-      result =
-        Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
-
-      assert {:ok, :txn_def} = result
+      assert {:ok, :txn_def} =
+               Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
     end
 
     test "register_gateway/5 with custom timeout", %{coordinator: coordinator} do
@@ -191,64 +140,42 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       compact_services = [{:log, :log_server}]
       capabilities = [:can_host_logs]
 
-      result =
-        Coordinator.register_gateway(
-          coordinator,
-          gateway_pid,
-          compact_services,
-          capabilities,
-          4000
-        )
-
-      assert {:ok, :txn_def} = result
+      assert {:ok, :txn_def} =
+               Coordinator.register_gateway(
+                 coordinator,
+                 gateway_pid,
+                 compact_services,
+                 capabilities,
+                 4000
+               )
     end
   end
 
   describe "type definitions" do
     test "service_info structure" do
-      # Test that the type structure is correctly defined
       service_info = {"service_id", :log, {:service_name, :node1}}
-
-      {service_id, kind, {name, node}} = service_info
-      assert is_binary(service_id)
-      assert kind in [:log, :storage]
-      assert is_atom(name)
-      assert is_atom(node)
+      assert {service_id, kind, {name, node}} = service_info
+      assert is_binary(service_id) and kind in [:log, :storage] and is_atom(name) and is_atom(node)
     end
 
     test "compact_service_info structure" do
-      # Test the compact service info structure
       compact_info = {:storage, :storage_server}
-
-      {kind, name} = compact_info
-      assert kind in [:log, :storage]
-      assert is_atom(name)
+      assert {kind, name} = compact_info
+      assert kind in [:log, :storage] and is_atom(name)
     end
   end
 
   describe "error handling" do
     test "handles timeout errors gracefully" do
-      # Create a coordinator that doesn't respond
-      unresponsive_coordinator =
-        spawn(fn ->
-          receive do
-            # Never respond
-            _ -> Process.sleep(10_000)
-          end
-        end)
-
-      result = Coordinator.fetch_config(unresponsive_coordinator, 100)
-      assert {:error, :timeout} = result
+      unresponsive_coordinator = spawn_unresponsive_coordinator()
+      assert {:error, :timeout} = Coordinator.fetch_config(unresponsive_coordinator, 100)
     end
 
     test "handles process termination" do
-      # Create a coordinator that terminates immediately
       terminated_coordinator = spawn(fn -> :ok end)
       # Ensure it's dead
       Process.sleep(10)
-
-      result = Coordinator.fetch_config(terminated_coordinator, 100)
-      assert {:error, _} = result
+      assert {:error, _} = Coordinator.fetch_config(terminated_coordinator, 100)
     end
   end
 
@@ -275,20 +202,17 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     end
 
     test "handles unavailable error", %{coordinator: coordinator} do
-      result = Coordinator.fetch_config(coordinator)
-      assert {:error, :unavailable} = result
+      assert {:error, :unavailable} = Coordinator.fetch_config(coordinator)
     end
 
     test "handles not_leader error", %{coordinator: coordinator} do
       config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      result = Coordinator.update_config(coordinator, config)
-      assert {:error, :not_leader} = result
+      assert {:error, :not_leader} = Coordinator.update_config(coordinator, config)
     end
 
     test "handles failed error", %{coordinator: coordinator} do
       services = [{"service_1", :log, {:log_server, :node1}}]
-      result = Coordinator.register_services(coordinator, services)
-      assert {:error, :failed} = result
+      assert {:error, :failed} = Coordinator.register_services(coordinator, services)
     end
   end
 
@@ -318,21 +242,13 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     end
 
     test "registers multiple services", %{coordinator: coordinator} do
-      services = [
-        {"log_1", :log, {:log_server_1, :node1}},
-        {"log_2", :log, {:log_server_2, :node1}},
-        {"storage_1", :storage, {:storage_server_1, :node2}}
-      ]
-
-      result = Coordinator.register_services(coordinator, services)
-      assert {:ok, {:registered, 3}} = result
+      services = create_multiple_test_services()
+      assert {:ok, {:registered, 3}} = Coordinator.register_services(coordinator, services)
     end
 
     test "deregisters multiple services", %{coordinator: coordinator} do
       service_ids = ["log_1", "log_2", "storage_1", "storage_2"]
-
-      result = Coordinator.deregister_services(coordinator, service_ids)
-      assert {:ok, {:deregistered, 4}} = result
+      assert {:ok, {:deregistered, 4}} = Coordinator.deregister_services(coordinator, service_ids)
     end
 
     test "registers gateway with services and capabilities", %{coordinator: coordinator} do
@@ -340,10 +256,49 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       compact_services = [{:log, :log_1}, {:log, :log_2}, {:storage, :storage_1}]
       capabilities = [:can_host_logs, :can_host_storage, :high_memory]
 
-      result =
-        Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
-
-      assert {:ok, {:gateway_registered, 3, 3}} = result
+      assert {:ok, {:gateway_registered, 3, 3}} =
+               Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
     end
+  end
+
+  # Helper functions
+
+  defp create_test_layout do
+    %{
+      id: "test_layout",
+      epoch: 2,
+      director: nil,
+      sequencer: nil,
+      rate_keeper: nil,
+      proxies: [],
+      resolvers: [],
+      logs: %{},
+      storage_teams: [],
+      services: %{}
+    }
+  end
+
+  defp create_test_services do
+    [
+      {"service_1", :log, {:log_server, :node1}},
+      {"service_2", :storage, {:storage_server, :node2}}
+    ]
+  end
+
+  defp create_multiple_test_services do
+    [
+      {"log_1", :log, {:log_server_1, :node1}},
+      {"log_2", :log, {:log_server_2, :node1}},
+      {"storage_1", :storage, {:storage_server_1, :node2}}
+    ]
+  end
+
+  defp spawn_unresponsive_coordinator do
+    spawn(fn ->
+      receive do
+        # Never respond
+        _ -> Process.sleep(10_000)
+      end
+    end)
   end
 end

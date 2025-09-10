@@ -13,32 +13,35 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
     :ok
   end
 
-  test "reload_segments_at_path/2 returns sorted segments" do
-    File.write!(Path.join(@segment_dir, Segment.encode_file_name(1)), "")
-    File.write!(Path.join(@segment_dir, Segment.encode_file_name(2)), "")
-    File.write!(Path.join(@segment_dir, Segment.encode_file_name(10)), "")
+  describe "reload_segments_at_path/2" do
+    test "returns segments sorted by version in descending order" do
+      create_segment_file(1)
+      create_segment_file(2)
+      create_segment_file(10)
 
-    {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
+      version_10 = Version.from_integer(10)
+      version_2 = Version.from_integer(2)
+      version_1 = Version.from_integer(1)
 
-    version_10 = Version.from_integer(10)
-    version_2 = Version.from_integer(2)
-    version_1 = Version.from_integer(1)
+      assert {:ok,
+              [
+                %Segment{min_version: ^version_10},
+                %Segment{min_version: ^version_2},
+                %Segment{min_version: ^version_1}
+              ]} = ColdStarting.reload_segments_at_path(@segment_dir)
+    end
 
-    assert [
-             %Segment{min_version: ^version_10},
-             %Segment{min_version: ^version_2},
-             %Segment{min_version: ^version_1}
-           ] =
-             segments
+    test "ignores non-matching files in directory" do
+      create_segment_file(1)
+      File.write!(Path.join(@segment_dir, "other_file.log"), "")
+
+      version_1 = Version.from_integer(1)
+
+      assert {:ok, [%Segment{min_version: ^version_1}]} = ColdStarting.reload_segments_at_path(@segment_dir)
+    end
   end
 
-  test "reload_segments_at_path/2 ignores non-matching files" do
-    File.write!(Path.join(@segment_dir, Segment.encode_file_name(1)), "")
-    File.write!(Path.join(@segment_dir, "other_file.log"), "")
-
-    {:ok, segments} = ColdStarting.reload_segments_at_path(@segment_dir)
-
-    version_1 = Version.from_integer(1)
-    assert [%Segment{min_version: ^version_1}] = segments
+  defp create_segment_file(version) do
+    File.write!(Path.join(@segment_dir, Segment.encode_file_name(version)), "")
   end
 end

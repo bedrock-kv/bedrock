@@ -15,51 +15,35 @@ defmodule Bedrock.ControlPlane.Coordinator.PathConfigTest do
     end
   end
 
+  # Helper to configure cluster with coordinator path
+  defp configure_cluster_with_path(coordinator_path) do
+    Application.put_env(:bedrock, TestPathCluster, coordinator: [path: coordinator_path])
+  end
+
+  # Helper to configure cluster without path
+  defp configure_cluster_without_path do
+    Application.put_env(:bedrock, TestPathCluster, coordinator: [])
+  end
+
   describe "coordinator path configuration pattern" do
-    test "coordinator creates disk log files when path provided", %{tmp_dir: tmp_dir} do
-      # Configure cluster with coordinator path
+    test "coordinator creates disk log and files when path provided", %{tmp_dir: tmp_dir} do
       coordinator_path = Path.join(tmp_dir, "coordinator")
-      Application.put_env(:bedrock, TestPathCluster, coordinator: [path: coordinator_path])
+      configure_cluster_with_path(coordinator_path)
 
-      # Use coordinator's actual implementation
-      {:ok, raft_log} = Server.init_raft_log(TestPathCluster)
+      # Verify it returns a DiskRaftLog and creates expected directory structure
+      assert {:ok, %DiskRaftLog{} = raft_log} = Server.init_raft_log(TestPathCluster)
 
-      # Verify it created the expected directory structure
       working_directory = Path.join(coordinator_path, "raft")
       assert File.exists?(working_directory)
       assert File.exists?(Path.join(working_directory, "raft_log.dets"))
 
-      # Verify it's actually a DiskRaftLog
-      assert %DiskRaftLog{} = raft_log
-
-      # Clean up
       DiskRaftLog.close(raft_log)
     end
 
-    test "coordinator uses disk log when path provided", %{tmp_dir: tmp_dir} do
-      # Configure cluster with coordinator path
-      coordinator_path = Path.join(tmp_dir, "coordinator")
-      Application.put_env(:bedrock, TestPathCluster, coordinator: [path: coordinator_path])
+    test "coordinator uses in-memory log when no path provided" do
+      configure_cluster_without_path()
 
-      # Test init_raft_log function
-      {:ok, raft_log} = Server.init_raft_log(TestPathCluster)
-
-      # Should be a DiskRaftLog
-      assert %DiskRaftLog{} = raft_log
-
-      # Clean up
-      DiskRaftLog.close(raft_log)
-    end
-
-    test "coordinator uses in-memory log when no path provided", %{tmp_dir: _tmp_dir} do
-      # Configure cluster without coordinator path
-      Application.put_env(:bedrock, TestPathCluster, coordinator: [])
-
-      # Test init_raft_log function
-      {:ok, raft_log} = Server.init_raft_log(TestPathCluster)
-
-      # Should be a TupleInMemoryLog
-      assert %TupleInMemoryLog{} = raft_log
+      assert {:ok, %TupleInMemoryLog{}} = Server.init_raft_log(TestPathCluster)
     end
   end
 end

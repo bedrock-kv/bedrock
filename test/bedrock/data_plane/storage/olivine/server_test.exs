@@ -7,9 +7,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
 
   describe "module structure" do
     test "all modules compile and load successfully" do
-      assert Code.ensure_loaded(Server) == {:module, Server}
-      assert Code.ensure_loaded(Database) == {:module, Database}
-      assert Code.ensure_loaded(IndexManager) == {:module, IndexManager}
+      modules = [Server, Database, IndexManager]
+
+      for module <- modules do
+        assert {:module, ^module} = Code.ensure_loaded(module)
+      end
     end
 
     test "basic DETS operations work" do
@@ -45,8 +47,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
           path: "/tmp/test_olivine"
         )
 
-      assert %{id: {Server, "test_id"}} = spec
-      assert {GenServer, :start_link, _args} = spec.start
+      assert %{
+               id: {Server, "test_id"},
+               start: {GenServer, :start_link, _args}
+             } = spec
     end
 
     test "child_spec raises when required options are missing" do

@@ -32,10 +32,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
       file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
 
-      {:ok, db} = Database.open(table_name, file_path)
+      assert {:ok, %{dets_storage: dets_storage, window_size_in_microseconds: 5_000_000} = db} =
+               Database.open(table_name, file_path)
 
-      assert db.dets_storage
-      assert db.window_size_in_microseconds == 5_000_000
+      assert dets_storage
 
       Database.close(db)
     end
@@ -44,9 +44,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
       file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
 
-      {:ok, db} = Database.open(table_name, file_path, 2_000)
-
-      assert db.window_size_in_microseconds == 2_000_000
+      assert {:ok, %{window_size_in_microseconds: 2_000_000} = db} = Database.open(table_name, file_path, 2_000)
 
       Database.close(db)
     end
@@ -89,9 +87,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       page_binary = <<"this is a test page">>
 
       :ok = Database.store_page(db, 1, page_binary)
-      {:ok, loaded_page} = Database.load_page(db, 1)
-
-      assert loaded_page == page_binary
+      assert {:ok, ^page_binary} = Database.load_page(db, 1)
     end
 
     @tag :tmp_dir
@@ -104,8 +100,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_page(db, 1, <<"original">>)
       :ok = Database.store_page(db, 1, <<"updated">>)
 
-      {:ok, loaded} = Database.load_page(db, 1)
-      assert loaded == <<"updated">>
+      assert {:ok, <<"updated">>} = Database.load_page(db, 1)
     end
 
     @tag :tmp_dir
@@ -130,9 +125,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       value = <<"test_value">>
 
       :ok = Database.store_value(db, key, value)
-      {:ok, loaded_value} = Database.load_value(db, key)
-
-      assert loaded_value == value
+      assert {:ok, ^value} = Database.load_value(db, key)
     end
 
     @tag :tmp_dir
@@ -148,11 +141,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       :ok = Database.store_value(db, <<"key2">>, <<"different_key">>)
 
-      {:ok, val1} = Database.load_value(db, <<"key1">>)
-      assert val1 == <<"updated_value">>
-
-      {:ok, val2} = Database.load_value(db, <<"key2">>)
-      assert val2 == <<"different_key">>
+      assert {:ok, <<"updated_value">>} = Database.load_value(db, <<"key1">>)
+      assert {:ok, <<"different_key">>} = Database.load_value(db, <<"key2">>)
     end
 
     @tag :tmp_dir
@@ -165,14 +155,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       :ok = Database.batch_store_values(db, values)
 
-      {:ok, val1} = Database.load_value(db, <<"key1">>)
-      assert val1 == <<"value1">>
-
-      {:ok, val2} = Database.load_value(db, <<"key2">>)
-      assert val2 == <<"value2">>
-
-      {:ok, val3} = Database.load_value(db, <<"key3">>)
-      assert val3 == <<"value3">>
+      assert {:ok, <<"value1">>} = Database.load_value(db, <<"key1">>)
+      assert {:ok, <<"value2">>} = Database.load_value(db, <<"key2">>)
+      assert {:ok, <<"value3">>} = Database.load_value(db, <<"key3">>)
     end
   end
 
@@ -214,11 +199,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       :ok = Database.store_value(db, <<"key">>, <<"value_data">>)
 
-      {:ok, page_data} = Database.load_page(db, 42)
-      assert page_data == <<"page_data">>
-
-      {:ok, value_data} = Database.load_value(db, <<"key">>)
-      assert value_data == <<"value_data">>
+      assert {:ok, <<"page_data">>} = Database.load_page(db, 42)
+      assert {:ok, <<"value_data">>} = Database.load_value(db, <<"key">>)
 
       page_ids = Database.get_all_page_ids(db)
       assert page_ids == [42]
@@ -230,11 +212,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       :ok = Database.store_page(db, 42, <<"page_42">>)
 
-      {:ok, value} = Database.load_value(db, <<42>>)
-      assert value == <<"binary_42">>
-
-      {:ok, page} = Database.load_page(db, 42)
-      assert page == <<"page_42">>
+      assert {:ok, <<"binary_42">>} = Database.load_value(db, <<42>>)
+      assert {:ok, <<"page_42">>} = Database.load_page(db, 42)
     end
   end
 
@@ -321,8 +300,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       {:ok, updated_db} = Database.store_durable_version(db, new_version)
 
       # Should be updated in memory
-      {:ok, loaded_version} = Database.load_durable_version(updated_db)
-      assert loaded_version == new_version
+      assert {:ok, ^new_version} = Database.load_durable_version(updated_db)
     end
   end
 
@@ -391,21 +369,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       pages_map = Map.new(pages)
       values_map = Map.new(values)
 
-      # Should have newest values only
-      assert values_map == %{
-               # newest version wins
+      # Should have newest values only (newest version wins for key1, only version for key2)
+      assert %{
                <<"key1">> => <<"value1_new">>,
-               # only version
                <<"key2">> => <<"value2">>
-             }
+             } = values_map
 
-      # Should have newest pages only
-      assert pages_map == %{
-               # newest version wins
+      # Should have newest pages only (newest version wins for page 42, only version for page 43)
+      assert %{
                42 => <<"page42_new">>,
-               # only version
                43 => <<"page43">>
-             }
+             } = pages_map
 
       # Should not include v3 data (beyond cutoff)
       refute Map.has_key?(values_map, <<"key3">>)
@@ -441,18 +415,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       assert updated_db.durable_version == v2
 
       # Verify data was persisted to DETS
-      {:ok, value1} = Database.load_value(updated_db, <<"key1">>)
-      assert value1 == <<"value1">>
-
-      {:ok, value2} = Database.load_value(updated_db, <<"key2">>)
-      assert value2 == <<"value2">>
-
-      {:ok, page42} = Database.load_page(updated_db, 42)
-      assert page42 == <<"page42">>
+      assert {:ok, <<"value1">>} = Database.load_value(updated_db, <<"key1">>)
+      assert {:ok, <<"value2">>} = Database.load_value(updated_db, <<"key2">>)
+      assert {:ok, <<"page42">>} = Database.load_page(updated_db, 42)
 
       # Verify durable version was persisted
-      {:ok, persisted_version} = Database.load_durable_version(updated_db)
-      assert persisted_version == v2
+      assert {:ok, ^v2} = Database.load_durable_version(updated_db)
     end
 
     @tag :tmp_dir
@@ -501,14 +469,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       # Advance durable version - should persist only newest values
       {:ok, updated_db} = Database.advance_durable_version(db, v2, [v1, v2])
 
-      # Should have persisted the newest values only
-      {:ok, value} = Database.load_value(updated_db, <<"key1">>)
-      # Not old_value
-      assert value == <<"new_value">>
-
-      {:ok, page} = Database.load_page(updated_db, 42)
-      # Not old_page
-      assert page == <<"new_page">>
+      # Should have persisted the newest values only (not old_value)
+      assert {:ok, <<"new_value">>} = Database.load_value(updated_db, <<"key1">>)
+      # Should have persisted the newest page only (not old_page)
+      assert {:ok, <<"new_page">>} = Database.load_page(updated_db, 42)
     end
   end
 end

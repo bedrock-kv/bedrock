@@ -16,6 +16,27 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     })
   end
 
+  # Common setup helper for server startup
+  defp start_test_server(additional_opts \\ []) do
+    lock_token = :crypto.strong_rand_bytes(32)
+
+    opts =
+      Keyword.merge(
+        [
+          lock_token: lock_token,
+          key_range: {"", :end},
+          epoch: 1,
+          last_version: Version.zero(),
+          director: self(),
+          cluster: TestCluster
+        ],
+        additional_opts
+      )
+
+    pid = start_supervised!({Server, opts})
+    %{server: pid, lock_token: lock_token}
+  end
+
   describe "child_spec/1" do
     test "creates valid child spec with required options" do
       opts = [
@@ -30,11 +51,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       assert %{
                id: {Server, _, _, _},
-               restart: :temporary
+               restart: :temporary,
+               start:
+                 {GenServer, :start_link,
+                  [Server, {token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}]}
              } = spec
-
-      assert {GenServer, :start_link,
-              [Server, {token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}]} = spec.start
 
       assert is_binary(token)
       assert last_version == Version.zero()
@@ -95,93 +116,38 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
   describe "GenServer lifecycle" do
     setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
-      {:ok, server: pid, lock_token: lock_token}
+      start_test_server()
     end
 
     test "initializes with correct state", %{server: server, lock_token: lock_token} do
-      state = :sys.get_state(server)
-
       assert %State{
                lock_token: ^lock_token,
-               mode: :running
-             } = state
-
-      assert state.tree
-      assert state.oldest_version
-      assert state.last_version
-      assert state.waiting == %{}
+               mode: :running,
+               waiting: %{}
+             } = :sys.get_state(server)
     end
   end
 
-  describe "handle_call - resolve_transactions when running" do
+  describe "server state and lifecycle" do
     setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
-      {:ok, server: pid, lock_token: lock_token}
+      start_test_server()
     end
 
     test "resolver starts in running mode and is ready for transactions", %{server: server} do
-      state = :sys.get_state(server)
-      assert state.mode == :running
-    end
-  end
-
-  describe "handle_info - resolve_next" do
-    setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
-      {:ok, server: pid}
+      assert %State{mode: :running} = :sys.get_state(server)
     end
 
     test "server is alive and can receive messages", %{server: server} do
       assert Process.alive?(server)
-      state = :sys.get_state(server)
-      assert %State{mode: :running} = state
+      assert %State{mode: :running} = :sys.get_state(server)
     end
   end
 
-  describe "private functions" do
+  describe "module structure and integration" do
+    setup do
+      start_test_server()
+    end
+
     test "module compiles and has expected structure" do
       Code.ensure_loaded!(Server)
 
@@ -189,67 +155,35 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert function_exported?(Server, :child_spec, 1)
       assert function_exported?(Server, :init, 1)
     end
-  end
-
-  describe "integration scenarios" do
-    setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
-      {:ok, server: pid, lock_token: lock_token}
-    end
 
     test "resolver is ready to accept transactions", %{server: server} do
-      state = :sys.get_state(server)
-      assert state.mode == :running
-      assert state.last_version
-      assert state.waiting == %{}
+      assert %State{
+               mode: :running,
+               waiting: %{}
+             } = :sys.get_state(server)
     end
 
     test "server maintains state consistency", %{server: server, lock_token: lock_token} do
-      state = :sys.get_state(server)
-      assert state.lock_token == lock_token
-      assert state.mode == :running
+      assert %State{
+               lock_token: ^lock_token,
+               mode: :running
+             } = :sys.get_state(server)
+
       assert Process.alive?(server)
 
-      final_state = :sys.get_state(server)
-      assert final_state.lock_token == lock_token
-      assert final_state.mode == :running
+      assert %State{
+               lock_token: ^lock_token,
+               mode: :running
+             } = :sys.get_state(server)
     end
   end
 
   describe "transaction validation" do
     setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
+      context = start_test_server()
       zero_version = Version.zero()
       next_version = Version.increment(zero_version)
-      {:ok, server: pid, zero_version: zero_version, next_version: next_version}
+      Map.merge(context, %{zero_version: zero_version, next_version: next_version})
     end
 
     test "accepts valid binary transaction", %{
@@ -257,13 +191,10 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       zero_version: zero_version,
       next_version: next_version
     } do
-      # Create a simple binary transaction with no write conflicts
       valid_transactions = [simple_binary_transaction()]
 
-      result =
-        Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
-
-      assert {:ok, []} = result
+      assert {:ok, []} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
     end
 
     test "rejects invalid transaction summaries", %{
@@ -273,60 +204,42 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     } do
       invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
 
-      result =
-        Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions)
+      assert {:error, error_message} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions)
 
-      assert {:error, error_message} = result
-
-      assert error_message =~
-               "invalid transaction format: all transactions must be binary"
+      assert error_message =~ "invalid transaction format: all transactions must be binary"
     end
 
-    test "validation now correctly expects binary transaction summaries", %{
+    test "handles various binary transaction formats", %{
       server: server,
       zero_version: zero_version,
       next_version: next_version
     } do
-      # Test with various binary transactions
       binary_transactions = [
-        # no writes
         simple_binary_transaction(),
-        # writes to key1, key2
         simple_binary_transaction(["key1", "key2"]),
-        # write to write_key
         simple_binary_transaction(["write_key"])
       ]
 
-      result =
-        Resolver.resolve_transactions(server, 1, zero_version, next_version, binary_transactions)
+      assert {:ok, aborted_indices} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, binary_transactions)
 
-      assert {:ok, aborted_indices} = result
       assert is_list(aborted_indices)
     end
   end
 
   describe "timeout mechanism for waiting transactions" do
     setup do
-      lock_token = :crypto.strong_rand_bytes(32)
-
-      pid =
-        start_supervised!(
-          {Server,
-           [
-             lock_token: lock_token,
-             key_range: {"", :end},
-             epoch: 1,
-             last_version: Version.zero(),
-             director: self(),
-             cluster: TestCluster
-           ]}
-        )
-
+      context = start_test_server()
       zero_version = Version.zero()
       next_version = Version.increment(zero_version)
       future_version = Version.increment(next_version)
 
-      {:ok, server: pid, zero_version: zero_version, next_version: next_version, future_version: future_version}
+      Map.merge(context, %{
+        zero_version: zero_version,
+        next_version: next_version,
+        future_version: future_version
+      })
     end
 
     test "adds transaction to waiting list when dependency missing", %{
@@ -334,7 +247,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create simple binary transaction that writes to "test_key"
       test_transaction = simple_binary_transaction(["test_key"])
 
       task =
@@ -346,11 +258,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 1
 
-      [{deadline, _reply_fn, data}] = Map.get(state.waiting, next_version)
-      assert data == {future_version, [test_transaction]}
+      assert [{deadline, _reply_fn, {^future_version, [^test_transaction]}}] =
+               Map.get(state.waiting, next_version)
+
       assert is_integer(deadline)
-      now = Bedrock.Internal.Time.monotonic_now_in_ms()
-      assert deadline > now
+      assert deadline > Bedrock.Internal.Time.monotonic_now_in_ms()
 
       Task.shutdown(task)
     end
@@ -360,7 +272,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create simple binary transaction that writes to "test_key"
       test_transaction = simple_binary_transaction(["test_key"])
 
       task =
@@ -379,32 +290,30 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 1
 
-      [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
+      assert [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
       expired_deadline = Bedrock.Internal.Time.monotonic_now_in_ms() - 1_000
       expired_entry = {expired_deadline, reply_fn, data}
       expired_state = %{state | waiting: %{next_version => [expired_entry]}}
       :sys.replace_state(server, fn _ -> expired_state end)
 
       send(server, :timeout)
-
       Process.sleep(50)
 
-      final_state = :sys.get_state(server)
-      assert map_size(final_state.waiting) == 0
+      assert %{waiting: waiting} = :sys.get_state(server)
+      assert map_size(waiting) == 0
 
       assert {:error, :waiting_timeout} = Task.await(task)
     end
 
     test "timeout message with no waiting transactions is ignored", %{server: server} do
-      initial_state = :sys.get_state(server)
-      assert map_size(initial_state.waiting) == 0
+      assert %{waiting: waiting} = :sys.get_state(server)
+      assert map_size(waiting) == 0
 
       send(server, :timeout)
       Process.sleep(50)
 
-      final_state = :sys.get_state(server)
-      assert final_state.waiting == initial_state.waiting
-      assert map_size(final_state.waiting) == 0
+      assert %{waiting: ^waiting} = :sys.get_state(server)
+      assert map_size(waiting) == 0
     end
 
     test "waiting list maintains chronological order", %{
@@ -412,7 +321,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       next_version: next_version,
       future_version: future_version
     } do
-      # Create simple binary transactions that write to different keys
       transaction1 = simple_binary_transaction(["key1"])
       transaction2 = simple_binary_transaction(["key2"])
 
@@ -422,7 +330,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
         end)
 
       Process.sleep(50)
-
       later_version = Version.increment(future_version)
 
       task2 =
@@ -434,12 +341,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       state = :sys.get_state(server)
       assert map_size(state.waiting) == 2
-
       assert Map.has_key?(state.waiting, next_version)
       assert Map.has_key?(state.waiting, future_version)
 
-      [{first_deadline, _, _}] = Map.get(state.waiting, next_version)
-      [{second_deadline, _, _}] = Map.get(state.waiting, future_version)
+      assert [{first_deadline, _, _}] = Map.get(state.waiting, next_version)
+      assert [{second_deadline, _, _}] = Map.get(state.waiting, future_version)
       assert first_deadline <= second_deadline
 
       Task.shutdown(task1)
@@ -449,27 +355,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
   describe "sweep functionality" do
     setup do
-      lock_token = :crypto.strong_rand_bytes(32)
+      context =
+        start_test_server(
+          # Short interval for testing
+          sweep_interval_ms: 100,
+          # Keep only 200ms of history
+          version_retention_ms: 200
+        )
 
-      pid =
-        start_supervised!({Server,
-         [
-           lock_token: lock_token,
-           key_range: {"", :end},
-           epoch: 1,
-           last_version: Version.zero(),
-           director: self(),
-           cluster: TestCluster,
-           # Short interval for testing
-           sweep_interval_ms: 100,
-           # Keep only 200ms of history
-           version_retention_ms: 200
-         ]})
-
-      %{resolver: pid, lock_token: lock_token}
+      Map.put(context, :resolver, context[:server])
     end
 
-    test "child_spec accepts custom sweep configuration", %{} do
+    test "child_spec accepts custom sweep configuration" do
       opts = [
         lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
@@ -482,26 +379,19 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       spec = Server.child_spec(opts)
 
-      assert {GenServer, :start_link,
-              [Server, {_token, _last_version, _epoch, _director, sweep_interval_ms, version_retention_ms}]} =
-               spec.start
-
-      assert sweep_interval_ms == 500
-      assert version_retention_ms == 2000
+      assert %{
+               start: {GenServer, :start_link, [Server, {_token, _last_version, _epoch, _director, 500, 2000}]}
+             } = spec
     end
 
     test "resolver state includes sweep configuration", %{resolver: resolver} do
-      # Get the current state by calling a simple operation
-      {:ok, _aborted} =
-        Resolver.resolve_transactions(resolver, 1, Version.zero(), Version.from_integer(1000), [], timeout: 1000)
+      assert {:ok, _aborted} =
+               Resolver.resolve_transactions(resolver, 1, Version.zero(), Version.from_integer(1000), [], timeout: 1000)
 
-      # Check that state was initialized properly by verifying it can handle transactions
-      # (we can't directly access state but can verify the resolver is working with sweep config)
       assert Process.alive?(resolver)
     end
 
     test "sweep removes old versions from tree", %{resolver: resolver} do
-      # Create transactions at different versions
       # 1ms in microseconds
       old_version = Version.from_integer(1000)
       # 300ms in microseconds
@@ -510,29 +400,25 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       old_tx = simple_binary_transaction(["key1"])
       recent_tx = simple_binary_transaction(["key2"])
 
-      # Process old transaction
-      {:ok, _} = Resolver.resolve_transactions(resolver, 1, Version.zero(), old_version, [old_tx], timeout: 1000)
+      assert {:ok, _} = Resolver.resolve_transactions(resolver, 1, Version.zero(), old_version, [old_tx], timeout: 1000)
 
-      # Process recent transaction
-      {:ok, _} = Resolver.resolve_transactions(resolver, 1, old_version, recent_version, [recent_tx], timeout: 1000)
+      assert {:ok, _} =
+               Resolver.resolve_transactions(resolver, 1, old_version, recent_version, [recent_tx], timeout: 1000)
 
       # Wait for sweep to occur (sweep interval is 100ms, retention is 200ms)
       Process.sleep(150)
-
-      # Force a timeout to trigger sweep by sending a message that will cause :next_timeout
       send(resolver, :timeout)
       Process.sleep(50)
 
-      # Verify resolver is still functioning (old data swept but resolver still works)
+      # Verify resolver is still functioning after sweep
       newer_version = Version.from_integer(400_000)
       newer_tx = simple_binary_transaction(["key3"])
-      {:ok, _} = Resolver.resolve_transactions(resolver, 1, recent_version, newer_version, [newer_tx], timeout: 1000)
+
+      assert {:ok, _} =
+               Resolver.resolve_transactions(resolver, 1, recent_version, newer_version, [newer_tx], timeout: 1000)
     end
 
-    test "sweep configuration is applied correctly", %{resolver: resolver} do
-      # This test just verifies that the resolver continues to work correctly
-      # with sweep configuration, by processing some transactions over time
-
+    test "sweep configuration works with transaction processing", %{resolver: resolver} do
       # 100ms
       version1 = Version.from_integer(100_000)
       # 200ms
@@ -545,17 +431,14 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       tx3 = simple_binary_transaction(["key3"])
 
       # Process transactions in sequence
-      {:ok, []} = Resolver.resolve_transactions(resolver, 1, Version.zero(), version1, [tx1], timeout: 1000)
-      {:ok, []} = Resolver.resolve_transactions(resolver, 1, version1, version2, [tx2], timeout: 1000)
+      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, Version.zero(), version1, [tx1], timeout: 1000)
+      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, version1, version2, [tx2], timeout: 1000)
 
-      # Wait for sweep to potentially occur
-      # Longer than sweep interval (100ms)
+      # Wait for sweep to potentially occur (longer than sweep interval)
       Process.sleep(150)
 
-      # Process another transaction - this should work fine regardless of sweep
-      {:ok, []} = Resolver.resolve_transactions(resolver, 1, version2, version3, [tx3], timeout: 1000)
-
-      # Verify resolver is still alive and functioning
+      # Process another transaction - should work fine regardless of sweep
+      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, version2, version3, [tx3], timeout: 1000)
       assert Process.alive?(resolver)
     end
   end

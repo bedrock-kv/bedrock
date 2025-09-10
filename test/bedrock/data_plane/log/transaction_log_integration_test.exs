@@ -22,6 +22,18 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     :ok
   end
 
+  # Helper to read all valid transactions from the log file
+  defp read_transactions_from_log do
+    @test_file
+    |> TransactionStreams.from_file!()
+    |> Enum.to_list()
+    |> Enum.reject(fn
+      {:error, _} -> true
+      :eof -> true
+      _ -> false
+    end)
+  end
+
   test "full transaction log pipeline: encode -> write -> read -> mutations" do
     transaction_map = %{
       mutations: [
@@ -46,18 +58,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, _updated_writer} = Writer.append(writer, transaction_with_version, commit_version)
     Writer.close(writer)
 
-    transactions_from_log =
-      @test_file
-      |> TransactionStreams.from_file!()
-      |> Enum.to_list()
-      |> Enum.reject(fn
-        {:error, _} -> true
-        :eof -> true
-        _ -> false
-      end)
-
-    assert length(transactions_from_log) == 1
-    [read_transaction] = transactions_from_log
+    assert [read_transaction] = read_transactions_from_log()
 
     # CRITICAL: Verify that what we read back is a valid Transaction
     # This would fail with the old bug where wrapper was returned instead of payload
@@ -73,17 +74,15 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     assert {:clear, "key3"} in mutations_list
     assert {:clear_range, "range_start", "range_end"} in mutations_list
 
-    assert {:ok, extracted_version} = Transaction.commit_version(read_transaction)
-    assert extracted_version == commit_version
+    assert {:ok, ^commit_version} = Transaction.commit_version(read_transaction)
 
-    assert {:ok, {read_version, read_conflicts}} =
+    expected_read_version = Version.from_integer(100)
+
+    assert {:ok, {^expected_read_version, [{"read_key", "read_key\0"}]}} =
              Transaction.read_conflicts(read_transaction)
 
-    assert read_version == Version.from_integer(100)
-    assert read_conflicts == [{"read_key", "read_key\0"}]
-
-    assert {:ok, write_conflicts} = Transaction.write_conflicts(read_transaction)
-    assert write_conflicts == [{"key1", "key1\0"}, {"key2", "key2\0"}]
+    assert {:ok, [{"key1", "key1\0"}, {"key2", "key2\0"}]} =
+             Transaction.write_conflicts(read_transaction)
   end
 
   test "multiple transactions in log preserve order and individual integrity" do
@@ -106,30 +105,16 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
 
     Writer.close(final_writer)
 
-    read_transactions =
-      @test_file
-      |> TransactionStreams.from_file!()
-      |> Enum.to_list()
-      |> Enum.reject(fn
-        {:error, _} -> true
-        :eof -> true
-        _ -> false
-      end)
-
-    assert length(read_transactions) == 3
+    assert [tx1, tx2, tx3] = read_transactions_from_log()
 
     # Verify each transaction can be processed individually
-    read_transactions
-    |> Enum.with_index(1)
-    |> Enum.each(fn {tx, expected_version} ->
+    for {tx, expected_version} <- [{tx1, 1}, {tx2, 2}, {tx3, 3}] do
       assert {:ok, _decoded} = Transaction.decode(tx)
       assert {:ok, mutations_stream} = Transaction.mutations(tx)
-      mutations = Enum.to_list(mutations_stream)
-      assert length(mutations) == 1
-
-      assert {:ok, version} = Transaction.commit_version(tx)
-      assert version == Version.from_integer(expected_version)
-    end)
+      assert [_single_mutation] = Enum.to_list(mutations_stream)
+      expected_commit_version = Version.from_integer(expected_version)
+      assert {:ok, ^expected_commit_version} = Transaction.commit_version(tx)
+    end
   end
 
   test "empty transactions (no mutations) still roundtrip correctly" do
@@ -148,23 +133,14 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, _} = Writer.append(writer, tx_with_version, version)
     Writer.close(writer)
 
-    [read_transaction] =
-      @test_file
-      |> TransactionStreams.from_file!()
-      |> Enum.to_list()
-      |> Enum.reject(fn
-        {:error, _} -> true
-        :eof -> true
-        _ -> false
-      end)
+    assert [read_transaction] = read_transactions_from_log()
 
     # Should decode and stream successfully even with empty mutations
     assert {:ok, _decoded} = Transaction.decode(read_transaction)
     assert {:ok, mutations_stream} = Transaction.mutations(read_transaction)
     assert Enum.to_list(mutations_stream) == []
 
-    assert {:ok, write_conflicts} = Transaction.write_conflicts(read_transaction)
-    assert write_conflicts == [{"key1", "key1\0"}]
+    assert {:ok, [{"key1", "key1\0"}]} = Transaction.write_conflicts(read_transaction)
   end
 
   test "log format preserves transaction integrity across write/read cycle" do
@@ -180,15 +156,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, _} = Writer.append(writer, tx_with_version, version)
     Writer.close(writer)
 
-    [read_transaction] =
-      @test_file
-      |> TransactionStreams.from_file!()
-      |> Enum.to_list()
-      |> Enum.reject(fn
-        {:error, _} -> true
-        :eof -> true
-        _ -> false
-      end)
+    assert [read_transaction] = read_transactions_from_log()
 
     # CRITICAL TEST: This is what was failing with the bug
     # The read transaction should be a valid Transaction, not a wrapper
@@ -196,14 +164,12 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     # Should start with Transaction magic number, not version bytes
     <<"BRDT", _rest::binary>> = read_transaction
 
-    assert {:ok, decoded} = Transaction.decode(read_transaction)
-    assert decoded.mutations == [{:set, "key", "value"}]
+    assert {:ok, %{mutations: [{:set, "key", "value"}]}} = Transaction.decode(read_transaction)
 
     # Should stream mutations successfully (this was the failing operation)
     assert {:ok, stream} = Transaction.mutations(read_transaction)
     assert Enum.to_list(stream) == [{:set, "key", "value"}]
 
-    assert {:ok, commit_version} = Transaction.commit_version(read_transaction)
-    assert commit_version == version
+    assert {:ok, ^version} = Transaction.commit_version(read_transaction)
   end
 end

@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
 
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.Transaction
-  alias ConflictShardingGenerators, as: Gen
+  alias Bedrock.Test.Common.ConflictShardingGenerators, as: Gen
 
   describe "shard_conflicts_across_resolvers/3 property tests" do
     property "sharded conflicts cover exact key space with no duplication" do
@@ -52,19 +52,13 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
         resolver_refs = [:single_resolver]
 
         sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
-        sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-        # Should have exactly one entry
-        assert map_size(sharded) == 1
-        assert Map.has_key?(sharded, :single_resolver)
+        # Should have exactly one entry with all conflicts
+        assert %{single_resolver: single_sections} =
+                 ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-        # The single resolver should get all conflicts
-        single_sections = Map.get(sharded, :single_resolver)
-        {:ok, {result_read, result_write}} = Transaction.read_write_conflicts(single_sections)
-
-        # Verify conflicts match (allowing for format differences)
-        assert conflicts_equivalent?(result_read, read_conflicts), "Read conflicts don't match"
-        assert conflicts_equivalent?(result_write, write_conflicts), "Write conflicts don't match"
+        # Verify conflicts match using helper
+        assert_conflicts(single_sections, read_conflicts, write_conflicts)
       end
     end
 
@@ -84,9 +78,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
         assert map_size(sharded) == length(resolver_refs)
 
         Enum.each(sharded, fn {_resolver_ref, binary_sections} ->
-          {:ok, {result_read, result_write}} = Transaction.read_write_conflicts(binary_sections)
-          assert result_read == {nil, []} or elem(result_read, 1) == []
-          assert result_write == []
+          assert {:ok, {_read_version, []}} = Transaction.read_write_conflicts(binary_sections)
         end)
       end
     end
@@ -116,11 +108,10 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
         sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
         sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-        # Verify that multiple resolvers received parts of the conflict
+        # Count resolvers that received parts of the conflict
         non_empty_resolvers =
           Enum.count(sharded, fn {_resolver_ref, binary_sections} ->
-            {:ok, {_read, write}} = Transaction.read_write_conflicts(binary_sections)
-            write != []
+            match?({:ok, {_read, [_ | _]}}, Transaction.read_write_conflicts(binary_sections))
           end)
 
         # Should have at least 2 resolvers with conflicts (since it spans boundaries)
@@ -139,9 +130,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
 
         # Verify that within each resolver's conflicts, ordering is preserved
         Enum.each(sharded, fn {_resolver_ref, binary_sections} ->
-          {:ok, {result_read, result_write}} = Transaction.read_write_conflicts(binary_sections)
+          assert {:ok, {result_read, result_write}} = Transaction.read_write_conflicts(binary_sections)
 
-          # Check read conflicts ordering
           read_ranges =
             case result_read do
               {_version, ranges} -> ranges
@@ -168,13 +158,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
       sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
       sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-      # The conflict should go to resolver_1 (covers middle_key to :end)
-      {:ok, {_read, write_0}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
-      {:ok, {_read, write_1}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
-
-      # Only resolver_1 should have the conflict
-      assert write_0 == []
-      assert write_1 != []
+      # Only resolver_1 should have the conflict (covers middle_key to :end)
+      assert {:ok, {_read, []}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
+      assert {:ok, {_read, [_ | _]}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
     end
 
     test "handles single key conflicts" do
@@ -189,16 +175,20 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
       sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
       sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-      # Should go to resolver_0 (write conflicts)
-      {:ok, {_read_0, write_0}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
-      {:ok, {_read_1, write_1}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
-
-      assert write_0 != []
-      assert write_1 == []
+      # Should go to resolver_0 only
+      assert {:ok, {_read_0, [_ | _]}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
+      assert {:ok, {_read_1, []}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
     end
   end
 
   # Helper functions
+
+  defp assert_conflicts(binary_sections, expected_read, expected_write) do
+    assert {:ok, conflicts} = Transaction.read_write_conflicts(binary_sections)
+    assert {result_read, result_write} = conflicts
+    assert conflicts_equivalent?(result_read, expected_read), "Read conflicts don't match"
+    assert conflicts_equivalent?(result_write, expected_write), "Write conflicts don't match"
+  end
 
   defp conflicts_equivalent?({version1, ranges1}, {version2, ranges2}) do
     version1 == version2 and ranges_equivalent?(ranges1, ranges2)
@@ -208,21 +198,11 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
     ranges_equivalent?(ranges1, ranges2)
   end
 
-  defp conflicts_equivalent?({nil, []}, {nil, []}) do
+  defp conflicts_equivalent?(conflict1, conflict2) when conflict1 in [{nil, []}, []] and conflict2 in [{nil, []}, []] do
     true
   end
 
-  defp conflicts_equivalent?({nil, []}, []) do
-    true
-  end
-
-  defp conflicts_equivalent?([], {nil, []}) do
-    true
-  end
-
-  defp conflicts_equivalent?(_, _) do
-    false
-  end
+  defp conflicts_equivalent?(_, _), do: false
 
   defp ranges_equivalent?(ranges1, ranges2) do
     # Convert to sets and compare (order might change due to sharding)
@@ -253,20 +233,12 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
 
     # Check that all resolvers with read conflicts have the same version
     Enum.all?(sharded_results, fn {_resolver_ref, binary_sections} ->
-      {:ok, {result_read, _result_write}} = Transaction.read_write_conflicts(binary_sections)
+      assert {:ok, {result_read, _result_write}} = Transaction.read_write_conflicts(binary_sections)
 
       case result_read do
-        {version, [_ | _]} ->
-          # If this resolver has read conflicts, version must match original
-          version == original_version
-
-        {_version, []} ->
-          # Empty read conflicts are fine regardless of version
-          true
-
-        {nil, []} ->
-          # No read conflicts is fine
-          true
+        {version, [_ | _]} -> version == original_version
+        {_version, []} -> true
+        {nil, []} -> true
       end
     end)
   end

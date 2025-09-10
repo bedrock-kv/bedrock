@@ -5,44 +5,67 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Logic
-  alias Bedrock.DataPlane.Storage.Olivine.PageTestHelpers
   alias Bedrock.DataPlane.Storage.Olivine.State
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
   # Helper functions for cleaner test assertions
+  defp setup_tmp_dir(context, base_name) do
+    tmp_dir =
+      context[:tmp_dir] ||
+        Path.join(System.tmp_dir!(), "#{base_name}_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_dir)
+
+    on_exit(fn ->
+      File.rm_rf(tmp_dir)
+    end)
+
+    {:ok, tmp_dir: tmp_dir}
+  end
+
+  defp assert_values_in_db(database, key_values) do
+    Enum.each(key_values, fn {key, expected_value} ->
+      assert {:ok, ^expected_value} = Database.load_value(database, key)
+    end)
+  end
+
+  defp create_test_pages(pages_data) do
+    Enum.map(pages_data, fn
+      {id, keys, next_id} ->
+        page = Page.new(id, Enum.map(keys, &{&1, Version.from_integer(id * 10)}), next_id)
+        {id, page}
+
+      {id, keys} ->
+        page = Page.new(id, Enum.map(keys, &{&1, Version.from_integer(id * 10)}))
+        {id, page}
+    end)
+  end
 
   describe "full persistence and recovery lifecycle" do
     @tag :tmp_dir
 
     setup context do
-      tmp_dir =
-        context[:tmp_dir] ||
-          Path.join(System.tmp_dir!(), "persistence_lifecycle_test_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_dir)
-      end)
-
-      {:ok, tmp_dir: tmp_dir}
+      setup_tmp_dir(context, "persistence_lifecycle_test")
     end
 
     test "server startup with empty database initializes correctly", %{tmp_dir: tmp_dir} do
       {:ok, state} = Logic.startup(:test_startup, self(), :test_id, tmp_dir)
 
-      assert state.otp_name == :test_startup
-      assert state.id == :test_id
-      assert state.path == tmp_dir
-      assert state.database
-      assert state.index_manager
+      assert %{
+               otp_name: :test_startup,
+               id: :test_id,
+               path: ^tmp_dir,
+               database: db,
+               index_manager: %{
+                 page_allocator: %{max_page_id: 0, free_page_ids: []},
+                 current_version: current_version
+               }
+             } = state
 
-      vm = state.index_manager
-      assert vm.page_allocator.max_page_id == 0
-      assert vm.page_allocator.free_page_ids == []
-      assert vm.current_version == Version.zero()
-      assert {:ok, version} = Database.load_durable_version(state.database)
-      assert version == Version.zero()
+      assert db
+      assert current_version == Version.zero()
+      assert {:ok, ^current_version} = Database.load_durable_version(state.database)
 
       Logic.shutdown(state)
     end
@@ -72,18 +95,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       {:ok, state} = Logic.startup(:test_recovery, self(), :test_id, tmp_dir)
 
-      vm = state.index_manager
-      assert vm.page_allocator.max_page_id == 5
-      assert Enum.sort(vm.page_allocator.free_page_ids) == [1, 3, 4]
+      assert %{
+               index_manager: %{
+                 page_allocator: %{max_page_id: 5, free_page_ids: free_pages}
+               }
+             } = state
 
-      {:ok, val1} = Database.load_value(state.database, <<"key1">>)
-      assert val1 == <<"value1">>
+      assert Enum.sort(free_pages) == [1, 3, 4]
 
-      {:ok, val2} = Database.load_value(state.database, <<"key2">>)
-      assert val2 == <<"value2">>
-
-      {:ok, val3} = Database.load_value(state.database, <<"key3">>)
-      assert val3 == <<"value3">>
+      assert_values_in_db(state.database, [
+        {<<"key1">>, <<"value1">>},
+        {<<"key2">>, <<"value2">>},
+        {<<"key3">>, <<"value3">>}
+      ])
 
       Logic.shutdown(state)
     end
@@ -93,8 +117,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       {:ok, updated_state} = Logic.advance_window_with_persistence(state)
 
-      assert updated_state.index_manager
-      assert updated_state.database
+      assert %{index_manager: vm, database: db} = updated_state
+      assert vm
+      assert db
 
       Logic.shutdown(updated_state)
     end
@@ -146,15 +171,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       recovery_time = end_time - start_time
       assert recovery_time < 1000
 
-      vm = state.index_manager
-      assert vm.page_allocator.max_page_id == 49
-      assert vm.page_allocator.free_page_ids == []
+      assert %{
+               index_manager: %{
+                 page_allocator: %{max_page_id: 49, free_page_ids: []}
+               }
+             } = state
 
-      {:ok, val1} = Database.load_value(state.database, <<"bulk_key_1">>)
-      assert val1 == <<"bulk_value_1">>
-
-      {:ok, val500} = Database.load_value(state.database, <<"bulk_key_500">>)
-      assert val500 == <<"bulk_value_500">>
+      assert_values_in_db(state.database, [
+        {<<"bulk_key_1">>, <<"bulk_value_1">>},
+        {<<"bulk_key_500">>, <<"bulk_value_500">>}
+      ])
 
       Logic.shutdown(state)
     end
@@ -164,17 +190,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     @tag :tmp_dir
 
     setup context do
-      tmp_dir =
-        context[:tmp_dir] ||
-          Path.join(System.tmp_dir!(), "persistence_edge_cases_test_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_dir)
-      end)
-
-      {:ok, tmp_dir: tmp_dir}
+      setup_tmp_dir(context, "persistence_edge_cases_test")
     end
 
     test "recovery with missing page 0 creates empty state", %{tmp_dir: tmp_dir} do
@@ -189,11 +205,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       # Recovery should handle missing page 0
       {:ok, state} = Logic.startup(:no_zero_recovery, self(), :test_id, tmp_dir)
 
-      vm = state.index_manager
       # Note: Since page 0 doesn't exist, no valid chain is found
       # max_page_id should be 0 (default) and no free pages
-      assert vm.page_allocator.max_page_id == 0
-      assert vm.page_allocator.free_page_ids == []
+      assert %{
+               index_manager: %{
+                 page_allocator: %{max_page_id: 0, free_page_ids: []}
+               }
+             } = state
 
       Logic.shutdown(state)
     end
@@ -216,17 +234,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     @tag :tmp_dir
 
     setup context do
-      tmp_dir =
-        context[:tmp_dir] ||
-          Path.join(System.tmp_dir!(), "persistence_criteria_test_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_dir)
-      end)
-
-      {:ok, tmp_dir: tmp_dir}
+      setup_tmp_dir(context, "persistence_criteria_test")
     end
 
     test "pages persist to DETS and can be retrieved", %{tmp_dir: tmp_dir} do
@@ -252,15 +260,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       {:ok, db1} = Database.open(:rebuild_test, Path.join(tmp_dir, "dets"))
 
       # Chain: 0 -> 3 -> 7 -> 2 -> end (non-sequential for complexity)
-      pages = [
+      pages_data = [
         {0, [<<"start">>], 3},
         {3, [<<"second">>], 7},
         {7, [<<"third">>], 2},
         {2, [<<"end">>], 0}
       ]
 
-      Enum.each(pages, fn {id, keys, next_id} ->
-        page = Page.new(id, Enum.map(keys, &{&1, Version.from_integer(id * 10)}), next_id)
+      test_pages = create_test_pages(pages_data)
+
+      Enum.each(test_pages, fn {id, page} ->
         :ok = Database.store_page(db1, id, page)
       end)
 
@@ -270,12 +279,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       {:ok, state} = Logic.startup(:rebuild_recovery, self(), :test_id, tmp_dir)
 
       # Verify structure rebuilt correctly
-      vm = state.index_manager
-      assert vm.page_allocator.max_page_id == 7
-
       # Free pages should be: 1, 4, 5, 6 (gaps in 0,2,3,7)
       expected_free = [1, 4, 5, 6]
-      assert Enum.sort(vm.page_allocator.free_page_ids) == expected_free
+
+      assert %{
+               index_manager: %{
+                 page_allocator: %{max_page_id: 7, free_page_ids: free_pages}
+               }
+             } = state
+
+      assert Enum.sort(free_pages) == expected_free
 
       Logic.shutdown(state)
     end
@@ -297,11 +310,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       # Recovery should find maximum correctly
       {:ok, state} = Logic.startup(:max_id_recovery, self(), :test_id, tmp_dir)
 
-      vm = state.index_manager
       # Note: Only page 0 is part of the valid chain (others are not linked)
       # max_page_id should be 0 (since page 0 is highest in valid chain) and no free pages
-      assert vm.page_allocator.max_page_id == 0
-      assert vm.page_allocator.free_page_ids == []
+      assert %{
+               index_manager: %{
+                 page_allocator: %{max_page_id: 0, free_page_ids: []}
+               }
+             } = state
 
       Logic.shutdown(state)
     end
@@ -311,17 +326,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     @tag :tmp_dir
 
     setup context do
-      tmp_dir =
-        context[:tmp_dir] ||
-          Path.join(System.tmp_dir!(), "persistence_window_test_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_dir)
-      end)
-
-      {:ok, tmp_dir: tmp_dir}
+      setup_tmp_dir(context, "persistence_window_test")
     end
 
     test "window eviction maintains data integrity in DETS", %{tmp_dir: tmp_dir} do
@@ -374,14 +379,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       assert updated_vm.current_version == new_version
 
       # But data should still be accessible in DETS (without version since DETS stores version-less)
-      {:ok, value1} = Database.load_value(db, <<"key1">>)
-      assert value1 == <<"value1">>
-
-      {:ok, value2} = Database.load_value(db, <<"key2">>)
-      assert value2 == <<"value2">>
-
-      {:ok, value3} = Database.load_value(db, <<"key3">>)
-      assert value3 == <<"value3">>
+      assert_values_in_db(db, [
+        {<<"key1">>, <<"value1">>},
+        {<<"key2">>, <<"value2">>},
+        {<<"key3">>, <<"value3">>}
+      ])
 
       # Durable version should be the oldest version (v1, since all are kept in MVP)
       assert {:ok, version} = Database.load_durable_version(db)
@@ -421,11 +423,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       _updated_vm = updated_state.index_manager
 
       # Data should be synced to disk (without version since DETS stores version-less)
-      {:ok, old_value} = Database.load_value(db, <<"old_key">>)
-      assert old_value == <<"old_value">>
-
-      {:ok, recent_value} = Database.load_value(db, <<"recent_key">>)
-      assert recent_value == <<"recent_value">>
+      assert_values_in_db(db, [
+        {<<"old_key">>, <<"old_value">>},
+        {<<"recent_key">>, <<"recent_value">>}
+      ])
 
       Database.close(db)
     end
@@ -511,17 +512,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       # Data should still be accessible regardless of in-memory window state
       # (without version since DETS stores version-less)
-      {:ok, value1} = Database.load_value(db2, <<"key1">>)
-      assert value1 == <<"value1">>
-
-      {:ok, value2} = Database.load_value(db2, <<"key2">>)
-      assert value2 == <<"value2">>
+      assert_values_in_db(db2, [
+        {<<"key1">>, <<"value1">>},
+        {<<"key2">>, <<"value2">>}
+      ])
 
       # Version manager should start fresh (versions list will be different)
       # but persistent data remains accessible
-      assert vm2.current_version == Version.zero()
-      assert {:ok, version} = Database.load_durable_version(db2)
-      assert version == Version.zero()
+      zero_version = Version.zero()
+      assert vm2.current_version == zero_version
+      assert {:ok, ^zero_version} = Database.load_durable_version(db2)
 
       Database.close(db2)
     end

@@ -1,100 +1,76 @@
 defmodule TestTelemetryHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.Test.Common.TestTelemetryHandler
+
+  # Common setup helper
+  defp setup_handler(events) do
+    handler = TestTelemetryHandler.attach_many(events)
+    on_exit(fn -> TestTelemetryHandler.detach(handler) end)
+    handler
+  end
+
+  # Helper to emit events and wait for processing
+  defp emit_and_wait(events_to_emit) do
+    Enum.each(events_to_emit, fn {event, measurements, metadata} ->
+      :telemetry.execute(event, measurements, metadata)
+    end)
+
+    Process.sleep(10)
+  end
+
   describe "TestTelemetryHandler" do
     test "captures telemetry events with attach_many/1" do
-      handler =
-        TestTelemetryHandler.attach_many([
-          [:bedrock, :test, :started],
-          [:bedrock, :test, :completed]
-        ])
+      handler = setup_handler([[:bedrock, :test, :started], [:bedrock, :test, :completed]])
 
-      on_exit(fn -> TestTelemetryHandler.detach(handler) end)
-
-      # Emit some test events
-      :telemetry.execute([:bedrock, :test, :started], %{count: 1}, %{user: "alice"})
-      :telemetry.execute([:bedrock, :test, :completed], %{duration: 100}, %{user: "alice"})
-
-      # Give GenServer time to process events
-      Process.sleep(10)
-
-      events = TestTelemetryHandler.get_events(handler)
-
-      assert length(events) == 2
+      emit_and_wait([
+        {[:bedrock, :test, :started], %{count: 1}, %{user: "alice"}},
+        {[:bedrock, :test, :completed], %{duration: 100}, %{user: "alice"}}
+      ])
 
       # Events are returned in chronological order (oldest first)
-      [started_event, completed_event] = events
-
-      assert started_event.name == [:bedrock, :test, :started]
-      assert started_event.measurements.count == 1
-      assert started_event.metadata.user == "alice"
-
-      assert completed_event.name == [:bedrock, :test, :completed]
-      assert completed_event.measurements.duration == 100
-      assert completed_event.metadata.user == "alice"
+      assert [
+               %{name: [:bedrock, :test, :started], measurements: %{count: 1}, metadata: %{user: "alice"}},
+               %{name: [:bedrock, :test, :completed], measurements: %{duration: 100}, metadata: %{user: "alice"}}
+             ] = TestTelemetryHandler.get_events(handler)
     end
 
     test "captures specific events with attach_many/1" do
-      handler =
-        TestTelemetryHandler.attach_many([
-          [:bedrock, :test, :started],
-          [:bedrock, :test, :completed]
-        ])
+      handler = setup_handler([[:bedrock, :test, :started], [:bedrock, :test, :completed]])
 
-      on_exit(fn -> TestTelemetryHandler.detach(handler) end)
-
-      # These should be captured
-      :telemetry.execute([:bedrock, :test, :started], %{}, %{})
-      :telemetry.execute([:bedrock, :test, :completed], %{}, %{})
-
-      # This should NOT be captured (not in the list)
-      :telemetry.execute([:bedrock, :test, :failed], %{}, %{})
-
-      # Give GenServer time to process events
-      Process.sleep(10)
+      emit_and_wait([
+        {[:bedrock, :test, :started], %{}, %{}},
+        {[:bedrock, :test, :completed], %{}, %{}},
+        # This should NOT be captured
+        {[:bedrock, :test, :failed], %{}, %{}}
+      ])
 
       events = TestTelemetryHandler.get_events(handler)
-
-      assert length(events) == 2
-
       event_names = Enum.map(events, & &1.name)
+
+      # Verify exactly 2 events captured with specific names
+      assert length(events) == 2
       assert [:bedrock, :test, :started] in event_names
       assert [:bedrock, :test, :completed] in event_names
       refute [:bedrock, :test, :failed] in event_names
     end
 
     test "clears events" do
-      handler =
-        TestTelemetryHandler.attach_many([
-          [:bedrock, :test, :event1],
-          [:bedrock, :test, :event2]
-        ])
+      handler = setup_handler([[:bedrock, :test, :event1], [:bedrock, :test, :event2]])
 
-      on_exit(fn -> TestTelemetryHandler.detach(handler) end)
+      emit_and_wait([
+        {[:bedrock, :test, :event1], %{}, %{}},
+        {[:bedrock, :test, :event2], %{}, %{}}
+      ])
 
-      :telemetry.execute([:bedrock, :test, :event1], %{}, %{})
-      :telemetry.execute([:bedrock, :test, :event2], %{}, %{})
-
-      # Give GenServer time to process events
-      Process.sleep(10)
-
-      events = TestTelemetryHandler.get_events(handler)
-      assert length(events) == 2
-
+      # Verify events were captured, then clear and verify empty
+      assert [_, _] = TestTelemetryHandler.get_events(handler)
       TestTelemetryHandler.clear_events(handler)
-
-      events = TestTelemetryHandler.get_events(handler)
-      assert Enum.empty?(events)
+      assert [] = TestTelemetryHandler.get_events(handler)
     end
 
     test "waits for events with timeout" do
-      handler =
-        TestTelemetryHandler.attach_many([
-          [:bedrock, :test, :event1],
-          [:bedrock, :test, :event2]
-        ])
-
-      on_exit(fn -> TestTelemetryHandler.detach(handler) end)
+      handler = setup_handler([[:bedrock, :test, :event1], [:bedrock, :test, :event2]])
 
       # Emit events in a background task
       task =
@@ -105,28 +81,18 @@ defmodule TestTelemetryHandlerTest do
           :telemetry.execute([:bedrock, :test, :event2], %{}, %{})
         end)
 
-      # Wait for 2 events
-      {:ok, events} = TestTelemetryHandler.wait_for_events(handler, 2, 200)
-
-      assert length(events) == 2
+      # Wait for exactly 2 events to be received
+      assert {:ok, [%{name: [:bedrock, :test, :event1]}, %{name: [:bedrock, :test, :event2]}]} =
+               TestTelemetryHandler.wait_for_events(handler, 2, 200)
 
       Task.await(task)
     end
 
     test "times out when waiting for events" do
-      handler =
-        TestTelemetryHandler.attach_many([
-          [:bedrock, :test, :event1]
-        ])
+      handler = setup_handler([[:bedrock, :test, :event1]])
 
-      on_exit(fn -> TestTelemetryHandler.detach(handler) end)
-
-      # Don't emit any events
-
-      # Should timeout
-      {:timeout, events} = TestTelemetryHandler.wait_for_events(handler, 1, 50)
-
-      assert Enum.empty?(events)
+      # Don't emit any events - should timeout
+      assert {:timeout, []} = TestTelemetryHandler.wait_for_events(handler, 1, 50)
     end
   end
 end

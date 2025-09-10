@@ -11,6 +11,56 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangePropertyTest d
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.Internal.Atomics
 
+  # Helper function to apply atomic operations using Atomics module
+  defp apply_atomic_operation(operation, storage_value, operand) do
+    apply_arithmetic_operation(operation, storage_value, operand) ||
+      apply_bitwise_operation(operation, storage_value, operand) ||
+      apply_byte_operation(operation, storage_value, operand) ||
+      apply_special_operation(operation, storage_value, operand)
+  end
+
+  defp apply_arithmetic_operation(operation, storage_value, operand) do
+    case operation do
+      :add -> Atomics.add(storage_value, operand)
+      :min -> Atomics.min(storage_value, operand)
+      :max -> Atomics.max(storage_value, operand)
+      _ -> nil
+    end
+  end
+
+  defp apply_bitwise_operation(operation, storage_value, operand) do
+    case operation do
+      :bit_and -> Atomics.bit_and(storage_value, operand)
+      :bit_or -> Atomics.bit_or(storage_value, operand)
+      :bit_xor -> Atomics.bit_xor(storage_value, operand)
+      _ -> nil
+    end
+  end
+
+  defp apply_byte_operation(operation, storage_value, operand) do
+    case operation do
+      :byte_min -> Atomics.byte_min(storage_value, operand)
+      :byte_max -> Atomics.byte_max(storage_value, operand)
+      _ -> nil
+    end
+  end
+
+  defp apply_special_operation(operation, storage_value, operand) do
+    case operation do
+      :append_if_fits -> Atomics.append_if_fits(storage_value, operand)
+      _ -> nil
+    end
+  end
+
+  # Helper function to test atomic operation application
+  defp assert_atomic_operation(operation, storage_value, operand) do
+    expected_result = apply_atomic_operation(operation, storage_value, operand)
+    actual_result = Tx.apply_atomic_to_storage_value({operation, operand}, storage_value)
+
+    assert actual_result == expected_result,
+           "Atomic #{operation} failed: storage=#{inspect(storage_value)}, operand=#{inspect(operand)}"
+  end
+
   describe "atomic operations in range queries" do
     property "atomic add operations compute correct values when merged with storage" do
       check all(
@@ -30,73 +80,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangePropertyTest d
       end
     end
 
-    property "atomic min/max operations compute correct values" do
+    property "all atomic operations compute correct values" do
       check all(
               _key <- binary(min_length: 1, max_length: 20),
               storage_value <- binary(max_length: 8),
               operand <- binary(max_length: 8),
-              operation <- member_of([:min, :max]),
+              operation <- member_of([:min, :max, :bit_and, :bit_or, :bit_xor, :byte_min, :byte_max]),
               max_runs: 100
             ) do
-        # Compute expected result
-        expected_result =
-          case operation do
-            :min -> Atomics.min(storage_value, operand)
-            :max -> Atomics.max(storage_value, operand)
-          end
-
-        # Test the internal function
-        actual_result = Tx.apply_atomic_to_storage_value({operation, operand}, storage_value)
-
-        assert actual_result == expected_result,
-               "Atomic #{operation} failed: storage=#{inspect(storage_value)}, operand=#{inspect(operand)}"
-      end
-    end
-
-    property "bitwise atomic operations compute correct values" do
-      check all(
-              _key <- binary(min_length: 1, max_length: 20),
-              storage_value <- binary(max_length: 8),
-              operand <- binary(max_length: 8),
-              operation <- member_of([:bit_and, :bit_or, :bit_xor]),
-              max_runs: 100
-            ) do
-        # Compute expected result
-        expected_result =
-          case operation do
-            :bit_and -> Atomics.bit_and(storage_value, operand)
-            :bit_or -> Atomics.bit_or(storage_value, operand)
-            :bit_xor -> Atomics.bit_xor(storage_value, operand)
-          end
-
-        # Test the internal function
-        actual_result = Tx.apply_atomic_to_storage_value({operation, operand}, storage_value)
-
-        assert actual_result == expected_result,
-               "Atomic #{operation} failed: storage=#{inspect(storage_value)}, operand=#{inspect(operand)}"
-      end
-    end
-
-    property "byte operations compute correct values" do
-      check all(
-              _key <- binary(min_length: 1, max_length: 20),
-              storage_value <- binary(max_length: 8),
-              operand <- binary(max_length: 8),
-              operation <- member_of([:byte_min, :byte_max]),
-              max_runs: 100
-            ) do
-        # Compute expected result
-        expected_result =
-          case operation do
-            :byte_min -> Atomics.byte_min(storage_value, operand)
-            :byte_max -> Atomics.byte_max(storage_value, operand)
-          end
-
-        # Test the internal function
-        actual_result = Tx.apply_atomic_to_storage_value({operation, operand}, storage_value)
-
-        assert actual_result == expected_result,
-               "Atomic #{operation} failed: storage=#{inspect(storage_value)}, operand=#{inspect(operand)}"
+        assert_atomic_operation(operation, storage_value, operand)
       end
     end
 
@@ -146,20 +138,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangePropertyTest d
               max_runs: 50
             ) do
         # Test that nil storage values are treated as empty binary
-        expected_result =
-          case operation do
-            :add -> Atomics.add(<<>>, operand)
-            :min -> Atomics.min(<<>>, operand)
-            :max -> Atomics.max(<<>>, operand)
-            :bit_and -> Atomics.bit_and(<<>>, operand)
-            :bit_or -> Atomics.bit_or(<<>>, operand)
-            :bit_xor -> Atomics.bit_xor(<<>>, operand)
-            :byte_min -> Atomics.byte_min(<<>>, operand)
-            :byte_max -> Atomics.byte_max(<<>>, operand)
-            :append_if_fits -> Atomics.append_if_fits(<<>>, operand)
-          end
-
-        # Test the internal function with nil storage
+        expected_result = apply_atomic_operation(operation, <<>>, operand)
         actual_result = Tx.apply_atomic_to_storage_value({operation, operand}, nil)
 
         assert actual_result == expected_result,
@@ -190,29 +169,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangePropertyTest d
             ) do
         # Create a transaction that reads a value, then applies an atomic operation
         base_tx = put_in(Tx.new(), [Access.key(:reads)], Map.put(%{}, key, read_value))
+        tx = Tx.atomic_operation(base_tx, key, operation, operand)
 
-        tx =
-          case operation do
-            :add -> Tx.atomic_operation(base_tx, key, :add, operand)
-            :min -> Tx.atomic_operation(base_tx, key, :min, operand)
-            :max -> Tx.atomic_operation(base_tx, key, :max, operand)
-            :bit_and -> Tx.atomic_operation(base_tx, key, :bit_and, operand)
-            :bit_or -> Tx.atomic_operation(base_tx, key, :bit_or, operand)
-            :bit_xor -> Tx.atomic_operation(base_tx, key, :bit_xor, operand)
-          end
-
-        # Compute expected result
-        expected_result =
-          case operation do
-            :add -> Atomics.add(read_value, operand)
-            :min -> Atomics.min(read_value, operand)
-            :max -> Atomics.max(read_value, operand)
-            :bit_and -> Atomics.bit_and(read_value, operand)
-            :bit_or -> Atomics.bit_or(read_value, operand)
-            :bit_xor -> Atomics.bit_xor(read_value, operand)
-          end
-
-        # Test repeatable_read returns computed atomic value
+        # Compute expected result and test repeatable_read returns computed atomic value
+        expected_result = apply_atomic_operation(operation, read_value, operand)
         actual_result = Tx.repeatable_read(tx, key)
 
         assert actual_result == expected_result,

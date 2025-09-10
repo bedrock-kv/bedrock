@@ -6,35 +6,29 @@ defmodule Bedrock.Key.TupleTest do
 
   doctest Key
 
-  property "pack and unpack nil" do
-    check all(_x <- constant(nil)) do
-      packed = Key.pack(nil)
-      unpacked = Key.unpack(packed)
-      assert unpacked == nil
-    end
+  # Helper function to test roundtrip property
+  defp assert_roundtrip(data) do
+    assert data |> Key.pack() |> Key.unpack() == data
   end
 
-  property "pack and unpack integers" do
-    check all(int <- integer()) do
-      packed = Key.pack(int)
-      unpacked = Key.unpack(packed)
-      assert unpacked == int
-    end
+  # Helper function to test deterministic packing
+  defp assert_deterministic_pack(data) do
+    packed1 = Key.pack(data)
+    packed2 = Key.pack(data)
+    assert packed1 == packed2
   end
 
-  property "pack and unpack floats" do
-    check all(float <- float()) do
-      packed = Key.pack(float)
-      unpacked = Key.unpack(packed)
-      assert unpacked == float
-    end
-  end
-
-  property "pack and unpack binaries" do
-    check all(binary <- binary()) do
-      packed = Key.pack(binary)
-      unpacked = Key.unpack(packed)
-      assert unpacked == binary
+  property "pack and unpack basic data types" do
+    check all(
+            data <-
+              one_of([
+                constant(nil),
+                integer(),
+                float(),
+                binary()
+              ])
+          ) do
+      assert_roundtrip(data)
     end
   end
 
@@ -53,39 +47,27 @@ defmodule Bedrock.Key.TupleTest do
     end
   end
 
-  property "pack and unpack simple tuples" do
+  property "pack and unpack tuples (simple and nested)" do
     check all(
             tuple <-
               one_of([
+                # Simple tuples
                 tuple({integer()}),
                 tuple({float()}),
                 tuple({binary()}),
                 tuple({integer(), binary()}),
-                tuple({integer(), float(), binary()})
-              ])
-          ) do
-      packed = Key.pack(tuple)
-      unpacked = Key.unpack(packed)
-      assert unpacked == tuple
-    end
-  end
-
-  property "pack and unpack nested tuples" do
-    check all(
-            nested_tuple <-
-              one_of([
+                tuple({integer(), float(), binary()}),
+                # Nested tuples
                 tuple({integer(), tuple({float(), binary()})}),
                 tuple({tuple({integer(), binary()}), float()}),
                 tuple({tuple({integer()}), tuple({binary()}), float()})
               ])
           ) do
-      packed = Key.pack(nested_tuple)
-      unpacked = Key.unpack(packed)
-      assert unpacked == nested_tuple
+      assert_roundtrip(tuple)
     end
   end
 
-  property "pack and unpack mixed data types" do
+  property "pack and unpack comprehensive data types with deterministic results" do
     check all(
             data <-
               one_of([
@@ -98,25 +80,10 @@ defmodule Bedrock.Key.TupleTest do
                 tuple({integer(), tuple({binary(), nil})})
               ])
           ) do
-      packed = Key.pack(data)
-      unpacked = Key.unpack(packed)
-      assert unpacked == data
-    end
-  end
-
-  property "packed data produces deterministic results" do
-    check all(
-            data <-
-              one_of([
-                integer(),
-                float(),
-                binary(),
-                tuple({integer(), binary()})
-              ])
-          ) do
-      packed1 = Key.pack(data)
-      packed2 = Key.pack(data)
-      assert packed1 == packed2
+      # Test roundtrip property
+      assert_roundtrip(data)
+      # Test deterministic packing
+      assert_deterministic_pack(data)
     end
   end
 
@@ -133,7 +100,7 @@ defmodule Bedrock.Key.TupleTest do
     end
   end
 
-  property "roundtrip property - pack then unpack returns original" do
+  property "bounded data types roundtrip correctly" do
     check all(
             data <-
               one_of([
@@ -145,85 +112,83 @@ defmodule Bedrock.Key.TupleTest do
                 tuple({integer(-100..100), float(min: -100.0, max: 100.0), binary(max_length: 50)})
               ])
           ) do
-      assert data |> Key.pack() |> Key.unpack() == data
+      assert_roundtrip(data)
     end
   end
 
-  test "pack returns binary" do
-    assert is_binary(Key.pack(42))
-    assert is_binary(Key.pack("hello"))
-    assert is_binary(Key.pack({1, 2, 3}))
-    assert is_binary(Key.pack(nil))
+  describe "pack/1" do
+    test "always returns binary for any supported data type" do
+      test_cases = [42, "hello", {1, 2, 3}, nil, [], <<>>]
+
+      for data <- test_cases do
+        assert is_binary(Key.pack(data))
+      end
+    end
   end
 
-  test "specific edge cases" do
-    # Test zero
-    assert 0 |> Key.pack() |> Key.unpack() == 0
+  describe "edge cases" do
+    test "handles boundary values correctly" do
+      edge_cases = [
+        {0, "zero integer"},
+        {<<>>, "empty binary"},
+        {{}, "empty tuple"},
+        {{42}, "single element tuple"},
+        {<<0, 0, 0>>, "binary with null bytes"}
+      ]
 
-    # Test empty binary
-    assert <<>> |> Key.pack() |> Key.unpack() == <<>>
-
-    # Test empty tuple
-    assert {} |> Key.pack() |> Key.unpack() == {}
-
-    # Test single element tuple
-    assert {42} |> Key.pack() |> Key.unpack() == {42}
-
-    # Test binary with only null bytes
-    null_binary = <<0, 0, 0>>
-    assert null_binary |> Key.pack() |> Key.unpack() == null_binary
+      for {data, _description} <- edge_cases do
+        assert_roundtrip(data)
+      end
+    end
   end
 
-  test "unsupported data types raise errors" do
-    assert_raise ArgumentError, fn ->
-      Key.pack(:atom)
+  describe "error handling" do
+    test "raises ArgumentError for unsupported data types" do
+      unsupported_types = [:atom, %{key: :value}]
+
+      for data <- unsupported_types do
+        assert_raise ArgumentError, fn -> Key.pack(data) end
+      end
     end
 
-    assert_raise ArgumentError, fn ->
-      Key.pack(%{key: :value})
+    test "supports lists (no error expected)" do
+      assert is_binary(Key.pack([1, 2, 3]))
     end
-
-    # Lists are now supported, so no error expected
-    assert is_binary(Key.pack([1, 2, 3]))
   end
 
-  describe "pack/1 with lists" do
-    test "packs lists differently from tuples (separate encodings)" do
-      list = ["users", 123, "active"]
-      tuple = {"users", 123, "active"}
+  describe "lists vs tuples encoding" do
+    test "maintains distinct encodings with proper ordering" do
+      test_data = ["users", 123, "active"]
+      list = test_data
+      tuple = List.to_tuple(test_data)
 
-      # Lists and tuples now have different encodings
-      assert Key.pack(list) != Key.pack(tuple)
-      # But list encoding should be > tuple encoding (lists > tuples in Elixir)
-      assert Key.pack(list) > Key.pack(tuple)
+      # Pattern match to verify encoding differences and ordering
+      list_packed = Key.pack(list)
+      tuple_packed = Key.pack(tuple)
+
+      assert list_packed != tuple_packed
+      # lists > tuples in Elixir ordering
+      assert list_packed > tuple_packed
     end
 
-    test "handles empty lists vs empty tuples" do
-      empty_list = []
-      empty_tuple = {}
-
-      # Different encodings for empty containers too
-      assert Key.pack(empty_list) != Key.pack(empty_tuple)
-      assert Key.pack(empty_list) > Key.pack(empty_tuple)
+    test "handles empty containers correctly" do
+      assert Key.pack([]) != Key.pack({})
+      assert Key.pack([]) > Key.pack({})
     end
 
-    test "round trip: list -> pack -> unpack" do
-      list = ["users", 123, "active"]
-      packed = Key.pack(list)
-      assert Key.unpack(packed) == list
+    test "maintains roundtrip integrity for both types" do
+      test_data = ["users", 123, "active"]
+
+      # Both lists and tuples should roundtrip correctly
+      assert_roundtrip(test_data)
+      assert_roundtrip(List.to_tuple(test_data))
     end
 
-    test "round trip: tuple -> pack -> unpack" do
-      tuple = {"users", 123, "active"}
-      packed = Key.pack(tuple)
-      assert Key.unpack(packed) == tuple
-    end
-
-    test "list to tuple conversion" do
+    test "supports conversion between list and tuple representations" do
       list = ["users", 123, "active"]
       tuple = List.to_tuple(list)
-      # Lists and tuples have different encodings but can be converted
-      assert Key.pack(list) != Key.pack(tuple)
+
+      # Verify conversion works through pack/unpack cycle
       assert tuple |> Key.pack() |> Key.unpack() |> Tuple.to_list() == list
     end
   end

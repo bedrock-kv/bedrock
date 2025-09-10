@@ -3,17 +3,19 @@ defmodule Bedrock.Internal.RangeQueryTest do
 
   alias Bedrock.Internal.RangeQuery
 
+  # Test helper for creating mock transaction PIDs
+  defp mock_txn_pid(sleep_ms \\ 1000) do
+    spawn(fn -> :timer.sleep(sleep_ms) end)
+  end
+
   describe "stream/4" do
     test "creates a lazy stream" do
-      # Mock transaction PID (we won't actually call it in this test)
-      txn_pid = spawn(fn -> :timer.sleep(1000) end)
+      txn_pid = mock_txn_pid()
 
       # Creating the stream should not fail
       stream = RangeQuery.stream(txn_pid, "a", "z", batch_size: 10)
 
-      # Stream should be a proper Stream function
-      assert is_function(stream)
-      # Stream.resource returns a 2-arity function
+      # Stream should be a proper 2-arity Stream function
       assert is_function(stream, 2)
     end
 

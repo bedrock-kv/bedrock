@@ -1,43 +1,32 @@
 defmodule Bedrock.Cluster.Gateway.FetchCoordinatorTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.Cluster.Gateway.Server
   alias Bedrock.Cluster.Gateway.State
 
-  describe "fetch_coordinator integration" do
-    test "gateway returns error when coordinator unavailable" do
-      state_unavailable = %State{
+  describe "get_known_coordinator/0" do
+    test "returns error when coordinator unavailable" do
+      state = %State{
         node: Node.self(),
         cluster: DefaultTestCluster,
         known_coordinator: :unavailable
       }
 
-      # Direct assertion - unavailable coordinator returns error
-      assert state_unavailable.known_coordinator == :unavailable
+      assert {:reply, {:error, :unavailable}, ^state} =
+               Server.handle_call(:get_known_coordinator, self(), state)
     end
 
-    test "gateway returns coordinator when available" do
-      state_available = %State{
+    test "returns coordinator when available" do
+      coordinator_ref = :test_coordinator_ref
+
+      state = %State{
         node: Node.self(),
         cluster: DefaultTestCluster,
-        known_coordinator: :test_coordinator_ref
+        known_coordinator: coordinator_ref
       }
 
-      # Direct assertion - available coordinator returns the ref
-      assert state_available.known_coordinator == :test_coordinator_ref
-    end
-
-    test "cluster handles successful gateway response" do
-      gateway_response_success = {:ok, :test_coordinator}
-
-      # Direct assertion - successful response pattern matches correctly
-      assert {:ok, :test_coordinator} = gateway_response_success
-    end
-
-    test "cluster handles unavailable gateway response" do
-      gateway_response_unavailable = {:error, :unavailable}
-
-      # Direct assertion - error response pattern matches correctly
-      assert {:error, :unavailable} = gateway_response_unavailable
+      assert {:reply, {:ok, ^coordinator_ref}, ^state} =
+               Server.handle_call(:get_known_coordinator, self(), state)
     end
   end
 end

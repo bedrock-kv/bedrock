@@ -4,6 +4,33 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.DataPlane.Transaction
 
+  # Helper functions
+  defp assert_lexicographic_order(keys, context \\ "key") do
+    Enum.reduce(keys, nil, fn current_key, previous_key ->
+      if previous_key do
+        assert current_key > previous_key,
+               "#{context} #{inspect(current_key)} should be lexicographically after #{inspect(previous_key)}"
+      end
+
+      current_key
+    end)
+  end
+
+  defp assert_lexicographic_order_ge(keys, context \\ "key") do
+    Enum.reduce(keys, nil, fn current_key, previous_key ->
+      if previous_key do
+        assert current_key >= previous_key,
+               "#{context} #{inspect(current_key)} should be lexicographically >= #{inspect(previous_key)}"
+      end
+
+      current_key
+    end)
+  end
+
+  defp commit_and_decode(tx, read_version \\ nil) do
+    tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+  end
+
   describe "add_or_merge maintains lexicographic ordering" do
     test "inserting ranges in lexicographic order preserves order" do
       # Start with empty and insert ranges in lexicographic order
@@ -121,29 +148,28 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         |> Tx.set("apple", "fruit")
         |> Tx.set("banana", "fruit")
 
-      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert conflicts == [
-               {"apple", "apple\0"},
-               {"banana", "banana\0"},
-               {"zebra", "zebra\0"}
-             ]
+      assert %{
+               write_conflicts: [
+                 {"apple", "apple\0"},
+                 {"banana", "banana\0"},
+                 {"zebra", "zebra\0"}
+               ]
+             } = commit_and_decode(tx)
     end
 
     test "read conflicts are in lexicographic order" do
       read_version = Bedrock.DataPlane.Version.from_integer(100)
-
       tx = then(Tx.new(), &%{&1 | reads: %{"zebra" => "animal", "apple" => "fruit", "banana" => "fruit"}})
 
-      # out of order
-      %{read_conflicts: {^read_version, conflicts}} =
-        tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert conflicts == [
-               {"apple", "apple\0"},
-               {"banana", "banana\0"},
-               {"zebra", "zebra\0"}
-             ]
+      assert %{
+               read_conflicts:
+                 {^read_version,
+                  [
+                    {"apple", "apple\0"},
+                    {"banana", "banana\0"},
+                    {"zebra", "zebra\0"}
+                  ]}
+             } = commit_and_decode(tx, read_version)
     end
 
     test "mixed range and individual conflicts maintain lexicographic order" do
@@ -154,14 +180,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         |> Tx.clear_range("banana", "mango")
         |> Tx.set("apple", "fruit")
 
-      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert conflicts == [
-               {"apple", "apple\0"},
-               # range
-               {"banana", "mango"},
-               {"zebra", "zebra\0"}
-             ]
+      assert %{
+               write_conflicts: [
+                 {"apple", "apple\0"},
+                 # range
+                 {"banana", "mango"},
+                 {"zebra", "zebra\0"}
+               ]
+             } = commit_and_decode(tx)
     end
 
     test "overlapping range conflicts are merged in lexicographic order" do
@@ -173,52 +199,26 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         # overlaps both
         |> Tx.clear_range("d", "n")
 
-      %{write_conflicts: conflicts} = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       # All ranges should merge into one
-      assert conflicts == [{"a", "p"}]
+      assert %{write_conflicts: [{"a", "p"}]} = commit_and_decode(tx)
     end
   end
 
   describe "KeySelector resolution maintains lexicographic ordering" do
     test "first_greater_than maintains lexicographic progression" do
       keys = ["apple", "banana", "cherry", "date"]
-
-      Enum.reduce(keys, nil, fn current_key, previous_key ->
-        if previous_key do
-          assert current_key > previous_key,
-                 "#{current_key} should be lexicographically after #{previous_key}"
-        end
-
-        current_key
-      end)
+      assert_lexicographic_order(keys)
     end
 
     test "first_greater_or_equal maintains lexicographic progression" do
       keys = ["", "a", "aa", "ab", "b", "ba", "bb"]
-
-      Enum.reduce(keys, nil, fn current_key, previous_key ->
-        if previous_key do
-          assert current_key >= previous_key,
-                 "#{current_key} should be lexicographically >= #{previous_key}"
-        end
-
-        current_key
-      end)
+      assert_lexicographic_order_ge(keys)
     end
 
     test "unicode keys maintain lexicographic order" do
       # Greek alphabet order
       unicode_keys = ["α", "β", "γ", "δ", "ε"]
-
-      Enum.reduce(unicode_keys, nil, fn current_key, previous_key ->
-        if previous_key do
-          assert current_key > previous_key,
-                 "Unicode key #{current_key} should be after #{previous_key}"
-        end
-
-        current_key
-      end)
+      assert_lexicographic_order(unicode_keys, "Unicode key")
     end
 
     test "binary keys with different byte values maintain lexicographic order" do
@@ -231,14 +231,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
         <<255>>
       ]
 
-      Enum.reduce(binary_keys, nil, fn current_key, previous_key ->
-        if previous_key do
-          assert current_key > previous_key,
-                 "Binary key #{inspect(current_key)} should be after #{inspect(previous_key)}"
-        end
-
-        current_key
-      end)
+      assert_lexicographic_order(binary_keys, "Binary key")
     end
   end
 
@@ -248,14 +241,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
       shard2_results = [{"mango", "fruit"}, {"orange", "fruit"}]
       combined_results = shard1_results ++ shard2_results
 
-      Enum.reduce(combined_results, nil, fn {current_key, _}, previous_key ->
-        if previous_key do
-          assert current_key > previous_key,
-                 "Cross-shard key #{current_key} should be after #{previous_key}"
-        end
-
-        current_key
-      end)
+      keys = Enum.map(combined_results, fn {k, _} -> k end)
+      assert_lexicographic_order(keys, "Cross-shard key")
     end
 
     test "cross-shard results with unicode keys maintain lexicographic order" do
@@ -265,6 +252,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
 
       keys = Enum.map(combined_results, fn {k, _} -> k end)
       assert keys == ["α", "β", "γ", "δ"]
+      assert_lexicographic_order(keys, "Cross-shard unicode key")
     end
 
     test "empty ranges maintain lexicographic ordering invariants" do
@@ -278,56 +266,26 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.LexicographicOrderingTest d
   end
 
   describe "edge cases for lexicographic ordering" do
-    test "empty string key comes before all other keys" do
-      keys = ["", "a", "aa", "b"]
-
-      assert Enum.sort(keys) == ["", "a", "aa", "b"]
-    end
-
-    test "null byte keys maintain proper lexicographic order" do
-      keys = ["\0", "\0a", "\0b", "a", "a\0", "b"]
-      sorted_keys = Enum.sort(keys)
-
-      # Verify manual ordering matches Erlang's binary comparison
-      assert sorted_keys == ["\0", "\0a", "\0b", "a", "a\0", "b"]
-    end
-
-    test "mixed byte values maintain lexicographic order" do
-      keys = [
-        # null
-        <<0>>,
-        # low byte
-        <<1>>,
-        # high ASCII
-        <<127>>,
-        # extended ASCII
-        <<128>>,
-        # max byte
-        <<255>>
+    test "various key types maintain proper lexicographic order" do
+      # Test different edge cases in a single comprehensive test
+      test_cases = [
+        {"empty string comes first", ["", "a", "aa", "b"]},
+        {"null byte keys", ["\0", "\0a", "\0b", "a", "a\0", "b"]},
+        {"mixed byte values", [<<0>>, <<1>>, <<127>>, <<128>>, <<255>>]},
+        {"prefix relationships", ["a", "aa", "aaa", "ab", "aba", "b"]},
+        {"case sensitivity (uppercase before lowercase)", ["A", "B", "a", "b"]}
       ]
 
-      assert Enum.sort(keys) == keys
-    end
+      for {description, keys} <- test_cases do
+        assert Enum.sort(keys) == keys, "Failed for #{description}: #{inspect(keys)}"
+        assert_lexicographic_order_ge(keys, description)
+      end
 
-    test "prefix relationships maintain lexicographic order" do
-      keys = ["a", "aa", "aaa", "ab", "aba", "b"]
-
-      # Verify that prefix relationships work correctly
-      assert Enum.sort(keys) == keys
-
-      # Verify all prefixes come before their extensions
+      # Additional prefix relationship assertions
       assert "a" < "aa"
       assert "aa" < "aaa"
       assert "a" < "ab"
       assert "ab" < "aba"
-    end
-
-    test "case sensitivity in lexicographic ordering" do
-      keys = ["A", "B", "a", "b"]
-      sorted_keys = Enum.sort(keys)
-
-      # In binary comparison, uppercase comes before lowercase
-      assert sorted_keys == ["A", "B", "a", "b"]
     end
   end
 end

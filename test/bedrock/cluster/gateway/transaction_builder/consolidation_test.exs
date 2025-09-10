@@ -11,6 +11,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ConsolidationTest do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.Internal.Atomics
 
+  # Helper function to extract common merge pattern with empty storage
+  defp merge_with_empty_storage(tx, query_range) do
+    Tx.merge_storage_range_with_writes(
+      tx,
+      # Empty storage results
+      [],
+      # No more data in storage
+      false,
+      # Query range
+      query_range,
+      # Shard range (unbounded)
+      {elem(query_range, 0), :end}
+    )
+  end
+
   test "scan_pending_writes now computes atomic values instead of placeholders" do
     # This test verifies that the consolidation fixed the atomic operations bug
     # by checking that atomic operations return computed values, not :atomic_operation
@@ -25,42 +40,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ConsolidationTest do
 
     # Test the public merge_storage_range_with_writes function which internally
     # calls scan_pending_writes in the {[], false} case (empty storage, no more data)
-    {_updated_tx, results} =
-      Tx.merge_storage_range_with_writes(
-        tx,
-        # Empty storage results
-        [],
-        # No more data in storage
-        false,
-        # Query range
-        {"key0", "key9"},
-        # Shard range (unbounded)
-        {"key0", :end}
-      )
+    expected_key1 = Atomics.add(<<>>, <<5::64-little>>)
+    expected_key2 = Atomics.min(<<>>, <<100::64-little>>)
+    expected_key4 = Atomics.max(<<>>, <<50::64-little>>)
 
-    # Verify we got results (not empty)
-    assert length(results) == 4
-
-    # Extract the values and verify they're computed, not placeholders
-    result_values = Enum.map(results, fn {_key, value} -> value end)
-
-    # None of the results should be :atomic_operation placeholders
-    refute :atomic_operation in result_values
-
-    # Verify the actual computed values
-    results_map = Map.new(results)
-
-    # key1: add to empty (nil storage) should be add(<<>>, <<5>>)
-    assert results_map["key1"] == Atomics.add(<<>>, <<5::64-little>>)
-
-    # key2: min with empty should be min(<<>>, <<100>>)
-    assert results_map["key2"] == Atomics.min(<<>>, <<100::64-little>>)
-
-    # key3: regular set should be unchanged
-    assert results_map["key3"] == "regular_value"
-
-    # key4: max with empty should be max(<<>>, <<50>>)
-    assert results_map["key4"] == Atomics.max(<<>>, <<50::64-little>>)
+    # Pattern match the entire result structure to verify all values at once
+    assert {_updated_tx,
+            [
+              {"key1", ^expected_key1},
+              {"key2", ^expected_key2},
+              {"key3", "regular_value"},
+              {"key4", ^expected_key4}
+            ]} = merge_with_empty_storage(tx, {"key0", "key9"})
   end
 
   test "consolidation maintains correct ordering" do
@@ -72,21 +63,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ConsolidationTest do
       |> Tx.set("d", "value_d")
       |> Tx.set("c", "value_c")
 
-    {_updated_tx, results} =
-      Tx.merge_storage_range_with_writes(
-        tx,
-        # Empty storage
-        [],
-        # No more data
-        false,
-        # Query range
-        {"a", "z"},
-        # Shard range
-        {"a", :end}
-      )
-
-    # Results should be in key order (gb_trees iteration order)
-    keys = Enum.map(results, fn {key, _value} -> key end)
-    assert keys == ["a", "b", "c", "d"]
+    # Pattern match to verify both structure and ordering in one assertion
+    assert {_updated_tx,
+            [
+              {"a", "value_a"},
+              {"b", "value_b"},
+              {"c", "value_c"},
+              {"d", "value_d"}
+            ]} = merge_with_empty_storage(tx, {"a", "z"})
   end
 end

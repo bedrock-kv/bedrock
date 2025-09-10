@@ -54,32 +54,91 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end
   end
 
+  # Helper functions for creating mock transaction processes
+  defp spawn_transaction_mock(message, response) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, ^message} ->
+          GenServer.reply(from, response)
+      end
+    end)
+  end
+
+  defp spawn_transaction_mock_with_rollback(message, response) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, ^message} ->
+          GenServer.reply(from, response)
+
+          receive do
+            {:"$gen_cast", :rollback} -> :ok
+          end
+      end
+    end)
+  end
+
+  defp spawn_get_mock(key, response) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:get, ^key, []}} ->
+          GenServer.reply(from, response)
+      end
+    end)
+  end
+
+  defp spawn_select_mock(key_selector, response) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:get_key_selector, ^key_selector, []}} ->
+          GenServer.reply(from, response)
+      end
+    end)
+  end
+
+  defp spawn_range_mock(start_key, end_key, batch_size, response) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:get_range, ^start_key, ^end_key, ^batch_size, []}} ->
+          GenServer.reply(from, response)
+      end
+    end)
+  end
+
+  defp spawn_range_mock_with_limit(start_key, end_key, batch_size, limit, results) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:get_range, ^start_key, ^end_key, ^batch_size, [limit: ^limit]}} ->
+          GenServer.reply(from, {:ok, {results, false}})
+      end
+    end)
+  end
+
+  defp spawn_range_mock_with_continuation(start_key, end_key, batch_size, first_batch, second_batch) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:get_range, ^start_key, ^end_key, ^batch_size, []}} ->
+          GenServer.reply(from, {:ok, {first_batch, true}})
+      end
+
+      expected_key_after = first_batch |> hd() |> elem(0) |> Bedrock.Key.key_after()
+
+      receive do
+        {:"$gen_call", from, {:get_range, ^expected_key_after, ^end_key, ^batch_size, []}} ->
+          GenServer.reply(from, {:ok, {second_batch, false}})
+      end
+    end)
+  end
+
   describe "nested_transaction/2" do
     test "delegates to GenServer call and executes function" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, :nested_transaction} ->
-              GenServer.reply(from, :ok)
-          end
-        end)
+      txn_pid = spawn_transaction_mock(:nested_transaction, :ok)
 
       result = Repo.nested_transaction(txn_pid, fn _txn -> :test_result end)
       assert result == :test_result
     end
 
     test "handles exceptions and rolls back" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, :nested_transaction} ->
-              GenServer.reply(from, :ok)
-
-              receive do
-                {:"$gen_cast", :rollback} -> :ok
-              end
-          end
-        end)
+      txn_pid = spawn_transaction_mock_with_rollback(:nested_transaction, :ok)
 
       assert_raise RuntimeError, "test error", fn ->
         Repo.nested_transaction(txn_pid, fn _txn ->
@@ -91,64 +150,31 @@ defmodule Bedrock.Internal.RepoSimpleTest do
 
   describe "get/2 (no options)" do
     test "returns value when fetch succeeds" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get, "get_key", []}} ->
-              GenServer.reply(from, {:ok, "get_value"})
-          end
-        end)
+      txn_pid = spawn_get_mock("get_key", {:ok, "get_value"})
 
-      result = Repo.get(txn_pid, "get_key")
-      assert result == "get_value"
+      assert Repo.get(txn_pid, "get_key") == "get_value"
     end
 
     test "returns nil when fetch returns error" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get, "missing_get_key", []}} ->
-              GenServer.reply(from, {:error, :not_found})
-          end
-        end)
+      txn_pid = spawn_get_mock("missing_get_key", {:error, :not_found})
 
-      result = Repo.get(txn_pid, "missing_get_key")
-      assert result == nil
+      assert Repo.get(txn_pid, "missing_get_key") == nil
     end
   end
 
   describe "get/3 with options" do
-    test "returns value when fetch succeeds" do
+    test "returns value when key exists" do
       {:ok, tx} = MockTransaction.start_link(%{"test_key" => "test_value"})
 
-      result = Repo.get(tx, "test_key", [])
-      assert result == "test_value"
-    end
-
-    test "supports snapshot option" do
-      {:ok, tx} = MockTransaction.start_link(%{"test_key" => "test_value"})
-
-      result = Repo.get(tx, "test_key", snapshot: true)
-      assert result == "test_value"
+      assert Repo.get(tx, "test_key", []) == "test_value"
+      assert Repo.get(tx, "test_key", snapshot: true) == "test_value"
     end
 
     test "returns nil for non-existent keys" do
       {:ok, tx} = MockTransaction.start_link(%{})
 
-      result = Repo.get(tx, "non_existent", snapshot: true)
-      assert result == nil
-    end
-
-    test "works with valid options" do
-      {:ok, tx} = MockTransaction.start_link(%{"key" => "value"})
-
-      # Test that the function works with valid options
-      result = Repo.get(tx, "key", [])
-      assert result == "value"
-
-      # Test with snapshot option
-      result_snapshot = Repo.get(tx, "key", snapshot: true)
-      assert result_snapshot == "value"
+      assert Repo.get(tx, "non_existent", []) == nil
+      assert Repo.get(tx, "non_existent", snapshot: true) == nil
     end
   end
 
@@ -177,16 +203,9 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end
 
     test "returns success result" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, :commit} ->
-              GenServer.reply(from, {:ok, 999})
-          end
-        end)
+      txn_pid = spawn_transaction_mock(:commit, {:ok, 999})
 
-      result = Repo.commit(txn_pid)
-      assert result == {:ok, 999}
+      assert {:ok, 999} = Repo.commit(txn_pid)
     end
   end
 
@@ -204,21 +223,13 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   describe "range/4" do
     test "creates a lazy stream that delegates to range_batch calls" do
       txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_range, "key_a", "key_z", 2, []}} ->
-              # Return first batch with continuation
-              GenServer.reply(from, {:ok, {[{"key_b", "value_b"}], true}})
-          end
-
-          expected_key_after = Bedrock.Key.key_after("key_b")
-
-          receive do
-            {:"$gen_call", from, {:get_range, ^expected_key_after, "key_z", 2, []}} ->
-              # Return final batch
-              GenServer.reply(from, {:ok, {[{"key_c", "value_c"}], false}})
-          end
-        end)
+        spawn_range_mock_with_continuation(
+          "key_a",
+          "key_z",
+          2,
+          [{"key_b", "value_b"}],
+          [{"key_c", "value_c"}]
+        )
 
       stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 2)
       results = stream |> Enum.to_list() |> List.flatten()
@@ -227,13 +238,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end
 
     test "handles empty results gracefully" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_range, "key_a", "key_z", 10, []}} ->
-              GenServer.reply(from, {:ok, {[], false}})
-          end
-        end)
+      txn_pid = spawn_range_mock("key_a", "key_z", 10, {:ok, {[], false}})
 
       stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10)
       results = Enum.to_list(stream)
@@ -242,18 +247,13 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end
 
     test "respects limit option" do
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_range, "key_a", "key_z", 2, [limit: 2]}} ->
-              GenServer.reply(from, {:ok, {[{"key_b", "value_b"}, {"key_c", "value_c"}], false}})
-          end
-        end)
+      expected_results = [{"key_b", "value_b"}, {"key_c", "value_c"}]
+      txn_pid = spawn_range_mock_with_limit("key_a", "key_z", 2, 2, expected_results)
 
       stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10, limit: 2)
       results = stream |> Enum.to_list() |> List.flatten()
 
-      assert results == [{"key_b", "value_b"}, {"key_c", "value_c"}]
+      assert results == expected_results
     end
   end
 
@@ -271,62 +271,30 @@ defmodule Bedrock.Internal.RepoSimpleTest do
 
     test "returns success result with resolved key-value pair" do
       key_selector = KeySelector.first_greater_or_equal("mykey")
+      txn_pid = spawn_select_mock(key_selector, {:ok, {"resolved_key", "resolved_value"}})
 
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_key_selector, ^key_selector, []}} ->
-              GenServer.reply(from, {:ok, {"resolved_key", "resolved_value"}})
-          end
-        end)
-
-      result = Repo.select(txn_pid, key_selector)
-      assert result == {:ok, {"resolved_key", "resolved_value"}}
+      assert {:ok, {"resolved_key", "resolved_value"}} = Repo.select(txn_pid, key_selector)
     end
 
     test "returns error when KeySelector resolution fails" do
       key_selector = KeySelector.first_greater_than("nonexistent")
+      txn_pid = spawn_select_mock(key_selector, {:error, :not_found})
 
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_key_selector, ^key_selector, []}} ->
-              GenServer.reply(from, {:error, :not_found})
-          end
-        end)
-
-      result = Repo.select(txn_pid, key_selector)
-      assert result == {:error, :not_found}
+      assert {:error, :not_found} = Repo.select(txn_pid, key_selector)
     end
 
     test "handles version errors" do
       key_selector = KeySelector.first_greater_or_equal("versioned_key")
+      txn_pid = spawn_select_mock(key_selector, {:error, :version_too_old})
 
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_key_selector, ^key_selector, []}} ->
-              GenServer.reply(from, {:error, :version_too_old})
-          end
-        end)
-
-      result = Repo.select(txn_pid, key_selector)
-      assert result == {:error, :version_too_old}
+      assert {:error, :version_too_old} = Repo.select(txn_pid, key_selector)
     end
 
     test "handles clamped errors from cross-shard operations" do
       key_selector = "cross_shard" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
+      txn_pid = spawn_select_mock(key_selector, nil)
 
-      txn_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:get_key_selector, ^key_selector, []}} ->
-              GenServer.reply(from, nil)
-          end
-        end)
-
-      result = Repo.select(txn_pid, key_selector)
-      assert result == nil
+      assert Repo.select(txn_pid, key_selector) == nil
     end
   end
 end

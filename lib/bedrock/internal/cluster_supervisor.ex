@@ -121,7 +121,6 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     children =
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
-        {Cluster.PubSub, otp_name: cluster.otp_name(:pub_sub)},
         {Gateway,
          [
            cluster: cluster,

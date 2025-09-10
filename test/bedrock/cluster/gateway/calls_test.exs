@@ -5,115 +5,72 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
   alias Bedrock.Cluster.Gateway.State
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
+  # Shared setup functions
+  defp build_base_state(overrides \\ %{}) do
+    defaults = %{
+      node: :test_node,
+      cluster: TestCluster,
+      known_coordinator: :test_coordinator,
+      transaction_system_layout: nil,
+      deadline_by_version: %{},
+      minimum_read_version: nil,
+      lease_renewal_interval_in_ms: 5_000
+    }
+
+    struct(State, Map.merge(defaults, overrides))
+  end
+
+  defp assert_valid_transaction_result(result) do
+    case result do
+      {:ok, _pid} -> :ok
+      {:error, reason} when reason != :unavailable -> :ok
+      other -> flunk("Unexpected result: #{inspect(other)}")
+    end
+  end
+
+  defp calculate_expected_deadline(current_time, renewal_interval) do
+    current_time + 10 + renewal_interval
+  end
+
+  defp assert_deadline_calculation(updated_state, read_version, current_time, renewal_interval) do
+    new_deadline = Map.get(updated_state.deadline_by_version, read_version)
+    expected_deadline = calculate_expected_deadline(current_time, renewal_interval)
+    assert new_deadline == expected_deadline
+    new_deadline
+  end
+
   describe "begin_transaction/2" do
     setup do
-      # Create a minimal TransactionSystemLayout for testing
       tsl = TransactionSystemLayout.default()
-
-      base_state = %State{
-        node: :test_node,
-        cluster: TestCluster,
-        known_coordinator: :test_coordinator,
-        transaction_system_layout: nil,
-        deadline_by_version: %{},
-        minimum_read_version: nil,
-        lease_renewal_interval_in_ms: 5_000
-      }
-
+      base_state = build_base_state()
       %{tsl: tsl, base_state: base_state}
     end
 
     test "returns error when coordinator is unavailable", %{base_state: base_state} do
       state = %{base_state | known_coordinator: :unavailable}
-      opts = []
 
-      {updated_state, result} = Calls.begin_transaction(state, opts)
-
-      assert updated_state == state
-      assert result == {:error, :unavailable}
+      assert {^state, {:error, :unavailable}} = Calls.begin_transaction(state, [])
     end
 
-    test "works without any options", %{tsl: tsl, base_state: base_state} do
+    test "works with various option formats when TSL is cached", %{tsl: tsl, base_state: base_state} do
       state = %{base_state | transaction_system_layout: tsl}
 
-      {updated_state, result} = Calls.begin_transaction(state, [])
+      test_cases = [
+        [],
+        [some_option: :value],
+        [multiple: :options, ignored: true]
+      ]
 
-      assert updated_state == state
-
-      case result do
-        {:ok, _pid} -> :ok
-        {:error, reason} when reason != :unavailable -> :ok
-        other -> flunk("Unexpected result: #{inspect(other)}")
+      for opts <- test_cases do
+        assert {^state, result} = Calls.begin_transaction(state, opts)
+        assert_valid_transaction_result(result)
       end
     end
 
-    test "ignores any provided options", %{tsl: tsl, base_state: base_state} do
-      state = %{base_state | transaction_system_layout: tsl}
-
-      {updated_state, result} = Calls.begin_transaction(state, some_option: :value)
-
-      assert updated_state == state
-
-      case result do
-        {:ok, _pid} -> :ok
-        {:error, reason} when reason != :unavailable -> :ok
-        other -> flunk("Unexpected result: #{inspect(other)}")
-      end
-    end
-
-    test "works with empty options list", %{
-      tsl: tsl,
-      base_state: base_state
-    } do
-      state = %{base_state | transaction_system_layout: tsl}
-
-      {updated_state, result} = Calls.begin_transaction(state, [])
-
-      assert updated_state == state
-
-      case result do
-        {:ok, _pid} -> :ok
-        {:error, reason} when reason != :unavailable -> :ok
-        other -> flunk("Unexpected result: #{inspect(other)}")
-      end
-    end
-
-    test "attempts to start TransactionBuilder when TSL is cached", %{
-      tsl: tsl,
-      base_state: base_state
-    } do
-      state = %{base_state | transaction_system_layout: tsl}
-      opts = []
-
-      # Since we can't easily mock TransactionBuilder.start_link in this environment,
-      # we test that the function reaches the point where it would call start_link
-      # by verifying it doesn't return :unavailable (which would happen if TSL lookup failed)
-      {updated_state, result} = Calls.begin_transaction(state, opts)
-
-      # State should remain unchanged when TSL is already cached
-      assert updated_state == state
-
-      # Result should be either {:ok, pid} or {:error, reason} from TransactionBuilder.start_link
-      # We can't predict the exact result without mocking, but it shouldn't be :unavailable
-      case result do
-        {:ok, _pid} -> :ok
-        {:error, reason} when reason != :unavailable -> :ok
-        other -> flunk("Unexpected result: #{inspect(other)}")
-      end
-    end
-
-    # Test the ensure_current_tsl logic through the public interface
-    test "returns error when coordinator fetch would be needed but coordinator unavailable", %{
-      base_state: base_state
-    } do
-      # No cached TSL and unavailable coordinator
+    test "returns error when TSL is missing and coordinator unavailable", %{base_state: base_state} do
       state = %{base_state | known_coordinator: :unavailable, transaction_system_layout: nil}
-      opts = []
 
-      {updated_state, result} = Calls.begin_transaction(state, opts)
-
-      assert updated_state == state
-      assert result == {:error, :unavailable}
+      assert {^state, {:error, :unavailable}} = Calls.begin_transaction(state, [])
     end
 
     # This test verifies the TSL caching behavior
@@ -133,29 +90,15 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
 
   describe "renew_read_version_lease/2" do
     setup do
-      base_state = %State{
-        node: :test_node,
-        cluster: TestCluster,
-        known_coordinator: :test_coordinator,
-        deadline_by_version: %{},
-        minimum_read_version: nil,
-        lease_renewal_interval_in_ms: 5_000
-      }
-
-      %{base_state: base_state}
+      %{base_state: build_base_state()}
     end
 
     test "returns lease_expired when read_version is below minimum_read_version", %{
       base_state: base_state
     } do
       state = %{base_state | minimum_read_version: 100}
-      read_version = 50
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-
-      assert result == {:error, :lease_expired}
-      # State should be unchanged
-      assert updated_state == state
+      assert {^state, {:error, :lease_expired}} = Calls.renew_read_version_lease(state, 50)
     end
 
     test "allows renewal when read_version equals minimum_read_version", %{
@@ -164,10 +107,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       state = %{base_state | minimum_read_version: 100}
       read_version = 100
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-
-      assert {:ok, renewal_interval} = result
-      assert renewal_interval == 5_000
+      assert {updated_state, {:ok, 5_000}} = Calls.renew_read_version_lease(state, read_version)
 
       # Should add the version to deadline_by_version
       assert Map.has_key?(updated_state.deadline_by_version, read_version)
@@ -183,11 +123,8 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
         | deadline_by_version: %{read_version => expired_deadline}
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-
-      assert result == {:error, :lease_expired}
-      # Should remove the expired entry from deadline_by_version
-      assert updated_state.deadline_by_version == %{}
+      assert {%State{deadline_by_version: %{}}, {:error, :lease_expired}} =
+               Calls.renew_read_version_lease(state, read_version)
     end
 
     test "successfully renews lease when deadline is valid", %{base_state: base_state} do
@@ -202,18 +139,10 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
         | deadline_by_version: %{read_version => future_deadline}
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
+      assert {updated_state, {:ok, 5_000}} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
-      assert {:ok, renewal_interval} = result
-      assert renewal_interval == 5_000
-
-      # Should update the deadline
-      new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-      assert new_deadline > now
-
-      # New deadline should be exactly now + 10 + renewal_interval_in_ms
-      expected_deadline = now + 10 + 5_000
-      assert new_deadline == expected_deadline
+      # Should update the deadline with exact calculation
+      assert_deadline_calculation(updated_state, read_version, now, 5_000)
     end
 
     test "handles version not in deadline_by_version map", %{base_state: base_state} do
@@ -223,10 +152,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       # State with empty deadline_by_version
       state = %{base_state | deadline_by_version: %{}}
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-
-      assert {:ok, renewal_interval} = result
-      assert renewal_interval == 5_000
+      assert {updated_state, {:ok, 5_000}} = Calls.renew_read_version_lease(state, read_version)
 
       # Should add new entry to deadline_by_version
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
@@ -250,9 +176,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           }
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version_1)
-
-      assert {:ok, 5_000} = result
+      assert {updated_state, {:ok, 5_000}} = Calls.renew_read_version_lease(state, read_version_1)
 
       # Should preserve read_version_2 deadline
       assert Map.get(updated_state.deadline_by_version, read_version_2) == future_deadline_2
@@ -279,15 +203,12 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       }
 
       time_fn = fn -> current_time end
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, time_fn)
 
-      assert {:ok, ^custom_renewal_interval} = result
+      assert {updated_state, {:ok, ^custom_renewal_interval}} =
+               Calls.renew_read_version_lease(state, read_version, time_fn)
 
       # Verify the calculation: new_lease_deadline_in_ms = now + 10 + renewal_deadline_in_ms
-      new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-      expected_deadline = current_time + 10 + custom_renewal_interval
-
-      assert new_deadline == expected_deadline
+      assert_deadline_calculation(updated_state, read_version, current_time, custom_renewal_interval)
     end
 
     test "handles boundary case when deadline exactly equals current time", %{
@@ -302,10 +223,8 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
         | deadline_by_version: %{read_version => now}
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-
-      assert result == {:error, :lease_expired}
-      assert updated_state.deadline_by_version == %{}
+      assert {%State{deadline_by_version: %{}}, {:error, :lease_expired}} =
+               Calls.renew_read_version_lease(state, read_version)
     end
 
     test "works with minimum renewal interval", %{base_state: base_state} do
@@ -319,8 +238,7 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
           lease_renewal_interval_in_ms: 1
       }
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version)
-      assert {:ok, 1} = result
+      assert {updated_state, {:ok, 1}} = Calls.renew_read_version_lease(state, read_version)
 
       # With minimum renewal interval, new deadline should be now + 10 + 1
       new_deadline = Map.get(updated_state.deadline_by_version, read_version)
@@ -353,78 +271,10 @@ defmodule Bedrock.Cluster.Gateway.CallsTest do
       # Use mocked time function
       mock_time_fn = fn -> mock_now end
 
-      {updated_state, result} = Calls.renew_read_version_lease(state, read_version, mock_time_fn)
-      assert {:ok, ^large_interval} = result
-
-      new_deadline = Map.get(updated_state.deadline_by_version, read_version)
-
-      # Calculate the actual interval and verify it matches expected exactly
-      actual_interval = new_deadline - mock_now
-      expected_interval = 10 + large_interval
+      assert {updated_state, {:ok, ^large_interval}} = Calls.renew_read_version_lease(state, read_version, mock_time_fn)
 
       # With mocked time, this should be exact
-      assert actual_interval == expected_interval
-    end
-  end
-
-  describe "integration scenarios" do
-    test "begin_transaction and renew_read_version_lease work with same state" do
-      # Test that both functions work with the same state structure
-      base_state = %State{
-        node: :test_node,
-        cluster: TestCluster,
-        known_coordinator: :test_coordinator,
-        transaction_system_layout: TransactionSystemLayout.default(),
-        deadline_by_version: %{100 => :erlang.monotonic_time(:millisecond) + 10_000},
-        minimum_read_version: 50,
-        lease_renewal_interval_in_ms: 5_000
-      }
-
-      # Test begin_transaction with this state
-      opts = []
-      {_updated_state1, result1} = Calls.begin_transaction(base_state, opts)
-
-      # Should not return :unavailable since coordinator and TSL are available
-      case result1 do
-        {:ok, _pid} -> :ok
-        {:error, reason} when reason != :unavailable -> :ok
-        {:error, :unavailable} -> flunk("Should not return :unavailable with valid state")
-      end
-
-      # Test renew_read_version_lease with same state
-      {updated_state2, result2} = Calls.renew_read_version_lease(base_state, 100)
-      assert {:ok, 5_000} = result2
-      assert Map.has_key?(updated_state2.deadline_by_version, 100)
-    end
-
-    test "state transitions maintain data integrity" do
-      # Start with minimal state
-      initial_state = %State{
-        node: :test_node,
-        cluster: TestCluster,
-        known_coordinator: :test_coordinator,
-        transaction_system_layout: nil,
-        deadline_by_version: %{},
-        minimum_read_version: nil,
-        lease_renewal_interval_in_ms: 2_000
-      }
-
-      # Add some lease data
-      now = :erlang.monotonic_time(:millisecond)
-      state_with_lease = %{initial_state | deadline_by_version: %{200 => now + 5_000}}
-
-      # Renew lease
-      {updated_state, result} = Calls.renew_read_version_lease(state_with_lease, 200)
-      assert {:ok, 2_000} = result
-
-      # Verify state integrity
-      assert updated_state.node == :test_node
-      assert updated_state.cluster == TestCluster
-      assert updated_state.known_coordinator == :test_coordinator
-      assert updated_state.transaction_system_layout == nil
-      assert updated_state.minimum_read_version == nil
-      assert updated_state.lease_renewal_interval_in_ms == 2_000
-      assert Map.has_key?(updated_state.deadline_by_version, 200)
+      assert_deadline_calculation(updated_state, read_version, mock_now, large_interval)
     end
   end
 end

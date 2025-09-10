@@ -15,7 +15,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
-  # Helper function to convert integers to binary for tests
+  # Helper functions for testing atomic operations
   defp int_to_binary(n) when n >= 0 and n <= 255, do: <<n>>
   defp int_to_binary(n) when n >= -128 and n < 0, do: <<n::signed-little-8>>
   defp int_to_binary(n) when n >= -32_768 and n < -128, do: <<n::signed-little-16>>
@@ -27,13 +27,33 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
   # Catch-all for very large numbers - use arbitrary precision
   defp int_to_binary(n), do: :binary.encode_unsigned(abs(n), :little)
 
+  # Helper to commit transaction and decode result with pattern matching
+  defp commit_and_decode(tx, read_version \\ nil) do
+    assert {:ok, decoded} = tx |> Tx.commit(read_version) |> Transaction.decode()
+    decoded
+  end
+
+  # Helper to assert atomic mutation with specific operation
+  defp assert_atomic_mutation(tx, op, key, value, read_version \\ nil) do
+    assert %{mutations: [{:atomic, ^op, ^key, ^value}]} = commit_and_decode(tx, read_version)
+  end
+
+  # Helper to assert mutations match expected list (order-independent)
+  defp assert_mutations_match(tx, expected_mutations, read_version \\ nil) do
+    decoded = commit_and_decode(tx, read_version)
+    assert Enum.sort(decoded.mutations) == Enum.sort(expected_mutations)
+    decoded
+  end
+
+  # Helper to assert no write conflicts for atomic operations
+  defp assert_no_write_conflicts(tx, read_version \\ nil) do
+    assert %{write_conflicts: []} = commit_and_decode(tx, read_version)
+  end
+
   describe "Tx.add/3" do
     test "adds add mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "counter", :add, <<5>>)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :add, "counter", <<5>>}]
+      tx = Tx.atomic_operation(Tx.new(), "counter", :add, <<5>>)
+      assert_atomic_mutation(tx, :add, "counter", <<5>>)
     end
 
     test "handles positive and negative values" do
@@ -43,8 +63,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("balance", :add, int_to_binary(-5))
         |> Tx.atomic_operation("zero", :add, int_to_binary(0))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :add, "zero", <<0>>},
         # -5 as unsigned byte
@@ -52,7 +70,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         {:atomic, :add, "counter", <<10>>}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "handles 64-bit signed integer boundaries" do
@@ -61,25 +79,22 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("max_val", :add, int_to_binary(9_223_372_036_854_775_807))
         |> Tx.atomic_operation("min_val", :add, int_to_binary(-9_223_372_036_854_775_808))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :add, "min_val", int_to_binary(-9_223_372_036_854_775_808)},
         {:atomic, :add, "max_val", int_to_binary(9_223_372_036_854_775_807)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "accepts any binary value (no longer validates integer range)" do
-      tx = Tx.new()
+      tx =
+        Tx.new()
+        |> Tx.atomic_operation("large_value", :add, int_to_binary(9_223_372_036_854_775_808))
+        |> Tx.atomic_operation("small_value", :add, int_to_binary(-9_223_372_036_854_775_809))
 
-      # These should work fine now since we accept any binary
-      tx1 = Tx.atomic_operation(tx, "large_value", :add, int_to_binary(9_223_372_036_854_775_808))
-      tx2 = Tx.atomic_operation(tx1, "small_value", :add, int_to_binary(-9_223_372_036_854_775_809))
-
-      committed = tx2 |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert length(committed.mutations) == 2
+      assert %{mutations: mutations} = commit_and_decode(tx)
+      assert length(mutations) == 2
     end
 
     test "overwrites previous operations on same key" do
@@ -88,8 +103,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("counter", :add, int_to_binary(5))
         |> Tx.atomic_operation("counter", :add, int_to_binary(10))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :add, "counter", int_to_binary(10)}]
+      assert_atomic_mutation(tx, :add, "counter", int_to_binary(10))
     end
 
     test "removes conflicting operations on same key range" do
@@ -98,25 +112,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.set("counter", "old_value")
         |> Tx.atomic_operation("counter", :add, int_to_binary(5))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :add, "counter", int_to_binary(5)}]
+      assert_atomic_mutation(tx, :add, "counter", int_to_binary(5))
     end
 
     test "does not add write conflicts for atomic operations" do
       tx = Tx.atomic_operation(Tx.new(), "counter", :add, int_to_binary(5))
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.write_conflicts == []
+      assert_no_write_conflicts(tx)
     end
   end
 
   describe "Tx.min/3" do
     test "adds min mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "min_temp", :min, <<25>>)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :min, "min_temp", <<25>>}]
+      tx = Tx.atomic_operation(Tx.new(), "min_temp", :min, <<25>>)
+      assert_atomic_mutation(tx, :min, "min_temp", <<25>>)
     end
 
     test "handles various integer values" do
@@ -126,15 +134,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("depth", :min, int_to_binary(-100))
         |> Tx.atomic_operation("baseline", :min, int_to_binary(0))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :min, "baseline", int_to_binary(0)},
         {:atomic, :min, "depth", int_to_binary(-100)},
         {:atomic, :min, "temp", int_to_binary(22)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "handles 64-bit signed integer boundaries" do
@@ -143,25 +149,22 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("max_bound", :min, int_to_binary(9_223_372_036_854_775_807))
         |> Tx.atomic_operation("min_bound", :min, int_to_binary(-9_223_372_036_854_775_808))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :min, "min_bound", int_to_binary(-9_223_372_036_854_775_808)},
         {:atomic, :min, "max_bound", int_to_binary(9_223_372_036_854_775_807)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "accepts any binary value (no longer validates integer range)" do
-      tx = Tx.new()
+      tx =
+        Tx.new()
+        |> Tx.atomic_operation("large_value", :min, int_to_binary(9_223_372_036_854_775_808))
+        |> Tx.atomic_operation("small_value", :min, int_to_binary(-9_223_372_036_854_775_809))
 
-      # These should work fine now since we accept any binary
-      tx1 = Tx.atomic_operation(tx, "large_value", :min, int_to_binary(9_223_372_036_854_775_808))
-      tx2 = Tx.atomic_operation(tx1, "small_value", :min, int_to_binary(-9_223_372_036_854_775_809))
-
-      committed = tx2 |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert length(committed.mutations) == 2
+      assert %{mutations: mutations} = commit_and_decode(tx)
+      assert length(mutations) == 2
     end
 
     test "overwrites previous operations on same key" do
@@ -170,8 +173,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("min_val", :min, int_to_binary(100))
         |> Tx.atomic_operation("min_val", :min, int_to_binary(50))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :min, "min_val", int_to_binary(50)}]
+      assert_atomic_mutation(tx, :min, "min_val", int_to_binary(50))
     end
 
     test "removes conflicting operations on same key range" do
@@ -180,18 +182,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.set("min_val", "old_value")
         |> Tx.atomic_operation("min_val", :min, int_to_binary(25))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :min, "min_val", int_to_binary(25)}]
+      assert_atomic_mutation(tx, :min, "min_val", int_to_binary(25))
     end
   end
 
   describe "Tx.max/3" do
     test "adds max mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "high_score", :max, int_to_binary(1500))
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :max, "high_score", int_to_binary(1500)}]
+      tx = Tx.atomic_operation(Tx.new(), "high_score", :max, int_to_binary(1500))
+      assert_atomic_mutation(tx, :max, "high_score", int_to_binary(1500))
     end
 
     test "handles various integer values" do
@@ -201,15 +199,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("threshold", :max, int_to_binary(-50))
         |> Tx.atomic_operation("ceiling", :max, int_to_binary(0))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :max, "ceiling", int_to_binary(0)},
         {:atomic, :max, "threshold", int_to_binary(-50)},
         {:atomic, :max, "score", int_to_binary(100)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "handles variable-length binary values" do
@@ -221,31 +217,23 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         # 65537 as little-endian
         |> Tx.atomic_operation("three_bytes", :max, <<1, 0, 1>>)
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :max, "single_byte", <<255>>},
         {:atomic, :max, "two_bytes", <<0, 1>>},
         {:atomic, :max, "three_bytes", <<1, 0, 1>>}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "validates value is binary" do
-      tx = Tx.new()
+      tx = Tx.atomic_operation(Tx.new(), "valid", :max, int_to_binary(42))
+      assert_atomic_mutation(tx, :max, "valid", int_to_binary(42))
 
-      # int_to_binary(42) produces valid binary, so this should work
-      tx = Tx.atomic_operation(tx, "valid", :max, int_to_binary(42))
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :max, "valid", int_to_binary(42)}]
-
-      # Test invalid value types with fresh transaction
-      fresh_tx = Tx.new()
-
+      # Test invalid value types
       assert_raise FunctionClauseError, fn ->
         # Integer instead of binary
-        Tx.atomic_operation(fresh_tx, "invalid", :max, 42)
+        Tx.atomic_operation(Tx.new(), "invalid", :max, 42)
       end
     end
 
@@ -255,8 +243,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("max_val", :max, int_to_binary(50))
         |> Tx.atomic_operation("max_val", :max, int_to_binary(100))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :max, "max_val", int_to_binary(100)}]
+      assert_atomic_mutation(tx, :max, "max_val", int_to_binary(100))
     end
 
     test "removes conflicting operations on same key range" do
@@ -265,8 +252,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.set("max_val", "old_value")
         |> Tx.atomic_operation("max_val", :max, int_to_binary(75))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :max, "max_val", int_to_binary(75)}]
+      assert_atomic_mutation(tx, :max, "max_val", int_to_binary(75))
     end
   end
 
@@ -279,8 +265,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("max_score", :max, int_to_binary(100))
         |> Tx.atomic_operation("balance", :add, int_to_binary(-10))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :add, "balance", int_to_binary(-10)},
         {:atomic, :max, "max_score", int_to_binary(100)},
@@ -288,7 +272,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         {:atomic, :add, "counter", int_to_binary(5)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "mixes atomic operations with regular mutations" do
@@ -301,8 +285,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.clear_range("cache/", "cache0")
         |> Tx.atomic_operation("max_users", :max, int_to_binary(50))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :max, "max_users", int_to_binary(50)},
         {:clear_range, "cache/", "cache0"},
@@ -312,7 +294,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         {:set, "name", "Alice"}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "handles conflicts between different atomic operations on same key" do
@@ -324,8 +306,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         # Should overwrite min
         |> Tx.atomic_operation("value", :max, int_to_binary(15))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :max, "value", int_to_binary(15)}]
+      assert_atomic_mutation(tx, :max, "value", int_to_binary(15))
     end
   end
 
@@ -337,10 +318,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("counter2", :min, int_to_binary(10))
         |> Tx.atomic_operation("counter3", :max, int_to_binary(100))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      # Atomic operations do not generate write conflicts
-      assert committed.write_conflicts == []
+      assert_no_write_conflicts(tx)
     end
 
     test "clear_range removes atomic operations within range" do
@@ -352,8 +330,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         # Should remove all item_* operations
         |> Tx.clear_range("item_", "item~")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:clear_range, "item_", "item~"}]
+      assert %{mutations: [{:clear_range, "item_", "item~"}]} = commit_and_decode(tx)
     end
 
     test "atomic operations work with read conflicts" do
@@ -363,12 +340,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("counter", :add, int_to_binary(5))
 
       read_version = Version.from_integer(12_345)
-      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+      decoded = commit_and_decode(tx, read_version)
 
-      assert committed.mutations == [{:atomic, :add, "counter", int_to_binary(5)}]
-      # Atomic operations don't add read conflicts or write conflicts
-      assert committed.read_conflicts == {read_version, [{"existing_key", "existing_key\0"}]}
-      assert committed.write_conflicts == []
+      assert %{
+               mutations: [{:atomic, :add, "counter", _}],
+               read_conflicts: {^read_version, [{"existing_key", "existing_key\0"}]},
+               write_conflicts: []
+             } = decoded
     end
   end
 
@@ -381,22 +359,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("max_val", :max, int_to_binary(100))
 
       binary = Tx.commit(tx, nil)
-
-      # Should encode and decode successfully
       assert {:ok, decoded} = Transaction.decode(binary)
 
-      # Can re-encode the decoded result
+      # Should be idempotent: re-encode and decode
       re_encoded_binary = Transaction.encode(decoded)
-      assert {:ok, re_decoded} = Transaction.decode(re_encoded_binary)
-      assert re_decoded == decoded
+      assert {:ok, ^decoded} = Transaction.decode(re_encoded_binary)
     end
 
     test "large transaction with many atomic operations" do
-      tx = Tx.new()
-
-      # Add many atomic operations
       tx =
-        Enum.reduce(1..100, tx, fn i, acc_tx ->
+        Enum.reduce(1..100, Tx.new(), fn i, acc_tx ->
           acc_tx
           |> Tx.atomic_operation("counter_#{i}", :add, int_to_binary(i))
           |> Tx.atomic_operation("min_#{i}", :min, int_to_binary(i * 10))
@@ -404,25 +376,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         end)
 
       binary = Tx.commit(tx, nil)
+      assert {:ok, decoded} = Transaction.decode(binary)
 
-      # Decode to check the mutations
-      assert {:ok, transaction_map} = Transaction.decode(binary)
-
-      # Should have 300 mutations (3 per iteration)
-      assert length(transaction_map.mutations) == 300
-
-      # Should re-encode successfully
-      re_encoded_binary = Transaction.encode(transaction_map)
-      assert {:ok, re_decoded} = Transaction.decode(re_encoded_binary)
-      assert re_decoded == transaction_map
+      # Should have 300 mutations (3 per iteration) and re-encode successfully
+      assert length(decoded.mutations) == 300
+      re_encoded_binary = Transaction.encode(decoded)
+      assert {:ok, ^decoded} = Transaction.decode(re_encoded_binary)
     end
   end
 
   describe "repeatable read with atomic operations" do
     test "repeatable_read computes add values correctly" do
       tx = Tx.atomic_operation(Tx.new(), "counter", :add, int_to_binary(5))
-
-      # Should return the computed value (0 + 5 = 5) as binary
       assert Tx.repeatable_read(tx, "counter") == int_to_binary(5)
     end
 
@@ -433,7 +398,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("min_key", :min, int_to_binary(20))
         |> Tx.atomic_operation("max_key", :max, int_to_binary(30))
 
-      # Should return computed values as binaries
       # empty + 10 = 10
       assert Tx.repeatable_read(tx, "add_key") == int_to_binary(10)
       # min(empty, 20) = 20 (when existing is empty, return operand)
@@ -449,7 +413,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.merge_storage_read("key", int_to_binary(100))
         |> Tx.atomic_operation("key", :add, int_to_binary(42))
 
-      # Should compute 100 + 42 = 142
+      # 100 + 42 = 142
       assert Tx.repeatable_read(tx, "key") == int_to_binary(142)
     end
 
@@ -459,7 +423,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.merge_storage_read("counter", int_to_binary(10))
         |> Tx.atomic_operation("counter", :add, int_to_binary(5))
 
-      # Should compute 10 + 5 = 15
+      # 10 + 5 = 15
       assert Tx.repeatable_read(tx, "counter") == int_to_binary(15)
     end
 
@@ -469,7 +433,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.merge_storage_read("min_val", int_to_binary(50))
         |> Tx.atomic_operation("min_val", :min, int_to_binary(30))
 
-      # Should compute min(50, 30) = 30
+      # min(50, 30) = 30
       assert Tx.repeatable_read(tx, "min_val") == int_to_binary(30)
     end
 
@@ -479,7 +443,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.merge_storage_read("max_val", int_to_binary(20))
         |> Tx.atomic_operation("max_val", :max, int_to_binary(35))
 
-      # Should compute max(20, 35) = 35
+      # max(20, 35) = 35
       assert Tx.repeatable_read(tx, "max_val") == int_to_binary(35)
     end
   end
@@ -492,14 +456,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("counter2", :min, int_to_binary(10))
         |> Tx.atomic_operation("counter3", :max, int_to_binary(15))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+      assert %{
+               mutations: mutations,
+               write_conflicts: [],
+               read_conflicts: {nil, []}
+             } = commit_and_decode(tx)
 
-      # Should have mutations but no write conflicts for atomic operations
-      assert length(committed.mutations) == 3
-      assert Enum.empty?(committed.write_conflicts)
-
-      # But should NOT have any read conflicts - no read version needed
-      assert committed.read_conflicts == {nil, []}
+      assert length(mutations) == 3
     end
 
     test "existing reads with atomic operations maintain read conflicts" do
@@ -509,26 +472,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("counter", :add, int_to_binary(5))
 
       read_version = Version.from_integer(12_345)
-      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
-      # Should have the existing read conflict but not add new ones for atomic ops
-      assert committed.read_conflicts == {read_version, [{"existing_key", "existing_key\0"}]}
-      assert committed.write_conflicts == []
+      assert %{
+               read_conflicts: {^read_version, [{"existing_key", "existing_key\0"}]},
+               write_conflicts: []
+             } = commit_and_decode(tx, read_version)
     end
 
     test "atomic operation followed by repeatable_read does not add read conflicts to Tx" do
       tx = Tx.atomic_operation(Tx.new(), "counter", :add, int_to_binary(5))
 
-      # This should compute the value but not modify the transaction's read state
-      result = Tx.repeatable_read(tx, "counter")
-      assert result == int_to_binary(5)
-
-      # The transaction should still have no reads recorded
+      # Should compute value but not modify transaction's read state
+      assert Tx.repeatable_read(tx, "counter") == int_to_binary(5)
       assert tx.reads == %{}
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      # Should still have no read conflicts
-      assert committed.read_conflicts == {nil, []}
+      assert %{read_conflicts: {nil, []}} = commit_and_decode(tx)
     end
 
     test "atomic operation on key with existing read uses cached value for computation" do
@@ -537,16 +495,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.merge_storage_read("counter", int_to_binary(100))
         |> Tx.atomic_operation("counter", :add, int_to_binary(25))
 
-      # Should use the cached read value (100) for computation
-      result = Tx.repeatable_read(tx, "counter")
-      assert result == int_to_binary(125)
+      # Should use cached read value (100) for computation
+      assert Tx.repeatable_read(tx, "counter") == int_to_binary(125)
 
       read_version = Version.from_integer(12_345)
-      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
 
-      # Should maintain the original read conflict
-      assert committed.read_conflicts == {read_version, [{"counter", "counter\0"}]}
-      assert committed.write_conflicts == []
+      assert %{
+               read_conflicts: {^read_version, [{"counter", "counter\0"}]},
+               write_conflicts: []
+             } = commit_and_decode(tx, read_version)
     end
 
     test "mixed operations maintain correct read/write conflict separation" do
@@ -559,23 +516,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("atomic_key2", :min, int_to_binary(20))
 
       read_version = Version.from_integer(12_345)
-      committed = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+      decoded = commit_and_decode(tx, read_version)
 
-      # Should have read conflicts only for explicitly read keys
       expected_read_conflicts = [
         {"read_key1", "read_key1\0"},
         {"read_key2", "read_key2\0"}
       ]
 
-      assert {^read_version, read_conflicts} = committed.read_conflicts
-      assert Enum.sort(read_conflicts) == Enum.sort(expected_read_conflicts)
-
-      # Should have write conflicts only for non-atomic operations
       expected_write_conflicts = [
         {"write_key1", "write_key1\0"}
       ]
 
-      assert Enum.sort(committed.write_conflicts) == Enum.sort(expected_write_conflicts)
+      assert {^read_version, read_conflicts} = decoded.read_conflicts
+      assert Enum.sort(read_conflicts) == Enum.sort(expected_read_conflicts)
+      assert Enum.sort(decoded.write_conflicts) == Enum.sort(expected_write_conflicts)
     end
   end
 
@@ -583,47 +537,35 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
     test "validates key is binary" do
       tx = Tx.new()
 
-      assert_raise FunctionClauseError, fn ->
-        Tx.atomic_operation(tx, :atom_key, :add, int_to_binary(5))
-      end
-
-      assert_raise FunctionClauseError, fn ->
-        Tx.atomic_operation(tx, 123, :min, int_to_binary(10))
-      end
-
-      assert_raise FunctionClauseError, fn ->
-        Tx.atomic_operation(tx, ["list"], :max, int_to_binary(15))
+      for invalid_key <- [:atom_key, 123, ["list"]] do
+        assert_raise FunctionClauseError, fn ->
+          Tx.atomic_operation(tx, invalid_key, :add, int_to_binary(5))
+        end
       end
     end
 
     test "validates value is binary" do
       tx = Tx.new()
 
-      assert_raise FunctionClauseError, fn ->
-        # integer, not binary
-        Tx.atomic_operation(tx, "key", :add, 123)
+      for invalid_value <- [123, :atom] do
+        assert_raise FunctionClauseError, fn ->
+          Tx.atomic_operation(tx, "key", :add, invalid_value)
+        end
       end
 
-      assert_raise FunctionClauseError, fn ->
-        # atom, not binary
-        Tx.atomic_operation(tx, "key", :max, :atom)
-      end
-
-      # int_to_binary(3) produces valid binary, so this should work
-      fresh_tx = Tx.new()
-      final_tx = Tx.atomic_operation(fresh_tx, "key", :min, int_to_binary(3))
-      committed = final_tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert [{:atomic, :min, "key", <<3>>}] == committed.mutations
+      # Valid binary should work
+      final_tx = Tx.atomic_operation(Tx.new(), "key", :min, int_to_binary(3))
+      assert_atomic_mutation(final_tx, :min, "key", <<3>>)
     end
 
     test "handles empty transaction with only atomic operations" do
       tx = Tx.atomic_operation(Tx.new(), "counter", :add, int_to_binary(1))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert committed.mutations == [{:atomic, :add, "counter", int_to_binary(1)}]
-      assert committed.write_conflicts == []
-      assert committed.read_conflicts == {nil, []}
+      assert %{
+               mutations: [{:atomic, :add, "counter", _}],
+               write_conflicts: [],
+               read_conflicts: {nil, []}
+             } = commit_and_decode(tx)
     end
 
     test "handles zero values correctly" do
@@ -633,25 +575,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("zero_min", :min, int_to_binary(0))
         |> Tx.atomic_operation("zero_max", :max, int_to_binary(0))
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :max, "zero_max", int_to_binary(0)},
         {:atomic, :min, "zero_min", int_to_binary(0)},
         {:atomic, :add, "zero_add", int_to_binary(0)}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
   end
 
   describe "Tx.bit_and/3" do
     test "adds bit_and mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "flags", :bit_and, <<0b11110000>>)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :bit_and, "flags", <<0b11110000>>}]
+      tx = Tx.atomic_operation(Tx.new(), "flags", :bit_and, <<0b11110000>>)
+      assert_atomic_mutation(tx, :bit_and, "flags", <<0b11110000>>)
     end
 
     test "handles multiple bit operations" do
@@ -661,15 +598,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("flags2", :bit_or, <<0x0F, 0xF0>>)
         |> Tx.atomic_operation("flags3", :bit_xor, <<0xAA, 0x55>>)
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :bit_xor, "flags3", <<0xAA, 0x55>>},
         {:atomic, :bit_or, "flags2", <<0x0F, 0xF0>>},
         {:atomic, :bit_and, "flags1", <<0xFF, 0x00>>}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "overwrites previous bit operations on same key" do
@@ -678,19 +613,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("flags", :bit_and, <<0xFF>>)
         |> Tx.atomic_operation("flags", :bit_or, <<0x0F>>)
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
       # Should only have the OR operation (overwrites AND)
-      assert committed.mutations == [{:atomic, :bit_or, "flags", <<0x0F>>}]
+      assert_atomic_mutation(tx, :bit_or, "flags", <<0x0F>>)
     end
   end
 
   describe "Tx.bit_or/3" do
     test "adds bit_or mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "permissions", :bit_or, <<0b00001111>>)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :bit_or, "permissions", <<0b00001111>>}]
+      tx = Tx.atomic_operation(Tx.new(), "permissions", :bit_or, <<0b00001111>>)
+      assert_atomic_mutation(tx, :bit_or, "permissions", <<0b00001111>>)
     end
 
     test "handles empty and multi-byte values" do
@@ -699,42 +630,32 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("empty", :bit_or, <<>>)
         |> Tx.atomic_operation("multi", :bit_or, <<0x12, 0x34, 0x56, 0x78>>)
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :bit_or, "multi", <<0x12, 0x34, 0x56, 0x78>>},
         {:atomic, :bit_or, "empty", <<>>}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
   end
 
   describe "Tx.bit_xor/3" do
     test "adds bit_xor mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "toggle", :bit_xor, <<0b10101010>>)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :bit_xor, "toggle", <<0b10101010>>}]
+      tx = Tx.atomic_operation(Tx.new(), "toggle", :bit_xor, <<0b10101010>>)
+      assert_atomic_mutation(tx, :bit_xor, "toggle", <<0b10101010>>)
     end
 
     test "handles complex patterns" do
       pattern = <<0xFF, 0x00, 0xAA, 0x55, 0xF0, 0x0F>>
       tx = Tx.atomic_operation(Tx.new(), "pattern", :bit_xor, pattern)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :bit_xor, "pattern", pattern}]
+      assert_atomic_mutation(tx, :bit_xor, "pattern", pattern)
     end
   end
 
   describe "Tx.byte_min/3" do
     test "adds byte_min mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "min_string", :byte_min, "hello")
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :byte_min, "min_string", "hello"}]
+      tx = Tx.atomic_operation(Tx.new(), "min_string", :byte_min, "hello")
+      assert_atomic_mutation(tx, :byte_min, "min_string", "hello")
     end
 
     test "handles various string values" do
@@ -744,15 +665,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("alpha", :byte_min, "apple")
         |> Tx.atomic_operation("empty", :byte_min, <<>>)
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :byte_min, "empty", <<>>},
         {:atomic, :byte_min, "alpha", "apple"},
         {:atomic, :byte_min, "earliest", "2024-01-01"}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "overwrites previous operations on same key" do
@@ -761,19 +680,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("key", :byte_min, "first")
         |> Tx.atomic_operation("key", :byte_max, "second")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
       # Should only have the max operation (overwrites min)
-      assert committed.mutations == [{:atomic, :byte_max, "key", "second"}]
+      assert_atomic_mutation(tx, :byte_max, "key", "second")
     end
   end
 
   describe "Tx.byte_max/3" do
     test "adds byte_max mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "max_version", :byte_max, "1.2.3")
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :byte_max, "max_version", "1.2.3"}]
+      tx = Tx.atomic_operation(Tx.new(), "max_version", :byte_max, "1.2.3")
+      assert_atomic_mutation(tx, :byte_max, "max_version", "1.2.3")
     end
 
     test "handles binary vs string values" do
@@ -782,24 +697,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("binary", :byte_max, <<1, 2, 3, 4>>)
         |> Tx.atomic_operation("string", :byte_max, "version")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :byte_max, "string", "version"},
         {:atomic, :byte_max, "binary", <<1, 2, 3, 4>>}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
   end
 
   describe "Tx.append_if_fits/3" do
     test "adds append_if_fits mutation to transaction" do
-      tx = Tx.new()
-      tx = Tx.atomic_operation(tx, "log", :append_if_fits, "new entry\n")
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :append_if_fits, "log", "new entry\n"}]
+      tx = Tx.atomic_operation(Tx.new(), "log", :append_if_fits, "new entry\n")
+      assert_atomic_mutation(tx, :append_if_fits, "log", "new entry\n")
     end
 
     test "handles various append scenarios" do
@@ -809,23 +719,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("log2", :append_if_fits, " - second entry")
         |> Tx.atomic_operation("empty", :append_if_fits, "")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
       expected_mutations = [
         {:atomic, :append_if_fits, "empty", ""},
         {:atomic, :append_if_fits, "log2", " - second entry"},
         {:atomic, :append_if_fits, "log1", "first entry"}
       ]
 
-      assert Enum.sort(committed.mutations) == Enum.sort(expected_mutations)
+      assert_mutations_match(tx, expected_mutations)
     end
 
     test "handles large values within limits" do
       large_value = String.duplicate("x", 1000)
       tx = Tx.atomic_operation(Tx.new(), "large", :append_if_fits, large_value)
-
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert committed.mutations == [{:atomic, :append_if_fits, "large", large_value}]
+      assert_atomic_mutation(tx, :append_if_fits, "large", large_value)
     end
 
     test "overwrites previous operations on same key" do
@@ -834,9 +740,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("buffer", :append_if_fits, "first")
         |> Tx.atomic_operation("buffer", :append_if_fits, "second")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
       # Should only have the second operation (overwrites first)
-      assert committed.mutations == [{:atomic, :append_if_fits, "buffer", "second"}]
+      assert_atomic_mutation(tx, :append_if_fits, "buffer", "second")
     end
   end
 
@@ -854,25 +759,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderAtomicOperationsTest do
         |> Tx.atomic_operation("latest", :byte_max, "2024-12-31")
         |> Tx.atomic_operation("log", :append_if_fits, "entry")
 
-      committed = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-      assert length(committed.mutations) == 9
+      decoded = commit_and_decode(tx)
+      assert length(decoded.mutations) == 9
 
       # Verify all operation types are present
-      operations =
-        Enum.map(committed.mutations, fn
-          {:atomic, op, _key, _value} -> op
-          _ -> :other
-        end)
+      operations = MapSet.new(decoded.mutations, fn {:atomic, op, _key, _value} -> op end)
+      expected_operations = [:add, :min, :max, :bit_and, :bit_or, :bit_xor, :byte_min, :byte_max, :append_if_fits]
 
-      assert :add in operations
-      assert :min in operations
-      assert :max in operations
-      assert :bit_and in operations
-      assert :bit_or in operations
-      assert :bit_xor in operations
-      assert :byte_min in operations
-      assert :byte_max in operations
-      assert :append_if_fits in operations
+      assert operations == MapSet.new(expected_operations)
     end
   end
 end

@@ -4,8 +4,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @moduletag :tmp_dir
 
@@ -36,17 +36,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   describe "child_spec/1" do
     test "creates valid child spec with all required options", %{server_opts: opts} do
       spec = Server.child_spec(opts)
-
       expected_id = opts[:id]
       expected_name = opts[:otp_name]
 
       assert %{
-               id: {Server, id},
-               start: {GenServer, :start_link, [Server, _, [name: name]]}
+               id: {Server, ^expected_id},
+               start: {GenServer, :start_link, [Server, _, [name: ^expected_name]]}
              } = spec
-
-      assert id == expected_id
-      assert name == expected_name
     end
 
     test "raises error when cluster option is missing" do
@@ -65,27 +61,15 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       end
     end
 
-    test "raises error when id option is missing" do
-      opts = [cluster: Cluster, otp_name: :test, foreman: self(), path: "/tmp"]
-
-      assert_raise KeyError, fn ->
-        Server.child_spec(opts)
-      end
-    end
-
-    test "raises error when foreman option is missing" do
-      opts = [cluster: Cluster, otp_name: :test, id: "test", path: "/tmp"]
-
-      assert_raise KeyError, fn ->
-        Server.child_spec(opts)
-      end
-    end
-
-    test "raises error when path option is missing" do
-      opts = [cluster: Cluster, otp_name: :test, id: "test", foreman: self()]
-
-      assert_raise KeyError, fn ->
-        Server.child_spec(opts)
+    for {missing_key, opts_without_key} <- [
+          {:id, [cluster: Cluster, otp_name: :test, foreman: self(), path: "/tmp"]},
+          {:foreman, [cluster: Cluster, otp_name: :test, id: "test", path: "/tmp"]},
+          {:path, [cluster: Cluster, otp_name: :test, id: "test", foreman: self()]}
+        ] do
+      test "raises KeyError when #{missing_key} option is missing" do
+        assert_raise KeyError, fn ->
+          Server.child_spec(unquote(opts_without_key))
+        end
       end
     end
   end
@@ -99,16 +83,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
     test "initializes with correct state", %{server_opts: opts} do
       pid = start_supervised!(Server.child_spec(opts))
-
-      :sys.get_state(pid)
-
       state = :sys.get_state(pid)
-
-      expected_id = opts[:id]
-      expected_otp_name = opts[:otp_name]
-      expected_foreman = opts[:foreman]
-      expected_path = opts[:path]
-
       version_0 = Version.from_integer(0)
 
       assert %State{
@@ -122,12 +97,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
                last_version: ^version_0
              } = state
 
-      assert id == expected_id
-      assert otp_name == expected_otp_name
-      assert foreman == expected_foreman
-      assert path == expected_path
+      assert {id, otp_name, foreman, path} == {opts[:id], opts[:otp_name], opts[:foreman], opts[:path]}
 
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      cleanup_server(pid)
     end
 
     test "handles initialization continue properly", %{server_opts: opts} do
@@ -138,20 +110,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         assert state.segment_recycler
       end)
 
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      cleanup_server(pid)
     end
   end
 
   describe "handle_call/3 - basic operations" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      {:ok, server: pid}
+      {:ok, server: setup_server(opts)}
     end
 
     test "responds to ping", %{server: pid} do
@@ -159,18 +124,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles info request", %{server: pid} do
-      result = GenServer.call(pid, {:info, [:id, :kind, :oldest_version]})
-
-      assert {:ok, info} = result
-      assert is_map(info)
-      assert Map.has_key?(info, :id)
-      assert Map.has_key?(info, :kind)
-      assert Map.has_key?(info, :oldest_version)
+      assert {:ok, %{id: _, kind: _, oldest_version: _}} =
+               GenServer.call(pid, {:info, [:id, :kind, :oldest_version]})
     end
 
     test "handles info request with single fact", %{server: pid} do
-      assert {:ok, info} = GenServer.call(pid, {:info, [:id]})
-      assert is_binary(info[:id])
+      assert {:ok, %{id: id}} = GenServer.call(pid, {:info, [:id]})
+      assert is_binary(id)
     end
 
     test "handles empty info request", %{server: pid} do
@@ -181,19 +141,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - lock_for_recovery" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -208,19 +157,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - push operations" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -247,19 +185,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - pull operations" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -293,19 +220,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_call/3 - recover_from operations" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -332,19 +248,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_continue/2" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -356,19 +261,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "handle_info/2" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -410,19 +304,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   describe "concurrent operations" do
     setup %{server_opts: opts} do
-      pid = start_supervised!(Server.child_spec(opts))
-
-      eventually(fn ->
-        state = :sys.get_state(pid)
-        assert state.segment_recycler
-      end)
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-      end)
-
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
 
@@ -449,6 +332,21 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
                match?({:ok, %{id: _, kind: _}}, result)
              end)
     end
+  end
+
+  defp setup_server(opts) do
+    pid = start_supervised!(Server.child_spec(opts))
+
+    eventually(fn ->
+      state = :sys.get_state(pid)
+      assert state.segment_recycler
+    end)
+
+    pid
+  end
+
+  defp cleanup_server(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid)
   end
 
   defp eventually(assertion_fn, timeout \\ 1000, interval \\ 50) do

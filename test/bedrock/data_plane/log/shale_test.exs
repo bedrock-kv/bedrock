@@ -14,12 +14,8 @@ defmodule Bedrock.DataPlane.Log.ShaleTest do
         path: "/tmp/test_log"
       ]
 
-      # Test that child_spec is delegated to Server
-      spec = Shale.child_spec(opts)
-
-      # Verify the spec has the expected structure
-      assert is_map(spec)
-      assert spec.id == {Server, "test_log_1"}
+      # Test that child_spec is delegated to Server and has expected structure
+      assert %{id: {Server, "test_log_1"}} = Shale.child_spec(opts)
     end
   end
 end

@@ -5,6 +5,17 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
   alias Bedrock.ControlPlane.Director.Server
   alias Bedrock.ControlPlane.Director.State
 
+  # Common setup for child_spec tests
+  defp base_child_spec_opts do
+    [
+      cluster: TestCluster,
+      config: Config.new([:node1, :node2]),
+      old_transaction_system_layout: %{},
+      epoch: 1,
+      coordinator: self()
+    ]
+  end
+
   describe "director service integration" do
     test "add_services_to_directory/2 adds new services to existing directory" do
       state = %State{
@@ -18,14 +29,13 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
         {"new-service-2", :storage, {:storage_2, :node3}}
       ]
 
-      result = Server.add_services_to_directory(state, service_infos)
-
-      assert Map.has_key?(result.services, "existing-service")
-      assert Map.has_key?(result.services, "new-service-1")
-      assert Map.has_key?(result.services, "new-service-2")
-
-      assert result.services["new-service-1"] == {:log, {:log_1, :node2}}
-      assert result.services["new-service-2"] == {:storage, {:storage_2, :node3}}
+      assert %State{
+               services: %{
+                 "existing-service" => {:storage, {:existing, :node1}},
+                 "new-service-1" => {:log, {:log_1, :node2}},
+                 "new-service-2" => {:storage, {:storage_2, :node3}}
+               }
+             } = Server.add_services_to_directory(state, service_infos)
     end
 
     test "add_services_to_directory/2 overwrites existing services with same ID" do
@@ -39,9 +49,11 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
         {"service-1", :log, {:new_name, :new_node}}
       ]
 
-      result = Server.add_services_to_directory(state, service_infos)
-
-      assert result.services["service-1"] == {:log, {:new_name, :new_node}}
+      assert %State{
+               services: %{
+                 "service-1" => {:log, {:new_name, :new_node}}
+               }
+             } = Server.add_services_to_directory(state, service_infos)
     end
 
     test "try_to_recover_if_stalled/1 handles different states correctly" do
@@ -72,37 +84,19 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
         "test-service" => {:storage, {:test_storage, :node1}}
       }
 
-      child_spec =
-        Server.child_spec(
-          cluster: TestCluster,
-          config: Config.new([:node1, :node2]),
-          old_transaction_system_layout: %{},
-          epoch: 1,
-          coordinator: self(),
-          services: services
-        )
+      child_spec = Server.child_spec(base_child_spec_opts() ++ [services: services])
 
       assert child_spec.id == Server
       assert is_tuple(child_spec.start)
     end
 
     test "director defaults services to empty map when not provided" do
-      child_spec =
-        Server.child_spec(
-          cluster: TestCluster,
-          config: Config.new([:node1, :node2]),
-          old_transaction_system_layout: %{},
-          epoch: 1,
-          coordinator: self()
-        )
+      child_spec = Server.child_spec(base_child_spec_opts())
 
       # Extract the init args and verify services default to %{}
-      {_module, _func, [_server_module, init_args]} = child_spec.start
-
-      {_cluster, _config, _layout, _epoch, _coordinator, services, _node_capabilities} =
-        init_args
-
-      assert services == %{}
+      assert {_module, _func,
+              [_server_module, {_cluster, _config, _layout, _epoch, _coordinator, %{}, _node_capabilities}]} =
+               child_spec.start
     end
   end
 end

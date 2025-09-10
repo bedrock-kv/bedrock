@@ -80,6 +80,51 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
   end
 
+  # Helper functions for common test patterns
+  defp get_transaction_mutations(pid) do
+    pid
+    |> :sys.get_state()
+    |> Map.fetch!(:tx)
+    |> Tx.commit(nil)
+    |> Transaction.decode()
+    |> elem(1)
+    |> Map.fetch!(:mutations)
+  end
+
+  defp assert_valid_state(pid, expected_overrides \\ []) do
+    state = :sys.get_state(pid)
+
+    expected =
+      Keyword.merge(
+        [
+          state: :valid,
+          stack: [],
+          commit_version: nil,
+          fastest_storage_servers: %{}
+        ],
+        expected_overrides
+      )
+
+    assert %State{
+             state: state_value,
+             stack: stack,
+             commit_version: commit_version,
+             fastest_storage_servers: fastest_storage_servers
+           } = state
+
+    assert state_value == expected[:state]
+    assert stack == expected[:stack]
+    assert commit_version == expected[:commit_version]
+    assert fastest_storage_servers == expected[:fastest_storage_servers]
+
+    # Only check read_version if explicitly specified
+    if Keyword.has_key?(expected_overrides, :read_version) do
+      assert state.read_version == expected[:read_version]
+    end
+
+    state
+  end
+
   def start_transaction_builder(opts \\ []) do
     read_version = Keyword.get(opts, :read_version)
 
@@ -117,12 +162,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder()
       assert Process.alive?(pid)
 
-      state = :sys.get_state(pid)
-      assert %State{} = state
-      assert state.state == :valid
-      assert state.gateway == self()
-      assert state.stack == []
-      assert %Tx{} = state.tx
+      assert %State{
+               state: :valid,
+               gateway: gateway,
+               stack: [],
+               tx: %Tx{}
+             } = :sys.get_state(pid)
+
+      assert gateway == self()
     end
 
     test "fails to start with missing required options" do
@@ -227,20 +274,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "GenServer cast handling" do
     test "{:set_key, key, value} cast updates transaction state" do
       pid = start_transaction_builder()
-
-      initial_state = :sys.get_state(pid)
-      binary_result = Tx.commit(initial_state.tx, nil)
-      {:ok, decoded} = Transaction.decode(binary_result)
-      initial_mutations = decoded.mutations
+      initial_mutations = get_transaction_mutations(pid)
 
       GenServer.cast(pid, {:set_key, "test_key", "test_value"})
       :timer.sleep(10)
 
-      final_state = :sys.get_state(pid)
-
-      final_mutations =
-        final_state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
-
+      final_mutations = get_transaction_mutations(pid)
       assert final_mutations == initial_mutations ++ [{:set, "test_key", "test_value"}]
     end
 
@@ -276,8 +315,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       GenServer.cast(pid, {:set_key, "key3", "value3"})
       :timer.sleep(10)
 
-      state = :sys.get_state(pid)
-      mutations = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
+      mutations = get_transaction_mutations(pid)
 
       assert mutations == [
                {:set, "key1", "value1"},
@@ -293,15 +331,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       GenServer.cast(pid, {:set_key, "key1", "updated_value"})
       :timer.sleep(10)
 
-      state = :sys.get_state(pid)
-      commit_result = state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+      mutations = get_transaction_mutations(pid)
+      assert mutations == [{:set, "key1", "updated_value"}]
 
-      assert commit_result.mutations == [
-               {:set, "key1", "updated_value"}
-             ]
-
-      result = GenServer.call(pid, {:get, "key1"})
-      assert result == {:ok, "updated_value"}
+      assert {:ok, "updated_value"} = GenServer.call(pid, {:get, "key1"})
     end
 
     @tag :capture_log
@@ -345,18 +378,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     test "state is properly initialized with defaults" do
       pid = start_transaction_builder()
 
-      state = :sys.get_state(pid)
+      assert %State{
+               state: :valid,
+               gateway: gateway,
+               read_version: nil,
+               commit_version: nil,
+               stack: [],
+               fastest_storage_servers: %{},
+               fetch_timeout_in_ms: fetch_timeout,
+               lease_renewal_threshold: lease_threshold,
+               tx: %Tx{}
+             } = :sys.get_state(pid)
 
-      assert %State{} = state
-      assert state.state == :valid
-      assert state.gateway == self()
-      assert state.read_version == nil
-      assert state.commit_version == nil
-      assert state.stack == []
-      assert state.fastest_storage_servers == %{}
-      assert is_integer(state.fetch_timeout_in_ms)
-      assert is_integer(state.lease_renewal_threshold)
-      assert %Tx{} = state.tx
+      assert gateway == self()
+      assert is_integer(fetch_timeout)
+      assert is_integer(lease_threshold)
     end
 
     test "state fields are preserved across operations" do
@@ -416,19 +452,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       GenServer.cast(pid, {:set_key, "key1", "value1"})
       :timer.sleep(5)
-
-      state1 = :sys.get_state(pid)
-      mutations1 = state1.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
-      assert length(mutations1) == 1
+      assert length(get_transaction_mutations(pid)) == 1
 
       GenServer.cast(pid, {:set_key, "key2", "value2"})
       :timer.sleep(5)
 
-      state2 = :sys.get_state(pid)
-      mutations2 = state2.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
-      assert length(mutations2) == 2
+      mutations = get_transaction_mutations(pid)
+      assert length(mutations) == 2
 
-      assert mutations2 == [
+      assert mutations == [
                {:set, "key1", "value1"},
                {:set, "key2", "value2"}
              ]
@@ -497,16 +529,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "GenServer configuration and customization" do
     test "transaction builder works without codecs" do
       pid = start_transaction_builder()
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-      assert state.gateway == self()
+      assert_valid_state(pid, gateway: self())
 
       GenServer.cast(pid, {:set_key, "test", "value"})
       :timer.sleep(10)
 
-      final_state = :sys.get_state(pid)
-      mutations = final_state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) |> Map.fetch!(:mutations)
+      mutations = get_transaction_mutations(pid)
       assert [{:set, "test", "value"}] = mutations
     end
 
@@ -543,44 +571,26 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "KeySelector operations" do
-    test "handles {:get_key_selector, key_selector} call and delegates to resolution module" do
-      key_selector = KeySelector.first_greater_or_equal("test_key")
-      pid = start_transaction_builder(read_version: 42)
-
-      # Make the call - this will delegate to KeySelectorResolution.resolve_key_selector/3
+    # Helper for common KeySelector test pattern
+    defp assert_key_selector_call_succeeds(pid, key_selector) do
       result = GenServer.call(pid, {:get_key_selector, key_selector})
-
       assert is_tuple(result)
       assert tuple_size(result) >= 2
       assert elem(result, 0) in [:ok, :error]
-
-      # Check that the call was properly handled and state remains valid
-      state = :sys.get_state(pid)
-      assert state.state == :valid
+      assert_valid_state(pid)
+      result
     end
 
-    test "handles KeySelector with first_greater_or_equal" do
+    test "handles various KeySelector types" do
       pid = start_transaction_builder(read_version: 42)
-      selector = KeySelector.first_greater_or_equal("test_key")
 
-      result = GenServer.call(pid, {:get_key_selector, selector})
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
+      # Basic first_greater_or_equal
+      selector1 = KeySelector.first_greater_or_equal("test_key")
+      assert_key_selector_call_succeeds(pid, selector1)
 
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-    end
-
-    test "handles KeySelector with offset" do
-      pid = start_transaction_builder(read_version: 42)
-      selector = "test_key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
-
-      result = GenServer.call(pid, {:get_key_selector, selector})
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
+      # With offset
+      selector2 = "test_key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
+      assert_key_selector_call_succeeds(pid, selector2)
     end
 
     test "tracks read version management during KeySelector operations" do
@@ -599,26 +609,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       assert %Tx{} = final_state.tx
     end
 
-    test "maintains transaction state consistency with KeySelector reads" do
+    test "maintains transaction state consistency with repeated KeySelector reads" do
       pid = start_transaction_builder(read_version: 42)
-
       key_selector = KeySelector.first_greater_or_equal("consistency_key")
 
       # Multiple KeySelector calls should maintain consistent state
-      result1 = GenServer.call(pid, {:get_key_selector, key_selector})
-      result2 = GenServer.call(pid, {:get_key_selector, key_selector})
-
-      # Both results should be the same format
-      assert is_tuple(result1)
-      assert is_tuple(result2)
-      assert elem(result1, 0) in [:ok, :error]
-      assert elem(result2, 0) in [:ok, :error]
+      result1 = assert_key_selector_call_succeeds(pid, key_selector)
+      result2 = assert_key_selector_call_succeeds(pid, key_selector)
 
       # For deterministic testing, we expect consistent results
       assert result1 == result2
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
     end
 
     test "updates read conflict tracking for successful KeySelector fetch" do
@@ -647,92 +647,52 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   end
 
   describe "KeySelector range operations" do
-    test "handles {:get_range_selectors, start_selector, end_selector, opts} call" do
-      start_selector = KeySelector.first_greater_or_equal("range_start")
-      end_selector = KeySelector.first_greater_than("range_end")
-      opts = [limit: 50]
-      pid = start_transaction_builder(read_version: 42)
-
+    # Helper for common range selector test pattern
+    defp assert_range_selector_call_succeeds(pid, start_selector, end_selector, opts) do
       result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
       assert is_tuple(result)
       assert tuple_size(result) >= 2
       assert elem(result, 0) in [:ok, :error]
-
-      # State should remain valid
-      state = :sys.get_state(pid)
-      assert state.state == :valid
+      assert_valid_state(pid)
+      result
     end
 
-    test "handles KeySelector range with standard boundaries" do
+    test "handles various KeySelector range configurations" do
       pid = start_transaction_builder(read_version: 42)
 
-      start_selector = KeySelector.first_greater_or_equal("a")
-      end_selector = KeySelector.first_greater_than("z")
-      opts = []
+      # Basic range with options
+      start1 = KeySelector.first_greater_or_equal("range_start")
+      end1 = KeySelector.first_greater_than("range_end")
+      assert_range_selector_call_succeeds(pid, start1, end1, limit: 50)
 
-      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
+      # Standard boundaries with no options
+      start2 = KeySelector.first_greater_or_equal("a")
+      end2 = KeySelector.first_greater_than("z")
+      assert_range_selector_call_succeeds(pid, start2, end2, [])
 
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
+      # Range with offset selectors
+      start3 = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-5)
+      end3 = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
+      assert_range_selector_call_succeeds(pid, start3, end3, limit: 100)
 
-      state = :sys.get_state(pid)
-      assert state.state == :valid
+      # Range with nonexistent keys
+      start4 = KeySelector.first_greater_than("zzz_nonexistent")
+      end4 = KeySelector.first_greater_than("zzz_also_nonexistent")
+      assert_range_selector_call_succeeds(pid, start4, end4, [])
     end
 
-    test "handles KeySelector range with limit option" do
+    test "maintains transaction consistency across repeated range operations" do
       pid = start_transaction_builder(read_version: 42)
-
-      start_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-5)
-      end_selector = "middle" |> KeySelector.first_greater_or_equal() |> KeySelector.add(5)
-      opts = [limit: 100]
-
-      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-    end
-
-    test "handles range with nonexistent keys" do
-      start_selector = KeySelector.first_greater_than("zzz_nonexistent")
-      end_selector = KeySelector.first_greater_than("zzz_also_nonexistent")
-      opts = []
-      pid = start_transaction_builder(read_version: 42)
-
-      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-    end
-
-    test "maintains transaction consistency across range operations" do
-      pid = start_transaction_builder(read_version: 42)
-
       start_selector = KeySelector.first_greater_or_equal("consistency_range_start")
       end_selector = KeySelector.first_greater_than("consistency_range_end")
       opts = [limit: 5]
 
       # Multiple range operations should maintain consistent state
-      result1 = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-      result2 = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
-      # Both results should have the same format
-      assert is_tuple(result1)
-      assert is_tuple(result2)
-      assert elem(result1, 0) in [:ok, :error]
-      assert elem(result2, 0) in [:ok, :error]
+      result1 = assert_range_selector_call_succeeds(pid, start_selector, end_selector, opts)
+      result2 = assert_range_selector_call_succeeds(pid, start_selector, end_selector, opts)
 
       # For deterministic behavior, results should be identical
       assert result1 == result2
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
     end
 
     test "updates range read conflict tracking for successful KeySelector range fetch" do
@@ -778,73 +738,23 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
           assert Enum.empty?(state.tx.range_reads)
       end
     end
-
-    test "processes range with no options" do
-      pid = start_transaction_builder(read_version: 42)
-
-      start_selector = KeySelector.first_greater_or_equal("opts_test")
-      end_selector = KeySelector.first_greater_than("opts_test_end")
-      opts = []
-
-      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-    end
-
-    test "processes range with limit option" do
-      pid = start_transaction_builder(read_version: 42)
-
-      start_selector = KeySelector.first_greater_or_equal("opts_test")
-      end_selector = KeySelector.first_greater_than("opts_test_end")
-      opts = [limit: 50, timeout: 5000]
-
-      result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
-
-      assert is_tuple(result)
-      assert elem(result, 0) in [:ok, :error]
-
-      state = :sys.get_state(pid)
-      assert state.state == :valid
-    end
   end
 
   describe "read version lease management" do
-    test "handles :update_version_lease_if_needed continue message" do
+    test "handles lease lifecycle properly" do
       pid = start_transaction_builder()
 
-      # Get initial state and verify it's valid
-      initial_state = :sys.get_state(pid)
-      assert initial_state.state == :valid
-
-      # The continue message is handled internally by GenServer.continue/2
-      # We can't send it directly, so we test that the process remains stable
-      # and the handler exists by checking the process stays alive
+      # Initial state should be valid
+      assert_valid_state(pid)
       assert Process.alive?(pid)
 
-      # State should remain valid
-      final_state = :sys.get_state(pid)
-      assert %State{} = final_state
-      assert final_state.state == :valid
-    end
-
-    test "handles version lease expiration" do
-      pid = start_transaction_builder()
-
-      # Simulate an expired lease by manipulating state directly
-      # This tests the lease expiration logic
+      # Simulate expired lease state
       current_state = :sys.get_state(pid)
-      expired_state = %{current_state | state: :expired}
-      :sys.replace_state(pid, fn _state -> expired_state end)
+      :sys.replace_state(pid, fn _state -> %{current_state | state: :expired} end)
 
-      # The process should still be alive and handle the expired state
+      # Process should handle expired state
       assert Process.alive?(pid)
-
-      updated_state = :sys.get_state(pid)
-      assert updated_state.state == :expired
+      assert %State{state: :expired} = :sys.get_state(pid)
     end
   end
 end

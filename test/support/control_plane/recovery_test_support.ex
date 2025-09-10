@@ -1,4 +1,4 @@
-defmodule RecoveryTestSupport do
+defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   @moduledoc """
   Shared test utilities and fixtures for recovery tests.
   """

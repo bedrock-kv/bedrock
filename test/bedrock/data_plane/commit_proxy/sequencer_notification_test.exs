@@ -4,85 +4,69 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
 
-  describe "sequencer notification" do
-    test "finalize_batch notifies sequencer after log persistence" do
-      # Create a mock sequencer process that tracks notifications
-      test_pid = self()
+  # Common test setup
+  defp create_batch do
+    %Batch{
+      commit_version: 100,
+      last_commit_version: 99,
+      n_transactions: 0,
+      buffer: []
+    }
+  end
 
-      mock_sequencer =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:report_successful_commit, version}} ->
-              GenServer.reply(from, :ok)
-              send(test_pid, {:sequencer_notified, version})
-          after
-            1000 -> :timeout
-          end
-        end)
+  defp create_transaction_system_layout(sequencer) do
+    %{
+      sequencer: sequencer,
+      resolvers: [],
+      logs: %{},
+      storage_teams: [],
+      services: %{}
+    }
+  end
 
-      batch = %Batch{
-        commit_version: 100,
-        last_commit_version: 99,
-        n_transactions: 0,
-        buffer: []
-      }
+  defp create_finalization_opts do
+    [
+      epoch: 1,
+      resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
+      batch_log_push_fn: fn _, _, _, _, _ -> :ok end
+    ]
+  end
 
-      transaction_system_layout = %{
-        sequencer: mock_sequencer,
-        resolvers: [],
-        logs: %{},
-        storage_teams: [],
-        services: %{}
-      }
+  defp create_mock_sequencer do
+    test_pid = self()
 
-      # Mock all the finalization functions to just return :ok
-      opts = [
-        epoch: 1,
-        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
-        batch_log_push_fn: fn _, _, _, _, _ -> :ok end
-      ]
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:report_successful_commit, version}} ->
+          GenServer.reply(from, :ok)
+          send(test_pid, {:sequencer_notified, version})
+      after
+        1000 -> :timeout
+      end
+    end)
+  end
 
-      result = Finalization.finalize_batch(batch, transaction_system_layout, opts)
+  describe "finalize_batch/3" do
+    test "notifies sequencer after log persistence" do
+      mock_sequencer = create_mock_sequencer()
+      batch = create_batch()
+      layout = create_transaction_system_layout(mock_sequencer)
+      opts = create_finalization_opts()
 
-      assert {:ok, 0, 0} = result
-
-      # The mock sequencer should have received the notification
+      assert {:ok, 0, 0} = Finalization.finalize_batch(batch, layout, opts)
       assert_receive {:sequencer_notified, 100}, 100
 
-      # Clean up
       Process.exit(mock_sequencer, :kill)
     end
 
-    test "sequencer notification uses call so invalid refs return error" do
-      # This test documents the current behavior - GenServer.call returns {:error, :unavailable}
+    test "returns error when sequencer ref is invalid" do
+      # Documents current behavior: GenServer.call returns {:error, :unavailable}
       # for invalid refs, so sequencer notification returns an error but doesn't crash the commit proxy.
-      # In a real system, the sequencer would be a valid reference.
+      batch = create_batch()
+      layout = create_transaction_system_layout(:invalid_sequencer_ref)
+      opts = create_finalization_opts()
 
-      batch = %Batch{
-        commit_version: 100,
-        last_commit_version: 99,
-        n_transactions: 0,
-        buffer: []
-      }
-
-      transaction_system_layout = %{
-        # This would be a valid ref in real usage
-        sequencer: :invalid_sequencer_ref,
-        resolvers: [],
-        logs: %{},
-        storage_teams: [],
-        services: %{}
-      }
-
-      opts = [
-        epoch: 1,
-        resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
-        batch_log_push_fn: fn _, _, _, _, _ -> :ok end
-      ]
-
-      # GenServer.call returns error for invalid refs, so this returns error
-      result = Finalization.finalize_batch(batch, transaction_system_layout, opts)
-      assert {:error, :unavailable} = result
+      assert {:error, :unavailable} = Finalization.finalize_batch(batch, layout, opts)
     end
   end
 end

@@ -55,6 +55,36 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
     }
   end
 
+  def create_racing_layout do
+    %{
+      storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["server1", "server2"]}],
+      services: %{
+        "server1" => %{kind: :storage, status: {:up, :pid1}},
+        "server2" => %{kind: :storage, status: {:up, :pid2}}
+      }
+    }
+  end
+
+  def create_multirange_layout do
+    %{
+      sequencer: :test_sequencer,
+      storage_teams: [
+        %{
+          key_range: {"", "k"},
+          storage_ids: ["storage1"]
+        },
+        %{
+          key_range: {"k", :end},
+          storage_ids: ["storage2"]
+        }
+      ],
+      services: %{
+        "storage1" => %{kind: :storage, status: {:up, :storage1_pid}},
+        "storage2" => %{kind: :storage, status: {:up, :storage2_pid}}
+      }
+    }
+  end
+
   describe "do_fetch/3" do
     test "returns value from writes cache" do
       alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
@@ -63,9 +93,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       tx = Tx.set(Tx.new(), "cached_key", "cached_value")
       state = %{create_test_state() | tx: tx}
 
-      {new_state, result} = PointReads.get_key(state, "cached_key")
-
-      assert result == {:ok, {"cached_key", "cached_value"}}
+      assert {new_state, {:ok, {"cached_key", "cached_value"}}} = PointReads.get_key(state, "cached_key")
       # Transaction state should be unchanged when reading from writes
       assert Tx.commit(new_state.tx, nil) == Tx.commit(state.tx, nil)
     end
@@ -82,8 +110,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       opts = [storage_get_key_fn: storage_fn]
 
       # Fetch should call storage and return value
-      {_new_state, result} = PointReads.get_key(state, "storage_key", opts)
-      assert result == {:ok, {"storage_key", "storage_value"}}
+      assert {_new_state, {:ok, {"storage_key", "storage_value"}}} = PointReads.get_key(state, "storage_key", opts)
     end
 
     test "writes cache takes precedence over reads cache" do
@@ -98,10 +125,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       state = %{create_test_state() | tx: tx}
 
-      {new_state, result} = PointReads.get_key(state, "key")
-
       # Should get writes value, not reads value
-      assert result == {:ok, {"key", "new_value"}}
+      assert {new_state, {:ok, {"key", "new_value"}}} = PointReads.get_key(state, "key")
       # Transaction unchanged since value came from writes cache
       # Use a valid read version since both transactions have read conflicts
       read_version = Bedrock.DataPlane.Version.from_integer(12_345)
@@ -121,11 +146,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_fn: storage_get_key_fn]
 
-      {new_state, result} = PointReads.get_key(state, "storage_key", opts)
-
-      assert result == {:ok, {"storage_key", "storage_value"}}
-      # Check that the value was cached in the transaction reads
-      assert new_state.tx.reads == %{"storage_key" => "storage_value"}
+      assert {%{tx: %{reads: %{"storage_key" => "storage_value"}}}, {:ok, {"storage_key", "storage_value"}}} =
+               PointReads.get_key(state, "storage_key", opts)
     end
 
     test "handles storage fetch error" do
@@ -141,11 +163,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_fn: storage_get_key_fn]
 
-      {new_state, result} = PointReads.get_key(state, "error_key", opts)
-
-      assert result == {:error, :not_found}
-      # Check that the error was cached in the transaction reads
-      assert new_state.tx.reads == %{"error_key" => :clear}
+      assert {%{tx: %{reads: %{"error_key" => :clear}}}, {:error, :not_found}} =
+               PointReads.get_key(state, "error_key", opts)
     end
 
     test "acquires read version when nil" do
@@ -169,13 +188,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         storage_get_key_fn: storage_get_key_fn
       ]
 
-      {new_state, result} = PointReads.get_key(state, "key", opts)
+      expected_expiration = current_time + 5000
 
-      assert result == {:ok, {"key", "value"}}
-      assert new_state.read_version == 12_345
-      assert new_state.read_version_lease_expiration == current_time + 5000
-      # Check that the value was cached in the transaction reads
-      assert new_state.tx.reads == %{"key" => "value"}
+      assert {
+               %{
+                 read_version: 12_345,
+                 read_version_lease_expiration: ^expected_expiration,
+                 tx: %{reads: %{"key" => "value"}}
+               },
+               {:ok, {"key", "value"}}
+             } = PointReads.get_key(state, "key", opts)
     end
 
     test "handles next_read_version unavailable error" do
@@ -200,8 +222,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_fn: storage_get_key_fn]
 
-      {_new_state, result} = PointReads.get_key(state, "key", opts)
-      assert {:ok, {"key", "raw_value"}} = result
+      assert {_new_state, {:ok, {"key", "raw_value"}}} = PointReads.get_key(state, "key", opts)
     end
   end
 
@@ -237,8 +258,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       assert :pid1 in pids and :pid2 in pids
 
       # Key "zebra" should be in second range
-      result = LayoutIndex.lookup_key!(index, "zebra")
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "zebra")
       assert :pid3 in pids
     end
 
@@ -258,8 +278,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       }
 
       index = LayoutIndex.build_index(layout)
-      result = LayoutIndex.lookup_key!(index, "key")
-      assert {_, pids} = result
+      assert {_, pids} = LayoutIndex.lookup_key!(index, "key")
       assert :pid1 in pids and :pid3 in pids
       refute :pid2 in pids
     end
@@ -292,8 +311,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       empty_layout = %{storage_teams: [], services: %{}}
       layout_index = LayoutIndex.build_index(empty_layout)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn)
-      assert result == {state, {:error, :unavailable}}
+      assert {^state, {:error, :unavailable}} = StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "returns first successful response" do
@@ -302,19 +320,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         :pid2, _version, _timeout -> {:error, :timeout}
       end
 
-      layout_config = %{
-        storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["server1", "server2"]}],
-        services: %{
-          "server1" => %{kind: :storage, status: {:up, :pid1}},
-          "server2" => %{kind: :storage, status: {:up, :pid2}}
-        }
-      }
-
+      layout_config = create_racing_layout()
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn)
-      assert {%State{}, {:ok, {"value1", {"", "zzz"}}}} = result
+      assert {%State{}, {:ok, {"value1", {"", "zzz"}}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "handles all servers returning errors" do
@@ -323,20 +334,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         :pid2, _version, _timeout -> {:error, :version_too_old}
       end
 
-      layout_config = %{
-        storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["server1", "server2"]}],
-        services: %{
-          "server1" => %{kind: :storage, status: {:up, :pid1}},
-          "server2" => %{kind: :storage, status: {:up, :pid2}}
-        }
-      }
-
+      layout_config = create_racing_layout()
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn)
       # Returns meaningful error over timeout
-      assert result == {state, {:error, :version_too_old}}
+      assert {^state, {:error, :version_too_old}} = StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "prioritizes success over errors" do
@@ -345,19 +348,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         :pid2, _version, _timeout -> {:ok, :success_value}
       end
 
-      layout_config = %{
-        storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["server1", "server2"]}],
-        services: %{
-          "server1" => %{kind: :storage, status: {:up, :pid1}},
-          "server2" => %{kind: :storage, status: {:up, :pid2}}
-        }
-      }
-
+      layout_config = create_racing_layout()
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn)
-      assert {%State{}, {:ok, {:success_value, {"", "zzz"}}}} = result
+      assert {%State{}, {:ok, {:success_value, {"", "zzz"}}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "cached fastest server fails, races remaining servers to find new winner" do
@@ -367,14 +363,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         :pid2, _version, _timeout -> {:ok, "backup_success"}
       end
 
-      layout_config = %{
-        storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["server1", "server2"]}],
-        services: %{
-          "server1" => %{kind: :storage, status: {:up, :pid1}},
-          "server2" => %{kind: :storage, status: {:up, :pid2}}
-        }
-      }
-
+      layout_config = create_racing_layout()
       layout_index = LayoutIndex.build_index(layout_config)
 
       # Start with pid1 cached as fastest for this key range
@@ -387,13 +376,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       }
 
       # When we race, pid1 (cached) should fail, then pid2 should be tried and win
-      result = StorageRacing.race_storage_servers(state, "key1", operation_fn)
-
-      # Should succeed with pid2's result and update cache
-      assert {updated_state, {:ok, {"backup_success", {"", "zzz"}}}} = result
-
-      # Verify that pid2 is now cached as the fastest server
-      assert updated_state.fastest_storage_servers[{"", "zzz"}] == :pid2
+      # Should succeed with pid2's result and update cache with pid2 as fastest server
+      assert {%{fastest_storage_servers: %{{"", "zzz"} => :pid2}}, {:ok, {"backup_success", {"", "zzz"}}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
   end
 
@@ -412,18 +397,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_fn: storage_get_key_fn]
 
-      {new_state, result} = PointReads.get_key(state, "integration_key", opts)
+      assert {%{tx: %{reads: %{"integration_key" => "integration_value"}}} = new_state,
+              {:ok, {"integration_key", "integration_value"}}} =
+               PointReads.get_key(state, "integration_key", opts)
 
-      assert result == {:ok, {"integration_key", "integration_value"}}
-      # Check that the value was cached in the transaction reads
-      assert new_state.tx.reads == %{"integration_key" => "integration_value"}
-
-      # Second fetch should hit reads cache
-      {final_state, result2} = PointReads.get_key(new_state, "integration_key", opts)
-
-      assert result2 == {:ok, {"integration_key", "integration_value"}}
-      # No change since it hit cache
-      assert final_state == new_state
+      # Second fetch should hit reads cache - no change since it hit cache
+      assert {^new_state, {:ok, {"integration_key", "integration_value"}}} =
+               PointReads.get_key(new_state, "integration_key", opts)
     end
 
     test "fetch with stack fallback" do
@@ -436,9 +416,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       tx = %{Tx.new() | reads: %{"stack_key" => "stack_value"}}
       state = %{create_test_state() | tx: tx}
 
-      {new_state, result} = PointReads.get_key(state, "stack_key")
-
-      assert result == {:ok, {"stack_key", "stack_value"}}
+      assert {new_state, {:ok, {"stack_key", "stack_value"}}} = PointReads.get_key(state, "stack_key")
       # Transaction unchanged since it hit reads cache
       # Use a valid read version since both transactions have read conflicts
       read_version = Bedrock.DataPlane.Version.from_integer(12_345)
@@ -479,10 +457,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         }
 
         index = LayoutIndex.build_index(layout)
-        result = LayoutIndex.lookup_key!(index, key)
-
         # Should only include the up server
-        assert {{"", :end}, [:up_pid]} = result
+        assert {{"", :end}, [:up_pid]} = LayoutIndex.lookup_key!(index, key)
       end
     end
   end
@@ -528,32 +504,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_selector_fn: storage_get_key_selector_fn]
 
-      {new_state, result} = PointReads.get_key_selector(state, key_selector, opts)
-
-      assert result == {:ok, {"a", "value_a"}}
-      # Check that the resolved key was cached in the transaction reads
-      assert new_state.tx.reads == %{"a" => "value_a"}
+      assert {%{tx: %{reads: %{"a" => "value_a"}}}, {:ok, {"a", "value_a"}}} =
+               PointReads.get_key_selector(state, key_selector, opts)
     end
 
     test "offset pushes key selector to next shard (positive offset)" do
       # Create layout with multiple shards
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", "k"},
-            storage_ids: ["storage1"]
-          },
-          %{
-            key_range: {"k", :end},
-            storage_ids: ["storage2"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}},
-          "storage2" => %{kind: :storage, status: {:up, :storage2_pid}}
-        }
-      }
+      layout = create_multirange_layout()
 
       state =
         create_test_state(
@@ -578,32 +535,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_selector_fn: storage_get_key_selector_fn]
 
-      {new_state, result} = PointReads.get_key_selector(state, key_selector, opts)
-
-      assert result == {:ok, {"o", "value_o"}}
-      # Check that the resolved key was cached
-      assert new_state.tx.reads == %{"o" => "value_o"}
+      assert {%{tx: %{reads: %{"o" => "value_o"}}}, {:ok, {"o", "value_o"}}} =
+               PointReads.get_key_selector(state, key_selector, opts)
     end
 
     test "offset pushes key selector to previous shard (negative offset)" do
       # Create layout with multiple shards
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", "k"},
-            storage_ids: ["storage1"]
-          },
-          %{
-            key_range: {"k", :end},
-            storage_ids: ["storage2"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}},
-          "storage2" => %{kind: :storage, status: {:up, :storage2_pid}}
-        }
-      }
+      layout = create_multirange_layout()
 
       state =
         create_test_state(
@@ -628,11 +566,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_selector_fn: storage_get_key_selector_fn]
 
-      {new_state, result} = PointReads.get_key_selector(state, key_selector, opts)
-
-      assert result == {:ok, {"h", "value_h"}}
-      # Check that the resolved key was cached
-      assert new_state.tx.reads == %{"h" => "value_h"}
+      assert {%{tx: %{reads: %{"h" => "value_h"}}}, {:ok, {"h", "value_h"}}} =
+               PointReads.get_key_selector(state, key_selector, opts)
     end
 
     test "handles key selector resolution error" do
@@ -651,11 +586,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [storage_get_key_selector_fn: storage_get_key_selector_fn]
 
-      {new_state, result} = PointReads.get_key_selector(state, key_selector, opts)
-
-      assert result == {:error, :not_found}
-      # No reads should be cached on error
-      assert new_state.tx.reads == %{}
+      assert {%{tx: %{reads: %{}}}, {:error, :not_found}} =
+               PointReads.get_key_selector(state, key_selector, opts)
     end
 
     test "acquires read version when nil for key selector" do
@@ -681,38 +613,28 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
         storage_get_key_selector_fn: storage_get_key_selector_fn
       ]
 
-      {new_state, result} = PointReads.get_key_selector(state, key_selector, opts)
+      expected_expiration = current_time + 5000
 
-      assert result == {:ok, {"resolved_key", "resolved_value"}}
-      assert new_state.read_version == 12_345
-      assert new_state.read_version_lease_expiration == current_time + 5000
-      # Check that the resolved key was cached
-      assert new_state.tx.reads == %{"resolved_key" => "resolved_value"}
+      assert {
+               %{
+                 read_version: 12_345,
+                 read_version_lease_expiration: ^expected_expiration,
+                 tx: %{reads: %{"resolved_key" => "resolved_value"}}
+               },
+               {:ok, {"resolved_key", "resolved_value"}}
+             } = PointReads.get_key_selector(state, key_selector, opts)
     end
   end
 
   describe "lease_expired error handling" do
-    test "confirms fix: lease_expired is now handled gracefully" do
+    test "raises exception when read version lease expires" do
       # Mock next_read_version_fn to return lease_expired (simulates old incarnation scenario)
       next_read_version_fn = fn _state -> {:error, :lease_expired} end
 
       state = create_test_state(read_version: nil)
       opts = [next_read_version_fn: next_read_version_fn]
 
-      # Should now raise exception since ensure_read_version! is a bang function
-      assert_raise RuntimeError, "Read version lease expired", fn ->
-        PointReads.get_key(state, "test_key", opts)
-      end
-    end
-
-    test "handles lease_expired error gracefully (desired behavior after fix)" do
-      # This test will pass after we implement the fix
-      next_read_version_fn = fn _state -> {:error, :lease_expired} end
-
-      state = create_test_state(read_version: nil)
-      opts = [next_read_version_fn: next_read_version_fn]
-
-      # After fix, should raise exception since ensure_read_version! is a bang function
+      # Should raise exception since ensure_read_version! is a bang function
       assert_raise RuntimeError, "Read version lease expired", fn ->
         PointReads.get_key(state, "test_key", opts)
       end

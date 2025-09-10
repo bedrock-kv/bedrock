@@ -1,4 +1,4 @@
-defmodule Bedrock.Test.GenServerTestHelpers do
+defmodule Bedrock.Test.Common.GenServerTestHelpers do
   @moduledoc """
   Helper macros for testing GenServer call and cast messages.
 

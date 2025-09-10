@@ -20,59 +20,63 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     }
   end
 
+  # Helper function for testing - commits and decodes transaction for assertions
+  defp commit_and_decode(tx, read_version) do
+    tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+  end
+
   describe "new/0" do
     test "creates empty transaction" do
-      tx = Tx.new()
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [],
-               writes: %{},
+               writes: writes,
                reads: %{},
                range_writes: [],
                range_reads: []
-             }
+             } = Tx.new()
+
+      assert :gb_trees.is_empty(writes)
 
       assert %{
                mutations: [],
                write_conflicts: [],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(Tx.new(), nil)
     end
   end
 
   describe "set/3" do
     test "sets key-value pair" do
-      tx = Tx.set(Tx.new(), "key1", "value1")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:set, "key1", "value1"}],
-               writes: %{"key1" => "value1"},
                reads: %{},
                range_writes: [{"key1", "key1\0"}],
                range_reads: []
-             }
+             } = tx = Tx.set(Tx.new(), "key1", "value1")
+
+      assert writes_to_map(tx) == %{"key1" => "value1"}
 
       assert %{
                mutations: [{:set, "key1", "value1"}],
                write_conflicts: [{"key1", "key1\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
 
     test "sets multiple key-value pairs" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.set("key2", "value2")
-        |> Tx.set("key3", "value3")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:set, "key3", "value3"}, {:set, "key2", "value2"}, {:set, "key1", "value1"}],
-               writes: %{"key1" => "value1", "key2" => "value2", "key3" => "value3"},
                reads: %{},
                range_writes: [{"key1", "key1\0"}, {"key2", "key2\0"}, {"key3", "key3\0"}],
                range_reads: []
-             }
+             } =
+               tx =
+               Tx.new()
+               |> Tx.set("key1", "value1")
+               |> Tx.set("key2", "value2")
+               |> Tx.set("key3", "value3")
+
+      assert writes_to_map(tx) == %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}
 
       assert %{
                mutations: [
@@ -80,90 +84,79 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {:set, "key2", "value2"},
                  {:set, "key3", "value3"}
                ],
-               write_conflicts: write_conflicts,
+               write_conflicts: [
+                 {"key1", "key1\0"},
+                 {"key2", "key2\0"},
+                 {"key3", "key3\0"}
+               ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert write_conflicts == [
-               {"key1", "key1\0"},
-               {"key2", "key2\0"},
-               {"key3", "key3\0"}
-             ]
+             } = commit_and_decode(tx, nil)
     end
 
     test "overwrites existing key" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.set("key1", "updated_value")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:set, "key1", "updated_value"}],
-               writes: %{"key1" => "updated_value"},
                reads: %{},
                range_writes: [{"key1", "key1\0"}],
                range_reads: []
-             }
+             } =
+               tx =
+               Tx.new()
+               |> Tx.set("key1", "value1")
+               |> Tx.set("key1", "updated_value")
+
+      assert writes_to_map(tx) == %{"key1" => "updated_value"}
 
       assert %{
-               mutations: [
-                 {:set, "key1", "updated_value"}
-               ],
+               mutations: [{:set, "key1", "updated_value"}],
                write_conflicts: [{"key1", "key1\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
 
     test "handles empty string key and value" do
-      tx = Tx.set(Tx.new(), "", "")
-
       assert %{
                mutations: [{:set, "", ""}],
                write_conflicts: [{"", "\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(Tx.set(Tx.new(), "", ""), nil)
     end
 
     test "handles unicode keys and values" do
-      tx = Tx.set(Tx.new(), "键名", "值")
-
       assert %{
                mutations: [{:set, "键名", "值"}],
                write_conflicts: [{"键名", "键名\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(Tx.set(Tx.new(), "键名", "值"), nil)
     end
 
     test "handles binary data with null bytes" do
       binary_key = "\x00\x01\xFF\x02"
       binary_value = "\xFF\x00\x01\x02"
-
-      tx = Tx.set(Tx.new(), binary_key, binary_value)
-
       expected_end_key = binary_key <> "\0"
 
       assert %{
                mutations: [{:set, ^binary_key, ^binary_value}],
                write_conflicts: [{^binary_key, ^expected_end_key}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(Tx.set(Tx.new(), binary_key, binary_value), nil)
     end
   end
 
   describe "clear/2" do
     test "clears single key" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.clear("key2")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:clear, "key2"}, {:set, "key1", "value1"}],
-               writes: %{"key1" => "value1", "key2" => :clear},
                reads: %{},
                range_writes: [{"key1", "key1\0"}, {"key2", "key2\0"}],
                range_reads: []
-             }
+             } =
+               tx =
+               Tx.new()
+               |> Tx.set("key1", "value1")
+               |> Tx.clear("key2")
+
+      assert writes_to_map(tx) == %{"key1" => "value1", "key2" => :clear}
 
       assert %{
                mutations: [
@@ -175,50 +168,47 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {"key2", "key2\0"}
                ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
 
     test "clear overwrites existing key" do
-      tx =
-        Tx.new()
-        |> Tx.set("key1", "value1")
-        |> Tx.clear("key1")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:clear, "key1"}],
-               writes: %{"key1" => :clear},
                reads: %{},
                range_writes: [{"key1", "key1\0"}],
                range_reads: []
-             }
+             } =
+               tx =
+               Tx.new()
+               |> Tx.set("key1", "value1")
+               |> Tx.clear("key1")
+
+      assert writes_to_map(tx) == %{"key1" => :clear}
 
       assert %{
-               mutations: [
-                 {:clear, "key1"}
-               ],
+               mutations: [{:clear, "key1"}],
                write_conflicts: [{"key1", "key1\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
   end
 
   describe "clear_range/3" do
     test "clears range of keys" do
-      tx = Tx.clear_range(Tx.new(), "a", "z")
-
-      assert to_test_map(tx) == %{
+      assert %Tx{
                mutations: [{:clear_range, "a", "z"}],
-               writes: %{},
                reads: %{},
                range_writes: [{"a", "z"}],
                range_reads: []
-             }
+             } = tx = Tx.clear_range(Tx.new(), "a", "z")
+
+      assert :gb_trees.is_empty(tx.writes)
 
       assert %{
                mutations: [{:clear_range, "a", "z"}],
                write_conflicts: [{"a", "z"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
 
     test "clears range removes individual ops in range" do
@@ -234,14 +224,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {:set, "zebra", "animal"},
                  {:clear_range, "a", "m"}
                ],
-               write_conflicts: write_conflicts,
+               write_conflicts: [
+                 {"a", "m"},
+                 {"zebra", "zebra\0"}
+               ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      assert write_conflicts == [
-               {"a", "m"},
-               {"zebra", "zebra\0"}
-             ]
+             } = commit_and_decode(tx, nil)
     end
   end
 
@@ -249,70 +237,41 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "gets value from writes cache" do
       tx = Tx.set(Tx.new(), "cached_key", "cached_value")
 
-      fetch_fn = fn _key, state ->
+      fetch_fn = fn _key, _state ->
         flunk("Should not call fetch_fn when value is in writes cache")
-        {{:ok, "should_not_reach"}, state}
       end
 
-      {new_tx, result, state} = Tx.get(tx, "cached_key", fetch_fn, :test_state)
-
-      assert result == {:ok, "cached_value"}
-      assert state == :test_state
-
-      assert to_test_map(new_tx) == %{
-               mutations: [{:set, "cached_key", "cached_value"}],
-               writes: %{"cached_key" => "cached_value"},
-               reads: %{},
-               range_writes: [{"cached_key", "cached_key\0"}],
-               range_reads: []
-             }
-
-      assert new_tx == tx
+      assert {^tx, {:ok, "cached_value"}, :test_state} =
+               Tx.get(tx, "cached_key", fetch_fn, :test_state)
     end
 
     test "gets value from reads cache when not in writes" do
       tx = then(Tx.new(), &%{&1 | reads: %{"cached_key" => "cached_value"}})
 
-      fetch_fn = fn _key, state ->
+      fetch_fn = fn _key, _state ->
         flunk("Should not call fetch_fn when value is in reads cache")
-        {{:ok, "should_not_reach"}, state}
       end
 
-      {new_tx, result, state} = Tx.get(tx, "cached_key", fetch_fn, :test_state)
-
-      assert result == {:ok, "cached_value"}
-      assert new_tx == tx
-      assert state == :test_state
+      assert {^tx, {:ok, "cached_value"}, :test_state} =
+               Tx.get(tx, "cached_key", fetch_fn, :test_state)
     end
 
     test "fetches from storage when not in cache" do
-      tx = Tx.new()
-
-      fetch_fn = fn key, state ->
-        assert key == "missing_key"
-        assert state == :test_state
+      fetch_fn = fn "missing_key", :test_state ->
         {{:ok, "fetched_value"}, :new_state}
       end
 
-      {new_tx, result, new_state} = Tx.get(tx, "missing_key", fetch_fn, :test_state)
-
-      assert result == {:ok, "fetched_value"}
-      assert new_state == :new_state
-      assert new_tx.reads == %{"missing_key" => "fetched_value"}
+      assert {%Tx{reads: %{"missing_key" => "fetched_value"}}, {:ok, "fetched_value"}, :new_state} =
+               Tx.get(Tx.new(), "missing_key", fetch_fn, :test_state)
     end
 
     test "handles fetch error" do
-      tx = Tx.new()
-
       fetch_fn = fn _key, state ->
         {{:error, :not_found}, state}
       end
 
-      {new_tx, result, state} = Tx.get(tx, "missing_key", fetch_fn, :test_state)
-
-      assert result == {:error, :not_found}
-      assert state == :test_state
-      assert new_tx.reads == %{"missing_key" => :clear}
+      assert {%Tx{reads: %{"missing_key" => :clear}}, {:error, :not_found}, :test_state} =
+               Tx.get(Tx.new(), "missing_key", fetch_fn, :test_state)
     end
 
     test "handles cleared key in writes" do
@@ -322,11 +281,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         flunk("Should not call fetch_fn for cleared key")
       end
 
-      {new_tx, result, state} = Tx.get(tx, "cleared_key", fetch_fn, :test_state)
-
-      assert result == {:error, :not_found}
-      assert new_tx == tx
-      assert state == :test_state
+      assert {^tx, {:error, :not_found}, :test_state} =
+               Tx.get(tx, "cleared_key", fetch_fn, :test_state)
     end
 
     test "handles cleared key in reads" do
@@ -336,11 +292,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         flunk("Should not call fetch_fn for cleared key in reads")
       end
 
-      {new_tx, result, state} = Tx.get(tx, "cleared_key", fetch_fn, :test_state)
-
-      assert result == {:error, :not_found}
-      assert new_tx == tx
-      assert state == :test_state
+      assert {^tx, {:error, :not_found}, :test_state} =
+               Tx.get(tx, "cleared_key", fetch_fn, :test_state)
     end
 
     test "writes cache takes precedence over reads cache" do
@@ -353,11 +306,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         flunk("Should not fetch when value is in writes cache")
       end
 
-      {new_tx, result, state} = Tx.get(tx, "key", fetch_fn, :test_state)
-
-      assert result == {:ok, "new_value"}
-      assert new_tx == tx
-      assert state == :test_state
+      assert {^tx, {:ok, "new_value"}, :test_state} =
+               Tx.get(tx, "key", fetch_fn, :test_state)
     end
   end
 
@@ -365,13 +315,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
 
   describe "commit/1" do
     test "commits empty transaction" do
-      tx = Tx.new()
-
       assert %{
                mutations: [],
                write_conflicts: [],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(Tx.new(), nil)
     end
 
     test "commits transaction with only writes" do
@@ -390,7 +338,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {"key2", "key2\0"}
                ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
 
     test "commits transaction with reads and writes" do
@@ -405,7 +353,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                mutations: [{:set, "key1", "value1"}],
                write_conflicts: [{"key1", "key1\0"}],
                read_conflicts: {^read_version, [{"read_key", "read_key\0"}]}
-             } = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, read_version)
     end
 
     test "commits complex transaction with multiple operations" do
@@ -430,19 +378,18 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {"key3", "key3\0"}
                ],
                read_conflicts: {^read_version, [{"read_key", "read_key\0"}]}
-             } = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, read_version)
     end
 
     test "coalesces overlapping ranges in conflicts" do
       tx = then(Tx.new(), &%{&1 | range_reads: [{"a", "m"}, {"k", "z"}, {"b", "n"}]})
-
       read_version = Bedrock.DataPlane.Version.from_integer(789)
 
       assert %{
                mutations: [],
                write_conflicts: [],
                read_conflicts: {^read_version, [{"a", "m"}, {"k", "z"}, {"b", "n"}]}
-             } = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, read_version)
     end
   end
 
@@ -450,22 +397,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
     test "handles large keys and values" do
       large_key = String.duplicate("k", 1000)
       large_value = String.duplicate("v", 10_000)
-
-      tx = Tx.set(Tx.new(), large_key, large_value)
+      expected_end_key = large_key <> "\0"
 
       assert %{
                mutations: [{:set, ^large_key, ^large_value}],
-               write_conflicts: write_conflicts,
+               write_conflicts: [{^large_key, ^expected_end_key}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      expected_end_key = large_key <> "\0"
-      assert write_conflicts == [{large_key, expected_end_key}]
+             } = commit_and_decode(Tx.set(Tx.new(), large_key, large_value), nil)
     end
 
     test "handles mixed operations" do
       large_key = "large_key"
       large_value = "large_value"
+      expected_large_end_key = large_key <> "\0"
 
       tx =
         Tx.new()
@@ -479,17 +423,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {:clear, "clear_key"},
                  {:clear_range, "a", "b"}
                ],
-               write_conflicts: write_conflicts,
+               write_conflicts: [
+                 {"a", "b"},
+                 {"clear_key", "clear_key\0"},
+                 {^large_key, ^expected_large_end_key}
+               ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      expected_large_end_key = large_key <> "\0"
-
-      assert write_conflicts == [
-               {"a", "b"},
-               {"clear_key", "clear_key\0"},
-               {large_key, expected_large_end_key}
-             ]
+             } = commit_and_decode(tx, nil)
     end
 
     test "handles key collision between set and clear" do
@@ -501,30 +441,29 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
       assert writes_to_map(tx)["collision_key"] == :clear
 
       assert %{
-               mutations: [
-                 {:clear, "collision_key"}
-               ],
+               mutations: [{:clear, "collision_key"}],
                write_conflicts: [{"collision_key", "collision_key\0"}],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, nil)
     end
   end
 
   describe "clear_range edge cases" do
     test "clear_range with empty range does nothing" do
-      tx =
-        Tx.new()
-        |> Tx.set("key", "value")
-        # empty range
-        |> Tx.clear_range("m", "m")
-
-      assert to_test_map(tx) == %{
+      # Empty range should not affect existing operations
+      assert %Tx{
                mutations: [{:set, "key", "value"}],
-               writes: %{"key" => "value"},
                reads: %{},
                range_writes: [{"key", "key\0"}],
                range_reads: []
-             }
+             } =
+               tx =
+               Tx.new()
+               |> Tx.set("key", "value")
+               # empty range
+               |> Tx.clear_range("m", "m")
+
+      assert writes_to_map(tx) == %{"key" => "value"}
     end
 
     test "clear_range at range boundaries" do
@@ -713,16 +652,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                  {:clear, "alpha"},
                  {:clear_range, "b", "h"}
                ],
-               write_conflicts: write_conflicts,
+               write_conflicts: [
+                 {"alpha", "alpha\0"},
+                 {"b", "h"},
+                 {"zeta", "zeta\0"}
+               ],
                read_conflicts: {nil, []}
-             } = tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1))
-
-      # Verify conflicts are in lexicographic order
-      assert write_conflicts == [
-               {"alpha", "alpha\0"},
-               {"b", "h"},
-               {"zeta", "zeta\0"}
-             ]
+             } = commit_and_decode(tx, nil)
     end
   end
 
@@ -897,7 +833,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
                mutations: [],
                write_conflicts: [{"write_end", "write_start"}],
                read_conflicts: {^read_version, [{"read_start", "read_end"}]}
-             } = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+             } = commit_and_decode(tx, read_version)
     end
 
     test "conflict helpers work with normal operations" do
@@ -909,17 +845,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
         |> Tx.add_write_conflict_range("extra_write_a", "extra_write_z")
 
       read_version = Bedrock.DataPlane.Version.from_integer(456)
+      result = commit_and_decode(tx, read_version)
 
       assert %{
                mutations: [{:set, "key1", "value1"}],
-               write_conflicts: write_conflicts,
                read_conflicts: {^read_version, read_conflicts}
-             } = tx |> Tx.commit(read_version) |> then(&elem(Transaction.decode(&1), 1))
+             } = result
 
       # Should include both normal operation conflicts and helper conflicts
-      assert {"key1", "key1\0"} in write_conflicts
-      assert {"extra_write_a", "extra_write_z"} in write_conflicts
-
+      assert {"key1", "key1\0"} in result.write_conflicts
+      assert {"extra_write_a", "extra_write_z"} in result.write_conflicts
       assert {"read_key", "read_key\0"} in read_conflicts
       assert {"extra_read_start", "extra_read_end"} in read_conflicts
     end
@@ -966,53 +901,37 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxTest do
   end
 
   describe "atomic operations with subsequent reads" do
-    test "repeatable_read with add should compute local value" do
-      # Create a transaction with existing data in reads (simulating storage read)
-      # Use little-endian format: 10 as 1-byte
+    test "repeatable_read with add computes local value" do
+      # Use little-endian format: 10 as 1-byte, add 5, expect 15
       tx =
         Tx.new()
         |> Tx.merge_storage_read("counter", <<10>>)
         |> Tx.atomic_operation("counter", :add, <<5>>)
 
-      # When we read the key after add, repeatable_read should compute the value
-      result = Tx.repeatable_read(tx, "counter")
-
-      # Should return the computed value (10 + 5 = 15) as little-endian binary
-      assert result == <<15>>
+      assert <<15>> = Tx.repeatable_read(tx, "counter")
     end
 
-    test "repeatable_read with add to non-existent key should default to empty" do
+    test "repeatable_read with add to non-existent key returns operand" do
       tx = Tx.atomic_operation(Tx.new(), "counter", :add, <<5>>)
-
-      # When we read a non-existent key after add, it should be treated as empty (returns operand)
-      result = Tx.repeatable_read(tx, "counter")
-
-      # Should return the operand value since existing is empty
-      assert result == <<5>>
+      assert <<5>> = Tx.repeatable_read(tx, "counter")
     end
 
-    test "repeatable_read with min should compute local value" do
+    test "repeatable_read with min computes local value" do
       tx =
         Tx.new()
         |> Tx.merge_storage_read("min_val", <<10>>)
         |> Tx.atomic_operation("min_val", :min, <<5>>)
 
-      result = Tx.repeatable_read(tx, "min_val")
-
-      # Should return min(10, 5) = 5 as little-endian binary
-      assert result == <<5>>
+      assert <<5>> = Tx.repeatable_read(tx, "min_val")
     end
 
-    test "repeatable_read with max should compute local value" do
+    test "repeatable_read with max computes local value" do
       tx =
         Tx.new()
         |> Tx.merge_storage_read("max_val", <<10>>)
         |> Tx.atomic_operation("max_val", :max, <<15>>)
 
-      result = Tx.repeatable_read(tx, "max_val")
-
-      # Should return max(10, 15) = 15 as little-endian binary
-      assert result == <<15>>
+      assert <<15>> = Tx.repeatable_read(tx, "max_val")
     end
   end
 end

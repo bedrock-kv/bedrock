@@ -230,42 +230,33 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # CORE ROUND-TRIP PROPERTIES
   # ============================================================================
 
-  property "transaction round-trip encoding preserves all data" do
-    check all(transaction <- transaction_generator(), max_runs: 100) do
-      encoded = Transaction.encode(transaction)
-      assert is_binary(encoded)
-      assert byte_size(encoded) > 0
+  describe "round-trip encoding" do
+    property "preserves all transaction data" do
+      check all(transaction <- transaction_generator(), max_runs: 100) do
+        encoded = Transaction.encode(transaction)
+        assert is_binary(encoded)
+        assert byte_size(encoded) > 0
 
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded == transaction
+        assert {:ok, ^transaction} = Transaction.decode(encoded)
+      end
     end
-  end
 
-  property "mutation encoding round-trip preserves mutation data" do
-    check all(mutation <- mutation_generator(), max_runs: 100) do
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
+    property "preserves mutation data" do
+      check all(mutation <- mutation_generator(), max_runs: 100) do
+        transaction = single_mutation_transaction(mutation)
+        encoded = Transaction.encode(transaction)
 
-      encoded = Transaction.encode(transaction)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded.mutations == [mutation]
+        assert {:ok, %{mutations: [^mutation]}} = Transaction.decode(encoded)
+      end
     end
-  end
 
-  property "empty transaction encodes and decodes correctly" do
-    check all(_ <- constant(:ok)) do
-      empty_tx = %{
-        mutations: [],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
+    property "handles empty transactions correctly" do
+      check all(_ <- constant(:ok)) do
+        empty_tx = empty_transaction()
+        encoded = Transaction.encode(empty_tx)
 
-      encoded = Transaction.encode(empty_tx)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded == empty_tx
+        assert {:ok, ^empty_tx} = Transaction.decode(encoded)
+      end
     end
   end
 
@@ -273,108 +264,89 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # SIZE OPTIMIZATION PROPERTIES
   # ============================================================================
 
-  property "SET operations use optimal encoding variants" do
-    check all(mutation <- set_mutation_generator()) do
-      {:set, key, value} = mutation
-      key_size = byte_size(key)
-      value_size = byte_size(value)
+  describe "size optimization" do
+    property "SET operations use optimal encoding variants" do
+      check all(mutation <- set_mutation_generator()) do
+        {:set, key, value} = mutation
+        key_size = byte_size(key)
+        value_size = byte_size(value)
 
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
-
-      encoded = Transaction.encode(transaction)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded.mutations == [mutation]
-
-      # Verify size optimization was applied
-      # Most compact variant should be used based on sizes
-      expected_is_compact =
-        (key_size <= 255 and value_size <= 255) or
-          (key_size <= 255 and value_size <= 65_535) or
-          (key_size <= 65_535 and value_size <= 4_294_967_295)
-
-      assert expected_is_compact, "Size optimization should choose appropriate variant"
-    end
-  end
-
-  property "CLEAR operations use optimal encoding variants" do
-    check all(mutation <- clear_mutation_generator()) do
-      {:clear, key} = mutation
-      key_size = byte_size(key)
-
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
-
-      encoded = Transaction.encode(transaction)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded.mutations == [mutation]
-
-      # Verify appropriate variant was chosen
-      if key_size <= 255 do
-        # Should use 8-bit length variant
-        assert true
-      else
-        # Should use 16-bit length variant
-        assert true
-      end
-    end
-  end
-
-  property "CLEAR_RANGE operations use optimal encoding variants" do
-    check all(mutation <- clear_range_mutation_generator()) do
-      {:clear_range, start_key, end_key} = mutation
-      start_size = byte_size(start_key)
-      end_size = byte_size(end_key)
-      max_size = max(start_size, end_size)
-
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
-
-      encoded = Transaction.encode(transaction)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded.mutations == [mutation]
-
-      # Verify appropriate variant was chosen based on max key size
-      if max_size <= 255 do
-        # Should use 8-bit length variant
-        assert true
-      else
-        # Should use 16-bit length variant
-        assert true
-      end
-    end
-  end
-
-  property "encoding produces minimal size for given data" do
-    check all(mutations <- mutation_list_generator()) do
-      if length(mutations) > 0 do
-        transaction = %{
-          mutations: mutations,
-          read_conflicts: {nil, []},
-          write_conflicts: []
-        }
-
+        transaction = single_mutation_transaction(mutation)
         encoded = Transaction.encode(transaction)
 
-        # Each mutation should use the most compact encoding possible
-        # We verify this by ensuring decode works and data is preserved
-        assert {:ok, decoded} = Transaction.decode(encoded)
-        assert decoded.mutations == mutations
+        assert {:ok, %{mutations: [^mutation]}} = Transaction.decode(encoded)
 
-        # Size should be reasonable - exact size depends on optimization
-        # At least header
-        assert byte_size(encoded) >= 8
-        # Reasonable upper bound for test data
-        assert byte_size(encoded) < 1_000_000
+        # Verify size optimization was applied
+        # Most compact variant should be used based on sizes
+        expected_is_compact =
+          (key_size <= 255 and value_size <= 255) or
+            (key_size <= 255 and value_size <= 65_535) or
+            (key_size <= 65_535 and value_size <= 4_294_967_295)
+
+        assert expected_is_compact, "Size optimization should choose appropriate variant"
+      end
+    end
+
+    property "CLEAR operations use optimal encoding variants" do
+      check all(mutation <- clear_mutation_generator()) do
+        {:clear, key} = mutation
+        key_size = byte_size(key)
+
+        transaction = single_mutation_transaction(mutation)
+        encoded = Transaction.encode(transaction)
+
+        assert {:ok, %{mutations: [^mutation]}} = Transaction.decode(encoded)
+
+        # Verify appropriate variant was chosen
+        if key_size <= 255 do
+          # Should use 8-bit length variant
+          assert true
+        else
+          # Should use 16-bit length variant
+          assert true
+        end
+      end
+    end
+
+    property "CLEAR_RANGE operations use optimal encoding variants" do
+      check all(mutation <- clear_range_mutation_generator()) do
+        {:clear_range, start_key, end_key} = mutation
+        start_size = byte_size(start_key)
+        end_size = byte_size(end_key)
+        max_size = max(start_size, end_size)
+
+        transaction = single_mutation_transaction(mutation)
+        encoded = Transaction.encode(transaction)
+
+        assert {:ok, %{mutations: [^mutation]}} = Transaction.decode(encoded)
+
+        # Verify appropriate variant was chosen based on max key size
+        if max_size <= 255 do
+          # Should use 8-bit length variant
+          assert true
+        else
+          # Should use 16-bit length variant
+          assert true
+        end
+      end
+    end
+
+    property "produces minimal size for given data" do
+      check all(mutations <- mutation_list_generator()) do
+        if length(mutations) > 0 do
+          transaction = mutations_transaction(mutations)
+          encoded = Transaction.encode(transaction)
+
+          # Each mutation should use the most compact encoding possible
+          # We verify this by ensuring decode works and data is preserved
+          assert {:ok, %{mutations: ^mutations}} = Transaction.decode(encoded)
+
+          # Size should be reasonable - exact size depends on optimization
+          # At least header
+          assert byte_size(encoded) >= 8
+          # Reasonable upper bound for test data
+          assert byte_size(encoded) < 1_000_000
+        end
       end
     end
   end
@@ -383,74 +355,63 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # LENGTH ENCODING PROPERTIES
   # ============================================================================
 
-  property "all valid lengths encode and decode correctly" do
-    check all(length <- length_generator(), max_runs: 100) do
-      # Create a value of the specified length to test encoding
-      test_value = String.duplicate("x", length)
-      assert byte_size(test_value) == length
+  describe "length encoding" do
+    property "all valid lengths encode and decode correctly" do
+      check all(length <- length_generator(), max_runs: 100) do
+        # Create a value of the specified length to test encoding
+        test_value = String.duplicate("x", length)
+        assert byte_size(test_value) == length
 
-      mutation = {:set, "test_key", test_value}
+        mutation = {:set, "test_key", test_value}
+        transaction = single_mutation_transaction(mutation)
+        encoded = Transaction.encode(transaction)
 
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
+        assert {:ok, %{mutations: [^mutation]}} = Transaction.decode(encoded)
 
-      encoded = Transaction.encode(transaction)
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded.mutations == [mutation]
-
-      # Verify the actual value was preserved
-      {:set, _, decoded_value} = List.first(decoded.mutations)
-      assert byte_size(decoded_value) == length
-      assert decoded_value == test_value
+        # Verify the actual value was preserved
+        assert {:ok, %{mutations: [{:set, _, decoded_value}]}} = Transaction.decode(encoded)
+        assert byte_size(decoded_value) == length
+        assert decoded_value == test_value
+      end
     end
-  end
 
-  property "length encoding uses minimal representation" do
-    check all(length <- length_generator()) do
-      test_value = String.duplicate("a", length)
-      mutation = {:set, "k", test_value}
+    property "uses minimal representation" do
+      check all(length <- length_generator()) do
+        test_value = String.duplicate("a", length)
+        mutation = {:set, "k", test_value}
+        transaction = single_mutation_transaction(mutation)
+        encoded = Transaction.encode(transaction)
 
-      transaction = %{
-        mutations: [mutation],
-        read_conflicts: {nil, []},
-        write_conflicts: []
-      }
+        # The encoding should work and be decodable
+        assert {:ok, %{mutations: [{:set, _, decoded_value}]}} = Transaction.decode(encoded)
+        assert byte_size(decoded_value) == length
 
-      encoded = Transaction.encode(transaction)
+        # Length should be encoded in the most compact form possible
+        # Direct (0-11): no extension bytes
+        # 1-byte extended (12-255): 1 extension byte
+        # 2-byte extended (256-65535): 2 extension bytes
+        # 2-byte extended high (65536-131071): 2 extension bytes
+        cond do
+          length <= 11 ->
+            # Direct encoding - most compact
+            assert true
 
-      # The encoding should work and be decodable
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      {:set, _, decoded_value} = List.first(decoded.mutations)
-      assert byte_size(decoded_value) == length
+          length <= 255 ->
+            # 1-byte extension
+            assert true
 
-      # Length should be encoded in the most compact form possible
-      # Direct (0-11): no extension bytes
-      # 1-byte extended (12-255): 1 extension byte
-      # 2-byte extended (256-65535): 2 extension bytes
-      # 2-byte extended high (65536-131071): 2 extension bytes
-      cond do
-        length <= 11 ->
-          # Direct encoding - most compact
-          assert true
+          length <= 65_535 ->
+            # 2-byte extension low
+            assert true
 
-        length <= 255 ->
-          # 1-byte extension
-          assert true
+          length <= 131_071 ->
+            # 2-byte extension high
+            assert true
 
-        length <= 65_535 ->
-          # 2-byte extension low
-          assert true
-
-        length <= 131_071 ->
-          # 2-byte extension high
-          assert true
-
-        true ->
-          # Should not reach here with our generator
-          flunk("Length #{length} exceeds maximum supported length")
+          true ->
+            # Should not reach here with our generator
+            flunk("Length #{length} exceeds maximum supported length")
+        end
       end
     end
   end
@@ -459,57 +420,50 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # HEADER STRUCTURE PROPERTIES
   # ============================================================================
 
-  property "decoded opcodes are in valid ranges" do
-    check all(mutations <- mutation_list_generator()) do
-      if length(mutations) > 0 do
-        transaction = %{
-          mutations: mutations,
-          read_conflicts: {nil, []},
-          write_conflicts: []
-        }
+  describe "header structure" do
+    property "decoded opcodes are in valid ranges" do
+      check all(mutations <- mutation_list_generator()) do
+        if length(mutations) > 0 do
+          transaction = mutations_transaction(mutations)
+          encoded = Transaction.encode(transaction)
 
-        encoded = Transaction.encode(transaction)
-        assert {:ok, decoded} = Transaction.decode(encoded)
+          assert {:ok, %{mutations: decoded_mutations}} = Transaction.decode(encoded)
 
-        # All mutations should be valid types that decode correctly
-        Enum.each(decoded.mutations, fn mutation ->
-          case mutation do
-            {:set, key, value} ->
-              assert is_binary(key)
-              assert is_binary(value)
+          # All mutations should be valid types that decode correctly
+          Enum.each(decoded_mutations, fn mutation ->
+            case mutation do
+              {:set, key, value} ->
+                assert is_binary(key)
+                assert is_binary(value)
 
-            {:clear, key} ->
-              assert is_binary(key)
+              {:clear, key} ->
+                assert is_binary(key)
 
-            {:clear_range, start_key, end_key} ->
-              assert is_binary(start_key)
-              assert is_binary(end_key)
+              {:clear_range, start_key, end_key} ->
+                assert is_binary(start_key)
+                assert is_binary(end_key)
 
-            _ ->
-              flunk("Invalid mutation type: #{inspect(mutation)}")
-          end
-        end)
+              _ ->
+                flunk("Invalid mutation type: #{inspect(mutation)}")
+            end
+          end)
+        end
       end
     end
-  end
 
-  property "section headers maintain consistency" do
-    check all(transaction <- transaction_generator()) do
-      encoded = Transaction.encode(transaction)
+    property "section headers maintain consistency" do
+      check all(transaction <- transaction_generator()) do
+        encoded = Transaction.encode(transaction)
 
-      # Should have valid magic number and version
-      <<magic::unsigned-big-32, version, _flags, section_count::unsigned-big-16, _rest::binary>> = encoded
-      # "BRDT" magic number
-      assert magic == 0x42524454
-      # Format version
-      assert version == 0x01
-      assert section_count >= 0
-      # Max sections: mutations, read_conflicts, write_conflicts, commit_version
-      assert section_count <= 4
+        # Should have valid magic number and version
+        assert <<0x42524454::unsigned-big-32, 0x01, _flags, section_count::unsigned-big-16, _rest::binary>> = encoded
+        assert section_count >= 0
+        # Max sections: mutations, read_conflicts, write_conflicts, commit_version
+        assert section_count <= 4
 
-      # Should decode successfully
-      assert {:ok, decoded} = Transaction.decode(encoded)
-      assert decoded == transaction
+        # Should decode successfully
+        assert {:ok, ^transaction} = Transaction.decode(encoded)
+      end
     end
   end
 
@@ -517,66 +471,68 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # ERROR HANDLING PROPERTIES
   # ============================================================================
 
-  property "invalid binary data produces appropriate errors" do
-    check all(invalid_data <- binary(max_length: 100)) do
-      # Random binary data should either decode or produce a known error
-      case Transaction.decode(invalid_data) do
-        {:ok, _transaction} ->
-          # This is unlikely but technically possible with random data
-          true
-
-        {:error, _reason} ->
-          # Expected for most random data
-          true
-
-        other ->
-          flunk("decode/1 should return {:ok, _} or {:error, _}, got: #{inspect(other)}")
-      end
-    end
-  end
-
-  property "truncated transaction data produces errors" do
-    check all(transaction <- transaction_generator()) do
-      encoded = Transaction.encode(transaction)
-
-      if byte_size(encoded) > 10 do
-        # Create truncated versions
-        truncated_sizes = [1, 4, 8, byte_size(encoded) - 1]
-
-        Enum.each(truncated_sizes, fn size ->
-          if size < byte_size(encoded) do
-            truncated = binary_part(encoded, 0, size)
-            assert {:error, _reason} = Transaction.decode(truncated)
-          end
-        end)
-      end
-    end
-  end
-
-  property "corrupted section CRCs are detected" do
-    check all(transaction <- transaction_generator()) do
-      encoded = Transaction.encode(transaction)
-
-      if byte_size(encoded) > 20 do
-        # Corrupt a byte in the middle (likely to hit section data)
-        corruption_pos = div(byte_size(encoded), 2)
-        <<prefix::binary-size(corruption_pos), _byte, suffix::binary>> = encoded
-        corrupted = <<prefix::binary, 0xFF, suffix::binary>>
-
-        case Transaction.decode(corrupted) do
-          {:error, _} ->
-            # Expected - corruption should be detected
+  describe "error handling" do
+    property "invalid binary data produces appropriate errors" do
+      check all(invalid_data <- binary(max_length: 100)) do
+        # Random binary data should either decode or produce a known error
+        case Transaction.decode(invalid_data) do
+          {:ok, _transaction} ->
+            # This is unlikely but technically possible with random data
             true
 
-          {:ok, decoded} ->
-            # Very unlikely but possible if corruption didn't affect critical data
-            # In this case, the decoded data might be different
-            # This is acceptable as long as it's a valid transaction
-            valid_transaction?(decoded)
+          {:error, _reason} ->
+            # Expected for most random data
+            true
+
+          other ->
+            flunk("decode/1 should return {:ok, _} or {:error, _}, got: #{inspect(other)}")
         end
-      else
-        # Skip very small transactions
-        true
+      end
+    end
+
+    property "truncated transaction data produces errors" do
+      check all(transaction <- transaction_generator()) do
+        encoded = Transaction.encode(transaction)
+
+        if byte_size(encoded) > 10 do
+          # Create truncated versions
+          truncated_sizes = [1, 4, 8, byte_size(encoded) - 1]
+
+          Enum.each(truncated_sizes, fn size ->
+            if size < byte_size(encoded) do
+              truncated = binary_part(encoded, 0, size)
+              assert {:error, _reason} = Transaction.decode(truncated)
+            end
+          end)
+        end
+      end
+    end
+
+    property "corrupted section CRCs are detected" do
+      check all(transaction <- transaction_generator()) do
+        encoded = Transaction.encode(transaction)
+
+        if byte_size(encoded) > 20 do
+          # Corrupt a byte in the middle (likely to hit section data)
+          corruption_pos = div(byte_size(encoded), 2)
+          assert <<prefix::binary-size(corruption_pos), _byte, suffix::binary>> = encoded
+          corrupted = <<prefix::binary, 0xFF, suffix::binary>>
+
+          case Transaction.decode(corrupted) do
+            {:error, _} ->
+              # Expected - corruption should be detected
+              true
+
+            {:ok, decoded} ->
+              # Very unlikely but possible if corruption didn't affect critical data
+              # In this case, the decoded data might be different
+              # This is acceptable as long as it's a valid transaction
+              valid_transaction?(decoded)
+          end
+        else
+          # Skip very small transactions
+          true
+        end
       end
     end
   end
@@ -585,53 +541,75 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   # STREAMING AND SECTION EXTRACTION PROPERTIES
   # ============================================================================
 
-  property "mutation streaming produces identical results to decode" do
-    check all(mutations <- mutation_list_generator()) do
-      if length(mutations) > 0 do
-        transaction = %{
-          mutations: mutations,
-          read_conflicts: {nil, []},
-          write_conflicts: []
-        }
+  describe "streaming and section extraction" do
+    property "mutation streaming produces identical results to decode" do
+      check all(mutations <- mutation_list_generator()) do
+        if length(mutations) > 0 do
+          transaction = mutations_transaction(mutations)
+          encoded = Transaction.encode(transaction)
 
-        encoded = Transaction.encode(transaction)
+          # Compare streaming vs decode
+          assert {:ok, stream} = Transaction.mutations(encoded)
+          streamed_mutations = Enum.to_list(stream)
 
-        # Compare streaming vs decode
-        assert {:ok, stream} = Transaction.mutations(encoded)
-        streamed_mutations = Enum.to_list(stream)
-
-        assert {:ok, decoded} = Transaction.decode(encoded)
-
-        assert streamed_mutations == decoded.mutations
-        assert streamed_mutations == mutations
+          assert {:ok, %{mutations: ^streamed_mutations}} = Transaction.decode(encoded)
+          assert streamed_mutations == mutations
+        end
       end
     end
-  end
 
-  property "section extraction preserves data integrity" do
-    check all(transaction <- transaction_generator()) do
-      encoded = Transaction.encode(transaction)
+    property "section extraction preserves data integrity" do
+      check all(transaction <- transaction_generator()) do
+        encoded = Transaction.encode(transaction)
 
-      # Extract conflicts and verify they match
-      assert {:ok, {read_version, read_conflicts}} = Transaction.read_conflicts(encoded)
-      assert {:ok, write_conflicts} = Transaction.write_conflicts(encoded)
+        # Extract conflicts and verify they match
+        assert {:ok, {read_version, read_conflicts}} = Transaction.read_conflicts(encoded)
+        assert {:ok, write_conflicts} = Transaction.write_conflicts(encoded)
 
-      expected_read_conflicts =
-        case transaction.read_conflicts do
-          {version, conflicts} -> {version, conflicts}
-          _ -> {nil, []}
-        end
+        expected_read_conflicts =
+          case transaction.read_conflicts do
+            {version, conflicts} -> {version, conflicts}
+            _ -> {nil, []}
+          end
 
-      expected_write_conflicts = Map.get(transaction, :write_conflicts, [])
+        expected_write_conflicts = Map.get(transaction, :write_conflicts, [])
 
-      assert {read_version, read_conflicts} == expected_read_conflicts
-      assert write_conflicts == expected_write_conflicts
+        assert {^read_version, ^read_conflicts} = expected_read_conflicts
+        assert ^write_conflicts = expected_write_conflicts
+      end
     end
   end
 
   # ============================================================================
   # HELPER FUNCTIONS
   # ============================================================================
+
+  # Creates a basic empty transaction structure.
+  defp empty_transaction do
+    %{
+      mutations: [],
+      read_conflicts: {nil, []},
+      write_conflicts: []
+    }
+  end
+
+  # Creates a transaction with a single mutation.
+  defp single_mutation_transaction(mutation) do
+    %{
+      mutations: [mutation],
+      read_conflicts: {nil, []},
+      write_conflicts: []
+    }
+  end
+
+  # Creates a transaction with a list of mutations.
+  defp mutations_transaction(mutations) do
+    %{
+      mutations: mutations,
+      read_conflicts: {nil, []},
+      write_conflicts: []
+    }
+  end
 
   defp valid_transaction?(transaction) when is_map(transaction) do
     required_keys = [:mutations, :read_conflicts, :write_conflicts]

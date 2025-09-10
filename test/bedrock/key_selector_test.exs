@@ -232,12 +232,12 @@ defmodule Bedrock.KeySelectorTest do
 
   describe "type checking and validation" do
     test "KeySelector struct has correct type specification" do
-      selector = KeySelector.first_greater_or_equal("test")
+      assert %KeySelector{key: key, or_equal: or_equal, offset: offset} =
+               KeySelector.first_greater_or_equal("test")
 
-      assert %KeySelector{} = selector
-      assert is_binary(selector.key)
-      assert is_boolean(selector.or_equal)
-      assert is_integer(selector.offset)
+      assert is_binary(key)
+      assert is_boolean(or_equal)
+      assert is_integer(offset)
     end
 
     test "all construction functions return KeySelector struct" do
@@ -262,22 +262,21 @@ defmodule Bedrock.KeySelectorTest do
       selector2 = "key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1)
 
       # They have different internal representations but same logical meaning
-      assert selector1.key == selector2.key
-      assert selector1.offset == selector2.offset
-      assert selector1.or_equal == selector2.or_equal
+      assert %KeySelector{key: key, offset: offset, or_equal: or_equal} = selector1
+      assert %KeySelector{key: ^key, offset: ^offset, or_equal: ^or_equal} = selector2
     end
 
     test "offset manipulation creates predictable patterns" do
       base = KeySelector.first_greater_or_equal("test")
 
       # Forward and back should cancel out
-      result = base |> KeySelector.add(5) |> KeySelector.subtract(5)
-      assert result == base
+      assert ^base = base |> KeySelector.add(5) |> KeySelector.subtract(5)
 
       # Multiple small additions should equal one large addition
       incremental = base |> KeySelector.add(2) |> KeySelector.add(3)
       bulk = KeySelector.add(base, 5)
-      assert incremental.offset == bulk.offset
+      assert %KeySelector{offset: offset} = incremental
+      assert %KeySelector{offset: ^offset} = bulk
     end
   end
 end

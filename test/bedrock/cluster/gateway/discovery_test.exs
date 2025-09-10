@@ -12,8 +12,8 @@ defmodule Bedrock.Cluster.Gateway.DiscoveryTest do
         {:node3, {:pong, 3, :coordinator_pid_3}}
       ]
 
-      assert Discovery.select_leader_from_responses(responses) ==
-               {:ok, {:coordinator_pid_2, 8}}
+      assert {:ok, {:coordinator_pid_2, 8}} =
+               Discovery.select_leader_from_responses(responses)
     end
 
     test "select_leader_from_responses/1 filters out nil leaders" do
@@ -23,8 +23,8 @@ defmodule Bedrock.Cluster.Gateway.DiscoveryTest do
         {:node3, {:pong, 10, nil}}
       ]
 
-      assert Discovery.select_leader_from_responses(responses) ==
-               {:ok, {:coordinator_pid_2, 8}}
+      assert {:ok, {:coordinator_pid_2, 8}} =
+               Discovery.select_leader_from_responses(responses)
     end
 
     test "select_leader_from_responses/1 returns error when no leaders available" do
@@ -46,71 +46,33 @@ defmodule Bedrock.Cluster.Gateway.DiscoveryTest do
         {:node1, {:pong, 5, :coordinator_pid_1}}
       ]
 
-      assert Discovery.select_leader_from_responses(responses) ==
-               {:ok, {:coordinator_pid_1, 5}}
+      assert {:ok, {:coordinator_pid_1, 5}} =
+               Discovery.select_leader_from_responses(responses)
     end
   end
 
   describe "change_coordinator/2" do
-    test "does not change when coordinator is the same" do
+    setup do
       state = %State{
         node: :test_node,
         cluster: TestCluster,
         known_coordinator: :coordinator_ref
       }
 
-      result = Discovery.change_coordinator(state, :coordinator_ref)
-
-      assert result.known_coordinator == :coordinator_ref
+      %{state: state}
     end
 
-    test "sets known_coordinator to unavailable when requested" do
-      state = %State{
-        node: :test_node,
-        cluster: TestCluster,
-        known_coordinator: :coordinator_ref
-      }
-
-      result = Discovery.change_coordinator(state, :unavailable)
-
-      assert result.known_coordinator == :unavailable
+    test "does not change when coordinator is the same", %{state: state} do
+      assert %State{known_coordinator: :coordinator_ref} =
+               Discovery.change_coordinator(state, :coordinator_ref)
     end
 
-    test "triggers service discovery message when coordinator becomes available" do
-      # Create a mock state with minimal cluster info to avoid PubSub calls
-      # In this test we just verify the message is sent to self()
-
-      # Note: This is a simplified test that focuses on the core logic
-      # Real integration tests would need proper cluster setup
-      assert true
+    test "sets known_coordinator to unavailable when requested", %{state: state} do
+      assert %State{known_coordinator: :unavailable} =
+               Discovery.change_coordinator(state, :unavailable)
     end
   end
 
-  describe "try_direct_coordinator_call/2" do
-    test "returns success when coordinator responds with leader" do
-      # This would need a mock coordinator process in real testing
-      # For now, just test the pattern matching logic
-
-      # Send ourselves the expected response format
-      send(self(), {:call_response, {:pong, 10, :leader_pid}})
-
-      # This is a simplified test - real implementation would need proper mocking
-      result =
-        receive do
-          {:call_response, {:pong, epoch, leader_pid}} when leader_pid != nil ->
-            {:ok, {leader_pid, epoch}}
-
-          {:call_response, {:pong, _epoch, nil}} ->
-            {:error, :unavailable}
-
-          _ ->
-            {:error, :unavailable}
-        after
-          50 ->
-            {:error, :unavailable}
-        end
-
-      assert result == {:ok, {:leader_pid, 10}}
-    end
-  end
+  # Note: try_direct_coordinator_call/2 would require proper mocking setup
+  # Integration tests would be more appropriate for testing this functionality
 end

@@ -1,4 +1,4 @@
-defmodule FinalizationTestSupport do
+defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   @moduledoc """
   Shared test utilities and fixtures for finalization tests.
   """

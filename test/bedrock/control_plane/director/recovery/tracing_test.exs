@@ -21,266 +21,138 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
     end)
   end
 
+  # Helper function to capture trace logs
+  defp capture_trace(event, data \\ %{}, metadata \\ %{}, opts \\ []) do
+    capture_log(opts, fn ->
+      Tracing.trace(event, data, metadata)
+    end)
+  end
+
   describe "trace/3" do
     test "traces recovery started event" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:started, %{}, %{cluster: TestCluster, epoch: 42, attempt: 1})
-        end)
-
+      log_output = capture_trace(:started, %{}, %{cluster: TestCluster, epoch: 42, attempt: 1})
       assert log_output =~ "Bedrock [test_cluster/42]: Recovery attempt #1 started"
     end
 
     test "traces recovery completed event" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:completed, %{}, %{elapsed: {:millisecond, 1500}})
-        end)
-
+      log_output = capture_trace(:completed, %{}, %{elapsed: {:millisecond, 1500}})
       assert log_output =~ "Bedrock [test_cluster/42]: Recovery completed in 1s!"
     end
 
     test "traces recovery stalled event" do
-      log_output =
-        capture_log([level: :error], fn ->
-          Tracing.trace(:stalled, %{}, %{elapsed: {:second, 5}, reason: :timeout})
-        end)
-
+      log_output = capture_trace(:stalled, %{}, %{elapsed: {:second, 5}, reason: :timeout}, level: :error)
       assert log_output =~ "Bedrock [test_cluster/42]: Recovery stalled after 5s: :timeout"
     end
 
     test "traces services locked event" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:services_locked, %{n_services: 10, n_reporting: 8}, %{})
-        end)
-
+      log_output = capture_trace(:services_locked, %{n_services: 10, n_reporting: 8})
       assert log_output =~ "Bedrock [test_cluster/42]: Services 8/10 reporting"
     end
 
     test "traces first time initialization event" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:first_time_initialization, %{}, %{})
-        end)
-
+      log_output = capture_trace(:first_time_initialization)
       assert log_output =~ "Bedrock [test_cluster/42]: Initializing a brand new system"
     end
 
-    test "traces creating vacancies event with no vacancies" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(
+    test "traces creating vacancies events" do
+      test_cases = [
+        {0, 0, "No vacancies to create"},
+        {3, 0, "Creating 3 log vacancies"},
+        {0, 2, "Creating 2 storage team vacancies"},
+        {3, 2, "Creating 3 log vacancies and 2 storage team vacancies"}
+      ]
+
+      for {log_count, storage_count, expected_message} <- test_cases do
+        log_output =
+          capture_trace(
             :creating_vacancies,
-            %{n_log_vacancies: 0, n_storage_team_vacancies: 0},
-            %{}
+            %{n_log_vacancies: log_count, n_storage_team_vacancies: storage_count}
           )
-        end)
 
-      assert log_output =~ "Bedrock [test_cluster/42]: No vacancies to create"
+        assert log_output =~ "Bedrock [test_cluster/42]: #{expected_message}"
+      end
     end
 
-    test "traces creating vacancies event with log vacancies only" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(
-            :creating_vacancies,
-            %{n_log_vacancies: 3, n_storage_team_vacancies: 0},
-            %{}
-          )
-        end)
+    test "traces durable version chosen events" do
+      test_cases = [
+        {Version.from_integer(100), "<0,0,0,0,0,0,0,100>"},
+        {nil, "nil"},
+        {Version.from_integer(999_999_999), "<0,0,0,0,59,154,201,255>"},
+        {Version.zero(), "<0,0,0,0,0,0,0,0>"}
+      ]
 
-      assert log_output =~ "Bedrock [test_cluster/42]: Creating 3 log vacancies"
+      for {version, expected_output} <- test_cases do
+        log_output = capture_trace(:durable_version_chosen, %{}, %{durable_version: version})
+        assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: #{expected_output}"
+      end
     end
 
-    test "traces creating vacancies event with storage team vacancies only" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(
-            :creating_vacancies,
-            %{n_log_vacancies: 0, n_storage_team_vacancies: 2},
-            %{}
-          )
-        end)
+    test "traces team health events" do
+      test_cases = [
+        {[], [], "No teams available"},
+        {["team_a", "team_b"], [], "All teams healthy (team_a, team_b)"},
+        {[], ["team_c", "team_d"], "All teams degraded (team_c, team_d)"},
+        {["team_a"], ["team_b"], "Healthy teams are team_a, with some teams degraded (team_b)"}
+      ]
 
-      assert log_output =~ "Bedrock [test_cluster/42]: Creating 2 storage team vacancies"
-    end
-
-    test "traces creating vacancies event with both types" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(
-            :creating_vacancies,
-            %{n_log_vacancies: 3, n_storage_team_vacancies: 2},
-            %{}
-          )
-        end)
-
-      assert log_output =~
-               "Bedrock [test_cluster/42]: Creating 3 log vacancies and 2 storage team vacancies"
-    end
-
-    test "traces durable version chosen event" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:durable_version_chosen, %{}, %{
-            durable_version: Version.from_integer(100)
+      for {healthy_teams, degraded_teams, expected_message} <- test_cases do
+        log_output =
+          capture_trace(:team_health, %{}, %{
+            healthy_teams: healthy_teams,
+            degraded_teams: degraded_teams
           })
-        end)
 
-      assert log_output =~
-               "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,0,0,0,100>"
-    end
-
-    test "traces durable version chosen event with nil version" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:durable_version_chosen, %{}, %{
-            durable_version: nil
-          })
-        end)
-
-      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: nil"
-    end
-
-    test "traces durable version chosen event with large version" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:durable_version_chosen, %{}, %{
-            durable_version: Version.from_integer(999_999_999)
-          })
-        end)
-
-      assert log_output =~
-               "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,59,154,201,255>"
-    end
-
-    test "traces durable version chosen event with zero version" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:durable_version_chosen, %{}, %{
-            durable_version: Version.zero()
-          })
-        end)
-
-      assert log_output =~ "Bedrock [test_cluster/42]: Durable version chosen: <0,0,0,0,0,0,0,0>"
-    end
-
-    test "traces team health with no teams" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:team_health, %{}, %{healthy_teams: [], degraded_teams: []})
-        end)
-
-      assert log_output =~ "Bedrock [test_cluster/42]: No teams available"
-    end
-
-    test "traces team health with all healthy teams" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:team_health, %{}, %{
-            healthy_teams: ["team_a", "team_b"],
-            degraded_teams: []
-          })
-        end)
-
-      assert log_output =~ "Bedrock [test_cluster/42]: All teams healthy (team_a, team_b)"
-    end
-
-    test "traces team health with all degraded teams" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:team_health, %{}, %{
-            healthy_teams: [],
-            degraded_teams: ["team_c", "team_d"]
-          })
-        end)
-
-      assert log_output =~ "Bedrock [test_cluster/42]: All teams degraded (team_c, team_d)"
-    end
-
-    test "traces team health with mixed teams" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:team_health, %{}, %{
-            healthy_teams: ["team_a"],
-            degraded_teams: ["team_b"]
-          })
-        end)
-
-      assert log_output =~
-               "Bedrock [test_cluster/42]: Healthy teams are team_a, with some teams degraded (team_b)"
+        assert log_output =~ "Bedrock [test_cluster/42]: #{expected_message}"
+      end
     end
 
     test "traces all log vacancies filled" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:all_log_vacancies_filled, %{}, %{})
-        end)
-
+      log_output = capture_trace(:all_log_vacancies_filled)
       assert log_output =~ "Bedrock [test_cluster/42]: All log vacancies filled"
     end
 
     test "traces all storage team vacancies filled" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:all_storage_team_vacancies_filled, %{}, %{})
-        end)
-
+      log_output = capture_trace(:all_storage_team_vacancies_filled)
       assert log_output =~ "Bedrock [test_cluster/42]: All storage team vacancies filled"
     end
 
-    test "traces replaying old logs with no logs to replay" do
+    test "traces replaying old logs events" do
+      # Test with no logs to replay
       log_output =
-        capture_log(fn ->
-          Tracing.trace(:replaying_old_logs, %{}, %{
-            old_log_ids: [],
-            new_log_ids: ["log:1", "log:2"],
-            version_vector: {10, 50}
-          })
-        end)
+        capture_trace(:replaying_old_logs, %{}, %{
+          old_log_ids: [],
+          new_log_ids: ["log:1", "log:2"],
+          version_vector: {10, 50}
+        })
 
       assert log_output =~ "Bedrock [test_cluster/42]: Version vector chosen: {10, 50}"
       assert log_output =~ "Bedrock [test_cluster/42]: No logs to replay"
-    end
 
-    test "traces replaying old logs with logs to replay" do
+      # Test with logs to replay
       log_output =
-        capture_log(fn ->
-          Tracing.trace(:replaying_old_logs, %{}, %{
-            old_log_ids: ["log:10", "log:20"],
-            new_log_ids: ["log:1", "log:2"],
-            version_vector: {10, 50}
-          })
-        end)
+        capture_trace(:replaying_old_logs, %{}, %{
+          old_log_ids: ["log:10", "log:20"],
+          new_log_ids: ["log:1", "log:2"],
+          version_vector: {10, 50}
+        })
 
       assert log_output =~ "Bedrock [test_cluster/42]: Version vector chosen: {10, 50}"
-
-      assert log_output =~
-               "Bedrock [test_cluster/42]: Replaying logs: {log:10, log:20} -> {log:1, log:2}"
+      assert log_output =~ "Bedrock [test_cluster/42]: Replaying logs: {log:10, log:20} -> {log:1, log:2}"
     end
 
     test "traces suitable logs chosen" do
       log_output =
-        capture_log(fn ->
-          Tracing.trace(:suitable_logs_chosen, %{}, %{
-            suitable_logs: ["log:1", "log:2"],
-            log_version_vector: {5, 25}
-          })
-        end)
+        capture_trace(:suitable_logs_chosen, %{}, %{
+          suitable_logs: ["log:1", "log:2"],
+          log_version_vector: {5, 25}
+        })
 
-      assert log_output =~
-               ~s(Bedrock [test_cluster/42]: Suitable logs chosen for copying: "log:1", "log:2")
-
+      assert log_output =~ ~s(Bedrock [test_cluster/42]: Suitable logs chosen for copying: "log:1", "log:2")
       assert log_output =~ "Bedrock [test_cluster/42]: Version vector: {5, 25}"
     end
 
     test "traces storage unlocking" do
-      log_output =
-        capture_log(fn ->
-          Tracing.trace(:storage_unlocking, %{}, %{storage_worker_id: "storage_123"})
-        end)
-
+      log_output = capture_trace(:storage_unlocking, %{}, %{storage_worker_id: "storage_123"})
       assert log_output =~ "Bedrock [test_cluster/42]: Storage worker storage_123 unlocking"
     end
   end
@@ -302,20 +174,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
   describe "start/0 and stop/0" do
     test "attaches and detaches telemetry handlers" do
       # Test that we can start without error
-      assert Tracing.start() == :ok
+      assert :ok = Tracing.start()
 
       # Starting again should return error
-      assert Tracing.start() == {:error, :already_exists}
+      assert {:error, :already_exists} = Tracing.start()
 
       # Stop should work
-      assert Tracing.stop() == :ok
+      assert :ok = Tracing.stop()
 
       # Stopping again should return error
-      assert Tracing.stop() == {:error, :not_found}
+      assert {:error, :not_found} = Tracing.stop()
 
       # Should be able to start again after stop
-      assert Tracing.start() == :ok
-      assert Tracing.stop() == :ok
+      assert :ok = Tracing.start()
+      assert :ok = Tracing.stop()
     end
   end
 end

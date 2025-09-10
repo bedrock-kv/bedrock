@@ -1,4 +1,4 @@
-defmodule TestTelemetryHandler do
+defmodule Bedrock.Test.Common.TestTelemetryHandler do
   @moduledoc """
   A test telemetry handler that captures events for assertion in tests.
 

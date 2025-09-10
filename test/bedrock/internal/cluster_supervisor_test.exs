@@ -11,6 +11,31 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
 
   defmock(Bedrock.MockCluster, for: Bedrock.Cluster)
 
+  # Test helpers
+  defp expect_cluster_name(cluster, name) do
+    expect(cluster, :name, fn -> name end)
+  end
+
+  defp assert_log_contains(fun, expected_message) do
+    log = capture_log(fun)
+    assert log =~ expected_message
+  end
+
+  defp expected_child_spec(node, cluster, path_to_descriptor, descriptor) do
+    %{
+      id: ClusterSupervisor,
+      restart: :permanent,
+      start:
+        {Supervisor, :start_link,
+         [
+           ClusterSupervisor,
+           {node, cluster, nil, nil, path_to_descriptor, descriptor},
+           []
+         ]},
+      type: :supervisor
+    }
+  end
+
   describe "child_spec/1" do
     test "raises when cluster: option is missing" do
       assert_raise RuntimeError, "Missing :cluster option", fn ->
@@ -36,14 +61,12 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       expected_message =
         "Bedrock: The cluster name in the descriptor file does not match the cluster name (#{expected_name}) in the configuration."
 
-      expect(Bedrock.MockCluster, :name, fn -> expected_name end)
+      expect_cluster_name(Bedrock.MockCluster, expected_name)
 
-      log =
-        capture_log(fn ->
-          ClusterSupervisor.child_spec(opts)
-        end)
-
-      assert log =~ expected_message
+      assert_log_contains(
+        fn -> ClusterSupervisor.child_spec(opts) end,
+        expected_message
+      )
     end
 
     @tag :tmp_dir
@@ -67,51 +90,36 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       expected_message =
         ~s{Bedrock: This node is not part of a cluster (use the "--name" or "--sname" option when starting the Erlang VM)}
 
-      expect(Bedrock.MockCluster, :name, fn -> expected_name end)
+      expect_cluster_name(Bedrock.MockCluster, expected_name)
 
-      log =
-        capture_log(fn ->
-          ClusterSupervisor.child_spec(opts)
-        end)
-
-      assert log =~ expected_message
+      assert_log_contains(
+        fn -> ClusterSupervisor.child_spec(opts) end,
+        expected_message
+      )
     end
 
-    test "creates a child spec using the default path from the cluster when the path_to_descriptor option is omitted" do
+    test "creates a child spec using the default path when path_to_descriptor is omitted" do
       opts = [node: :some_node, cluster: Bedrock.MockCluster]
-
       expected_name = Faker.Lorem.word()
 
-      expect(Bedrock.MockCluster, :name, fn -> expected_name end)
+      expect_cluster_name(Bedrock.MockCluster, expected_name)
 
-      expected_spec = %{
-        id: ClusterSupervisor,
-        restart: :permanent,
-        start:
-          {Supervisor, :start_link,
-           [
-             ClusterSupervisor,
-             {:some_node, Bedrock.MockCluster, nil, nil, "bedrock.cluster",
-              %Descriptor{
-                cluster_name: expected_name,
-                coordinator_nodes: [:some_node]
-              }},
-             []
-           ]},
-        type: :supervisor
+      expected_descriptor = %Descriptor{
+        cluster_name: expected_name,
+        coordinator_nodes: [:some_node]
       }
 
-      expected_message = "Bedrock: Creating a default single-node configuration"
+      expected_spec = expected_child_spec(:some_node, Bedrock.MockCluster, "bedrock.cluster", expected_descriptor)
 
-      log =
-        capture_log(fn ->
-          assert expected_spec == ClusterSupervisor.child_spec(opts)
-        end)
-
-      assert log =~ expected_message
+      assert_log_contains(
+        fn ->
+          assert ^expected_spec = ClusterSupervisor.child_spec(opts)
+        end,
+        "Bedrock: Creating a default single-node configuration"
+      )
     end
 
-    test "creates a child spec using the path_to_descriptor option" do
+    test "creates a child spec using the provided path_to_descriptor" do
       opts = [
         node: :some_node,
         cluster: Bedrock.MockCluster,
@@ -120,31 +128,22 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
 
       expected_name = Faker.Lorem.word()
 
-      expect(Bedrock.MockCluster, :name, fn -> expected_name end)
+      expect_cluster_name(Bedrock.MockCluster, expected_name)
 
-      expected_spec = %{
-        id: ClusterSupervisor,
-        restart: :permanent,
-        start:
-          {Supervisor, :start_link,
-           [
-             ClusterSupervisor,
-             {:some_node, Bedrock.MockCluster, nil, nil, "path-to-invalid-descriptor",
-              %Descriptor{
-                cluster_name: expected_name,
-                coordinator_nodes: [:some_node]
-              }},
-             []
-           ]},
-        type: :supervisor
+      expected_descriptor = %Descriptor{
+        cluster_name: expected_name,
+        coordinator_nodes: [:some_node]
       }
 
-      log =
-        capture_log(fn ->
-          assert expected_spec == ClusterSupervisor.child_spec(opts)
-        end)
+      expected_spec =
+        expected_child_spec(:some_node, Bedrock.MockCluster, "path-to-invalid-descriptor", expected_descriptor)
 
-      assert log =~ "Bedrock: Creating a default single-node configuration"
+      assert_log_contains(
+        fn ->
+          assert ^expected_spec = ClusterSupervisor.child_spec(opts)
+        end,
+        "Bedrock: Creating a default single-node configuration"
+      )
     end
   end
 end

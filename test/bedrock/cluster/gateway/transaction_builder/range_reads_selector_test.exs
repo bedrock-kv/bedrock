@@ -34,6 +34,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
     }
   end
 
+  defp default_storage_layout do
+    %{
+      sequencer: :test_sequencer,
+      storage_teams: [
+        %{
+          key_range: {"", :end},
+          storage_ids: ["storage1"]
+        }
+      ],
+      services: %{
+        "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
+      }
+    }
+  end
+
   describe "key selector range reads with conflict tracking" do
     test "tracks conflicts on actual returned keys, not selector keys" do
       # Mock storage function that resolves selectors to actual keys
@@ -54,20 +69,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
         {:ok, {data, false}}
       end
 
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", :end},
-            storage_ids: ["storage1"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
-        }
-      }
-
-      state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      state = create_test_state(transaction_system_layout: default_storage_layout(), read_version: 12_345)
 
       start_selector = %KeySelector{key: "user", offset: 1}
       end_selector = %KeySelector{key: "user", offset: 3}
@@ -75,10 +77,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
       opts = [storage_get_range_fn: storage_get_range_fn]
 
       # Perform the range query with selectors
-      {new_state, result} = RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
-
-      # Verify the query succeeded
-      assert {:ok, {data, false}} = result
+      assert {new_state, {:ok, {data, false}}} =
+               RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
 
       assert data == [
                {"user:alice", "alice_data"},
@@ -94,21 +94,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
       # Should have one range read entry
       assert length(tx_ranges) == 1
 
-      # Get the range that was actually tracked
-      [{start_key, end_key}] = tx_ranges
-
-      # The tracked range should be based on actual returned keys, not selector keys
-      # First actual key returned
-      assert start_key == "user:alice"
-      # Note: end_key gets converted to binary format during range processing
-      # Last actual key returned (as binary)
-      assert end_key == <<"user:charlie", 0>>
+      # Get the range that was actually tracked - should be based on actual returned keys, not selector keys
+      assert [{"user:alice", <<"user:charlie", 0>>}] = tx_ranges
 
       # These assertions would FAIL with the old buggy code that used selector keys
       # This would be wrong - selector key, not actual key
-      refute start_key == "user"
+      refute elem(hd(tx_ranges), 0) == "user"
       # This would be wrong - selector key, not actual key
-      refute end_key == "user"
+      refute elem(hd(tx_ranges), 1) == "user"
     end
 
     test "tracks conflicts correctly for empty key selector results" do
@@ -121,20 +114,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
         {:ok, {[], false}}
       end
 
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", :end},
-            storage_ids: ["storage1"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
-        }
-      }
-
-      state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      state = create_test_state(transaction_system_layout: default_storage_layout(), read_version: 12_345)
 
       start_selector = %KeySelector{key: "nonexistent", offset: 0}
       end_selector = %KeySelector{key: "nonexistent", offset: 10}
@@ -142,16 +122,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
       opts = [storage_get_range_fn: storage_get_range_fn]
 
       # Perform the range query with selectors
-      {new_state, result} = RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
-
-      # Verify the query succeeded but returned no data
-      assert {:ok, {[], false}} = result
+      assert {new_state, {:ok, {[], false}}} =
+               RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
 
       # For empty results, no range conflict is tracked because start == end
       # (The add_range_conflict function filters out point ranges)
-      tx_ranges = new_state.tx.range_reads
-      # No range tracking for empty results
-      assert [] == tx_ranges
+      assert [] == new_state.tx.range_reads
     end
 
     test "handles partial results correctly" do
@@ -171,20 +147,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
         {:ok, {data, true}}
       end
 
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", :end},
-            storage_ids: ["storage1"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
-        }
-      }
-
-      state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      state = create_test_state(transaction_system_layout: default_storage_layout(), read_version: 12_345)
 
       start_selector = %KeySelector{key: "items", offset: 0}
       end_selector = %KeySelector{key: "items", offset: 100}
@@ -192,11 +155,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
       opts = [storage_get_range_fn: storage_get_range_fn]
 
       # Query with small limit
-      {new_state, result} = RangeReads.get_range_selectors(state, start_selector, end_selector, 2, opts)
-
-      # Verify partial results
-      # has_more = true
-      assert {:ok, {data, true}} = result
+      assert {new_state, {:ok, {data, true}}} =
+               RangeReads.get_range_selectors(state, start_selector, end_selector, 2, opts)
 
       assert data == [
                {"items:001", "item_001_data"},
@@ -204,14 +164,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
              ]
 
       # Conflict tracking should cover the actual keys returned
-      tx_ranges = new_state.tx.range_reads
-      assert length(tx_ranges) == 1
-
-      [{start_key, end_key}] = tx_ranges
-
-      # Should track the actual range of returned data
-      assert start_key == "items:001"
-      assert end_key == <<"items:002", 0>>
+      assert [{"items:001", <<"items:002", 0>>}] = new_state.tx.range_reads
     end
 
     test "properly merges with existing transaction writes" do
@@ -229,20 +182,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
         {:ok, {data, false}}
       end
 
-      layout = %{
-        sequencer: :test_sequencer,
-        storage_teams: [
-          %{
-            key_range: {"", :end},
-            storage_ids: ["storage1"]
-          }
-        ],
-        services: %{
-          "storage1" => %{kind: :storage, status: {:up, :storage1_pid}}
-        }
-      }
-
-      state = create_test_state(transaction_system_layout: layout, read_version: 12_345)
+      state = create_test_state(transaction_system_layout: default_storage_layout(), read_version: 12_345)
 
       # Add some writes to the transaction that should be included in results
       tx_with_writes = %{
@@ -257,11 +197,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
 
       opts = [storage_get_range_fn: storage_get_range_fn]
 
-      {new_state, result} = RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
+      assert {new_state, {:ok, {data, false}}} =
+               RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
 
       # Should get merged results: storage + transaction writes
-      assert {:ok, {data, false}} = result
-
       assert data == [
                # from storage
                {"data:10", "storage_val_10"},
@@ -274,16 +213,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsKeySelectorTest d
              ]
 
       # The range tracked should be based on the ACTUAL returned keys, including writes
-      tx_ranges = new_state.tx.range_reads
-      assert length(tx_ranges) == 1
-
-      [{start_key, end_key}] = tx_ranges
-
-      # Should track the full range of actual data accessed
-      # First key from storage data
-      assert start_key == "data:10"
-      # Last key from storage data
-      assert end_key == <<"data:30", 0>>
+      assert [{"data:10", <<"data:30", 0>>}] = new_state.tx.range_reads
     end
   end
 end

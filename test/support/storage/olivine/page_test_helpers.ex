@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.Storage.Olivine.PageTestHelpers do
+defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @moduledoc """
   Test helper functions for Page operations that are only used in tests.
   """

@@ -14,40 +14,67 @@ defmodule Bedrock.DataPlane.Log.EnhancedTransactionStreamsTest do
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Version
-  alias Bedrock.DataPlane.WALTestSupport
+  alias Bedrock.Test.DataPlane.WALTestSupport
 
-  describe "TransactionStreams with real WAL files" do
-    test "can stream transactions from segments loaded from actual files" do
-      # Create WAL file with known transactions
+  # Test setup helpers
+  defp create_test_segment(file_path, min_version) do
+    %Segment{
+      path: file_path,
+      min_version: Version.from_integer(min_version),
+      transactions: nil
+    }
+  end
+
+  defp with_test_wal(version_data_pairs, test_fn) do
+    {file_path, version_map} = WALTestSupport.create_test_wal(version_data_pairs)
+
+    try do
+      test_fn.(file_path, version_map)
+    after
+      WALTestSupport.cleanup_test_file(file_path)
+    end
+  end
+
+  defp with_multiple_test_wals(wal_specs, test_fn) do
+    file_paths =
+      Enum.map(wal_specs, fn {version_data_pairs, _min_version} ->
+        {file_path, _} = WALTestSupport.create_test_wal(version_data_pairs)
+        file_path
+      end)
+
+    try do
+      test_fn.(file_paths)
+    after
+      Enum.each(file_paths, &WALTestSupport.cleanup_test_file/1)
+    end
+  end
+
+  defp extract_versions_from_stream(segments, start_after) do
+    assert {:ok, stream} = TransactionStreams.from_segments(segments, start_after)
+
+    stream
+    |> Enum.to_list()
+    |> Enum.map(&WALTestSupport.extract_version/1)
+  end
+
+  describe "TransactionStreams.from_segments/2" do
+    test "streams transactions from segments loaded from actual files" do
       version_data_pairs = [
         {100, %{"account" => "alice", "balance" => "1000"}},
         {200, %{"account" => "bob", "balance" => "500"}},
         {300, %{"account" => "charlie", "balance" => "750"}}
       ]
 
-      {file_path, _version_map} = WALTestSupport.create_test_wal(version_data_pairs)
-
-      try do
-        segment = %Segment{
-          path: file_path,
-          min_version: Version.from_integer(100),
-          # Start with nil - should be loaded on demand
-          transactions: nil
-        }
-
+      with_test_wal(version_data_pairs, fn file_path, _version_map ->
+        segment = create_test_segment(file_path, 100)
         start_after = Version.from_integer(150)
 
-        assert {:ok, stream} = TransactionStreams.from_segments([segment], start_after)
-        transactions = Enum.to_list(stream)
-        assert length(transactions) == 2
+        versions = extract_versions_from_stream([segment], start_after)
 
-        versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
-        assert Version.from_integer(200) in versions
-        assert Version.from_integer(300) in versions
-        refute Version.from_integer(100) in versions
-      after
-        WALTestSupport.cleanup_test_file(file_path)
-      end
+        # Use variables for pattern matching
+        expected_versions = [Version.from_integer(200), Version.from_integer(300)]
+        assert ^expected_versions = Enum.sort(versions)
+      end)
     end
 
     test "handles segments with nil transactions gracefully" do
@@ -57,65 +84,35 @@ defmodule Bedrock.DataPlane.Log.EnhancedTransactionStreamsTest do
         {200, %{"key2" => "value2"}}
       ]
 
-      {file_path, _version_map} = WALTestSupport.create_test_wal(version_data_pairs)
-
-      try do
-        segment = %Segment{
-          path: file_path,
-          min_version: Version.from_integer(100),
-          # This was causing KeyError crashes
-          transactions: nil
-        }
+      with_test_wal(version_data_pairs, fn file_path, _version_map ->
+        segment = create_test_segment(file_path, 100)
 
         assert {:ok, stream} = TransactionStreams.from_segments([segment], Version.from_integer(150))
         transactions = Enum.to_list(stream)
-        assert is_list(transactions)
-      after
-        WALTestSupport.cleanup_test_file(file_path)
-      end
+        # Ensure we get exactly one transaction and it's properly formed
+        assert [transaction] = transactions
+        assert is_binary(transaction)
+      end)
     end
 
-    test "correctly applies start_after filtering across multiple segments" do
-      segment1_data = [
-        {100, %{"seg1" => "tx1"}},
-        {200, %{"seg1" => "tx2"}}
+    test "applies start_after filtering across multiple segments" do
+      wal_specs = [
+        {[{100, %{"seg1" => "tx1"}}, {200, %{"seg1" => "tx2"}}], 100},
+        {[{300, %{"seg2" => "tx1"}}, {400, %{"seg2" => "tx2"}}], 300}
       ]
 
-      segment2_data = [
-        {300, %{"seg2" => "tx1"}},
-        {400, %{"seg2" => "tx2"}}
-      ]
-
-      {file1_path, _} = WALTestSupport.create_test_wal(segment1_data)
-      {file2_path, _} = WALTestSupport.create_test_wal(segment2_data)
-
-      try do
+      with_multiple_test_wals(wal_specs, fn [file1_path, file2_path] ->
         segments = [
-          %Segment{
-            path: file1_path,
-            min_version: Version.from_integer(100),
-            transactions: nil
-          },
-          %Segment{
-            path: file2_path,
-            min_version: Version.from_integer(300),
-            transactions: nil
-          }
+          create_test_segment(file1_path, 100),
+          create_test_segment(file2_path, 300)
         ]
 
-        # Request transactions after version 250 - should get 300 and 400, not 100 or 200
-        assert {:ok, stream} = TransactionStreams.from_segments(segments, Version.from_integer(250))
-        transactions = Enum.to_list(stream)
-        versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
+        versions = extract_versions_from_stream(segments, Version.from_integer(250))
 
-        assert Version.from_integer(300) in versions
-        assert Version.from_integer(400) in versions
-        refute Version.from_integer(100) in versions
-        refute Version.from_integer(200) in versions
-      after
-        WALTestSupport.cleanup_test_file(file1_path)
-        WALTestSupport.cleanup_test_file(file2_path)
-      end
+        # Pattern match expected results - should get 300 and 400 only
+        expected_versions = [Version.from_integer(300), Version.from_integer(400)]
+        assert ^expected_versions = Enum.sort(versions)
+      end)
     end
 
     test "handles empty segments correctly" do
@@ -123,88 +120,72 @@ defmodule Bedrock.DataPlane.Log.EnhancedTransactionStreamsTest do
       File.write!(empty_file_path, :binary.copy(<<0>>, 1024))
 
       try do
-        segment = %Segment{
-          path: empty_file_path,
-          min_version: Version.from_integer(0),
-          transactions: nil
-        }
+        segment = create_test_segment(empty_file_path, 0)
 
-        # Should handle empty/invalid WAL files gracefully
+        # Pattern match error tuple directly
         assert {:error, _reason} = TransactionStreams.from_segments([segment], Version.from_integer(0))
       after
         WALTestSupport.cleanup_test_file(empty_file_path)
       end
     end
 
-    test "version boundary edge cases" do
+    test "handles version boundary edge cases" do
       version_data_pairs = [
         {100, %{"boundary" => "test1"}},
         {200, %{"boundary" => "test2"}},
         {300, %{"boundary" => "test3"}}
       ]
 
-      {file_path, _version_map} = WALTestSupport.create_test_wal(version_data_pairs)
+      with_test_wal(version_data_pairs, fn file_path, _version_map ->
+        segment = create_test_segment(file_path, 100)
 
-      try do
-        segment = %Segment{
-          path: file_path,
-          min_version: Version.from_integer(100),
-          transactions: nil
-        }
+        # Test start_after exactly at a transaction version - should exclude that version
+        versions = extract_versions_from_stream([segment], Version.from_integer(200))
 
-        # Test start_after exactly at a transaction version
-        assert {:ok, stream} = TransactionStreams.from_segments([segment], Version.from_integer(200))
-        transactions = Enum.to_list(stream)
-        versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
-
-        assert Version.from_integer(300) in versions
-        refute Version.from_integer(200) in versions
-        refute Version.from_integer(100) in versions
-      after
-        WALTestSupport.cleanup_test_file(file_path)
-      end
+        # Pattern match expected result directly
+        expected_version = Version.from_integer(300)
+        assert [^expected_version] = versions
+      end)
     end
 
-    test "reproduces segment loading issue from production scenario" do
-      # This test specifically reproduces the conditions that led to
-      # the KeyError crash in the main test suite
+    test "handles various start_after values without crashing" do
+      # This test reproduces production conditions that led to KeyError crashes
+      transactions = for i <- 1..5, do: {i * 100, %{"account" => "account_#{i}", "balance" => "#{i * 100}"}}
 
-      # Create realistic transaction pattern
-      transactions =
-        for i <- 1..5 do
-          {i * 100, %{"account" => "account_#{i}", "balance" => "#{i * 100}"}}
-        end
+      with_test_wal(transactions, fn file_path, _version_map ->
+        segment = create_test_segment(file_path, 100)
 
-      {file_path, _version_map} = WALTestSupport.create_test_wal(transactions)
-
-      try do
-        # This replicates the exact state we saw in the crash: active_segment with transactions: nil
-        segment = %Segment{
-          path: file_path,
-          min_version: Version.from_integer(100),
-          transactions: nil
-        }
-
-        test_start_values = [
-          Version.from_integer(99),
-          Version.from_integer(150),
-          Version.from_integer(250),
-          Version.from_integer(450),
-          Version.from_integer(600)
+        test_cases = [
+          # Before all - should get all 5
+          {Version.from_integer(99), 5},
+          # After first - should get 4
+          {Version.from_integer(150), 4},
+          # After second - should get 3
+          {Version.from_integer(250), 3},
+          # After fourth - should get 1
+          {Version.from_integer(450), 1},
+          # After all - should get none
+          {Version.from_integer(600), 0}
         ]
 
-        # Test that we can handle various edge cases without crashing
-        Enum.each(test_start_values, fn start_after ->
+        # Test all scenarios handle gracefully and return expected counts
+        Enum.each(test_cases, fn {start_after, expected_count} ->
           result = TransactionStreams.from_segments([segment], start_after)
 
           case result do
-            {:ok, stream} -> Enum.to_list(stream)
-            {:error, _reason} -> :ok
+            {:ok, stream} ->
+              transactions = Enum.to_list(stream)
+              assert length(transactions) == expected_count
+
+            {:error, :not_found} ->
+              # This is acceptable when start_after is beyond all transactions
+              assert expected_count == 0
+
+            {:error, _other_reason} ->
+              flunk("Unexpected error for start_after #{inspect(start_after)}: #{inspect(result)}")
           end
         end)
-      after
-        WALTestSupport.cleanup_test_file(file_path)
-      end
+      end)
     end
   end
 end

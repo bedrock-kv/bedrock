@@ -35,61 +35,46 @@ defmodule Bedrock.DataPlane.Storage.Olivine.AtomicOperationsTest do
     end
 
     test "add works with missing key", %{database: database, index_manager: index_manager} do
-      # Create transaction with add
       transaction = create_atomic_transaction([{:atomic, :add, "counter", <<8>>}])
-
-      # Apply transaction
-      updated_manager = IndexManager.apply_transaction(index_manager, transaction, database)
-
-      # Ensure the transaction was applied successfully
-      assert updated_manager != index_manager
-
-      # Verify the value was stored correctly in database
-      version = Transaction.commit_version!(transaction)
-      assert {:ok, <<8>>} = OlivineDatabase.load_value(database, "counter", version)
+      apply_and_verify(index_manager, transaction, database, [{"counter", <<8>>}])
     end
 
     test "atomic operations work with existing values through database", %{
       database: database,
       index_manager: index_manager
     } do
-      # First, apply a transaction that sets an initial value
       initial_transaction = create_set_transaction("balance", <<100>>, 1)
       manager_with_initial = IndexManager.apply_transaction(index_manager, initial_transaction, database)
 
-      # Then apply add (note: using 231 which is -25 as unsigned byte)
       add_transaction = create_atomic_transaction([{:atomic, :add, "balance", <<231>>}], 2)
-      final_manager = IndexManager.apply_transaction(manager_with_initial, add_transaction, database)
-
-      # Ensure the atomic operation was applied successfully
-      assert final_manager != manager_with_initial
-
       # Verify the result (100 + 231 with carry = 75 as next byte)
-      version = Transaction.commit_version!(add_transaction)
-      assert {:ok, <<75, 1>>} = OlivineDatabase.load_value(database, "balance", version)
+      apply_and_verify(manager_with_initial, add_transaction, database, [{"balance", <<75, 1>>}])
     end
 
     test "min and max work correctly", %{database: database, index_manager: index_manager} do
-      # Apply transaction with min and max operations
       atomic_transaction =
         create_atomic_transaction([
           {:atomic, :min, "temperature", <<22>>},
           {:atomic, :max, "pressure", <<150>>}
         ])
 
-      updated_manager = IndexManager.apply_transaction(index_manager, atomic_transaction, database)
-
-      # Ensure the atomic operations were applied successfully
-      assert updated_manager != index_manager
-
-      # Verify results
-      version = Transaction.commit_version!(atomic_transaction)
-      assert {:ok, <<22>>} = OlivineDatabase.load_value(database, "temperature", version)
-      assert {:ok, <<150>>} = OlivineDatabase.load_value(database, "pressure", version)
+      apply_and_verify(index_manager, atomic_transaction, database, [
+        {"temperature", <<22>>},
+        {"pressure", <<150>>}
+      ])
     end
   end
 
   # Helper functions
+
+  defp apply_and_verify(index_manager, transaction, database, expected_values) do
+    _updated_manager = IndexManager.apply_transaction(index_manager, transaction, database)
+    version = Transaction.commit_version!(transaction)
+
+    for {key, expected_value} <- expected_values do
+      assert {:ok, ^expected_value} = OlivineDatabase.load_value(database, key, version)
+    end
+  end
 
   defp create_atomic_transaction(mutations, version_int \\ 1) do
     create_transaction(mutations, version_int)

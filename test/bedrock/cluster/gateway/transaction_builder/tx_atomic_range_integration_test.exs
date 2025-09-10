@@ -33,22 +33,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangeIntegrationTes
         |> Tx.atomic_operation("key4", :min, <<100>>)
 
       # Simulate what happens in range queries - this would fail before the fix
-      result_key1 = simulate_merge_with_storage(tx, "key1", "existing_value")
-      result_key2 = simulate_merge_with_storage(tx, "key2", nil)
-      result_key3 = simulate_merge_with_storage(tx, "key3", "another_value")
-      result_key4 = simulate_merge_with_storage(tx, "key4", nil)
-
-      # These assertions would have failed before the fix
-      assert result_key1 == Atomics.add("existing_value", <<5>>)
-      assert result_key2 == Atomics.add(<<>>, <<10>>)
-      # Non-atomic, should be direct value
-      assert result_key3 == "new_value"
-      assert result_key4 == Atomics.min(<<>>, <<100>>)
-
-      # Make sure we're not getting placeholder values
-      refute result_key1 == :atomic_operation
-      refute result_key2 == :atomic_operation
-      refute result_key4 == :atomic_operation
+      # Assert computed values (not placeholders) using pattern matching
+      assert_atomic_operation_computes(tx, "key1", "existing_value", Atomics.add("existing_value", <<5>>))
+      assert_atomic_operation_computes(tx, "key2", nil, Atomics.add(<<>>, <<10>>))
+      # Non-atomic
+      assert "new_value" = simulate_merge_with_storage(tx, "key3", "another_value")
+      assert_atomic_operation_computes(tx, "key4", nil, Atomics.min(<<>>, <<100>>))
     end
 
     test "repeatable_read returns computed atomic values, not placeholders" do
@@ -61,11 +51,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangeIntegrationTes
         |> Tx.atomic_operation("counter", :add, <<10::64-little>>)
 
       # This should return the computed value, not :atomic_operation
-      result = Tx.repeatable_read(tx, "counter")
       expected = Atomics.add(<<42::64-little>>, <<10::64-little>>)
-
-      assert result == expected
-      refute result == :atomic_operation
+      assert ^expected = Tx.repeatable_read(tx, "counter")
     end
 
     test "all atomic operation types compute correctly in range scenarios" do
@@ -90,30 +77,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangeIntegrationTes
         key = "test_key_#{index}"
         storage_value = "base_value_#{index}"
 
-        # Create transaction with the atomic operation
-        tx =
-          case op do
-            :add -> Tx.atomic_operation(Tx.new(), key, :add, operand)
-            :min -> Tx.atomic_operation(Tx.new(), key, :min, operand)
-            :max -> Tx.atomic_operation(Tx.new(), key, :max, operand)
-            :bit_and -> Tx.atomic_operation(Tx.new(), key, :bit_and, operand)
-            :bit_or -> Tx.atomic_operation(Tx.new(), key, :bit_or, operand)
-            :bit_xor -> Tx.atomic_operation(Tx.new(), key, :bit_xor, operand)
-            :byte_min -> Tx.atomic_operation(Tx.new(), key, :byte_min, operand)
-            :byte_max -> Tx.atomic_operation(Tx.new(), key, :byte_max, operand)
-            :append_if_fits -> Tx.atomic_operation(Tx.new(), key, :append_if_fits, operand)
-            :compare_and_clear -> Tx.atomic_operation(Tx.new(), key, :compare_and_clear, operand)
-          end
+        # Create transaction with the atomic operation - simplified pattern
+        tx = Tx.atomic_operation(Tx.new(), key, op, operand)
 
-        # Simulate merge with storage
-        result = simulate_merge_with_storage(tx, key, storage_value)
+        # Simulate merge with storage and assert computed result (not placeholder)
         expected = expected_fn.(storage_value)
 
-        assert result == expected,
-               "Operation #{op} failed: got #{inspect(result)}, expected #{inspect(expected)}"
-
-        # Ensure no placeholder values
-        refute result == :atomic_operation
+        assert ^expected = simulate_merge_with_storage(tx, key, storage_value),
+               "Operation #{op} failed: expected #{inspect(expected)}"
       end
     end
 
@@ -128,11 +99,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangeIntegrationTes
         |> Tx.atomic_operation("key", :min, <<3>>)
 
       storage_value = <<50>>
-      result = simulate_merge_with_storage(tx, "key", storage_value)
       expected = Atomics.min(storage_value, <<3>>)
-
-      assert result == expected
-      refute result == :atomic_operation
+      assert ^expected = simulate_merge_with_storage(tx, "key", storage_value)
     end
   end
 
@@ -146,5 +114,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxAtomicRangeIntegrationTes
         # No transaction write for this key, return storage value
         storage_value
     end
+  end
+
+  # Helper to create transaction with atomic operation and assert computed result
+  defp assert_atomic_operation_computes(tx, key, storage_value, expected) do
+    assert ^expected = simulate_merge_with_storage(tx, key, storage_value)
   end
 end

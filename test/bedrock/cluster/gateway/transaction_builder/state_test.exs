@@ -7,64 +7,59 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
   describe "struct creation and defaults" do
     test "creates state with default values" do
-      state = %State{}
+      assert %State{
+               state: nil,
+               gateway: nil,
+               transaction_system_layout: nil,
+               read_version: nil,
+               read_version_lease_expiration: nil,
+               commit_version: nil,
+               stack: [],
+               fastest_storage_servers: %{},
+               fetch_timeout_in_ms: 50,
+               lease_renewal_threshold: 100
+             } = %State{}
 
-      assert state.state == nil
-      assert state.gateway == nil
-      assert state.transaction_system_layout == nil
-      assert state.read_version == nil
-      assert state.read_version_lease_expiration == nil
-      assert state.commit_version == nil
+      empty_tx = %State{}.tx
 
-      assert state.tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) == %{
-               mutations: [],
-               write_conflicts: [],
-               read_conflicts: {nil, []}
-             }
-
-      assert state.stack == []
-      assert state.fastest_storage_servers == %{}
-      assert state.fetch_timeout_in_ms == 50
-      assert state.lease_renewal_threshold == 100
+      assert {:ok, %{mutations: [], write_conflicts: [], read_conflicts: {nil, []}}} =
+               empty_tx |> Tx.commit(nil) |> Transaction.decode()
     end
 
     test "creates state with custom values" do
       tx = Tx.set(Tx.new(), "key", "value")
       layout = %{sequencer: :test_sequencer}
+      gateway_pid = self()
+      servers = %{{:a, :b} => :pid}
 
-      state = %State{
-        state: :valid,
-        gateway: self(),
-        transaction_system_layout: layout,
-        read_version: 12_345,
-        read_version_lease_expiration: 67_890,
-        commit_version: 11_111,
-        tx: tx,
-        stack: [Tx.new()],
-        fastest_storage_servers: %{{:a, :b} => :pid},
-        fetch_timeout_in_ms: 200,
-        lease_renewal_threshold: 300
-      }
-
-      assert state.state == :valid
-      assert state.gateway == self()
-      assert state.transaction_system_layout == layout
-      assert state.read_version == 12_345
-      assert state.read_version_lease_expiration == 67_890
-      assert state.commit_version == 11_111
-      assert state.tx == tx
-      assert length(state.stack) == 1
-      [stacked_tx] = state.stack
-
-      assert stacked_tx |> Tx.commit(nil) |> then(&elem(Transaction.decode(&1), 1)) == %{
-               mutations: [],
-               write_conflicts: [],
-               read_conflicts: {nil, []}
+      assert %State{
+               state: :valid,
+               gateway: ^gateway_pid,
+               transaction_system_layout: ^layout,
+               read_version: 12_345,
+               read_version_lease_expiration: 67_890,
+               commit_version: 11_111,
+               tx: ^tx,
+               stack: [stacked_tx],
+               fastest_storage_servers: ^servers,
+               fetch_timeout_in_ms: 200,
+               lease_renewal_threshold: 300
+             } = %State{
+               state: :valid,
+               gateway: gateway_pid,
+               transaction_system_layout: layout,
+               read_version: 12_345,
+               read_version_lease_expiration: 67_890,
+               commit_version: 11_111,
+               tx: tx,
+               stack: [Tx.new()],
+               fastest_storage_servers: servers,
+               fetch_timeout_in_ms: 200,
+               lease_renewal_threshold: 300
              }
 
-      assert state.fastest_storage_servers == %{{:a, :b} => :pid}
-      assert state.fetch_timeout_in_ms == 200
-      assert state.lease_renewal_threshold == 300
+      assert {:ok, %{mutations: [], write_conflicts: [], read_conflicts: {nil, []}}} =
+               stacked_tx |> Tx.commit(nil) |> Transaction.decode()
     end
   end
 
@@ -72,39 +67,40 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "valid state transitions" do
       state = %State{state: :valid}
 
-      committed_state = %{state | state: :committed, commit_version: 12_345}
-      assert committed_state.state == :committed
-      assert committed_state.commit_version == 12_345
+      assert %State{state: :committed, commit_version: 12_345} =
+               %{state | state: :committed, commit_version: 12_345}
 
-      rolled_back_state = %{state | state: :rolled_back}
-      assert rolled_back_state.state == :rolled_back
-
-      expired_state = %{state | state: :expired}
-      assert expired_state.state == :expired
+      assert %State{state: :rolled_back} = %{state | state: :rolled_back}
+      assert %State{state: :expired} = %{state | state: :expired}
     end
 
     test "preserves other fields during state transitions" do
+      gateway_pid = self()
+      layout = %{test: "layout"}
+      tx = Tx.set(Tx.new(), "key", "value")
+      stack = [Tx.new()]
+      servers = %{range: :server}
+
       original_state = %State{
         state: :valid,
-        gateway: self(),
-        transaction_system_layout: %{test: "layout"},
+        gateway: gateway_pid,
+        transaction_system_layout: layout,
         read_version: 12_345,
-        tx: Tx.set(Tx.new(), "key", "value"),
-        stack: [Tx.new()],
-        fastest_storage_servers: %{range: :server}
+        tx: tx,
+        stack: stack,
+        fastest_storage_servers: servers
       }
 
-      committed_state = %{original_state | state: :committed, commit_version: 67_890}
-
-      assert committed_state.state == :committed
-      assert committed_state.commit_version == 67_890
-
-      assert committed_state.gateway == original_state.gateway
-      assert committed_state.transaction_system_layout == original_state.transaction_system_layout
-      assert committed_state.read_version == original_state.read_version
-      assert committed_state.tx == original_state.tx
-      assert committed_state.stack == original_state.stack
-      assert committed_state.fastest_storage_servers == original_state.fastest_storage_servers
+      assert %State{
+               state: :committed,
+               commit_version: 67_890,
+               gateway: ^gateway_pid,
+               transaction_system_layout: ^layout,
+               read_version: 12_345,
+               tx: ^tx,
+               stack: ^stack,
+               fastest_storage_servers: ^servers
+             } = %{original_state | state: :committed, commit_version: 67_890}
     end
   end
 
@@ -112,13 +108,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "pushes transaction to stack" do
       original_tx = Tx.set(Tx.new(), "key1", "value1")
       state = %State{tx: original_tx, stack: []}
-
       new_tx = Tx.set(Tx.new(), "key2", "value2")
-      state_with_stack = %{state | tx: new_tx, stack: [original_tx]}
 
-      assert length(state_with_stack.stack) == 1
-      assert hd(state_with_stack.stack) == original_tx
-      assert state_with_stack.tx == new_tx
+      assert %State{tx: ^new_tx, stack: [^original_tx]} =
+               %{state | tx: new_tx, stack: [original_tx]}
     end
 
     test "pops transaction from stack" do
@@ -126,10 +119,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       current_tx = Tx.set(Tx.new(), "current", "value")
       state = %State{tx: current_tx, stack: [stacked_tx]}
 
-      state_after_pop = %{state | tx: stacked_tx, stack: []}
-
-      assert state_after_pop.stack == []
-      assert state_after_pop.tx == stacked_tx
+      assert %State{tx: ^stacked_tx, stack: []} = %{state | tx: stacked_tx, stack: []}
     end
 
     test "handles multiple nested transactions" do
@@ -138,15 +128,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       tx3 = Tx.set(Tx.new(), "key3", "value3")
 
       state = %State{tx: tx1, stack: []}
-
       state = %{state | tx: tx2, stack: [tx1]}
 
-      state = %{state | tx: tx3, stack: [tx2, tx1]}
-
-      assert length(state.stack) == 2
-      assert state.tx == tx3
-      assert hd(state.stack) == tx2
-      assert List.last(state.stack) == tx1
+      assert %State{tx: ^tx3, stack: [^tx2, ^tx1]} =
+               %{state | tx: tx3, stack: [tx2, tx1]}
     end
   end
 
@@ -156,14 +141,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       current_time = 50_000
       lease_duration = 5_000
 
-      updated_state = %{
-        state
-        | read_version: 12_345,
-          read_version_lease_expiration: current_time + lease_duration
-      }
-
-      assert updated_state.read_version == 12_345
-      assert updated_state.read_version_lease_expiration == 55_000
+      assert %State{
+               read_version: 12_345,
+               read_version_lease_expiration: 55_000
+             } = %{
+               state
+               | read_version: 12_345,
+                 read_version_lease_expiration: current_time + lease_duration
+             }
     end
 
     test "updates lease expiration" do
@@ -174,21 +159,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         read_version_lease_expiration: current_time - 1000
       }
 
-      renewed_state = %{state | read_version_lease_expiration: current_time + 3000}
-
-      assert renewed_state.read_version == 12_345
-      assert renewed_state.read_version_lease_expiration == 63_000
+      assert %State{
+               read_version: 12_345,
+               read_version_lease_expiration: 63_000
+             } = %{state | read_version_lease_expiration: current_time + 3000}
     end
 
     test "handles zero and large version numbers" do
       state = %State{}
 
-      zero_state = %{state | read_version: 0}
-      assert zero_state.read_version == 0
+      assert %State{read_version: 0} = %{state | read_version: 0}
 
       large_version = 999_999_999_999
-      large_state = %{state | read_version: large_version}
-      assert large_state.read_version == large_version
+      assert %State{read_version: ^large_version} = %{state | read_version: large_version}
     end
   end
 
@@ -198,68 +181,54 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       range = {"a", "m"}
       server_pid = :test_pid
 
-      updated_state = %{
-        state
-        | fastest_storage_servers: Map.put(state.fastest_storage_servers, range, server_pid)
-      }
-
-      assert updated_state.fastest_storage_servers == %{range => server_pid}
+      assert %State{fastest_storage_servers: %{^range => ^server_pid}} = %{
+               state
+               | fastest_storage_servers: Map.put(state.fastest_storage_servers, range, server_pid)
+             }
     end
 
     test "updates fastest storage servers" do
       range1 = {"a", "m"}
       range2 = {"m", :end}
       state = %State{fastest_storage_servers: %{range1 => :old_pid}}
+      expected_servers = %{range1 => :new_pid, range2 => :another_pid}
 
-      updated_state = %{
-        state
-        | fastest_storage_servers: %{
-            range1 => :new_pid,
-            range2 => :another_pid
-          }
-      }
-
-      assert updated_state.fastest_storage_servers == %{
-               range1 => :new_pid,
-               range2 => :another_pid
+      assert %State{fastest_storage_servers: ^expected_servers} = %{
+               state
+               | fastest_storage_servers: expected_servers
              }
     end
 
     test "handles complex range keys" do
-      state = %State{fastest_storage_servers: %{}}
-
-      ranges = [
-        {"", :end},
-        {"a", "z"},
-        {"key_prefix", "key_prefiy"},
-        {"\x00", "\xFF"}
-      ]
-
+      ranges = [{"", :end}, {"a", "z"}, {"key_prefix", "key_prefiy"}, {"\x00", "\xFF"}]
       servers = Enum.with_index(ranges, fn range, i -> {range, :"pid_#{i}"} end)
-      updated_state = %{state | fastest_storage_servers: Map.new(servers)}
+      expected_servers = Map.new(servers)
 
-      assert map_size(updated_state.fastest_storage_servers) == 4
-      assert updated_state.fastest_storage_servers[{"", :end}] == :pid_0
-      assert updated_state.fastest_storage_servers[{"\x00", "\xFF"}] == :pid_3
+      assert %State{fastest_storage_servers: ^expected_servers} =
+               %State{fastest_storage_servers: expected_servers}
+
+      # Verify specific key lookups work
+      assert expected_servers[{"", :end}] == :pid_0
+      assert expected_servers[{"\x00", "\xFF"}] == :pid_3
     end
   end
 
   describe "timeout configuration" do
     test "default timeout values" do
-      state = %State{}
-
-      assert state.fetch_timeout_in_ms == 50
-      assert state.lease_renewal_threshold == 100
+      assert %State{
+               fetch_timeout_in_ms: 50,
+               lease_renewal_threshold: 100
+             } = %State{}
     end
 
     test "custom timeout values" do
-      state = %State{
-        fetch_timeout_in_ms: 1000,
-        lease_renewal_threshold: 2000
-      }
-
-      assert state.fetch_timeout_in_ms == 1000
-      assert state.lease_renewal_threshold == 2000
+      assert %State{
+               fetch_timeout_in_ms: 1000,
+               lease_renewal_threshold: 2000
+             } = %State{
+               fetch_timeout_in_ms: 1000,
+               lease_renewal_threshold: 2000
+             }
     end
 
     test "preserves timeout values during other updates" do
@@ -268,15 +237,20 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         lease_renewal_threshold: 800
       }
 
-      updated_state = %{
-        original_state
-        | state: :valid,
-          read_version: 12_345,
-          tx: Tx.set(Tx.new(), "key", "value")
-      }
+      tx = Tx.set(Tx.new(), "key", "value")
 
-      assert updated_state.fetch_timeout_in_ms == 500
-      assert updated_state.lease_renewal_threshold == 800
+      assert %State{
+               state: :valid,
+               read_version: 12_345,
+               tx: ^tx,
+               fetch_timeout_in_ms: 500,
+               lease_renewal_threshold: 800
+             } = %{
+               original_state
+               | state: :valid,
+                 read_version: 12_345,
+                 tx: tx
+             }
     end
   end
 
@@ -285,76 +259,54 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       valid_states = [:valid, :committed, :rolled_back, :expired]
 
       for valid_state <- valid_states do
-        state = %State{state: valid_state}
-        assert state.state == valid_state
+        assert %State{state: ^valid_state} = %State{state: valid_state}
       end
     end
 
     test "tx field maintains Tx type" do
-      state = %State{}
-      assert %Tx{} = state.tx
+      assert %State{tx: %Tx{}} = %State{}
 
       new_tx = Tx.set(Tx.new(), "key", "value")
-      updated_state = %{state | tx: new_tx}
-      assert %Tx{} = updated_state.tx
-      assert updated_state.tx == new_tx
+      assert %State{tx: %Tx{}} = %State{tx: new_tx}
     end
 
     test "stack field maintains list of Tx" do
-      state = %State{}
-      assert is_list(state.stack)
-      assert state.stack == []
+      assert %State{stack: []} = %State{}
 
       tx1 = Tx.set(Tx.new(), "key1", "value1")
       tx2 = Tx.set(Tx.new(), "key2", "value2")
 
-      updated_state = %{state | stack: [tx1, tx2]}
-      assert is_list(updated_state.stack)
-      assert length(updated_state.stack) == 2
-      assert Enum.all?(updated_state.stack, fn tx -> %Tx{} = tx end)
+      assert %State{stack: [%Tx{}, %Tx{}]} = %State{stack: [tx1, tx2]}
     end
 
     test "fastest_storage_servers maintains map type" do
-      state = %State{}
-      assert is_map(state.fastest_storage_servers)
-      assert state.fastest_storage_servers == %{}
+      assert %State{fastest_storage_servers: %{}} = %State{}
 
       servers = %{{"a", "z"} => :pid1, {"z", :end} => :pid2}
-      updated_state = %{state | fastest_storage_servers: servers}
-      assert is_map(updated_state.fastest_storage_servers)
-      assert updated_state.fastest_storage_servers == servers
+      assert %State{fastest_storage_servers: ^servers} = %State{fastest_storage_servers: servers}
     end
   end
 
   describe "integration with transaction operations" do
     test "state changes during put operations" do
-      initial_state = %State{
-        state: :valid,
-        tx: Tx.new()
-      }
-
+      initial_state = %State{state: :valid, tx: Tx.new()}
       new_tx = Tx.set(initial_state.tx, "key", "value")
-      updated_state = %{initial_state | tx: new_tx}
 
-      assert updated_state.state == :valid
-      binary_result = Tx.commit(updated_state.tx, nil)
-      {:ok, decoded} = Transaction.decode(binary_result)
-      assert decoded.mutations == [{:set, "key", "value"}]
+      assert %State{state: :valid, tx: ^new_tx} = %{initial_state | tx: new_tx}
+
+      assert {:ok, %{mutations: [{:set, "key", "value"}]}} =
+               new_tx |> Tx.commit(nil) |> Transaction.decode()
     end
 
     test "state changes during commit operations" do
       tx_with_data = Tx.set(Tx.new(), "key", "value")
+      initial_state = %State{state: :valid, tx: tx_with_data}
 
-      initial_state = %State{
-        state: :valid,
-        tx: tx_with_data
-      }
-
-      committed_state = %{initial_state | state: :committed, commit_version: 12_345}
-
-      assert committed_state.state == :committed
-      assert committed_state.commit_version == 12_345
-      assert committed_state.tx == tx_with_data
+      assert %State{
+               state: :committed,
+               commit_version: 12_345,
+               tx: ^tx_with_data
+             } = %{initial_state | state: :committed, commit_version: 12_345}
     end
 
     test "state changes during rollback operations" do
@@ -367,11 +319,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
         stack: [stacked_tx]
       }
 
-      rolled_back_state = %{initial_state | tx: stacked_tx, stack: []}
-
-      assert rolled_back_state.state == :valid
-      assert rolled_back_state.tx == stacked_tx
-      assert rolled_back_state.stack == []
+      assert %State{
+               state: :valid,
+               tx: ^stacked_tx,
+               stack: []
+             } = %{initial_state | tx: stacked_tx, stack: []}
     end
   end
 end

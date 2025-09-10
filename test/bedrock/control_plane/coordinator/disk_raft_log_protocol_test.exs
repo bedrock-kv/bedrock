@@ -15,6 +15,17 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     {:ok, Map.put(context, :log, log)}
   end
 
+  defp create_test_chain(log) do
+    # Create test chain: {0,0} -> {1,1} -> {1,2} -> {2,3} -> {2,4}
+    {:ok, _log} =
+      Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
+
+    {:ok, _log} =
+      Log.append_transactions(log, {1, 2}, [{{2, 3}, {2, :data3}}, {{2, 4}, {2, :data4}}])
+
+    log
+  end
+
   describe "basic protocol methods" do
     setup :with_log
 
@@ -29,18 +40,18 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "has_transaction_id?/2 handles {0, 0} specially", %{log: log} do
       # {0, 0} always returns true without lookup
-      assert Log.has_transaction_id?(log, {0, 0}) == true
+      assert Log.has_transaction_id?(log, {0, 0})
 
       # Other IDs require actual lookup
-      assert Log.has_transaction_id?(log, {1, 1}) == false
+      refute Log.has_transaction_id?(log, {1, 1})
     end
 
     test "newest_transaction_id/1 returns {0, 0} for empty log", %{log: log} do
-      assert Log.newest_transaction_id(log) == {0, 0}
+      assert {0, 0} = Log.newest_transaction_id(log)
     end
 
     test "newest_safe_transaction_id/1 returns {0, 0} for empty log", %{log: log} do
-      assert Log.newest_safe_transaction_id(log) == {0, 0}
+      assert {0, 0} = Log.newest_safe_transaction_id(log)
     end
   end
 
@@ -52,12 +63,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       assert {:ok, _log} = Log.append_transactions(log, {0, 0}, transactions)
 
-      # Verify transactions were stored
-      assert Log.has_transaction_id?(log, {1, 1}) == true
-      assert Log.has_transaction_id?(log, {1, 2}) == true
-
-      # Verify tail was updated
-      assert Log.newest_transaction_id(log) == {1, 2}
+      # Verify transactions were stored and tail was updated
+      assert Log.has_transaction_id?(log, {1, 1})
+      assert Log.has_transaction_id?(log, {1, 2})
+      assert {1, 2} = Log.newest_transaction_id(log)
     end
 
     test "can append transactions from existing transaction", %{log: log} do
@@ -69,11 +78,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
                Log.append_transactions(log, {1, 1}, [{{1, 2}, {1, :data2}}, {{1, 3}, {1, :data3}}])
 
       # Verify all transactions exist
-      assert Log.has_transaction_id?(log, {1, 1}) == true
-      assert Log.has_transaction_id?(log, {1, 2}) == true
-      assert Log.has_transaction_id?(log, {1, 3}) == true
-
-      assert Log.newest_transaction_id(log) == {1, 3}
+      assert Log.has_transaction_id?(log, {1, 1})
+      assert Log.has_transaction_id?(log, {1, 2})
+      assert Log.has_transaction_id?(log, {1, 3})
+      assert {1, 3} = Log.newest_transaction_id(log)
     end
 
     test "fails when prev_transaction_id doesn't exist", %{log: log} do
@@ -85,7 +93,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       assert {:ok, _log} = Log.append_transactions(log, {0, 0}, [])
 
       # Tail should remain {0, 0} since no transactions were added
-      assert Log.newest_transaction_id(log) == {0, 0}
+      assert {0, 0} = Log.newest_transaction_id(log)
     end
 
     test "creates proper chain structure", %{log: log} do
@@ -103,13 +111,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
     setup :with_log
 
     setup %{log: log} do
-      # Create test chain: {0,0} -> {1,1} -> {1,2} -> {2,3} -> {2,4}
-      {:ok, _log} =
-        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
-
-      {:ok, _log} =
-        Log.append_transactions(log, {1, 2}, [{{2, 3}, {2, :data3}}, {{2, 4}, {2, :data4}}])
-
+      log = create_test_chain(log)
       {:ok, log: log}
     end
 
@@ -171,18 +173,6 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       assert result == expected
     end
-
-    test "transactions_from/3 returns empty list when from > to", %{log: log} do
-      result = Log.transactions_from(log, {2, 4}, {1, 1})
-
-      assert result == []
-    end
-
-    test "transactions_from/3 returns empty list when from not found", %{log: log} do
-      result = Log.transactions_from(log, {99, 99}, {2, 4})
-
-      assert result == []
-    end
   end
 
   describe "commit_up_to/2" do
@@ -197,15 +187,15 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
         Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
 
       # Initially no commits
-      assert Log.newest_safe_transaction_id(log) == {0, 0}
+      assert {0, 0} = Log.newest_safe_transaction_id(log)
 
       # Commit up to {1, 1}
       assert {:ok, _log} = Log.commit_up_to(log, {1, 1})
-      assert Log.newest_safe_transaction_id(log) == {1, 1}
+      assert {1, 1} = Log.newest_safe_transaction_id(log)
 
       # Commit further
       assert {:ok, _log} = Log.commit_up_to(log, {1, 2})
-      assert Log.newest_safe_transaction_id(log) == {1, 2}
+      assert {1, 2} = Log.newest_safe_transaction_id(log)
     end
 
     test "commit_up_to/2 with same commit level returns :unchanged", %{log: log} do
@@ -252,16 +242,16 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
         ])
 
       # Verify all transactions exist
-      assert Log.has_transaction_id?(log, {1, 1}) == true
-      assert Log.has_transaction_id?(log, {1, 2}) == true
-      assert Log.has_transaction_id?(log, {1, 3}) == true
-      assert Log.newest_transaction_id(log) == {1, 3}
+      assert Log.has_transaction_id?(log, {1, 1})
+      assert Log.has_transaction_id?(log, {1, 2})
+      assert Log.has_transaction_id?(log, {1, 3})
+      assert {1, 3} = Log.newest_transaction_id(log)
 
       # Truncate after {1, 2}
       assert {:ok, _log} = Log.purge_transactions_after(log, {1, 2})
 
       # Verify truncation
-      assert Log.newest_transaction_id(log) == {1, 2}
+      assert {1, 2} = Log.newest_transaction_id(log)
 
       # Verify {1, 3} is no longer reachable via chain traversal
       result = Log.transactions_to(log, :newest)
@@ -270,7 +260,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       # The actual record may still exist in DETS but shouldn't be reachable
       # Physical record exists
-      assert Log.has_transaction_id?(log, {1, 3}) == true
+      assert Log.has_transaction_id?(log, {1, 3})
     end
 
     test "adjusts commit level when purging committed transactions", %{log: log} do
@@ -283,13 +273,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       {:ok, _log} = Log.commit_up_to(log, {1, 3})
 
-      assert Log.newest_safe_transaction_id(log) == {1, 3}
+      assert {1, 3} = Log.newest_safe_transaction_id(log)
 
       # Purge after {1, 1} - should adjust commit level
       assert {:ok, _log} = Log.purge_transactions_after(log, {1, 1})
 
       # Commit level should be reduced to {1, 1}
-      assert Log.newest_safe_transaction_id(log) == {1, 1}
+      assert {1, 1} = Log.newest_safe_transaction_id(log)
     end
 
     test "leaves commit level unchanged when purging beyond commit", %{log: log} do
@@ -302,12 +292,12 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       {:ok, _log} = Log.commit_up_to(log, {1, 1})
 
-      assert Log.newest_safe_transaction_id(log) == {1, 1}
+      assert {1, 1} = Log.newest_safe_transaction_id(log)
 
       # Purge after {1, 2} - commit level should remain unchanged
       assert {:ok, _log} = Log.purge_transactions_after(log, {1, 2})
 
-      assert Log.newest_safe_transaction_id(log) == {1, 1}
+      assert {1, 1} = Log.newest_safe_transaction_id(log)
     end
   end
 
@@ -316,30 +306,32 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
     test "empty log behavior", %{log: log} do
       # All transactions_* methods should return empty lists
-      assert Log.transactions_to(log, :newest) == []
-      assert Log.transactions_to(log, :newest_safe) == []
-      assert Log.transactions_to(log, {1, 1}) == []
-      assert Log.transactions_from(log, {0, 0}, {1, 1}) == []
-      assert Log.transactions_from(log, {1, 1}, {2, 2}) == []
+      assert [] = Log.transactions_to(log, :newest)
+      assert [] = Log.transactions_to(log, :newest_safe)
+      assert [] = Log.transactions_to(log, {1, 1})
+      assert [] = Log.transactions_from(log, {0, 0}, {1, 1})
+      assert [] = Log.transactions_from(log, {1, 1}, {2, 2})
 
       # Newest IDs should be {0, 0}
-      assert Log.newest_transaction_id(log) == {0, 0}
-      assert Log.newest_safe_transaction_id(log) == {0, 0}
+      assert {0, 0} = Log.newest_transaction_id(log)
+      assert {0, 0} = Log.newest_safe_transaction_id(log)
     end
 
-    test "boundary conditions for range queries", %{log: log} do
+    test "boundary and error conditions for range queries", %{log: log} do
       {:ok, _log} =
         Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
 
       # from == to should return empty (since from is excluded)
-      assert Log.transactions_from(log, {1, 1}, {1, 1}) == []
+      assert [] = Log.transactions_from(log, {1, 1}, {1, 1})
 
       # from > to should return empty
-      assert Log.transactions_from(log, {1, 2}, {1, 1}) == []
+      assert [] = Log.transactions_from(log, {1, 2}, {1, 1})
 
       # transactions_to with exact boundary
-      result = Log.transactions_to(log, {1, 1})
-      assert result == [{{1, 1}, {1, :data1}}]
+      assert [{{1, 1}, {1, :data1}}] = Log.transactions_to(log, {1, 1})
+
+      # from not found should return empty
+      assert [] = Log.transactions_from(log, {99, 99}, {2, 4})
     end
 
     test "large transaction sequences", %{log: log} do
@@ -349,7 +341,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       {:ok, _log} = Log.append_transactions(log, {0, 0}, large_transactions)
 
       # Verify all transactions exist
-      assert Log.newest_transaction_id(log) == {1, 50}
+      assert {1, 50} = Log.newest_transaction_id(log)
 
       # Test range query performance
       result = Log.transactions_from(log, {1, 10}, {1, 20})
@@ -408,15 +400,15 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       # Commit some transactions
       {:ok, _log} = Log.commit_up_to(log, {1, 2})
-      assert Log.newest_safe_transaction_id(log) == {1, 2}
+      assert {1, 2} = Log.newest_safe_transaction_id(log)
 
       # Purge after committed transaction
       {:ok, _log} = Log.purge_transactions_after(log, {1, 3})
 
       # Verify state
-      assert Log.newest_transaction_id(log) == {1, 3}
+      assert {1, 3} = Log.newest_transaction_id(log)
       # Should remain unchanged
-      assert Log.newest_safe_transaction_id(log) == {1, 2}
+      assert {1, 2} = Log.newest_safe_transaction_id(log)
 
       # Verify accessible transactions
       result = Log.transactions_to(log, :newest)
@@ -447,8 +439,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       {:ok, _log1} = Log.commit_up_to(log1, {1, 2})
 
       # Verify state before closing
-      assert Log.newest_transaction_id(log1) == {2, 3}
-      assert Log.newest_safe_transaction_id(log1) == {1, 2}
+      assert {2, 3} = Log.newest_transaction_id(log1)
+      assert {1, 2} = Log.newest_safe_transaction_id(log1)
       assert Log.has_transaction_id?(log1, {1, 1})
       assert Log.has_transaction_id?(log1, {2, 3})
 
@@ -458,15 +450,15 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       log2 = DiskRaftLog.new(log_dir: tmp_dir, table_name: table_name)
       {:ok, log2} = DiskRaftLog.open(log2)
 
-      assert Log.newest_transaction_id(log2) == {2, 3}
-      assert Log.newest_safe_transaction_id(log2) == {1, 2}
+      assert {2, 3} = Log.newest_transaction_id(log2)
+      assert {1, 2} = Log.newest_safe_transaction_id(log2)
       assert Log.has_transaction_id?(log2, {1, 1})
       assert Log.has_transaction_id?(log2, {1, 2})
       assert Log.has_transaction_id?(log2, {2, 3})
 
       # Verify we can continue appending
       {:ok, _log2} = Log.append_transactions(log2, {2, 3}, [{{2, 4}, {2, :new_after_restart}}])
-      assert Log.newest_transaction_id(log2) == {2, 4}
+      assert {2, 4} = Log.newest_transaction_id(log2)
 
       DiskRaftLog.close(log2)
     end

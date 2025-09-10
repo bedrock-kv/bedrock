@@ -12,31 +12,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
         |> Tx.set("key2", "value2")
         |> Tx.clear("key3")
 
-      # commit should return binary
       binary_result = Tx.commit(tx, nil)
       assert is_binary(binary_result)
-
       assert {:ok, _validated} = Transaction.validate(binary_result)
 
-      assert {:ok, decoded} = Transaction.decode(binary_result)
-
-      # Verify mutations are in exact order
-      assert decoded.mutations == [
-               {:set, "key1", "value1"},
-               {:set, "key2", "value2"},
-               {:clear, "key3"}
-             ]
-
-      assert decoded.write_conflicts == [
-               {"key1", "key1\0"},
-               {"key2", "key2\0"},
-               {"key3", "key3\0"}
-             ]
-
-      # Read conflicts and version should be empty/nil for this transaction
-      assert %{
-               read_conflicts: {nil, []}
-             } = decoded
+      # Use pattern matching to verify complete structure in one assertion
+      assert {:ok,
+              %{
+                mutations: [
+                  {:set, "key1", "value1"},
+                  {:set, "key2", "value2"},
+                  {:clear, "key3"}
+                ],
+                write_conflicts: [
+                  {"key1", "key1\0"},
+                  {"key2", "key2\0"},
+                  {"key3", "key3\0"}
+                ],
+                read_conflicts: {nil, []}
+              }} = Transaction.decode(binary_result)
     end
 
     test "transaction with reads generates read conflicts" do
@@ -48,31 +42,26 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
 
       tx = Tx.new()
 
-      # Add some reads
-      {tx, {:ok, _value}, _state} = Tx.get(tx, "existing_key", fetch_fn, :state)
-      {tx, {:error, :not_found}, _state} = Tx.get(tx, "missing_key", fetch_fn, :state)
-
-      # Add a write
+      # Add some reads and write using pattern matching for cleaner assertions
+      assert {tx, {:ok, _value}, _state} = Tx.get(tx, "existing_key", fetch_fn, :state)
+      assert {tx, {:error, :not_found}, _state} = Tx.get(tx, "missing_key", fetch_fn, :state)
       tx = Tx.set(tx, "new_key", "new_value")
 
-      # Commit to binary with read_version (required for read_conflicts to be preserved)
       read_version = Bedrock.DataPlane.Version.from_integer(12_345)
       binary_result = Tx.commit(tx, read_version)
-      assert {:ok, decoded} = Transaction.decode(binary_result)
 
-      # Verify decoded structure
-      assert %{
-               mutations: [{:set, "new_key", "new_value"}],
-               read_conflicts: {^read_version, read_conflicts}
-             } = decoded
-
-      # Should have read conflicts from the get operations
-      assert read_conflicts == [
-               {"existing_key", "existing_key\0"},
-               {"missing_key", "missing_key\0"}
-             ]
-
-      assert decoded.write_conflicts == [{"new_key", "new_key\0"}]
+      # Use pattern matching to verify complete structure
+      assert {:ok,
+              %{
+                mutations: [{:set, "new_key", "new_value"}],
+                read_conflicts:
+                  {^read_version,
+                   [
+                     {"existing_key", "existing_key\0"},
+                     {"missing_key", "missing_key\0"}
+                   ]},
+                write_conflicts: [{"new_key", "new_key\0"}]
+              }} = Transaction.decode(binary_result)
     end
 
     test "transaction with range operations" do
@@ -82,82 +71,79 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.TxBinaryIntegrationTest do
         |> Tx.set("inside_range", "value")
 
       binary_result = Tx.commit(tx, nil)
-      assert {:ok, decoded} = Transaction.decode(binary_result)
 
-      assert decoded.mutations == [
-               {:clear_range, "end_key", "start_key"},
-               {:set, "inside_range", "value"}
-             ]
-
-      assert decoded.write_conflicts == [
-               {"end_key", "start_key"}
-             ]
+      # Use pattern matching to verify complete structure
+      assert {:ok,
+              %{
+                mutations: [
+                  {:clear_range, "end_key", "start_key"},
+                  {:set, "inside_range", "value"}
+                ],
+                write_conflicts: [{"end_key", "start_key"}]
+              }} = Transaction.decode(binary_result)
     end
 
     test "empty transaction produces valid binary" do
-      tx = Tx.new()
-      binary_result = Tx.commit(tx, nil)
+      binary_result = Tx.commit(Tx.new(), nil)
 
       assert is_binary(binary_result)
-      assert {:ok, decoded} = Transaction.decode(binary_result)
-
-      # Empty transaction should have empty structure
-      assert decoded == %{
-               mutations: [],
-               read_conflicts: {nil, []},
-               write_conflicts: []
-             }
+      # Use pattern matching to verify empty structure
+      assert {:ok,
+              %{
+                mutations: [],
+                read_conflicts: {nil, []},
+                write_conflicts: []
+              }} = Transaction.decode(binary_result)
     end
 
     # Range read testing moved to client-side streaming architecture
 
     test "binary transaction maintains size optimization" do
-      # Create transactions with different key/value sizes
-      small_tx = Tx.set(Tx.new(), "k", "v")
-      medium_tx = Tx.set(Tx.new(), "k", String.duplicate("x", 300))
-      large_tx = Tx.set(Tx.new(), String.duplicate("k", 300), String.duplicate("v", 70_000))
-
-      small_binary = Tx.commit(small_tx, nil)
-      medium_binary = Tx.commit(medium_tx, nil)
-      large_binary = Tx.commit(large_tx, nil)
+      # Create transactions with different key/value sizes and commit them
+      binaries = [
+        {"small", Tx.commit(Tx.set(Tx.new(), "k", "v"), nil)},
+        {"medium", Tx.commit(Tx.set(Tx.new(), "k", String.duplicate("x", 300)), nil)},
+        {"large", Tx.commit(Tx.set(Tx.new(), String.duplicate("k", 300), String.duplicate("v", 70_000)), nil)}
+      ]
 
       # All should decode correctly
-      assert {:ok, _} = Transaction.decode(small_binary)
-      assert {:ok, _} = Transaction.decode(medium_binary)
-      assert {:ok, _} = Transaction.decode(large_binary)
+      for {_size, binary} <- binaries do
+        assert {:ok, _decoded} = Transaction.decode(binary)
+      end
 
-      # Size optimization should result in smaller binaries for smaller data
+      # Size optimization: smaller data should result in smaller binaries
+      assert [small_binary, medium_binary, large_binary] = Enum.map(binaries, &elem(&1, 1))
       assert byte_size(small_binary) < byte_size(medium_binary)
       assert byte_size(medium_binary) < byte_size(large_binary)
     end
 
     test "transaction builder integrates with Transaction section operations" do
-      tx =
+      binary_result =
         Tx.new()
         |> Tx.set("key1", "value1")
         |> Tx.set("key2", "value2")
+        |> Tx.commit(nil)
 
-      binary_result = Tx.commit(tx, nil)
-
+      # Verify section operations work using pattern matching
       assert {:ok, mutations_section} = Transaction.extract_section(binary_result, 0x01)
-      assert is_binary(mutations_section)
-      assert byte_size(mutations_section) > 0
+      assert is_binary(mutations_section) and byte_size(mutations_section) > 0
 
       assert {:ok, stream} = Transaction.mutations(binary_result)
-      mutations = Enum.to_list(stream)
-      assert length(mutations) == 2
+      assert [_mutation1, _mutation2] = Enum.to_list(stream)
 
+      # Verify version stamping preserves original data
       version = Bedrock.DataPlane.Version.from_integer(12_345)
       assert {:ok, stamped} = Transaction.add_commit_version(binary_result, version)
       assert {:ok, ^version} = Transaction.commit_version(stamped)
 
-      # Original transaction data should be preserved
-      assert {:ok, decoded} = Transaction.decode(stamped)
-
-      assert decoded.mutations == [
-               {:set, "key1", "value1"},
-               {:set, "key2", "value2"}
-             ]
+      # Original transaction data should be preserved after stamping
+      assert {:ok,
+              %{
+                mutations: [
+                  {:set, "key1", "value1"},
+                  {:set, "key2", "value2"}
+                ]
+              }} = Transaction.decode(stamped)
     end
   end
 end

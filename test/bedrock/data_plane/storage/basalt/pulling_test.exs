@@ -2,8 +2,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.Storage.Basalt.Pulling
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   describe "start_pulling/6" do
     test "creates a task with proper initial state" do

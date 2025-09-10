@@ -40,15 +40,15 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
   describe "try_to_add_to_waiting_pullers/4" do
     test "returns an error if not willing to wait" do
       waiting_pullers = %{}
-      montonic_now = :erlang.monotonic_time(:millisecond)
+      monotonic_now = :erlang.monotonic_time(:millisecond)
       reply_to_fn = fn _ -> :ok end
       from_version = 1
       opts = []
 
-      assert {:error, :version_too_new} ==
+      assert {:error, :version_too_new} =
                LongPulls.try_to_add_to_waiting_pullers(
                  waiting_pullers,
-                 montonic_now,
+                 monotonic_now,
                  reply_to_fn,
                  from_version,
                  opts
@@ -57,76 +57,68 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
 
     test "adds puller to the waiting pullers map" do
       waiting_pullers = %{}
-      montonic_now = :erlang.monotonic_time(:millisecond)
+      monotonic_now = :erlang.monotonic_time(:millisecond)
       reply_to_fn = fn _ -> :ok end
       from_version = 1
       opts = [willing_to_wait_in_ms: 1000]
 
-      {:ok, updated_waiting_pullers} =
-        LongPulls.try_to_add_to_waiting_pullers(
-          waiting_pullers,
-          montonic_now,
-          reply_to_fn,
-          from_version,
-          opts
-        )
+      assert {:ok, updated_waiting_pullers} =
+               LongPulls.try_to_add_to_waiting_pullers(
+                 waiting_pullers,
+                 monotonic_now,
+                 reply_to_fn,
+                 from_version,
+                 opts
+               )
 
       assert Map.has_key?(updated_waiting_pullers, from_version)
 
-      # Check the entry structure (deadline should be reasonable)
-      [{deadline, actual_reply_fn, data}] = Map.get(updated_waiting_pullers, from_version)
-      assert actual_reply_fn == reply_to_fn
-      assert data == []
+      # Check the entry structure with pattern matching
+      assert [{deadline, ^reply_to_fn, []}] = Map.get(updated_waiting_pullers, from_version)
       # Deadline should be in the future
-      assert deadline > montonic_now
+      assert deadline > monotonic_now
     end
 
-    test "adds a second puller to the waiting pullers map" do
+    test "maintains entries sorted by deadline when adding multiple pullers" do
       waiting_pullers = %{}
       monotonic_now = :erlang.monotonic_time(:millisecond)
       reply_to_fn = fn _ -> :ok end
       from_version = 1
       opts = [willing_to_wait_in_ms: 1000]
 
-      {:ok, updated_waiting_pullers} =
-        LongPulls.try_to_add_to_waiting_pullers(
-          waiting_pullers,
-          monotonic_now,
-          reply_to_fn,
-          from_version,
-          opts
-        )
+      assert {:ok, updated_waiting_pullers} =
+               LongPulls.try_to_add_to_waiting_pullers(
+                 waiting_pullers,
+                 monotonic_now,
+                 reply_to_fn,
+                 from_version,
+                 opts
+               )
 
-      assert Map.has_key?(updated_waiting_pullers, from_version)
-
-      [{deadline, actual_reply_fn, data}] = Map.get(updated_waiting_pullers, from_version)
-
-      # Check the deadline is approximately correct (within 100ms tolerance)
+      # Verify first entry with pattern matching
+      assert [{deadline, ^reply_to_fn, []}] = Map.get(updated_waiting_pullers, from_version)
       expected_deadline = monotonic_now + 1000
       assert abs(deadline - expected_deadline) <= 100
-      assert actual_reply_fn == reply_to_fn
-      assert data == []
 
+      # Add second puller
       reply_to_fn_2 = fn _ -> :ok end
       monotonic_now_2 = monotonic_now + :rand.uniform(1000)
-      from_version_2 = 1
       opts_2 = [willing_to_wait_in_ms: 1000, some_other_option: :value]
 
-      {:ok, updated_waiting_pullers} =
-        LongPulls.try_to_add_to_waiting_pullers(
-          updated_waiting_pullers,
-          monotonic_now_2,
-          reply_to_fn_2,
-          from_version_2,
-          opts_2
-        )
+      assert {:ok, updated_waiting_pullers} =
+               LongPulls.try_to_add_to_waiting_pullers(
+                 updated_waiting_pullers,
+                 monotonic_now_2,
+                 reply_to_fn_2,
+                 from_version,
+                 opts_2
+               )
 
-      assert Map.has_key?(updated_waiting_pullers, from_version)
+      # Verify entries are sorted by deadline with pattern matching
+      assert [{first_deadline, _, _}, {second_deadline, _, _}] =
+               Map.get(updated_waiting_pullers, from_version)
 
-      # Entries should be sorted by deadline (earliest first)
-      entries = Map.get(updated_waiting_pullers, from_version_2)
-      assert length(entries) == 2
-      [{first_deadline, _, _}, {second_deadline, _, _}] = entries
+      assert length(Map.get(updated_waiting_pullers, from_version)) == 2
       assert first_deadline <= second_deadline
     end
   end
@@ -152,7 +144,7 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
         LongPulls.process_expired_deadlines_for_waiting_pullers(waiting_pullers, now)
 
       assert_received :notified
-      assert updated_waiting_pullers == %{2 => [{future_deadline, reply_to_fn, []}]}
+      assert %{2 => [{^future_deadline, ^reply_to_fn, []}]} = updated_waiting_pullers
     end
   end
 
@@ -167,8 +159,7 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
       }
 
       # Should return exactly 1000ms (time until first deadline)
-      timeout = LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, current_time)
-      assert timeout == 1000
+      assert LongPulls.determine_timeout_for_next_puller_deadline(waiting_pullers, current_time) == 1000
     end
 
     test "returns nil if there are no pullers" do

@@ -36,37 +36,31 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
     {:ok, log: pid, path: path}
   end
 
-  test "empty log pull boundary conditions work correctly", %{log: log} do
-    # Test that various pull scenarios return correct semantics
+  describe "empty log pull boundary conditions" do
+    test "pull from version 0 returns error immediately without timeout", %{log: log} do
+      # Pull from version 0 on empty log should return error immediately
+      # (version 0 == last_version, no transactions after it, no willing_to_wait)
+      assert {:error, :version_too_new} = Log.pull(log, Version.from_integer(0), [])
+    end
 
-    # 1. Pull from version 0 on empty log should return error immediately
-    #    (version 0 == last_version, no transactions after it, no willing_to_wait)
-    result = Log.pull(log, Version.from_integer(0), [])
-    assert {:error, :version_too_new} = result
+    test "pull from version 0 with timeout returns error immediately without waiting", %{log: log} do
+      start_time = System.monotonic_time(:millisecond)
+      assert {:error, :version_too_new} = Log.pull(log, Version.from_integer(0), timeout_in_ms: 100)
+      elapsed = System.monotonic_time(:millisecond) - start_time
 
-    # 2. Pull from version 0 should return empty immediately (no waiting)
-    start_time = System.monotonic_time(:millisecond)
-    result = Log.pull(log, Version.from_integer(0), timeout_in_ms: 100)
-    end_time = System.monotonic_time(:millisecond)
-    elapsed = end_time - start_time
+      assert elapsed < 50, "Should return immediately, but took #{elapsed}ms"
+    end
 
-    # Should return error immediately, not wait
-    assert {:error, :version_too_new} = result
-    assert elapsed < 50, "Should return immediately, but took #{elapsed}ms"
-
-    # 3. Pull from higher version without timeout should return version_too_new
-    result = Log.pull(log, Version.from_integer(1), [])
-    assert {:error, :version_too_new} = result
+    test "pull from higher version returns version_too_new", %{log: log} do
+      assert {:error, :version_too_new} = Log.pull(log, Version.from_integer(1), [])
+    end
   end
 
-  test "log info works on empty log", %{log: log} do
-    # Verify the log can provide info without crashing
-    {:ok, info} = Log.info(log, [:last_version, :oldest_version])
-
-    assert Map.has_key?(info, :last_version)
-    assert Map.has_key?(info, :oldest_version)
-
-    # Last version should be 0 for empty log
-    assert info.last_version == <<0, 0, 0, 0, 0, 0, 0, 0>>
+  describe "log info/2" do
+    test "returns expected structure on empty log", %{log: log} do
+      # Verify the log can provide info without crashing and returns expected structure
+      assert {:ok, %{last_version: <<0, 0, 0, 0, 0, 0, 0, 0>>, oldest_version: _}} =
+               Log.info(log, [:last_version, :oldest_version])
+    end
   end
 end

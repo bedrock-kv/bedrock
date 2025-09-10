@@ -1,105 +1,60 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
   alias Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
   alias Bedrock.DataPlane.Version
 
+  # Helper functions for common test setup
+  defp recovery_setup(log_recovery_info, old_logs, desired_logs) do
+    {
+      with_log_recovery_info(recovery_attempt(), log_recovery_info),
+      %{
+        node_tracking: nil,
+        old_transaction_system_layout: %{logs: old_logs, storage_teams: []},
+        cluster_config: %{
+          parameters: %{desired_logs: desired_logs},
+          transaction_system_layout: %{logs: old_logs}
+        }
+      }
+    }
+  end
+
+  defp log_info(oldest, last),
+    do: %{oldest_version: Version.from_integer(oldest), last_version: Version.from_integer(last)}
+
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
-      recovery_attempt =
-        with_log_recovery_info(recovery_attempt(), %{
-          {:log, 1} => %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)},
-          {:log, 2} => %{oldest_version: Version.from_integer(5), last_version: Version.from_integer(45)}
-        })
+      log_recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45)}
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"]}
+      {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 3)
 
-      # Quorum = 2
-      {result, next_phase} =
-        LogRecoveryPlanningPhase.execute(recovery_attempt, %{
-          node_tracking: nil,
-          old_transaction_system_layout: %{
-            logs: %{
-              {:log, 1} => ["tag_a"],
-              {:log, 2} => ["tag_b"]
-            },
-            storage_teams: []
-          },
-          cluster_config: %{
-            # Quorum = 2, with two logs
-            parameters: %{desired_logs: 3},
-            transaction_system_layout: %{
-              logs: %{
-                {:log, 1} => ["tag_a"],
-                {:log, 2} => ["tag_b"]
-              }
-            }
-          }
-        })
+      assert {%{old_log_ids_to_copy: old_log_ids, version_vector: version_vector}, VacancyCreationPhase} =
+               LogRecoveryPlanningPhase.execute(recovery_attempt, context)
 
-      assert next_phase == VacancyCreationPhase
-      assert is_list(result.old_log_ids_to_copy)
-      assert is_tuple(result.version_vector)
-      assert length(result.old_log_ids_to_copy) > 0
+      assert is_list(old_log_ids) and length(old_log_ids) > 0
+      assert is_tuple(version_vector)
     end
 
     test "stalls recovery when unable to meet log quorum" do
-      recovery_attempt = %RecoveryAttempt{
-        log_recovery_info_by_id: %{}
-      }
+      {recovery_attempt, context} = recovery_setup(%{}, %{}, 3)
 
-      {_result, next_phase_or_stall} =
-        LogRecoveryPlanningPhase.execute(recovery_attempt, %{
-          node_tracking: nil,
-          old_transaction_system_layout: %{logs: %{}, storage_teams: []},
-          cluster_config: %{
-            # Quorum = 2, but no logs
-            parameters: %{desired_logs: 3},
-            transaction_system_layout: %{
-              # No logs available
-              logs: %{}
-            }
-          }
-        })
+      {_result, next_phase_or_stall} = LogRecoveryPlanningPhase.execute(recovery_attempt, context)
 
       assert {:stalled, :unable_to_meet_log_quorum} = next_phase_or_stall
     end
 
     test "handles single log with quorum of 1" do
-      recovery_attempt = %RecoveryAttempt{
-        log_recovery_info_by_id: %{
-          {:log, 1} => %{
-            oldest_version: Version.from_integer(10),
-            last_version: Version.from_integer(50)
-          }
-        }
-      }
+      log_recovery_info = %{{:log, 1} => log_info(10, 50)}
+      old_logs = %{{:log, 1} => ["tag_a"]}
+      {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 1)
 
-      {result, next_phase} =
-        LogRecoveryPlanningPhase.execute(recovery_attempt, %{
-          node_tracking: nil,
-          old_transaction_system_layout: %{
-            logs: %{
-              {:log, 1} => ["tag_a"]
-            },
-            storage_teams: []
-          },
-          cluster_config: %{
-            # Quorum = 1
-            parameters: %{desired_logs: 1},
-            transaction_system_layout: %{
-              logs: %{
-                {:log, 1} => ["tag_a"]
-              }
-            }
-          }
-        })
+      expected_version = {Version.from_integer(10), Version.from_integer(50)}
 
-      assert next_phase == VacancyCreationPhase
-      assert result.old_log_ids_to_copy == [{:log, 1}]
-      assert result.version_vector == {Version.from_integer(10), Version.from_integer(50)}
+      assert {%{old_log_ids_to_copy: [{:log, 1}], version_vector: ^expected_version}, VacancyCreationPhase} =
+               LogRecoveryPlanningPhase.execute(recovery_attempt, context)
     end
   end
 
@@ -110,54 +65,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
     end
 
     test "successfully determines logs for quorum of 1" do
-      old_logs = %{
-        {:log, 1} => ["tag_a"]
-      }
+      old_logs = %{{:log, 1} => ["tag_a"]}
+      recovery_info = %{{:log, 1} => log_info(10, 50)}
+      expected_version_vector = {Version.from_integer(10), Version.from_integer(50)}
 
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        }
-      }
-
-      {:ok, log_ids, version_vector} =
-        LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 1)
-
-      assert log_ids == [{:log, 1}]
-      assert version_vector == {Version.from_integer(10), Version.from_integer(50)}
+      assert {:ok, [{:log, 1}], ^expected_version_vector} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 1)
     end
 
     test "successfully determines logs for quorum of 2" do
-      old_logs = %{
-        {:log, 1} => ["tag_a"],
-        {:log, 2} => ["tag_b"],
-        {:log, 3} => ["tag_c"]
-      }
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"], {:log, 3} => ["tag_c"]}
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45), {:log, 3} => log_info(15, 55)}
+      expected_version_vector = {Version.from_integer(15), Version.from_integer(45)}
+      expected_logs = [{:log, 1}, {:log, 2}, {:log, 3}]
 
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(45)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(55)
-        }
-      }
-
-      {:ok, log_ids, version_vector} =
-        LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+      assert {:ok, log_ids, ^expected_version_vector} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
 
       # Shard-aware algorithm includes all available shards
-      assert length(log_ids) == 3
-      assert Enum.all?([{:log, 1}, {:log, 2}, {:log, 3}], fn id -> id in log_ids end)
-      # Cross-shard minimum: max(10,5,15)=15, min(50,45,55)=45
-      assert version_vector == {Version.from_integer(15), Version.from_integer(45)}
+      assert length(log_ids) == 3 and Enum.all?(expected_logs, &(&1 in log_ids))
     end
 
     test "returns error when recovery info is missing for all logs" do
@@ -174,77 +100,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
     end
 
     test "handles partial recovery info availability" do
-      old_logs = %{
-        {:log, 1} => ["tag_a"],
-        {:log, 2} => ["tag_b"],
-        {:log, 3} => ["tag_c"]
-      }
-
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(45)
-        }
-        # {:log, 3} has no recovery info
-      }
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"], {:log, 3} => ["tag_c"]}
+      # {:log, 3} has no recovery info
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45)}
 
       # Shard-aware algorithm requires all shards to participate
       # Since shard "tag_c" has no recovery info, it fails
-      result = LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
-      assert result == {:error, :unable_to_meet_log_quorum}
+      assert {:error, :unable_to_meet_log_quorum} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
     end
   end
 
   describe "recovery_info_for_logs/2" do
     test "filters logs to only those with recovery info" do
-      logs = %{
-        {:log, 1} => ["tag_a"],
-        {:log, 2} => ["tag_b"],
-        {:log, 3} => ["tag_c"]
-      }
+      logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"], {:log, 3} => ["tag_c"]}
+      # {:log, 2} has no recovery info
+      recovery_info_by_id = %{{:log, 1} => log_info(10, 50), {:log, 3} => log_info(15, 55)}
 
-      recovery_info_by_id = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(55)
-        }
-        # {:log, 2} has no recovery info
-      }
+      expected = %{{:log, 1} => log_info(10, 50), {:log, 3} => log_info(15, 55)}
 
-      result = LogRecoveryPlanningPhase.recovery_info_for_logs(logs, recovery_info_by_id)
-
-      expected = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(55)
-        }
-      }
-
-      assert result == expected
+      assert ^expected = LogRecoveryPlanningPhase.recovery_info_for_logs(logs, recovery_info_by_id)
     end
 
     test "returns empty map when no logs have recovery info" do
-      logs = %{
-        {:log, 1} => ["tag_a"],
-        {:log, 2} => ["tag_b"]
-      }
+      logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"]}
 
-      recovery_info_by_id = %{}
-
-      result = LogRecoveryPlanningPhase.recovery_info_for_logs(logs, recovery_info_by_id)
-      assert result == %{}
+      assert %{} = LogRecoveryPlanningPhase.recovery_info_for_logs(logs, %{})
     end
 
     test "handles empty logs map" do
@@ -257,52 +138,40 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
     test "generates correct combinations for small lists" do
       result = LogRecoveryPlanningPhase.combinations([1, 2, 3], 2)
       expected = [[1, 2], [1, 3], [2, 3]]
-      assert Enum.sort(result) == Enum.sort(expected)
+      assert MapSet.new(result) == MapSet.new(expected)
     end
 
     test "handles combinations of size 1" do
       result = LogRecoveryPlanningPhase.combinations([1, 2, 3], 1)
       expected = [[1], [2], [3]]
-      assert Enum.sort(result) == Enum.sort(expected)
+      assert MapSet.new(result) == MapSet.new(expected)
     end
 
-    test "handles combinations of size 0" do
-      result = LogRecoveryPlanningPhase.combinations([1, 2, 3], 0)
-      assert result == [[]]
-    end
+    test "handles edge cases" do
+      edge_cases = [
+        # {input_list, size, expected_result, description}
+        {[1, 2, 3], 0, [[]], "size 0 combinations"},
+        {[], 2, [], "empty list"},
+        {[1, 2], 3, [], "combinations larger than list size"}
+      ]
 
-    test "handles empty list" do
-      result = LogRecoveryPlanningPhase.combinations([], 2)
-      assert result == []
-    end
-
-    test "handles combinations larger than list size" do
-      result = LogRecoveryPlanningPhase.combinations([1, 2], 3)
-      assert result == []
+      Enum.each(edge_cases, fn {input_list, size, expected, _description} ->
+        assert LogRecoveryPlanningPhase.combinations(input_list, size) == expected
+      end)
     end
   end
 
   describe "version_vectors_by_id/1" do
     test "converts recovery info to version vectors" do
-      log_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(45)
-        }
-      }
-
-      result = LogRecoveryPlanningPhase.version_vectors_by_id(log_info)
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45)}
 
       expected = [
         {{:log, 1}, {Version.from_integer(10), Version.from_integer(50)}},
         {{:log, 2}, {Version.from_integer(5), Version.from_integer(45)}}
       ]
 
-      assert Enum.sort(result) == Enum.sort(expected)
+      result = LogRecoveryPlanningPhase.version_vectors_by_id(recovery_info)
+      assert MapSet.new(result) == MapSet.new(expected)
     end
 
     test "handles empty log info" do
@@ -324,22 +193,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
         ]
       ]
 
-      result =
-        LogRecoveryPlanningPhase.build_log_groups_and_vectors_from_combinations(combinations)
-
+      result = LogRecoveryPlanningPhase.build_log_groups_and_vectors_from_combinations(combinations)
       assert length(result) == 2
 
       # Check first group: max(10, 5) = 10, min(50, 45) = 45
-      {log_ids_1, {oldest_1, newest_1}} = Enum.at(result, 0)
-      assert Enum.sort(log_ids_1) == Enum.sort([{:log, 1}, {:log, 2}])
-      assert oldest_1 == Version.from_integer(10)
-      assert newest_1 == Version.from_integer(45)
+      expected_version_1 = {Version.from_integer(10), Version.from_integer(45)}
+      assert {log_ids_1, ^expected_version_1} = Enum.at(result, 0)
+      assert MapSet.new(log_ids_1) == MapSet.new([{:log, 1}, {:log, 2}])
 
       # Check second group: max(10, 15) = 15, min(50, 55) = 50
-      {log_ids_2, {oldest_2, newest_2}} = Enum.at(result, 1)
-      assert Enum.sort(log_ids_2) == Enum.sort([{:log, 1}, {:log, 3}])
-      assert oldest_2 == Version.from_integer(15)
-      assert newest_2 == Version.from_integer(50)
+      expected_version_2 = {Version.from_integer(15), Version.from_integer(50)}
+      assert {log_ids_2, ^expected_version_2} = Enum.at(result, 1)
+      assert MapSet.new(log_ids_2) == MapSet.new([{:log, 1}, {:log, 3}])
     end
 
     test "filters out invalid ranges" do
@@ -350,38 +215,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
         [{{:log, 2}, {Version.from_integer(10), Version.from_integer(50)}}]
       ]
 
-      result =
-        LogRecoveryPlanningPhase.build_log_groups_and_vectors_from_combinations(combinations)
-
+      result = LogRecoveryPlanningPhase.build_log_groups_and_vectors_from_combinations(combinations)
       assert length(result) == 1
-      {log_ids, {oldest, newest}} = List.first(result)
-      assert log_ids == [{:log, 2}]
-      assert oldest == Version.from_integer(10)
-      assert newest == Version.from_integer(50)
+      expected = {[{:log, 2}], {Version.from_integer(10), Version.from_integer(50)}}
+      assert ^expected = List.first(result)
     end
   end
 
   describe "valid_range?/1" do
-    test "allows valid ranges where newest >= oldest" do
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.from_integer(50)}}) == true
+    test "validates version ranges correctly" do
+      valid_ranges = [
+        {Version.from_integer(10), Version.from_integer(50)},
+        {Version.from_integer(10), Version.from_integer(10)},
+        {Version.zero(), Version.from_integer(50)},
+        {Version.zero(), Version.zero()}
+      ]
 
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.from_integer(10)}}) == true
-    end
+      invalid_ranges = [
+        {Version.from_integer(50), Version.from_integer(10)},
+        {Version.from_integer(10), Version.zero()}
+      ]
 
-    test "rejects invalid ranges where newest < oldest" do
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(50), Version.from_integer(10)}}) == false
-    end
+      Enum.each(valid_ranges, fn range ->
+        assert LogRecoveryPlanningPhase.valid_range?({[], range})
+      end)
 
-    test "handles special case with oldest = 0" do
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.from_integer(50)}}) == true
-
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.zero()}}) == true
-    end
-
-    test "handles special case with newest = 0" do
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.from_integer(10), Version.zero()}}) == false
-
-      assert LogRecoveryPlanningPhase.valid_range?({[], {Version.zero(), Version.zero()}}) == true
+      Enum.each(invalid_ranges, fn range ->
+        refute LogRecoveryPlanningPhase.valid_range?({[], range})
+      end)
     end
   end
 
@@ -435,109 +296,55 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
   describe "shard-aware algorithm" do
     test "uses shard-aware algorithm when multiple logs per shard exist" do
-      old_logs = %{
-        {:log, 1} => ["tag_a"],
-        # Same shard as log 1
-        {:log, 2} => ["tag_a"],
-        {:log, 3} => ["tag_b"],
-        # Same shard as log 3
-        {:log, 4} => ["tag_b"]
-      }
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_a"], {:log, 3} => ["tag_b"], {:log, 4} => ["tag_b"]}
 
       recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(45)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(60)
-        },
-        {:log, 4} => %{
-          oldest_version: Version.from_integer(20),
-          last_version: Version.from_integer(55)
-        }
+        {:log, 1} => log_info(10, 50),
+        {:log, 2} => log_info(15, 45),
+        {:log, 3} => log_info(5, 60),
+        {:log, 4} => log_info(20, 55)
       }
-
-      {:ok, log_ids, version_vector} =
-        LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
-
-      # Should include logs from both shards
-      assert length(log_ids) == 4
-      assert Enum.all?([{:log, 1}, {:log, 2}, {:log, 3}, {:log, 4}], fn id -> id in log_ids end)
 
       # Version vector should be cross-shard minimum of maximums
       # Shard A: max(10,15) = 15, min(50,45) = 45 -> {15, 45}
-      # Shard B: max(5,20) = 20, min(60,55) = 55 -> {Version.from_integer(20), Version.from_integer(55)}
+      # Shard B: max(5,20) = 20, min(60,55) = 55 -> {20, 55}
       # Cross-shard: max(15,20) = 20, min(45,55) = 45
-      assert version_vector == {Version.from_integer(20), Version.from_integer(45)}
+      expected_version_vector = {Version.from_integer(20), Version.from_integer(45)}
+      expected_logs = [{:log, 1}, {:log, 2}, {:log, 3}, {:log, 4}]
+
+      assert {:ok, log_ids, ^expected_version_vector} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+
+      # Should include logs from both shards
+      assert length(log_ids) == 4 and Enum.all?(expected_logs, &(&1 in log_ids))
     end
 
     test "uses shard-aware algorithm universally for all scenarios" do
-      old_logs = %{
-        {:log, 1} => ["tag_a"],
-        {:log, 2} => ["tag_b"],
-        {:log, 3} => ["tag_c"]
-      }
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"], {:log, 3} => ["tag_c"]}
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45), {:log, 3} => log_info(15, 55)}
+      expected_logs = [{:log, 1}, {:log, 2}, {:log, 3}]
 
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(45)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(55)
-        }
-      }
+      # Conservative minimum for storage lag tolerance
+      expected_version_vector = {Version.from_integer(15), Version.from_integer(45)}
 
-      {:ok, log_ids, version_vector} =
-        LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+      assert {:ok, log_ids, ^expected_version_vector} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
 
       # Shard-aware algorithm includes all shards and provides conservative minimum
-      assert length(log_ids) == 3
-      assert Enum.all?([{:log, 1}, {:log, 2}, {:log, 3}], fn id -> id in log_ids end)
-      # Conservative minimum for storage lag tolerance
-      assert version_vector == {Version.from_integer(15), Version.from_integer(45)}
+      assert length(log_ids) == 3 and Enum.all?(expected_logs, &(&1 in log_ids))
     end
 
     test "handles logs participating in multiple shards" do
-      old_logs = %{
-        # Participates in both shards
-        {:log, 1} => ["tag_a", "tag_b"],
-        {:log, 2} => ["tag_a"],
-        {:log, 3} => ["tag_b"]
-      }
+      # log 1 participates in both shards
+      old_logs = %{{:log, 1} => ["tag_a", "tag_b"], {:log, 2} => ["tag_a"], {:log, 3} => ["tag_b"]}
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45), {:log, 3} => log_info(15, 55)}
+      expected_logs = [{:log, 1}, {:log, 2}, {:log, 3}]
 
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(45)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(55)
-        }
-      }
-
-      {:ok, log_ids, _version_vector} =
-        LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+      assert {:ok, log_ids, _version_vector} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
 
       # Should include all logs since both shards have multiple logs
-      assert length(log_ids) == 3
-      assert Enum.all?([{:log, 1}, {:log, 2}, {:log, 3}], fn id -> id in log_ids end)
+      assert length(log_ids) == 3 and Enum.all?(expected_logs, &(&1 in log_ids))
     end
 
     test "fails when shard cannot meet quorum" do
@@ -546,65 +353,27 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
         {:log, 2} => ["tag_a"],
         {:log, 3} => ["tag_b"],
         {:log, 4} => ["tag_b"],
-        # Shard B has 3 logs, needs 2 for quorum
         {:log, 5} => ["tag_b"]
       }
 
-      recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(45)
-        },
-        {:log, 3} => %{
-          oldest_version: Version.from_integer(5),
-          last_version: Version.from_integer(40)
-        }
-        # logs 4 and 5 have no recovery info - shard B cannot meet quorum (1 < 2)
-      }
+      # logs 4 and 5 have no recovery info - shard B cannot meet quorum (1 < 2)
+      recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(15, 45), {:log, 3} => log_info(5, 40)}
 
-      result = LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
-      assert result == {:error, :unable_to_meet_log_quorum}
+      assert {:error, :unable_to_meet_log_quorum} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
     end
   end
 
   describe "shard grouping functions" do
     test "group_logs_by_shard groups logs correctly" do
-      log_recovery_info = %{
-        {:log, 1} => %{
-          oldest_version: Version.from_integer(10),
-          last_version: Version.from_integer(50)
-        },
-        {:log, 2} => %{
-          oldest_version: Version.from_integer(15),
-          last_version: Version.from_integer(45)
-        }
-      }
-
-      old_logs = %{
-        {:log, 1} => ["tag_a", "tag_b"],
-        {:log, 2} => ["tag_a"]
-      }
+      log_recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(15, 45)}
+      old_logs = %{{:log, 1} => ["tag_a", "tag_b"], {:log, 2} => ["tag_a"]}
 
       result = LogRecoveryPlanningPhase.group_logs_by_shard(log_recovery_info, old_logs)
 
-      expected = %{
-        "tag_a" => [
-          {{:log, 2}, %{oldest_version: Version.from_integer(15), last_version: Version.from_integer(45)}},
-          {{:log, 1}, %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
-        ],
-        "tag_b" => [
-          {{:log, 1}, %{oldest_version: Version.from_integer(10), last_version: Version.from_integer(50)}}
-        ]
-      }
-
       # Check structure (order may vary due to list insertion)
-      assert Map.keys(result) == Map.keys(expected)
-      assert length(result["tag_a"]) == 2
-      assert length(result["tag_b"]) == 1
+      assert MapSet.new(Map.keys(result)) == MapSet.new(["tag_a", "tag_b"])
+      assert length(result["tag_a"]) == 2 and length(result["tag_b"]) == 1
     end
   end
 end

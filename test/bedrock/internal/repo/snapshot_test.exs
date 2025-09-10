@@ -56,41 +56,30 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
 
   describe "get/3 with snapshot: true" do
     test "returns same value as get/2 with snapshot option" do
-      # Setup mock transaction with data
       {:ok, tx} = MockTransaction.start_link(%{"test_key" => "test_value"})
 
-      # Test regular get
       regular_result = Repo.get(tx, "test_key")
-      assert regular_result == "test_value"
-
-      # Test snapshot get - should return same value
       snapshot_result = Repo.get(tx, "test_key", snapshot: true)
+
+      assert regular_result == "test_value"
       assert snapshot_result == "test_value"
-      assert regular_result == snapshot_result
     end
 
     test "returns nil for non-existent keys" do
       {:ok, tx} = MockTransaction.start_link(%{})
-
-      result = Repo.get(tx, "non_existent", snapshot: true)
-      assert result == nil
+      assert Repo.get(tx, "non_existent", snapshot: true) == nil
     end
 
-    test "works with different key values" do
+    test "works with multiple keys" do
       {:ok, tx} = MockTransaction.start_link(%{"key1" => "value1", "key2" => "value2"})
 
-      # Test multiple snapshot reads
-      result1 = Repo.get(tx, "key1", snapshot: true)
-      result2 = Repo.get(tx, "key2", snapshot: true)
-
-      assert result1 == "value1"
-      assert result2 == "value2"
+      assert Repo.get(tx, "key1", snapshot: true) == "value1"
+      assert Repo.get(tx, "key2", snapshot: true) == "value2"
     end
   end
 
   describe "range/4 with snapshot: true" do
     setup do
-      # Create transaction with test data
       data = %{
         "key1" => "value1",
         "key2" => "value2",
@@ -99,99 +88,61 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
       }
 
       {:ok, tx} = MockTransaction.start_link(data)
-      {:ok, tx: tx}
+      expected_results = [{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}]
+      {:ok, tx: tx, expected_results: expected_results}
     end
 
-    test "range/4 with snapshot: true works with different option formats", %{tx: tx} do
-      # This test verifies the snapshot option works correctly
+    test "returns consistent results across multiple calls", %{tx: tx, expected_results: expected} do
       result1 = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.to_list()
       result2 = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.to_list()
 
-      assert result1 == result2
-      expected = [{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}]
       assert result1 == expected
+      assert result1 == result2
     end
 
-    test "works with valid parameters", %{tx: tx} do
-      # Just test that it works with valid parameters
-      stream = Repo.range(tx, "start", "end", snapshot: true)
-      results = Enum.to_list(stream)
-
-      # Should return empty list since no data matches the range
-      assert results == []
-    end
-
-    test "returns enumerable stream with snapshot reads", %{tx: tx} do
-      # Create the snapshot range stream
-      stream = Repo.range(tx, "key", "key4", batch_size: 2, snapshot: true)
-
-      # Consume the stream
-      results = Enum.to_list(stream)
-
-      # Verify we got the expected results
-      expected = [{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}]
+    test "works with batch_size parameter", %{tx: tx, expected_results: expected} do
+      results = tx |> Repo.range("key", "key4", batch_size: 2, snapshot: true) |> Enum.to_list()
       assert results == expected
     end
 
-    test "works when stream is halted early", %{tx: tx} do
-      stream = Repo.range(tx, "key", "key4", snapshot: true)
+    test "supports stream operations and early halting", %{tx: tx} do
+      # Test early halting
+      [first_result] = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.take(1)
+      assert first_result == {"key1", "value1"}
 
-      # Take only first item and halt early
-      results = Enum.take(stream, 1)
-
-      assert length(results) == 1
-      assert hd(results) == {"key1", "value1"}
-    end
-
-    test "handles empty range results", %{tx: tx} do
-      stream = Repo.range(tx, "nonexistent", "nonexistent1", snapshot: true)
-
-      results = Enum.to_list(stream)
-      assert results == []
-    end
-
-    test "works with stream operations", %{tx: tx} do
-      results =
+      # Test stream transformations
+      uppercase_results =
         tx
         |> Repo.range("key", "key4", snapshot: true)
         |> Stream.map(fn {k, v} -> {k, String.upcase(v)} end)
         |> Enum.take(2)
 
-      expected = [{"key1", "VALUE1"}, {"key2", "VALUE2"}]
-      assert results == expected
+      assert uppercase_results == [{"key1", "VALUE1"}, {"key2", "VALUE2"}]
+    end
+
+    test "handles empty ranges", %{tx: tx} do
+      empty_result = tx |> Repo.range("nonexistent", "nonexistent1", snapshot: true) |> Enum.to_list()
+      assert empty_result == []
+
+      no_match_result = tx |> Repo.range("start", "end", snapshot: true) |> Enum.to_list()
+      assert no_match_result == []
     end
   end
 
-  describe "integration with real transaction operations" do
-    test "snapshot reads work alongside regular transaction operations" do
-      # This test would require more complex setup with actual transaction system
-      # For now, verify the function signatures and basic delegation work
-
+  describe "integration and error handling" do
+    test "snapshot reads work alongside regular operations and handle errors gracefully" do
       {:ok, tx} = MockTransaction.start_link(%{"test" => "data"})
 
       # Mix regular operations with snapshot operations
       Repo.put(tx, "new_key", "new_value")
+      assert Repo.get(tx, "test", snapshot: true) == "data"
 
-      # Snapshot read shouldn't interfere with transaction state
-      result = Repo.get(tx, "test", snapshot: true)
-      assert result == "data"
-    end
-  end
+      # Test error handling with empty transaction
+      {:ok, empty_tx} = MockTransaction.start_link(%{})
+      assert Repo.get(empty_tx, "any_key", snapshot: true) == nil
 
-  describe "error handling" do
-    test "snapshot functions handle transaction errors gracefully" do
-      {:ok, tx} = MockTransaction.start_link(%{})
-
-      # These should not raise, even if underlying operations have issues
-      result = Repo.get(tx, "any_key", snapshot: true)
-      assert result == nil
-
-      stream_results =
-        tx
-        |> Repo.range("start", "end", snapshot: true)
-        |> Enum.to_list()
-
-      assert stream_results == []
+      empty_range_results = empty_tx |> Repo.range("start", "end", snapshot: true) |> Enum.to_list()
+      assert empty_range_results == []
     end
   end
 end

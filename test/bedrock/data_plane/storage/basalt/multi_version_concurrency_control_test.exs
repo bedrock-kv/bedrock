@@ -2,8 +2,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl, as: MVCC
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   def new_random_mvcc, do: MVCC.new(:"mvcc_#{Faker.random_between(0, 10_000)}", Version.zero())
 

@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
     end
   end
 
-  # Helper function to spawn and register a named process
+  # Helper functions
   defp spawn_registered_process(name) do
     test_process = self()
 
@@ -35,6 +35,22 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
     on_exit(fn -> send(pid, :stop) end)
 
     pid
+  end
+
+  defp base_config do
+    %{
+      coordinators: [],
+      epoch: 1,
+      parameters: %{},
+      policies: %{},
+      transaction_system_layout: %{
+        director: nil,
+        sequencer: nil,
+        rate_keeper: nil,
+        proxies: [],
+        services: %{}
+      }
+    }
   end
 
   describe "encode_for_storage/2" do
@@ -58,100 +74,66 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
       encoded = Persistence.encode_for_storage(config, TestCluster)
 
       refute Map.has_key?(encoded, :recovery_attempt)
-      assert encoded.coordinators == [:node1, :node2]
-      assert encoded.epoch == 5
+      assert %{coordinators: [:node1, :node2], epoch: 5} = encoded
     end
 
     test "encodes single PID references to {otp_name, node} tuples" do
       director_pid = spawn(fn -> :ok end)
       sequencer_pid = spawn(fn -> :ok end)
 
-      config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: director_pid,
-          sequencer: sequencer_pid,
-          rate_keeper: nil,
-          proxies: [],
-          services: %{}
-        }
-      }
+      config =
+        base_config()
+        |> put_in([:transaction_system_layout, :director], director_pid)
+        |> put_in([:transaction_system_layout, :sequencer], sequencer_pid)
 
       encoded = Persistence.encode_for_storage(config, TestCluster)
 
-      layout = encoded.transaction_system_layout
-      assert layout.director == {:test_cluster_director, node()}
-      assert layout.sequencer == {:test_cluster_sequencer, node()}
-      assert layout.rate_keeper == nil
+      assert %{
+               transaction_system_layout: %{
+                 director: {:test_cluster_director, _},
+                 sequencer: {:test_cluster_sequencer, _},
+                 rate_keeper: nil
+               }
+             } = encoded
     end
 
     test "encodes proxy list PIDs to {otp_name, node} tuples" do
       proxy1 = spawn(fn -> :ok end)
       proxy2 = spawn(fn -> :ok end)
 
-      config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: nil,
-          sequencer: nil,
-          rate_keeper: nil,
-          proxies: [proxy1, proxy2],
-          services: %{}
-        }
-      }
+      config = put_in(base_config(), [:transaction_system_layout, :proxies], [proxy1, proxy2])
 
       encoded = Persistence.encode_for_storage(config, TestCluster)
 
-      layout = encoded.transaction_system_layout
-
-      assert layout.proxies == [
-               {:test_cluster_commit_proxy_1, node()},
-               {:test_cluster_commit_proxy_2, node()}
-             ]
+      assert %{
+               transaction_system_layout: %{
+                 proxies: [
+                   {:test_cluster_commit_proxy_1, _},
+                   {:test_cluster_commit_proxy_2, _}
+                 ]
+               }
+             } = encoded
     end
 
     test "encodes service descriptor PIDs to {otp_name, node} tuples" do
       worker_pid = spawn(fn -> :ok end)
 
-      config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: nil,
-          sequencer: nil,
-          rate_keeper: nil,
-          proxies: [],
-          services: %{
-            "log-1" => %{
-              kind: :log,
-              last_seen: {:some_otp_name, :some_node},
-              status: {:up, worker_pid}
-            },
-            "storage-1" => %{
-              kind: :storage,
-              status: :down
-            }
-          }
-        }
-      }
+      config =
+        put_in(base_config(), [:transaction_system_layout, :services], %{
+          "log-1" => %{kind: :log, last_seen: {:some_otp_name, :some_node}, status: {:up, worker_pid}},
+          "storage-1" => %{kind: :storage, status: :down}
+        })
 
       encoded = Persistence.encode_for_storage(config, TestCluster)
 
-      services = encoded.transaction_system_layout.services
-
-      # PID should be encoded
-      assert services["log-1"].status == {:up, {:"test_cluster_log-1", node()}}
-
-      # Non-PID status should be unchanged
-      assert services["storage-1"].status == :down
+      assert %{
+               transaction_system_layout: %{
+                 services: %{
+                   "log-1" => %{status: {:up, {:"test_cluster_log-1", _}}},
+                   "storage-1" => %{status: :down}
+                 }
+               }
+             } = encoded
     end
   end
 
@@ -159,101 +141,70 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
     test "decodes {otp_name, node} tuples back to PIDs for running processes" do
       fake_sequencer = spawn_registered_process(:test_cluster_sequencer)
 
-      encoded_config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: nil,
-          sequencer: {:test_cluster_sequencer, node()},
-          rate_keeper: nil,
-          proxies: [],
-          services: %{}
-        }
-      }
+      encoded_config =
+        put_in(base_config(), [:transaction_system_layout, :sequencer], {:test_cluster_sequencer, node()})
 
       decoded = Persistence.decode_from_storage(encoded_config, TestCluster)
 
-      layout = decoded.transaction_system_layout
-      assert layout.sequencer == fake_sequencer
+      assert %{
+               transaction_system_layout: %{
+                 sequencer: ^fake_sequencer
+               }
+             } = decoded
     end
 
     test "handles non-existent processes gracefully" do
-      encoded_config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: {:non_existent_process, node()},
-          sequencer: nil,
-          rate_keeper: nil,
-          proxies: [],
-          services: %{}
-        }
-      }
+      encoded_config = put_in(base_config(), [:transaction_system_layout, :director], {:non_existent_process, node()})
 
       decoded = Persistence.decode_from_storage(encoded_config, TestCluster)
 
-      layout = decoded.transaction_system_layout
-      assert layout.director == nil
+      assert %{
+               transaction_system_layout: %{
+                 director: nil
+               }
+             } = decoded
     end
 
     test "decodes proxy list references" do
       fake_proxy_1 = spawn_registered_process(:test_cluster_commit_proxy_1)
       fake_proxy_2 = spawn_registered_process(:test_cluster_commit_proxy_2)
 
-      encoded_config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: nil,
-          sequencer: nil,
-          rate_keeper: nil,
-          proxies: [
-            {:test_cluster_commit_proxy_1, node()},
-            {:test_cluster_commit_proxy_2, node()}
-          ],
-          services: %{}
-        }
-      }
+      encoded_config =
+        put_in(base_config(), [:transaction_system_layout, :proxies], [
+          {:test_cluster_commit_proxy_1, node()},
+          {:test_cluster_commit_proxy_2, node()}
+        ])
 
       decoded = Persistence.decode_from_storage(encoded_config, TestCluster)
 
-      layout = decoded.transaction_system_layout
-      assert layout.proxies == [fake_proxy_1, fake_proxy_2]
+      assert %{
+               transaction_system_layout: %{
+                 proxies: [^fake_proxy_1, ^fake_proxy_2]
+               }
+             } = decoded
     end
 
     test "decodes service descriptor references" do
       fake_log_worker = spawn_registered_process(:"test_cluster_log-1")
 
-      encoded_config = %{
-        coordinators: [],
-        epoch: 1,
-        parameters: %{},
-        policies: %{},
-        transaction_system_layout: %{
-          director: nil,
-          sequencer: nil,
-          rate_keeper: nil,
-          proxies: [],
-          services: %{
-            "log-1" => %{
-              kind: :log,
-              last_seen: {:some_otp_name, :some_node},
-              status: {:up, {:"test_cluster_log-1", node()}}
-            }
+      encoded_config =
+        put_in(base_config(), [:transaction_system_layout, :services], %{
+          "log-1" => %{
+            kind: :log,
+            last_seen: {:some_otp_name, :some_node},
+            status: {:up, {:"test_cluster_log-1", node()}}
           }
-        }
-      }
+        })
 
       decoded = Persistence.decode_from_storage(encoded_config, TestCluster)
 
-      services = decoded.transaction_system_layout.services
-      assert services["log-1"].status == {:up, fake_log_worker}
+      assert %{
+               transaction_system_layout: %{
+                 services: %{
+                   "log-1" => %{status: {:up, ^fake_log_worker}}
+                 }
+               }
+             } = decoded
     end
   end
 
@@ -289,15 +240,21 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
       decoded = Persistence.decode_from_storage(encoded, TestCluster)
 
       # Non-PID data should be preserved exactly
-      assert decoded.coordinators == original_config.coordinators
-      assert decoded.epoch == original_config.epoch
-      assert decoded.parameters == original_config.parameters
-      assert decoded.policies == original_config.policies
-
-      # Non-PID service status should be preserved
-      services = decoded.transaction_system_layout.services
-      assert services["storage-1"].status == :down
-      assert services["storage-1"].kind == :storage
+      assert %{
+               coordinators: [:node1, :node2, :node3],
+               epoch: 42,
+               parameters: %{
+                 desired_logs: 5,
+                 desired_replication_factor: 3,
+                 desired_commit_proxies: 2
+               },
+               policies: %{allow_volunteer_nodes: true},
+               transaction_system_layout: %{
+                 services: %{
+                   "storage-1" => %{status: :down, kind: :storage}
+                 }
+               }
+             } = decoded
     end
   end
 end

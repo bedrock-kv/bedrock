@@ -62,6 +62,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
     end)
   end
 
+  def ordered_key_pair_generator do
+    # Generate two keys and ensure they are ordered
+    {key_generator(), key_generator()}
+    |> StreamData.tuple()
+    |> StreamData.map(fn {key1, key2} ->
+      if key1 <= key2 do
+        {key1, key2}
+      else
+        {key2, key1}
+      end
+    end)
+  end
+
   def page_data_generator do
     # Generate realistic page data with varying densities
     1..100
@@ -172,12 +185,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
   property "Range KeySelector results have consistent bounds" do
     check all(
             {index, start_key, end_key} <-
-              StreamData.tuple({
+              {
                 multi_page_index_generator(),
-                key_generator(),
-                key_generator()
-              }),
-            start_key <= end_key
+                ordered_key_pair_generator()
+              }
+              |> StreamData.tuple()
+              |> StreamData.map(fn {index, {start_key, end_key}} -> {index, start_key, end_key} end)
           ) do
       start_selector = KeySelector.first_greater_or_equal(start_key)
       end_selector = KeySelector.first_greater_than(end_key)

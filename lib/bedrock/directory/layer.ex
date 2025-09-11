@@ -83,35 +83,30 @@ defmodule Bedrock.Directory.Layer do
 
   # Helpers for path validation
   @doc false
-  def validate_path(path) do
-    path
-    |> normalize_path()
-    |> do_validate_path()
+  def validate_path(path) when is_list(path), do: validate_path_components(path)
+  def validate_path(path) when is_binary(path), do: validate_path_components([path])
+  def validate_path(path) when is_tuple(path), do: validate_path_components(Tuple.to_list(path))
+  def validate_path(_), do: {:error, :invalid_path_format}
+
+  defp validate_path_components([]), do: :ok
+
+  defp validate_path_components([component | rest]) do
+    with :ok <- validate_component(component) do
+      validate_path_components(rest)
+    end
   end
 
-  # Normalize various input formats to a list
-  defp normalize_path(path) when is_list(path), do: {:ok, path}
-  defp normalize_path(path) when is_binary(path), do: {:ok, [path]}
-  defp normalize_path(path) when is_tuple(path), do: {:ok, Tuple.to_list(path)}
-  defp normalize_path(_), do: {:error, :invalid_path_format}
+  defp validate_component(component) when not is_binary(component), do: {:error, :invalid_path_component}
 
-  defp do_validate_path({:error, _} = error), do: error
-  defp do_validate_path({:ok, []}), do: :ok
+  defp validate_component(""), do: {:error, :empty_path_component}
+  defp validate_component("."), do: {:error, :invalid_directory_name}
+  defp validate_component(".."), do: {:error, :invalid_directory_name}
 
-  defp do_validate_path({:ok, [component | rest]}) do
+  defp validate_component(<<0xFE, _rest::binary>>), do: {:error, :reserved_prefix_in_path}
+  defp validate_component(<<0xFF, _rest::binary>>), do: {:error, :reserved_prefix_in_path}
+
+  defp validate_component(component) do
     cond do
-      not is_binary(component) ->
-        {:error, :invalid_path_component}
-
-      byte_size(component) == 0 ->
-        {:error, :empty_path_component}
-
-      # Check for reserved bytes before UTF-8 validation
-      # (reserved bytes might not be valid UTF-8)
-      byte_size(component) > 0 and
-          (binary_part(component, 0, 1) == <<0xFE>> or binary_part(component, 0, 1) == <<0xFF>>) ->
-        {:error, :reserved_prefix_in_path}
-
       not String.valid?(component) ->
         {:error, :invalid_utf8_in_path}
 
@@ -119,7 +114,7 @@ defmodule Bedrock.Directory.Layer do
         {:error, :null_byte_in_path}
 
       true ->
-        do_validate_path({:ok, rest})
+        :ok
     end
   end
 
@@ -420,6 +415,7 @@ defmodule Bedrock.Directory.Layer do
   def do_move(%__MODULE__{} = layer, txn, old_path, new_path) do
     with true <- not root?(old_path) || {:error, :cannot_move_root},
          true <- not root?(new_path) || {:error, :cannot_move_to_root},
+         true <- not List.starts_with?(new_path, old_path) || {:error, :cannot_move_to_subdirectory},
          :ok <- check_version(layer, txn, true),
          :ok <- ensure_version_initialized(layer, txn),
          true <- do_exists?(layer, txn, old_path) || {:error, :directory_does_not_exist},

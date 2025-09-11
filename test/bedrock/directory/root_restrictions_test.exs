@@ -1,117 +1,82 @@
 defmodule Bedrock.Directory.RootRestrictionsTest do
   use ExUnit.Case, async: true
 
+  import Bedrock.Test.DirectoryHelpers
   import Mox
 
   alias Bedrock.Directory
   alias Bedrock.Directory.Layer
 
-  # Version key used by the directory layer
-  @version_key <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
-
   setup do
-    # Automatically stub transaction to execute callbacks immediately
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
     :ok
   end
 
   setup :verify_on_exit!
 
+  # Helper function specific to root restrictions tests
+  defp expect_range_query(repo, path, results) do
+    expected_range = Bedrock.KeyRange.from_prefix(build_directory_key(path))
+
+    expect(repo, :range, fn :mock_txn, ^expected_range -> results end)
+  end
+
   describe "root directory restrictions" do
-    test "cannot open root directory" do
-      # No expectations needed - should fail immediately
+    test "cannot perform restricted operations on root" do
       layer = Layer.new(MockRepo)
 
-      assert {:error, :cannot_open_root} = Directory.open(layer, [])
-    end
+      restricted_operations = [
+        {:open, fn -> Directory.open(layer, []) end},
+        {:remove, fn -> Directory.remove(layer, []) end},
+        {:move_from_root, fn -> Directory.move(layer, [], ["somewhere"]) end},
+        {:move_to_root, fn -> Directory.move(layer, ["somewhere"], []) end},
+        {:remove_if_exists, fn -> Directory.remove_if_exists(layer, []) end}
+      ]
 
-    test "cannot remove root directory" do
-      # No expectations needed - should fail immediately
-      layer = Layer.new(MockRepo)
+      expected_errors = [
+        :cannot_open_root,
+        :cannot_remove_root,
+        :cannot_move_root,
+        :cannot_move_to_root,
+        :cannot_remove_root
+      ]
 
-      assert {:error, :cannot_remove_root} = Directory.remove(layer, [])
-    end
-
-    test "cannot move root directory" do
-      # No expectations needed - should fail immediately
-      layer = Layer.new(MockRepo)
-
-      assert {:error, :cannot_move_root} = Directory.move(layer, [], ["somewhere"])
-    end
-
-    test "cannot move to root directory" do
-      # No expectations needed - should fail immediately
-      layer = Layer.new(MockRepo)
-
-      assert {:error, :cannot_move_to_root} = Directory.move(layer, ["somewhere"], [])
+      for {{_op, operation}, expected_error} <- Enum.zip(restricted_operations, expected_errors) do
+        assert {:error, ^expected_error} = operation.()
+      end
     end
 
     test "can create root directory" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      prefix = <<0, 1>>
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists([], nil)
+      |> expect_directory_creation([], {prefix, ""})
 
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
+      layer = Layer.new(MockRepo, next_prefix_fn: fn -> prefix end)
 
-      # Check if root exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      # Store root directory
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == <<254>>
-        assert {prefix, ""} = Bedrock.Key.unpack(value)
-        assert is_binary(prefix)
-        :ok
-      end)
-
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 1>> end)
-
-      assert {:ok, %{path: [], prefix: <<0, 1>>}} = Directory.create(layer, [])
+      assert {:ok, %{path: [], prefix: ^prefix}} = Directory.create(layer, [])
     end
 
     test "can check if root exists" do
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        Bedrock.Key.pack({<<0, 1>>, ""})
-      end)
+      root_data = Bedrock.Key.pack({<<0, 1>>, ""})
 
+      expect_directory_exists(MockRepo, [], root_data)
       layer = Layer.new(MockRepo)
 
       assert Directory.exists?(layer, []) == true
     end
 
     test "can list root directory children" do
-      # Version check for list operation
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        <<1::little-32, 0::little-32, 0::little-32>>
-      end)
+      children_results = [
+        {build_directory_key(["users"]), Bedrock.Key.pack({<<0, 2>>, ""})},
+        {build_directory_key(["docs"]), Bedrock.Key.pack({<<0, 3>>, ""})}
+      ]
 
-      # Range query for children
-      expect(MockRepo, :range, fn :mock_txn, range ->
-        expected_range = Bedrock.KeyRange.from_prefix(<<254>>)
-        assert range == expected_range
-
-        # Return some child directories with properly packed keys
-        [
-          {<<254>> <> Bedrock.Key.pack(["users"]), Bedrock.Key.pack({<<0, 2>>, ""})},
-          {<<254>> <> Bedrock.Key.pack(["docs"]), Bedrock.Key.pack({<<0, 3>>, ""})}
-        ]
-      end)
+      MockRepo
+      |> expect_version_check_only()
+      |> expect_range_query([], children_results)
 
       layer = Layer.new(MockRepo)
 
@@ -119,23 +84,21 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       assert "users" in children
       assert "docs" in children
     end
-
-    test "remove_if_exists handles root directory properly" do
-      # Should not attempt to remove root
-      layer = Layer.new(MockRepo)
-
-      # remove_if_exists should treat root specially
-      assert {:error, :cannot_remove_root} = Directory.remove_if_exists(layer, [])
-    end
   end
 
   describe "root? helper" do
     test "identifies root path correctly" do
-      assert Layer.root?([]) == true
-      assert Layer.root?(["users"]) == false
-      assert Layer.root?(["users", "profiles"]) == false
-      assert Layer.root?(nil) == false
-      assert Layer.root?("") == false
+      test_cases = [
+        {[], true},
+        {["users"], false},
+        {["users", "profiles"], false},
+        {nil, false},
+        {"", false}
+      ]
+
+      for {path, expected} <- test_cases do
+        assert Layer.root?(path) == expected
+      end
     end
   end
 end

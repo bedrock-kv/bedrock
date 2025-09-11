@@ -1,265 +1,140 @@
 defmodule Bedrock.Directory.PrefixCollisionTest do
   use ExUnit.Case, async: true
 
+  import Bedrock.Test.DirectoryHelpers
   import Mox
 
   alias Bedrock.Directory
   alias Bedrock.Directory.Layer
 
-  # Version key used by the directory layer
-  @version_key <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
-
   setup do
-    # Automatically stub transaction to execute callbacks immediately
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
     :ok
   end
 
   setup :verify_on_exit!
 
+  # Helper when we expect collision to be detected in range scan
+  defp expect_collision_in_range(repo, prefix, collision_data) do
+    expected_range = Bedrock.KeyRange.from_prefix(prefix)
+
+    expect(repo, :range, fn :mock_txn, ^expected_range, opts ->
+      assert opts[:limit] == 1
+      collision_data
+    end)
+
+    # No get() call because collision detected early
+  end
+
+  # Helper when no collision in range but need ancestor checking
+  defp expect_collision_check_with_ancestors(repo, prefix) do
+    expected_range = Bedrock.KeyRange.from_prefix(prefix)
+
+    repo
+    |> expect(:range, fn :mock_txn, ^expected_range, opts ->
+      assert opts[:limit] == 1
+      # No collision in range
+      []
+    end)
+    |> expect(:get, fn :mock_txn, key ->
+      # This handles both the full prefix check and ancestor checks
+      # The implementation checks the full prefix first, then ancestors
+      cond do
+        key == prefix -> nil
+        # Ancestor check
+        byte_size(key) < byte_size(prefix) -> nil
+        true -> raise "Unexpected key: #{inspect(key)}"
+      end
+    end)
+  end
+
   describe "prefix collision detection" do
     test "rejects manual prefix that collides with existing data" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      prefix = <<1, 2>>
+      collision_data = [{<<1, 2, 3>>, "some_data"}]
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
-
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      # Check for prefix collision - simulate existing data with prefix <<1, 2>>
-      expect(MockRepo, :range, fn :mock_txn, range, opts ->
-        assert opts[:limit] == 1
-        # Should be checking for keys that start with our prefix <<1, 2>>
-        expected_range = Bedrock.KeyRange.from_prefix(<<1, 2>>)
-        assert range == expected_range
-        # Return a result to indicate collision
-        [{<<1, 2, 3>>, "some_data"}]
-      end)
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists([], nil)
+      |> expect_collision_in_range(prefix, collision_data)
 
       layer = Layer.new(MockRepo)
 
-      # Try to create with a colliding prefix
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: <<1, 2>>)
+               Directory.create(layer, [], prefix: prefix)
     end
 
     test "accepts manual prefix that doesn't collide" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      prefix = <<10, 20>>
+      packed_value = {prefix, ""}
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
-
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      # Check for prefix collision - no existing data
-      expect(MockRepo, :range, fn :mock_txn, range, opts ->
-        assert opts[:limit] == 1
-        # Should be checking for keys that start with our prefix <<10, 20>>
-        expected_range = Bedrock.KeyRange.from_prefix(<<10, 20>>)
-        assert range == expected_range
-        []
-      end)
-
-      # Check ancestor prefixes - none exist
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<10>>
-        nil
-      end)
-
-      # Store the directory
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == <<254>>
-        assert {<<10, 20>>, ""} = Bedrock.Key.unpack(value)
-        :ok
-      end)
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists([], nil)
+      |> expect_collision_check_with_ancestors(prefix)
+      |> expect_directory_creation([], packed_value)
 
       layer = Layer.new(MockRepo)
 
-      # Create with a non-colliding prefix
-      assert {:ok, %{prefix: <<10, 20>>}} =
-               Directory.create(layer, [], prefix: <<10, 20>>)
+      assert {:ok, %{prefix: ^prefix}} =
+               Directory.create(layer, [], prefix: prefix)
     end
 
-    test "rejects reserved system prefix 0xFE" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+    test "rejects reserved system prefixes" do
+      reserved_prefixes = [<<0xFE>>, <<0xFF>>]
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      for prefix <- reserved_prefixes do
+        MockRepo
+        |> expect_version_initialization()
+        |> expect_directory_exists([], nil)
 
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
+        layer = Layer.new(MockRepo)
 
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      layer = Layer.new(MockRepo)
-
-      # Try to create with reserved prefix 0xFE
-      assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: <<0xFE>>)
-    end
-
-    test "rejects reserved system prefix 0xFF" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
-
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      layer = Layer.new(MockRepo)
-
-      # Try to create with reserved prefix 0xFF
-      assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: <<0xFF>>)
+        assert {:error, :prefix_collision} =
+                 Directory.create(layer, [], prefix: prefix)
+      end
     end
 
     test "detects when new prefix would be ancestor of existing key" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      prefix = <<1, 2>>
+      collision_data = [{<<1, 2, 3>>, "existing_data"}]
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
-
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      # Check for prefix collision - existing key starts with our prefix
-      expect(MockRepo, :range, fn :mock_txn, range, opts ->
-        assert opts[:limit] == 1
-        # Should be checking for keys that start with our prefix <<1, 2>>
-        expected_range = Bedrock.KeyRange.from_prefix(<<1, 2>>)
-        assert range == expected_range
-        # Existing key <<1, 2, 3>> starts with our prefix <<1, 2>>
-        [{<<1, 2, 3>>, "existing_data"}]
-      end)
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists([], nil)
+      |> expect_collision_in_range(prefix, collision_data)
 
       layer = Layer.new(MockRepo)
 
-      # Try to create with prefix that would be ancestor
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: <<1, 2>>)
+               Directory.create(layer, [], prefix: prefix)
     end
 
     test "detects when existing key would be ancestor of new prefix" do
-      # Version management expectations
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
+      prefix = <<1, 2, 3>>
 
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == @version_key
-        nil
-      end)
-
-      expect(MockRepo, :put, fn :mock_txn, key, value ->
-        assert key == @version_key
-        assert value == <<1::little-32, 0::little-32, 0::little-32>>
-        :ok
-      end)
-
-      # Check if directory exists
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<254>>
-        nil
-      end)
-
-      # Check for prefix collision - no keys start with our full prefix
-      expect(MockRepo, :range, fn :mock_txn, range, opts ->
+      # We need a custom expectation here since an ancestor will return data
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists([], nil)
+      |> expect(:range, fn :mock_txn, range, opts ->
+        assert Bedrock.KeyRange.from_prefix(prefix) == range
         assert opts[:limit] == 1
-        # Should be checking for keys that start with our prefix <<1, 2, 3>>
-        expected_range = Bedrock.KeyRange.from_prefix(<<1, 2, 3>>)
-        assert range == expected_range
         []
       end)
-
-      # Check ancestor prefixes - <<1>> exists!
-      expect(MockRepo, :get, fn :mock_txn, key ->
-        assert key == <<1>>
-        # This key exists
-        "existing_data"
+      |> expect(:get, fn :mock_txn, key ->
+        cond do
+          key == prefix -> nil
+          # Ancestor has data
+          key == <<1>> -> "existing_data"
+          true -> raise "Unexpected key: #{inspect(key)}"
+        end
       end)
 
       layer = Layer.new(MockRepo)
 
-      # Try to create with prefix that extends existing key
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: <<1, 2, 3>>)
+               Directory.create(layer, [], prefix: prefix)
     end
   end
 end

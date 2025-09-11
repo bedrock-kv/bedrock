@@ -1,13 +1,11 @@
 defmodule Bedrock.Directory.MetadataTest do
   use ExUnit.Case, async: true
 
+  import Bedrock.Test.DirectoryHelpers
   import Mox
 
   alias Bedrock.Directory
   alias Bedrock.Directory.Layer
-
-  # Version key used by the directory layer
-  @version_key <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
 
   setup do
     # Automatically stub transaction to execute callbacks immediately
@@ -17,95 +15,47 @@ defmodule Bedrock.Directory.MetadataTest do
 
   setup :verify_on_exit!
 
-  test "create non-root directory with manual prefix preserves metadata" do
-    path = ["test"]
-    layer_name = nil
-    prefix = <<0, 0>>
+  # Custom helper for this test - handles ancestor prefix checking
+  defp expect_prefix_collision_check_with_ancestors(repo, prefix) do
+    expected_range = Bedrock.KeyRange.from_prefix(prefix)
 
-    # CREATE expectations
-    # 1. check_version
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == @version_key
-      nil
-    end)
-
-    # 2. ensure_version_initialized
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == @version_key
-      nil
-    end)
-
-    # 3. init_version
-    expect(MockRepo, :put, fn :mock_txn, key, value ->
-      assert key == @version_key
-      assert value == <<1::little-32, 0::little-32, 0::little-32>>
-      :ok
-    end)
-
-    # 4. Check if directory exists
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == <<254>> <> Bedrock.Key.pack(["test"])
-      nil
-    end)
-
-    # 5. Parent check (root exists)
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      # Root directory key
-      assert key == <<254>>
-      # Root exists
-      Bedrock.Key.pack({<<0, 1>>, ""})
-    end)
-
-    # 6. Prefix collision check - range query
-    expect(MockRepo, :range, fn :mock_txn, range, opts ->
+    repo
+    |> expect(:range, fn :mock_txn, ^expected_range, opts ->
       assert opts[:limit] == 1
-      expected_range = Bedrock.KeyRange.from_prefix(<<0, 0>>)
-      assert range == expected_range
-      # No collision
       []
     end)
-
-    # 7. Check ancestor prefix <<0>>
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == <<0>>
-      # No collision
+    |> expect(:get, fn :mock_txn, key ->
+      # This handles both the full prefix and ancestor checks
+      assert key in [prefix, <<0>>]
       nil
     end)
+  end
 
-    # 8. Store directory
-    stored_value = Bedrock.Key.pack({prefix, ""})
+  describe "directory metadata preservation" do
+    test "create and open non-root directory with manual prefix preserves all metadata" do
+      path = ["test"]
+      layer_name = nil
+      prefix = <<0, 0>>
+      packed_value = Bedrock.Key.pack({prefix, ""})
 
-    expect(MockRepo, :put, fn :mock_txn, key, value ->
-      assert key == <<254>> <> Bedrock.Key.pack(["test"])
-      assert value == stored_value
-      :ok
-    end)
+      MockRepo
+      |> expect_version_initialization()
+      |> expect_directory_exists(path, nil)
+      |> expect_parent_exists(path)
+      |> expect_prefix_collision_check_with_ancestors(prefix)
+      |> expect_directory_creation(path, {prefix, ""})
+      |> expect_directory_exists(path, packed_value)
+      |> expect_version_check_only()
 
-    # OPEN expectations
-    # 1. Check if directory exists
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == <<254>> <> Bedrock.Key.pack(["test"])
-      stored_value
-    end)
+      layer = Layer.new(MockRepo, next_prefix_fn: fn -> prefix end)
 
-    # 2. check_version for read
-    expect(MockRepo, :get, fn :mock_txn, key ->
-      assert key == @version_key
-      <<1::little-32, 0::little-32, 0::little-32>>
-    end)
+      # Create with manual prefix and verify all fields in one assertion
+      assert {:ok, %{prefix: ^prefix, layer: ^layer_name, path: ^path}} =
+               Directory.create(layer, path, layer: layer_name, prefix: prefix)
 
-    layer = Layer.new(MockRepo, next_prefix_fn: fn -> prefix end)
-
-    # Create with manual prefix
-    assert {:ok, created_node} = Directory.create(layer, path, layer: layer_name, prefix: prefix)
-    assert created_node.prefix == prefix
-    assert created_node.layer == layer_name
-    assert created_node.path == path
-
-    # Open should return same metadata
-    assert {:ok, opened_node} = Directory.open(layer, path)
-    assert opened_node.prefix == created_node.prefix
-    assert opened_node.layer == created_node.layer
-    assert opened_node.path == created_node.path
+      # Open should return identical metadata using pattern matching
+      assert {:ok, %{prefix: ^prefix, layer: ^layer_name, path: ^path}} =
+               Directory.open(layer, path)
+    end
   end
 end

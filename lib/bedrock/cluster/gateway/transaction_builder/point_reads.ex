@@ -34,10 +34,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
           {State.t(),
            {:ok, {Bedrock.key(), Bedrock.value()}}
            | {:error, :not_found}
-           | {:error, :version_too_old}
-           | {:error, :version_too_new}
-           | {:error, :unavailable}
-           | {:error, :timeout}}
+           | {:failure,
+              %{
+                (:timeout
+                 | :unavailable
+                 | :version_too_old
+                 | :version_too_new
+                 | :no_servers_to_race
+                 | :layout_lookup_failed) => [pid()]
+              }}}
   def get_key(t, key, opts \\ []) do
     case Tx.repeatable_read(t.tx, key) do
       nil ->
@@ -45,7 +50,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
 
         t
         |> ensure_read_version!(opts)
-        |> get_value_from_storage(
+        |> execute_get_query(
           key,
           &case storage_get_key_fn.(&1, key, &2, timeout: &3) do
             {:ok, raw_value} -> {:ok, {key, raw_value}}
@@ -74,17 +79,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
           {State.t(),
            {:ok, Bedrock.key_value()}
            | {:error, :not_found}
-           | {:error, :version_too_old}
-           | {:error, :version_too_new}
-           | {:error, :decode_error}
-           | {:error, :unavailable}
-           | {:error, :timeout}}
+           | {:failure,
+              %{
+                (:timeout
+                 | :unavailable
+                 | :version_too_old
+                 | :version_too_new
+                 | :no_servers_to_race
+                 | :layout_lookup_failed) => [pid()]
+              }}}
   def get_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
     storage_get_key_selector_fn = Keyword.get(opts, :storage_get_key_selector_fn, &Storage.get/4)
 
     t
     |> ensure_read_version!(opts)
-    |> get_value_from_storage(
+    |> execute_get_query(
       key_selector.key,
       &case storage_get_key_selector_fn.(&1, key_selector, &2, timeout: &3) do
         {:ok, nil} -> {:ok, nil}
@@ -98,14 +107,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
 
   # Private helper functions
 
-  defp get_value_from_storage(state, racing_key, operation_fn, opts) do
+  defp execute_get_query(state, racing_key, operation_fn, opts) do
     snapshot = Keyword.get(opts, :snapshot, false)
 
     state
     |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
-      {state, {:error, reason}} ->
-        {state, {:error, reason}}
+      {state, {:failure, failures_by_reason}} ->
+        {state, {:failure, failures_by_reason}}
 
       {state, {:ok, {nil, _shard_range}}} ->
         {state, {:error, :not_found}}

@@ -1,25 +1,13 @@
 defmodule Bedrock.Internal.Repo do
-  import Bedrock.Internal.GenServer.Calls
+  import Bedrock.Internal.GenServer.Calls, only: [cast: 2]
 
+  alias Bedrock.Cluster.Gateway
   alias Bedrock.Internal.RangeQuery
   alias Bedrock.KeySelector
 
-  @opaque transaction :: pid()
+  @type transaction :: pid()
   @type key :: term()
   @type value :: term()
-
-  @spec nested_transaction(transaction(), function()) :: term()
-  def nested_transaction(txn, fun) do
-    call(txn, :nested_transaction, :infinity)
-    fun.(txn)
-  rescue
-    exception ->
-      rollback(txn)
-      reraise exception, __STACKTRACE__
-  end
-
-  @spec rollback(transaction()) :: :ok
-  def rollback(t), do: cast(t, :rollback)
 
   @spec add_read_conflict_key(transaction(), key()) :: transaction()
   def add_read_conflict_key(t, key) do
@@ -35,16 +23,38 @@ defmodule Bedrock.Internal.Repo do
 
   @spec get(transaction(), key(), opts :: keyword()) :: nil | value()
   def get(t, key, opts \\ []) do
-    case call(t, {:get, key, opts}, :infinity) do
-      {:ok, value} -> value
-      {:error, :not_found} -> nil
+    case GenServer.call(t, {:get, key, opts}, :infinity) do
+      {:ok, value} ->
+        value
+
+      {:error, :not_found} ->
+        nil
+
+      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+        throw({__MODULE__, :retryable_failure, reason})
+
+      {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
+        throw({__MODULE__, :transaction_error, reason, :get, key})
     end
   end
 
   @spec select(transaction(), KeySelector.t()) :: nil | {resolved_key :: key(), value()}
   @spec select(transaction(), KeySelector.t(), opts :: keyword()) :: nil | {resolved_key :: key(), value()}
-  def select(t, %KeySelector{} = key_selector, opts \\ []),
-    do: call(t, {:get_key_selector, key_selector, opts}, :infinity)
+  def select(t, %KeySelector{} = key_selector, opts \\ []) do
+    case GenServer.call(t, {:get_key_selector, key_selector, opts}, :infinity) do
+      {:ok, {_key, _value} = result} ->
+        result
+
+      {:error, :not_found} ->
+        nil
+
+      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+        throw({__MODULE__, :retryable_failure, reason})
+
+      {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
+        throw({__MODULE__, :transaction_error, reason, :select, key_selector})
+    end
+  end
 
   @spec range(
           transaction(),
@@ -81,22 +91,85 @@ defmodule Bedrock.Internal.Repo do
   end
 
   @spec put(transaction(), key(), value(), opts :: [no_write_conflict: boolean()]) :: transaction()
-  def put(t, key, value, opts \\ []) do
+  def put(t, key, value, opts \\ []) when is_binary(key) and is_binary(value) do
     cast(t, {:set_key, key, value, opts})
     t
   end
 
   @spec atomic(transaction(), atom(), key(), binary()) :: transaction()
-  def atomic(t, op, key, value) do
+  def atomic(t, op, key, value) when is_atom(op) and is_binary(key) and is_binary(value) do
     cast(t, {:atomic, op, key, value})
     t
   end
 
-  @spec commit(transaction(), opts :: [timeout_in_ms :: Bedrock.timeout_in_ms()]) ::
-          {:ok, Bedrock.version()}
-          | {:error, :unavailable | :timeout | :unknown}
-  def commit(t, opts \\ []), do: call(t, :commit, opts[:timeout_in_ms] || default_timeout_in_ms())
+  @spec rollback(reason :: term()) :: no_return()
+  def rollback(reason), do: throw({__MODULE__, :rollback, reason})
 
-  @spec default_timeout_in_ms() :: pos_integer()
-  def default_timeout_in_ms, do: 1_000
+  @spec transaction(cluster :: module(), (transaction() -> result), opts :: keyword()) :: result when result: any()
+  def transaction(cluster, fun, _opts \\ []) do
+    tx_key = tx_key(cluster)
+
+    case Process.get(tx_key) do
+      nil ->
+        run_new_transaction(cluster, fun, tx_key)
+
+      existing_txn ->
+        run_nested_transaction(existing_txn, fun)
+    end
+  end
+
+  defp run_new_transaction(cluster, fun, tx_key) do
+    restart_fn = fn ->
+      {:ok, gateway} = cluster.fetch_gateway()
+      {:ok, txn} = Gateway.begin_transaction(gateway)
+      Process.put(tx_key, txn)
+      txn
+    end
+
+    run_transaction(restart_fn.(), fun, restart_fn)
+  after
+    Process.delete(tx_key)
+  end
+
+  defp run_nested_transaction(txn, fun) do
+    restart_fn = fn ->
+      GenServer.call(txn, :nested_transaction, :infinity)
+      txn
+    end
+
+    run_transaction(restart_fn.(), fun, restart_fn)
+  end
+
+  defp run_transaction(txn, fun, restart_fn) do
+    result = fun.(txn)
+
+    case GenServer.call(txn, :commit) do
+      :ok ->
+        result
+
+      {:ok, _} ->
+        result
+
+      {:error, reason} ->
+        throw({__MODULE__, :retryable_failure, reason})
+    end
+  rescue
+    exception ->
+      GenServer.cast(txn, :rollback)
+      reraise exception, __STACKTRACE__
+  catch
+    {__MODULE__, :rollback, reason} ->
+      GenServer.cast(txn, :rollback)
+      {:error, reason}
+
+    {__MODULE__, :retryable_failure, _reason} ->
+      GenServer.cast(txn, :rollback)
+      run_transaction(restart_fn.(), fun, restart_fn)
+
+    {__MODULE__, :transaction_error, reason, operation, key} ->
+      GenServer.cast(txn, :rollback)
+      raise Bedrock.TransactionError, reason: reason, operation: operation, key: key
+  end
+
+  defp tx_key(cluster), do: {:transaction, cluster}
 end

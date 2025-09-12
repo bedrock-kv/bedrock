@@ -8,6 +8,7 @@ defmodule Bedrock.Directory.Layer do
 
   alias Bedrock.Directory.Node
   alias Bedrock.Directory.Partition
+  alias Bedrock.HCA
   alias Bedrock.Key
   alias Bedrock.KeyRange
   alias Bedrock.Subspace
@@ -24,7 +25,7 @@ defmodule Bedrock.Directory.Layer do
           node_subspace: Subspace.t(),
           content_subspace: Subspace.t(),
           repo: module(),
-          next_prefix_fn: (-> binary()),
+          next_prefix_fn: (Bedrock.Internal.Repo.transaction() -> binary()),
           path: [String.t()]
         }
 
@@ -57,27 +58,39 @@ defmodule Bedrock.Directory.Layer do
   - `:node_subspace` - Custom node storage location
   - `:content_subspace` - Custom content storage location
   """
-  @spec new(module(), keyword()) :: t()
+  @spec new(module(), keyword()) :: Node.t()
   def new(repo, opts \\ []) when is_atom(repo) do
     # Default HCA-based prefix allocation
-    hca = Bedrock.HCA.new(repo, @content_subspace_prefix)
+    hca = HCA.new(repo, @content_subspace_prefix)
 
     next_prefix_fn =
       opts[:next_prefix_fn] ||
         fn ->
-          {:ok, prefix} = Bedrock.HCA.allocate(hca)
-          prefix
+          case HCA.allocate(hca) do
+            {:ok, prefix} -> prefix
+            {:error, reason} -> raise "Failed to allocate prefix: #{inspect(reason)}"
+          end
         end
 
     node_subspace = Keyword.get(opts, :node_subspace, Subspace.new(@node_subspace_prefix))
     content_subspace = Keyword.get(opts, :content_subspace, Subspace.new(@content_subspace_prefix))
 
-    %__MODULE__{
+    layer = %__MODULE__{
       node_subspace: node_subspace,
       content_subspace: content_subspace,
       repo: repo,
       next_prefix_fn: next_prefix_fn,
       path: []
+    }
+
+    # Return the root directory directly
+    %Node{
+      prefix: Subspace.key(content_subspace),
+      path: [],
+      layer: nil,
+      directory_layer: layer,
+      version: nil,
+      metadata: nil
     }
   end
 
@@ -263,13 +276,22 @@ defmodule Bedrock.Directory.Layer do
     key = node_key(layer, path)
 
     with :ok <- check_version(layer, txn, true),
-         :ok <- ensure_version_initialized(layer, txn),
-         nil <- repo.get(txn, key),
-         true <- parent_exists?(layer, txn, path) || {:error, :parent_directory_does_not_exist} do
-      create_directory(layer, txn, path, key, opts)
+         :ok <- ensure_version_initialized(layer, txn) do
+      existing_value = repo.get(txn, key)
+
+      case existing_value do
+        nil ->
+          if parent_exists?(layer, txn, path) do
+            create_directory(layer, txn, path, key, opts)
+          else
+            {:error, :parent_directory_does_not_exist}
+          end
+
+        _value ->
+          {:error, :directory_already_exists}
+      end
     else
       {:error, _} = error -> error
-      _existing_value -> {:error, :directory_already_exists}
     end
   end
 
@@ -280,9 +302,8 @@ defmodule Bedrock.Directory.Layer do
       metadata = Keyword.get(opts, :metadata)
 
       # Store the directory metadata
-      prefix
-      |> encode_node_value(layer_id, version, metadata)
-      |> then(&repo.put(txn, key, &1))
+      encoded_value = encode_node_value(prefix, layer_id, version, metadata)
+      repo.put(txn, key, encoded_value)
 
       {:ok,
        %Node{
@@ -299,7 +320,7 @@ defmodule Bedrock.Directory.Layer do
   defp allocate_or_validate_prefix(layer, txn, opts) do
     case Keyword.get(opts, :prefix) do
       nil ->
-        # Automatic allocation via HCA
+        # Automatic allocation via HCA - uses nested transaction internally
         {:ok, layer.next_prefix_fn.()}
 
       prefix ->
@@ -353,11 +374,16 @@ defmodule Bedrock.Directory.Layer do
 
   @doc false
   def do_exists?(%__MODULE__{repo: repo} = layer, txn, path) do
-    key = node_key(layer, path)
+    # Root directory always exists (it's virtual)
+    if root?(path) do
+      true
+    else
+      key = node_key(layer, path)
 
-    case repo.get(txn, key) do
-      nil -> false
-      _value -> true
+      case repo.get(txn, key) do
+        nil -> false
+        _value -> true
+      end
     end
   end
 
@@ -499,24 +525,29 @@ defimpl Bedrock.Directory, for: Bedrock.Directory.Layer do
   alias Bedrock.Directory.Node
 
   def create(%Layer{repo: repo} = layer, path, opts) do
-    with :ok <- Layer.validate_path(path) do
+    with :ok <- Layer.validate_path(path),
+         true <- not Layer.root?(path) || {:error, :cannot_create_root} do
       repo.transaction(fn txn -> Layer.do_create(layer, txn, path, opts) end)
     end
   end
 
   def open(%Layer{repo: repo} = layer, path) do
-    with :ok <- Layer.validate_path(path) do
+    with :ok <- Layer.validate_path(path),
+         true <- not Layer.root?(path) || {:error, :cannot_open_root} do
       repo.transaction(fn txn -> Layer.do_open(layer, txn, path) end)
     end
   end
 
   def create_or_open(%Layer{repo: repo} = layer, path, opts) do
-    repo.transaction(fn txn ->
-      case Layer.do_open(layer, txn, path) do
-        {:ok, node} -> {:ok, node}
-        {:error, :directory_does_not_exist} -> Layer.do_create(layer, txn, path, opts)
-      end
-    end)
+    with :ok <- Layer.validate_path(path),
+         true <- not Layer.root?(path) || {:error, :cannot_create_or_open_root} do
+      repo.transaction(fn txn ->
+        case Layer.do_open(layer, txn, path) do
+          {:ok, node} -> {:ok, node}
+          {:error, :directory_does_not_exist} -> Layer.do_create(layer, txn, path, opts)
+        end
+      end)
+    end
   end
 
   def move(%Layer{repo: repo} = layer, old_path, new_path),
@@ -543,7 +574,8 @@ defimpl Bedrock.Directory, for: Bedrock.Directory.Layer do
 
   def get_layer(%Layer{}), do: nil
 
-  def get_subspace(%Layer{}) do
-    raise ArgumentError, "Cannot get subspace from directory layer - use open/create first"
-  end
+  def get_subspace(%Layer{}),
+    do: raise(ArgumentError, "Cannot get subspace from directory layer - use open/create first")
+
+  def range(%Layer{}), do: raise(ArgumentError, "Cannot perform range on directory layer - use open/create first")
 end

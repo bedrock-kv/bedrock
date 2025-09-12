@@ -212,9 +212,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       nil ->
         noreply(t, continue: :next_timeout)
 
-      {_deadline, reply_fn, {next_version, transactions}} ->
-        emit_waiting_resolved(length(transactions), 0, next_version, t.last_version)
-        noreply(t, continue: {:process_ready, {next_version, transactions, reply_fn}})
+      {_deadline, reply_fn, {waiting_next_version, transactions}} ->
+        emit_waiting_resolved(length(transactions), 0, waiting_next_version, t.last_version)
+        noreply(t, continue: {:process_ready, {waiting_next_version, transactions, reply_fn}})
     end
   end
 

@@ -21,6 +21,7 @@ end
 defimpl Bedrock.Directory, for: Bedrock.Directory.Partition do
   alias Bedrock.Directory
   alias Bedrock.Directory.Partition
+  alias Bedrock.Key
   alias Bedrock.Subspace
 
   # Partitions provide isolated namespaces - operations are scoped to the partition
@@ -68,6 +69,7 @@ defimpl Bedrock.Directory, for: Bedrock.Directory.Partition do
   def get_path(%Partition{path: path}), do: path
   def get_layer(%Partition{}), do: "partition"
   def get_subspace(%Partition{prefix: prefix}), do: Subspace.new(prefix)
+  def range(%Partition{prefix: prefix}), do: Key.to_range(prefix)
 
   # Ensure operations don't escape the partition boundary
   defp validate_within_partition!(path) when is_list(path) do

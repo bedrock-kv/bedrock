@@ -85,7 +85,7 @@ defmodule Bedrock.DataPlane.Storage do
           opts :: [timeout: timeout()]
         ) ::
           {:ok, {resolved_key :: Bedrock.key(), value :: Bedrock.value()} | nil}
-          | {:error, :version_too_old | :version_too_new | :decode_error}
+          | {:error, :version_too_old | :version_too_new}
           | {:failure, :timeout | :unavailable, ref()}
   def get(storage, %KeySelector{} = key_selector, version, opts) do
     timeout = opts[:timeout] || :infinity

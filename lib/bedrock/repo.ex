@@ -6,7 +6,7 @@ defmodule Bedrock.Repo do
   alias Bedrock.KeySelector
   alias Bedrock.Subspace
 
-  @type t :: Repo.transaction()
+  @opaque t :: Repo.transaction()
 
   # Transaction Control
 
@@ -51,23 +51,23 @@ defmodule Bedrock.Repo do
   @doc """
   Rolls back the transaction, discarding all changes.
 
-  This cancels the transaction and discards all buffered writes and modifications.
-  The transaction cannot be used after rollback.
+  This cancels the transaction and discards all buffered writes and modifications. The transaction cannot be used after
+  rollback.
 
   ## Examples
 
-      transaction(fn tx ->
+      {:error, :some_reason} = transaction(fn tx ->
         put(tx, "key", "value")
 
         if should_abort? do
-          rollback(tx)
+          rollback(:some_reason)
         else
-          tx
+          :ok
         end
       end)
 
   """
-  @callback rollback(t()) :: no_return()
+  @callback rollback(reason :: term()) :: no_return()
 
   @doc """
   Adds a read conflict key to the transaction.
@@ -629,18 +629,21 @@ defmodule Bedrock.Repo do
       @behaviour Bedrock.Repo
 
       alias Bedrock.Internal.Repo
-      alias Bedrock.Internal.TransactionManager
       alias Bedrock.Subspace
 
       @cluster unquote(cluster)
 
+      # Expose cluster for internal use (e.g., nested transaction detection)
+      @doc false
+      def __cluster__, do: @cluster
+
       # Transaction Control
 
       @impl true
-      def transaction(fun, opts \\ []), do: TransactionManager.transaction(@cluster, fun, opts)
+      def transaction(fun, opts \\ []), do: Repo.transaction(@cluster, fun, opts)
 
       @impl true
-      defdelegate rollback(t), to: Repo
+      defdelegate rollback(reason), to: Repo
 
       @impl true
       defdelegate add_read_conflict_key(t, key), to: Repo
@@ -704,6 +707,7 @@ defmodule Bedrock.Repo do
       def range(t, subspace_or_range, opts \\ [])
       def range(t, %Subspace{} = subspace, opts), do: range(t, Subspace.range(subspace), opts)
       def range(t, {start_key, end_key}, opts), do: Repo.range(t, start_key, end_key, opts)
+      def range(t, start_key, end_key), do: Repo.range(t, start_key, end_key, [])
 
       @impl true
       defdelegate range(t, start_key, end_key, opts), to: Repo
@@ -712,6 +716,7 @@ defmodule Bedrock.Repo do
       def clear_range(t, subspace_or_range, opts \\ [])
       def clear_range(t, %Subspace{} = subspace, opts), do: clear_range(t, Subspace.range(subspace), opts)
       def clear_range(t, {start_key, end_key}, opts), do: Repo.clear_range(t, start_key, end_key, opts)
+      def clear_range(t, start_key, end_key), do: Repo.clear_range(t, start_key, end_key, [])
 
       @impl true
       defdelegate clear_range(t, start_key, end_key, opts), to: Repo
@@ -719,30 +724,57 @@ defmodule Bedrock.Repo do
       # Atomic Operations
 
       @impl true
+      def add(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def add(t, key, value), do: Repo.atomic(t, :add, key, value)
 
       @impl true
+      def min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def min(t, key, value), do: Repo.atomic(t, :min, key, value)
 
       @impl true
+      def max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def max(t, key, value), do: Repo.atomic(t, :max, key, value)
 
       @impl true
+      def bit_and(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def bit_and(t, key, value), do: Repo.atomic(t, :bit_and, key, value)
 
       @impl true
+      def bit_or(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def bit_or(t, key, value), do: Repo.atomic(t, :bit_or, key, value)
 
       @impl true
+      def bit_xor(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def bit_xor(t, key, value), do: Repo.atomic(t, :bit_xor, key, value)
 
       @impl true
+      def byte_min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def byte_min(t, key, value), do: Repo.atomic(t, :byte_min, key, value)
 
       @impl true
+      def byte_max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def byte_max(t, key, value), do: Repo.atomic(t, :byte_max, key, value)
 
       @impl true
+      def append_if_fits(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
+
       def append_if_fits(t, key, value), do: Repo.atomic(t, :append_if_fits, key, value)
 
       @impl true

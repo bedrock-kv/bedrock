@@ -19,21 +19,19 @@ defmodule Bedrock.Directory.VersionManagementTest do
     test "initializes version on first write operation (create)" do
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
-      |> expect_directory_creation([])
+      |> expect_directory_exists(["test"], nil)
+      |> expect_directory_creation(["test"])
 
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      assert {:ok, %Node{}} = Directory.create(layer, [])
+      # Test version initialization via subdirectory creation
+      assert {:ok, %Node{}} = Directory.create(layer, ["test"])
     end
 
     test "does not reinitialize version if already set" do
-      root_data = Bedrock.Key.pack({<<0, 1>>, ""})
-
       MockRepo
-      |> expect_version_check_only()
-      |> expect_version_check_only()
+      |> expect_version_check()
+      |> expect_version_check()
       |> expect_directory_exists(["test"], nil)
-      |> expect_directory_exists([], root_data)
       |> expect_directory_creation(["test"])
 
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
@@ -47,7 +45,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
       MockRepo
       |> expect_directory_exists(["test"], test_data)
-      |> expect_version_check_only()
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
       assert {:ok, %Node{prefix: <<0, 42>>}} = Directory.open(layer, ["test"])
@@ -59,7 +57,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
       MockRepo
       |> expect_directory_exists(["test"], test_data)
-      |> expect_version_check_only(incompatible_version)
+      |> expect_version_check(incompatible_version)
 
       layer = Layer.new(MockRepo)
       assert {:error, :incompatible_directory_version} = Directory.open(layer, ["test"])
@@ -68,7 +66,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
     test "blocks writes to newer minor version" do
       newer_minor_version = <<1::little-32, 1::little-32, 0::little-32>>
 
-      expect_version_check_only(MockRepo, newer_minor_version)
+      expect_version_check(MockRepo, newer_minor_version)
       # No more expectations - check_version will fail early
 
       layer = Layer.new(MockRepo)
@@ -76,13 +74,10 @@ defmodule Bedrock.Directory.VersionManagementTest do
     end
 
     test "allows writes to same or older minor version" do
-      root_data = Bedrock.Key.pack({<<0, 1>>, ""})
-
       MockRepo
-      |> expect_version_check_only()
-      |> expect_version_check_only()
+      |> expect_version_check()
+      |> expect_version_check()
       |> expect_directory_exists(["test"], nil)
-      |> expect_directory_exists([], root_data)
       |> expect_directory_creation(["test"])
 
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
@@ -105,23 +100,34 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
     test "move operation checks version" do
       source_data = Bedrock.Key.pack({<<0, 42>>, ""})
-      root_data = Bedrock.Key.pack({<<0, 1>>, ""})
-
-      range_results = [
-        {build_directory_key(["old"]), source_data}
-      ]
+      version_key = <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
+      current_version = <<1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>
+      old_key = <<254, 6, 1, 111, 108, 100, 0, 0>>
+      new_key = <<254, 6, 1, 110, 101, 119, 0, 0>>
 
       MockRepo
-      |> expect_version_check_only()
-      # ensure_version_initialized also checks
-      |> expect_version_check_only()
-      |> expect_directory_exists(["old"], source_data)
-      |> expect_directory_exists(["new"], nil)
-      |> expect_directory_exists([], root_data)
-      |> expect_directory_exists(["old"], source_data)
-      |> expect_range_scan(["old"], range_results)
-      |> expect_directory_creation(["new"])
-      |> expect_range_clear(["old"])
+      # Version checks (2 calls)
+      |> expect(:get, fn :mock_txn, ^version_key -> current_version end)
+      |> expect(:get, fn :mock_txn, ^version_key -> current_version end)
+      # Source exists check
+      |> expect(:get, fn :mock_txn, ^old_key -> source_data end)
+      # Destination doesn't exist check
+      |> expect(:get, fn :mock_txn, ^new_key -> nil end)
+      # Source fetch for move operation (gets called again)
+      |> expect(:get, fn :mock_txn, ^old_key -> source_data end)
+      # Range scan to get source + all children
+      |> expect(:range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+        [{old_key, source_data}]
+      end)
+      # Put destination directory
+      |> expect(:put, fn :mock_txn, ^new_key, value ->
+        assert {<<0, 42>>, ""} == Bedrock.Key.unpack(value)
+        :ok
+      end)
+      # Clear source range
+      |> expect(:clear_range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+        :ok
+      end)
 
       layer = Layer.new(MockRepo)
       assert :ok = Directory.move(layer, ["old"], ["new"])
@@ -129,7 +135,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
     test "list operation checks version for reads" do
       MockRepo
-      |> expect_version_check_only()
+      |> expect_version_check()
       |> expect(:range, fn :mock_txn, _range -> [] end)
 
       layer = Layer.new(MockRepo)

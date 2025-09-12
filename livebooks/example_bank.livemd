@@ -2,7 +2,8 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
+  {:bedrock, path: "/Users/j5n/Workspace/bedrock"},
+#  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
   {:kino, "~> 0.16.0"}
 ])
 ```
@@ -189,8 +190,7 @@ defmodule Example.Bank do
   """
   def get_account_info(tx, account) do
     with {:ok, balance} <- fetch_balance(tx, account),
-         {:ok, raw_metadata} <- Repo.fetch(tx, metadata_key(account)),
-         metadata <- :erlang.binary_to_term(raw_metadata) do
+         {:ok, metadata} <- fetch_account_metadata(tx, account) do
       {:ok, Map.put(metadata, :balance, balance)}
     else
       {:error, :not_found} -> {:error, :account_not_found}
@@ -279,9 +279,9 @@ defmodule Example.Bank do
   end
 
   defp fetch_balance(tx, account) do
-    case Repo.fetch(tx, balance_key(account)) do
-      {:ok, balance} -> {:ok, :binary.decode_unsigned(balance)}
-      {:error, :not_found} -> {:error, :account_not_found}
+    case Repo.get(tx, balance_key(account)) do
+      nil -> {:error, :account_not_found}
+      balance -> {:ok, :binary.decode_unsigned(balance)}
     end
   end
 
@@ -299,6 +299,13 @@ defmodule Example.Bank do
 
   defp set_account_metadata(tx, account, %{} = metadata),
     do: Repo.put(tx, metadata_key(account), :erlang.term_to_binary(metadata))
+
+  defp fetch_account_metadata(tx, account) do
+    case Repo.get(tx, metadata_key(account)) do
+      nil -> {:error, :no_metadata}
+      metadata -> {:ok, :erlang.binary_to_term(metadata)}
+    end
+  end
 
   defp record_transaction(tx, account, amount, type, timestamp, extra \\ %{}) do
     tx_data = Map.merge(%{
@@ -477,7 +484,7 @@ Repo.transaction(fn tx ->
   IO.puts("Transaction history entries: #{history |> Enum.count()}")
 
   # Rollback by returning error
-  {:rollback, "Intentionally rolled back to demonstrate atomicity"}
+  Repo.rollback("Intentionally rolled back to demonstrate atomicity")
 end)
 ```
 

@@ -16,10 +16,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   alias Bedrock.Key
   alias Bedrock.KeySelector
 
-  @type next_read_version_fn() :: (State.t() -> {:ok, Bedrock.version(), Bedrock.interval_in_ms()} | {:error, atom()})
-  @type operation_fn() :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() -> {:ok, any()} | {:error, any()})
+  @type storage_get_range_fn() :: (pid(), binary(), binary(), Bedrock.version(), keyword() ->
+                                     {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()})
+
+  @type storage_get_range_selector_fn() :: (pid(), KeySelector.t(), KeySelector.t(), Bedrock.version(), keyword() ->
+                                              {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()})
+
   @type range_fn :: ([Bedrock.key_value()] -> Bedrock.key_range())
-  @type time_fn() :: (-> integer())
 
   @doc """
   Execute a range batch query against storage servers.
@@ -27,8 +30,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
   This function handles version initialization, storage team coordination,
   and result processing for range queries with regular keys.
   """
-  @spec get_range(State.t(), Bedrock.key_range(), batch_size :: pos_integer(), opts :: keyword()) ::
-          {State.t(), {:ok, {[{binary(), Bedrock.value()}], more :: boolean()}} | {:error, atom()}}
+  @spec get_range(
+          State.t(),
+          Bedrock.key_range(),
+          batch_size :: pos_integer(),
+          opts :: [storage_get_range_fn: storage_get_range_fn(), snapshot: boolean()]
+        ) ::
+          {State.t(),
+           {:ok, {[{binary(), Bedrock.value()}], more :: boolean()}}
+           | {:error, :timeout | :unavailable | :version_too_new}
+           | {:failure,
+              %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
   def get_range(state, {min_key, max_key_ex} = range, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
@@ -51,9 +63,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
           KeySelector.t(),
           KeySelector.t(),
           batch_size :: pos_integer(),
-          opts :: keyword()
+          opts :: [storage_get_range_fn: storage_get_range_selector_fn(), snapshot: boolean()]
         ) ::
-          {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
+          {State.t(),
+           {:ok, {[Bedrock.key_value()], more :: boolean()}}
+           | {:error, :timeout | :unavailable | :version_too_new}
+           | {:failure,
+              %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
   def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
@@ -68,8 +84,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
 
   # Private helper functions
 
-  @spec execute_range_query(State.t(), racing_key :: binary(), operation_fn(), range_fn()) ::
-          {State.t(), {:ok, {[Bedrock.key_value()], more :: boolean()}} | {:error, atom()}}
   defp execute_range_query(state, racing_key, operation_fn, range_fn) do
     state
     |> StorageRacing.race_storage_servers(racing_key, operation_fn)
@@ -78,7 +92,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
         {state, {:ok, {[], false}}}
 
       {state, {:ok, {{results, has_more}, shard_range}}} ->
-        {updated_tx, batch_results} =
+        {updated_tx, merged_batch_results} =
           Tx.merge_storage_range_with_writes(
             state.tx,
             results,
@@ -87,10 +101,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReads do
             shard_range
           )
 
-        {%{state | tx: updated_tx}, {:ok, {batch_results, has_more}}}
+        {%{state | tx: updated_tx}, {:ok, {merged_batch_results, has_more}}}
 
-      {state, {:error, reason}} ->
-        {state, {:error, reason}}
+      {state, {:failure, failures_by_reason}} ->
+        {state, {:failure, failures_by_reason}}
     end
   end
 

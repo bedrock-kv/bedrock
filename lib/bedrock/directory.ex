@@ -8,6 +8,7 @@ defprotocol Bedrock.Directory do
 
   Based on the FoundationDB directory layer specification.
   """
+  alias Bedrock.KeyRange
 
   @doc """
   Creates a directory at the given path.
@@ -121,4 +122,7 @@ defprotocol Bedrock.Directory do
   """
   @spec get_subspace(t()) :: Bedrock.Subspace.t()
   def get_subspace(dir)
+
+  @spec range(t()) :: KeyRange.t()
+  def range(dir)
 end

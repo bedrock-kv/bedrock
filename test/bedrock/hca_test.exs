@@ -35,7 +35,7 @@ defmodule Bedrock.HCATest do
       assert selector.key == hca.counters_subspace <> <<0xFF>>
       nil
     end)
-    |> expect(:add, fn :mock_txn, key, 1 ->
+    |> expect(:atomic, fn :mock_txn, :add, key, <<1::64-little>> ->
       assert_counter_key(key, hca, window_start)
       :mock_txn
     end)

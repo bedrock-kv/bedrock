@@ -573,10 +573,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "KeySelector operations" do
     # Helper for common KeySelector test pattern
     defp assert_key_selector_call_succeeds(pid, key_selector) do
-      result = GenServer.call(pid, {:get_key_selector, key_selector})
+      result = GenServer.call(pid, {:get_key_selector, key_selector, []})
       assert is_tuple(result)
       assert tuple_size(result) >= 2
-      assert elem(result, 0) in [:ok, :error]
+      assert elem(result, 0) in [:ok, :error, :failure]
       assert_valid_state(pid)
       result
     end
@@ -598,7 +598,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       _initial_state = :sys.get_state(pid)
 
       key_selector = KeySelector.first_greater_or_equal("version_test_key")
-      _result = GenServer.call(pid, {:get_key_selector, key_selector})
+      _result = GenServer.call(pid, {:get_key_selector, key_selector, []})
 
       final_state = :sys.get_state(pid)
 
@@ -625,7 +625,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       pid = start_transaction_builder(read_version: 42)
 
       key_selector = KeySelector.first_greater_or_equal("conflict_test_key")
-      result = GenServer.call(pid, {:get_key_selector, key_selector})
+      result = GenServer.call(pid, {:get_key_selector, key_selector, []})
 
       # For successful resolution, check transaction state was updated
       case result do
@@ -642,6 +642,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
           # For errors, transaction state should not be updated with reads
           state = :sys.get_state(pid)
           assert map_size(state.tx.reads) == 0
+
+        {:failure, _failures} ->
+          # For failures, transaction state should not be updated with reads
+          state = :sys.get_state(pid)
+          assert map_size(state.tx.reads) == 0
       end
     end
   end
@@ -652,7 +657,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       result = GenServer.call(pid, {:get_range_selectors, start_selector, end_selector, opts})
       assert is_tuple(result)
       assert tuple_size(result) >= 2
-      assert elem(result, 0) in [:ok, :error]
+      assert elem(result, 0) in [:ok, :error, :failure]
       assert_valid_state(pid)
       result
     end
@@ -733,6 +738,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
         {:error, _reason} ->
           # For errors, transaction state should not be updated
+          state = :sys.get_state(pid)
+          assert map_size(state.tx.reads) == 0
+          assert Enum.empty?(state.tx.range_reads)
+
+        {:failure, _reasons} ->
+          # For failures, transaction state should not be updated
           state = :sys.get_state(pid)
           assert map_size(state.tx.reads) == 0
           assert Enum.empty?(state.tx.range_reads)

@@ -522,11 +522,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:set, Bedrock.key(), Bedrock.value()}
           | {:clear, Bedrock.key()}
           | {:clear_range, Bedrock.key(), Bedrock.key()}
+          | {:atomic, atom(), Bedrock.key(), Bedrock.value()}
         ) ::
           Bedrock.key() | {Bedrock.key(), Bedrock.key()}
   def mutation_to_key_or_range({:set, key, _value}), do: key
   def mutation_to_key_or_range({:clear, key}), do: key
   def mutation_to_key_or_range({:clear_range, start_key, end_key}), do: {start_key, end_key}
+  def mutation_to_key_or_range({:atomic, _op, key, _value}), do: key
 
   @spec key_or_range_to_tags(Bedrock.key() | Bedrock.key_range(), [StorageTeamDescriptor.t()]) ::
           {:ok, [Bedrock.range_tag()]}

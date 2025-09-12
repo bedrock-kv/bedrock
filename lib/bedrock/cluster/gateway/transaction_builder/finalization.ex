@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
+defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Finalization do
   @moduledoc false
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
@@ -36,4 +36,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Committing do
           {:ok, CommitProxy.ref()} | {:error, :unavailable}
   defp select_commit_proxy(%{proxies: []}), do: {:error, :unavailable}
   defp select_commit_proxy(%{proxies: proxies}), do: {:ok, Enum.random(proxies)}
+
+  @spec rollback(State.t()) :: :stop | State.t()
+  def rollback(%{stack: []}), do: :stop
+  def rollback(%{stack: [tx | stack]} = t), do: %{t | tx: tx, stack: stack}
 end

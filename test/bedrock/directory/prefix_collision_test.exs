@@ -6,6 +6,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
 
   alias Bedrock.Directory
   alias Bedrock.Directory.Layer
+  alias Bedrock.Directory.Node
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -28,14 +29,8 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
 
   # Helper when no collision in range but need ancestor checking
   defp expect_collision_check_with_ancestors(repo, prefix) do
-    expected_range = Bedrock.KeyRange.from_prefix(prefix)
-
     repo
-    |> expect(:range, fn :mock_txn, ^expected_range, opts ->
-      assert opts[:limit] == 1
-      # No collision in range
-      []
-    end)
+    |> expect_collision_check(prefix)
     |> expect(:get, fn :mock_txn, key ->
       # This handles both the full prefix check and ancestor checks
       # The implementation checks the full prefix first, then ancestors
@@ -55,13 +50,13 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
 
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
+      |> expect_directory_exists(["users"], nil)
       |> expect_collision_in_range(prefix, collision_data)
 
       layer = Layer.new(MockRepo)
 
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: prefix)
+               Directory.create(layer, ["users"], prefix: prefix)
     end
 
     test "accepts manual prefix that doesn't collide" do
@@ -70,14 +65,14 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
 
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
+      |> expect_directory_exists(["users"], nil)
       |> expect_collision_check_with_ancestors(prefix)
-      |> expect_directory_creation([], packed_value)
+      |> expect_directory_creation(["users"], packed_value)
 
       layer = Layer.new(MockRepo)
 
-      assert {:ok, %{prefix: ^prefix}} =
-               Directory.create(layer, [], prefix: prefix)
+      assert {:ok, %Node{prefix: ^prefix, path: ["users"]}} =
+               Directory.create(layer, ["users"], prefix: prefix)
     end
 
     test "rejects reserved system prefixes" do
@@ -86,12 +81,12 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       for prefix <- reserved_prefixes do
         MockRepo
         |> expect_version_initialization()
-        |> expect_directory_exists([], nil)
+        |> expect_directory_exists(["users"], nil)
 
         layer = Layer.new(MockRepo)
 
         assert {:error, :prefix_collision} =
-                 Directory.create(layer, [], prefix: prefix)
+                 Directory.create(layer, ["users"], prefix: prefix)
       end
     end
 
@@ -101,24 +96,25 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
 
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
+      |> expect_directory_exists(["users"], nil)
       |> expect_collision_in_range(prefix, collision_data)
 
       layer = Layer.new(MockRepo)
 
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: prefix)
+               Directory.create(layer, ["users"], prefix: prefix)
     end
 
     test "detects when existing key would be ancestor of new prefix" do
       prefix = <<1, 2, 3>>
 
-      # We need a custom expectation here since an ancestor will return data
+      # Custom expectation for ancestor collision check
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
+      |> expect_directory_exists(["users"], nil)
       |> expect(:range, fn :mock_txn, range, opts ->
-        assert Bedrock.KeyRange.from_prefix(prefix) == range
+        expected_range = Bedrock.KeyRange.from_prefix(prefix)
+        assert expected_range == range
         assert opts[:limit] == 1
         []
       end)
@@ -134,7 +130,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       layer = Layer.new(MockRepo)
 
       assert {:error, :prefix_collision} =
-               Directory.create(layer, [], prefix: prefix)
+               Directory.create(layer, ["users"], prefix: prefix)
     end
   end
 end

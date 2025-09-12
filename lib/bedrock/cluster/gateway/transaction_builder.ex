@@ -59,8 +59,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   use GenServer
 
-  import __MODULE__.Committing, only: [commit: 1]
-  import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 2]
+  import __MODULE__.Finalization, only: [commit: 1, rollback: 1]
+  import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 3]
   import __MODULE__.RangeReads, only: [get_range: 4, get_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
@@ -131,36 +131,60 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   def handle_call(:commit, _from, t) do
     t
     |> commit()
-    |> then(fn
-      {:ok, t} -> reply(t, {:ok, t.commit_version}, continue: :stop)
-      {:error, _reason} = error -> reply(t, error)
-    end)
+    |> case do
+      {:ok, new_t} when t.stack == [] ->
+        # Outermost transaction committed - stop the process
+        reply(new_t, {:ok, new_t.commit_version}, continue: :stop)
+
+      {:ok, new_t} ->
+        # Nested transaction committed (stack popped) - continue
+        reply(new_t, :ok)
+
+      {:error, _reason} = error ->
+        reply(t, error)
+    end
   end
 
-  def handle_call({:get, key}, from, t) when is_binary(key) do
-    handle_call({:get, key, []}, from, t)
-  end
+  def handle_call({:get, key}, from, t) when is_binary(key), do: handle_call({:get, key, []}, from, t)
 
   def handle_call({:get, key, opts}, _from, t) when is_binary(key) and is_list(opts) do
     t
     |> get_key(key, opts)
     |> then(fn
-      {t, {:error, _} = error} -> reply(t, error, continue: :update_version_lease_if_needed)
-      {t, {:ok, {^key, value}}} -> reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
+      {t, {:error, _} = error} ->
+        reply(t, error, continue: :update_version_lease_if_needed)
+
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, {:ok, {^key, value}}} ->
+        reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
     end)
   end
 
-  def handle_call({:get_key_selector, %KeySelector{} = key_selector}, _from, t) do
+  def handle_call({:get_key_selector, %KeySelector{} = key_selector, opts}, _from, t) do
     t
-    |> get_key_selector(key_selector)
-    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
+    |> get_key_selector(key_selector, opts)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
   def handle_call({:get_range, start_key, end_key, batch_size, opts}, _from, t)
       when is_binary(start_key) and is_binary(end_key) do
     t
     |> get_range({start_key, end_key}, batch_size, opts)
-    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
   def handle_call(
@@ -172,7 +196,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
     t
     |> get_range_selectors(start_selector, end_selector, batch_size, opts)
-    |> then(fn {t, result} -> reply(t, result, continue: :update_version_lease_if_needed) end)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
   @impl true
@@ -186,6 +216,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   def handle_cast({:atomic, op, key, value}, t) when is_atom(op) and is_binary(key) and is_binary(value),
     do: noreply(%{t | tx: Tx.atomic_operation(t.tx, key, op, value)})
+
+  def handle_cast({:clear, key, opts}, t) when is_binary(key), do: noreply(%{t | tx: Tx.clear(t.tx, key, opts)})
 
   def handle_cast({:clear_range, start_key, end_key, opts}, t) when is_binary(start_key) and is_binary(end_key),
     do: noreply(%{t | tx: Tx.clear_range(t.tx, start_key, end_key, opts)})
@@ -208,7 +240,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
 
-  @spec rollback(State.t()) :: :stop | State.t()
-  def rollback(%{stack: []}), do: :stop
-  def rollback(%{stack: [tx | stack]} = t), do: %{t | tx: tx, stack: stack}
+  defp choose_a_reason(%{timeout: _}), do: :timeout
+  defp choose_a_reason(%{unavailable: _}), do: :unavailable
+  defp choose_a_reason(%{version_too_new: _}), do: :version_too_new
+  defp choose_a_reason(failures_by_reason), do: failures_by_reason |> Map.keys() |> hd()
 end

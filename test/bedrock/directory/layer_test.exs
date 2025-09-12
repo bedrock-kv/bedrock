@@ -7,6 +7,7 @@ defmodule Bedrock.Directory.LayerTest do
   alias Bedrock.Directory
   alias Bedrock.Directory.Layer
   alias Bedrock.Directory.Node
+  alias Bedrock.Key
 
   setup do
     # Automatically stub transaction to execute callbacks immediately
@@ -17,21 +18,17 @@ defmodule Bedrock.Directory.LayerTest do
   setup :verify_on_exit!
 
   describe "create/3" do
-    test "creates a root directory with HCA prefix allocation" do
-      MockRepo
-      |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
-      |> expect_directory_creation([], {<<0, 42>>, ""})
-
+    test "creates a root directory with empty prefix" do
+      # No mock expectations needed - Layer.new() doesn't call the database
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      assert {:ok, %Node{prefix: <<0, 42>>, path: [], layer: nil}} = Directory.create(layer, [])
+      # Root directory is now returned directly from Layer.new() with empty prefix
+      assert %Node{prefix: "", path: [], layer: nil} = layer
     end
 
     test "creates a subdirectory when parent exists" do
       MockRepo
       |> expect_version_initialization()
       |> expect_directory_exists(["users"], nil)
-      |> expect_directory_exists([], Bedrock.Key.pack({<<0, 1>>, ""}))
       |> expect_directory_creation(["users"], {<<0, 42>>, ""})
 
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
@@ -41,7 +38,7 @@ defmodule Bedrock.Directory.LayerTest do
     test "fails when directory already exists" do
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists(["users"], Bedrock.Key.pack({<<0, 1>>, ""}))
+      |> expect_directory_exists(["users"], Key.pack({<<0, 1>>, ""}))
 
       layer = Layer.new(MockRepo)
       assert {:error, :directory_already_exists} = Directory.create(layer, ["users"])
@@ -63,8 +60,8 @@ defmodule Bedrock.Directory.LayerTest do
   describe "open/3" do
     test "opens existing directory" do
       MockRepo
-      |> expect_directory_exists(["users"], Bedrock.Key.pack({<<0, 42>>, "document"}))
-      |> expect_version_check_only()
+      |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document"}))
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
 
@@ -95,7 +92,7 @@ defmodule Bedrock.Directory.LayerTest do
 
   describe "exists?/3" do
     test "returns true when directory exists" do
-      expect_directory_exists(MockRepo, ["users"], Bedrock.Key.pack({<<0, 1>>, ""}))
+      expect_directory_exists(MockRepo, ["users"], Key.pack({<<0, 1>>, ""}))
       layer = Layer.new(MockRepo)
       assert Directory.exists?(layer, ["users"]) == true
     end
@@ -109,26 +106,10 @@ defmodule Bedrock.Directory.LayerTest do
 
   describe "metadata and versioning support" do
     test "creates directory with version and metadata" do
-      expected_key = <<254>>
-
-      MockRepo
-      |> expect_version_initialization()
-      |> expect_directory_exists([], nil)
-      |> expect(:put, fn :mock_txn, ^expected_key, value ->
-        assert {<<0, 42>>, "document", "1.0", {"created_by", "test"}} = Bedrock.Key.unpack(value)
-        :ok
-      end)
-
       layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
 
-      # Use pattern matching for struct assertion
-      assert {:ok,
-              %Node{
-                prefix: <<0, 42>>,
-                layer: "document",
-                version: "1.0",
-                metadata: {"created_by", "test"}
-              }} =
+      # Root creation via Directory.create() is no longer supported
+      assert {:error, :cannot_create_root} =
                Directory.create(layer, [],
                  layer: "document",
                  version: "1.0",
@@ -138,8 +119,8 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "opens directory with existing metadata fields" do
       MockRepo
-      |> expect_directory_exists(["users"], Bedrock.Key.pack({<<0, 42>>, "document", "2.0", {"updated", 1}}))
-      |> expect_version_check_only()
+      |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document", "2.0", {"updated", 1}}))
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
 
@@ -155,8 +136,8 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "handles legacy 2-tuple format for backward compatibility" do
       MockRepo
-      |> expect_directory_exists(["legacy"], Bedrock.Key.pack({<<0, 42>>, "legacy"}))
-      |> expect_version_check_only()
+      |> expect_directory_exists(["legacy"], Key.pack({<<0, 42>>, "legacy"}))
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
 
@@ -172,8 +153,8 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "handles 3-tuple format with version only" do
       MockRepo
-      |> expect_directory_exists(["versioned"], Bedrock.Key.pack({<<0, 42>>, "versioned", "1.5"}))
-      |> expect_version_check_only()
+      |> expect_directory_exists(["versioned"], Key.pack({<<0, 42>>, "versioned", "1.5"}))
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
 
@@ -191,9 +172,9 @@ defmodule Bedrock.Directory.LayerTest do
       MockRepo
       |> expect_directory_exists(
         ["isolated_space"],
-        Bedrock.Key.pack({<<0, 42>>, "partition", "1.0", {"type", "isolated"}})
+        Key.pack({<<0, 42>>, "partition", "1.0", {"type", "isolated"}})
       )
-      |> expect_version_check_only()
+      |> expect_version_check()
 
       layer = Layer.new(MockRepo)
 

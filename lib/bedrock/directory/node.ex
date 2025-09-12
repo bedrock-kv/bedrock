@@ -21,6 +21,8 @@ end
 defimpl Bedrock.Directory, for: Bedrock.Directory.Node do
   alias Bedrock.Directory
   alias Bedrock.Directory.Node
+  alias Bedrock.Key
+  alias Bedrock.Subspace
 
   def create(%Node{directory_layer: layer}, path, opts), do: Directory.create(layer, path, opts)
   def open(%Node{directory_layer: layer}, path), do: Directory.open(layer, path)
@@ -32,5 +34,6 @@ defimpl Bedrock.Directory, for: Bedrock.Directory.Node do
   def exists?(%Node{directory_layer: layer}, path), do: Directory.exists?(layer, path)
   def get_path(%Node{path: path}), do: path
   def get_layer(%Node{layer: layer}), do: layer
-  def get_subspace(%Node{prefix: prefix}), do: Bedrock.Subspace.new(prefix)
+  def get_subspace(%Node{prefix: prefix}), do: Subspace.new(prefix)
+  def range(%Node{prefix: prefix}), do: Key.to_range(prefix)
 end

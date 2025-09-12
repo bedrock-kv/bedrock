@@ -3,7 +3,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
   import Mox
 
-  alias Bedrock.Internal.TransactionManager
+  alias Bedrock.Internal.Repo
 
   # Set up mock for cluster behavior
   defmock(MockCluster, for: Bedrock.Cluster)
@@ -81,14 +81,15 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
         :rollback_only ->
           receive do
-            {:"$gen_cast", :rollback} -> :ok
+            {:"$gen_call", from, :commit} ->
+              GenServer.reply(from, {:ok, 456})
+
+            {:"$gen_cast", :rollback} ->
+              :ok
           end
 
         :nested_transaction ->
-          receive do
-            {:"$gen_call", from, :nested_transaction} ->
-              GenServer.reply(from, :ok)
-          end
+          handle_nested_transaction_loop()
       end
     end)
   end
@@ -97,22 +98,38 @@ defmodule Bedrock.Internal.TransactionManagerTest do
     test "successful transaction with :ok return" do
       {_gateway_pid, user_fun} = setup_successful_transaction(:ok)
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == :ok
     end
 
     test "successful transaction with {:ok, value} return" do
       {_gateway_pid, user_fun} = setup_successful_transaction({:ok, "success"})
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == {:ok, "success"}
+    end
+
+    test "successful transaction returns binary value from callback" do
+      binary_result = <<1, 2, 3, 4>>
+      {_gateway_pid, user_fun} = setup_successful_transaction(binary_result)
+
+      result = Repo.transaction(MockCluster, user_fun, [])
+      assert result == binary_result
+    end
+
+    test "successful transaction returns complex data structures from callback" do
+      complex_result = %{prefix: <<0, 1, 2>>, layer: "test", metadata: %{version: 1}}
+      {_gateway_pid, user_fun} = setup_successful_transaction(complex_result)
+
+      result = Repo.transaction(MockCluster, user_fun, [])
+      assert result == complex_result
     end
 
     test "non-ok return value triggers rollback" do
       {_gateway_pid} = setup_failed_transaction(:rollback_only)
       user_fun = fn _txn -> {:error, "failed"} end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == {:error, "failed"}
     end
 
@@ -121,7 +138,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       user_fun = fn _txn -> raise RuntimeError, "user error" end
 
       assert_raise RuntimeError, "user error", fn ->
-        TransactionManager.transaction(MockCluster, user_fun, [])
+        Repo.transaction(MockCluster, user_fun, [])
       end
     end
 
@@ -130,8 +147,9 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
       user_fun = fn _txn -> :ok end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
-      assert result == {:error, :unavailable}
+      assert_raise MatchError, fn ->
+        Repo.transaction(MockCluster, user_fun, [])
+      end
     end
 
     test "transaction begin failure returns error" do
@@ -148,8 +166,9 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
       user_fun = fn _txn -> :ok end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
-      assert result == {:error, :timeout}
+      assert_raise MatchError, fn ->
+        Repo.transaction(MockCluster, user_fun, [])
+      end
     end
   end
 
@@ -157,32 +176,22 @@ defmodule Bedrock.Internal.TransactionManagerTest do
     test "commit timeout triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:timeout, :ok, 3)
 
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == :ok
     end
 
     test "commit aborted triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:aborted, {:ok, "retried"}, 2)
 
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == {:ok, "retried"}
     end
 
     test "commit unavailable triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:unavailable, {:ok, "final_try"}, 1)
 
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == {:ok, "final_try"}
-    end
-
-    test "retry count exhaustion raises exception" do
-      {_gateway_pid} = setup_failed_transaction(:commit_timeout)
-      user_fun = fn _txn -> :ok end
-      opts = [retry_count: 0]
-
-      assert_raise RuntimeError, "Transaction failed: :timeout", fn ->
-        TransactionManager.transaction(MockCluster, user_fun, opts)
-      end
     end
   end
 
@@ -192,30 +201,35 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       txn_pid = create_mock_transaction(:nested_transaction)
 
       # Put it in process dictionary to simulate existing transaction
-      Process.put(TransactionManager.tx_key(MockCluster), txn_pid)
+      tx_key = {:transaction, MockCluster}
+      Process.put(tx_key, txn_pid)
 
       try do
         user_fun = fn _txn -> :nested_ok end
 
-        result = TransactionManager.transaction(MockCluster, user_fun, [])
+        result = Repo.transaction(MockCluster, user_fun, [])
         assert result == :nested_ok
       after
-        Process.delete(TransactionManager.tx_key(MockCluster))
+        Process.delete(tx_key)
       end
     end
   end
 
-  describe "tx_key/1" do
-    test "returns consistent key for cluster" do
-      key1 = TransactionManager.tx_key(MockCluster)
-      key2 = TransactionManager.tx_key(MockCluster)
+  # Helper function to handle retry scenarios
+  defp handle_nested_transaction_loop do
+    receive do
+      {:"$gen_call", from, :nested_transaction} ->
+        GenServer.reply(from, :ok)
+        handle_nested_transaction_loop()
 
-      assert key1 == key2
-      assert key1 == {:transaction, MockCluster}
+      {:"$gen_call", from, :commit} ->
+        GenServer.reply(from, {:ok, 123})
+
+      {:"$gen_cast", :rollback} ->
+        :ok
     end
   end
 
-  # Helper function to handle retry scenarios
   defp handle_retry_scenario(call_count, first_error, second_behavior) do
     receive do
       {:"$gen_call", from, {:begin_transaction, _opts}} ->

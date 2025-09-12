@@ -88,7 +88,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
 
       {_new_state, result} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
 
-      assert {:error, :unavailable} = result
+      assert {:failure, %{unavailable: _pids}} = result
     end
 
     test "respects limit parameter" do

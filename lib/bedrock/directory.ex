@@ -9,7 +9,7 @@ defmodule Bedrock.Directory do
   Based on the FoundationDB directory layer specification.
   """
 
-  alias Bedrock.HCA
+  alias Bedrock.HighContentionAllocator, as: HCA
   alias Bedrock.Key
   alias Bedrock.KeyRange
   alias Bedrock.Subspace
@@ -108,13 +108,13 @@ defmodule Bedrock.Directory do
 
   ## Options
 
-  - `:next_prefix_fn` - Function for prefix allocation (default: uses HCA)
+  - `:next_prefix_fn` - Function for prefix allocation (default: uses HighContentionAllocator)
   - `:node_subspace` - Custom node storage location
   - `:content_subspace` - Custom content storage location
   """
   @spec root(module(), keyword()) :: Node.t()
   def root(repo, opts \\ []) when is_atom(repo) do
-    # Default HCA-based prefix allocation
+    # Default HighContentionAllocator-based prefix allocation
     hca = HCA.new(repo, @content_subspace_prefix)
 
     next_prefix_fn =
@@ -615,7 +615,7 @@ defmodule Bedrock.Directory do
   defp allocate_or_validate_prefix(layer, txn, opts) do
     case Keyword.get(opts, :prefix) do
       nil ->
-        # Automatic allocation via HCA - uses nested transaction internally
+        # Automatic allocation via HighContentionAllocator - uses nested transaction internally
         {:ok, layer.next_prefix_fn.()}
 
       prefix ->

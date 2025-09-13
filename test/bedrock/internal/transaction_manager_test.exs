@@ -10,6 +10,17 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
   setup :verify_on_exit!
 
+  # Helper function for gateway that counts calls and always fails with retryable error
+  defp gateway_loop_with_counter(counter_agent) do
+    receive do
+      {:"$gen_call", from, {:begin_transaction, _opts}} ->
+        _call_count = Agent.get_and_update(counter_agent, &{&1, &1 + 1})
+        # Always return retryable error to test retry limit
+        GenServer.reply(from, {:error, :timeout})
+        gateway_loop_with_counter(counter_agent)
+    end
+  end
+
   # Helper to create a mock gateway that handles begin_transaction and returns
   # a transaction process that can handle various operations
   defp create_mock_gateway(txn_behavior) do
@@ -153,22 +164,52 @@ defmodule Bedrock.Internal.TransactionManagerTest do
     end
 
     test "transaction begin failure returns error" do
-      # Create a gateway that fails begin_transaction
+      # Create a simple counter to track calls
+      {:ok, counter_agent} = Agent.start_link(fn -> 0 end)
+
+      # Create a gateway that always fails with retryable error
       gateway_pid =
         spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:begin_transaction, []}} ->
-              GenServer.reply(from, {:error, :timeout})
-          end
+          gateway_loop_with_counter(counter_agent)
         end)
 
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+      # Use stub to allow unlimited calls
+      stub(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
 
       user_fun = fn _txn -> :ok end
 
-      assert_raise MatchError, fn ->
-        Repo.transaction(MockCluster, user_fun, [])
+      # Should retry once on :timeout, then hit retry limit and fail
+      assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
+        Repo.transaction(MockCluster, user_fun, retry_limit: 1)
       end
+
+      # Verify it was called exactly twice (first call + one retry before hitting limit)
+      call_count = Agent.get(counter_agent, & &1)
+      assert call_count == 2
+    end
+
+    test "transaction retry limit of 0 means no retries" do
+      # Create a simple counter to track calls
+      {:ok, counter_agent} = Agent.start_link(fn -> 0 end)
+
+      # Create a gateway that always fails
+      gateway_pid =
+        spawn(fn ->
+          gateway_loop_with_counter(counter_agent)
+        end)
+
+      stub(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+
+      user_fun = fn _txn -> :ok end
+
+      # Should fail immediately without any retries
+      assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
+        Repo.transaction(MockCluster, user_fun, retry_limit: 0)
+      end
+
+      # Verify it was called exactly once (no retries allowed)
+      call_count = Agent.get(counter_agent, & &1)
+      assert call_count == 1
     end
   end
 

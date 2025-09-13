@@ -83,7 +83,7 @@ defmodule Bedrock.Key do
     end
   end
 
-  # Tuple Packing/Unpacking Functions
+  # Packing/Unpacking Functions
 
   @doc """
   Packs a value (nil, tuple, list, number, or binary) into a binary key.

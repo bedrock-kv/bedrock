@@ -19,7 +19,7 @@ defmodule Bedrock.Repo do
 
   ## Options
 
-  - `:retry_count` - Maximum number of retries on transaction conflicts (default: varies by implementation)
+  - `:retry_limit` - Maximum number of retries on transaction conflicts (default: nil for unlimited)
   - `:timeout_in_ms` - Transaction timeout in milliseconds
 
   ## Examples
@@ -31,10 +31,10 @@ defmodule Bedrock.Repo do
         |> get("other_key")
       end)
 
-      # Transaction with options
+      # Transaction with retry limit
       transaction(fn tx ->
         put(tx, "counter", "1")
-      end, retry_count: 5, timeout_in_ms: 10_000)
+      end, retry_limit: 5)
 
   """
   @callback transaction((t() -> result | {:rollback, reason})) :: result | {:rollback, reason}
@@ -42,7 +42,7 @@ defmodule Bedrock.Repo do
   @callback transaction(
               (t() -> result | {:rollback, reason}),
               opts :: [
-                retry_count: non_neg_integer(),
+                retry_limit: non_neg_integer() | nil,
                 timeout_in_ms: Bedrock.timeout_in_ms()
               ]
             ) :: result | {:rollback, reason}

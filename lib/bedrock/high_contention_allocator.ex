@@ -1,9 +1,9 @@
-defmodule Bedrock.HCA do
+defmodule Bedrock.HighContentionAllocator do
   @moduledoc """
   High-Concurrency Allocator (HCA) implementation for Bedrock.
 
-  This module implements the HCA algorithm used by FoundationDB's Directory Layer
-  for efficient allocation of unique identifiers in high-concurrency environments.
+  This module implements the HighContentionAllocator algorithm used by FoundationDB's Directory Layer
+  for efficient allocation of unique identifiers in high-contention environments.
 
   Based on the FoundationDB Python bindings and the erlang/erlfdb implementation.
   Uses a sophisticated windowing strategy with:
@@ -29,7 +29,7 @@ defmodule Bedrock.HCA do
         }
 
   @doc """
-  Create a new HCA instance.
+  Create a new HighContentionAllocator instance.
 
   ## Parameters
 
@@ -43,7 +43,7 @@ defmodule Bedrock.HCA do
 
   ## Examples
 
-      iex> hca = Bedrock.HCA.new(MyApp.Repo, "my_allocator")
+      iex> hca = Bedrock.HighContentionAllocator.new(MyApp.Repo, "my_allocator")
       iex> hca.counters_subspace
       "my_allocator\\x00"
 
@@ -52,7 +52,7 @@ defmodule Bedrock.HCA do
 
       # For testing with controlled randomization
       iex> deterministic_random = fn _size -> 1 end
-      iex> hca = Bedrock.HCA.new(MyApp.Repo, "test", random_fn: deterministic_random)
+      iex> hca = Bedrock.HighContentionAllocator.new(MyApp.Repo, "test", random_fn: deterministic_random)
   """
   @spec new(module(), binary(), keyword()) :: t()
   def new(repo, subspace, opts \\ []) when is_atom(repo) and is_binary(subspace) do
@@ -67,7 +67,7 @@ defmodule Bedrock.HCA do
   end
 
   @doc """
-  Allocate multiple unique IDs from the HCA.
+  Allocate multiple unique IDs from the HighContentionAllocator.
 
   Returns a list of unique compact binary encoded IDs. This is implemented by calling
   allocate/2 multiple times.
@@ -75,7 +75,7 @@ defmodule Bedrock.HCA do
   ## Examples
 
       iex> MyApp.Repo.transaction(fn txn ->
-      ...>   Bedrock.HCA.allocate_many(hca, txn, 5)
+      ...>   Bedrock.HighContentionAllocator.allocate_many(hca, txn, 5)
       ...> end)
       {:ok, [<<21, 0>>, <<21, 1>>, <<21, 2>>, <<21, 3>>, <<21, 4>>]}
   """
@@ -95,7 +95,7 @@ defmodule Bedrock.HCA do
   end
 
   @doc """
-  Allocate a single unique ID from the HCA.
+  Allocate a single unique ID from the HighContentionAllocator.
 
   Returns a unique compact binary encoding of the allocated ID. This operation
   is highly concurrent and designed to minimize write conflicts even under heavy load.
@@ -103,9 +103,9 @@ defmodule Bedrock.HCA do
   ## Examples
 
       iex> MyApp.Repo.transaction(fn txn ->
-      ...>   Bedrock.HCA.allocate(hca, txn)
+      ...>   Bedrock.HighContentionAllocator.allocate(hca, txn)
       ...> end)
-      {:ok, <<21, 42>>}  # Tuple-encoded binary
+      {:ok, <<21, 42>>}  # Key-encoded binary
   """
 
   @spec allocate(t()) :: {:ok, binary()} | {:error, term()}
@@ -212,10 +212,8 @@ defmodule Bedrock.HCA do
     case repo.get(txn, candidate_key, snapshot: true) do
       nil ->
         repo.put(txn, candidate_key, <<>>, no_write_conflict: true)
-
         add_write_conflict_key(hca, txn, candidate_key)
-
-        Key.pack({candidate})
+        Key.pack(candidate)
 
       _existing_value ->
         # Candidate is taken, retry
@@ -236,13 +234,9 @@ defmodule Bedrock.HCA do
   end
 
   # Dynamic window sizing based on allocation pressure
-  defp dynamic_window_size(start) do
-    cond do
-      start < 255 -> 64
-      start < 65_535 -> 1024
-      true -> 8192
-    end
-  end
+  defp dynamic_window_size(start) when start < 255, do: 64
+  defp dynamic_window_size(start) when start < 65_535, do: 1024
+  defp dynamic_window_size(_start), do: 8192
 
   # Key encoding functions
   defp encode_counter_key(hca, start), do: hca.counters_subspace <> <<start::64-big>>
@@ -258,7 +252,7 @@ defmodule Bedrock.HCA do
   defp add_write_conflict_key(%{repo: repo}, txn, key), do: repo.add_write_conflict_range(txn, key, Key.key_after(key))
 
   @doc """
-  Get statistics about the HCA state.
+  Get statistics about the HighContentionAllocator state.
 
   Returns information about allocated windows, usage patterns, etc.
   Useful for monitoring and debugging.

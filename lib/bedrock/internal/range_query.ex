@@ -102,7 +102,7 @@ defmodule Bedrock.Internal.RangeQuery do
         emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
 
       {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
-        throw({__MODULE__, :retryable_failure, reason})
+        throw({__MODULE__, state.txn_pid, :retryable_failure, reason})
 
       {:error, reason} ->
         raise "Range query failed: #{inspect(reason)}"

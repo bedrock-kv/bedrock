@@ -32,10 +32,10 @@ defmodule Bedrock.Internal.Repo do
         nil
 
       {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
-        throw({__MODULE__, :retryable_failure, reason})
+        throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
-        throw({__MODULE__, :transaction_error, reason, :get, key})
+        throw({__MODULE__, t, :transaction_error, reason, :get, key})
     end
   end
 
@@ -50,10 +50,10 @@ defmodule Bedrock.Internal.Repo do
         nil
 
       {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
-        throw({__MODULE__, :retryable_failure, reason})
+        throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
-        throw({__MODULE__, :transaction_error, reason, :select, key_selector})
+        throw({__MODULE__, t, :transaction_error, reason, :select, key_selector})
     end
   end
 
@@ -107,72 +107,94 @@ defmodule Bedrock.Internal.Repo do
   def rollback(reason), do: throw({__MODULE__, :rollback, reason})
 
   @spec transaction(cluster :: module(), (transaction() -> result), opts :: keyword()) :: result when result: any()
-  def transaction(cluster, fun, _opts \\ []) do
+  def transaction(cluster, fun, opts \\ []) do
     tx_key = tx_key(cluster)
 
     case Process.get(tx_key) do
       nil ->
-        run_new_transaction(cluster, fun, tx_key)
+        start_new_transaction(cluster, fun, tx_key, opts)
 
       existing_txn ->
-        run_nested_transaction(existing_txn, fun)
+        start_nested_transaction(existing_txn, fun)
     end
   end
 
-  defp run_new_transaction(cluster, fun, tx_key) do
-    restart_fn = fn ->
-      {:ok, gateway} = cluster.fetch_gateway()
-      {:ok, txn} = Gateway.begin_transaction(gateway)
-      Process.put(tx_key, txn)
-      txn
-    end
+  defp start_new_transaction(cluster, fun, tx_key, opts) do
+    retry_limit = Keyword.get(opts, :retry_limit)
 
-    run_transaction(restart_fn.(), fun, restart_fn)
+    start_retryable_transaction(fun, 0, retry_limit, fn ->
+      {:ok, gateway} = cluster.fetch_gateway()
+
+      case Gateway.begin_transaction(gateway) do
+        {:ok, txn} ->
+          Process.put(tx_key, txn)
+          txn
+
+        {:error, reason} ->
+          throw({__MODULE__, nil, :retryable_failure, reason})
+      end
+    end)
   after
     Process.delete(tx_key)
   end
 
-  defp run_nested_transaction(txn, fun) do
-    restart_fn = fn ->
+  defp start_nested_transaction(txn, fun) do
+    start_retryable_transaction(fun, 0, nil, fn ->
       GenServer.call(txn, :nested_transaction, :infinity)
       txn
-    end
-
-    run_transaction(restart_fn.(), fun, restart_fn)
+    end)
   end
 
-  defp run_transaction(txn, fun, restart_fn, delay \\ 2) do
+  defp start_retryable_transaction(fun, retry_count, retry_limit, restart_fn) do
+    run_transaction(restart_fn.(), fun)
+  catch
+    {__MODULE__, failed_txn, :retryable_failure, reason} ->
+      try_to_rollback(failed_txn)
+      enforce_retry_limit(retry_count, retry_limit, reason)
+      delay_for_retry(retry_count)
+      start_retryable_transaction(fun, retry_count + 1, retry_limit, restart_fn)
+
+    {__MODULE__, failed_txn, :rollback, reason} ->
+      try_to_rollback(failed_txn)
+      {:error, reason}
+
+    {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->
+      try_to_rollback(failed_txn)
+      raise Bedrock.TransactionError, reason: reason, operation: operation, key: key
+  end
+
+  defp run_transaction(txn, fun) do
     result = fun.(txn)
 
     case GenServer.call(txn, :commit) do
-      :ok ->
-        result
-
-      {:ok, _} ->
-        result
-
-      {:error, reason} ->
-        throw({__MODULE__, :retryable_failure, reason})
+      :ok -> result
+      {:ok, _} -> result
+      {:error, reason} -> throw({__MODULE__, txn, :retryable_failure, reason})
     end
   rescue
     exception ->
-      GenServer.cast(txn, :rollback)
+      try_to_rollback(txn)
       reraise exception, __STACKTRACE__
-  catch
-    {__MODULE__, :rollback, reason} ->
-      GenServer.cast(txn, :rollback)
-      {:error, reason}
-
-    {__MODULE__, :retryable_failure, _reason} ->
-      GenServer.cast(txn, :rollback)
-      jitter = delay |> div(2) |> :rand.uniform()
-      Process.sleep(min(1000, delay + jitter))
-      run_transaction(restart_fn.(), fun, restart_fn, delay <<< 2)
-
-    {__MODULE__, :transaction_error, reason, operation, key} ->
-      GenServer.cast(txn, :rollback)
-      raise Bedrock.TransactionError, reason: reason, operation: operation, key: key
   end
+
+  defp delay_for_retry(retry_count) do
+    base_delay = 1 <<< retry_count
+    jitter = :rand.uniform(10)
+    retry_delay = min(1000, base_delay + jitter)
+    Process.sleep(retry_delay)
+  end
+
+  defp enforce_retry_limit(_retry_count, nil, _reason), do: :ok
+  defp enforce_retry_limit(retry_count, retry_limit, _reason) when retry_count < retry_limit, do: :ok
+
+  defp enforce_retry_limit(_retry_count, retry_limit, reason) do
+    raise Bedrock.TransactionError,
+      reason: "Retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}",
+      retry_limit: retry_limit
+  end
+
+  defp try_to_rollback(nil), do: :ok
+  defp try_to_rollback(txn), do: GenServer.cast(txn, :rollback)
 
   defp tx_key(cluster), do: {:transaction, cluster}
 end

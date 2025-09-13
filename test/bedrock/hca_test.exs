@@ -1,9 +1,9 @@
-defmodule Bedrock.HCATest do
+defmodule Bedrock.HighContentionAllocatorTest do
   use ExUnit.Case, async: true
 
   import Mox
 
-  alias Bedrock.HCA
+  alias Bedrock.HighContentionAllocator
   alias Bedrock.KeySelector
 
   setup :verify_on_exit!
@@ -84,19 +84,19 @@ defmodule Bedrock.HCATest do
     fn _size -> value end
   end
 
-  describe "HCA creation and configuration" do
-    test "creates HCA with new two-subspace structure" do
+  describe "HighContentionAllocator creation and configuration" do
+    test "creates HighContentionAllocator with new two-subspace structure" do
       assert %{repo: MockRepo, counters_subspace: "test_allocator" <> <<0>>, recent_subspace: "test_allocator" <> <<1>>} =
-               HCA.new(MockRepo, "test_allocator")
+               HighContentionAllocator.new(MockRepo, "test_allocator")
     end
 
     test "handles different subspace prefixes correctly" do
       assert %{counters_subspace: "my_alloc" <> <<0>>, recent_subspace: "my_alloc" <> <<1>>} =
-               HCA.new(MockRepo, "my_alloc")
+               HighContentionAllocator.new(MockRepo, "my_alloc")
     end
 
     test "handles empty stats correctly" do
-      hca = HCA.new(MockRepo, "test_empty")
+      hca = HighContentionAllocator.new(MockRepo, "test_empty")
 
       # Expected call sequence for stats:
       # 1. select to find latest counter
@@ -120,7 +120,7 @@ defmodule Bedrock.HCATest do
         []
       end)
 
-      assert %{latest_window_start: 0, total_counters: 0, estimated_allocated: 0} = HCA.stats(hca)
+      assert %{latest_window_start: 0, total_counters: 0, estimated_allocated: 0} = HighContentionAllocator.stats(hca)
     end
   end
 
@@ -128,16 +128,16 @@ defmodule Bedrock.HCATest do
     test "provides allocate/2 function with correct call sequence" do
       # With start=0, window_size=64, random=42: candidate = 0 + (42 - 1) = 41
       expected_candidate = 41
-      hca = HCA.new(MockRepo, "test_alloc", random_fn: deterministic_random_fn(42))
+      hca = HighContentionAllocator.new(MockRepo, "test_alloc", random_fn: deterministic_random_fn(42))
 
       MockRepo
       |> expect(:transaction, fn fun -> fun.(:mock_txn) end)
       |> expect_allocation_sequence(hca, 0, 1, expected_candidate)
 
-      assert {:ok, encoded_result} = HCA.allocate(hca)
+      assert {:ok, encoded_result} = HighContentionAllocator.allocate(hca)
 
       # Verify it's the expected candidate encoded as compact binary
-      assert encoded_result == Bedrock.Key.pack({expected_candidate})
+      assert encoded_result == Bedrock.Key.pack(expected_candidate)
     end
 
     test "provides allocate_many/3 function with correct multiplied calls" do
@@ -146,17 +146,17 @@ defmodule Bedrock.HCATest do
       # Second: candidate = 0 + (25 - 1) = 24
       expected_candidates = [9, 24]
       [first_candidate, second_candidate] = expected_candidates
-      hca = HCA.new(MockRepo, "test_many", random_fn: deterministic_random_fn([10, 25]))
+      hca = HighContentionAllocator.new(MockRepo, "test_many", random_fn: deterministic_random_fn([10, 25]))
 
       MockRepo
       |> expect(:transaction, 2, fn fun -> fun.(:mock_txn) end)
       |> expect_allocation_sequence(hca, 0, 1, first_candidate)
       |> expect_allocation_sequence(hca, 0, 2, second_candidate)
 
-      assert {:ok, encoded_results} = HCA.allocate_many(hca, 2)
+      assert {:ok, encoded_results} = HighContentionAllocator.allocate_many(hca, 2)
 
       # Verify each result is the expected candidate encoded as compact binary
-      expected_encoded = Enum.map(expected_candidates, &Bedrock.Key.pack({&1}))
+      expected_encoded = Enum.map(expected_candidates, &Bedrock.Key.pack/1)
       assert encoded_results == expected_encoded
     end
   end
@@ -168,45 +168,45 @@ defmodule Bedrock.HCATest do
       # Retry attempt: candidate = 0 + (30 - 1) = 29 (will succeed)
       first_candidate = 14
       retry_candidate = 29
-      hca = HCA.new(MockRepo, "test_collision", random_fn: deterministic_random_fn([15, 30]))
+      hca = HighContentionAllocator.new(MockRepo, "test_collision", random_fn: deterministic_random_fn([15, 30]))
 
       MockRepo
       |> expect(:transaction, fn fun -> fun.(:mock_txn) end)
       |> expect_allocation_sequence(hca, 0, 1, first_candidate, false)
       |> expect_allocation_sequence(hca, 0, 2, retry_candidate)
 
-      assert {:ok, encoded_result} = HCA.allocate(hca)
+      assert {:ok, encoded_result} = HighContentionAllocator.allocate(hca)
 
       # Verify it's the expected candidate encoded as compact binary
-      assert encoded_result == Bedrock.Key.pack({retry_candidate})
+      assert encoded_result == Bedrock.Key.pack(retry_candidate)
     end
   end
 
   describe "key generation and encoding" do
     test "generates correct counter key format" do
       assert %{counters_subspace: "test/prefix" <> <<0>>, recent_subspace: "test/prefix" <> <<1>>} =
-               HCA.new(MockRepo, "test/prefix")
+               HighContentionAllocator.new(MockRepo, "test/prefix")
     end
 
     test "uses custom random function when provided" do
       # With start=0, window_size=64, random=1: candidate = 0 + (1 - 1) = 0
       expected_candidate = 0
-      hca = HCA.new(MockRepo, "test_random", random_fn: deterministic_random_fn(1))
+      hca = HighContentionAllocator.new(MockRepo, "test_random", random_fn: deterministic_random_fn(1))
 
       MockRepo
       |> expect(:transaction, fn fun -> fun.(:mock_txn) end)
       |> expect_allocation_sequence(hca, 0, 1, expected_candidate)
 
-      assert {:ok, encoded_result} = HCA.allocate(hca)
+      assert {:ok, encoded_result} = HighContentionAllocator.allocate(hca)
 
       # Verify it's the expected candidate encoded as compact binary
-      assert encoded_result == Bedrock.Key.pack({expected_candidate})
+      assert encoded_result == Bedrock.Key.pack(expected_candidate)
     end
   end
 
   describe "dynamic window sizing" do
     test "uses correct window sizes for different ranges" do
-      hca = HCA.new(MockRepo, "test")
+      hca = HighContentionAllocator.new(MockRepo, "test")
 
       # The dynamic window sizing logic is:
       # start < 255 -> 64
@@ -225,7 +225,7 @@ defmodule Bedrock.HCATest do
         []
       end)
 
-      HCA.stats(hca)
+      HighContentionAllocator.stats(hca)
     end
   end
 end

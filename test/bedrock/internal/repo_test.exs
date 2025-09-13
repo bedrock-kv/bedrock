@@ -228,8 +228,10 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       key_selector = KeySelector.first_greater_or_equal("versioned_key")
       txn_pid = spawn_select_mock(key_selector, {:error, :version_too_old})
 
-      {Repo, :transaction_error, :version_too_old, :select, ^key_selector} =
+      {Repo, failed_txn, :transaction_error, :version_too_old, :select, ^key_selector} =
         catch_throw(Repo.select(txn_pid, key_selector))
+
+      assert failed_txn == txn_pid
     end
 
     test "handles clamped errors from cross-shard operations" do

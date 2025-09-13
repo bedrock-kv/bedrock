@@ -5,8 +5,6 @@ defmodule Bedrock.Directory.LayerTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
-  alias Bedrock.Directory.Node
   alias Bedrock.Key
 
   setup do
@@ -19,10 +17,10 @@ defmodule Bedrock.Directory.LayerTest do
 
   describe "create/3" do
     test "creates a root directory with empty prefix" do
-      # No mock expectations needed - Layer.new() doesn't call the database
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      # Root directory is now returned directly from Layer.new() with empty prefix
-      assert %Node{prefix: "", path: [], layer: nil} = layer
+      # No mock expectations needed - Directory.root() doesn't call the database
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      # Root directory is now returned directly from Directory.root() with empty prefix
+      assert %Directory.Node{prefix: "", path: [], layer: nil} = layer
     end
 
     test "creates a subdirectory when parent exists" do
@@ -31,8 +29,8 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["users"], nil)
       |> expect_directory_creation(["users"], {<<0, 42>>, ""})
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      assert {:ok, %Node{path: ["users"]}} = Directory.create(layer, ["users"])
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      assert {:ok, %Directory.Node{path: ["users"]}} = Directory.create(layer, ["users"])
     end
 
     test "fails when directory already exists" do
@@ -40,7 +38,7 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_version_initialization()
       |> expect_directory_exists(["users"], Key.pack({<<0, 1>>, ""}))
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert {:error, :directory_already_exists} = Directory.create(layer, ["users"])
     end
 
@@ -50,7 +48,7 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["users", "profiles"], nil)
       |> expect_directory_exists(["users"], nil)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert {:error, :parent_directory_does_not_exist} =
                Directory.create(layer, ["users", "profiles"])
@@ -63,22 +61,22 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document"}))
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
-      assert {:ok, %Node{prefix: <<0, 42>>, layer: "document", path: ["users"]}} =
+      assert {:ok, %Directory.Node{prefix: <<0, 42>>, layer: "document", path: ["users"]}} =
                Directory.open(layer, ["users"])
     end
 
     test "fails when directory doesn't exist" do
       expect_directory_exists(MockRepo, ["nonexistent"], nil)
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert {:error, :directory_does_not_exist} = Directory.open(layer, ["nonexistent"])
     end
   end
 
   describe "get_subspace/1" do
     test "returns subspace for directory node" do
-      node = %Node{
+      node = %Directory.Node{
         prefix: <<0, 42>>,
         path: ["users"],
         layer: nil,
@@ -93,20 +91,20 @@ defmodule Bedrock.Directory.LayerTest do
   describe "exists?/3" do
     test "returns true when directory exists" do
       expect_directory_exists(MockRepo, ["users"], Key.pack({<<0, 1>>, ""}))
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert Directory.exists?(layer, ["users"]) == true
     end
 
     test "returns false when directory doesn't exist" do
       expect_directory_exists(MockRepo, ["nonexistent"], nil)
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert Directory.exists?(layer, ["nonexistent"]) == false
     end
   end
 
   describe "metadata and versioning support" do
     test "creates directory with version and metadata" do
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
 
       # Root creation via Directory.create() is no longer supported
       assert {:error, :cannot_create_root} =
@@ -122,11 +120,11 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document", "2.0", {"updated", 1}}))
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       # Use pattern matching for struct assertion
       assert {:ok,
-              %Node{
+              %Directory.Node{
                 prefix: <<0, 42>>,
                 layer: "document",
                 version: "2.0",
@@ -139,11 +137,11 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["legacy"], Key.pack({<<0, 42>>, "legacy"}))
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       # Use pattern matching for struct assertion
       assert {:ok,
-              %Node{
+              %Directory.Node{
                 prefix: <<0, 42>>,
                 layer: "legacy",
                 version: nil,
@@ -156,11 +154,11 @@ defmodule Bedrock.Directory.LayerTest do
       |> expect_directory_exists(["versioned"], Key.pack({<<0, 42>>, "versioned", "1.5"}))
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       # Use pattern matching for struct assertion
       assert {:ok,
-              %Node{
+              %Directory.Node{
                 prefix: <<0, 42>>,
                 layer: "versioned",
                 version: "1.5",
@@ -176,11 +174,11 @@ defmodule Bedrock.Directory.LayerTest do
       )
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       # Use pattern matching for struct assertion
       assert {:ok,
-              %Bedrock.Directory.Partition{
+              %Directory.Partition{
                 prefix: <<0, 42>>,
                 version: "1.0",
                 metadata: {"type", "isolated"}

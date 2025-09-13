@@ -5,8 +5,6 @@ defmodule Bedrock.Directory.VersionManagementTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
-  alias Bedrock.Directory.Node
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -22,9 +20,9 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], nil)
       |> expect_directory_creation(["test"])
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
       # Test version initialization via subdirectory creation
-      assert {:ok, %Node{}} = Directory.create(layer, ["test"])
+      assert {:ok, %Directory.Node{}} = Directory.create(layer, ["test"])
     end
 
     test "does not reinitialize version if already set" do
@@ -34,8 +32,8 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], nil)
       |> expect_directory_creation(["test"])
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      assert {:ok, %Node{}} = Directory.create(layer, ["test"])
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      assert {:ok, %Directory.Node{}} = Directory.create(layer, ["test"])
     end
   end
 
@@ -47,8 +45,8 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], test_data)
       |> expect_version_check()
 
-      layer = Layer.new(MockRepo)
-      assert {:ok, %Node{prefix: <<0, 42>>}} = Directory.open(layer, ["test"])
+      layer = Directory.root(MockRepo)
+      assert {:ok, %Directory.Node{prefix: <<0, 42>>}} = Directory.open(layer, ["test"])
     end
 
     test "blocks reads from incompatible major version" do
@@ -59,7 +57,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], test_data)
       |> expect_version_check(incompatible_version)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert {:error, :incompatible_directory_version} = Directory.open(layer, ["test"])
     end
 
@@ -69,7 +67,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       expect_version_check(MockRepo, newer_minor_version)
       # No more expectations - check_version will fail early
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert {:error, :directory_version_write_restricted} = Directory.create(layer, ["test"])
     end
 
@@ -80,8 +78,8 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], nil)
       |> expect_directory_creation(["test"])
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
-      assert {:ok, %Node{}} = Directory.create(layer, ["test"])
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, 42>> end)
+      assert {:ok, %Directory.Node{}} = Directory.create(layer, ["test"])
     end
   end
 
@@ -94,7 +92,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["test"], test_data)
       |> expect_range_clear(["test"])
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert :ok = Directory.remove(layer, ["test"])
     end
 
@@ -129,7 +127,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
         :ok
       end)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert :ok = Directory.move(layer, ["old"], ["new"])
     end
 
@@ -138,7 +136,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_version_check()
       |> expect(:range, fn :mock_txn, _range -> [] end)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert {:ok, []} = Directory.list(layer, [])
     end
 
@@ -146,7 +144,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       test_data = Bedrock.Key.pack({<<0, 42>>, ""})
 
       expect_directory_exists(MockRepo, ["test"], test_data)
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
       assert Directory.exists?(layer, ["test"])
     end
   end

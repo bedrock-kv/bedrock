@@ -17,6 +17,13 @@ defmodule Bedrock.Subspace do
 
   @type t :: %__MODULE__{prefix: binary()}
 
+  defprotocol Subspaceable do
+    @type t :: term()
+
+    @spec to_subspace(any()) :: Bedrock.Subspace.t()
+    def to_subspace(data)
+  end
+
   @doc """
   Create a new subspace from raw bytes prefix.
   """
@@ -36,9 +43,11 @@ defmodule Bedrock.Subspace do
   Create a new subspace with the given tuple and raw prefix.
   The tuple is packed and appended to the raw prefix.
   """
-  @spec create(t(), tuple()) :: t()
+  @spec create(t() | Subspaceable.t(), tuple()) :: t()
   def create(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
     do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])}
+
+  def create(term, tuple) when is_tuple(tuple), do: term |> Subspaceable.to_subspace() |> create(tuple)
 
   @doc """
   Add an item to the subspace, creating a new subspace.

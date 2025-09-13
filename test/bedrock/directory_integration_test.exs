@@ -5,7 +5,6 @@ defmodule Bedrock.DirectoryIntegrationTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -37,11 +36,11 @@ defmodule Bedrock.DirectoryIntegrationTest do
     |> expect_directory_creation(["users"], {<<0, 0, 0, 0>>, "document"})
 
     # Create directory layer
-    root = Layer.new(MockRepo, next_prefix_fn: next_prefix_fn)
+    root = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
 
     # Execute the workflow with pattern matching assertions
-    # Root is already created by Layer.new(), verify its properties
-    assert %Bedrock.Directory.Node{path: [], prefix: ""} = root
+    # Root is already created by Directory.root(), verify its properties
+    assert %Directory.Node{path: [], prefix: ""} = root
 
     assert {:ok, users_dir} = Directory.create(root, ["users"], layer: "document")
     assert %{layer: "document", path: ["users"], prefix: <<0, 0, 0, 0>>} = users_dir

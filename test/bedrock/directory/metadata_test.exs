@@ -7,7 +7,6 @@ defmodule Bedrock.Directory.MetadataTest do
   import StreamData
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -31,7 +30,7 @@ defmodule Bedrock.Directory.MetadataTest do
               prefix <- non_reserved_prefix()
             ) do
         expect_version_initialization(MockRepo)
-        layer = Layer.new(MockRepo, next_prefix_fn: fn -> prefix end)
+        layer = Directory.root(MockRepo, next_prefix_fn: fn -> prefix end)
 
         path = [path_name]
         layer_name = nil

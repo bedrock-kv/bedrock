@@ -5,8 +5,6 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
-  alias Bedrock.Directory.Node
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -53,7 +51,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       |> expect_directory_exists(["users"], nil)
       |> expect_collision_in_range(prefix, collision_data)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert {:error, :prefix_collision} =
                Directory.create(layer, ["users"], prefix: prefix)
@@ -69,9 +67,9 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       |> expect_collision_check_with_ancestors(prefix)
       |> expect_directory_creation(["users"], packed_value)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
-      assert {:ok, %Node{prefix: ^prefix, path: ["users"]}} =
+      assert {:ok, %Directory.Node{prefix: ^prefix, path: ["users"]}} =
                Directory.create(layer, ["users"], prefix: prefix)
     end
 
@@ -83,7 +81,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
         |> expect_version_initialization()
         |> expect_directory_exists(["users"], nil)
 
-        layer = Layer.new(MockRepo)
+        layer = Directory.root(MockRepo)
 
         assert {:error, :prefix_collision} =
                  Directory.create(layer, ["users"], prefix: prefix)
@@ -99,7 +97,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       |> expect_directory_exists(["users"], nil)
       |> expect_collision_in_range(prefix, collision_data)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert {:error, :prefix_collision} =
                Directory.create(layer, ["users"], prefix: prefix)
@@ -127,7 +125,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
         end
       end)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert {:error, :prefix_collision} =
                Directory.create(layer, ["users"], prefix: prefix)

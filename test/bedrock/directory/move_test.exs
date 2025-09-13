@@ -5,7 +5,6 @@ defmodule Bedrock.Directory.MoveTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
   alias Bedrock.Key
   alias Bedrock.KeyRange
 
@@ -59,7 +58,7 @@ defmodule Bedrock.Directory.MoveTest do
       :ok
     end)
 
-    layer = Layer.new(MockRepo)
+    layer = Directory.root(MockRepo)
 
     assert :ok = Directory.move(layer, source_path, dest_path)
   end
@@ -72,7 +71,7 @@ defmodule Bedrock.Directory.MoveTest do
     |> expect_version_initialization()
     |> expect_directory_exists(source_path, nil)
 
-    layer = Layer.new(MockRepo)
+    layer = Directory.root(MockRepo)
 
     assert {:error, :directory_does_not_exist} =
              Directory.move(layer, source_path, dest_path)
@@ -89,7 +88,7 @@ defmodule Bedrock.Directory.MoveTest do
     |> expect_directory_exists(source_path, source_data)
     |> expect_directory_exists(dest_path, dest_data)
 
-    layer = Layer.new(MockRepo)
+    layer = Directory.root(MockRepo)
 
     assert {:error, :directory_already_exists} =
              Directory.move(layer, source_path, dest_path)

@@ -6,7 +6,6 @@ defmodule Bedrock.Directory.PropertyTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -50,8 +49,8 @@ defmodule Bedrock.Directory.PropertyTest do
       assert is_list(path)
       assert Enum.all?(path, &is_binary/1)
 
-      _layer = Layer.new(MockRepo)
-      assert Layer.validate_path(path) == :ok
+      _layer = Directory.root(MockRepo)
+      assert Directory.validate_path(path) == :ok
     end
   end
 
@@ -76,7 +75,7 @@ defmodule Bedrock.Directory.PropertyTest do
 
       stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> <<0, :rand.uniform(255)>> end)
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, :rand.uniform(255)>> end)
 
       case Directory.create(layer, path, layer: layer_name) do
         {:ok, node} ->
@@ -162,7 +161,7 @@ defmodule Bedrock.Directory.PropertyTest do
 
       stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
 
-      layer = Layer.new(MockRepo, next_prefix_fn: next_prefix_fn)
+      layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
 
       # Create all directories and verify unique prefixes
       {successful_nodes, all_prefixes} =
@@ -242,7 +241,7 @@ defmodule Bedrock.Directory.PropertyTest do
           :ok
       end)
 
-      layer = Layer.new(MockRepo, next_prefix_fn: fn -> prefix end)
+      layer = Directory.root(MockRepo, next_prefix_fn: fn -> prefix end)
 
       # Create and then open
       case Directory.create(layer, path, layer: layer_name) do

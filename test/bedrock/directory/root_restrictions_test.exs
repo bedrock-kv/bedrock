@@ -5,7 +5,6 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Directory.Layer
 
   setup do
     stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
@@ -23,7 +22,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
 
   describe "root directory restrictions" do
     test "cannot perform restricted operations on root" do
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       restricted_operations = [
         {:open, fn -> Directory.open(layer, []) end},
@@ -51,10 +50,10 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       stub(MockRepo, :get, fn :mock_txn, _key -> nil end)
       stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
-      # Root directory is returned directly from Layer.new()
-      assert %Bedrock.Directory.Node{path: [], prefix: ""} = layer
+      # Root directory is returned directly from Directory.root()
+      assert %Directory.Node{path: [], prefix: ""} = layer
     end
 
     test "can check if root exists" do
@@ -62,7 +61,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       root_key = build_directory_key([])
 
       stub(MockRepo, :get, fn :mock_txn, ^root_key -> root_data end)
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert Directory.exists?(layer, []) == true
     end
@@ -77,7 +76,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       |> expect_version_check()
       |> expect_range_query([], children_results)
 
-      layer = Layer.new(MockRepo)
+      layer = Directory.root(MockRepo)
 
       assert {:ok, children} = Directory.list(layer, [])
       assert "users" in children
@@ -96,7 +95,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       ]
 
       for {path, expected} <- test_cases do
-        assert Layer.root?(path) == expected
+        assert Directory.root?(path) == expected
       end
     end
   end

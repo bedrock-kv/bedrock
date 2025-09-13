@@ -3,13 +3,13 @@ defmodule Bedrock.Directory.PathValidationTest do
 
   import Mox
 
-  alias Bedrock.Directory.Layer
+  alias Bedrock.Directory
 
   setup :verify_on_exit!
 
   describe "UTF-8 validation" do
     test "accepts valid UTF-8 strings" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       valid_paths = [
         # English
@@ -22,12 +22,12 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- valid_paths do
-        assert Layer.validate_path(path) == :ok
+        assert Directory.validate_path(path) == :ok
       end
     end
 
     test "rejects invalid UTF-8 sequences" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       invalid_sequences = [
         # Invalid UTF-8 bytes (avoiding reserved prefixes 0xFE and 0xFF)
@@ -40,27 +40,27 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for sequence <- invalid_sequences do
-        assert {:error, :invalid_utf8_in_path} = Layer.validate_path(sequence)
+        assert {:error, :invalid_utf8_in_path} = Directory.validate_path(sequence)
       end
     end
   end
 
   describe "input format normalization" do
     test "accepts list of binaries" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
-      assert Layer.validate_path(["dir1", "dir2", "dir3"]) == :ok
-      assert Layer.validate_path([]) == :ok
+      assert Directory.validate_path(["dir1", "dir2", "dir3"]) == :ok
+      assert Directory.validate_path([]) == :ok
     end
 
     test "accepts single binary as single-element path" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
-      assert Layer.validate_path("single") == :ok
+      assert Directory.validate_path("single") == :ok
     end
 
     test "accepts tuple and converts to list" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       valid_tuples = [
         {"dir1", "dir2"},
@@ -69,24 +69,24 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for tuple <- valid_tuples do
-        assert Layer.validate_path(tuple) == :ok
+        assert Directory.validate_path(tuple) == :ok
       end
     end
 
     test "rejects invalid formats" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       invalid_formats = [123, :atom, %{}]
 
       for format <- invalid_formats do
-        assert {:error, :invalid_path_format} = Layer.validate_path(format)
+        assert {:error, :invalid_path_format} = Directory.validate_path(format)
       end
     end
   end
 
   describe "special character validation" do
     test "rejects null bytes in path components" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       null_byte_paths = [
         ["hello\x00world"],
@@ -95,12 +95,12 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- null_byte_paths do
-        assert {:error, :null_byte_in_path} = Layer.validate_path(path)
+        assert {:error, :null_byte_in_path} = Directory.validate_path(path)
       end
     end
 
     test "rejects empty path components" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       empty_component_paths = [
         [""],
@@ -108,12 +108,12 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- empty_component_paths do
-        assert {:error, :empty_path_component} = Layer.validate_path(path)
+        assert {:error, :empty_path_component} = Directory.validate_path(path)
       end
     end
 
     test "rejects reserved prefixes in path components" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       reserved_prefix_paths = [
         [<<0xFE, 0x01>>],
@@ -122,12 +122,12 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- reserved_prefix_paths do
-        assert {:error, :reserved_prefix_in_path} = Layer.validate_path(path)
+        assert {:error, :reserved_prefix_in_path} = Directory.validate_path(path)
       end
     end
 
     test "rejects . and .. as directory names" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       invalid_directory_paths = [
         ["."],
@@ -137,14 +137,14 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- invalid_directory_paths do
-        assert {:error, :invalid_directory_name} = Layer.validate_path(path)
+        assert {:error, :invalid_directory_name} = Directory.validate_path(path)
       end
     end
   end
 
   describe "mixed validation" do
     test "validates all components in path" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       # Test different error positions
       test_cases = [
@@ -154,12 +154,12 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for {path, expected_error} <- test_cases do
-        assert {:error, ^expected_error} = Layer.validate_path(path)
+        assert {:error, ^expected_error} = Directory.validate_path(path)
       end
     end
 
     test "accepts complex valid paths" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       valid_complex_paths = [
         ["users", "profiles", "settings", "preferences"],
@@ -168,14 +168,14 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- valid_complex_paths do
-        assert Layer.validate_path(path) == :ok
+        assert Directory.validate_path(path) == :ok
       end
     end
   end
 
   describe "non-binary components" do
     test "rejects non-binary components in list" do
-      _layer = Layer.new(MockRepo)
+      _layer = Directory.root(MockRepo)
 
       non_binary_paths = [
         [:atom, "valid"],
@@ -184,7 +184,7 @@ defmodule Bedrock.Directory.PathValidationTest do
       ]
 
       for path <- non_binary_paths do
-        assert {:error, :invalid_path_component} = Layer.validate_path(path)
+        assert {:error, :invalid_path_component} = Directory.validate_path(path)
       end
     end
   end

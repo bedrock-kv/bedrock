@@ -1,5 +1,9 @@
 defmodule Bedrock.DataPlane.Resolver.ServerTest do
   use ExUnit.Case, async: false
+  use ExUnitProperties
+
+  import Bedrock.Test.TelemetryTestHelper
+  import StreamData
 
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Server
@@ -14,6 +18,43 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       read_conflicts: [],
       write_conflicts: Enum.map(write_keys, &{&1, &1 <> "\0"})
     })
+  end
+
+  # Telemetry helpers for deterministic testing
+  defp expect_transaction_waitlisted(last_version, next_version) do
+    {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted])
+    assert metadata.last_version == last_version
+    assert metadata.next_version == next_version
+  end
+
+  defp expect_transaction_processing_start(last_version, next_version) do
+    {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :processing])
+    assert metadata.last_version == last_version
+    assert metadata.next_version == next_version
+  end
+
+  defp expect_transaction_completed(last_version, next_version) do
+    {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :completed])
+    assert metadata.last_version == last_version
+    assert metadata.next_version == next_version
+  end
+
+  defp expect_waitlisted_transaction_resolved(next_version) do
+    {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :waiting_resolved])
+    assert metadata.next_version == next_version
+  end
+
+  defp attach_resolver_telemetry(test_pid) do
+    attach_telemetry_reflector(
+      test_pid,
+      [
+        [:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted],
+        [:bedrock, :resolver, :resolve_transactions, :processing],
+        [:bedrock, :resolver, :resolve_transactions, :completed],
+        [:bedrock, :resolver, :resolve_transactions, :waiting_resolved]
+      ],
+      "test-resolver-events"
+    )
   end
 
   # Common setup helper for server startup
@@ -351,6 +392,60 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       Task.shutdown(task1)
       Task.shutdown(task2)
     end
+
+    test "waitlist processing works correctly with telemetry-based deterministic test", %{
+      server: server,
+      zero_version: zero_version,
+      next_version: next_version,
+      future_version: future_version
+    } do
+      # Use telemetry to make test deterministic instead of relying on timing
+      attach_resolver_telemetry(self())
+
+      transaction_b = simple_binary_transaction(["key_b"])
+
+      # Send B - will be waitlisted with key=next_version
+      task_b =
+        Task.async(fn ->
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction_b])
+        end)
+
+      # Wait for B to be waitlisted
+      expect_transaction_waitlisted(next_version, future_version)
+
+      # Verify B is waitlisted
+      state_before = :sys.get_state(server)
+      assert map_size(state_before.waiting) == 1
+      assert Map.has_key?(state_before.waiting, next_version)
+
+      # Process transaction A - this should trigger processing of B
+      assert {:ok, []} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, [
+                 simple_binary_transaction(["key_a"])
+               ])
+
+      # Wait for A to start processing
+      expect_transaction_processing_start(zero_version, next_version)
+
+      # Wait for A to complete processing (completed event shows resolver's new state)
+      expect_transaction_completed(next_version, next_version)
+
+      # Wait for B to be resolved from waitlist and start processing
+      expect_waitlisted_transaction_resolved(future_version)
+      expect_transaction_processing_start(next_version, future_version)
+
+      # Wait for B to complete processing (completed event shows resolver's new state)
+      expect_transaction_completed(future_version, future_version)
+
+      # B should complete successfully
+      assert {:ok, []} = Task.await(task_b, 1000)
+
+      # Final check - waitlist should be empty
+      final_state = :sys.get_state(server)
+      assert map_size(final_state.waiting) == 0
+
+      # Clean up telemetry
+    end
   end
 
   describe "sweep functionality" do
@@ -440,6 +535,77 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       # Process another transaction - should work fine regardless of sweep
       assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, version2, version3, [tx3], timeout: 1000)
       assert Process.alive?(resolver)
+    end
+  end
+
+  describe "property-based testing" do
+    setup do
+      start_test_server()
+    end
+
+    property "transactions complete in version order regardless of arrival order", %{server: server} do
+      check all(
+              sequence_length <- integer(3..6),
+              max_runs: 20
+            ) do
+        # Generate consecutive versions starting from server's current last_version
+        server_state = :sys.get_state(server)
+        start_version_int = Version.to_integer(server_state.last_version)
+
+        versions =
+          for i <- start_version_int..(start_version_int + sequence_length) do
+            Version.from_integer(i)
+          end
+
+        # Create transaction pairs: [(last_v, next_v), ...]
+        transaction_specs = Enum.zip(versions, tl(versions))
+
+        attach_telemetry_reflector(
+          self(),
+          [[:bedrock, :resolver, :resolve_transactions, :completed]],
+          "property-test-resolver-events"
+        )
+
+        # Create and shuffle transactions
+        transactions_with_specs =
+          transaction_specs
+          |> Enum.with_index()
+          |> Enum.map(fn {{last_v, next_v}, idx} ->
+            tx = simple_binary_transaction(["key_#{idx}"])
+            {tx, last_v, next_v}
+          end)
+          |> Enum.shuffle()
+
+        # Send all transactions asynchronously in shuffled order
+        tasks =
+          for {tx, last_v, next_v} <- transactions_with_specs do
+            Task.async(fn ->
+              Resolver.resolve_transactions(server, 1, last_v, next_v, [tx])
+            end)
+          end
+
+        # Collect completion events as they arrive
+        completion_versions =
+          for _ <- 1..length(transaction_specs) do
+            {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :completed])
+            metadata.next_version
+          end
+
+        # Collect all task results
+        results = Enum.map(tasks, &Task.await(&1, 5000))
+
+        # All should succeed
+        assert Enum.all?(results, &match?({:ok, []}, &1))
+
+        # Verify the completion order matches expected version sequence
+        expected_versions = Enum.map(transaction_specs, fn {_last, next} -> next end)
+        assert completion_versions == expected_versions
+
+        # Verify resolver state is clean
+        final_state = :sys.get_state(server)
+        assert map_size(final_state.waiting) == 0
+        assert final_state.last_version == List.last(expected_versions)
+      end
     end
   end
 end

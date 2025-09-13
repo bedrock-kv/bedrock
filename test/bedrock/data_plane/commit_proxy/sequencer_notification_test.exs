@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
 
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
 
   # Common test setup
   defp create_batch do
@@ -27,6 +28,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   defp create_finalization_opts do
     [
       epoch: 1,
+      precomputed: LayoutOptimization.precompute_from_layout(%{resolvers: []}),
       resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
       batch_log_push_fn: fn _, _, _, _, _ -> :ok end
     ]

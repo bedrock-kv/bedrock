@@ -46,14 +46,25 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   @spec do_pending_pushes(State.t()) ::
           {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
   def do_pending_pushes(t) do
-    case Map.pop(t.pending_pushes, t.last_version) do
+    next_expected_version = t.last_version
+
+    case Map.pop(t.pending_pushes, next_expected_version) do
       {nil, _} ->
         {:ok, t}
 
       {{encoded_transaction, ack_fn}, pending_pushes} ->
-        :ok = ack_fn.(:ok)
+        t_with_updated_pending = %{t | pending_pushes: pending_pushes}
 
-        push(%{t | pending_pushes: pending_pushes}, t.last_version, encoded_transaction, ack_fn)
+        case write_encoded_transaction(t_with_updated_pending, encoded_transaction) do
+          {:ok, new_t} ->
+            trace_push_transaction(encoded_transaction)
+            :ok = ack_fn.(:ok)
+            do_pending_pushes(new_t)
+
+          {:error, reason} ->
+            :ok = ack_fn.({:error, reason})
+            {:error, reason}
+        end
     end
   end
 

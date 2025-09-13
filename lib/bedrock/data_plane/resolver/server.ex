@@ -191,10 +191,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   def handle_continue({:process_ready, {next_version, transactions, reply_fn}}, t) do
     emit_processing(length(transactions), t.last_version, next_version)
 
-    {new_waiting, _} = WaitingList.remove(t.waiting, t.last_version)
-
     {tree, aborted} = resolve(t.tree, transactions, next_version)
-    t = %{t | tree: tree, last_version: next_version, waiting: new_waiting}
+    t = %{t | tree: tree, last_version: next_version}
 
     emit_completed(
       length(transactions),
@@ -208,13 +206,16 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
     emit_reply_sent(length(transactions), length(aborted), t.last_version, next_version)
 
-    case WaitingList.find(t.waiting, next_version) do
-      nil ->
-        noreply(t, continue: :next_timeout)
+    case WaitingList.remove(t.waiting, next_version) do
+      {updated_waiting, nil} ->
+        noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {_deadline, reply_fn, {waiting_next_version, transactions}} ->
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions}}} ->
         emit_waiting_resolved(length(transactions), 0, waiting_next_version, t.last_version)
-        noreply(t, continue: {:process_ready, {waiting_next_version, transactions, reply_fn}})
+
+        noreply(%{t | waiting: updated_waiting},
+          continue: {:process_ready, {waiting_next_version, transactions, reply_fn}}
+        )
     end
   end
 

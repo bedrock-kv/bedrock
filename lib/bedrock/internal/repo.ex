@@ -1,5 +1,6 @@
 defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls, only: [cast: 2]
+  import Bitwise
 
   alias Bedrock.Cluster.Gateway
   alias Bedrock.Internal.RangeQuery
@@ -140,7 +141,7 @@ defmodule Bedrock.Internal.Repo do
     run_transaction(restart_fn.(), fun, restart_fn)
   end
 
-  defp run_transaction(txn, fun, restart_fn) do
+  defp run_transaction(txn, fun, restart_fn, delay \\ 2) do
     result = fun.(txn)
 
     case GenServer.call(txn, :commit) do
@@ -164,7 +165,9 @@ defmodule Bedrock.Internal.Repo do
 
     {__MODULE__, :retryable_failure, _reason} ->
       GenServer.cast(txn, :rollback)
-      run_transaction(restart_fn.(), fun, restart_fn)
+      jitter = delay |> div(2) |> :rand.uniform()
+      Process.sleep(min(1000, delay + jitter))
+      run_transaction(restart_fn.(), fun, restart_fn, delay <<< 2)
 
     {__MODULE__, :transaction_error, reason, operation, key} ->
       GenServer.cast(txn, :rollback)

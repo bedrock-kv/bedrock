@@ -47,12 +47,6 @@ Kino.start_child!({Tutorial.Cluster, []})
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-Tutorial.Cluster.transaction_system_layout!()
-```
-
-<!-- livebook:{"reevaluate_automatically":true} -->
-
-```elixir
 defmodule Tutorial.Repo do
   use Bedrock.Repo, cluster: Tutorial.Cluster
 end
@@ -302,6 +296,7 @@ defmodule Scheduling do
           # Decrement seats and record signup
           Repo.put(tx, class_key, Key.pack({seats_left - 1}))
           Repo.put(tx, rec, "")
+          :ok
 
         _existing ->
           # Already signed up
@@ -327,6 +322,7 @@ defmodule Scheduling do
 
           Repo.put(tx, class_key, Key.pack({seats_left + 1}))
           Repo.clear(tx, rec)
+          :ok
       end
     end)
   end
@@ -366,6 +362,7 @@ defmodule Scheduling do
     key = Subspace.pack(course, {class})
     value = Key.pack({@total_seats_available})
     Repo.put(tx, key, value)
+    :ok
   end
 end
 ```

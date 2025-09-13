@@ -39,6 +39,6 @@ defmodule Bedrock.DataPlane.CommitProxy do
     do: call(commit_proxy, {:recover_from, lock_token, transaction_system_layout}, :infinity)
 
   @spec commit(commit_proxy_ref :: ref(), transaction :: Transaction.encoded()) ::
-          {:ok, version :: Bedrock.version()} | {:error, :timeout | :unavailable}
+          {:ok, version :: Bedrock.version(), index :: non_neg_integer()} | {:error, :timeout | :unavailable}
   def commit(commit_proxy, transaction), do: call(commit_proxy, {:commit, transaction}, :infinity)
 end

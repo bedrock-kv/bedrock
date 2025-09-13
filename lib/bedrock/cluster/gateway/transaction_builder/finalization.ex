@@ -16,7 +16,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.Finalization do
     transaction = prepare_transaction_for_commit(t.read_version, t.tx)
 
     with {:ok, commit_proxy} <- select_commit_proxy(t.transaction_system_layout),
-         {:ok, version} <- commit_fn.(commit_proxy, transaction) do
+         {:ok, version, _sequence} <- commit_fn.(commit_proxy, transaction) do
       {:ok, %{t | state: :committed, commit_version: version}}
     end
   end

@@ -39,21 +39,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Batching,
     only: [
       start_batch_if_needed: 1,
-      add_transaction_to_batch: 4,
       apply_finalization_policy: 1,
-      single_transaction_batch: 2,
-      create_resolver_task: 2
+      add_transaction_to_batch: 4,
+      single_transaction_batch: 2
     ]
 
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 3]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
-    only: [
-      trace_metadata: 1,
-      trace_commit_proxy_batch_started: 3,
-      trace_commit_proxy_batch_finished: 4,
-      trace_commit_proxy_batch_failed: 3
-    ]
+    only: [trace_metadata: 1]
 
   import Bedrock.Internal.GenServer.Replies
 
@@ -83,8 +77,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     epoch = opts[:epoch] || raise "Missing :epoch option"
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     instance = opts[:instance] || raise "Missing :instance option"
-    max_latency_in_ms = opts[:max_latency_in_ms] || 1
-    max_per_batch = opts[:max_per_batch] || 10
+    max_latency_in_ms = opts[:max_latency_in_ms] || 4
+    max_per_batch = opts[:max_per_batch] || 32
     empty_transaction_timeout_ms = opts[:empty_transaction_timeout_ms] || 1_000
 
     %{
@@ -124,7 +118,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec terminate(term(), State.t()) :: :ok
-  def terminate(_reason, t) do
+  def terminate(_reason, %State{} = t) do
     abort_current_batch(t)
     :ok
   end
@@ -138,7 +132,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
   def handle_call({:recover_from, lock_token, transaction_system_layout}, _from, %{mode: :locked} = t) do
     if lock_token == t.lock_token do
-      # Precompute expensive static structures once at boot
       precomputed_layout = LayoutOptimization.precompute_from_layout(transaction_system_layout)
 
       reply(
@@ -167,15 +160,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         exit(reason)
 
       updated_t ->
-        # Start resolver assignment task
-        task = create_resolver_task(transaction, updated_t.precomputed_layout)
-
         updated_t
-        |> add_transaction_to_batch(transaction, reply_fn(from), task)
+        |> add_transaction_to_batch(transaction, reply_fn(from), nil)
         |> apply_finalization_policy()
         |> case do
-          {t, nil} -> noreply(t, timeout: 0)
-          {t, batch} -> noreply(t, continue: {:finalize, batch})
+          {t, nil} ->
+            # Keep waiting - calculate remaining time until max latency
+            now = Time.monotonic_now_in_ms()
+            elapsed = now - t.batch.started_at
+            remaining_time = max(0, t.max_latency_in_ms - elapsed)
+            noreply(t, timeout: remaining_time)
+
+          {t, batch} ->
+            # Finalize asynchronously and reset for next batch
+            finalize_batch_async(batch, t.transaction_system_layout, t.epoch, t.precomputed_layout)
+            maybe_set_empty_transaction_timeout(t)
         end
     end
   end
@@ -183,23 +182,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:commit, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
-  @spec handle_info(:timeout, State.t()) ::
-          {:noreply, State.t()} | {:noreply, State.t(), {:continue, term()}}
+  @spec handle_info(:timeout, State.t()) :: {:noreply, State.t(), timeout()}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
     empty_transaction = Transaction.empty_transaction()
 
     case single_transaction_batch(t, empty_transaction) do
       {:ok, batch} ->
-        noreply(t, continue: {:finalize, batch})
+        # Send empty batch asynchronously
+        finalize_batch_async(batch, t.transaction_system_layout, t.epoch, t.precomputed_layout)
+        maybe_set_empty_transaction_timeout(t)
 
       {:error, :sequencer_unavailable} ->
         exit({:sequencer_unavailable, :timeout_empty_transaction})
     end
   end
 
-  def handle_info(:timeout, %{batch: nil} = t), do: noreply(t, timeout: t.empty_transaction_timeout_ms)
+  def handle_info(:timeout, %{batch: nil} = t) do
+    noreply(t, timeout: t.empty_transaction_timeout_ms)
+  end
 
-  def handle_info(:timeout, %{batch: batch} = t), do: noreply(%{t | batch: nil}, continue: {:finalize, batch})
+  def handle_info(:timeout, %{batch: batch} = t) do
+    # Timeout reached - finalize current batch asynchronously
+    finalize_batch_async(batch, t.transaction_system_layout, t.epoch, t.precomputed_layout)
+    maybe_set_empty_transaction_timeout(%{t | batch: nil})
+  end
 
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
     # Director has died - this commit proxy should terminate gracefully
@@ -210,43 +216,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:noreply, t}
   end
 
-  @impl true
-  @spec handle_continue({:finalize, Batch.t()}, State.t()) :: {:noreply, State.t()}
-  def handle_continue({:finalize, batch}, t) do
-    trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
+  # Asynchronous batch finalization - creates its own resolver tasks
+  defp finalize_batch_async(batch, transaction_system_layout, epoch, precomputed_layout) do
+    Task.start_link(fn ->
+      case finalize_batch(batch, transaction_system_layout, epoch: epoch, precomputed: precomputed_layout) do
+        {:ok, _n_aborts, _n_oks} ->
+          :ok
 
-    case :timer.tc(fn ->
-           finalize_batch(batch, t.transaction_system_layout, epoch: t.epoch, precomputed: t.precomputed_layout)
-         end) do
-      {n_usec, {:ok, n_aborts, n_oks}} ->
-        trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
-        maybe_set_empty_transaction_timeout(t)
-
-      {n_usec, {:error, {:log_failures, errors}}} ->
-        trace_commit_proxy_batch_failed(batch, {:log_failures, errors}, n_usec)
-        exit({:log_failures, errors})
-
-      {n_usec, {:error, {:insufficient_acknowledgments, count, required, errors}}} ->
-        trace_commit_proxy_batch_failed(
-          batch,
-          {:insufficient_acknowledgments, count, required, errors},
-          n_usec
-        )
-
-        exit({:insufficient_acknowledgments, count, required, errors})
-
-      {n_usec, {:error, {:resolver_unavailable, reason}}} ->
-        trace_commit_proxy_batch_failed(batch, {:resolver_unavailable, reason}, n_usec)
-        exit({:resolver_unavailable, reason})
-
-      {n_usec, {:error, {:storage_team_coverage_error, key}}} ->
-        trace_commit_proxy_batch_failed(batch, {:storage_team_coverage_error, key}, n_usec)
-        exit({:storage_team_coverage_error, key})
-
-      {n_usec, {:error, reason}} ->
-        trace_commit_proxy_batch_failed(batch, reason, n_usec)
-        exit({:unknown_error, reason})
-    end
+        {:error, reason} ->
+          exit(reason)
+      end
+    end)
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
@@ -254,7 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   # Moved to Batching module to avoid duplication
 
-  @spec maybe_set_empty_transaction_timeout(State.t()) :: {:noreply, State.t()}
+  @spec maybe_set_empty_transaction_timeout(State.t()) :: {:noreply, State.t(), timeout()}
   defp maybe_set_empty_transaction_timeout(%{mode: :running} = t),
     do: noreply(t, timeout: t.empty_transaction_timeout_ms)
 

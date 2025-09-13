@@ -15,18 +15,27 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   transactions, recovery scenarios, or system restarts.
   """
 
+  import Bedrock.DataPlane.CommitProxy.Telemetry,
+    only: [
+      trace_commit_proxy_batch_started: 3,
+      trace_commit_proxy_batch_finished: 4,
+      trace_commit_proxy_batch_failed: 3
+    ]
+
   import Bitwise, only: [<<<: 2]
 
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.Time
   alias Bedrock.KeyRange
 
   @type resolver_fn() :: (Resolver.ref(),
@@ -60,7 +69,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type abort_reply_fn() :: ([Batch.reply_fn()] -> :ok)
 
-  @type success_reply_fn() :: ([Batch.reply_fn()], Bedrock.version() -> :ok)
+  @type success_reply_fn() :: ([{Batch.reply_fn(), non_neg_integer(), non_neg_integer()}], Bedrock.version() -> :ok)
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
@@ -118,7 +127,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     @type t :: %__MODULE__{
             transactions: %{
-              non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t()}
+              non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t() | nil}
             },
             transaction_count: non_neg_integer(),
             commit_version: Bedrock.version(),
@@ -189,14 +198,28 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()}
           | {:error, finalization_error()}
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
-    batch
-    |> create_finalization_plan(transaction_system_layout)
-    |> resolve_conflicts(transaction_system_layout, opts)
-    |> prepare_for_logging()
-    |> push_to_logs(transaction_system_layout, opts)
-    |> notify_sequencer(transaction_system_layout.sequencer, opts)
-    |> notify_successes(opts)
-    |> extract_result_or_handle_error(opts)
+    trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
+
+    fn ->
+      batch
+      |> create_finalization_plan(transaction_system_layout)
+      |> resolve_conflicts(transaction_system_layout, opts)
+      |> prepare_for_logging()
+      |> push_to_logs(transaction_system_layout, opts)
+      |> notify_sequencer(transaction_system_layout.sequencer, opts)
+      |> notify_successes(opts)
+      |> extract_result_or_handle_error(opts)
+    end
+    |> :timer.tc()
+    |> case do
+      {n_usec, {:ok, n_aborts, n_oks}} ->
+        trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
+        {:ok, n_aborts, n_oks}
+
+      {n_usec, {:error, reason}} ->
+        trace_commit_proxy_batch_failed(batch, reason, n_usec)
+        {:error, reason}
+    end
   end
 
   # ============================================================================
@@ -224,14 +247,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           FinalizationPlan.t()
   def resolve_conflicts(%FinalizationPlan{stage: :ready_for_resolution} = plan, layout, opts) do
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
+    precomputed_layout = Keyword.get(opts, :precomputed) || raise "Missing precomputed layout in finalization opts"
 
     resolver_transaction_map =
       if plan.transaction_count == 0 do
         Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end)
       else
+        # Create and await resolver tasks within the finalization process
         maps =
           for idx <- 0..(plan.transaction_count - 1) do
-            {_idx, _reply_fn, _transaction, task} = Map.fetch!(plan.transactions, idx)
+            {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
+            task = create_resolver_task_in_finalization(transaction, precomputed_layout)
             Task.await(task, 5000)
           end
 
@@ -360,6 +386,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
   def default_timeout_fn(attempts_used), do: 500 * (1 <<< attempts_used)
 
+  @spec create_resolver_task_in_finalization(Transaction.encoded(), LayoutOptimization.precomputed_layout()) :: Task.t()
+  defp create_resolver_task_in_finalization(transaction, %{resolver_refs: [single_ref], resolver_ends: _ends}) do
+    Task.async(fn ->
+      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      %{single_ref => sections}
+    end)
+  end
+
+  defp create_resolver_task_in_finalization(transaction, %{resolver_refs: refs, resolver_ends: ends}) do
+    Task.async(fn ->
+      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
+    end)
+  end
+
   @spec split_and_notify_aborts_with_set(FinalizationPlan.t(), MapSet.t(non_neg_integer()), keyword()) ::
           FinalizationPlan.t()
   defp split_and_notify_aborts_with_set(%FinalizationPlan{stage: :conflicts_resolved} = plan, aborted_set, opts) do
@@ -436,7 +477,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   @spec process_transaction_for_logs(
-          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t()}},
+          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t() | nil}},
           FinalizationPlan.t(),
           %{Log.id() => [Bedrock.range_tag()]},
           %{Log.id() => [term()]}
@@ -728,21 +769,32 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
 
   def notify_successes(%FinalizationPlan{stage: :sequencer_notified} = plan, opts) do
-    success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version/2)
+    success_reply_fn = Keyword.get(opts, :success_reply_fn, &send_reply_with_commit_version_and_index/2)
 
-    {successful_reply_fns, successful_indices} =
+    successful_entries =
       plan.transactions
       |> Enum.reject(fn {idx, _entry} -> MapSet.member?(plan.replied_indices, idx) end)
-      |> Enum.map(fn {idx, {_tx_idx, reply_fn, _binary, _task}} -> {reply_fn, idx} end)
-      |> Enum.unzip()
+      |> Enum.map(fn {idx, {tx_idx, reply_fn, _binary, _task}} -> {reply_fn, tx_idx, idx} end)
 
-    success_reply_fn.(successful_reply_fns, plan.commit_version)
+    successful_indices = Enum.map(successful_entries, fn {_reply_fn, _tx_idx, idx} -> idx end)
+
+    success_reply_fn.(successful_entries, plan.commit_version)
 
     %{plan | replied_indices: MapSet.union(plan.replied_indices, MapSet.new(successful_indices)), stage: :completed}
   end
 
   @spec send_reply_with_commit_version([Batch.reply_fn()], Bedrock.version()) :: :ok
   def send_reply_with_commit_version(oks, commit_version), do: Enum.each(oks, & &1.({:ok, commit_version}))
+
+  @spec send_reply_with_commit_version_and_index(
+          [{Batch.reply_fn(), non_neg_integer(), non_neg_integer()}],
+          Bedrock.version()
+        ) :: :ok
+  def send_reply_with_commit_version_and_index(entries, commit_version) do
+    Enum.each(entries, fn {reply_fn, tx_idx, _plan_idx} ->
+      reply_fn.({:ok, commit_version, tx_idx})
+    end)
+  end
 
   # ============================================================================
   # Result Extraction and Error Handling

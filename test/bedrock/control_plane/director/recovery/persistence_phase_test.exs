@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       expected_layout = mock_transaction_system_layout()
       recovery_attempt = base_recovery_attempt()
 
-      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _ -> {:ok, 1} end)
+      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _ -> {:ok, 1, 0} end)
 
       # Pattern match both result and next phase in single assertion
       assert {%{transaction_system_layout: ^expected_layout}, :completed} =

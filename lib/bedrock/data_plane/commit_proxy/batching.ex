@@ -30,13 +30,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   def single_transaction_batch(state, transaction, reply_fn) when is_binary(transaction) do
     case next_commit_version(state.transaction_system_layout.sequencer) do
       {:ok, last_commit_version, commit_version} ->
-        # Create task for resolver assignment (empty transactions still need processing)
-        task = create_resolver_task(transaction, state.precomputed_layout)
-
         {:ok,
          timestamp()
          |> new_batch(last_commit_version, commit_version)
-         |> add_transaction(transaction, reply_fn, task)
+         |> add_transaction(transaction, reply_fn, nil)
          |> set_finalized_at(timestamp())}
 
       {:error, :unavailable} ->
@@ -72,7 +69,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   def start_batch_if_needed(t), do: t
 
-  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn(), Task.t()) ::
+  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn(), Task.t() | nil) ::
           State.t()
   def add_transaction_to_batch(t, transaction, reply_fn, task) when is_binary(transaction),
     do: %{t | batch: add_transaction(t.batch, transaction, reply_fn, task)}

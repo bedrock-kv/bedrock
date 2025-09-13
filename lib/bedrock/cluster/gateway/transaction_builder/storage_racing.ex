@@ -116,12 +116,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
       {:ok, server, result}, _ ->
         {:halt, {:ok, server, result}}
 
-      {:failure, :version_too_new, server}, {:failure, failures} ->
-        {:cont, {:failure, Map.put(failures, server, :version_too_new)}}
-
-      {:failure, :version_too_old, server}, {:failure, failures} ->
-        {:cont, {:failure, Map.put(failures, server, :version_too_old)}}
-
       {:failure, reason, server}, {:failure, failures} ->
         {:cont, {:failure, Map.put(failures, server, reason)}}
     end)

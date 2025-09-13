@@ -2,8 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, path: "/Users/j5n/Workspace/bedrock"},
-#  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
   {:kino, "~> 0.16.0"}
 ])
 ```

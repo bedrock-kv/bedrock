@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, path: "/Users/j5n/Workspace/bedrock"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "develop"},
   {:kino, "~> 0.16.0"}
 ])
 ```
@@ -123,7 +123,7 @@ Bedrock includes directories and subspaces that make it easy to model data using
 
 ```elixir
 # Create root directory layer
-root = Directory.Layer.new(Repo)
+root = Directory.root(Repo)
 
 # Create or open scheduling directory
 {:ok, scheduling} = Directory.create_or_open(root, ["scheduling"])
@@ -132,8 +132,8 @@ root = Directory.Layer.new(Repo)
 The directory provides a subspace where we'll store our application data. Each subspace has a fixed prefix it uses when defining keys. We decided that we wanted `"attends"` and `"class"` as our prefixes, so we'll create new subspaces for them within the scheduling subspace:
 
 ```elixir
-course = Subspace.create(Directory.get_subspace(scheduling), {"class"})
-attends = Subspace.create(Directory.get_subspace(scheduling), {"attends"})
+course = Subspace.create(scheduling, {"class"})
+attends = Subspace.create(scheduling, {"attends"})
 ```
 
 Subspaces have a `pack/2` function for defining keys. To store the records for our data model, we can use `Subspace.pack(attends, {student, class})` and `Subspace.pack(course, {class})`.

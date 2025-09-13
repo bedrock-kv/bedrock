@@ -177,8 +177,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     key_count = Page.key_count(updated_page)
     {left_page, right_page} = Page.split_page(updated_page, div(key_count, 2), right_page_id)
 
-    # Add both split pages to the index
+    # Remove the original page, then add both split pages to the index
     index
+    |> delete_page(Page.id(updated_page))
     |> add_page(left_page)
     |> add_page(right_page)
   end

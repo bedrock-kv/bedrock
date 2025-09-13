@@ -121,7 +121,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   This is O(log n + k) where k is the number of overlapping pages.
   Minimizes comparisons by switching to collection mode after finding boundaries.
   """
-  @spec page_ids_in_range(t(), Bedrock.key(), Bedrock.key()) :: Enumerable.t({Bedrock.key(), page_id()})
+  @spec page_ids_in_range(t(), Bedrock.key(), Bedrock.key()) :: [page_id()]
   def page_ids_in_range({size, tree_node}, query_start, query_end) when size > 0,
     do: collect_pages_in_range(tree_node, query_start, query_end)
 

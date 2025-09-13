@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
@@ -69,13 +70,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
+                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
 
-      assert_receive {:reply1, {:ok, _}}
-      assert_receive {:reply2, {:ok, _}}
-      assert_receive {:reply3, {:ok, _}}
+      assert_receive {:reply1, {:ok, _, _}}
+      assert_receive {:reply2, {:ok, _, _}}
+      assert_receive {:reply3, {:ok, _, _}}
     end
 
     test "handles range operations that span multiple storage teams" do
@@ -112,11 +114,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
+                 precomputed: LayoutOptimization.precompute_from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
 
-      assert_receive {:range_reply, {:ok, _}}
+      assert_receive {:range_reply, {:ok, _, _}}
     end
 
     test "creates empty transactions for logs with no relevant mutations" do
@@ -151,11 +154,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
+                 precomputed: LayoutOptimization.precompute_from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
 
-      assert_receive {:reply, {:ok, _}}
+      assert_receive {:reply, {:ok, _, _}}
       # Both logs receive transactions (one with data, one empty) for version consistency
     end
 
@@ -210,14 +214,15 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
+                 precomputed: LayoutOptimization.precompute_from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
 
       # Verify correct replies - transaction 1 should be aborted, others succeed
-      assert_receive {:reply1, {:ok, ^expected_version}}
+      assert_receive {:reply1, {:ok, ^expected_version, _}}
       assert_receive {:reply2, {:error, :aborted}}
-      assert_receive {:reply3, {:ok, ^expected_version}}
+      assert_receive {:reply3, {:ok, ^expected_version, _}}
     end
   end
 

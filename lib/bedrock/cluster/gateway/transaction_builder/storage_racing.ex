@@ -32,15 +32,19 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
           state :: State.t(),
           key :: binary(),
           operation_fn :: (pid(), Bedrock.version(), Bedrock.timeout_in_ms() ->
-                             {:ok, any()} | {:error, any()} | {:failure, atom(), pid()})
+                             {:ok, any()}
+                             | {:error, :not_found | :version_too_new}
+                             | {:failure, :timeout | :unavailable | :version_too_old, pid()})
         ) ::
-          {State.t(), {:ok, {any(), Bedrock.key_range()}} | {:error, atom()}}
+          {State.t(),
+           {:ok, {any(), Bedrock.key_range()}}
+           | {:failure, %{atom() => [pid()]}}}
   def race_storage_servers(%State{} = state, key, operation_fn) do
     state.layout_index
     |> LayoutIndex.lookup_key!(key)
     |> case do
       {_key_range, []} ->
-        {state, {:error, :unavailable}}
+        raise "No storage servers configured for keyspace - this indicates a layout configuration error"
 
       {key_range, storage_pids} ->
         state.fastest_storage_servers
@@ -48,7 +52,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
         |> try_fastest_server(state, key_range, storage_pids, operation_fn)
     end
   rescue
-    RuntimeError -> {state, {:error, :unavailable}}
+    RuntimeError -> {state, {:failure, %{layout_lookup_failed: []}}}
   end
 
   # Private helper functions
@@ -61,12 +65,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
     |> operation_fn.(state.read_version, state.fetch_timeout_in_ms)
     |> case do
       {:ok, result} -> {state, {:ok, {result, key_range}}}
-      {:error, reason} when reason in [:version_too_old, :version_too_new, :decode_error] -> {state, {:error, reason}}
+      {:error, :not_found} -> {state, {:ok, {nil, key_range}}}
+      {:error, :version_too_old} -> {state, {:failure, %{version_too_old: [fastest_server]}}}
       _ -> race_all_servers(state, key_range, :lists.delete(fastest_server, all_servers), operation_fn)
     end
   end
 
-  defp race_all_servers(state, _key_range, [], _operation_fn), do: {state, {:error, :unavailable}}
+  defp race_all_servers(state, _key_range, [], _operation_fn), do: {state, {:failure, %{no_servers_to_race: []}}}
 
   defp race_all_servers(state, key_range, servers, operation_fn) do
     case run_race(servers, state, operation_fn) do
@@ -81,12 +86,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
       {:error, reason} ->
         {state, {:error, reason}}
 
-      {:failure, reasons_by_server} when map_size(reasons_by_server) == 0 ->
-        {state, {:error, :unavailable}}
-
       {:failure, reasons_by_server} ->
-        reason = if :timeout in Map.values(reasons_by_server), do: :timeout, else: hd(Map.values(reasons_by_server))
-        {state, {:error, reason}}
+        failures_by_reason =
+          Enum.group_by(reasons_by_server, fn {_pid, reason} -> reason end, fn {pid, _reason} -> pid end)
+
+        {state, {:failure, failures_by_reason}}
     end
   end
 
@@ -96,12 +100,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
       fn storage_server ->
         case operation_fn.(storage_server, state.read_version, state.fetch_timeout_in_ms) do
           {:ok, result} -> {:ok, storage_server, result}
+          {:error, :not_found} -> {:ok, storage_server, nil}
           {:error, reason} -> {:failure, reason, storage_server}
           {:failure, reason, server} -> {:failure, reason, server}
         end
       end,
       ordered: false,
-      timeout: state.fetch_timeout_in_ms,
       zip_input_on_exit: true
     )
     |> Enum.map(fn
@@ -111,9 +115,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StorageRacing do
     |> Enum.reduce_while({:failure, %{}}, fn
       {:ok, server, result}, _ ->
         {:halt, {:ok, server, result}}
-
-      {:failure, reason, _server}, _ when reason in [:version_too_old, :version_too_new, :decode_error] ->
-        {:halt, {:error, reason}}
 
       {:failure, reason, server}, {:failure, failures} ->
         {:cont, {:failure, Map.put(failures, server, reason)}}

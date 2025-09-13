@@ -334,6 +334,69 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
   end
 
+  describe "property-based testing" do
+    use ExUnitProperties
+
+    setup %{server_opts: base_opts} do
+      {:ok, base_opts: base_opts}
+    end
+
+    test "transactions are processed in version order regardless of arrival order", %{base_opts: base_opts} do
+      sequence_length = 8
+
+      # Create fresh server with unique name and path
+      iteration_id = :rand.uniform(1_000_000)
+      unique_path = Path.join(base_opts[:path], "test_#{iteration_id}")
+      File.mkdir_p!(unique_path)
+
+      unlocked_opts =
+        base_opts
+        |> Keyword.put(:start_unlocked, true)
+        |> Keyword.put(:otp_name, :"test_log_#{iteration_id}")
+        |> Keyword.put(:id, "test_log_#{iteration_id}")
+        |> Keyword.put(:path, unique_path)
+
+      server = setup_server(unlocked_opts)
+
+      # Create transaction specs with correct version semantics
+      # expected_version should equal server's current last_version (starting from 0)
+      # commit_version should be expected_version + 1
+      transaction_specs =
+        for i <- 0..(sequence_length - 1) do
+          expected_version = Version.from_integer(i)
+          commit_version = i + 1
+          transaction = TransactionTestSupport.new_log_transaction(commit_version, %{"key_#{i}" => "value_#{i}"})
+          {expected_version, transaction}
+        end
+
+      # Send transactions concurrently in shuffled order to test out-of-order handling
+      # The server should queue higher versions until lower ones complete
+      shuffled_specs = Enum.shuffle(transaction_specs)
+
+      tasks =
+        for {version, transaction} <- shuffled_specs do
+          Task.async(fn ->
+            GenServer.call(server, {:push, transaction, version}, 5_000)
+          end)
+        end
+
+      # Wait for all tasks to complete
+      task_results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+      # All pushes should succeed
+      assert Enum.all?(task_results, &(&1 == :ok))
+
+      # Verify server state is clean and advanced correctly
+      final_state = :sys.get_state(server)
+      assert map_size(final_state.pending_pushes) == 0
+      expected_final_version = Version.from_integer(sequence_length)
+      assert final_state.last_version == expected_final_version
+
+      # Cleanup server
+      cleanup_server(server)
+    end
+  end
+
   defp setup_server(opts) do
     pid = start_supervised!(Server.child_spec(opts))
 

@@ -19,12 +19,12 @@ defmodule Bedrock.HCA do
 
   alias Bedrock.Key
 
-  defstruct [:counters_subspace, :recent_subspace, :repo_module, :random_fn]
+  defstruct [:counters_subspace, :recent_subspace, :repo, :random_fn]
 
   @type t :: %__MODULE__{
           counters_subspace: binary(),
           recent_subspace: binary(),
-          repo_module: module(),
+          repo: module(),
           random_fn: (pos_integer() -> pos_integer())
         }
 
@@ -33,7 +33,7 @@ defmodule Bedrock.HCA do
 
   ## Parameters
 
-    * `repo_module` - The Bedrock.Repo module to use for transactions
+    * `repo` - The Bedrock.Repo module to use for transactions
     * `subspace` - Binary prefix for this allocator's keys
     * `opts` - Optional configuration
 
@@ -55,11 +55,11 @@ defmodule Bedrock.HCA do
       iex> hca = Bedrock.HCA.new(MyApp.Repo, "test", random_fn: deterministic_random)
   """
   @spec new(module(), binary(), keyword()) :: t()
-  def new(repo_module, subspace, opts \\ []) when is_atom(repo_module) and is_binary(subspace) do
+  def new(repo, subspace, opts \\ []) when is_atom(repo) and is_binary(subspace) do
     random_fn = Keyword.get(opts, :random_fn, &:rand.uniform/1)
 
     %__MODULE__{
-      repo_module: repo_module,
+      repo: repo,
       counters_subspace: subspace <> <<0>>,
       recent_subspace: subspace <> <<1>>,
       random_fn: random_fn
@@ -69,7 +69,7 @@ defmodule Bedrock.HCA do
   @doc """
   Allocate multiple unique IDs from the HCA.
 
-  Returns a list of unique integer IDs. This is implemented by calling
+  Returns a list of unique compact binary encoded IDs. This is implemented by calling
   allocate/2 multiple times.
 
   ## Examples
@@ -77,13 +77,13 @@ defmodule Bedrock.HCA do
       iex> MyApp.Repo.transaction(fn txn ->
       ...>   Bedrock.HCA.allocate_many(hca, txn, 5)
       ...> end)
-      {:ok, [0, 1, 2, 3, 4]}
+      {:ok, [<<21, 0>>, <<21, 1>>, <<21, 2>>, <<21, 3>>, <<21, 4>>]}
   """
-  @spec allocate_many(t(), term(), pos_integer()) :: {:ok, [non_neg_integer()]} | {:error, term()}
-  def allocate_many(%__MODULE__{} = hca, txn, count) when is_integer(count) and count > 0 do
+  @spec allocate_many(t(), pos_integer()) :: {:ok, [binary()]} | {:error, term()}
+  def allocate_many(%__MODULE__{} = hca, count) when is_integer(count) and count > 0 do
     ids =
       for _ <- 1..count do
-        case allocate(hca, txn) do
+        case allocate(hca) do
           {:ok, id} -> id
           {:error, reason} -> throw({:error, reason})
         end
@@ -97,47 +97,50 @@ defmodule Bedrock.HCA do
   @doc """
   Allocate a single unique ID from the HCA.
 
-  Returns a unique integer ID. This operation is highly concurrent and designed
-  to minimize write conflicts even under heavy load.
+  Returns a unique compact binary encoding of the allocated ID. This operation
+  is highly concurrent and designed to minimize write conflicts even under heavy load.
 
   ## Examples
 
       iex> MyApp.Repo.transaction(fn txn ->
       ...>   Bedrock.HCA.allocate(hca, txn)
       ...> end)
-      {:ok, 42}
+      {:ok, <<21, 42>>}  # Tuple-encoded binary
   """
-  defmodule HCARetryException do
-    @moduledoc false
-    defexception [:message]
 
-    def new(message \\ "HCA retry needed") do
-      %__MODULE__{message: message}
+  @spec allocate(t()) :: {:ok, binary()} | {:error, term()}
+  def allocate(%__MODULE__{repo: repo} = hca) do
+    case repo.transaction(&do_allocate(hca, &1)) do
+      {:error, _reason} = error -> error
+      result -> {:ok, result}
     end
+  rescue
+    error -> {:error, error}
   end
 
-  @spec allocate(t(), term()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @doc """
+  Allocate a prefix within an existing transaction.
+  """
+  @spec allocate(t(), Bedrock.Internal.Repo.transaction()) :: binary()
   def allocate(%__MODULE__{} = hca, txn) do
-    result = do_allocate(hca, txn)
-    {:ok, result}
-  rescue
-    _error in [HCARetryException] ->
-      # Retry the allocation
-      allocate(hca, txn)
-
-    error ->
-      {:error, error}
+    do_allocate(hca, txn)
   end
 
   # Private implementation functions
 
-  defp do_allocate(hca, txn) do
+  defp do_allocate(hca, txn), do: do_allocate_with_retry(hca, txn)
+
+  defp do_allocate_with_retry(hca, txn) do
     start = current_start(hca, txn)
     {candidate_start, window_size} = get_or_advance_window(hca, txn, start, false)
     search_candidate(hca, txn, candidate_start, window_size)
+  catch
+    {__MODULE__, :retry} ->
+      # Retry the allocation within the same transaction
+      do_allocate_with_retry(hca, txn)
   end
 
-  defp current_start(hca, txn) do
+  defp current_start(%{repo: repo} = hca, txn) do
     # Get the latest counter using KeySelector - equivalent to reverse scan with limit 1!
     counter_range_end = hca.counters_subspace <> <<0xFF>>
 
@@ -145,14 +148,14 @@ defmodule Bedrock.HCA do
     # which is the maximum counter key in our range
     last_counter_selector = Bedrock.KeySelector.last_less_than(counter_range_end)
 
-    case hca.repo_module.select(txn, last_counter_selector) do
+    case repo.select(txn, last_counter_selector) do
       nil ->
-        # No counters yet, start at 0
+        # No key found by selector, start at 0
         0
 
-      {resolved_key, _value} ->
+      {resolved_key, _value} when is_binary(resolved_key) ->
         # Verify the resolved key is actually in our counter range
-        if String.starts_with?(resolved_key, hca.counters_subspace) do
+        if :binary.match(resolved_key, hca.counters_subspace) == {0, byte_size(hca.counters_subspace)} do
           decode_counter_key(hca, resolved_key)
         else
           # Key is outside our range, no counters yet
@@ -161,19 +164,19 @@ defmodule Bedrock.HCA do
     end
   end
 
-  defp get_or_advance_window(hca, txn, start, window_advanced) do
+  defp get_or_advance_window(%{repo: repo} = hca, txn, start, window_advanced) do
     # Clear previous window if we advanced
     if window_advanced do
       clear_previous_window(hca, txn, start)
     end
 
-    # Increment counter for this window
+    # Increment counter for this window - use little-endian binary encoding
     counter_key = encode_counter_key(hca, start)
-    _new_count = hca.repo_module.add(txn, counter_key, 1)
+    repo.atomic(txn, :add, counter_key, <<1::64-little>>)
 
     # Get current usage count for this window
     count =
-      case hca.repo_module.get(txn, counter_key, snapshot: true) do
+      case repo.get(txn, counter_key, snapshot: true) do
         nil -> 0
         <<c::64-little>> -> c
         _other -> 0
@@ -192,7 +195,7 @@ defmodule Bedrock.HCA do
     end
   end
 
-  defp search_candidate(hca, txn, start, window_size) do
+  defp search_candidate(%{repo: repo} = hca, txn, start, window_size) do
     # Generate random candidate within the window
     # Use configurable random function for testing control
     candidate = start + (hca.random_fn.(window_size) - 1)
@@ -202,37 +205,34 @@ defmodule Bedrock.HCA do
     current_latest_start = current_start(hca, txn)
 
     if current_latest_start != start do
-      raise HCARetryException.new("Window advanced during allocation")
+      throw({__MODULE__, :retry})
     end
 
     # Check if candidate is available and claim it
-    case hca.repo_module.get(txn, candidate_key, snapshot: true) do
+    case repo.get(txn, candidate_key, snapshot: true) do
       nil ->
-        # Candidate is available, claim it
-        # First set without write conflict to claim the slot
-        hca.repo_module.put(txn, candidate_key, "", no_write_conflict: true)
+        repo.put(txn, candidate_key, <<>>, no_write_conflict: true)
 
-        # Then add write conflict to ensure transaction consistency
         add_write_conflict_key(hca, txn, candidate_key)
 
-        candidate
+        Key.pack({candidate})
 
       _existing_value ->
         # Candidate is taken, retry
-        raise HCARetryException.new("Candidate already taken")
+        throw({__MODULE__, :retry})
     end
   end
 
-  defp clear_previous_window(hca, txn, start) do
+  defp clear_previous_window(%{repo: repo} = hca, txn, start) do
     # Clear counter data for this window start
-    counter_start = encode_counter_key(hca, start)
-    counter_end = Key.key_after(counter_start)
-    hca.repo_module.clear_range(txn, counter_start, counter_end, no_write_conflict: true)
+    counter_key = encode_counter_key(hca, start)
+    counter_range = Bedrock.KeyRange.from_prefix(counter_key)
+    repo.clear_range(txn, counter_range, no_write_conflict: true)
 
     # Clear recent allocation data for this window start
-    recent_start = encode_recent_key(hca, start)
-    recent_end = Key.key_after(recent_start)
-    hca.repo_module.clear_range(txn, recent_start, recent_end, no_write_conflict: true)
+    recent_key = encode_recent_key(hca, start)
+    recent_range = Bedrock.KeyRange.from_prefix(recent_key)
+    repo.clear_range(txn, recent_range, no_write_conflict: true)
   end
 
   # Dynamic window sizing based on allocation pressure
@@ -245,9 +245,7 @@ defmodule Bedrock.HCA do
   end
 
   # Key encoding functions
-  defp encode_counter_key(hca, start) do
-    hca.counters_subspace <> <<start::64-big>>
-  end
+  defp encode_counter_key(hca, start), do: hca.counters_subspace <> <<start::64-big>>
 
   defp decode_counter_key(hca, counter_key) do
     prefix_size = byte_size(hca.counters_subspace)
@@ -255,13 +253,9 @@ defmodule Bedrock.HCA do
     start
   end
 
-  defp encode_recent_key(hca, candidate) do
-    hca.recent_subspace <> <<candidate::64-big>>
-  end
+  defp encode_recent_key(hca, candidate), do: hca.recent_subspace <> <<candidate::64-big>>
 
-  defp add_write_conflict_key(hca, txn, key) do
-    hca.repo_module.add_write_conflict_range(txn, key, Key.key_after(key))
-  end
+  defp add_write_conflict_key(%{repo: repo}, txn, key), do: repo.add_write_conflict_range(txn, key, Key.key_after(key))
 
   @doc """
   Get statistics about the HCA state.
@@ -269,37 +263,34 @@ defmodule Bedrock.HCA do
   Returns information about allocated windows, usage patterns, etc.
   Useful for monitoring and debugging.
   """
-  @spec stats(t(), term()) :: %{
+  @spec stats(t()) :: %{
           latest_window_start: non_neg_integer(),
           total_counters: non_neg_integer(),
           estimated_allocated: non_neg_integer()
         }
-  def stats(%__MODULE__{} = hca, txn) do
-    latest_start = current_start(hca, txn)
+  def stats(%__MODULE__{repo: repo} = hca) do
+    repo.transaction(fn txn ->
+      latest_start = current_start(hca, txn)
 
-    # Count total counter entries
-    counter_start = hca.counters_subspace
-    counter_end = hca.counters_subspace <> <<0xFF>>
+      # Count total counter entries
+      counter_start = hca.counters_subspace
+      counter_end = hca.counters_subspace <> <<0xFF>>
 
-    counters = txn |> hca.repo_module.range(counter_start, counter_end) |> Enum.to_list()
-    total_counters = length(counters)
+      counters = txn |> repo.range(counter_start, counter_end) |> Enum.to_list()
+      total_counters = length(counters)
 
-    # Estimate total allocated IDs by summing counter values
-    estimated_allocated =
-      Enum.reduce(counters, 0, fn {_key, value}, acc ->
-        count =
-          case value do
-            <<c::64-little>> -> c
-            _ -> 0
-          end
+      # Estimate total allocated IDs by summing counter values
+      estimated_allocated =
+        Enum.reduce(counters, 0, fn
+          {_key, <<c::64-little>>}, acc -> acc + c
+          {_key, _value}, acc -> acc
+        end)
 
-        acc + count
-      end)
-
-    %{
-      latest_window_start: latest_start,
-      total_counters: total_counters,
-      estimated_allocated: estimated_allocated
-    }
+      %{
+        latest_window_start: latest_start,
+        total_counters: total_counters,
+        estimated_allocated: estimated_allocated
+      }
+    end)
   end
 end

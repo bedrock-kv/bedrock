@@ -35,6 +35,8 @@ defmodule Bedrock.Key do
   @spec key_after(Bedrock.key()) :: binary()
   def key_after(key) when is_binary(key), do: key <> <<0>>
 
+  def to_range(key) when is_binary(key), do: {key, key_after(key)}
+
   @doc """
   Returns the lexicographically next key after the given key by incrementing
   the last non-0xFF byte.
@@ -50,7 +52,6 @@ defmodule Bedrock.Key do
 
       iex> Bedrock.Key.strinc(<<0, 1, 2>>)
       <<0, 1, 3>>
-
       iex> Bedrock.Key.strinc("hello")
       "hellp"
 
@@ -155,7 +156,7 @@ defmodule Bedrock.Key do
   defp pack_value(tuple, acc) when is_tuple(tuple),
     do: [@stop_marker | tuple |> Tuple.to_list() |> pack_list_elements([<<@nested_tuple_tag>> | acc])]
 
-  defp pack_value(_, _), do: raise(ArgumentError, "Unsupported data type")
+  defp pack_value(unsupported, _), do: raise(ArgumentError, "Unsupported data type: #{inspect(unsupported)}")
 
   defp pack_list_elements([], acc), do: acc
   defp pack_list_elements([element | rest], acc), do: pack_list_elements(rest, pack_value(element, acc))

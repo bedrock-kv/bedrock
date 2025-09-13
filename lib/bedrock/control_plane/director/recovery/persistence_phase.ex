@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       )
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
-      {:ok, _version} ->
+      {:ok, _version, _sequence} ->
         trace_recovery_system_state_persisted()
 
         {recovery_attempt, :completed}
@@ -228,7 +228,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           Transaction.encoded(),
           [pid()],
           map()
-        ) :: {:ok, Bedrock.version()} | {:error, :no_commit_proxies | :timeout | :unavailable}
+        ) ::
+          {:ok, Bedrock.version(), sequence :: non_neg_integer()}
+          | {:error, :no_commit_proxies | :timeout | :unavailable}
   defp submit_system_transaction(_system_transaction, [], _context), do: {:error, :no_commit_proxies}
 
   defp submit_system_transaction(encoded_transaction, proxies, context) when is_list(proxies) do

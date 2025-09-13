@@ -55,27 +55,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   end
 
   # Helper functions for creating mock transaction processes
-  defp spawn_transaction_mock(message, response) do
-    spawn(fn ->
-      receive do
-        {:"$gen_call", from, ^message} ->
-          GenServer.reply(from, response)
-      end
-    end)
-  end
-
-  defp spawn_transaction_mock_with_rollback(message, response) do
-    spawn(fn ->
-      receive do
-        {:"$gen_call", from, ^message} ->
-          GenServer.reply(from, response)
-
-          receive do
-            {:"$gen_cast", :rollback} -> :ok
-          end
-      end
-    end)
-  end
+  # (Unused functions removed since the API they supported was removed)
 
   defp spawn_get_mock(key, response) do
     spawn(fn ->
@@ -129,25 +109,6 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end)
   end
 
-  describe "nested_transaction/2" do
-    test "delegates to GenServer call and executes function" do
-      txn_pid = spawn_transaction_mock(:nested_transaction, :ok)
-
-      result = Repo.nested_transaction(txn_pid, fn _txn -> :test_result end)
-      assert result == :test_result
-    end
-
-    test "handles exceptions and rolls back" do
-      txn_pid = spawn_transaction_mock_with_rollback(:nested_transaction, :ok)
-
-      assert_raise RuntimeError, "test error", fn ->
-        Repo.nested_transaction(txn_pid, fn _txn ->
-          raise RuntimeError, "test error"
-        end)
-      end
-    end
-  end
-
   describe "get/2 (no options)" do
     test "returns value when fetch succeeds" do
       txn_pid = spawn_get_mock("get_key", {:ok, "get_value"})
@@ -191,32 +152,12 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     end
   end
 
-  describe "commit/2" do
-    test "commits with default timeout" do
-      txn_pid = self()
-
-      spawn(fn ->
-        Repo.commit(txn_pid)
-      end)
-
-      assert_receive {:"$gen_call", _from, :commit}
-    end
-
-    test "returns success result" do
-      txn_pid = spawn_transaction_mock(:commit, {:ok, 999})
-
-      assert {:ok, 999} = Repo.commit(txn_pid)
-    end
-  end
-
   describe "rollback/1" do
-    test "sends cast message for rollback" do
-      txn_pid = self()
-
-      result = Repo.rollback(txn_pid)
-
-      assert result == :ok
-      assert_receive {:"$gen_cast", :rollback}
+    test "throws rollback tuple with reason" do
+      {module, type, reason} = catch_throw(Repo.rollback("test_reason"))
+      assert module == Repo
+      assert type == :rollback
+      assert reason == "test_reason"
     end
   end
 
@@ -273,26 +214,27 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       key_selector = KeySelector.first_greater_or_equal("mykey")
       txn_pid = spawn_select_mock(key_selector, {:ok, {"resolved_key", "resolved_value"}})
 
-      assert {:ok, {"resolved_key", "resolved_value"}} = Repo.select(txn_pid, key_selector)
+      assert {"resolved_key", "resolved_value"} = Repo.select(txn_pid, key_selector)
     end
 
-    test "returns error when KeySelector resolution fails" do
+    test "returns nil when KeySelector resolution fails with not_found" do
       key_selector = KeySelector.first_greater_than("nonexistent")
       txn_pid = spawn_select_mock(key_selector, {:error, :not_found})
 
-      assert {:error, :not_found} = Repo.select(txn_pid, key_selector)
+      assert nil == Repo.select(txn_pid, key_selector)
     end
 
-    test "handles version errors" do
+    test "throws TransactionError tuple on version errors" do
       key_selector = KeySelector.first_greater_or_equal("versioned_key")
       txn_pid = spawn_select_mock(key_selector, {:error, :version_too_old})
 
-      assert {:error, :version_too_old} = Repo.select(txn_pid, key_selector)
+      {Repo, :transaction_error, :version_too_old, :select, ^key_selector} =
+        catch_throw(Repo.select(txn_pid, key_selector))
     end
 
     test "handles clamped errors from cross-shard operations" do
       key_selector = "cross_shard" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
-      txn_pid = spawn_select_mock(key_selector, nil)
+      txn_pid = spawn_select_mock(key_selector, {:error, :not_found})
 
       assert Repo.select(txn_pid, key_selector) == nil
     end

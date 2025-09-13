@@ -76,6 +76,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       {:error, :unavailable} ->
         {:error, {:source_log_unavailable, log_ref}}
+
+      {:error, reason} ->
+        {:error, {:log_pull_failed, reason, log_ref}}
     end
   end
 

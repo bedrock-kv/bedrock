@@ -311,7 +311,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       empty_layout = %{storage_teams: [], services: %{}}
       layout_index = LayoutIndex.build_index(empty_layout)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
-      assert {^state, {:error, :unavailable}} = StorageRacing.race_storage_servers(state, "key1", operation_fn)
+
+      assert {^state, {:failure, %{layout_lookup_failed: []}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "returns first successful response" do
@@ -338,8 +340,9 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       layout_index = LayoutIndex.build_index(layout_config)
       state = %State{layout_index: layout_index, fastest_storage_servers: %{}, fetch_timeout_in_ms: 100}
 
-      # Returns meaningful error over timeout
-      assert {^state, {:error, :version_too_old}} = StorageRacing.race_storage_servers(state, "key1", operation_fn)
+      # Returns all failures by reason
+      assert {^state, {:failure, %{version_too_old: [:pid2], timeout: [:pid1]}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
 
     test "prioritizes success over errors" do
@@ -378,6 +381,35 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       # When we race, pid1 (cached) should fail, then pid2 should be tried and win
       # Should succeed with pid2's result and update cache with pid2 as fastest server
       assert {%{fastest_storage_servers: %{{"", "zzz"} => :pid2}}, {:ok, {"backup_success", {"", "zzz"}}}} =
+               StorageRacing.race_storage_servers(state, "key1", operation_fn)
+    end
+
+    test "returns {:failure, %{no_servers_to_race: [nil]}} when no servers left after fastest server fails" do
+      # Operation function where the only server fails in a way that causes fallback to racing
+      operation_fn = fn
+        :only_pid, _version, _timeout -> {:error, :unavailable}
+      end
+
+      # Layout with only one server
+      single_server_layout = %{
+        storage_teams: [%{key_range: {"", "zzz"}, storage_ids: ["only_server"]}],
+        services: %{
+          "only_server" => %{kind: :storage, status: {:up, :only_pid}}
+        }
+      }
+
+      layout_index = LayoutIndex.build_index(single_server_layout)
+
+      # Pre-cache the only server as fastest
+      state = %State{
+        layout_index: layout_index,
+        fastest_storage_servers: %{{"", "zzz"} => :only_pid},
+        fetch_timeout_in_ms: 100
+      }
+
+      # When the cached fastest server fails with :unavailable, it will try to race remaining servers
+      # But since there's only one server and we remove it from the list, there are no servers left to race
+      assert {^state, {:failure, %{no_servers_to_race: []}}} =
                StorageRacing.race_storage_servers(state, "key1", operation_fn)
     end
   end

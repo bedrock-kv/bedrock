@@ -1,418 +1,811 @@
 defmodule Bedrock.Directory do
   @moduledoc """
-  Directory Layer implementation for Bedrock.
+  FoundationDB directory layer operations.
 
-  The Directory Layer provides a hierarchical namespace for organizing data,
-  similar to a filesystem. It automatically manages key prefixes and provides
-  efficient path-to-prefix mapping using the High-Concurrency Allocator (HCA).
+  Directories provide a hierarchical namespace for organizing data within
+  a FoundationDB database. Each directory corresponds to a unique prefix
+  that can be used to create isolated keyspaces.
 
-  ## Features
-
-  - **Hierarchical Paths**: Organize data using path-like structures (e.g., ["app", "users", "profiles"])
-  - **Automatic Prefix Management**: Converts human-readable paths to efficient binary prefixes
-  - **High Performance**: Uses HCA for concurrent directory allocation
-  - **Path Operations**: Create, move, remove, and list directories
-  - **Efficient Scans**: Generated prefixes are optimized for range queries
-
-  ## Usage
-
-      # Create directory layer
-      directory = Bedrock.Directory.new(MyApp.Repo)
-      
-      # Create directories and get prefixes
-      user_prefix = MyApp.Repo.transaction(fn txn ->
-        Bedrock.Directory.create_or_open(directory, txn, ["app", "users"])
-      end)
-      
-      # Use prefix for data storage
-      MyApp.Repo.transaction(fn txn ->
-        user_key = user_prefix <> "user:123"
-        Bedrock.Repo.put(txn, user_key, user_data)
-      end)
-
-  Based on the FoundationDB Directory Layer specification.
+  Based on the FoundationDB directory layer specification.
   """
 
   alias Bedrock.HCA
+  alias Bedrock.Key
+  alias Bedrock.KeyRange
   alias Bedrock.Subspace
 
-  # Directory layer constants
-  # Version 0.1.0
-  @version <<0, 1, 0>>
-  @default_content_subspace "_content"
-  @default_node_subspace "_node"
+  # Struct definitions
 
-  defstruct [:repo_module, :content_subspace, :node_subspace, :allocator, :allow_manual_prefixes]
+  defmodule Node do
+    @moduledoc """
+    A directory node returned by directory operations.
 
-  @type t :: %__MODULE__{
-          repo_module: module(),
-          content_subspace: Subspace.t(),
-          node_subspace: Subspace.t(),
-          allocator: HCA.t(),
-          allow_manual_prefixes: boolean()
-        }
+    Contains the metadata and prefix for a directory, and can generate
+    a subspace for data storage within the directory.
+    """
 
-  @type path :: [binary()]
-  @type prefix :: binary()
+    defstruct [:prefix, :path, :layer, :directory_layer, :version, :metadata]
+
+    @type t :: %__MODULE__{
+            prefix: binary(),
+            path: [String.t()],
+            layer: binary() | nil,
+            directory_layer: Bedrock.Directory.Layer.t(),
+            version: term() | nil,
+            metadata: term() | nil
+          }
+  end
+
+  defmodule Partition do
+    @moduledoc """
+    A directory partition provides an isolated namespace within a directory.
+
+    Partitions have their own prefix allocation and prevent operations
+    outside their boundary, providing isolation between different parts
+    of an application.
+    """
+
+    defstruct [:directory_layer, :path, :prefix, :version, :metadata]
+
+    @type t :: %__MODULE__{
+            directory_layer: Bedrock.Directory.Layer.t(),
+            path: [String.t()],
+            prefix: binary(),
+            version: term() | nil,
+            metadata: term() | nil
+          }
+  end
+
+  defmodule Layer do
+    @moduledoc """
+    Main implementation of the FoundationDB directory layer.
+
+    Manages directory hierarchy and metadata storage using the same
+    key/value layout as FoundationDB's directory layer.
+    """
+
+    defstruct [
+      :node_subspace,
+      :content_subspace,
+      :repo,
+      :next_prefix_fn,
+      :path
+    ]
+
+    @type t :: %__MODULE__{
+            node_subspace: Subspace.t(),
+            content_subspace: Subspace.t(),
+            repo: module(),
+            next_prefix_fn: (Bedrock.Internal.Repo.transaction() -> binary()),
+            path: [String.t()]
+          }
+  end
+
+  @type directory :: Node.t() | Partition.t() | Layer.t()
+
+  # System subspace prefixes - match FDB exactly
+  @node_subspace_prefix <<0xFE>>
+  @content_subspace_prefix <<>>
+
+  # Reserved prefix ranges - match FDB system prefixes
+  @reserved_prefixes [
+    # Node subspace
+    <<0xFE>>,
+    # System keys
+    <<0xFF>>
+  ]
+
+  # Version management
+  @layer_version {1, 0, 0}
+  @version_key "version"
 
   @doc """
-  Create a new Directory Layer instance.
+  Creates a new directory layer.
 
-  ## Parameters
+  ## Arguments
 
-    * `repo_module` - The Bedrock.Repo module to use for transactions
-    * `content_subspace` - Subspace for storing directory metadata (optional)
-    * `node_subspace` - Subspace for storing path-to-prefix mappings (optional)
+  - `repo` - Module implementing Bedrock.Repo behaviour (required)
 
   ## Options
 
-    * `:allow_manual_prefixes` - Allow manually specified prefixes (default: false)
-    * `:random_fn` - Custom random function for HCA testing (default: &:rand.uniform/1)
-
-  ## Examples
-
-      # Standard directory layer
-      dir = Bedrock.Directory.new(MyApp.Repo)
-      
-      # Custom subspaces  
-      dir = Bedrock.Directory.new(MyApp.Repo, "my_content", "my_nodes")
-      
-      # With options
-      dir = Bedrock.Directory.new(MyApp.Repo, "content", "nodes", 
-                                  allow_manual_prefixes: true)
-                                  
-      # For testing with controlled randomization
-      deterministic_fn = fn _size -> 1 end
-      dir = Bedrock.Directory.new(MyApp.Repo, "content", "nodes",
-                                  random_fn: deterministic_fn)
+  - `:next_prefix_fn` - Function for prefix allocation (default: uses HCA)
+  - `:node_subspace` - Custom node storage location
+  - `:content_subspace` - Custom content storage location
   """
-  @spec new(module(), binary(), binary(), keyword()) :: t()
-  def new(
-        repo_module,
-        content_subspace \\ @default_content_subspace,
-        node_subspace \\ @default_node_subspace,
-        opts \\ []
-      ) do
-    allow_manual = Keyword.get(opts, :allow_manual_prefixes, false)
+  @spec root(module(), keyword()) :: Node.t()
+  def root(repo, opts \\ []) when is_atom(repo) do
+    # Default HCA-based prefix allocation
+    hca = HCA.new(repo, @content_subspace_prefix)
 
-    # Create proper subspaces using tuple encoding
-    content_space = Subspace.new({content_subspace})
-    node_space = Subspace.new({node_subspace})
+    next_prefix_fn =
+      opts[:next_prefix_fn] ||
+        fn ->
+          case HCA.allocate(hca) do
+            {:ok, prefix} -> prefix
+            {:error, reason} -> raise "Failed to allocate prefix: #{inspect(reason)}"
+          end
+        end
 
-    # Extract HCA-specific options - HCA still uses binary prefix for now
-    hca_opts = Keyword.take(opts, [:random_fn])
-    hca_subspace = Subspace.pack(content_space, {"hca"})
-    allocator = HCA.new(repo_module, hca_subspace, hca_opts)
+    node_subspace = Keyword.get(opts, :node_subspace, Subspace.new(@node_subspace_prefix))
+    content_subspace = Keyword.get(opts, :content_subspace, Subspace.new(@content_subspace_prefix))
 
-    %__MODULE__{
-      repo_module: repo_module,
-      content_subspace: content_space,
-      node_subspace: node_space,
-      allocator: allocator,
-      allow_manual_prefixes: allow_manual
+    layer = %Layer{
+      node_subspace: node_subspace,
+      content_subspace: content_subspace,
+      repo: repo,
+      next_prefix_fn: next_prefix_fn,
+      path: []
+    }
+
+    # Return the root directory directly
+    %Node{
+      prefix: Subspace.key(content_subspace),
+      path: [],
+      layer: nil,
+      directory_layer: layer,
+      version: nil,
+      metadata: nil
     }
   end
 
+  # Directory operations - function overloading based on struct types
+
   @doc """
-  Create or open a directory at the given path.
+  Creates a directory at the given path.
 
-  If the directory already exists, returns its prefix. If it doesn't exist,
-  creates it with an automatically allocated prefix.
+  Returns `{:ok, directory}` if successful, or `{:error, reason}` if the
+  directory already exists or the parent directory does not exist.
 
-  ## Parameters
+  ## Options
 
-    * `directory` - The Directory Layer instance
-    * `txn` - The transaction to use
-    * `path` - Path components as a list of binaries
+  - `:layer` - Layer identifier for the directory (binary)
+  - `:prefix` - Manual prefix assignment (binary)
+  - `:version` - Version metadata for the directory (term)
+  - `:metadata` - Additional metadata for the directory (term)
+  """
+  @spec create(directory(), [String.t()], keyword()) ::
+          {:ok, directory()}
+          | {:error, :directory_already_exists}
+          | {:error, :parent_directory_does_not_exist}
+          | {:error, :invalid_path}
+  def create(dir, path, opts \\ [])
 
-  ## Examples
+  # Node implementation - delegate to directory_layer
+  def create(%Node{directory_layer: layer}, path, opts), do: create(layer, path, opts)
 
-      MyApp.Repo.transaction(fn txn ->
-        # Create nested directory structure
-        user_prefix = Bedrock.Directory.create_or_open(dir, txn, ["app", "users"])
-        profile_prefix = Bedrock.Directory.create_or_open(dir, txn, ["app", "users", "profiles"])
-        
-        # Use prefixes for data storage
-        user_key = user_prefix <> "user:123"
-        profile_key = profile_prefix <> "profile:123"
+  # Partition implementation - validate boundaries, then delegate
+  def create(%Partition{directory_layer: layer}, path, opts) do
+    validate_within_partition!(path)
+    create(layer, path, opts)
+  end
+
+  # Layer implementation - performs actual operations
+  def create(%Layer{repo: repo} = layer, path, opts) do
+    with :ok <- validate_path(path),
+         true <- not root?(path) || {:error, :cannot_create_root} do
+      repo.transaction(fn txn -> do_create(layer, txn, path, opts) end)
+    end
+  end
+
+  @doc """
+  Opens an existing directory at the given path.
+
+  Returns `{:ok, directory}` if successful, or `{:error, :directory_does_not_exist}`
+  if the directory does not exist.
+  """
+  @spec open(directory(), [String.t()]) ::
+          {:ok, directory()}
+          | {:error, :directory_does_not_exist}
+          | {:error, :invalid_path}
+  def open(%Node{directory_layer: layer}, path), do: open(layer, path)
+
+  def open(%Partition{directory_layer: layer}, path) do
+    validate_within_partition!(path)
+    open(layer, path)
+  end
+
+  def open(%Layer{repo: repo} = layer, path) do
+    with :ok <- validate_path(path),
+         true <- not root?(path) || {:error, :cannot_open_root} do
+      repo.transaction(fn txn -> do_open(layer, txn, path) end)
+    end
+  end
+
+  @doc """
+  Creates or opens a directory at the given path.
+
+  If the directory exists, opens it. Otherwise, creates it.
+
+  ## Options
+
+  - `:layer` - Layer identifier for the directory (binary)
+  - `:prefix` - Manual prefix assignment (binary)
+  - `:version` - Version metadata for the directory (term)
+  - `:metadata` - Additional metadata for the directory (term)
+  """
+  @spec create_or_open(directory(), [String.t()], keyword()) ::
+          {:ok, directory()}
+          | {:error, :parent_directory_does_not_exist}
+          | {:error, :invalid_path}
+  def create_or_open(dir, path, opts \\ [])
+
+  def create_or_open(%Node{directory_layer: layer}, path, opts), do: create_or_open(layer, path, opts)
+
+  def create_or_open(%Partition{directory_layer: layer}, path, opts) do
+    validate_within_partition!(path)
+    create_or_open(layer, path, opts)
+  end
+
+  def create_or_open(%Layer{repo: repo} = layer, path, opts) do
+    with :ok <- validate_path(path),
+         true <- not root?(path) || {:error, :cannot_create_or_open_root} do
+      repo.transaction(fn txn ->
+        case do_open(layer, txn, path) do
+          {:ok, node} -> {:ok, node}
+          {:error, :directory_does_not_exist} -> do_create(layer, txn, path, opts)
+        end
       end)
-  """
-  @spec create_or_open(t(), term(), path()) :: prefix()
-  def create_or_open(%__MODULE__{} = directory, txn, path) when is_list(path) do
-    case lookup_prefix(directory, txn, path) do
-      {:ok, prefix} ->
-        prefix
-
-      {:error, :not_found} ->
-        create_directory(directory, txn, path)
     end
   end
 
   @doc """
-  Create a new directory at the given path.
+  Moves a directory from old_path to new_path.
 
-  Fails if the directory already exists. Use `create_or_open/3` for 
-  idempotent directory creation.
-
-  ## Parameters
-
-    * `directory` - The Directory Layer instance
-    * `txn` - The transaction to use
-    * `path` - Path components as a list of binaries
-    * `prefix` - Optional manual prefix (requires allow_manual_prefixes: true)
+  The directory and all its subdirectories are moved atomically.
   """
-  @spec create_directory(t(), term(), path(), prefix() | nil) :: prefix()
-  def create_directory(%__MODULE__{} = directory, txn, path, manual_prefix \\ nil) when is_list(path) do
-    # Ensure parent directories exist
-    ensure_parent_directories(directory, txn, path)
+  @spec move(directory(), [String.t()], [String.t()]) ::
+          :ok
+          | {:error, :directory_does_not_exist}
+          | {:error, :directory_already_exists}
+          | {:error, :parent_directory_does_not_exist}
+  def move(%Node{directory_layer: layer}, old_path, new_path), do: move(layer, old_path, new_path)
 
-    # Check if directory already exists
-    case lookup_prefix(directory, txn, path) do
-      {:ok, _existing} ->
-        raise "Directory already exists: #{inspect(path)}"
-
-      {:error, :not_found} ->
-        # Allocate or use manual prefix
-        prefix =
-          case manual_prefix do
-            nil -> allocate_prefix(directory, txn)
-            prefix when directory.allow_manual_prefixes -> prefix
-            _ -> raise "Manual prefixes not allowed"
-          end
-
-        # Store the mapping
-        store_directory_mapping(directory, txn, path, prefix)
-        prefix
-    end
+  def move(%Partition{directory_layer: layer}, old_path, new_path) do
+    validate_within_partition!(old_path)
+    validate_within_partition!(new_path)
+    move(layer, old_path, new_path)
   end
 
-  @doc """
-  Open an existing directory and return its prefix.
+  def move(%Layer{repo: repo} = layer, old_path, new_path),
+    do: repo.transaction(fn txn -> do_move(layer, txn, old_path, new_path) end)
 
-  Fails if the directory doesn't exist. Use `create_or_open/3` to create
-  directories automatically.
+  @doc """
+  Removes a directory and all its subdirectories.
+
+  Returns an error if the directory does not exist.
   """
-  @spec open_directory(t(), term(), path()) :: prefix()
-  def open_directory(%__MODULE__{} = directory, txn, path) when is_list(path) do
-    case lookup_prefix(directory, txn, path) do
-      {:ok, prefix} -> prefix
-      {:error, :not_found} -> raise "Directory not found: #{inspect(path)}"
-    end
+  @spec remove(directory(), [String.t()]) :: :ok | {:error, :directory_does_not_exist}
+  def remove(%Node{directory_layer: layer}, path), do: remove(layer, path)
+
+  def remove(%Partition{directory_layer: layer}, path) do
+    validate_within_partition!(path)
+    remove(layer, path)
   end
 
+  def remove(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_remove(layer, txn, path) end)
+
   @doc """
-  Check if a directory exists at the given path.
+  Removes a directory if it exists.
+
+  Returns `:ok` whether the directory existed or not.
   """
-  @spec exists?(t(), term(), path()) :: boolean()
-  def exists?(%__MODULE__{} = directory, txn, path) when is_list(path) do
-    case lookup_prefix(directory, txn, path) do
-      {:ok, _} -> true
-      {:error, :not_found} -> false
-    end
+  @spec remove_if_exists(directory(), [String.t()]) :: :ok
+  def remove_if_exists(%Node{directory_layer: layer}, path), do: remove_if_exists(layer, path)
+
+  def remove_if_exists(%Partition{directory_layer: layer}, path) do
+    validate_within_partition!(path)
+    remove_if_exists(layer, path)
   end
 
-  @doc """
-  List all subdirectories of the given path.
-
-  Returns a list of {name, subpath} tuples for immediate children.
-  """
-  @spec list_directories(t(), term(), path()) :: [{binary(), path()}]
-  def list_directories(%__MODULE__{} = directory, txn, path) when is_list(path) do
-    # Create tuple-based range for scanning subdirectories
-    # We want all keys that start with the path tuple
-    path_tuple = List.to_tuple(path)
-    {start_key, end_key} = Subspace.range(directory.node_subspace, path_tuple)
-
-    # Immediate children are one level deeper
-    expected_depth = length(path) + 1
-
-    txn
-    |> directory.repo_module.range(start_key, end_key)
-    |> Enum.map(fn {key, _prefix} ->
-      # Extract subdirectory path from tuple-encoded key
-      subpath = key_to_path(directory, key)
-
-      case subpath do
-        # Invalid key, skip
-        [] -> nil
-        _ -> {subpath, List.last(subpath)}
+  def remove_if_exists(%Layer{repo: repo} = layer, path) do
+    repo.transaction(fn txn ->
+      case do_remove(layer, txn, path) do
+        :ok -> :ok
+        {:error, :directory_does_not_exist} -> :ok
+        {:error, :cannot_remove_root} = error -> error
+        error -> error
       end
     end)
-    # Remove invalid keys
-    |> Enum.reject(&is_nil/1)
-    |> Enum.filter(fn {subpath, _name} ->
-      # Only include immediate children (not nested deeper)
-      length(subpath) == expected_depth and List.starts_with?(subpath, path)
-    end)
-    |> Enum.map(fn {subpath, name} ->
-      {name, subpath}
-    end)
-    # Remove duplicates
-    |> Enum.uniq_by(fn {name, _} -> name end)
   end
 
   @doc """
-  Remove a directory and all its subdirectories.
+  Lists the immediate subdirectories of the given path.
 
-  This is a destructive operation that will remove all directory mappings
-  under the given path. It does not remove the actual data - only the
-  directory structure.
+  Returns a list of subdirectory names (strings).
   """
-  @spec remove_directory(t(), term(), path()) :: :ok
-  def remove_directory(%__MODULE__{} = directory, txn, path) when is_list(path) do
-    # Remove all subdirectories first
-    subdirs = list_directories(directory, txn, path)
+  @spec list(directory(), [String.t()]) :: {:ok, [String.t()]}
+  def list(dir, path \\ [])
 
-    Enum.each(subdirs, fn {_name, subpath} ->
-      remove_directory(directory, txn, subpath)
-    end)
+  def list(%Node{directory_layer: layer}, path), do: list(layer, path)
 
-    # Remove the directory itself
-    path_key = path_to_key(directory, path)
-    # Delete the mapping entirely
-    directory.repo_module.clear(txn, path_key)
+  def list(%Partition{directory_layer: layer}, path) do
+    validate_within_partition!(path)
+    list(layer, path)
+  end
+
+  def list(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_list(layer, txn, path) end)
+
+  @doc """
+  Checks if a directory exists at the given path.
+  """
+  @spec exists?(directory(), [String.t()]) :: boolean()
+  def exists?(%Node{directory_layer: layer}, path), do: exists?(layer, path)
+
+  def exists?(%Partition{directory_layer: layer}, path) do
+    validate_within_partition!(path)
+    exists?(layer, path)
+  end
+
+  def exists?(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_exists?(layer, txn, path) end)
+
+  @doc """
+  Returns the path of this directory as a list of strings.
+  """
+  @spec get_path(directory()) :: [String.t()]
+  def get_path(%Node{path: path}), do: path
+  def get_path(%Partition{path: path}), do: path
+  def get_path(%Layer{path: path}), do: path
+
+  @doc """
+  Returns the layer identifier of this directory, or `nil` if none.
+  """
+  @spec get_layer(directory()) :: binary() | nil
+  def get_layer(%Node{layer: layer}), do: layer
+  def get_layer(%Partition{}), do: "partition"
+  def get_layer(%Layer{}), do: nil
+
+  @doc """
+  Returns a `Bedrock.Subspace` for this directory.
+
+  The subspace can be used to store and retrieve data within
+  this directory's keyspace.
+  """
+  @spec get_subspace(directory()) :: Subspace.t()
+  def get_subspace(%Node{prefix: prefix}), do: Subspace.new(prefix)
+  def get_subspace(%Partition{prefix: prefix}), do: Subspace.new(prefix)
+
+  def get_subspace(%Layer{}),
+    do: raise(ArgumentError, "Cannot get subspace from directory layer - use open/create first")
+
+  defimpl Bedrock.Subspace.Subspaceable, for: Node do
+    def to_subspace(%Node{prefix: prefix}), do: Subspace.new(prefix)
+  end
+
+  defimpl Bedrock.Subspace.Subspaceable, for: Partition do
+    def to_subspace(%Partition{prefix: prefix}), do: Subspace.new(prefix)
+  end
+
+  @spec range(directory()) :: KeyRange.t()
+  def range(%Node{prefix: prefix}), do: Key.to_range(prefix)
+  def range(%Partition{prefix: prefix}), do: Key.to_range(prefix)
+  def range(%Layer{}), do: raise(ArgumentError, "Cannot perform range on directory layer - use open/create first")
+
+  # Helper functions (moved from Layer module)
+
+  # Helpers for path validation
+  def validate_path(path) when is_list(path), do: validate_path_components(path)
+  def validate_path(path) when is_binary(path), do: validate_path_components([path])
+  def validate_path(path) when is_tuple(path), do: validate_path_components(Tuple.to_list(path))
+  def validate_path(_), do: {:error, :invalid_path_format}
+
+  defp validate_path_components([]), do: :ok
+
+  defp validate_path_components([component | rest]) do
+    with :ok <- validate_component(component) do
+      validate_path_components(rest)
+    end
+  end
+
+  defp validate_component(component) when not is_binary(component), do: {:error, :invalid_path_component}
+
+  defp validate_component(""), do: {:error, :empty_path_component}
+  defp validate_component("."), do: {:error, :invalid_directory_name}
+  defp validate_component(".."), do: {:error, :invalid_directory_name}
+
+  defp validate_component(<<0xFE, _rest::binary>>), do: {:error, :reserved_prefix_in_path}
+  defp validate_component(<<0xFF, _rest::binary>>), do: {:error, :reserved_prefix_in_path}
+
+  defp validate_component(component) do
+    cond do
+      not String.valid?(component) ->
+        {:error, :invalid_utf8_in_path}
+
+      String.contains?(component, <<0>>) ->
+        {:error, :null_byte_in_path}
+
+      true ->
+        :ok
+    end
+  end
+
+  # Ensure operations don't escape the partition boundary
+  defp validate_within_partition!(path) when is_list(path) do
+    # Paths starting with ".." or containing ".." are trying to escape
+    if Enum.any?(path, &(&1 == ".." or String.starts_with?(&1, "../"))) do
+      raise ArgumentError, "Cannot access path outside partition boundary"
+    end
 
     :ok
   end
 
-  @doc """
-  Move a directory from one path to another.
+  defp validate_within_partition!(_), do: raise(ArgumentError, "Invalid path format for partition operation")
 
-  This operation is atomic - either the entire move succeeds or it fails.
-  The move will fail if the destination already exists.
-  """
-  @spec move_directory(t(), term(), path(), path()) :: :ok
-  def move_directory(%__MODULE__{} = directory, txn, from_path, to_path) when is_list(from_path) and is_list(to_path) do
-    # Get the prefix for the source directory
-    prefix = open_directory(directory, txn, from_path)
+  # Root directory helpers
+  def root?([]), do: true
+  def root?(_), do: false
 
-    # Ensure destination doesn't exist
-    if exists?(directory, txn, to_path) do
-      raise "Destination directory already exists: #{inspect(to_path)}"
+  # Key encoding for node metadata
+  defp node_key(%Layer{node_subspace: node_subspace, path: base_path}, path) do
+    case base_path ++ path do
+      [] -> Subspace.key(node_subspace)
+      full_path -> Subspace.pack(node_subspace, full_path)
     end
+  end
 
-    # Ensure parent of destination exists
-    ensure_parent_directories(directory, txn, to_path)
+  # Encode node metadata value - must match FDB format
+  defp encode_node_value(prefix, layer, nil, nil), do: Key.pack({prefix, layer || ""})
+  defp encode_node_value(prefix, layer, version, nil), do: Key.pack({prefix, layer || "", version})
+  defp encode_node_value(prefix, layer, nil, metadata), do: Key.pack({prefix, layer || "", nil, metadata})
+  defp encode_node_value(prefix, layer, version, metadata), do: Key.pack({prefix, layer || "", version, metadata})
 
-    # Create new mapping at destination
-    store_directory_mapping(directory, txn, to_path, prefix)
+  defp decode_node_value(value) do
+    value
+    |> Key.unpack()
+    |> case do
+      # Legacy 2-tuple format (backward compatibility)
+      {prefix, <<>>} -> {prefix, nil, nil, nil}
+      {prefix, layer} -> {prefix, layer, nil, nil}
+      # 3-tuple format with version
+      {prefix, <<>>, version} -> {prefix, nil, version, nil}
+      {prefix, layer, version} -> {prefix, layer, version, nil}
+      # Full 4-tuple format with version and metadata
+      {prefix, <<>>, version, metadata} -> {prefix, nil, version, metadata}
+      {prefix, layer, version, metadata} -> {prefix, layer, version, metadata}
+    end
+  end
 
-    # Remove old mapping
-    from_key = path_to_key(directory, from_path)
-    directory.repo_module.clear(txn, from_key)
+  # Version management implementation
 
-    # Move all subdirectories
-    subdirs = list_directories(directory, txn, from_path)
+  defp check_version(%Layer{repo: repo} = layer, txn, allow_writes) do
+    # Version key is at the root of the node subspace
+    version_key = Subspace.pack(layer.node_subspace, [@version_key])
 
-    Enum.each(subdirs, fn {name, _subpath} ->
-      old_subpath = from_path ++ [name]
-      new_subpath = to_path ++ [name]
-      move_directory(directory, txn, old_subpath, new_subpath)
-    end)
+    case repo.get(txn, version_key) do
+      nil ->
+        # No version stored yet - writing operations will initialize
+        :ok
 
+      stored_version_binary ->
+        stored_version = decode_version(stored_version_binary)
+        compare_versions(stored_version, @layer_version, allow_writes)
+    end
+  end
+
+  defp ensure_version_initialized(%Layer{repo: repo} = layer, txn) do
+    # Version key is at the root of the node subspace
+    version_key = Subspace.pack(layer.node_subspace, [@version_key])
+
+    case repo.get(txn, version_key) do
+      nil -> init_version(layer, txn)
+      _ -> :ok
+    end
+  end
+
+  defp init_version(%Layer{repo: repo} = layer, txn) do
+    version_key = Subspace.pack(layer.node_subspace, [@version_key])
+    version_binary = encode_version(@layer_version)
+    repo.put(txn, version_key, version_binary)
     :ok
   end
 
-  # Private implementation functions
+  defp encode_version({major, minor, patch}), do: <<major::little-32, minor::little-32, patch::little-32>>
+  defp decode_version(<<major::little-32, minor::little-32, patch::little-32>>), do: {major, minor, patch}
 
-  defp lookup_prefix(directory, txn, path) do
-    path_key = path_to_key(directory, path)
+  defp compare_versions({stored_major, _, _}, {current_major, _, _}, _) when stored_major > current_major,
+    do: {:error, :incompatible_directory_version}
 
-    case directory.repo_module.get(txn, path_key) do
-      nil -> {:error, :not_found}
-      prefix -> {:ok, prefix}
+  defp compare_versions({stored_major, stored_minor, _}, {current_major, current_minor, _}, true)
+       when stored_major == current_major and stored_minor > current_minor,
+       do: {:error, :directory_version_write_restricted}
+
+  defp compare_versions(_, _, _), do: :ok
+
+  # Prefix collision detection
+
+  def is_prefix_free?(%Layer{repo: repo, content_subspace: content_subspace}, txn, prefix) when is_binary(prefix) do
+    # Check if this prefix would collide with any existing keys
+    # A prefix is free if:
+    # 1. Not a reserved prefix
+    # 2. No existing keys start with this prefix
+    # 3. This prefix doesn't start with any existing key
+
+    # First check: Is this a reserved prefix?
+    if reserved_prefix?(prefix) do
+      false
+    else
+      # Second check: Are there any keys that start with our prefix?
+      # The content subspace prefix combined with the directory prefix
+      full_prefix = Subspace.key(content_subspace) <> prefix
+      prefix_range = KeyRange.from_prefix(full_prefix)
+
+      case repo.range(txn, prefix_range, limit: 1) do
+        [] ->
+          # No keys start with our prefix, now check the reverse
+          # Are there any existing keys that our prefix starts with?
+          check_prefix_ancestors(repo, txn, content_subspace, prefix)
+
+        _ ->
+          # Found keys that start with our prefix
+          false
+      end
     end
   end
 
-  defp ensure_parent_directories(directory, txn, path) do
-    case path do
-      # Root always exists
-      [] ->
-        :ok
+  defp reserved_prefix?(prefix) do
+    Enum.any?(@reserved_prefixes, fn reserved ->
+      # Check if the prefix starts with any reserved prefix
+      String.starts_with?(prefix, reserved)
+    end)
+  end
 
-      # Top-level directory
-      [_] ->
-        :ok
+  defp check_prefix_ancestors(_repo, _txn, _content_subspace, <<>>), do: true
+  defp check_prefix_ancestors(_repo, _txn, _content_subspace, <<_>>), do: true
+
+  defp check_prefix_ancestors(repo, txn, content_subspace, prefix) when byte_size(prefix) > 1 do
+    # Check each prefix of our prefix to see if it exists as a key
+    # For example, if prefix is <<1, 2, 3>>, check <<1>>, <<1, 2>>
+    prefix_size = byte_size(prefix)
+
+    Enum.all?(1..(prefix_size - 1), fn size ->
+      ancestor_prefix = binary_part(prefix, 0, size)
+      key = Subspace.key(content_subspace) <> ancestor_prefix
+
+      # If this exact key exists, we have a collision
+      txn |> repo.get(key) |> is_nil()
+    end)
+  end
+
+  # Core operations implementation
+
+  def do_create(%Layer{repo: repo} = layer, txn, path, opts) do
+    key = node_key(layer, path)
+
+    with :ok <- check_version(layer, txn, true),
+         :ok <- ensure_version_initialized(layer, txn) do
+      existing_value = repo.get(txn, key)
+
+      case existing_value do
+        nil ->
+          if parent_exists?(layer, txn, path) do
+            create_directory(layer, txn, path, key, opts)
+          else
+            {:error, :parent_directory_does_not_exist}
+          end
+
+        _value ->
+          {:error, :directory_already_exists}
+      end
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  defp create_directory(%Layer{repo: repo} = layer, txn, path, key, opts) do
+    with {:ok, prefix} <- allocate_or_validate_prefix(layer, txn, opts) do
+      layer_id = Keyword.get(opts, :layer)
+      version = Keyword.get(opts, :version)
+      metadata = Keyword.get(opts, :metadata)
+
+      # Store the directory metadata
+      encoded_value = encode_node_value(prefix, layer_id, version, metadata)
+      repo.put(txn, key, encoded_value)
+
+      {:ok,
+       %Node{
+         prefix: prefix,
+         path: layer.path ++ path,
+         layer: layer_id,
+         directory_layer: layer,
+         version: version,
+         metadata: metadata
+       }}
+    end
+  end
+
+  defp allocate_or_validate_prefix(layer, txn, opts) do
+    case Keyword.get(opts, :prefix) do
+      nil ->
+        # Automatic allocation via HCA - uses nested transaction internally
+        {:ok, layer.next_prefix_fn.()}
+
+      prefix ->
+        # Manual prefix assignment - check for collisions
+        if is_prefix_free?(layer, txn, prefix) do
+          {:ok, prefix}
+        else
+          {:error, :prefix_collision}
+        end
+    end
+  end
+
+  def do_open(%Layer{repo: repo} = layer, txn, path) do
+    with true <- not root?(path) || {:error, :cannot_open_root},
+         key = node_key(layer, path),
+         {:ok, value} <- fetch_directory(repo, txn, key),
+         :ok <- check_version(layer, txn, false) do
+      value
+      |> decode_node_value()
+      |> case do
+        {prefix, "partition", version, metadata} ->
+          %Partition{
+            directory_layer: layer,
+            path: layer.path ++ path,
+            prefix: prefix,
+            version: version,
+            metadata: metadata
+          }
+
+        {prefix, layer_id, version, metadata} ->
+          %Node{
+            prefix: prefix,
+            path: layer.path ++ path,
+            layer: layer_id,
+            directory_layer: layer,
+            version: version,
+            metadata: metadata
+          }
+      end
+      |> then(&{:ok, &1})
+    end
+  end
+
+  defp fetch_directory(repo, txn, key) do
+    case repo.get(txn, key) do
+      nil -> {:error, :directory_does_not_exist}
+      value -> {:ok, value}
+    end
+  end
+
+  def do_exists?(%Layer{repo: repo} = layer, txn, path) do
+    # Root directory always exists (it's virtual)
+    if root?(path) do
+      true
+    else
+      key = node_key(layer, path)
+
+      case repo.get(txn, key) do
+        nil -> false
+        _value -> true
+      end
+    end
+  end
+
+  def do_list(%Layer{repo: repo} = layer, txn, path) do
+    # Check version compatibility for reads
+    case check_version(layer, txn, false) do
+      {:error, _} = error ->
+        error
 
       _ ->
-        parent_path = Enum.drop(path, -1)
-        create_or_open(directory, txn, parent_path)
-        :ok
+        prefix_key = node_key(layer, path)
+        prefix_size = byte_size(prefix_key)
+
+        children =
+          txn
+          |> repo.range(KeyRange.from_prefix(prefix_key))
+          |> Stream.map(&extract_child_name(&1, prefix_size))
+          |> Stream.reject(&is_nil/1)
+          |> Enum.uniq()
+
+        {:ok, children}
     end
   end
 
-  defp allocate_prefix(directory, txn) do
-    {:ok, prefix_id} = HCA.allocate(directory.allocator, txn)
+  defp extract_child_name({key, _value}, prefix_size) when byte_size(key) <= prefix_size, do: nil
 
-    # Convert ID to binary prefix
-    # Use a compact encoding: version + ID as variable-length integer
-    id_binary = encode_prefix_id(prefix_id)
-    @version <> id_binary
+  defp extract_child_name({key, _value}, prefix_size) do
+    remaining_size = byte_size(key) - prefix_size
+    remaining = binary_part(key, prefix_size, remaining_size)
+
+    case Key.unpack(remaining) do
+      [child_name | _rest] -> child_name
+      child_name when is_binary(child_name) -> child_name
+      _ -> nil
+    end
   end
 
-  defp store_directory_mapping(directory, txn, path, prefix) do
-    path_key = path_to_key(directory, path)
-    directory.repo_module.put(txn, path_key, prefix)
+  def do_remove(%Layer{repo: repo} = layer, txn, path) do
+    with true <- not root?(path) || {:error, :cannot_remove_root},
+         :ok <- check_version(layer, txn, true),
+         :ok <- ensure_version_initialized(layer, txn),
+         true <- do_exists?(layer, txn, path) || {:error, :directory_does_not_exist} do
+      layer
+      |> node_key(path)
+      |> KeyRange.from_prefix()
+      |> then(&repo.clear_range(txn, &1))
+
+      :ok
+    end
   end
 
-  defp path_to_key(directory, path) do
-    # Convert path to a tuple-encoded key for storage
-    # Path components are stored as a tuple within the node subspace
-    path_tuple = List.to_tuple(path)
-    Subspace.pack(directory.node_subspace, path_tuple)
+  def do_move(%Layer{} = layer, txn, old_path, new_path) do
+    with true <- not root?(old_path) || {:error, :cannot_move_root},
+         true <- not root?(new_path) || {:error, :cannot_move_to_root},
+         true <- not List.starts_with?(new_path, old_path) || {:error, :cannot_move_to_subdirectory},
+         :ok <- check_version(layer, txn, true),
+         :ok <- ensure_version_initialized(layer, txn),
+         true <- do_exists?(layer, txn, old_path) || {:error, :directory_does_not_exist},
+         true <- not do_exists?(layer, txn, new_path) || {:error, :directory_already_exists},
+         true <- parent_exists?(layer, txn, new_path) || {:error, :parent_directory_does_not_exist} do
+      do_move_recursive(layer, txn, old_path, new_path)
+    end
   end
 
-  # Convert tuple-encoded storage key back to path
-  defp key_to_path(directory, key) do
-    path_tuple = Subspace.unpack(directory.node_subspace, key)
-    # Using Erlang's built-in tuple_to_list/1
-    :erlang.tuple_to_list(path_tuple)
-  rescue
-    ArgumentError ->
-      # Key doesn't belong to our subspace
-      []
-  end
+  defp parent_exists?(_layer, _txn, []), do: true
+  defp parent_exists?(layer, txn, path), do: do_exists?(layer, txn, Enum.drop(path, -1))
 
-  defp encode_prefix_id(id) when id < 128 do
-    # Single byte for small IDs
-    <<id>>
-  end
+  defp do_move_recursive(%Layer{repo: repo} = layer, txn, old_path, new_path) do
+    old_key = node_key(layer, old_path)
 
-  defp encode_prefix_id(id) when id < 16_384 do
-    # Two bytes for medium IDs
-    <<id::16-big>>
-  end
+    with {:ok, value} <- fetch_directory(repo, txn, old_key),
+         :ok <- check_not_partition(value) do
+      key_range = KeyRange.from_prefix(old_key)
 
-  defp encode_prefix_id(id) do
-    # Four bytes for large IDs
-    <<id::32-big>>
-  end
-
-  @doc """
-  Get statistics about the directory layer.
-
-  Returns information about allocated prefixes, directory count, etc.
-  """
-  @spec stats(t(), term()) :: %{
-          directory_count: non_neg_integer(),
-          allocated_prefixes: non_neg_integer(),
-          hca_stats: map()
-        }
-  def stats(%__MODULE__{} = directory, txn) do
-    hca_stats = HCA.stats(directory.allocator, txn)
-
-    # Count directory entries using proper subspace range
-    {start_key, end_key} = Subspace.range(directory.node_subspace)
-
-    directory_count =
       txn
-      |> directory.repo_module.range(start_key, end_key)
-      |> Enum.count()
+      |> repo.range(key_range)
+      |> Enum.each(fn {old_key, value} ->
+        relative_path = extract_relative_path(layer, old_key, old_path)
+        new_key = build_moved_key(layer, new_path, relative_path)
+        repo.put(txn, new_key, value)
+      end)
 
-    %{
-      directory_count: directory_count,
-      allocated_prefixes: hca_stats.estimated_allocated,
-      hca_stats: hca_stats
-    }
+      repo.clear_range(txn, key_range)
+      :ok
+    end
   end
+
+  defp check_not_partition(value) do
+    {_prefix, layer_type, _version, _metadata} = decode_node_value(value)
+
+    if layer_type == "partition" do
+      {:error, :cannot_move_partition}
+    else
+      :ok
+    end
+  end
+
+  defp extract_relative_path(%Layer{} = layer, key, base_path) do
+    node_subspace_prefix = Subspace.key(layer.node_subspace)
+
+    case key do
+      <<^node_subspace_prefix::binary, remaining::binary>> ->
+        remaining
+        |> unpack_key_remaining()
+        |> normalize_path_to_list()
+        |> compute_relative_to_base(base_path)
+
+      _ ->
+        []
+    end
+  end
+
+  defp unpack_key_remaining(<<>>), do: []
+  defp unpack_key_remaining(packed), do: Key.unpack(packed)
+
+  defp normalize_path_to_list(list) when is_list(list), do: list
+  defp normalize_path_to_list(single) when is_binary(single), do: [single]
+  defp normalize_path_to_list(_), do: []
+
+  defp compute_relative_to_base(full_path_list, base_path) do
+    cond do
+      full_path_list == base_path -> []
+      List.starts_with?(full_path_list, base_path) -> Enum.drop(full_path_list, length(base_path))
+      true -> []
+    end
+  end
+
+  defp build_moved_key(%Layer{} = layer, new_base_path, []), do: node_key(layer, new_base_path)
+
+  defp build_moved_key(%Layer{} = layer, new_base_path, relative_path),
+    do: node_key(layer, new_base_path ++ relative_path)
 end

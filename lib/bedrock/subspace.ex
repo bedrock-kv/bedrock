@@ -17,6 +17,13 @@ defmodule Bedrock.Subspace do
 
   @type t :: %__MODULE__{prefix: binary()}
 
+  defprotocol Subspaceable do
+    @type t :: term()
+
+    @spec to_subspace(any()) :: Bedrock.Subspace.t()
+    def to_subspace(data)
+  end
+
   @doc """
   Create a new subspace from raw bytes prefix.
   """
@@ -36,9 +43,11 @@ defmodule Bedrock.Subspace do
   Create a new subspace with the given tuple and raw prefix.
   The tuple is packed and appended to the raw prefix.
   """
-  @spec create(t(), tuple()) :: t()
+  @spec create(t() | Subspaceable.t(), tuple()) :: t()
   def create(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
     do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])}
+
+  def create(term, tuple) when is_tuple(tuple), do: term |> Subspaceable.to_subspace() |> create(tuple)
 
   @doc """
   Add an item to the subspace, creating a new subspace.
@@ -67,12 +76,12 @@ defmodule Bedrock.Subspace do
   def bytes(%__MODULE__{} = subspace), do: key(subspace)
 
   @doc """
-  Pack a tuple within this subspace.
-  The tuple will be packed and prefixed with the subspace's prefix.
+  Pack a list or tuple within this subspace.
+  The list/tuple will be packed and prefixed with the subspace's prefix.
   """
-  @spec pack(t(), tuple()) :: binary()
-  def pack(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
-    do: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])
+  @spec pack(t(), list() | tuple()) :: binary()
+  def pack(%__MODULE__{prefix: prefix}, value) when is_list(value) or is_tuple(value),
+    do: :erlang.iolist_to_binary([prefix | Key.to_iolist(value)])
 
   # @doc """
   # Pack a tuple with version stamp within this subspace.
@@ -82,10 +91,10 @@ defmodule Bedrock.Subspace do
 
   @doc """
   Unpack a key that belongs to this subspace.
-  Returns the tuple with the subspace prefix removed.
+  Returns the list or tuple with the subspace prefix removed.
   Raises an error if the key doesn't belong to this subspace.
   """
-  @spec unpack(t(), binary()) :: tuple()
+  @spec unpack(t(), binary()) :: list() | tuple()
   def unpack(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
     case key do
       <<^prefix::binary, remaining_key::binary>> -> Key.unpack(remaining_key)

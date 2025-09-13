@@ -48,6 +48,14 @@ defmodule Bedrock.Directory do
     defimpl String.Chars do
       defdelegate to_string(node), to: Bedrock.Directory.Node
     end
+
+    defimpl Inspect do
+      def inspect(%Bedrock.Directory.Node{path: path, layer: layer, prefix: prefix}, _opts) do
+        path_str = Enum.join(path, "/")
+        layer_suffix = if layer && layer != "", do: "@#{inspect(layer)}", else: ""
+        "#DirectoryNode<#{path_str}#{layer_suffix}, prefix: #{inspect(prefix)}>"
+      end
+    end
   end
 
   defmodule Partition do
@@ -58,6 +66,8 @@ defmodule Bedrock.Directory do
     outside their boundary, providing isolation between different parts
     of an application.
     """
+
+    alias Bedrock.Directory.Partition
 
     defstruct [:directory_layer, :path, :prefix, :version, :metadata]
 
@@ -79,7 +89,14 @@ defmodule Bedrock.Directory do
     end
 
     defimpl String.Chars do
-      defdelegate to_string(partition), to: Bedrock.Directory.Partition
+      defdelegate to_string(partition), to: Partition
+    end
+
+    defimpl Inspect do
+      def inspect(%Partition{path: path, prefix: prefix}, _opts) do
+        path_str = Enum.join(path, "/")
+        "#DirectoryPartition<#{path_str}, prefix: #{inspect(prefix)}>"
+      end
     end
   end
 
@@ -90,6 +107,8 @@ defmodule Bedrock.Directory do
     Manages directory hierarchy and metadata storage using the same
     key/value layout as FoundationDB's directory layer.
     """
+
+    alias Bedrock.Directory.Layer
 
     defstruct [
       :node_subspace,
@@ -117,7 +136,15 @@ defmodule Bedrock.Directory do
     end
 
     defimpl String.Chars do
-      defdelegate to_string(layer), to: Bedrock.Directory.Layer
+      defdelegate to_string(layer), to: Layer
+    end
+
+    defimpl Inspect do
+      def inspect(%Layer{path: path, repo: repo}, _opts) do
+        path_str = Enum.join(path, "/")
+        repo_name = if repo, do: inspect(repo), else: "nil"
+        "#DirectoryLayer<#{path_str}, repo: #{repo_name}>"
+      end
     end
   end
 

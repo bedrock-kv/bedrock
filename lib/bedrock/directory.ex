@@ -34,6 +34,20 @@ defmodule Bedrock.Directory do
             version: term() | nil,
             metadata: term() | nil
           }
+
+    @doc """
+    Create a string representation of the directory node.
+    """
+    @spec to_string(t()) :: String.t()
+    def to_string(%__MODULE__{path: path, layer: layer}) do
+      path_str = Enum.join(path, "/")
+      layer_suffix = if layer && layer != "", do: "@#{inspect(layer)}", else: ""
+      "DirectoryNode<#{path_str}#{layer_suffix}>"
+    end
+
+    defimpl String.Chars do
+      defdelegate to_string(node), to: Bedrock.Directory.Node
+    end
   end
 
   defmodule Partition do
@@ -54,6 +68,19 @@ defmodule Bedrock.Directory do
             version: term() | nil,
             metadata: term() | nil
           }
+
+    @doc """
+    Create a string representation of the directory partition.
+    """
+    @spec to_string(t()) :: String.t()
+    def to_string(%__MODULE__{path: path}) do
+      path_str = Enum.join(path, "/")
+      "DirectoryPartition<#{path_str}>"
+    end
+
+    defimpl String.Chars do
+      defdelegate to_string(partition), to: Bedrock.Directory.Partition
+    end
   end
 
   defmodule Layer do
@@ -79,6 +106,19 @@ defmodule Bedrock.Directory do
             next_prefix_fn: (Bedrock.Internal.Repo.transaction() -> binary()),
             path: [String.t()]
           }
+
+    @doc """
+    Create a string representation of the directory layer.
+    """
+    @spec to_string(t()) :: String.t()
+    def to_string(%__MODULE__{path: path}) do
+      path_str = Enum.join(path, "/")
+      "DirectoryLayer<#{path_str}>"
+    end
+
+    defimpl String.Chars do
+      defdelegate to_string(layer), to: Bedrock.Directory.Layer
+    end
   end
 
   @type directory :: Node.t() | Partition.t() | Layer.t()

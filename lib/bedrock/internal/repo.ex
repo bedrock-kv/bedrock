@@ -3,7 +3,6 @@ defmodule Bedrock.Internal.Repo do
   import Bitwise
 
   alias Bedrock.Cluster.Gateway
-  alias Bedrock.Internal.RangeQuery
   alias Bedrock.KeySelector
 
   @type transaction :: pid()
@@ -57,6 +56,17 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
+  # Streaming
+
+  @doc """
+  Create a lazy stream for a range query.
+
+  ## Options
+
+  - `:batch_size` - Number of items to fetch per batch (default: 100)
+  - `:timeout` - Timeout per batch request (default: 5000)
+  - `:limit` - Maximum total items to return
+  """
   @spec range(
           transaction(),
           start_key :: key(),
@@ -69,7 +79,88 @@ defmodule Bedrock.Internal.Repo do
             snapshot: boolean()
           ]
         ) :: Enumerable.t({any(), any()})
-  def range(t, start_key, end_key, opts \\ []), do: RangeQuery.stream(t, start_key, end_key, opts)
+  def range(txn_pid, start_key, end_key, opts \\ []) do
+    batch_size = Keyword.get(opts, :batch_size, 100)
+    timeout = Keyword.get(opts, :timeout, 5000)
+
+    # Filter out stream-specific options, keep only TransactionBuilder options
+    txn_opts = Keyword.drop(opts, [:batch_size, :timeout])
+
+    # Initial state tracks the current position in the range
+    initial_state = %{
+      txn_pid: txn_pid,
+      current_key: start_key,
+      end_key: end_key,
+      txn_opts: txn_opts,
+      finished: false,
+      items_returned: 0,
+      limit: opts[:limit],
+      current_batch: [],
+      has_more: true
+    }
+
+    Stream.resource(
+      fn -> initial_state end,
+      fn state ->
+        if state.finished or limit_reached?(state) do
+          {:halt, state}
+        else
+          emit_next_row(state, batch_size, timeout)
+        end
+      end,
+      fn _state -> :ok end
+    )
+  end
+
+  defp limit_reached?(%{limit: nil}), do: false
+  defp limit_reached?(%{limit: limit, items_returned: returned}), do: returned >= limit
+
+  defp emit_next_row(state, batch_size, timeout) do
+    case state.current_batch do
+      [] -> fetch_and_emit_first_row(state, batch_size, timeout)
+      [row | remaining_rows] -> emit_row_from_buffer(state, row, remaining_rows)
+    end
+  end
+
+  defp emit_row_from_buffer(state, {key, _} = row, remaining_rows) do
+    new_state = %{
+      state
+      | current_batch: remaining_rows,
+        current_key: Bedrock.Key.key_after(key),
+        items_returned: state.items_returned + 1,
+        finished: remaining_rows == [] and not state.has_more
+    }
+
+    {[row], new_state}
+  end
+
+  defp fetch_and_emit_first_row(state, batch_size, timeout) do
+    effective_batch_size =
+      case state.limit do
+        nil -> batch_size
+        limit -> min(batch_size, limit - state.items_returned)
+      end
+
+    case GenServer.call(
+           state.txn_pid,
+           {:get_range, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
+           timeout
+         ) do
+      {:ok, {[], _}} ->
+        {:halt, %{state | finished: true}}
+
+      {:ok, {[first_row | rest], has_more}} ->
+        emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
+
+      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+        throw({__MODULE__, state.txn_pid, :retryable_failure, reason})
+
+      {:error, reason} ->
+        raise "Range query failed: #{inspect(reason)}"
+    end
+  end
+
+  # Clearing
 
   @spec clear_range(
           transaction(),
@@ -91,6 +182,8 @@ defmodule Bedrock.Internal.Repo do
     t
   end
 
+  # Mutation
+
   @spec put(transaction(), key(), value(), opts :: [no_write_conflict: boolean()]) :: transaction()
   def put(t, key, value, opts \\ []) when is_binary(key) and is_binary(value) do
     cast(t, {:set_key, key, value, opts})
@@ -102,6 +195,8 @@ defmodule Bedrock.Internal.Repo do
     cast(t, {:atomic, op, key, value})
     t
   end
+
+  # Transaction Control
 
   @spec rollback(reason :: term()) :: no_return()
   def rollback(reason), do: throw({__MODULE__, :rollback, reason})
@@ -151,7 +246,7 @@ defmodule Bedrock.Internal.Repo do
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
-      delay_for_retry(retry_count)
+      wait_befor_retry(retry_count)
       start_retryable_transaction(fun, retry_count + 1, retry_limit, restart_fn)
 
     {__MODULE__, failed_txn, :rollback, reason} ->
@@ -177,11 +272,11 @@ defmodule Bedrock.Internal.Repo do
       reraise exception, __STACKTRACE__
   end
 
-  defp delay_for_retry(retry_count) do
+  defp wait_befor_retry(retry_count) do
     base_delay = 1 <<< retry_count
-    jitter = :rand.uniform(10)
-    retry_delay = min(1000, base_delay + jitter)
-    Process.sleep(retry_delay)
+    jitter = :rand.uniform(3)
+    wait_time_in_ms = min(base_delay + jitter, 1000)
+    Process.sleep(wait_time_in_ms)
   end
 
   defp enforce_retry_limit(_retry_count, nil, _reason), do: :ok

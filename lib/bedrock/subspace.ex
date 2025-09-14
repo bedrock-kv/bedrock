@@ -77,24 +77,19 @@ defmodule Bedrock.Subspace do
 
   @doc """
   Pack a list or tuple within this subspace.
-  The list/tuple will be packed and prefixed with the subspace's prefix.
+  The list/tuple/number/binary will be packed and prefixed with the subspace's prefix.
   """
-  @spec pack(t(), list() | tuple()) :: binary()
-  def pack(%__MODULE__{prefix: prefix}, value) when is_list(value) or is_tuple(value),
-    do: :erlang.iolist_to_binary([prefix | Key.to_iolist(value)])
-
-  # @doc """
-  # Pack a tuple with version stamp within this subspace.
-  # """
-  # @spec pack_vs(t(), tuple()) :: binary()
-  # def pack_vs(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple), do: prefix <> Tuple.pack_vs(tuple)
+  @spec pack(t(), list() | tuple() | number() | binary()) :: binary()
+  def pack(%__MODULE__{prefix: prefix}, value)
+      when is_list(value) or is_tuple(value) or is_number(value) or is_binary(value),
+      do: :erlang.iolist_to_binary([prefix | Key.to_iolist(value)])
 
   @doc """
   Unpack a key that belongs to this subspace.
   Returns the list or tuple with the subspace prefix removed.
   Raises an error if the key doesn't belong to this subspace.
   """
-  @spec unpack(t(), binary()) :: list() | tuple()
+  @spec unpack(t(), binary()) :: list() | tuple() | number() | binary()
   def unpack(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
     case key do
       <<^prefix::binary, remaining_key::binary>> -> Key.unpack(remaining_key)

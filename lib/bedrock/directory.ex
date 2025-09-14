@@ -442,6 +442,27 @@ defmodule Bedrock.Directory do
     def to_subspace(%Partition{prefix: prefix}), do: Subspace.new(prefix)
   end
 
+  @doc """
+  Pack a value within this directory's subspace.
+  The list/tuple/number/binary will be packed and prefixed with the directory subspace's prefix.
+  """
+  @spec pack(directory(), list() | tuple() | number() | binary()) :: binary()
+  def pack(%{prefix: prefix}, value) when is_list(value) or is_tuple(value) or is_number(value) or is_binary(value),
+    do: :erlang.iolist_to_binary([prefix | Key.to_iolist(value)])
+
+  @doc """
+  Unpack a key that belongs to this subspace.
+  Returns the list or tuple with the subspace prefix removed.
+  Raises an error if the key doesn't belong to this subspace.
+  """
+  @spec unpack(directory(), binary()) :: list() | tuple() | number() | binary()
+  def unpack(%{prefix: prefix}, key) when is_binary(key) do
+    case key do
+      <<^prefix::binary, remaining_key::binary>> -> Key.unpack(remaining_key)
+      _ -> raise(ArgumentError, "Key does not belong to this subspace")
+    end
+  end
+
   @spec range(directory()) :: KeyRange.t()
   def range(%Node{prefix: prefix}), do: Key.to_range(prefix)
   def range(%Partition{prefix: prefix}), do: Key.to_range(prefix)

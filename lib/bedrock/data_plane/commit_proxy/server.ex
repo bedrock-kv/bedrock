@@ -165,11 +165,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         |> apply_finalization_policy()
         |> case do
           {t, nil} ->
-            # Keep waiting - calculate remaining time until max latency
-            now = Time.monotonic_now_in_ms()
-            elapsed = now - t.batch.started_at
-            remaining_time = max(0, t.max_latency_in_ms - elapsed)
-            noreply(t, timeout: remaining_time)
+            # Use zero timeout to process any pending messages first
+            noreply(t, timeout: 0)
 
           {t, batch} ->
             # Finalize asynchronously and reset for next batch

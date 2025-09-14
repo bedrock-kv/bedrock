@@ -11,7 +11,7 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   """
   @spec persist_page_to_database(any(), Database.t(), Page.t()) :: :ok | {:error, term()}
   def persist_page_to_database(_index_manager, database, page) do
-    binary = Page.from_map(page)
+    binary = from_map(page)
     Database.store_page(database, Page.id(page), binary)
   end
 
@@ -21,7 +21,7 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @spec persist_pages_batch([Page.t()], Database.t()) :: :ok | {:error, term()}
   def persist_pages_batch(pages, database) do
     Enum.reduce_while(pages, :ok, fn page, :ok ->
-      binary = Page.from_map(page)
+      binary = from_map(page)
 
       case Database.store_page(database, Page.id(page), binary) do
         :ok -> {:cont, :ok}
@@ -86,4 +86,87 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
         walk_page_chain_from(page_map, next_id, [id | acc])
     end
   end
+
+  @doc """
+  Converts a page map to binary format for testing serialization.
+  Only used in tests for page persistence and deserialization testing.
+  """
+  @spec from_map(Page.t()) :: binary()
+  def from_map(%{key_versions: key_versions, id: id, next_id: next_id}),
+    do: encode_page_direct(id, next_id, key_versions)
+
+  def from_map(binary) when is_binary(binary), do: binary
+
+  @doc """
+  Converts binary page data back to map format for testing.
+  Only used in tests for page persistence and deserialization testing.
+  """
+  @spec to_map(binary()) :: {:ok, Page.t()} | {:error, :invalid_page}
+  def to_map(
+        <<id::unsigned-big-32, next_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-16, entries_data::binary>>
+      ) do
+    entries_data
+    |> decode_entries(key_count, [])
+    |> case do
+      {:ok, key_versions} ->
+        {:ok,
+         %{
+           id: id,
+           next_id: next_id,
+           key_versions: key_versions
+         }}
+
+      error ->
+        error
+    end
+  end
+
+  def to_map(_), do: {:error, :invalid_page}
+
+  # Direct page encoding using the efficient binary approach
+  @spec encode_page_direct(Page.id(), Page.id(), [{binary(), Bedrock.version()}]) :: binary()
+  defp encode_page_direct(id, next_id, key_versions) do
+    key_count = length(key_versions)
+
+    # Encode all entries as interleaved version-key pairs
+    {entries_binary, last_key_offset} = encode_entries(key_versions, <<>>, 0)
+
+    # Calculate right key offset: header (18 bytes) + entries up to last key
+    right_key_offset = 18 + last_key_offset
+
+    # Build the page with 18-byte header + interleaved entries
+    <<id::unsigned-big-32, next_id::unsigned-big-32, key_count::unsigned-big-16, right_key_offset::unsigned-big-32,
+      0::unsigned-big-16, entries_binary::binary>>
+  end
+
+  # Encode entries as interleaved version-key pairs and track last key offset
+  @spec encode_entries([{binary(), Bedrock.version()}], binary(), non_neg_integer()) ::
+          {binary(), non_neg_integer()}
+  defp encode_entries([], acc, last_offset), do: {acc, last_offset}
+
+  defp encode_entries([{key, version} | rest], acc, _last_offset) do
+    key_len = byte_size(key)
+    # version + key_len, then key starts
+    new_last_offset = byte_size(acc) + 8 + 2
+    entry = <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len)>>
+    encode_entries(rest, acc <> entry, new_last_offset)
+  end
+
+  # Decode interleaved version-key entries
+  @spec decode_entries(binary(), non_neg_integer(), [{binary(), Bedrock.version()}]) ::
+          {:ok, [{binary(), Bedrock.version()}]} | {:error, :invalid_entries}
+  defp decode_entries(<<>>, 0, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp decode_entries(
+         <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
+         count,
+         acc
+       )
+       when count > 0 do
+    decode_entries(rest, count - 1, [{key, version} | acc])
+  end
+
+  defp decode_entries(_, count, _) when count > 0, do: {:error, :invalid_entries}
+  defp decode_entries(_, 0, _), do: {:error, :invalid_entries}
 end

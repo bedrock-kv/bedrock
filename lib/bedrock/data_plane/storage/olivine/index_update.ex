@@ -1,7 +1,28 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   @moduledoc """
   Tracks mutation state during index updates.
-  Contains the base index plus mutation tracking fields.
+
+  ## Mutation Processing
+
+  Mutations are distributed to pages based on key ranges:
+  1. **Key Distribution**: Use `Tree.page_for_insertion/2` to find target page
+  2. **Batch Processing**: Group operations by page_id for efficiency
+  3. **Page Operations**: Apply all operations to a page at once
+  4. **Automatic Splitting**: Split pages exceeding 256 keys
+  5. **Chain Maintenance**: Update page chains when pages are added/removed
+
+  ## Process Flow
+
+  1. `apply_set_mutation/5`: Determines target page, stores value, queues operation
+  2. `apply_clear_mutation/3`: Queues clear operation for existing key
+  3. `apply_range_clear_mutation/4`: Handles range clears across multiple pages
+  4. `process_pending_operations/1`: Applies all queued operations
+  5. `finish/1`: Returns final index and page allocator state
+
+  ## Page 0 Protection
+
+  Page 0 is never deleted, only updated. When page 0 becomes empty,
+  it remains in the index to preserve the leftmost chain entry point.
   """
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
@@ -270,32 +291,40 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
     cond do
       Page.empty?(updated_page) ->
-        updated_index = fix_chain_before_delete(update_data.index, page_id)
+        # Never delete page 0 - just leave it empty
+        if page_id == 0 do
+          %{update_data | index: Index.update_page(update_data.index, page, updated_page)}
+        else
+          updated_index = fix_chain_before_delete(update_data.index, page_id)
 
-        %{
-          update_data
-          | index: Index.delete_page(updated_index, page_id),
-            page_allocator: PageAllocator.recycle_page_id(update_data.page_allocator, page_id)
-        }
+          %{
+            update_data
+            | index: Index.delete_page(updated_index, page_id),
+              page_allocator: PageAllocator.recycle_page_id(update_data.page_allocator, page_id)
+          }
+        end
 
       Page.key_count(updated_page) > 256 ->
-        # Allocate new page ID and split the page
-        {right_page_id, updated_allocator} = PageAllocator.allocate_id(update_data.page_allocator)
+        # Multi-way split: calculate how many pages we need
+        key_count = Page.key_count(updated_page)
+        # ceiling division
+        pages_needed = div(key_count - 1, 256) + 1
+        # subtract 1 because original page becomes first page
+        new_pages_needed = pages_needed - 1
 
-        updated_index =
-          update_data.index
-          |> Index.delete_page(page_id)
-          |> Index.split_page(updated_page, right_page_id)
+        # Allocate IDs for new pages
+        {new_page_ids, updated_allocator} = PageAllocator.allocate_ids(update_data.page_allocator, new_pages_needed)
+
+        updated_index = Index.multi_split_page(update_data.index, page, updated_page, new_page_ids)
+
+        # Track all modified page IDs (original + all new pages)
+        all_modified_ids = [page_id | new_page_ids]
 
         %{
           update_data
           | index: updated_index,
             page_allocator: updated_allocator,
-            modified_page_ids:
-              update_data.modified_page_ids
-              # left page keeps original ID
-              |> MapSet.put(page_id)
-              |> MapSet.put(right_page_id)
+            modified_page_ids: Enum.reduce(all_modified_ids, update_data.modified_page_ids, &MapSet.put(&2, &1))
         }
 
       true ->

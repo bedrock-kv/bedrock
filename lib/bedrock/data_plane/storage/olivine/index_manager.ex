@@ -211,18 +211,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec last_committed_version(index_manager :: t()) :: Bedrock.version()
   def last_committed_version(index_manager), do: index_manager.current_version
 
-  # These functions are deprecated - durable version is now managed by Database
-  @spec last_durable_version(index_manager :: t()) :: nil
-  def last_durable_version(_index_manager), do: nil
-
-  @spec oldest_durable_version(index_manager :: t()) :: nil
-  def oldest_durable_version(_index_manager), do: nil
-
-  @spec purge_transactions_newer_than(index_manager :: t(), version :: Bedrock.version()) :: :ok
-  def purge_transactions_newer_than(_index_manager, _version) do
-    :ok
-  end
-
   @spec info(index_manager :: t(), atom()) :: term()
   def info(index_manager, stat) do
     case stat do

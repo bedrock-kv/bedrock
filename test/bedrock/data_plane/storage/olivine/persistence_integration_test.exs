@@ -79,9 +79,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       page5 = Page.new(5, [{<<"end">>, Version.from_integer(30)}], 0)
 
-      :ok = Database.store_page(db1, 0, Page.from_map(page0))
-      :ok = Database.store_page(db1, 2, Page.from_map(page2))
-      :ok = Database.store_page(db1, 5, Page.from_map(page5))
+      :ok = Database.store_page(db1, 0, PageTestHelpers.from_map(page0))
+      :ok = Database.store_page(db1, 2, PageTestHelpers.from_map(page2))
+      :ok = Database.store_page(db1, 5, PageTestHelpers.from_map(page5))
 
       values = [
         {<<"key1">>, <<"value1">>},
@@ -129,12 +129,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       {:ok, db1} = Database.open(table_name, Path.join(tmp_dir, "dets"))
 
       page0 = Page.new(0, [{<<"valid">>, Version.from_integer(100)}], 1)
-      :ok = Database.store_page(db1, 0, Page.from_map(page0))
+      :ok = Database.store_page(db1, 0, PageTestHelpers.from_map(page0))
 
       :ok = Database.store_page(db1, 1, <<"definitely_not_a_valid_page">>)
 
       page3 = Page.new(3, [{<<"isolated">>, Version.from_integer(300)}])
-      :ok = Database.store_page(db1, 3, Page.from_map(page3))
+      :ok = Database.store_page(db1, 3, PageTestHelpers.from_map(page3))
 
       Database.close(db1)
 
@@ -198,7 +198,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       {:ok, db1} = Database.open(:no_zero, Path.join(tmp_dir, "dets"))
 
       page5 = Page.new(5, [{<<"orphan">>, Version.from_integer(500)}])
-      :ok = Database.store_page(db1, 5, Page.from_map(page5))
+      :ok = Database.store_page(db1, 5, PageTestHelpers.from_map(page5))
 
       Database.close(db1)
 
@@ -302,7 +302,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       Enum.each(page_ids, fn id ->
         page = Page.new(id, [{<<"page_#{id}">>, Version.from_integer(id)}])
-        :ok = Database.store_page(db1, id, Page.from_map(page))
+        :ok = Database.store_page(db1, id, PageTestHelpers.from_map(page))
       end)
 
       Database.close(db1)

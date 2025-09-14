@@ -2,11 +2,24 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   @moduledoc """
   Page management routines for the Olivine storage driver.
 
-  This module handles all page-related operations including:
+  Pages are the fundamental storage unit in the Olivine B-tree index. Each page
+  contains sorted key-version pairs and chain pointers for traversal.
+
+  ## Key Features
+
+  - **Binary encoding**: Pages are stored as optimized binary data for efficiency
+  - **Chain linking**: Pages form a linked list via `next_id` pointers
+  - **Sorted keys**: Keys within each page are maintained in ascending order
+  - **Version tracking**: Each key has an associated version for MVCC support
+  - **Size limits**: Pages are split when they exceed 256 keys to maintain performance
+
+  ## Operations
+
   - Page creation, encoding, and decoding
-  - Page splitting and key management
-  - Tree operations for page lookup
-  - Page chain walking and range queries
+  - Page splitting for size management
+  - Key range queries within pages
+  - Chain traversal for ordered iteration
+  - Validation of page structure and invariants
   """
 
   @type id :: non_neg_integer()
@@ -33,12 +46,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
     # Use direct encoding for maximum efficiency
     encode_page_direct(id, next_id || 0, key_versions)
   end
-
-  @spec from_map(t()) :: binary()
-  def from_map(%{key_versions: key_versions, id: id, next_id: next_id}),
-    do: encode_page_direct(id, next_id, key_versions)
-
-  def from_map(binary) when is_binary(binary), do: binary
 
   # Direct page encoding using the efficient binary approach
   @spec encode_page_direct(id(), id(), [{binary(), Bedrock.version()}]) :: binary()
@@ -258,29 +265,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
   def validate(_), do: {:error, :corrupted_page}
 
-  @spec to_map(binary()) :: {:ok, t()} | {:error, :invalid_page}
-  def to_map(
-        <<id::unsigned-big-32, next_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
-          _reserved::unsigned-big-16, entries_data::binary>>
-      ) do
-    entries_data
-    |> decode_entries(key_count, [])
-    |> case do
-      {:ok, key_versions} ->
-        {:ok,
-         %{
-           id: id,
-           next_id: next_id,
-           key_versions: key_versions
-         }}
-
-      error ->
-        error
-    end
-  end
-
-  def to_map(_), do: {:error, :invalid_page}
-
   # Decode interleaved version-key entries
   @spec decode_entries(binary(), non_neg_integer(), [{binary(), Bedrock.version()}]) ::
           {:ok, [{binary(), Bedrock.version()}]} | {:error, :invalid_entries}
@@ -324,9 +308,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   def keys(page) when is_binary(page) do
     page |> key_versions() |> Enum.map(fn {key, _version} -> key end)
   end
-
-  @spec extract_keys(t()) :: [binary()]
-  def extract_keys(page), do: keys(page)
 
   @spec left_key(t()) :: binary() | nil
   def left_key(<<_page_id::unsigned-big-32, _next_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
@@ -445,18 +426,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   """
   @spec empty?(t() | binary()) :: boolean()
   def empty?(page), do: key_count(page) == 0
-
-  @doc """
-  Checks if two pages are the same page (same ID).
-  """
-  @spec same_page?(t() | binary(), t() | binary()) :: boolean()
-  def same_page?(page1, page2), do: id(page1) == id(page2)
-
-  @doc """
-  Checks if a page has the given ID.
-  """
-  @spec has_id?(t() | binary(), id()) :: boolean()
-  def has_id?(page, page_id), do: id(page) == page_id
 
   @doc """
   Splits a page at the given key offset, creating two new pages.

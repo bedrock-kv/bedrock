@@ -107,8 +107,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
       page = Page.new(42, expected_key_versions, 99)
 
-      encoded = Page.from_map(page)
-      assert {:ok, decoded_page} = Page.to_map(encoded)
+      encoded = PageTestHelpers.from_map(page)
+      assert {:ok, decoded_page} = PageTestHelpers.to_map(encoded)
 
       assert Page.id(decoded_page) == 42
       assert Page.next_id(decoded_page) == 99
@@ -120,7 +120,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       versions = Enum.map([1000, 2000], &Version.from_integer/1)
       page = Page.new(5, Enum.zip(keys, versions), 10)
 
-      encoded = Page.from_map(page)
+      encoded = PageTestHelpers.from_map(page)
 
       # Validate header format
       assert <<5::integer-32-big, 10::integer-32-big, 2::integer-16-big, last_key_offset::integer-32-big,
@@ -140,19 +140,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
 
     test "to_map/1 handles empty page" do
       empty_page = Page.new(1, [])
-      encoded = Page.from_map(empty_page)
+      encoded = PageTestHelpers.from_map(empty_page)
 
-      {:ok, decoded} = Page.to_map(encoded)
+      {:ok, decoded} = PageTestHelpers.to_map(encoded)
       assert Page.empty?(decoded)
     end
 
     test "to_map/1 handles malformed page data" do
-      assert {:error, :invalid_page} = Page.to_map(<<1::32>>)
+      assert {:error, :invalid_page} = PageTestHelpers.to_map(<<1::32>>)
 
       # Invalid header with incorrect field sizes or incomplete entries
       invalid_header = <<1::32, 0::32, 1::16, 0::32, 0::16>>
       invalid_data = <<invalid_header::binary, "incomplete">>
-      assert {:error, :invalid_entries} = Page.to_map(invalid_data)
+      assert {:error, :invalid_entries} = PageTestHelpers.to_map(invalid_data)
     end
   end
 

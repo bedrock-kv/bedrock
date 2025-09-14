@@ -2,11 +2,28 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   @moduledoc """
   Tree operations for the Olivine storage driver.
 
-  This module handles all tree-related operations including:
-  - Building trees from page maps
-  - Finding pages containing keys
-  - Adding, removing, and updating pages in trees
-  - Range queries using tree structure
+  ## Structure
+
+  The tree is a gb_trees structure with:
+  - **Key**: Page's `last_key` (rightmost key in page)
+  - **Value**: `{page_id, first_key}` tuple
+  - **Ordering**: Sorted by `last_key` for efficient range queries
+
+  ## Key Operations
+
+  - `page_for_key/2`: Find page containing a specific key
+  - `page_for_insertion/2`: Find correct page for inserting a new key
+  - `page_ids_in_range/3`: Get pages intersecting a key range
+  - `add_page_to_tree/2`: Add page to tree structure
+  - `remove_page_from_tree/2`: Remove page from tree structure
+
+  ## Insertion Logic
+
+  For `page_for_insertion/2`:
+  1. Try to find existing page containing the key
+  2. If not found, find page whose `first_key` is smallest > insertion key
+  3. If no such page exists, use rightmost page
+  4. This maintains sorted traversal order while handling gaps between pages
   """
 
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
@@ -48,25 +65,44 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
 
   @doc """
   Finds the best page for inserting a key. First tries to find a page containing the key,
-  then falls back to the rightmost page for keys beyond all existing ranges.
+  then finds the page where inserting the key would maintain sorted order during tree traversal.
   """
   @spec page_for_insertion(t(), Bedrock.key()) :: page_id()
   def page_for_insertion(tree, key) do
-    case page_for_key(tree, key) || find_rightmost_page(tree) do
-      nil -> 0
-      page_id -> page_id
+    case page_for_key(tree, key) do
+      page_id when not is_nil(page_id) -> page_id
+      nil -> find_insertion_page(tree, key)
     end
   end
 
-  @doc """
-  Finds the rightmost page in the tree (the page with the highest last_key).
-  """
-  @spec find_rightmost_page(t()) :: page_id() | nil
-  def find_rightmost_page({size, tree_node}) when size > 0, do: find_rightmost_node(tree_node)
-  def find_rightmost_page(_), do: nil
+  # Finds the page where a key should be inserted to maintain sorted traversal order
+  # For keys that don't fit in any existing page, find the page whose first_key
+  # is the smallest key greater than the insertion key (to maintain tree order)
+  defp find_insertion_page(tree, key) do
+    # Get all pages sorted by last_key (tree order) and find the right insertion point
+    if :gb_trees.is_empty(tree) do
+      0
+    else
+      # Get all tree entries sorted by last_key
+      tree_entries = :gb_trees.to_list(tree)
+      find_best_page_for_key(tree_entries, key)
+    end
+  end
 
-  defp find_rightmost_node({_last_key, {page_id, _first_key}, _l, nil}), do: page_id
-  defp find_rightmost_node({_last_key, {_page_id, _first_key}, _l, r}), do: find_rightmost_node(r)
+  # Find the page where the key should go to maintain sorted order
+  defp find_best_page_for_key(tree_entries, key) do
+    # Find the first page whose first_key > key
+    # If no such page exists, use the last (rightmost) page
+    case Enum.find(tree_entries, fn {_last_key, {_page_id, first_key}} -> first_key > key end) do
+      {_last_key, {page_id, _first_key}} ->
+        page_id
+
+      nil ->
+        # Key is larger than all first_keys, use rightmost page
+        {_last_key, {page_id, _first_key}} = List.last(tree_entries)
+        page_id
+    end
+  end
 
   @doc """
   Updates the interval tree by adding a new page range.
@@ -76,7 +112,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
     case {Page.left_key(page), Page.right_key(page)} do
       # Empty page, don't add to tree
       {nil, nil} -> tree
-      {first_key, last_key} -> :gb_trees.insert(last_key, {Page.id(page), first_key}, tree)
+      {first_key, last_key} -> :gb_trees.enter(last_key, {Page.id(page), first_key}, tree)
     end
   end
 

@@ -246,8 +246,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       # Page 0 (empty) + page 1
       assert map_size(index.page_map) == 2
 
+      # Create an updated page (simulate what would happen during operations)
+      # For this test, we can use the same page since we're just testing the split logic
+      updated_page = original_page
+
       # This should not raise an error - currently it raises {:key_exists, "key04"}
-      split_index = Index.split_page(index, original_page, 2)
+      split_index = Index.split_page(index, original_page, updated_page, 2)
 
       # After split, should have 2 pages in tree (left + right, original removed)
       assert elem(split_index.tree, 0) == 2

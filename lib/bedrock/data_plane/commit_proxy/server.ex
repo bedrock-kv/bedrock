@@ -57,7 +57,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Internal.Time
 
   @spec child_spec(
           opts :: [

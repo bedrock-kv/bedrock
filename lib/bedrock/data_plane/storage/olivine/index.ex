@@ -65,14 +65,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
 
   @type t :: %__MODULE__{
           tree: :gb_trees.tree(),
-          page_map: map(),
-          chain_dirty: boolean()
+          page_map: map()
         }
 
   defstruct [
     :tree,
-    :page_map,
-    chain_dirty: false
+    :page_map
   ]
 
   @doc """
@@ -86,8 +84,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
 
     %__MODULE__{
       tree: initial_tree,
-      page_map: initial_page_map,
-      chain_dirty: false
+      page_map: initial_page_map
     }
   end
 
@@ -105,7 +102,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
         max_page_id = max(0, Enum.max(page_ids))
         free_page_ids = calculate_free_page_ids(max_page_id, page_ids)
 
-        # Create initial page_map - if empty database, include page 0 like new() does
         initial_page_map =
           if :gb_trees.is_empty(tree) and max_page_id == 0 do
             %{0 => Page.new(0, [])}
@@ -115,8 +111,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
 
         index = %__MODULE__{
           tree: tree,
-          page_map: initial_page_map,
-          chain_dirty: false
+          page_map: initial_page_map
         }
 
         {:ok, index, max_page_id, free_page_ids}
@@ -212,7 +207,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
       {:ok, page} ->
         updated_tree = Tree.remove_page_from_tree(tree, page)
         updated_page_map = Map.delete(page_map, page_id)
-        %{index | tree: updated_tree, page_map: updated_page_map, chain_dirty: true}
+        %{index | tree: updated_tree, page_map: updated_page_map}
 
       :error ->
         index
@@ -228,9 +223,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   def update_page(%__MODULE__{tree: tree, page_map: page_map} = index, old_page, new_page) do
     updated_tree = Tree.update_page_in_tree(tree, old_page, new_page)
     updated_page_map = Map.put(page_map, Page.id(new_page), new_page)
-    # Mark chain dirty if tree structure changed (when key ranges differ)
-    chain_dirty = updated_tree != tree or index.chain_dirty
-    %{index | tree: updated_tree, page_map: updated_page_map, chain_dirty: chain_dirty}
+    %{index | tree: updated_tree, page_map: updated_page_map}
   end
 
   @doc """
@@ -242,21 +235,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   def split_page(index, original_page, updated_page, right_page_id) do
     original_page_id = Page.id(updated_page)
 
-    # Split the page using binary format
     key_count = Page.key_count(updated_page)
     {left_page_raw, right_page_raw} = Page.split_page(updated_page, div(key_count, 2), right_page_id)
 
-    # Create pages - chain links will be set surgically
     left_page = Page.new(original_page_id, Page.key_versions(left_page_raw), 0)
     right_page = Page.new(right_page_id, Page.key_versions(right_page_raw), 0)
 
-    # Update tree structure first
     temp_index =
       index
       |> update_page_lazy(original_page, left_page)
       |> add_page_lazy(right_page)
 
-    # Apply targeted chain update - this replaces full reconstruction
     split_chain_update(temp_index, original_page, left_page, right_page)
   end
 
@@ -273,16 +262,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     original_next_id = Page.next_id(updated_page)
     all_key_versions = Page.key_versions(updated_page)
 
-    # Split into chunks of max 256 keys each
     key_chunks = Enum.chunk_every(all_key_versions, 256)
 
-    # Create page specifications: [original_id | new_page_ids]
     all_page_ids = [original_page_id | new_page_ids]
 
-    # Create next_id chain: each page points to the next, last points to original_next_id
     next_ids = new_page_ids ++ [original_next_id]
 
-    # Create all pages with surgical chain linking
     new_pages =
       key_chunks
       |> Enum.zip(all_page_ids)
@@ -291,17 +276,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
         Page.new(page_id, chunk_keys, next_id)
       end)
 
-    # Update original page and add all new pages
     [first_page | remaining_pages] = new_pages
 
-    # Start by updating the original page with the first split
-    # Use lazy operations - no chain_dirty flag needed since we maintain chain integrity
-    updated_index =
+    index_with_first_page_updated =
       index
       |> update_page_lazy(original_page, first_page)
       |> add_pages_batch(remaining_pages)
 
-    updated_index
+    index_with_first_page_updated
   end
 
   @doc """
@@ -313,43 +295,30 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   def add_page(%__MODULE__{tree: tree, page_map: page_map} = index, page) do
     updated_tree = Tree.add_page_to_tree(tree, page)
     updated_page_map = Map.put(page_map, Page.id(page), page)
-
-    # For single add_page calls, ensure chain is current for API consistency
-    temp_index = %{index | tree: updated_tree, page_map: updated_page_map, chain_dirty: true}
+    temp_index = %{index | tree: updated_tree, page_map: updated_page_map}
     ensure_chain_current(temp_index)
   end
 
-  # Ensures the page chain is current by rebuilding it if marked as dirty.
-  # This is the core of lazy chain linking optimization.
   @spec ensure_chain_current(t()) :: t()
-  defp ensure_chain_current(%__MODULE__{chain_dirty: true, tree: tree, page_map: page_map} = index) do
+  defp ensure_chain_current(%__MODULE__{tree: tree, page_map: page_map} = index) do
     updated_page_map = rebuild_page_chain_from_tree(tree, page_map)
-    %{index | page_map: updated_page_map, chain_dirty: false}
+    %{index | page_map: updated_page_map}
   end
 
-  # Updates a page without ensuring chain consistency (for internal batch use).
-  # Marks chain dirty but doesn't rebuild immediately.
   @spec update_page_lazy(t(), Page.t(), Page.t()) :: t()
   defp update_page_lazy(%__MODULE__{tree: tree, page_map: page_map} = index, old_page, new_page) do
     updated_tree = Tree.update_page_in_tree(tree, old_page, new_page)
     updated_page_map = Map.put(page_map, Page.id(new_page), new_page)
-    # Mark chain dirty if tree structure changed or if already dirty
-    chain_dirty = updated_tree != tree or index.chain_dirty
-    %{index | tree: updated_tree, page_map: updated_page_map, chain_dirty: chain_dirty}
+    %{index | tree: updated_tree, page_map: updated_page_map}
   end
 
-  # Adds a single page without ensuring chain consistency (for internal batch use).
-  # Marks chain dirty but doesn't rebuild immediately.
   @spec add_page_lazy(t(), Page.t()) :: t()
   defp add_page_lazy(%__MODULE__{tree: tree, page_map: page_map} = index, page) do
     updated_tree = Tree.add_page_to_tree(tree, page)
     updated_page_map = Map.put(page_map, Page.id(page), page)
-
-    # Mark chain as dirty without rebuilding (LAZY OPTIMIZATION)
-    %{index | tree: updated_tree, page_map: updated_page_map, chain_dirty: true}
+    %{index | tree: updated_tree, page_map: updated_page_map}
   end
 
-  # Rebuilds the page chain from tree ordering
   @spec rebuild_page_chain_from_tree(:gb_trees.tree(), map()) :: map()
   defp rebuild_page_chain_from_tree(tree, page_map) do
     tree_page_ids = Tree.page_ids_in_range(tree, <<>>, <<0xFF, 0xFF, 0xFF, 0xFF>>)
@@ -416,17 +385,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   def delete_pages(index, []), do: index
 
   def delete_pages(%__MODULE__{} = index, page_ids) do
-    # Handle surgical chain update for sequential page deletions
     sorted_page_ids = Enum.sort(page_ids)
 
     case detect_sequential_deletion(index, sorted_page_ids) do
       {:sequential, first_id, last_id} ->
-        # Use targeted range clear chain update for sequential deletions
-        updated_index = range_clear_chain_update(index, first_id, last_id, sorted_page_ids)
-        delete_pages_from_structures(updated_index, page_ids)
+        index_with_updated_chain = range_clear_chain_update(index, first_id, last_id, sorted_page_ids)
+        delete_pages_from_structures(index_with_updated_chain, page_ids)
 
       :non_sequential ->
-        # Fall back to individual targeted deletions
         delete_pages_individually(index, page_ids)
     end
   end
@@ -434,7 +400,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   defp detect_sequential_deletion(index, sorted_page_ids) do
     tree_order = Tree.page_ids_in_range(index.tree, <<>>, <<0xFF, 0xFF, 0xFF, 0xFF>>)
 
-    # Check if the pages to delete form a contiguous sequence in tree order
     case find_contiguous_sequence(tree_order, sorted_page_ids) do
       {:ok, first, last} -> {:sequential, first, last}
       :error -> :non_sequential
@@ -442,10 +407,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   end
 
   defp find_contiguous_sequence(tree_order, page_ids) do
-    # Find the positions of our page_ids in tree order
     positions = Enum.map(page_ids, &Enum.find_index(tree_order, fn id -> id == &1 end))
 
-    # Check if all positions are found and contiguous
     if Enum.all?(positions, &(&1 != nil)) do
       sorted_positions = Enum.sort(positions)
 
@@ -466,8 +429,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   defp contiguous_sequence?(_), do: false
 
   defp delete_pages_individually(index, page_ids) do
-    Enum.reduce(page_ids, index, fn page_id, acc_index ->
-      acc_index
+    Enum.reduce(page_ids, index, fn page_id, index_acc ->
+      index_acc
       |> delete_page_chain_update(page_id)
       |> delete_page_from_structures(page_id)
     end)
@@ -486,8 +449,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   end
 
   defp delete_pages_from_structures(%__MODULE__{tree: tree, page_map: page_map} = index, page_ids) do
-    # Remove pages from tree structure
-    updated_tree =
+    tree_without_pages =
       Enum.reduce(page_ids, tree, fn page_id, tree_acc ->
         case Map.fetch(page_map, page_id) do
           {:ok, page} -> Tree.remove_page_from_tree(tree_acc, page)
@@ -495,27 +457,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
         end
       end)
 
-    # Remove pages from page_map
-    updated_page_map = Map.drop(page_map, page_ids)
+    page_map_without_pages = Map.drop(page_map, page_ids)
 
-    %{index | tree: updated_tree, page_map: updated_page_map}
+    %{index | tree: tree_without_pages, page_map: page_map_without_pages}
   end
 
-  # =============================================================================
-  # Targeted Chain Update Functions
-  # =============================================================================
-
-  # Updates the page chain for a page split without full reconstruction.
-  # Updates only the affected chain segment: left_page → right_page → original_next_page.
   @spec split_chain_update(t(), Page.t(), Page.t(), Page.t()) :: t()
   defp split_chain_update(index, original_page, left_page, right_page) do
     original_next_id = Page.next_id(original_page)
 
-    # Update the two affected pages with correct next_id pointers
     updated_left = Page.new(Page.id(left_page), Page.key_versions(left_page), Page.id(right_page))
     updated_right = Page.new(Page.id(right_page), Page.key_versions(right_page), original_next_id)
 
-    # Update page_map with the new chain links
     updated_page_map =
       index.page_map
       |> Map.put(Page.id(updated_left), updated_left)
@@ -524,22 +477,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     %{index | page_map: updated_page_map}
   end
 
-  # Updates the page chain for range clears by linking predecessor to successor.
-  # Handles the chain repair needed when middle pages are deleted.
   @spec range_clear_chain_update(t(), Page.id(), Page.id(), [Page.id()]) :: t()
   defp range_clear_chain_update(index, first_affected_id, last_affected_id, _middle_page_ids) do
-    # Get the successor of the last affected page
     last_affected_page = Map.get(index.page_map, last_affected_id)
     successor_id = Page.next_id(last_affected_page)
 
-    # Find predecessor efficiently using tree structure
     case find_predecessor_via_tree(index.tree, first_affected_id) do
       nil ->
-        # first_affected_id is page 0 or the leftmost page, no predecessor to update
         index
 
       pred_id ->
-        # Link predecessor directly to successor
         predecessor = Map.get(index.page_map, pred_id)
         updated_predecessor = Page.new(Page.id(predecessor), Page.key_versions(predecessor), successor_id)
 
@@ -547,8 +494,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     end
   end
 
-  # Updates the page chain for individual page deletion.
-  # Links predecessor directly to the deleted page's successor.
   @spec delete_page_chain_update(t(), Page.id()) :: t()
   defp delete_page_chain_update(index, page_id) do
     page = Map.get(index.page_map, page_id)
@@ -556,7 +501,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
 
     case find_predecessor_via_tree(index.tree, page_id) do
       nil ->
-        # Deleting page 0 or leftmost page, no predecessor to update
         index
 
       pred_id ->
@@ -567,12 +511,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     end
   end
 
-  # Adds multiple pages to the index while maintaining chain integrity.
-  # Used in multi-split operations where pages already have correct next_id pointers.
   @spec add_pages_batch(t(), [Page.t()]) :: t()
   defp add_pages_batch(index, pages) do
-    # Add all pages to tree and page_map
-    # Pages already have correct next_id pointers from multi-split logic
     Enum.reduce(pages, index, fn page, acc_index ->
       updated_tree = Tree.add_page_to_tree(acc_index.tree, page)
       updated_page_map = Map.put(acc_index.page_map, Page.id(page), page)
@@ -581,21 +521,54 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     end)
   end
 
-  # Finds the predecessor of a given page ID using the tree structure.
-  # Returns the page ID that comes immediately before the target page in tree order,
-  # or nil if the target is the first page.
   @spec find_predecessor_via_tree(:gb_trees.tree(), Page.id()) :: Page.id() | nil
   defp find_predecessor_via_tree(tree, target_page_id) do
-    # Get all page IDs in tree order (sorted by last_key)
-    page_ids = Tree.page_ids_in_range(tree, <<>>, <<0xFF, 0xFF, 0xFF, 0xFF>>)
+    case find_page_last_key_in_tree(tree, target_page_id) do
+      nil ->
+        nil
 
-    # Find target in sorted list and return previous element
-    case Enum.find_index(page_ids, &(&1 == target_page_id)) do
-      # target not found in tree
-      nil -> nil
-      # target is first page, no predecessor
-      0 -> nil
-      index -> Enum.at(page_ids, index - 1)
+      target_last_key ->
+        find_predecessor_by_last_key(tree, target_last_key)
+    end
+  end
+
+  @spec find_page_last_key_in_tree(:gb_trees.tree(), Page.id()) :: binary() | nil
+  defp find_page_last_key_in_tree(tree, target_page_id) do
+    iterator = :gb_trees.iterator(tree)
+    find_page_last_key_in_iterator(iterator, target_page_id)
+  end
+
+  defp find_page_last_key_in_iterator(iterator, target_page_id) do
+    case :gb_trees.next(iterator) do
+      {last_key, {page_id, _first_key}, next_iter} ->
+        if page_id == target_page_id do
+          last_key
+        else
+          find_page_last_key_in_iterator(next_iter, target_page_id)
+        end
+
+      :none ->
+        nil
+    end
+  end
+
+  @spec find_predecessor_by_last_key(:gb_trees.tree(), binary()) :: Page.id() | nil
+  defp find_predecessor_by_last_key(tree, target_last_key) do
+    iterator = :gb_trees.iterator(tree)
+    find_predecessor_via_iterator(iterator, target_last_key, nil)
+  end
+
+  defp find_predecessor_via_iterator(iterator, target_key, best_candidate) do
+    case :gb_trees.next(iterator) do
+      {node_key, {page_id, _first_key}, next_iter} ->
+        if node_key < target_key do
+          find_predecessor_via_iterator(next_iter, target_key, page_id)
+        else
+          best_candidate
+        end
+
+      :none ->
+        best_candidate
     end
   end
 end

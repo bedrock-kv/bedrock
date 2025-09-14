@@ -212,7 +212,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
 
       [single_page_id] ->
         page = Index.get_page!(index_update.index, single_page_id)
-        keys_to_clear = get_keys_in_range(page, start_key, end_key)
+        keys_to_clear = extract_keys_in_range(page, start_key, end_key)
 
         clear_ops = Map.new(keys_to_clear, &{&1, :clear})
         updated_operations = Map.put(index_update.pending_operations, single_page_id, clear_ops)
@@ -223,10 +223,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
         {middle_page_ids, [last_page_id]} = Enum.split(remaining_page_ids, -1)
 
         first_page = Index.get_page!(index_update.index, first_page_id)
-        first_keys_to_clear = get_keys_in_range(first_page, start_key, Page.right_key(first_page) || end_key)
+        first_keys_to_clear = extract_keys_in_range(first_page, start_key, Page.right_key(first_page) || end_key)
 
         last_page = Index.get_page!(index_update.index, last_page_id)
-        last_keys_to_clear = get_keys_in_range(last_page, Page.left_key(last_page) || start_key, end_key)
+        last_keys_to_clear = extract_keys_in_range(last_page, Page.left_key(last_page) || start_key, end_key)
 
         %{
           index_update
@@ -235,22 +235,22 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
             pending_operations:
               index_update.pending_operations
               |> Map.drop(middle_page_ids)
-              |> add_clear_operations(first_page_id, first_keys_to_clear)
-              |> add_clear_operations(last_page_id, last_keys_to_clear)
+              |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
+              |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
         }
     end
   end
 
-  defp get_keys_in_range(page, start_key, end_key) do
+  defp extract_keys_in_range(page, start_key, end_key) do
     page
     |> Page.key_versions()
     |> Enum.filter(fn {key, _version} -> key >= start_key and key <= end_key end)
     |> Enum.map(fn {key, _version} -> key end)
   end
 
-  defp add_clear_operations(operations, _page_id, []), do: operations
+  defp add_clear_operations_for_keys(operations, _page_id, []), do: operations
 
-  defp add_clear_operations(operations, page_id, keys_to_clear) do
+  defp add_clear_operations_for_keys(operations, page_id, keys_to_clear) do
     Enum.reduce(keys_to_clear, operations, fn key, ops_acc ->
       Map.update(ops_acc, page_id, %{key => :clear}, &Map.put(&1, key, :clear))
     end)

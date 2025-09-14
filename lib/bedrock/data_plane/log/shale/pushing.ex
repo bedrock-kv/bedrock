@@ -104,7 +104,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {:ok, version} ->
         case Writer.append(t.writer, encoded_transaction, version) do
           {:ok, writer} ->
-            {:ok, %{t | writer: writer, last_version: version}}
+            # Update the active segment's transaction cache to keep it coherent with disk
+            updated_active_segment = update_segment_transaction_cache(t.active_segment, encoded_transaction)
+            {:ok, %{t | writer: writer, last_version: version, active_segment: updated_active_segment}}
 
           {:error, :segment_full} ->
             with :ok <- Writer.close(t.writer) do
@@ -114,6 +116,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
       {:error, reason} ->
         {:error, {:version_extraction_failed, reason}}
+    end
+  end
+
+  @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()
+  defp update_segment_transaction_cache(segment, encoded_transaction) do
+    case segment.transactions do
+      nil ->
+        # If transactions not loaded, initialize with the new transaction
+        %{segment | transactions: [encoded_transaction]}
+
+      existing_transactions ->
+        # Prepend new transaction to maintain newest-first order
+        %{segment | transactions: [encoded_transaction | existing_transactions]}
     end
   end
 end

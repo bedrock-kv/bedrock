@@ -330,8 +330,26 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   @spec update_predecessor_chain_pointer(t(), Page.id(), Page.id()) :: t()
   defp update_predecessor_chain_pointer(%__MODULE__{tree: tree} = index, target_page_id, new_successor_id) do
     case find_predecessor_via_tree(tree, target_page_id) do
-      nil -> index
-      pred_id -> update_page_chain_pointer(index, pred_id, new_successor_id)
+      nil ->
+        # No predecessor found in tree - check if target is leftmost page (pointed to by page 0)
+        handle_leftmost_page_deletion(index, target_page_id, new_successor_id)
+
+      pred_id ->
+        update_page_chain_pointer(index, pred_id, new_successor_id)
+    end
+  end
+
+  # Handle deletion of leftmost page by updating page 0's pointer
+  @spec handle_leftmost_page_deletion(t(), Page.id(), Page.id()) :: t()
+  defp handle_leftmost_page_deletion(index, target_page_id, new_successor_id) do
+    case Map.get(index.page_map, 0) do
+      {_page_0, leftmost_id} when leftmost_id == target_page_id ->
+        # Page 0 points to the target page - update it to point to successor
+        update_page_chain_pointer(index, 0, new_successor_id)
+
+      _ ->
+        # Target page is not the leftmost - no predecessor to update
+        index
     end
   end
 

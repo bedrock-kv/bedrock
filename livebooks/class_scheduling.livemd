@@ -170,6 +170,7 @@ defmodule Scheduling1 do
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
+      :ok
     end)
   end
 end
@@ -223,9 +224,8 @@ defmodule Scheduling2 do
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
+      :ok
     end)
-    
-    :ok
   end
 end
 ```
@@ -403,9 +403,8 @@ defmodule Scheduling do
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
+      :ok
     end)
-    
-    :ok
   end
 end
 ```

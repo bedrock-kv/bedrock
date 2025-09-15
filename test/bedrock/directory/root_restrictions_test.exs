@@ -17,7 +17,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
   defp expect_range_query(repo, path, results) do
     expected_range = Bedrock.KeyRange.from_prefix(build_directory_key(path))
 
-    expect(repo, :range, fn :mock_txn, ^expected_range -> results end)
+    expect(repo, :get_range, fn :mock_txn, ^expected_range -> results end)
   end
 
   describe "root directory restrictions" do

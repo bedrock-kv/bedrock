@@ -17,7 +17,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
   defp expect_collision_in_range(repo, prefix, collision_data) do
     expected_range = Bedrock.KeyRange.from_prefix(prefix)
 
-    expect(repo, :range, fn :mock_txn, ^expected_range, opts ->
+    expect(repo, :get_range, fn :mock_txn, ^expected_range, opts ->
       assert opts[:limit] == 1
       collision_data
     end)
@@ -110,7 +110,7 @@ defmodule Bedrock.Directory.PrefixCollisionTest do
       MockRepo
       |> expect_version_initialization()
       |> expect_directory_exists(["users"], nil)
-      |> expect(:range, fn :mock_txn, range, opts ->
+      |> expect(:get_range, fn :mock_txn, range, opts ->
         expected_range = Bedrock.KeyRange.from_prefix(prefix)
         assert expected_range == range
         assert opts[:limit] == 1

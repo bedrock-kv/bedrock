@@ -186,7 +186,7 @@ defmodule Bedrock.Repo do
       # Lazy iteration (memory efficient)
       transaction fn tx ->
         tx
-        |> range(start_key, end_key, limit: 100)
+        |> get_range(start_key, end_key, limit: 100)
         |> Enum.take(10)  # Only fetches what's needed
       end
 
@@ -194,7 +194,7 @@ defmodule Bedrock.Repo do
       transaction fn tx ->
         results =
           tx
-          |> range(start_key, end_key)
+          |> get_range(start_key, end_key)
           |> Enum.to_list()
       end
 
@@ -202,16 +202,16 @@ defmodule Bedrock.Repo do
       transaction fn tx ->
         metadata =
           tx
-          |> range("meta/", "meta0", snapshot: true)
+          |> get_range("meta/", "meta0", snapshot: true)
           |> Enum.to_list()
       end
 
   """
-  @callback range(
+  @callback get_range(
               t(),
               Subspace.t() | KeyRange.t()
             ) :: Enumerable.t(Bedrock.key_value())
-  @callback range(
+  @callback get_range(
               t(),
               Subspace.t() | KeyRange.t(),
               opts :: [
@@ -221,8 +221,8 @@ defmodule Bedrock.Repo do
                 timeout: non_neg_integer()
               ]
             ) :: Enumerable.t(Bedrock.key_value())
-  @callback range(t(), Key.t(), Key.t()) :: Enumerable.t(Bedrock.key_value())
-  @callback range(
+  @callback get_range(t(), Key.t(), Key.t()) :: Enumerable.t(Bedrock.key_value())
+  @callback get_range(
               t(),
               Key.t(),
               Key.t(),
@@ -704,13 +704,13 @@ defmodule Bedrock.Repo do
       # Range Operations
 
       @impl true
-      def range(t, subspace_or_range, opts \\ [])
-      def range(t, %Subspace{} = subspace, opts), do: range(t, Subspace.range(subspace), opts)
-      def range(t, {start_key, end_key}, opts), do: Repo.range(t, start_key, end_key, opts)
-      def range(t, start_key, end_key), do: Repo.range(t, start_key, end_key, [])
+      def get_range(t, subspace_or_range, opts \\ [])
+      def get_range(t, %Subspace{} = subspace, opts), do: get_range(t, Subspace.range(subspace), opts)
+      def get_range(t, {start_key, end_key}, opts), do: Repo.get_range(t, start_key, end_key, opts)
+      def get_range(t, start_key, end_key), do: Repo.get_range(t, start_key, end_key, [])
 
       @impl true
-      defdelegate range(t, start_key, end_key, opts), to: Repo
+      defdelegate get_range(t, start_key, end_key, opts), to: Repo
 
       @impl true
       def clear_range(t, subspace_or_range, opts \\ [])

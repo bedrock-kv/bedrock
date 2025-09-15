@@ -93,27 +93,27 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
     end
 
     test "returns consistent results across multiple calls", %{tx: tx, expected_results: expected} do
-      result1 = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.to_list()
-      result2 = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.to_list()
+      result1 = tx |> Repo.get_range("key", "key4", snapshot: true) |> Enum.to_list()
+      result2 = tx |> Repo.get_range("key", "key4", snapshot: true) |> Enum.to_list()
 
       assert result1 == expected
       assert result1 == result2
     end
 
     test "works with batch_size parameter", %{tx: tx, expected_results: expected} do
-      results = tx |> Repo.range("key", "key4", batch_size: 2, snapshot: true) |> Enum.to_list()
+      results = tx |> Repo.get_range("key", "key4", batch_size: 2, snapshot: true) |> Enum.to_list()
       assert results == expected
     end
 
     test "supports stream operations and early halting", %{tx: tx} do
       # Test early halting
-      [first_result] = tx |> Repo.range("key", "key4", snapshot: true) |> Enum.take(1)
+      [first_result] = tx |> Repo.get_range("key", "key4", snapshot: true) |> Enum.take(1)
       assert first_result == {"key1", "value1"}
 
       # Test stream transformations
       uppercase_results =
         tx
-        |> Repo.range("key", "key4", snapshot: true)
+        |> Repo.get_range("key", "key4", snapshot: true)
         |> Stream.map(fn {k, v} -> {k, String.upcase(v)} end)
         |> Enum.take(2)
 
@@ -121,10 +121,10 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
     end
 
     test "handles empty ranges", %{tx: tx} do
-      empty_result = tx |> Repo.range("nonexistent", "nonexistent1", snapshot: true) |> Enum.to_list()
+      empty_result = tx |> Repo.get_range("nonexistent", "nonexistent1", snapshot: true) |> Enum.to_list()
       assert empty_result == []
 
-      no_match_result = tx |> Repo.range("start", "end", snapshot: true) |> Enum.to_list()
+      no_match_result = tx |> Repo.get_range("start", "end", snapshot: true) |> Enum.to_list()
       assert no_match_result == []
     end
   end
@@ -141,7 +141,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
       {:ok, empty_tx} = MockTransaction.start_link(%{})
       assert Repo.get(empty_tx, "any_key", snapshot: true) == nil
 
-      empty_range_results = empty_tx |> Repo.range("start", "end", snapshot: true) |> Enum.to_list()
+      empty_range_results = empty_tx |> Repo.get_range("start", "end", snapshot: true) |> Enum.to_list()
       assert empty_range_results == []
     end
   end

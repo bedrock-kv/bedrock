@@ -114,7 +114,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
       # Source fetch for move operation (gets called again)
       |> expect(:get, fn :mock_txn, ^old_key -> source_data end)
       # Range scan to get source + all children
-      |> expect(:range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+      |> expect(:get_range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
         [{old_key, source_data}]
       end)
       # Put destination directory
@@ -134,7 +134,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
     test "list operation checks version for reads" do
       MockRepo
       |> expect_version_check()
-      |> expect(:range, fn :mock_txn, _range -> [] end)
+      |> expect(:get_range, fn :mock_txn, _range -> [] end)
 
       layer = Directory.root(MockRepo)
       assert {:ok, []} = Directory.list(layer, [])

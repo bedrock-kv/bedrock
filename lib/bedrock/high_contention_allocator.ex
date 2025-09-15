@@ -270,7 +270,7 @@ defmodule Bedrock.HighContentionAllocator do
       counter_start = hca.counters_subspace
       counter_end = hca.counters_subspace <> <<0xFF>>
 
-      counters = txn |> repo.range(counter_start, counter_end) |> Enum.to_list()
+      counters = txn |> repo.get_range(counter_start, counter_end) |> Enum.to_list()
       total_counters = length(counters)
 
       # Estimate total allocated IDs by summing counter values

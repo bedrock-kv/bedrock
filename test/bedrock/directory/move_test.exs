@@ -30,7 +30,7 @@ defmodule Bedrock.Directory.MoveTest do
     # Source fetch for move operation (gets called again)
     |> expect_directory_exists(source_path, source_data)
     # Range scan to get source + all children
-    |> expect(:range, fn :mock_txn, range ->
+    |> expect(:get_range, fn :mock_txn, range ->
       expected_range = KeyRange.from_prefix(build_directory_key(source_path))
       assert expected_range == range
 

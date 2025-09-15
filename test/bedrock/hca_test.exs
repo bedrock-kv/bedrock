@@ -112,7 +112,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
         # No counters yet
         nil
       end)
-      |> expect(:range, fn :mock_txn, start_key, end_key ->
+      |> expect(:get_range, fn :mock_txn, start_key, end_key ->
         # Verify range query parameters for counter counting in stats
         assert start_key == "test_empty" <> <<0>>
         assert end_key == "test_empty" <> <<0, 255>>
@@ -217,7 +217,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
       MockRepo
       |> expect(:transaction, fn fun -> fun.(:mock_txn) end)
       |> expect(:select, fn :mock_txn, %KeySelector{} -> nil end)
-      |> expect(:range, fn :mock_txn, start_key, end_key ->
+      |> expect(:get_range, fn :mock_txn, start_key, end_key ->
         # Verify counter range query in stats
         assert start_key == "test" <> <<0>>
         assert end_key == "test" <> <<0, 255>>

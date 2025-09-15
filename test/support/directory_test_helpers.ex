@@ -85,7 +85,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   """
   def expect_range_scan(repo, path, results) do
     expected_range = KeyRange.from_prefix(build_directory_key(path))
-    expect(repo, :range, fn :mock_txn, ^expected_range -> results end)
+    expect(repo, :get_range, fn :mock_txn, ^expected_range -> results end)
   end
 
   @doc """
@@ -94,7 +94,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   def expect_range_scan(repo, path, results, opts) do
     expected_range = KeyRange.from_prefix(build_directory_key(path))
 
-    expect(repo, :range, fn :mock_txn, ^expected_range, actual_opts ->
+    expect(repo, :get_range, fn :mock_txn, ^expected_range, actual_opts ->
       # Assert on any specific options we care about
       if opts[:limit], do: assert(actual_opts[:limit] == opts[:limit])
       results
@@ -118,7 +118,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
     expected_range = KeyRange.from_prefix(prefix)
 
     repo
-    |> expect(:range, fn :mock_txn, ^expected_range, opts ->
+    |> expect(:get_range, fn :mock_txn, ^expected_range, opts ->
       assert opts[:limit] == 1
       results
     end)
@@ -138,7 +138,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   def expect_collision_check(repo, prefix) do
     expected_range = KeyRange.from_prefix(prefix)
 
-    expect(repo, :range, fn :mock_txn, ^expected_range, opts ->
+    expect(repo, :get_range, fn :mock_txn, ^expected_range, opts ->
       assert opts[:limit] == 1
       []
     end)

@@ -172,7 +172,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
           [{"key_c", "value_c"}]
         )
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 2)
+      stream = Repo.get_range(txn_pid, "key_a", "key_z", batch_size: 2)
       results = stream |> Enum.to_list() |> List.flatten()
 
       assert results == [{"key_b", "value_b"}, {"key_c", "value_c"}]
@@ -181,7 +181,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     test "handles empty results gracefully" do
       txn_pid = spawn_range_mock("key_a", "key_z", 10, {:ok, {[], false}})
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10)
+      stream = Repo.get_range(txn_pid, "key_a", "key_z", batch_size: 10)
       results = Enum.to_list(stream)
 
       assert results == []
@@ -191,7 +191,7 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       expected_results = [{"key_b", "value_b"}, {"key_c", "value_c"}]
       txn_pid = spawn_range_mock_with_limit("key_a", "key_z", 2, 2, expected_results)
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10, limit: 2)
+      stream = Repo.get_range(txn_pid, "key_a", "key_z", batch_size: 10, limit: 2)
       results = stream |> Enum.to_list() |> List.flatten()
 
       assert results == expected_results

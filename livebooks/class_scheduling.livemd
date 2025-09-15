@@ -2,8 +2,8 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.3.0-rc3"},
-  {:kino, "~> 0.16.0"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "feature/api-feedback"},
+ {:kino, "~> 0.16.0"},
 ])
 
 # If you've used any of these tutorials before, and want to see the latest-greatest, you'll want 
@@ -249,7 +249,7 @@ defmodule Scheduling3 do
 
     Repo.transaction(fn tx ->
       tx
-      |> Repo.range(course_range)
+      |> Repo.get_range(course_range)
       |> Stream.map(fn {encoded_class, _v} ->
         Subspace.unpack(course, encoded_class)
       end)
@@ -370,7 +370,7 @@ defmodule Scheduling do
 
     Repo.transaction(fn tx ->
       tx
-      |> Repo.range(course_range)
+      |> Repo.get_range(course_range)
       |> Stream.map(fn {packed_class, packed_seats} ->
         class = Subspace.unpack(course, packed_class)
         availability = Key.unpack(packed_seats)

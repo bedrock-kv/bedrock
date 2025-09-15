@@ -67,7 +67,7 @@ defmodule Bedrock.Internal.Repo do
   - `:timeout` - Timeout per batch request (default: 5000)
   - `:limit` - Maximum total items to return
   """
-  @spec range(
+  @spec get_range(
           transaction(),
           start_key :: key(),
           end_key :: key(),
@@ -79,7 +79,7 @@ defmodule Bedrock.Internal.Repo do
             snapshot: boolean()
           ]
         ) :: Enumerable.t({any(), any()})
-  def range(txn_pid, start_key, end_key, opts \\ []) do
+  def get_range(txn_pid, start_key, end_key, opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 100)
     timeout = Keyword.get(opts, :timeout, 5000)
 

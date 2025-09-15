@@ -616,7 +616,7 @@ defmodule Bedrock.Directory do
       full_prefix = Subspace.key(content_subspace) <> prefix
       prefix_range = KeyRange.from_prefix(full_prefix)
 
-      case repo.range(txn, prefix_range, limit: 1) do
+      case repo.get_range(txn, prefix_range, limit: 1) do
         [] ->
           # No keys start with our prefix, now check the reverse
           # Are there any existing keys that our prefix starts with?
@@ -780,7 +780,7 @@ defmodule Bedrock.Directory do
 
         children =
           txn
-          |> repo.range(KeyRange.from_prefix(prefix_key))
+          |> repo.get_range(KeyRange.from_prefix(prefix_key))
           |> Stream.map(&extract_child_name(&1, prefix_size))
           |> Stream.reject(&is_nil/1)
           |> Enum.uniq()
@@ -840,7 +840,7 @@ defmodule Bedrock.Directory do
       key_range = KeyRange.from_prefix(old_key)
 
       txn
-      |> repo.range(key_range)
+      |> repo.get_range(key_range)
       |> Enum.each(fn {old_key, value} ->
         relative_path = extract_relative_path(layer, old_key, old_path)
         new_key = build_moved_key(layer, new_path, relative_path)

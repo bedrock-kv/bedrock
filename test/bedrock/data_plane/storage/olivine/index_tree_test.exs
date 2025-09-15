@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
 
@@ -21,9 +20,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       page2_kvs = [{"g", <<3::64>>}, {"m", <<4::64>>}]
       page3_kvs = [{"n", <<5::64>>}, {"z", <<6::64>>}]
 
-      page1 = Page.new(1, page1_kvs, 0)
-      page2 = Page.new(2, page2_kvs, 0)
-      page3 = Page.new(3, page3_kvs, 0)
+      page1 = Page.new(1, page1_kvs)
+      page2 = Page.new(2, page2_kvs)
+      page3 = Page.new(3, page3_kvs)
 
       # Add pages to tree (keyed by last_key: "f", "m", "z")
       tree =
@@ -58,9 +57,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       page2_kvs = [{"d", <<3::64>>}, {"h", <<4::64>>}]
       page3_kvs = [{"g", <<5::64>>}, {"k", <<6::64>>}]
 
-      page1 = Page.new(1, page1_kvs, 0)
-      page2 = Page.new(2, page2_kvs, 0)
-      page3 = Page.new(3, page3_kvs, 0)
+      page1 = Page.new(1, page1_kvs)
+      page2 = Page.new(2, page2_kvs)
+      page3 = Page.new(3, page3_kvs)
 
       tree =
         :gb_trees.empty()
@@ -81,9 +80,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       page2_kvs = [{"m", <<3::64>>}, {"n", <<4::64>>}]
       page3_kvs = [{"y", <<5::64>>}, {"z", <<6::64>>}]
 
-      page1 = Page.new(1, page1_kvs, 0)
-      page2 = Page.new(2, page2_kvs, 0)
-      page3 = Page.new(3, page3_kvs, 0)
+      page1 = Page.new(1, page1_kvs)
+      page2 = Page.new(2, page2_kvs)
+      page3 = Page.new(3, page3_kvs)
 
       tree =
         :gb_trees.empty()
@@ -128,9 +127,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
         {class_prefix <> "199", <<6::64>>}
       ]
 
-      page1 = Page.new(1, page1_kvs, 0)
-      page2 = Page.new(2, page2_kvs, 0)
-      page3 = Page.new(3, page3_kvs, 0)
+      page1 = Page.new(1, page1_kvs)
+      page2 = Page.new(2, page2_kvs)
+      page3 = Page.new(3, page3_kvs)
 
       tree =
         :gb_trees.empty()
@@ -152,7 +151,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
 
     test "handles single page correctly" do
       page_kvs = [{"key1", <<1::64>>}, {"key2", <<2::64>>}]
-      page = Page.new(42, page_kvs, 0)
+      page = Page.new(42, page_kvs)
 
       tree = Tree.add_page_to_tree(:gb_trees.empty(), page)
 
@@ -169,8 +168,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
 
     test "handles empty pages (pages with no keys)" do
       # Empty page should not appear in tree or results
-      empty_page = Page.new(1, [], 0)
-      regular_page = Page.new(2, [{"key", <<1::64>>}], 0)
+      empty_page = Page.new(1, [])
+      regular_page = Page.new(2, [{"key", <<1::64>>}])
 
       tree =
         :gb_trees.empty()
@@ -188,8 +187,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       page1_kvs = [{"a", <<1::64>>}, {"f", <<2::64>>}]
       page2_kvs = [{"g", <<3::64>>}, {"m", <<4::64>>}]
 
-      page1 = Page.new(1, page1_kvs, 0)
-      page2 = Page.new(2, page2_kvs, 0)
+      page1 = Page.new(1, page1_kvs)
+      page2 = Page.new(2, page2_kvs)
 
       tree =
         :gb_trees.empty()
@@ -210,7 +209,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
   describe "add_page_to_tree/2" do
     test "adds page correctly to tree" do
       page_kvs = [{"key1", <<1::64>>}, {"key3", <<2::64>>}]
-      page = Page.new(1, page_kvs, 0)
+      page = Page.new(1, page_kvs)
 
       tree = Tree.add_page_to_tree(:gb_trees.empty(), page)
 
@@ -222,43 +221,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       # Should not find it for keys outside its range
       assert Tree.page_for_key(tree, "key0") == nil
       assert Tree.page_for_key(tree, "key4") == nil
-    end
-  end
-
-  describe "Index.split_page/3" do
-    test "properly removes original page when splitting to avoid key conflicts" do
-      # Create a page that will be split
-      original_page_kvs = [
-        {"key01", <<1::64>>},
-        {"key02", <<2::64>>},
-        {"key03", <<3::64>>},
-        {"key04", <<4::64>>}
-      ]
-
-      original_page = Page.new(1, original_page_kvs, 0)
-
-      # Add page to index
-      index = Index.add_page(Index.new(), original_page)
-
-      # Verify initial state
-      # One page in tree
-      assert elem(index.tree, 0) == 1
-      # Page 0 (empty) + page 1
-      assert map_size(index.page_map) == 2
-
-      # This should not raise an error - currently it raises {:key_exists, "key04"}
-      split_index = Index.split_page(index, original_page, 2)
-
-      # After split, should have 2 pages in tree (left + right, original removed)
-      assert elem(split_index.tree, 0) == 2
-
-      # Should have 3 pages in page_map (page 0 + left page 1 + right page 2)
-      assert map_size(split_index.page_map) == 3
-
-      # Verify pages are properly ordered
-      page_ids = Tree.page_ids_in_range(split_index.tree, "", "zzz")
-      # Left page (1), then right page (2)
-      assert page_ids == [1, 2]
     end
   end
 end

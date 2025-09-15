@@ -69,40 +69,38 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    with :ok <- IndexManager.purge_transactions_newer_than(t.index_manager, durable_version) do
-      t = stop_pulling(t)
-      main_process_pid = self()
+    t = stop_pulling(t)
+    main_process_pid = self()
 
-      apply_and_notify_fn = fn transactions ->
-        send(main_process_pid, {:apply_transactions, transactions})
-        last_transaction = List.last(transactions)
-        Transaction.commit_version!(last_transaction)
-      end
-
-      puller =
-        Pulling.start_pulling(
-          durable_version,
-          t.id,
-          logs,
-          services,
-          apply_and_notify_fn,
-          fn ->
-            try do
-              case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
-                {:ok, version} -> version
-                _ -> raise "Failed to get current durable version"
-              end
-            catch
-              :exit, _ -> raise "Failed to get current durable version"
-            end
-          end
-        )
-
-      t
-      |> update_mode(:running)
-      |> put_puller(puller)
-      |> then(&{:ok, &1})
+    apply_and_notify_fn = fn transactions ->
+      send(main_process_pid, {:apply_transactions, transactions})
+      last_transaction = List.last(transactions)
+      Transaction.commit_version!(last_transaction)
     end
+
+    puller =
+      Pulling.start_pulling(
+        durable_version,
+        t.id,
+        logs,
+        services,
+        apply_and_notify_fn,
+        fn ->
+          try do
+            case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
+              {:ok, version} -> version
+              _ -> raise "Failed to get current durable version"
+            end
+          catch
+            :exit, _ -> raise "Failed to get current durable version"
+          end
+        end
+      )
+
+    t
+    |> update_mode(:running)
+    |> put_puller(puller)
+    |> then(&{:ok, &1})
   end
 
   @doc """

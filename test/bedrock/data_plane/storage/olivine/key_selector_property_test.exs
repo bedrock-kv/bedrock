@@ -103,15 +103,20 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
           versions = List.duplicate(<<0, 0, 0, 0, 0, 0, 0, 1>>, 50)
           key_versions = Enum.zip(keys, versions)
           next_id = if page_id == page_count - 1, do: 0, else: page_id + 1
-          Page.new(page_id, key_versions, next_id)
+          page = Page.new(page_id, key_versions)
+          {page, next_id}
         end
 
       create_index_from_pages(pages)
     end)
   end
 
-  defp create_index_from_pages(pages) do
-    page_map = Map.new(pages, &{Page.id(&1), &1})
+  defp create_index_from_pages(page_tuples) do
+    page_map =
+      Map.new(page_tuples, fn {page, next_id} ->
+        {Page.id(page), {page, next_id}}
+      end)
+
     tree = Tree.from_page_map(page_map)
     %Index{tree: tree, page_map: page_map}
   end
@@ -212,7 +217,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
   defp get_all_keys_from_index(%Index{page_map: page_map}) do
     page_map
     |> Map.values()
-    |> Enum.flat_map(&Page.keys/1)
+    |> Enum.flat_map(fn {page, _next_id} -> Page.keys(page) end)
     |> Enum.sort()
     |> Enum.uniq()
   end

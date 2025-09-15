@@ -49,6 +49,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
+  # Test helper function - only used in property tests
+  defp find_rightmost_page({size, tree_node}) when size > 0, do: find_rightmost_node(tree_node)
+  defp find_rightmost_page(_), do: nil
+
+  defp find_rightmost_node({_last_key, {page_id, _first_key}, _l, nil}), do: page_id
+  defp find_rightmost_node({_last_key, {_page_id, _first_key}, _l, r}), do: find_rightmost_node(r)
+
   # Generators
 
   def binary_key_generator do
@@ -231,7 +238,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
       if length(pages) > 0 do
         tree = build_tree_from_pages(pages)
 
-        rightmost_page_id = Tree.find_rightmost_page(tree)
+        rightmost_page_id = find_rightmost_page(tree)
         assert is_integer(rightmost_page_id), "find_rightmost_page should return a page_id"
 
         expected_page = Enum.max_by(pages, &Page.right_key/1)
@@ -310,7 +317,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
           mid_point = div(key_count, 2)
           new_page_id = 2
 
-          {left_page, right_page} = Page.split_page(oversized_page, mid_point, new_page_id)
+          {{left_page, _left_next_id}, {right_page, _right_next_id}} =
+            Page.split_page(oversized_page, mid_point, new_page_id, 0)
 
           # Validate both pages are non-empty and properly sized
           refute Page.empty?(left_page), "Left page should have keys"
@@ -344,7 +352,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
 
       assert Tree.page_for_insertion(empty_tree, test_key) == 0
 
-      assert Tree.find_rightmost_page(empty_tree) == nil
+      assert find_rightmost_page(empty_tree) == nil
     end
   end
 
@@ -356,7 +364,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
       if not Page.empty?(page) do
         tree = Tree.add_page_to_tree(:gb_trees.empty(), page)
 
-        assert Tree.find_rightmost_page(tree) == Page.id(page)
+        assert find_rightmost_page(tree) == Page.id(page)
 
         found_page_id = Tree.page_for_insertion(tree, test_key)
         assert found_page_id == Page.id(page)

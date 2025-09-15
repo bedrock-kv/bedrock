@@ -2,11 +2,28 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   @moduledoc """
   Tree operations for the Olivine storage driver.
 
-  This module handles all tree-related operations including:
-  - Building trees from page maps
-  - Finding pages containing keys
-  - Adding, removing, and updating pages in trees
-  - Range queries using tree structure
+  ## Structure
+
+  The tree is a gb_trees structure with:
+  - **Key**: Page's `last_key` (rightmost key in page)
+  - **Value**: `{page_id, first_key}` tuple
+  - **Ordering**: Sorted by `last_key` for efficient range queries
+
+  ## Key Operations
+
+  - `page_for_key/2`: Find page containing a specific key
+  - `page_for_insertion/2`: Find correct page for inserting a new key
+  - `page_ids_in_range/3`: Get pages intersecting a key range
+  - `add_page_to_tree/2`: Add page to tree structure
+  - `remove_page_from_tree/2`: Remove page from tree structure
+
+  ## Insertion Logic
+
+  For `page_for_insertion/2`:
+  1. Try to find existing page containing the key
+  2. If not found, find page whose `first_key` is smallest > insertion key
+  3. If no such page exists, use rightmost page
+  4. This maintains sorted traversal order while handling gaps between pages
   """
 
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
@@ -21,8 +38,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   """
   @spec from_page_map(page_map :: map()) :: t()
   def from_page_map(page_map) do
-    Enum.reduce(page_map, :gb_trees.empty(), fn {_page_id, page}, tree ->
-      add_page_to_tree(tree, page)
+    Enum.reduce(page_map, :gb_trees.empty(), fn {_page_id, {page, _next_id}}, tree_acc ->
+      add_page_to_tree(tree_acc, page)
     end)
   end
 
@@ -48,25 +65,35 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
 
   @doc """
   Finds the best page for inserting a key. First tries to find a page containing the key,
-  then falls back to the rightmost page for keys beyond all existing ranges.
+  then finds the page where inserting the key would maintain sorted order during tree traversal.
   """
   @spec page_for_insertion(t(), Bedrock.key()) :: page_id()
   def page_for_insertion(tree, key) do
-    case page_for_key(tree, key) || find_rightmost_page(tree) do
-      nil -> 0
-      page_id -> page_id
+    case page_for_key(tree, key) do
+      page_id when not is_nil(page_id) -> page_id
+      nil -> find_insertion_page(tree, key)
     end
   end
 
-  @doc """
-  Finds the rightmost page in the tree (the page with the highest last_key).
-  """
-  @spec find_rightmost_page(t()) :: page_id() | nil
-  def find_rightmost_page({size, tree_node}) when size > 0, do: find_rightmost_node(tree_node)
-  def find_rightmost_page(_), do: nil
+  defp find_insertion_page(tree, key) do
+    if :gb_trees.is_empty(tree) do
+      0
+    else
+      sorted_page_entries = :gb_trees.to_list(tree)
+      find_page_with_smallest_first_key_greater_than(sorted_page_entries, key)
+    end
+  end
 
-  defp find_rightmost_node({_last_key, {page_id, _first_key}, _l, nil}), do: page_id
-  defp find_rightmost_node({_last_key, {_page_id, _first_key}, _l, r}), do: find_rightmost_node(r)
+  defp find_page_with_smallest_first_key_greater_than(sorted_page_entries, key) do
+    case Enum.find(sorted_page_entries, fn {_last_key, {_page_id, first_key}} -> first_key > key end) do
+      {_last_key, {page_id, _first_key}} ->
+        page_id
+
+      nil ->
+        {_last_key, {rightmost_page_id, _first_key}} = List.last(sorted_page_entries)
+        rightmost_page_id
+    end
+  end
 
   @doc """
   Updates the interval tree by adding a new page range.
@@ -74,9 +101,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   @spec add_page_to_tree(t(), page()) :: t()
   def add_page_to_tree(tree, page) do
     case {Page.left_key(page), Page.right_key(page)} do
-      # Empty page, don't add to tree
       {nil, nil} -> tree
-      {first_key, last_key} -> :gb_trees.insert(last_key, {Page.id(page), first_key}, tree)
+      {first_key, last_key} -> :gb_trees.enter(last_key, {Page.id(page), first_key}, tree)
     end
   end
 
@@ -86,7 +112,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   @spec remove_page_from_tree(t(), page()) :: t()
   def remove_page_from_tree(tree, page) do
     case Page.right_key(page) do
-      # Empty page, nothing to remove
       nil -> tree
       last_key -> :gb_trees.delete_any(last_key, tree)
     end
@@ -123,42 +148,51 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   """
   @spec page_ids_in_range(t(), Bedrock.key(), Bedrock.key()) :: [page_id()]
   def page_ids_in_range({size, tree_node}, query_start, query_end) when size > 0,
-    do: collect_pages_in_range(tree_node, query_start, query_end)
+    do: traverse_tree_collecting_overlapping_pages(tree_node, query_start, query_end)
 
   def page_ids_in_range(_, _query_start, _query_end), do: []
 
-  defp collect_pages_in_range(tree_node, query_start, query_end) do
+  defp traverse_tree_collecting_overlapping_pages(tree_node, query_start, query_end) do
     tree_node
-    |> find_and_collect_overlapping(query_start, query_end, [])
+    |> find_and_collect_overlapping_pages(query_start, query_end, [])
     |> Enum.reverse()
   end
 
-  defp find_and_collect_overlapping(nil, _query_start, _query_end, acc), do: acc
+  defp find_and_collect_overlapping_pages(nil, _query_start, _query_end, collected_page_ids), do: collected_page_ids
 
-  defp find_and_collect_overlapping({last_key, _, _left, right}, query_start, query_end, acc)
+  defp find_and_collect_overlapping_pages({last_key, _, _left, right}, query_start, query_end, collected_page_ids)
        when last_key < query_start,
-       do: find_and_collect_overlapping(right, query_start, query_end, acc)
+       do: find_and_collect_overlapping_pages(right, query_start, query_end, collected_page_ids)
 
-  defp find_and_collect_overlapping({last_key, {page_id, first_key}, left, right}, query_start, query_end, acc) do
-    acc_after_left = find_and_collect_overlapping(left, query_start, query_end, acc)
+  defp find_and_collect_overlapping_pages(
+         {last_key, {page_id, first_key}, left, right},
+         query_start,
+         query_end,
+         collected_page_ids
+       ) do
+    collection_after_left = find_and_collect_overlapping_pages(left, query_start, query_end, collected_page_ids)
 
     if first_key <= query_end and last_key >= query_start do
-      acc_with_current = [page_id | acc_after_left]
-      collect_all_until_boundary(right, query_end, acc_with_current)
+      collection_with_current = [page_id | collection_after_left]
+      collect_remaining_pages_until_boundary(right, query_end, collection_with_current)
     else
-      find_and_collect_overlapping(right, query_start, query_end, acc_after_left)
+      find_and_collect_overlapping_pages(right, query_start, query_end, collection_after_left)
     end
   end
 
-  defp collect_all_until_boundary(nil, _query_end, acc), do: acc
+  defp collect_remaining_pages_until_boundary(nil, _query_end, collected_page_ids), do: collected_page_ids
 
-  defp collect_all_until_boundary({_last_key, {page_id, first_key}, left, right}, query_end, acc) do
+  defp collect_remaining_pages_until_boundary(
+         {_last_key, {page_id, first_key}, left, right},
+         query_end,
+         collected_page_ids
+       ) do
     if first_key > query_end do
-      acc
+      collected_page_ids
     else
-      acc_after_left = collect_all_until_boundary(left, query_end, acc)
-      acc_with_current = [page_id | acc_after_left]
-      collect_all_until_boundary(right, query_end, acc_with_current)
+      collection_after_left = collect_remaining_pages_until_boundary(left, query_end, collected_page_ids)
+      collection_with_current = [page_id | collection_after_left]
+      collect_remaining_pages_until_boundary(right, query_end, collection_with_current)
     end
   end
 end

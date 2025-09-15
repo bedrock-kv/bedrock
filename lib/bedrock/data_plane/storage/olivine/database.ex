@@ -73,18 +73,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
     :ok
   end
 
-  @spec store_page(t(), page_id :: Page.id(), page :: Page.t()) :: :ok | {:error, term()}
-  def store_page(database, page_id, page) do
-    case :dets.insert(database.dets_storage, {page_id, page}) do
+  @spec store_page(t(), page_id :: Page.id(), page_tuple :: {Page.t(), Page.id()}) :: :ok | {:error, term()}
+  def store_page(database, page_id, {page, next_id}) do
+    case :dets.insert(database.dets_storage, {page_id, {page, next_id}}) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  @spec load_page(t(), page_id :: Page.id()) :: {:ok, binary()} | {:error, :not_found}
+  @spec load_page(t(), page_id :: Page.id()) :: {:ok, {binary(), Page.id()}} | {:error, :not_found}
   def load_page(database, page_id) do
     case :dets.lookup(database.dets_storage, page_id) do
-      [{^page_id, page_binary}] -> {:ok, page_binary}
+      [{^page_id, {page_binary, next_id}}] -> {:ok, {page_binary, next_id}}
       [] -> {:error, :not_found}
     end
   end
@@ -139,10 +139,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   Store a page in the lookaside buffer for the given version and page_id.
   This is used during transaction application for modified pages within the window.
   """
-  @spec store_page_version(t(), Page.id(), version :: Bedrock.version(), page :: Page.t()) ::
+  @spec store_page_version(t(), Page.id(), version :: Bedrock.version(), page_tuple :: {Page.t(), Page.id()}) ::
           :ok
-  def store_page_version(database, page_id, version, page) do
-    :ets.insert(database.buffer, {{version, {:page, page_id}}, page})
+  def store_page_version(database, page_id, version, {page, next_id}) do
+    :ets.insert(database.buffer, {{version, {:page, page_id}}, {page, next_id}})
     :ok
   end
 
@@ -150,12 +150,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   Store multiple modified pages in the lookaside buffer for the given version.
   This is used during transaction application for efficient batch storage of modified pages.
   """
-  @spec store_modified_pages(t(), version :: Bedrock.version(), pages :: [Page.t()]) ::
+  @spec store_modified_pages(t(), version :: Bedrock.version(), page_tuples :: [{Page.t(), Page.id()}]) ::
           :ok
-  def store_modified_pages(database, version, pages) do
-    Enum.each(pages, fn page ->
+  def store_modified_pages(database, version, page_tuples) do
+    Enum.each(page_tuples, fn {page, next_id} ->
       page_id = Page.id(page)
-      :ok = store_page_version(database, page_id, version, page)
+      :ok = store_page_version(database, page_id, version, {page, next_id})
     end)
 
     :ok
@@ -169,11 +169,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
           t(),
           version :: Bedrock.version(),
           values :: [{Bedrock.key(), Bedrock.value()}],
-          pages :: [{Page.id(), binary()}]
+          pages :: [{Page.id(), {binary(), Page.id()}}]
         ) :: :ok | {:error, term()}
   def batch_store_version_data(database, version, values, pages) do
     value_entries = Enum.map(values, fn {key, value} -> {{version, key}, value} end)
-    page_entries = Enum.map(pages, fn {page_id, page_binary} -> {{version, {:page, page_id}}, page_binary} end)
+    page_entries = Enum.map(pages, fn {page_id, page_tuple} -> {{version, {:page, page_id}}, page_tuple} end)
 
     all_entries = value_entries ++ page_entries
 
@@ -217,7 +217,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   def get_all_page_ids(database) do
     :dets.foldl(
       fn
-        {page_id, _page_binary}, acc when is_integer(page_id) ->
+        {page_id, {_page_binary, _next_id}}, acc when is_integer(page_id) ->
           [page_id | acc]
 
         {key, _value}, acc when is_binary(key) ->
@@ -360,15 +360,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   # keeping only the first occurrence of each key/page_id. This eliminates redundant persistence.
   # Returns a single list of {key, value} tuples where keys can be integers (page_ids) or binaries.
   @spec build_dets_tx(t(), new_durable_version :: Bedrock.version()) ::
-          [{:durable_version, binary()} | {Bedrock.key(), Bedrock.value()} | {Page.id(), Page.t()}]
+          [{:durable_version, binary()} | {Bedrock.key(), Bedrock.value()} | {Page.id(), {Page.t(), Page.id()}}]
   def build_dets_tx(database, new_durable_version) do
     [
       {:durable_version, new_durable_version}
       | database.buffer
         |> :ets.select_reverse([{{{:"$1", :"$2"}, :"$3"}, [{:"=<", :"$1", new_durable_version}], [{{:"$2", :"$3"}}]}])
         |> Enum.reduce(%{}, fn
-          {{:page, page_id}, page_binary}, data_map ->
-            Map.put_new(data_map, page_id, page_binary)
+          {{:page, page_id}, page_tuple}, data_map ->
+            Map.put_new(data_map, page_id, page_tuple)
 
           {key, value}, data_map when is_binary(key) ->
             Map.put_new(data_map, key, value)

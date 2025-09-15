@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 3]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
-    only: [trace_metadata: 1]
+    only: [trace_metadata: 0, trace_metadata: 1]
 
   import Bedrock.Internal.GenServer.Replies
 
@@ -212,9 +212,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:noreply, t}
   end
 
-  # Asynchronous batch finalization - creates its own resolver tasks
   defp finalize_batch_async(batch, transaction_system_layout, epoch, precomputed_layout) do
+    metadata = trace_metadata()
+
     Task.start_link(fn ->
+      trace_metadata(metadata)
+
       case finalize_batch(batch, transaction_system_layout, epoch: epoch, precomputed: precomputed_layout) do
         {:ok, _n_aborts, _n_oks} ->
           :ok

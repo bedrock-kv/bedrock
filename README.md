@@ -15,11 +15,11 @@ by adding `bedrock` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.2"}
+    {:bedrock, "~> 0.3"}
   ]
 end
 ```
 
 ## Example
 
-[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjallum%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fexample_bank.livemd&cache-bust=328d11)
+[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjallum%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fclass_scheduling.livemd)

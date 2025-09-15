@@ -1,6 +1,5 @@
 defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   @moduledoc false
-  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.Telemetry
 
   @type telemetry_metadata :: %{optional(atom()) => term()}
@@ -39,7 +38,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
   end
 
   @spec trace_commit_proxy_batch_failed(
-          batch :: Batch.t(),
+          batch :: Bedrock.DataPlane.CommitProxy.Batch.t(),
           reason :: any(),
           duration_us :: Bedrock.interval_in_us()
         ) :: :ok

@@ -38,7 +38,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   """
   @spec from_page_map(page_map :: map()) :: t()
   def from_page_map(page_map) do
-    Enum.reduce(page_map, :gb_trees.empty(), fn {_page_id, page}, tree_acc ->
+    Enum.reduce(page_map, :gb_trees.empty(), fn {_page_id, {page, _next_id}}, tree_acc ->
       add_page_to_tree(tree_acc, page)
     end)
   end

@@ -62,14 +62,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       table1 = String.to_atom("persist_test1_#{System.unique_integer([:positive])}")
       {:ok, db1} = Database.open(table1, file_path)
-      :ok = Database.store_page(db1, 42, <<"test_page_data">>)
+      :ok = Database.store_page(db1, 42, {<<"test_page_data">>, 0})
       :ok = Database.store_value(db1, <<"key1">>, <<"value1">>)
       Database.close(db1)
 
       table2 = String.to_atom("persist_test2_#{System.unique_integer([:positive])}")
       {:ok, db2} = Database.open(table2, file_path)
 
-      {:ok, page_data} = Database.load_page(db2, 42)
+      {:ok, {page_data, _next_id}} = Database.load_page(db2, 42)
       assert page_data == <<"test_page_data">>
 
       {:ok, value} = Database.load_value(db2, <<"key1">>)
@@ -86,8 +86,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
     test "store_page/3 and load_page/2 work correctly", %{db: db} do
       page_binary = <<"this is a test page">>
 
-      :ok = Database.store_page(db, 1, page_binary)
-      assert {:ok, ^page_binary} = Database.load_page(db, 1)
+      :ok = Database.store_page(db, 1, {page_binary, 0})
+      assert {:ok, {^page_binary, _next_id}} = Database.load_page(db, 1)
     end
 
     @tag :tmp_dir
@@ -97,17 +97,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
     @tag :tmp_dir
     test "store_page/3 overwrites existing pages", %{db: db} do
-      :ok = Database.store_page(db, 1, <<"original">>)
-      :ok = Database.store_page(db, 1, <<"updated">>)
+      :ok = Database.store_page(db, 1, {<<"original">>, 0})
+      :ok = Database.store_page(db, 1, {<<"updated">>, 0})
 
-      assert {:ok, <<"updated">>} = Database.load_page(db, 1)
+      assert {:ok, {<<"updated">>, _next_id}} = Database.load_page(db, 1)
     end
 
     @tag :tmp_dir
     test "get_all_page_ids/1 returns all stored page IDs", %{db: db} do
-      :ok = Database.store_page(db, 1, <<"page1">>)
-      :ok = Database.store_page(db, 5, <<"page5">>)
-      :ok = Database.store_page(db, 3, <<"page3">>)
+      :ok = Database.store_page(db, 1, {<<"page1">>, 0})
+      :ok = Database.store_page(db, 5, {<<"page5">>, 0})
+      :ok = Database.store_page(db, 3, {<<"page3">>, 0})
 
       :ok = Database.store_value(db, <<"key1">>, <<"value1">>)
 
@@ -171,7 +171,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       assert Database.info(db, :utilization) >= 0.0
       assert Database.info(db, :key_ranges) == []
 
-      :ok = Database.store_page(db, 1, <<"page_data">>)
+      :ok = Database.store_page(db, 1, {<<"page_data">>, 0})
       :ok = Database.store_value(db, <<"key1">>, <<"value1">>)
 
       assert Database.info(db, :n_keys) > 0
@@ -185,7 +185,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
     @tag :tmp_dir
     test "sync/1 forces data to disk", %{db: db} do
-      :ok = Database.store_page(db, 1, <<"test">>)
+      :ok = Database.store_page(db, 1, {<<"test">>, 0})
       assert :ok = Database.sync(db)
     end
   end
@@ -195,11 +195,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
     @tag :tmp_dir
     test "natural type separation works correctly", %{db: db} do
-      :ok = Database.store_page(db, 42, <<"page_data">>)
+      :ok = Database.store_page(db, 42, {<<"page_data">>, 0})
 
       :ok = Database.store_value(db, <<"key">>, <<"value_data">>)
 
-      assert {:ok, <<"page_data">>} = Database.load_page(db, 42)
+      assert {:ok, {<<"page_data">>, _next_id}} = Database.load_page(db, 42)
       assert {:ok, <<"value_data">>} = Database.load_value(db, <<"key">>)
 
       page_ids = Database.get_all_page_ids(db)
@@ -210,10 +210,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
     test "handles edge cases in schema separation", %{db: db} do
       :ok = Database.store_value(db, <<42>>, <<"binary_42">>)
 
-      :ok = Database.store_page(db, 42, <<"page_42">>)
+      :ok = Database.store_page(db, 42, {<<"page_42">>, 0})
 
       assert {:ok, <<"binary_42">>} = Database.load_value(db, <<42>>)
-      assert {:ok, <<"page_42">>} = Database.load_page(db, 42)
+      assert {:ok, {<<"page_42">>, _next_id}} = Database.load_page(db, 42)
     end
   end
 
@@ -352,9 +352,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, <<"key3">>, v3, <<"value3">>)
 
       # Store overlapping pages
-      :ok = Database.store_page_version(db, 42, v1, <<"page42_old">>)
-      :ok = Database.store_page_version(db, 42, v2, <<"page42_new">>)
-      :ok = Database.store_page_version(db, 43, v1, <<"page43">>)
+      :ok = Database.store_page_version(db, 42, v1, {<<"page42_old">>, 0})
+      :ok = Database.store_page_version(db, 42, v2, {<<"page42_new">>, 0})
+      :ok = Database.store_page_version(db, 43, v1, {<<"page43">>, 0})
 
       # Build DETS transaction data for v2 and below
       result = Database.build_dets_tx(db, v2)
@@ -377,8 +377,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
       # Should have newest pages only (newest version wins for page 42, only version for page 43)
       assert %{
-               42 => <<"page42_new">>,
-               43 => <<"page43">>
+               42 => {<<"page42_new">>, 0},
+               43 => {<<"page43">>, 0}
              } = pages_map
 
       # Should not include v3 data (beyond cutoff)
@@ -406,7 +406,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       # Store data in lookaside buffer
       :ok = Database.store_value(db, <<"key1">>, v1, <<"value1">>)
       :ok = Database.store_value(db, <<"key2">>, v2, <<"value2">>)
-      :ok = Database.store_page_version(db, 42, v1, <<"page42">>)
+      :ok = Database.store_page_version(db, 42, v1, {<<"page42">>, 0})
 
       # Advance durable version to v2
       {:ok, updated_db} = Database.advance_durable_version(db, v2, [v1, v2])
@@ -417,7 +417,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       # Verify data was persisted to DETS
       assert {:ok, <<"value1">>} = Database.load_value(updated_db, <<"key1">>)
       assert {:ok, <<"value2">>} = Database.load_value(updated_db, <<"key2">>)
-      assert {:ok, <<"page42">>} = Database.load_page(updated_db, 42)
+      assert {:ok, {<<"page42">>, _next_id}} = Database.load_page(updated_db, 42)
 
       # Verify durable version was persisted
       assert {:ok, ^v2} = Database.load_durable_version(updated_db)
@@ -463,8 +463,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       :ok = Database.store_value(db, <<"key1">>, v2, <<"new_value">>)
 
       # Same page updated across versions
-      :ok = Database.store_page_version(db, 42, v1, <<"old_page">>)
-      :ok = Database.store_page_version(db, 42, v2, <<"new_page">>)
+      :ok = Database.store_page_version(db, 42, v1, {<<"old_page">>, 0})
+      :ok = Database.store_page_version(db, 42, v2, {<<"new_page">>, 0})
 
       # Advance durable version - should persist only newest values
       {:ok, updated_db} = Database.advance_durable_version(db, v2, [v1, v2])
@@ -472,7 +472,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       # Should have persisted the newest values only (not old_value)
       assert {:ok, <<"new_value">>} = Database.load_value(updated_db, <<"key1">>)
       # Should have persisted the newest page only (not old_page)
-      assert {:ok, <<"new_page">>} = Database.load_page(updated_db, 42)
+      assert {:ok, {<<"new_page">>, _next_id}} = Database.load_page(updated_db, 42)
     end
   end
 end

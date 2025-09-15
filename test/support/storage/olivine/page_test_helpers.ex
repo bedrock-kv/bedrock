@@ -10,9 +10,19 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   Persists a single page to the database.
   """
   @spec persist_page_to_database(any(), Database.t(), Page.t()) :: :ok | {:error, term()}
-  def persist_page_to_database(_index_manager, database, page) do
+  def persist_page_to_database(_index_manager, database, page) when is_map(page) do
     binary = from_map(page)
-    Database.store_page(database, Page.id(page), binary)
+    next_id = page.next_id
+    Database.store_page(database, Page.id(page), {binary, next_id})
+  end
+
+  def persist_page_to_database(_index_manager, database, page) when is_binary(page) do
+    # For binary pages created with Page.new(), we can't access next_id directly
+    # Since we're in a test context, assume next_id = 0 if not specified
+    binary = from_map(page)
+    # Default next_id for most test pages
+    next_id = 0
+    Database.store_page(database, Page.id(page), {binary, next_id})
   end
 
   @doc """
@@ -22,8 +32,9 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   def persist_pages_batch(pages, database) do
     Enum.reduce_while(pages, :ok, fn page, :ok ->
       binary = from_map(page)
+      next_id = if is_map(page), do: page.next_id, else: 0
 
-      case Database.store_page(database, Page.id(page), binary) do
+      case Database.store_page(database, Page.id(page), {binary, next_id}) do
         :ok -> {:cont, :ok}
         error -> {:halt, error}
       end
@@ -92,8 +103,7 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   Only used in tests for page persistence and deserialization testing.
   """
   @spec from_map(Page.t()) :: binary()
-  def from_map(%{key_versions: key_versions, id: id, next_id: next_id}),
-    do: encode_page_direct(id, next_id, key_versions)
+  def from_map(%{key_versions: key_versions, id: id, next_id: _next_id}), do: encode_page_direct(id, key_versions)
 
   def from_map(binary) when is_binary(binary), do: binary
 
@@ -103,8 +113,8 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   """
   @spec to_map(binary()) :: {:ok, Page.t()} | {:error, :invalid_page}
   def to_map(
-        <<id::unsigned-big-32, next_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
-          _reserved::unsigned-big-16, entries_data::binary>>
+        <<id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-48, entries_data::binary>>
       ) do
     entries_data
     |> decode_entries(key_count, [])
@@ -113,7 +123,7 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
         {:ok,
          %{
            id: id,
-           next_id: next_id,
+           next_id: 0,
            key_versions: key_versions
          }}
 
@@ -125,19 +135,19 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   def to_map(_), do: {:error, :invalid_page}
 
   # Direct page encoding using the efficient binary approach
-  @spec encode_page_direct(Page.id(), Page.id(), [{binary(), Bedrock.version()}]) :: binary()
-  defp encode_page_direct(id, next_id, key_versions) do
+  @spec encode_page_direct(Page.id(), [{binary(), Bedrock.version()}]) :: binary()
+  defp encode_page_direct(id, key_versions) do
     key_count = length(key_versions)
 
     # Encode all entries as interleaved version-key pairs
     {entries_binary, last_key_offset} = encode_entries(key_versions, <<>>, 0)
 
-    # Calculate right key offset: header (18 bytes) + entries up to last key
-    right_key_offset = 18 + last_key_offset
+    # Calculate right key offset: header (16 bytes) + entries up to last key
+    right_key_offset = 16 + last_key_offset
 
-    # Build the page with 18-byte header + interleaved entries
-    <<id::unsigned-big-32, next_id::unsigned-big-32, key_count::unsigned-big-16, right_key_offset::unsigned-big-32,
-      0::unsigned-big-16, entries_binary::binary>>
+    # Build the page with 16-byte header + interleaved entries
+    <<id::unsigned-big-32, key_count::unsigned-big-16, right_key_offset::unsigned-big-32, 0::unsigned-big-48,
+      entries_binary::binary>>
   end
 
   # Encode entries as interleaved version-key pairs and track last key offset

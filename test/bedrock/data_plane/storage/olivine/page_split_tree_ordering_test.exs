@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageSplitTreeOrderingTest do
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
+  alias Bedrock.Test.Storage.Olivine.IndexTestHelpers
 
   describe "page splitting maintains tree ordering" do
     test "page splitting maintains key ordering after distributed mutations" do
@@ -22,15 +23,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageSplitTreeOrderingTest do
       # 399,401,403,...,599
       odd_keys_page3 = for i <- 200..300, i = i * 2 - 1, do: {<<i::16>>, base_version}
 
-      page1 = Page.new(1, odd_keys_page1, 2)
-      page2 = Page.new(2, odd_keys_page2, 3)
-      page3 = Page.new(3, odd_keys_page3, 0)
+      page1 = Page.new(1, odd_keys_page1)
+      page2 = Page.new(2, odd_keys_page2)
+      page3 = Page.new(3, odd_keys_page3)
 
-      index =
-        Index.new()
-        |> Index.add_page(page1)
-        |> Index.add_page(page2)
-        |> Index.add_page(page3)
+      index = build_index_from_page_tuples([{page1, 2}, {page2, 3}, {page3, 0}])
 
       # Verify initial state is correct
       all_keys_before = extract_all_keys_in_order(index)
@@ -109,15 +106,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageSplitTreeOrderingTest do
       # 'b' prefix (will split)
       middle_kvs = for i <- 1..250, do: {<<0x62, i::16>>, base_version}
 
-      attends_page = Page.new(1, attends_kvs, 2)
-      class_page = Page.new(2, class_kvs, 3)
-      middle_page = Page.new(3, middle_kvs, 0)
+      attends_page = Page.new(1, attends_kvs)
+      class_page = Page.new(2, class_kvs)
+      middle_page = Page.new(3, middle_kvs)
 
-      index =
-        Index.new()
-        |> Index.add_page(attends_page)
-        |> Index.add_page(middle_page)
-        |> Index.add_page(class_page)
+      index = build_index_from_page_tuples([{attends_page, 2}, {class_page, 3}, {middle_page, 0}])
 
       # Apply a range clear that will trigger page splitting on the middle page
       version = <<0, 0, 0, 0, 0, 0, 0, 1>>
@@ -211,7 +204,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageSplitTreeOrderingTest do
     |> Enum.flat_map(fn page_id ->
       case Map.get(index.page_map, page_id) do
         nil -> []
-        page -> Page.keys(page)
+        {page, _next_id} -> Page.keys(page)
       end
     end)
   end
@@ -226,5 +219,26 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageSplitTreeOrderingTest do
         {:cont, key}
       end
     end)
+  end
+
+  # Helper function to efficiently build index from page tuples
+  defp build_index_from_page_tuples(page_tuples) do
+    initial_index = Index.new()
+
+    # Build page_map with all pages
+    page_map =
+      Enum.reduce(page_tuples, initial_index.page_map, fn {page, next_id}, acc_map ->
+        Map.put(acc_map, Page.id(page), {page, next_id})
+      end)
+
+    # Build tree with all pages
+    tree =
+      Enum.reduce(page_tuples, initial_index.tree, fn {page, _next_id}, acc_tree ->
+        Tree.add_page_to_tree(acc_tree, page)
+      end)
+
+    # Create temporary index and ensure chain consistency once at the end
+    temp_index = %{initial_index | tree: tree, page_map: page_map}
+    IndexTestHelpers.rebuild_page_chain_consistency(temp_index)
   end
 end

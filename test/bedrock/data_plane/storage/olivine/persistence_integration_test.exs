@@ -32,8 +32,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
   defp create_test_pages(pages_data) do
     Enum.map(pages_data, fn
-      {id, keys, next_id} ->
-        page = Page.new(id, Enum.map(keys, &{&1, Version.from_integer(id * 10)}), next_id)
+      {id, keys, _next_id} ->
+        page = Page.new(id, Enum.map(keys, &{&1, Version.from_integer(id * 10)}))
         {id, page}
 
       {id, keys} ->
@@ -73,15 +73,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     test "server startup with existing data performs recovery", %{tmp_dir: tmp_dir} do
       {:ok, db1} = Database.open(:session1, Path.join(tmp_dir, "dets"))
 
-      page0 = Page.new(0, [{<<"start">>, Version.from_integer(10)}], 2)
+      page0 = Page.new(0, [{<<"start">>, Version.from_integer(10)}])
 
-      page2 = Page.new(2, [{<<"middle">>, Version.from_integer(20)}], 5)
+      page2 = Page.new(2, [{<<"middle">>, Version.from_integer(20)}])
 
-      page5 = Page.new(5, [{<<"end">>, Version.from_integer(30)}], 0)
+      page5 = Page.new(5, [{<<"end">>, Version.from_integer(30)}])
 
-      :ok = Database.store_page(db1, 0, PageTestHelpers.from_map(page0))
-      :ok = Database.store_page(db1, 2, PageTestHelpers.from_map(page2))
-      :ok = Database.store_page(db1, 5, PageTestHelpers.from_map(page5))
+      page0_binary = PageTestHelpers.from_map(page0)
+      page2_binary = PageTestHelpers.from_map(page2)
+      page5_binary = PageTestHelpers.from_map(page5)
+      :ok = Database.store_page(db1, 0, {page0_binary, 2})
+      :ok = Database.store_page(db1, 2, {page2_binary, 5})
+      :ok = Database.store_page(db1, 5, {page5_binary, 0})
 
       values = [
         {<<"key1">>, <<"value1">>},
@@ -128,13 +131,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       table_name = String.to_atom("corrupt_test_#{System.unique_integer([:positive])}")
       {:ok, db1} = Database.open(table_name, Path.join(tmp_dir, "dets"))
 
-      page0 = Page.new(0, [{<<"valid">>, Version.from_integer(100)}], 1)
-      :ok = Database.store_page(db1, 0, PageTestHelpers.from_map(page0))
+      page0 = Page.new(0, [{<<"valid">>, Version.from_integer(100)}])
+      page0_binary = PageTestHelpers.from_map(page0)
+      :ok = Database.store_page(db1, 0, {page0_binary, 1})
 
-      :ok = Database.store_page(db1, 1, <<"definitely_not_a_valid_page">>)
+      :ok = Database.store_page(db1, 1, {<<"definitely_not_a_valid_page">>, 0})
 
       page3 = Page.new(3, [{<<"isolated">>, Version.from_integer(300)}])
-      :ok = Database.store_page(db1, 3, PageTestHelpers.from_map(page3))
+      page3_binary = PageTestHelpers.from_map(page3)
+      :ok = Database.store_page(db1, 3, {page3_binary, 0})
 
       Database.close(db1)
 
@@ -145,14 +150,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     test "large dataset recovery performance", %{tmp_dir: tmp_dir} do
       {:ok, db1} = Database.open(:large_test, Path.join(tmp_dir, "dets"))
 
-      pages =
+      page_tuples =
         for i <- 0..49 do
           next_id = if i == 49, do: 0, else: i + 1
-          Page.new(i, [{<<"key_#{i}">>, Version.from_integer(i * 10)}], next_id)
+          page = Page.new(i, [{<<"key_#{i}">>, Version.from_integer(i * 10)}])
+          {page, next_id}
         end
 
-      Enum.each(pages, fn page ->
-        :ok = Database.store_page(db1, Page.id(page), page)
+      Enum.each(page_tuples, fn {page, next_id} ->
+        :ok = Database.store_page(db1, Page.id(page), {page, next_id})
       end)
 
       values =
@@ -198,7 +204,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       {:ok, db1} = Database.open(:no_zero, Path.join(tmp_dir, "dets"))
 
       page5 = Page.new(5, [{<<"orphan">>, Version.from_integer(500)}])
-      :ok = Database.store_page(db1, 5, PageTestHelpers.from_map(page5))
+      page5_binary = PageTestHelpers.from_map(page5)
+      :ok = Database.store_page(db1, 5, {page5_binary, 0})
 
       Database.close(db1)
 
@@ -245,7 +252,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       :ok = PageTestHelpers.persist_page_to_database(state.index_manager, state.database, page)
 
       # Retrieve and verify
-      {:ok, retrieved_binary} = Database.load_page(state.database, 42)
+      {:ok, {retrieved_binary, _next_id}} = Database.load_page(state.database, 42)
 
       assert Page.id(retrieved_binary) == 42
       assert Page.keys(retrieved_binary) == [<<"test_key">>]
@@ -269,8 +276,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       test_pages = create_test_pages(pages_data)
 
+      # Store pages with their corresponding next_id from pages_data
+      pages_data_map = Map.new(pages_data, fn {id, _keys, next_id} -> {id, next_id} end)
+
       Enum.each(test_pages, fn {id, page} ->
-        :ok = Database.store_page(db1, id, page)
+        next_id = Map.get(pages_data_map, id)
+        :ok = Database.store_page(db1, id, {page, next_id})
       end)
 
       Database.close(db1)
@@ -302,7 +313,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
       Enum.each(page_ids, fn id ->
         page = Page.new(id, [{<<"page_#{id}">>, Version.from_integer(id)}])
-        :ok = Database.store_page(db1, id, PageTestHelpers.from_map(page))
+        page_binary = PageTestHelpers.from_map(page)
+        :ok = Database.store_page(db1, id, {page_binary, 0})
       end)
 
       Database.close(db1)
@@ -475,10 +487,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       assert recent_version in version_list
 
       # But pages should still be retrievable from DETS
-      {:ok, old_page_binary} = Database.load_page(db, 1)
+      {:ok, {old_page_binary, _next_id}} = Database.load_page(db, 1)
       assert Page.keys(old_page_binary) == [<<"old_key">>]
 
-      {:ok, recent_page_binary} = Database.load_page(db, 2)
+      {:ok, {recent_page_binary, _next_id}} = Database.load_page(db, 2)
       assert Page.keys(recent_page_binary) == [<<"recent_key">>]
 
       Database.close(db)

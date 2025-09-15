@@ -6,9 +6,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
 
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
+  alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Storage.Olivine.IndexTestHelpers
 
   @min_keys 100
   @max_keys 300
@@ -143,11 +145,27 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
     # Build pages with controlled size to ensure multiple pages
     pages = build_pages_from_key_versions(key_versions, 1)
 
-    # Build index
-    index = Enum.reduce(pages, Index.new(), &Index.add_page(&2, &1))
+    # Build index efficiently by constructing page_map and tree directly
+    initial_index = Index.new()
+
+    # Build page_map with all pages
+    page_map =
+      Enum.reduce(pages, initial_index.page_map, fn {page, next_id}, acc_map ->
+        Map.put(acc_map, Page.id(page), {page, next_id})
+      end)
+
+    # Build tree with all pages
+    tree =
+      Enum.reduce(pages, initial_index.tree, fn {page, _next_id}, acc_tree ->
+        Tree.add_page_to_tree(acc_tree, page)
+      end)
+
+    # Create temporary index and ensure chain consistency once at the end
+    temp_index = %{initial_index | tree: tree, page_map: page_map}
+    index = IndexTestHelpers.rebuild_page_chain_consistency(temp_index)
 
     # Create allocator with next available ID
-    max_page_id = pages |> Enum.map(&Page.id/1) |> Enum.max(fn -> 0 end)
+    max_page_id = pages |> Enum.map(fn {page, _next_id} -> Page.id(page) end) |> Enum.max(fn -> 0 end)
     allocator = PageAllocator.new(max_page_id, [])
 
     {index, allocator}
@@ -160,7 +178,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
     |> Enum.with_index(start_id)
     |> Enum.map(fn {chunk, page_id} ->
       next_id = if page_id == start_id + div(length(key_versions), 200), do: 0, else: page_id + 1
-      Page.new(page_id, chunk, next_id)
+      page = Page.new(page_id, chunk)
+      {page, next_id}
     end)
   end
 
@@ -204,7 +223,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
 
   defp apply_range_clear_without_db(index_update, start_key, end_key) do
     # Simplified version of apply_range_clear_mutation that doesn't need database
-    pages_in_range = Index.Tree.page_ids_in_range(index_update.index.tree, start_key, end_key)
+    pages_in_range = Tree.page_ids_in_range(index_update.index.tree, start_key, end_key)
 
     case pages_in_range do
       [] ->
@@ -290,7 +309,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
   defp extract_all_keys(index) do
     index.page_map
     |> Map.values()
-    |> Enum.flat_map(&Page.keys/1)
+    |> Enum.flat_map(fn {page, _next_id} -> Page.keys(page) end)
   end
 
   defp find_first_out_of_order(keys) do

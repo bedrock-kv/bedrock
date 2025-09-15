@@ -71,9 +71,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   @doc """
   Gets the modified pages from the IndexUpdate as a list of pages.
   """
-  @spec modified_pages(t()) :: [Page.t()]
+  @spec modified_pages(t()) :: [{Page.t(), Page.id()}]
   def modified_pages(%__MODULE__{index: index, modified_page_ids: modified_page_ids}),
-    do: Enum.map(modified_page_ids, &Index.get_page!(index, &1))
+    do: Enum.map(modified_page_ids, &Index.get_page_with_next_id!(index, &1))
 
   @doc """
   Stores all modified pages from the IndexUpdate in the database.
@@ -207,24 +207,27 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
   defp follow_chain_collecting_range_pages(page_map, current_page_id, start_key, end_key, collected_page_ids) do
     case Map.get(page_map, current_page_id) do
-      nil -> Enum.reverse(collected_page_ids)
-      current_page -> process_page_in_range(page_map, current_page, start_key, end_key, collected_page_ids)
+      nil ->
+        Enum.reverse(collected_page_ids)
+
+      {current_page, next_id} ->
+        process_page_in_range(page_map, current_page, next_id, start_key, end_key, collected_page_ids)
     end
   end
 
-  defp process_page_in_range(page_map, current_page, start_key, end_key, collected_page_ids) do
+  defp process_page_in_range(page_map, current_page, next_id, start_key, end_key, collected_page_ids) do
     page_first_key = Page.left_key(current_page)
     page_last_key = Page.right_key(current_page)
 
     cond do
       page_entirely_before_range?(page_last_key, start_key) ->
-        continue_to_next_page(page_map, current_page, start_key, end_key, collected_page_ids)
+        continue_to_next_page(page_map, next_id, start_key, end_key, collected_page_ids)
 
       page_entirely_after_range?(page_first_key, end_key) ->
         Enum.reverse(collected_page_ids)
 
       true ->
-        include_page_and_continue(page_map, current_page, start_key, end_key, collected_page_ids)
+        include_page_and_continue(page_map, current_page, next_id, start_key, end_key, collected_page_ids)
     end
   end
 
@@ -236,9 +239,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     page_first_key != nil and page_first_key > end_key
   end
 
-  defp continue_to_next_page(page_map, current_page, start_key, end_key, collected_page_ids) do
-    next_id = Page.next_id(current_page)
-
+  defp continue_to_next_page(page_map, next_id, start_key, end_key, collected_page_ids) do
     if next_id == 0 do
       Enum.reverse(collected_page_ids)
     else
@@ -246,9 +247,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     end
   end
 
-  defp include_page_and_continue(page_map, current_page, start_key, end_key, collected_page_ids) do
+  defp include_page_and_continue(page_map, current_page, next_id, start_key, end_key, collected_page_ids) do
     current_page_id = Page.id(current_page)
-    next_id = Page.next_id(current_page)
     updated_collection = [current_page_id | collected_page_ids]
 
     if next_id == 0 do
@@ -295,77 +295,79 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
     end)
   end
 
-  @spec fix_chain_before_delete(Index.t(), Page.id()) :: Index.t()
-  defp fix_chain_before_delete(%Index{page_map: page_map} = index, page_id_to_delete) do
-    case Map.fetch(page_map, page_id_to_delete) do
-      {:ok, page_to_delete} ->
-        deleted_next_id = Page.next_id(page_to_delete)
-        updated_page_map = update_predecessor_chain(page_map, page_id_to_delete, deleted_next_id)
-        %{index | page_map: updated_page_map}
-
-      :error ->
-        index
-    end
-  end
-
-  @spec update_predecessor_chain(map(), Page.id(), Page.id()) :: map()
-  defp update_predecessor_chain(page_map, page_to_delete_id, successor_page_id) do
-    Enum.reduce(page_map, page_map, fn {id, page}, updated_page_map ->
-      if Page.next_id(page) == page_to_delete_id do
-        page_with_updated_chain = Page.new(Page.id(page), Page.key_versions(page), successor_page_id)
-        Map.put(updated_page_map, id, page_with_updated_chain)
-      else
-        updated_page_map
-      end
-    end)
-  end
-
   @spec apply_mutations_to_page(t(), Page.id(), %{Bedrock.key() => {:set, Bedrock.version()} | :clear}) :: t()
   defp apply_mutations_to_page(%__MODULE__{} = mutation_tracker, page_id, page_mutations) do
     page = Index.get_page!(mutation_tracker.index, page_id)
     updated_page = Page.apply_operations(page, page_mutations)
+    key_count = Page.key_count(updated_page)
 
     cond do
-      Page.empty?(updated_page) ->
-        if page_id == 0 do
-          %{mutation_tracker | index: Index.update_page(mutation_tracker.index, page, updated_page)}
-        else
-          index_with_fixed_chain = fix_chain_before_delete(mutation_tracker.index, page_id)
+      key_count == 0 ->
+        handle_empty_page(mutation_tracker, page_id, page, updated_page)
 
-          %{
-            mutation_tracker
-            | index: Index.delete_page(index_with_fixed_chain, page_id),
-              page_allocator: PageAllocator.recycle_page_id(mutation_tracker.page_allocator, page_id)
-          }
-        end
-
-      Page.key_count(updated_page) > 256 ->
-        key_count = Page.key_count(updated_page)
-        pages_needed = div(key_count - 1, 256) + 1
-        additional_pages_needed = pages_needed - 1
-
-        {new_page_ids, allocator_after_allocation} =
-          PageAllocator.allocate_ids(mutation_tracker.page_allocator, additional_pages_needed)
-
-        index_after_split = Index.multi_split_page(mutation_tracker.index, page, updated_page, new_page_ids)
-
-        all_modified_page_ids = [page_id | new_page_ids]
-
-        %{
-          mutation_tracker
-          | index: index_after_split,
-            page_allocator: allocator_after_allocation,
-            modified_page_ids:
-              Enum.reduce(all_modified_page_ids, mutation_tracker.modified_page_ids, &MapSet.put(&2, &1))
-        }
+      key_count > 256 ->
+        handle_oversized_page(mutation_tracker, page_id, updated_page, key_count)
 
       true ->
-        %{
-          mutation_tracker
-          | index: Index.update_page(mutation_tracker.index, page, updated_page),
-            modified_page_ids: MapSet.put(mutation_tracker.modified_page_ids, page_id)
-        }
+        handle_normal_page(mutation_tracker, page_id, page, updated_page)
     end
+  end
+
+  defp handle_empty_page(mutation_tracker, page_id, _page, updated_page) do
+    if page_id == 0 do
+      # Inline update_page logic - page 0 becoming empty doesn't change tree structure
+      {_old_page, next_id} = Map.get(mutation_tracker.index.page_map, page_id)
+      updated_page_map = Map.put(mutation_tracker.index.page_map, page_id, {updated_page, next_id})
+      %{mutation_tracker | index: %{mutation_tracker.index | page_map: updated_page_map}}
+    else
+      %{
+        mutation_tracker
+        | index: Index.delete_pages(mutation_tracker.index, [page_id]),
+          page_allocator: PageAllocator.recycle_page_id(mutation_tracker.page_allocator, page_id)
+      }
+    end
+  end
+
+  defp handle_oversized_page(mutation_tracker, page_id, updated_page, key_count) do
+    additional_pages_needed = div(key_count - 1, 256)
+
+    {new_page_ids, allocator_after_allocation} =
+      PageAllocator.allocate_ids(mutation_tracker.page_allocator, additional_pages_needed)
+
+    {_original_page, original_next_id} = Map.get(mutation_tracker.index.page_map, page_id)
+
+    index_after_split =
+      Index.multi_split_page(mutation_tracker.index, page_id, original_next_id, updated_page, new_page_ids)
+
+    all_modified_page_ids = [page_id | new_page_ids]
+
+    %{
+      mutation_tracker
+      | index: index_after_split,
+        page_allocator: allocator_after_allocation,
+        modified_page_ids: MapSet.union(mutation_tracker.modified_page_ids, MapSet.new(all_modified_page_ids))
+    }
+  end
+
+  defp handle_normal_page(mutation_tracker, page_id, page, updated_page) do
+    # Inline update_page logic with boundary change optimization
+    {_old_page, next_id} = Map.get(mutation_tracker.index.page_map, page_id)
+
+    updated_tree =
+      if page_boundaries_changed?(page, updated_page) do
+        Tree.update_page_in_tree(mutation_tracker.index.tree, page, updated_page)
+      else
+        mutation_tracker.index.tree
+      end
+
+    updated_page_map = Map.put(mutation_tracker.index.page_map, page_id, {updated_page, next_id})
+    updated_index = %{mutation_tracker.index | tree: updated_tree, page_map: updated_page_map}
+
+    %{
+      mutation_tracker
+      | index: updated_index,
+        modified_page_ids: MapSet.put(mutation_tracker.modified_page_ids, page_id)
+    }
   end
 
   @spec get_current_value_for_atomic_op(t(), Database.t(), Bedrock.key(), Bedrock.version()) :: binary()
@@ -401,4 +403,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
         {:error, :not_found}
     end
   end
+
+  # Check if page boundaries (first_key/last_key) changed
+  defp page_boundaries_changed?(old_page, new_page),
+    do: Page.left_key(old_page) != Page.left_key(new_page) or Page.right_key(old_page) != Page.right_key(new_page)
 end

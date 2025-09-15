@@ -69,7 +69,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       page = Page.new(1, expected_key_versions)
 
       assert Page.id(page) == 1
-      assert Page.next_id(page) == 0
+      # next_id defaults to 0 when not specified
       assert Page.key_versions(page) == expected_key_versions
     end
 
@@ -80,7 +80,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       page = Page.new(1, expected_key_versions)
 
       assert Page.id(page) == 1
-      assert Page.next_id(page) == 0
+      # next_id defaults to 0 when not specified
       assert Page.keys(page) == keys
       assert Page.key_versions(page) == expected_key_versions
     end
@@ -105,26 +105,26 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       keys = [<<"apple">>, <<"banana">>, <<"cherry">>]
       versions = [100, 200, 300]
       expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
-      page = Page.new(42, expected_key_versions, 99)
+      page = Page.new(42, expected_key_versions)
 
       encoded = PageTestHelpers.from_map(page)
       assert {:ok, decoded_page} = PageTestHelpers.to_map(encoded)
 
       assert Page.id(decoded_page) == 42
-      assert Page.next_id(decoded_page) == 99
+      assert decoded_page.next_id == 0
       assert Page.key_versions(decoded_page) == expected_key_versions
     end
 
     test "from_map/1 creates proper binary format" do
       keys = [<<"a">>, <<"bb">>]
       versions = Enum.map([1000, 2000], &Version.from_integer/1)
-      page = Page.new(5, Enum.zip(keys, versions), 10)
+      page = Page.new(5, Enum.zip(keys, versions))
 
       encoded = PageTestHelpers.from_map(page)
 
       # Validate header format
-      assert <<5::integer-32-big, 10::integer-32-big, 2::integer-16-big, last_key_offset::integer-32-big,
-               _reserved::unsigned-big-16, rest::binary>> = encoded
+      assert <<5::integer-32-big, 2::integer-16-big, last_key_offset::integer-32-big, _reserved::unsigned-big-48,
+               rest::binary>> = encoded
 
       assert last_key_offset > 0
 
@@ -150,7 +150,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       assert {:error, :invalid_page} = PageTestHelpers.to_map(<<1::32>>)
 
       # Invalid header with incorrect field sizes or incomplete entries
-      invalid_header = <<1::32, 0::32, 1::16, 0::32, 0::16>>
+      invalid_header = <<1::32, 1::16, 0::32, 0::48>>
       invalid_data = <<invalid_header::binary, "incomplete">>
       assert {:error, :invalid_entries} = PageTestHelpers.to_map(invalid_data)
     end
@@ -242,7 +242,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       mid_point = div(key_count, 2)
       new_page_id = 999
 
-      assert {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      assert {{left_page, _left_next_id}, {right_page, _right_next_id}} =
+               Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify the split worked
       assert Page.key_count(left_page) == mid_point
@@ -254,19 +255,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "split_page/3 splits pages over threshold" do
       keys = for i <- 1..300, do: <<"key_#{String.pad_leading(to_string(i), 3, "0")}">>
       versions = Enum.map(1..300, & &1)
-      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)), 99)
+      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
 
       key_count = Page.key_count(page)
       mid_point = div(key_count, 2)
       new_page_id = 2
 
-      assert {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      assert {{left_page, left_next_id}, {right_page, right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify split results
       assert Page.id(left_page) == 1
       assert Page.id(right_page) == new_page_id
-      assert Page.next_id(right_page) == 99
-      assert Page.next_id(left_page) == Page.id(right_page)
+      assert right_next_id == 0
+      assert left_next_id == Page.id(right_page)
 
       # Keys should be split roughly in half
       left_keys = Page.keys(left_page)
@@ -296,7 +297,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       mid_point = div(key_count, 2)
       new_page_id = 2
 
-      {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      {{left_page, _left_next_id}, {right_page, _right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify all key-version pairs are preserved
       left_key_versions = Page.key_versions(left_page)
@@ -719,7 +720,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   describe "Page binary optimization helpers" do
     # Helper to extract entries from page binary
     defp extract_entries(page) do
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      <<_id::32, key_count::16, _offset::32, _reserved::48, entries::binary>> = page
       {entries, key_count}
     end
 

@@ -317,7 +317,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
           mid_point = div(key_count, 2)
           new_page_id = 2
 
-          {left_page, right_page} = Page.split_page(oversized_page, mid_point, new_page_id)
+          {{left_page, _left_next_id}, {right_page, _right_next_id}} =
+            Page.split_page(oversized_page, mid_point, new_page_id, 0)
 
           # Validate both pages are non-empty and properly sized
           refute Page.empty?(left_page), "Left page should have keys"

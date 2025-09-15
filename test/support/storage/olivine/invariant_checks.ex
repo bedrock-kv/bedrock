@@ -44,7 +44,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   Validates that each page has start_key <= end_key.
   """
   def check_page_key_ordering(index) do
-    Enum.reduce_while(index.page_map, :ok, fn {page_id, page}, acc ->
+    Enum.reduce_while(index.page_map, :ok, fn {page_id, {page, _next_id}}, acc ->
       case validate_page_key_ordering(page_id, page) do
         :ok -> {:cont, acc}
         error -> {:halt, error}
@@ -91,7 +91,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
     tree_page_ids
     |> Enum.map(&Map.get(index.page_map, &1))
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(&{Page.id(&1), Page.right_key(&1)})
+    |> Enum.map(fn {page, _next_id} -> {Page.id(page), Page.right_key(page)} end)
     |> check_ascending_end_keys()
   end
 
@@ -138,9 +138,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
     end
   end
 
-  defp check_chain_starts_correctly(%{page_map: %{0 => page_0} = page_map}) do
-    leftmost_id = Page.next_id(page_0)
-
+  defp check_chain_starts_correctly(%{page_map: %{0 => {_page_0, leftmost_id}} = page_map}) do
     if leftmost_id == 0 do
       # Empty index - valid
       :ok
@@ -158,7 +156,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   defp check_chain_starts_correctly(_index), do: {:error, "Page 0 (leftmost marker) not found in page_map"}
 
   defp check_chain_terminates(index) do
-    leftmost_id = Page.next_id(Map.get(index.page_map, 0))
+    {_page_0, leftmost_id} = Map.get(index.page_map, 0)
 
     if leftmost_id == 0 do
       # Empty index
@@ -182,12 +180,11 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   defp process_chain_page(index, current_id, visited) do
     case Map.get(index.page_map, current_id) do
       nil -> {:error, "Chain references non-existent page #{current_id}"}
-      page -> handle_chain_page(index, current_id, page, visited)
+      {page, next_id} -> handle_chain_page(index, current_id, page, next_id, visited)
     end
   end
 
-  defp handle_chain_page(index, current_id, page, visited) do
-    next_id = Page.next_id(page)
+  defp handle_chain_page(index, current_id, _page, next_id, visited) do
     new_visited = MapSet.put(visited, current_id)
 
     case next_id do
@@ -201,7 +198,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
     all_page_ids = Map.keys(index.page_map) -- [0]
 
     # Get all page IDs reachable through chain
-    leftmost_id = Page.next_id(Map.get(index.page_map, 0))
+    {_page_0, leftmost_id} = Map.get(index.page_map, 0)
 
     reachable_ids =
       if leftmost_id == 0 do
@@ -234,13 +231,12 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   defp collect_page_from_chain(index, current_id, collected) do
     case Map.get(index.page_map, current_id) do
       nil -> {:error, "Missing page #{current_id}"}
-      page -> process_collected_page(index, current_id, page, collected)
+      {_page, next_id} -> process_collected_page(index, current_id, next_id, collected)
     end
   end
 
-  defp process_collected_page(index, current_id, page, collected) do
+  defp process_collected_page(index, current_id, next_id, collected) do
     new_collected = MapSet.put(collected, current_id)
-    next_id = Page.next_id(page)
 
     case next_id do
       0 -> {:ok, new_collected}
@@ -263,18 +259,16 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   end
 
   defp get_chain_order(index) do
-    page_0 = Map.get(index.page_map, 0)
+    page_0_tuple = Map.get(index.page_map, 0)
 
     cond do
-      is_nil(page_0) -> []
-      Page.empty?(page_0) -> get_chain_order_from_empty_page_0(index, page_0)
+      is_nil(page_0_tuple) -> []
+      Page.empty?(elem(page_0_tuple, 0)) -> get_chain_order_from_empty_page_0(index, elem(page_0_tuple, 1))
       true -> get_chain_order_from_data_page_0(index)
     end
   end
 
-  defp get_chain_order_from_empty_page_0(index, page_0) do
-    leftmost_id = Page.next_id(page_0)
-
+  defp get_chain_order_from_empty_page_0(index, leftmost_id) do
     case leftmost_id do
       0 -> []
       _ -> collect_chain_order_safe(index, leftmost_id)
@@ -297,9 +291,8 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
       nil ->
         {:error, "Missing page"}
 
-      page ->
+      {_page, next_id} ->
         new_order = [current_id | order]
-        next_id = Page.next_id(page)
 
         if next_id == 0 do
           {:ok, Enum.reverse(new_order)}
@@ -315,12 +308,12 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   def check_chain_key_ordering(index) do
     case Map.get(index.page_map, 0) do
       nil -> {:error, "Page 0 must always exist as the leftmost page"}
-      page_0 -> validate_chain_key_ordering(index, page_0)
+      page_0_tuple -> validate_chain_key_ordering(index, page_0_tuple)
     end
   end
 
-  defp validate_chain_key_ordering(index, page_0) do
-    all_keys = collect_all_keys_from_chain(index, page_0)
+  defp validate_chain_key_ordering(index, {page_0, next_id}) do
+    all_keys = collect_all_keys_from_chain(index, page_0, next_id)
 
     case length(all_keys) do
       count when count <= 1 -> :ok
@@ -340,11 +333,10 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
      "Keys out of order in chain at position #{idx}: #{inspect(prev_key, base: :hex)} >= #{inspect(bad_key, base: :hex)}"}
   end
 
-  defp collect_all_keys_from_chain(index, page_0) do
+  defp collect_all_keys_from_chain(index, page_0, next_id) do
     if Page.empty?(page_0) do
       # Page 0 is empty sentinel - start from the page it points to
-      leftmost_id = Page.next_id(page_0)
-      collect_keys_from_chain(index, leftmost_id, [])
+      collect_keys_from_chain(index, next_id, [])
     else
       # Page 0 contains data - start from page 0 itself
       collect_keys_from_chain(index, 0, [])
@@ -359,9 +351,8 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
       nil ->
         Enum.reverse(acc)
 
-      page ->
+      {page, next_id} ->
         page_keys = Page.keys(page)
-        next_id = Page.next_id(page)
         collect_keys_from_chain(index, next_id, Enum.reverse(page_keys, acc))
     end
   end
@@ -384,8 +375,8 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
     # Get all non-empty pages from page_map (empty pages shouldn't be in tree)
     non_empty_page_ids =
       index.page_map
-      |> Enum.reject(fn {_page_id, page} -> Page.empty?(page) end)
-      |> Enum.map(fn {page_id, _page} -> page_id end)
+      |> Enum.reject(fn {_page_id, {page, _next_id}} -> Page.empty?(page) end)
+      |> Enum.map(fn {page_id, {_page, _next_id}} -> page_id end)
 
     tree_page_set = MapSet.new(tree_page_ids)
     map_page_set = MapSet.new(non_empty_page_ids)
@@ -403,7 +394,7 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   def check_page_size_limits(index) do
     max_keys_per_page = 256
 
-    Enum.reduce_while(index.page_map, :ok, fn {page_id, page}, acc ->
+    Enum.reduce_while(index.page_map, :ok, fn {page_id, {page, _next_id}}, acc ->
       key_count = Page.key_count(page)
 
       if key_count <= max_keys_per_page do
@@ -498,21 +489,19 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
   defp extract_all_keys_from_index(index) do
     case Map.get(index.page_map, 0) do
       nil -> []
-      page_0 -> extract_keys_from_page_0(index, page_0)
+      {page_0, next_id} -> extract_keys_from_page_0(index, page_0, next_id)
     end
   end
 
-  defp extract_keys_from_page_0(index, page_0) do
+  defp extract_keys_from_page_0(index, page_0, next_id) do
     if Page.empty?(page_0) do
-      extract_keys_from_empty_page_0(index, page_0)
+      extract_keys_from_empty_page_0(index, next_id)
     else
       collect_keys_from_chain(index, 0, [])
     end
   end
 
-  defp extract_keys_from_empty_page_0(index, page_0) do
-    leftmost_id = Page.next_id(page_0)
-
+  defp extract_keys_from_empty_page_0(index, leftmost_id) do
     case leftmost_id do
       0 -> []
       _ -> collect_keys_from_chain(index, leftmost_id, [])
@@ -553,10 +542,9 @@ defmodule Bedrock.Test.Storage.Olivine.InvariantChecks do
 
     index.page_map
     |> Enum.sort_by(fn {page_id, _} -> page_id end)
-    |> Enum.each(fn {page_id, page} ->
+    |> Enum.each(fn {page_id, {page, next_id}} ->
       start_key = Page.left_key(page)
       end_key = Page.right_key(page)
-      next_id = Page.next_id(page)
       key_count = Page.key_count(page)
 
       IO.puts(

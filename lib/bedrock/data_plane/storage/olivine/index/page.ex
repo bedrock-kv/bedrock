@@ -32,22 +32,22 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   @type operation :: {:set, Bedrock.version()} | :clear
 
   @doc """
-  Creates a page with key-version tuples and optional next_id.
-  Returns the binary-encoded page.
+  Creates a page with key-version tuples.
+  Returns the binary-encoded page with next_id set to 0.
   """
-  @spec new(id :: id(), key_versions :: [{binary(), Bedrock.version()}], next_id :: id()) :: binary()
-  def new(id, key_versions, next_id \\ 0) when is_list(key_versions) do
+  @spec new(id :: id(), key_versions :: [{binary(), Bedrock.version()}]) :: binary()
+  def new(id, key_versions) when is_list(key_versions) do
     versions = Enum.map(key_versions, fn {_key, version} -> version end)
 
     if !Enum.all?(versions, &(is_binary(&1) and byte_size(&1) == 8)) do
       raise ArgumentError, "All versions must be 8-byte binary values"
     end
 
-    encode_page_direct(id, next_id || 0, key_versions)
+    encode_page_direct(id, key_versions)
   end
 
-  @spec encode_page_direct(id(), id(), [{binary(), Bedrock.version()}]) :: binary()
-  defp encode_page_direct(id, next_id, key_versions) do
+  @spec encode_page_direct(id(), [{binary(), Bedrock.version()}]) :: binary()
+  defp encode_page_direct(id, key_versions) do
     key_count = length(key_versions)
 
     {payload_iodata, rightmost_key} = encode_entries_as_iodata(key_versions)
@@ -55,10 +55,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
     header = <<
       id::unsigned-big-32,
-      next_id::unsigned-big-32,
       key_count::unsigned-big-16,
       rightmost_key_offset::unsigned-big-32,
-      0::unsigned-big-16
+      0::unsigned-big-48
     >>
 
     IO.iodata_to_binary([header | payload_iodata])
@@ -90,10 +89,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   def apply_operations(page, operations) when is_binary(page) do
     <<
       id::unsigned-big-32,
-      next_id::unsigned-big-32,
       key_count::unsigned-big-16,
       _right_key_offset::unsigned-big-32,
-      _padding::unsigned-big-16,
+      _padding::unsigned-big-48,
       payload::binary
     >> = page
 
@@ -106,10 +104,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
     IO.iodata_to_binary([
       <<
         id::unsigned-big-32,
-        next_id::unsigned-big-32,
         key_count + key_count_delta::unsigned-big-16,
         new_rightmost_key_offset::unsigned-big-32,
-        0::unsigned-big-16
+        0::unsigned-big-48
       >>,
       new_payload
     ])
@@ -271,11 +268,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   Returns :ok if valid, {:error, :corrupted_page} if invalid.
   """
   @spec validate(binary()) :: :ok | {:error, :corrupted_page}
-  def validate(<<_id::32, _next_id::32, 0::16, _right_key_offset::32, _reserved::16, _entries::binary>>), do: :ok
+  def validate(<<_id::32, 0::16, _right_key_offset::32, _reserved::48, _entries::binary>>), do: :ok
 
   def validate(
-        <<_id::32, _next_id::32, _key_count::16, right_key_offset::32, _reserved::16,
-          _data::binary-size(right_key_offset - 16), _key_len::16, _key::binary>>
+        <<_id::32, _key_count::16, right_key_offset::32, _reserved::48, _data::binary-size(right_key_offset - 16),
+          _key_len::16, _key::binary>>
       ),
       do: :ok
 
@@ -298,14 +295,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   def id(<<page_id::unsigned-big-32, _rest::binary>>), do: page_id
   def id(%{id: page_id}), do: page_id
 
-  @spec next_id(t()) :: id()
-  def next_id(<<_page_id::unsigned-big-32, next_page_id::unsigned-big-32, _rest::binary>>), do: next_page_id
-  def next_id(%{next_id: next_page_id}), do: next_page_id
-
   @spec key_versions(t()) :: [{binary(), Bedrock.version()}]
   def key_versions(
-        <<_page_id::unsigned-big-32, _next_id::unsigned-big-32, key_count::unsigned-big-16,
-          _right_key_offset::unsigned-big-32, _reserved::unsigned-big-16, entries_data::binary>>
+        <<_page_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-48, entries_data::binary>>
       ) do
     {:ok, key_versions} = decode_entries(entries_data, key_count, [])
     key_versions
@@ -314,8 +307,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   def key_versions(%{key_versions: kvs}), do: kvs
 
   @spec key_count(t()) :: non_neg_integer()
-  def key_count(<<_page_id::unsigned-big-32, _next_id::unsigned-big-32, key_count::unsigned-big-16, _rest::binary>>),
-    do: key_count
+  def key_count(<<_page_id::unsigned-big-32, key_count::unsigned-big-16, _rest::binary>>), do: key_count
 
   def key_count(%{key_versions: kvs}), do: length(kvs)
 
@@ -325,31 +317,31 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   end
 
   @spec left_key(t()) :: binary() | nil
-  def left_key(<<_page_id::unsigned-big-32, _next_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
+  def left_key(<<_page_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
 
   def left_key(
-        <<_page_id::unsigned-big-32, _next_id::unsigned-big-32, _key_count::unsigned-big-16,
-          _right_key_offset::unsigned-big-32, _reserved::unsigned-big-16, _version::binary-size(8),
-          key_len::unsigned-big-16, key::binary-size(key_len), _rest::binary>>
+        <<_page_id::unsigned-big-32, _key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-48, _version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len),
+          _rest::binary>>
       ) do
     key
   end
 
   @spec right_key(t()) :: binary() | nil
-  def right_key(<<_page_id::unsigned-big-32, _next_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
+  def right_key(<<_page_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
 
   def right_key(
-        <<_page_id::unsigned-big-32, _next_id::unsigned-big-32, _key_count::unsigned-big-16,
-          right_key_offset::unsigned-big-32, _reserved::unsigned-big-16, _data::binary-size(right_key_offset - 16),
-          key_len::unsigned-big-16, key::binary-size(key_len)>>
+        <<_page_id::unsigned-big-32, _key_count::unsigned-big-16, right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-48, _data::binary-size(right_key_offset - 16), key_len::unsigned-big-16,
+          key::binary-size(key_len)>>
       ) do
     key
   end
 
   @spec version_for_key(t(), Bedrock.key()) :: {:ok, Bedrock.version()} | {:error, :not_found}
   def version_for_key(
-        <<_page_id::unsigned-big-32, _next_id::unsigned-big-32, key_count::unsigned-big-16,
-          _right_key_offset::unsigned-big-32, _reserved::unsigned-big-16, entries_data::binary>>,
+        <<_page_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
+          _reserved::unsigned-big-48, entries_data::binary>>,
         target_key
       ),
       do: search_entries_for_key(entries_data, key_count, target_key)
@@ -444,17 +436,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   Returns {left_page, right_page} where left_page keeps the original ID
   and right_page gets the new_page_id.
   """
-  @spec split_page(binary(), non_neg_integer(), id()) :: {binary(), binary()}
-  def split_page(page, key_offset, new_page_id) do
-    <<page_id::32, next_id::32, _key_count::16, _right_key_offset::32, _reserved::16, _entries::binary>> = page
+  @spec split_page(binary(), non_neg_integer(), id(), id()) :: {{binary(), id()}, {binary(), id()}}
+  def split_page(page, key_offset, new_page_id, original_next_id) do
+    <<page_id::32, _key_count::16, _right_key_offset::32, _reserved::48, _entries::binary>> = page
 
     key_versions = key_versions(page)
 
     {left_key_versions, right_key_versions} = Enum.split(key_versions, key_offset)
 
-    left_page = new(page_id, left_key_versions, new_page_id)
-    right_page = new(new_page_id, right_key_versions, next_id)
+    left_page = new(page_id, left_key_versions)
+    right_page = new(new_page_id, right_key_versions)
 
-    {left_page, right_page}
+    {{left_page, new_page_id}, {right_page, original_next_id}}
   end
 end

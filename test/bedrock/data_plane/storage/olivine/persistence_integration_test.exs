@@ -341,8 +341,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       setup_tmp_dir(context, "persistence_window_test")
     end
 
-    test "window eviction maintains data integrity in DETS", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "window_eviction.dets")
+    test "window eviction maintains data integrity in SQLite", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "window_eviction.sqlite")
       {:ok, db} = Database.open(:window_test, file_path)
 
       vm = IndexManager.new()
@@ -405,7 +405,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "window persistence integration with advance_window_with_persistence", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "window_persistence.dets")
+      file_path = Path.join(tmp_dir, "window_persistence.sqlite")
       {:ok, db} = Database.open(:window_persist_test, file_path)
 
       vm = IndexManager.new()
@@ -444,7 +444,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "window eviction with page data persistence", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "page_window.dets")
+      file_path = Path.join(tmp_dir, "page_window.sqlite")
       {:ok, db} = Database.open(:page_window_test, file_path)
 
       vm = IndexManager.new()
@@ -497,7 +497,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "version window behavior across restarts", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "restart_window.dets")
+      file_path = Path.join(tmp_dir, "restart_window.sqlite")
 
       # Session 1: Create data with timestamps and shut down
       {:ok, db1} = Database.open(:session1, file_path)

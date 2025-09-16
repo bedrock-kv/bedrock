@@ -74,8 +74,8 @@ defmodule Bedrock.HighContentionAllocator do
 
   ## Examples
 
-      iex> MyApp.Repo.transact(fn txn ->
-      ...>   {:ok, Bedrock.HighContentionAllocator.allocate_many(hca, txn, 5)}
+      iex> MyApp.Repo.transact(fn ->
+      ...>   {:ok, Bedrock.HighContentionAllocator.allocate_many(hca, 5)}
       ...> end)
       {:ok, [<<21, 0>>, <<21, 1>>, <<21, 2>>, <<21, 3>>, <<21, 4>>]}
   """
@@ -102,16 +102,16 @@ defmodule Bedrock.HighContentionAllocator do
 
   ## Examples
 
-      iex> MyApp.Repo.transact(fn txn ->
-      ...>   {:ok, Bedrock.HighContentionAllocator.allocate(hca, txn)}
+      iex> MyApp.Repo.transact(fn ->
+      ...>   {:ok, Bedrock.HighContentionAllocator.allocate(hca)}
       ...> end)
       {:ok, <<21, 42>>}  # Key-encoded binary
   """
 
   @spec allocate(t()) :: {:ok, binary()} | {:error, term()}
   def allocate(%__MODULE__{repo: repo} = hca) do
-    repo.transact(fn txn ->
-      result = do_allocate(hca, txn)
+    repo.transact(fn ->
+      result = do_allocate(hca)
       {:ok, result}
     end)
   rescue
@@ -122,25 +122,25 @@ defmodule Bedrock.HighContentionAllocator do
   Allocate a prefix within an existing transaction.
   """
   @spec allocate(t(), Bedrock.Internal.Repo.transaction()) :: binary()
-  def allocate(%__MODULE__{} = hca, txn) do
-    do_allocate(hca, txn)
+  def allocate(%__MODULE__{} = hca, _txn) do
+    do_allocate(hca)
   end
 
   # Private implementation functions
 
-  defp do_allocate(hca, txn), do: do_allocate_with_retry(hca, txn)
+  defp do_allocate(hca), do: do_allocate_with_retry(hca)
 
-  defp do_allocate_with_retry(hca, txn) do
-    start = current_start(hca, txn)
-    {candidate_start, window_size} = get_or_advance_window(hca, txn, start, false)
-    search_candidate(hca, txn, candidate_start, window_size)
+  defp do_allocate_with_retry(hca) do
+    start = current_start(hca)
+    {candidate_start, window_size} = get_or_advance_window(hca, start, false)
+    search_candidate(hca, candidate_start, window_size)
   catch
     {__MODULE__, :retry} ->
       # Retry the allocation within the same transaction
-      do_allocate_with_retry(hca, txn)
+      do_allocate_with_retry(hca)
   end
 
-  defp current_start(%{repo: repo} = hca, txn) do
+  defp current_start(%{repo: repo} = hca) do
     # Get the latest counter using KeySelector - equivalent to reverse scan with limit 1!
     counter_range_end = hca.counters_subspace <> <<0xFF>>
 
@@ -148,7 +148,7 @@ defmodule Bedrock.HighContentionAllocator do
     # which is the maximum counter key in our range
     last_counter_selector = Bedrock.KeySelector.last_less_than(counter_range_end)
 
-    case repo.select(txn, last_counter_selector) do
+    case repo.select(last_counter_selector) do
       nil ->
         # No key found by selector, start at 0
         0
@@ -164,19 +164,19 @@ defmodule Bedrock.HighContentionAllocator do
     end
   end
 
-  defp get_or_advance_window(%{repo: repo} = hca, txn, start, window_advanced) do
+  defp get_or_advance_window(%{repo: repo} = hca, start, window_advanced) do
     # Clear previous window if we advanced
     if window_advanced do
-      clear_previous_window(hca, txn, start)
+      clear_previous_window(hca, start)
     end
 
     # Increment counter for this window - use little-endian binary encoding
     counter_key = encode_counter_key(hca, start)
-    repo.atomic(txn, :add, counter_key, <<1::64-little>>)
+    repo.atomic(:add, counter_key, <<1::64-little>>)
 
     # Get current usage count for this window
     count =
-      case repo.get(txn, counter_key, snapshot: true) do
+      case repo.get(counter_key, snapshot: true) do
         nil -> 0
         <<c::64-little>> -> c
         _other -> 0
@@ -191,28 +191,28 @@ defmodule Bedrock.HighContentionAllocator do
     else
       # Window is getting full, advance to next window
       next_start = start + window_size
-      get_or_advance_window(hca, txn, next_start, true)
+      get_or_advance_window(hca, next_start, true)
     end
   end
 
-  defp search_candidate(%{repo: repo} = hca, txn, start, window_size) do
+  defp search_candidate(%{repo: repo} = hca, start, window_size) do
     # Generate random candidate within the window
     # Use configurable random function for testing control
     candidate = start + (hca.random_fn.(window_size) - 1)
     candidate_key = encode_recent_key(hca, candidate)
 
     # Check if we're still in the same counter window (detect concurrent advances)
-    current_latest_start = current_start(hca, txn)
+    current_latest_start = current_start(hca)
 
     if current_latest_start != start do
       throw({__MODULE__, :retry})
     end
 
     # Check if candidate is available and claim it
-    case repo.get(txn, candidate_key, snapshot: true) do
+    case repo.get(candidate_key, snapshot: true) do
       nil ->
-        repo.put(txn, candidate_key, <<>>, no_write_conflict: true)
-        add_write_conflict_key(hca, txn, candidate_key)
+        repo.put(candidate_key, <<>>, no_write_conflict: true)
+        add_write_conflict_key(hca, candidate_key)
         Key.pack(candidate)
 
       _existing_value ->
@@ -221,16 +221,16 @@ defmodule Bedrock.HighContentionAllocator do
     end
   end
 
-  defp clear_previous_window(%{repo: repo} = hca, txn, start) do
+  defp clear_previous_window(%{repo: repo} = hca, start) do
     # Clear counter data for this window start
     counter_key = encode_counter_key(hca, start)
     counter_range = Bedrock.KeyRange.from_prefix(counter_key)
-    repo.clear_range(txn, counter_range, no_write_conflict: true)
+    repo.clear_range(counter_range, no_write_conflict: true)
 
     # Clear recent allocation data for this window start
     recent_key = encode_recent_key(hca, start)
     recent_range = Bedrock.KeyRange.from_prefix(recent_key)
-    repo.clear_range(txn, recent_range, no_write_conflict: true)
+    repo.clear_range(recent_range, no_write_conflict: true)
   end
 
   # Dynamic window sizing based on allocation pressure
@@ -249,7 +249,7 @@ defmodule Bedrock.HighContentionAllocator do
 
   defp encode_recent_key(hca, candidate), do: hca.recent_subspace <> <<candidate::64-big>>
 
-  defp add_write_conflict_key(%{repo: repo}, txn, key), do: repo.add_write_conflict_range(txn, key, Key.key_after(key))
+  defp add_write_conflict_key(%{repo: repo}, key), do: repo.add_write_conflict_range(key, Key.key_after(key))
 
   @doc """
   Get statistics about the HighContentionAllocator state.
@@ -263,14 +263,15 @@ defmodule Bedrock.HighContentionAllocator do
           estimated_allocated: non_neg_integer()
         }
   def stats(%__MODULE__{repo: repo} = hca) do
-    repo.transact(fn txn ->
-      latest_start = current_start(hca, txn)
+    repo.transact(fn ->
+      # txn param not used in implicit transactions
+      latest_start = current_start(hca)
 
       # Count total counter entries
       counter_start = hca.counters_subspace
       counter_end = hca.counters_subspace <> <<0xFF>>
 
-      counters = txn |> repo.get_range(counter_start, counter_end) |> Enum.to_list()
+      counters = counter_start |> repo.get_range(counter_end) |> Enum.to_list()
       total_counters = length(counters)
 
       # Estimate total allocated IDs by summing counter values

@@ -9,7 +9,7 @@ defmodule Bedrock.Directory.MoveTest do
   alias Bedrock.KeyRange
 
   setup do
-    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -30,7 +30,7 @@ defmodule Bedrock.Directory.MoveTest do
     # Source fetch for move operation (gets called again)
     |> expect_directory_exists(source_path, source_data)
     # Range scan to get source + all children
-    |> expect(:get_range, fn :mock_txn, range ->
+    |> expect(:get_range, fn range ->
       expected_range = KeyRange.from_prefix(build_directory_key(source_path))
       assert expected_range == range
 
@@ -40,19 +40,19 @@ defmodule Bedrock.Directory.MoveTest do
       ]
     end)
     # Put destination directory
-    |> expect(:put, fn :mock_txn, key, value ->
+    |> expect(:put, fn key, value ->
       assert key == build_directory_key(dest_path)
       assert {<<0, 2>>, "document"} == Key.unpack(value)
       :ok
     end)
     # Put moved child directory
-    |> expect(:put, fn :mock_txn, key, value ->
+    |> expect(:put, fn key, value ->
       assert key == build_directory_key(["accounts", "profiles"])
       assert {<<0, 3>>, "profile"} == Key.unpack(value)
       :ok
     end)
     # Clear source range
-    |> expect(:clear_range, fn :mock_txn, range ->
+    |> expect(:clear_range, fn range ->
       expected_range = KeyRange.from_prefix(build_directory_key(source_path))
       assert expected_range == range
       :ok

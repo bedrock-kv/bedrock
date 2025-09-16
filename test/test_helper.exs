@@ -21,7 +21,7 @@ end
 
 Mox.defmock(Bedrock.Raft.MockInterface, for: Bedrock.Raft.Interface)
 Mox.defmock(MockRepo, for: Bedrock.Repo)
-Mox.stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+Mox.stub(MockRepo, :transact, fn callback -> callback.() end)
 
 # Define behavior for Resolver testing
 defmodule Bedrock.DataPlane.Resolver.Behaviour do

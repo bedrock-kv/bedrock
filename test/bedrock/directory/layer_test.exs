@@ -9,7 +9,7 @@ defmodule Bedrock.Directory.LayerTest do
 
   setup do
     # Automatically stub transaction to execute callbacks immediately
-    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 

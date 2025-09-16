@@ -477,16 +477,16 @@ Based on the BedrockEx test harness, here are practical examples of how applicat
 ```elixir
 # Basic put operation
 def hello do
-  Repo.transact(fn repo ->
-    Repo.put(repo, "hello", "world")
-    :ok
+  Repo.transact(fn ->
+    Repo.put("hello", "world")
+    {:ok, :ok}
   end)
 end
 
 # Basic get operation  
 def hello2 do
-  Repo.transact(fn repo ->
-    {:ok, Repo.get(repo, "hello")}
+  Repo.transact(fn ->
+    {:ok, Repo.get("hello")}
   end)
 end
 ```
@@ -495,17 +495,17 @@ end
 
 ```elixir
 def move_money(amount, account1, account2) do
-  Repo.transact(fn repo ->
-    with :ok <- check_sufficient_balance_for_transfer(repo, account1, amount),
-         {:ok, new_balance1} <- adjust_balance(repo, account1, -amount),
-         {:ok, new_balance2} <- adjust_balance(repo, account2, amount) do
-      {:ok, new_balance1, new_balance2}
+  Repo.transact(fn ->
+    with :ok <- check_sufficient_balance_for_transfer(account1, amount),
+         {:ok, new_balance1} <- adjust_balance(account1, -amount),
+         {:ok, new_balance2} <- adjust_balance(account2, amount) do
+      {:ok, {new_balance1, new_balance2}}
     end
   end)
 end
 
-def check_sufficient_balance_for_transfer(repo, account, amount) do
-  with {:ok, balance} <- fetch_balance(repo, account) do
+def check_sufficient_balance_for_transfer(account, amount) do
+  with {:ok, balance} <- fetch_balance(account) do
     if can_withdraw?(amount, balance) do
       :ok
     else
@@ -514,17 +514,17 @@ def check_sufficient_balance_for_transfer(repo, account, amount) do
   end
 end
 
-def fetch_balance(repo, account) do
-  case Repo.fetch(repo, key_for_account_balance(account)) do
+def fetch_balance(account) do
+  case Repo.fetch(key_for_account_balance(account)) do
     {:ok, balance} -> {:ok, balance}
     _ -> {:error, "Account not found"}
   end
 end
 
-def adjust_balance(repo, account, amount) do
-  with {:ok, balance} <- fetch_balance(repo, account) do
+def adjust_balance(account, amount) do
+  with {:ok, balance} <- fetch_balance(account) do
     new_balance = balance + amount
-    Repo.put(repo, key_for_account_balance(account), new_balance)
+    Repo.put(key_for_account_balance(account), new_balance)
     {:ok, new_balance}
   end
 end
@@ -536,10 +536,10 @@ def key_for_account_balance(account), do: {"balances", account}
 
 ```elixir
 def setup_accounts do
-  Repo.transact(fn repo ->
-    Repo.put(repo, key_for_account_balance("1"), 100)
-    Repo.put(repo, key_for_account_balance("2"), 500)
-    :ok
+  Repo.transact(fn ->
+    Repo.put(key_for_account_balance("1"), 100)
+    Repo.put(key_for_account_balance("2"), 500)
+    {:ok, :ok}
   end)
 end
 
@@ -547,14 +547,14 @@ end
 def rando do
   1..10_000
   |> Enum.each(fn _ ->
-    Repo.transact(fn repo ->
+    Repo.transact(fn ->
       1..5
       |> Enum.each(fn _ ->
         key = :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
         value = :crypto.strong_rand_bytes(5) |> Base.encode32(case: :upper)
-        Repo.put(repo, key, value)
+        Repo.put(key, value)
       end)
-      :ok
+      {:ok, :ok}
     end)
   end)
 end
@@ -594,12 +594,12 @@ The money transfer example demonstrates the classic read-modify-write pattern:
 Within a transaction, all reads immediately see previous writes:
 
 ```elixir
-Repo.transact(fn repo ->
-  Repo.put(repo, "key", "value1")
-  {:ok, "value1"} = Repo.get(repo, "key")  # Sees the write immediately
-  Repo.put(repo, "key", "value2")
-  {:ok, "value2"} = Repo.get(repo, "key")  # Sees the updated value
-  :ok
+Repo.transact(fn ->
+  Repo.put("key", "value1")
+  {:ok, "value1"} = Repo.get("key")  # Sees the write immediately
+  Repo.put("key", "value2")
+  {:ok, "value2"} = Repo.get("key")  # Sees the updated value
+  {:ok, :ok}
 end)
 ```
 
@@ -618,9 +618,9 @@ key_for_account_balance(account) -> {"balances", account}
 Transactions can return errors that cause rollback:
 
 ```elixir
-case Repo.transact(fn repo ->
-  case some_operation(repo) do
-    {:ok, result} -> result
+case Repo.transact(fn ->
+  case some_operation() do
+    {:ok, result} -> {:ok, result}
     {:error, reason} -> {:error, reason}  # Transaction rolls back
   end
 end) do

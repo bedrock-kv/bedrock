@@ -6,8 +6,6 @@ defmodule Bedrock.Repo do
   alias Bedrock.KeySelector
   alias Bedrock.Subspace
 
-  @opaque t :: Repo.transaction()
-
   # Transaction Control
 
   @doc """
@@ -25,27 +23,28 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Simple transaction
-      {:ok, result} = transact(fn tx ->
-        result =
-          tx
-          |> put("key", "value")
-          |> get("other_key")
-
+      {:ok, result} = transact(fn ->
+        put("key", "value")
+        result = get("other_key")
         {:ok, result}
       end)
 
       # Transaction with retry limit
-      :ok = transact(fn tx ->
-        put(tx, "counter", "1")
-
-        :ok
+      {:ok, :ok} = transact(fn ->
+        put("counter", "1")
+        {:ok, :ok}
       end, retry_limit: 5)
 
   """
-  @callback transact((t() -> :ok | {:ok, result} | {:error, reason})) :: :ok | {:ok, result} | {:error, reason}
+  @callback transact(
+              (-> :ok | {:ok, result} | {:error, reason})
+              | (module() -> :ok | {:ok, result} | {:error, reason})
+            ) ::
+              :ok | {:ok, result} | {:error, reason}
             when result: term(), reason: term()
   @callback transact(
-              (t() -> :ok | {:ok, result} | {:error, reason}),
+              (-> :ok | {:ok, result} | {:error, reason})
+              | (module() -> :ok | {:ok, result} | {:error, reason}),
               opts :: [
                 retry_limit: non_neg_integer() | nil,
                 timeout_in_ms: Bedrock.timeout_in_ms()
@@ -61,13 +60,13 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      {:error, :some_reason} = transact(fn tx ->
-        put(tx, "key", "value")
+      {:error, :some_reason} = transact(fn ->
+        put("key", "value")
 
         if should_abort? do
           rollback(:some_reason)
         else
-          :ok
+          {:ok, :ok}
         end
       end)
 
@@ -87,18 +86,18 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
+      transact(fn ->
         # Add conflict on a counter key without reading it
-        tx = add_read_conflict_key(tx, "global_counter")
+        add_read_conflict_key("global_counter")
 
         # Do other operations that depend on the counter not changing
-        put(tx, "dependent_data", compute_based_on_counter())
+        put("dependent_data", compute_based_on_counter())
 
-        :ok
+        {:ok, :ok}
       end)
 
   """
-  @callback add_read_conflict_key(t(), Key.t()) :: t()
+  @callback add_read_conflict_key(Key.t()) :: :ok
 
   @doc """
   Adds a write conflict range to the transaction.
@@ -112,19 +111,19 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
+      transact(fn ->
         # Reserve the entire user namespace
-        tx = add_write_conflict_range(tx, "user:", "user;")
+        add_write_conflict_range("user:", "user;")
 
         # Now we can safely assume no other transaction is modifying users
-        put(tx, "user:123", user_data)
+        put("user:123", user_data)
 
-        :ok
+        {:ok, :ok}
       end)
 
   """
-  @callback add_write_conflict_range(t(), Key.t(), Key.t()) :: t()
-  @callback add_write_conflict_range(t(), Subspace.t() | KeyRange.t()) :: t()
+  @callback add_write_conflict_range(Key.t(), Key.t()) :: :ok
+  @callback add_write_conflict_range(Subspace.t() | KeyRange.t()) :: :ok
 
   # Read Operations
 
@@ -139,19 +138,19 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
+      transact(fn ->
         # Regular read with conflict tracking
-        user = get(tx, "user:123")
+        user = get("user:123")
 
         # Snapshot read without conflict tracking
-        metadata = get(tx, "metadata", snapshot: true)
+        metadata = get("metadata", snapshot: true)
 
-        :ok
+        {:ok, :ok}
       end)
 
   """
-  @callback get(t(), Key.t()) :: nil | binary()
-  @callback get(t(), Key.t(), opts :: [snapshot: boolean()]) :: nil | binary()
+  @callback get(Key.t()) :: nil | binary()
+  @callback get(Key.t(), opts :: [snapshot: boolean()]) :: nil | binary()
 
   @doc """
   Selects a key-value pair using a key selector, returning `{key, value}` or `nil` if not found.
@@ -165,19 +164,19 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
+      transact(fn ->
         # Find first key after "user:"
-        first_user = select(tx, KeySelector.first_greater_than("user:"))
+        first_user = select(KeySelector.first_greater_than("user:"))
 
         # Find last key in user namespace
-        last_user = select(tx, KeySelector.last_less_or_equal("user;"))
+        last_user = select(KeySelector.last_less_or_equal("user;"))
 
-        :ok
+        {:ok, :ok}
       end)
 
   """
-  @callback select(t(), KeySelector.t()) :: nil | {Key.t(), binary()}
-  @callback select(t(), KeySelector.t(), opts :: [snapshot: boolean()]) :: nil | {Key.t(), binary()}
+  @callback select(KeySelector.t()) :: nil | {Key.t(), binary()}
+  @callback select(KeySelector.t(), opts :: [snapshot: boolean()]) :: nil | {Key.t(), binary()}
 
   # Range Operations
 
@@ -197,42 +196,35 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Lazy iteration (memory efficient)
-      transact(fn tx ->
+      transact(fn ->
         result =
-          tx
-          |> get_range(start_key, end_key, limit: 100)
+          get_range(start_key, end_key, limit: 100)
           |> Enum.take(10)  # Only fetches what's needed
 
         {:ok, result}
       end)
 
       # Collect all results
-      transact(fn tx ->
+      transact(fn ->
         results =
-          tx
-          |> get_range(start_key, end_key)
+          get_range(start_key, end_key)
           |> Enum.to_list()
 
         {:ok, results}
       end)
 
       # Snapshot read without conflicts
-      transact(fn tx ->
+      transact(fn ->
         metadata =
-          tx
-          |> get_range("meta/", "meta0", snapshot: true)
+          get_range("meta/", "meta0", snapshot: true)
           |> Enum.to_list()
 
         {:ok, metadata}
       end)
 
   """
+  @callback get_range(Subspace.t() | KeyRange.t()) :: Enumerable.t(Bedrock.key_value())
   @callback get_range(
-              t(),
-              Subspace.t() | KeyRange.t()
-            ) :: Enumerable.t(Bedrock.key_value())
-  @callback get_range(
-              t(),
               Subspace.t() | KeyRange.t(),
               opts :: [
                 batch_size: pos_integer(),
@@ -241,9 +233,8 @@ defmodule Bedrock.Repo do
                 timeout: non_neg_integer()
               ]
             ) :: Enumerable.t(Bedrock.key_value())
-  @callback get_range(t(), Key.t(), Key.t()) :: Enumerable.t(Bedrock.key_value())
+  @callback get_range(Key.t(), Key.t()) :: Enumerable.t(Bedrock.key_value())
   @callback get_range(
-              t(),
               Key.t(),
               Key.t(),
               opts :: [
@@ -267,20 +258,22 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
+      transact(fn ->
         # Clear all user data using key range
-        clear_range(tx, "user:", "user;")
+        clear_range("user:", "user;")
 
         # Clear using subspace
         user_space = Subspace.new("users")
-        clear_range(tx, user_space)
+        clear_range(user_space)
+
+        {:ok, :ok}
       end)
 
   """
-  @callback clear_range(t(), Subspace.t() | KeyRange.t()) :: t()
-  @callback clear_range(t(), Subspace.t() | KeyRange.t(), opts :: [no_write_conflict: boolean()]) :: t()
-  @callback clear_range(t(), Key.t(), Key.t()) :: t()
-  @callback clear_range(t(), Key.t(), Key.t(), opts :: [no_write_conflict: boolean()]) :: t()
+  @callback clear_range(Subspace.t() | KeyRange.t()) :: :ok
+  @callback clear_range(Subspace.t() | KeyRange.t(), opts :: [no_write_conflict: boolean()]) :: :ok
+  @callback clear_range(Key.t(), Key.t()) :: :ok
+  @callback clear_range(Key.t(), Key.t(), opts :: [no_write_conflict: boolean()]) :: :ok
 
   # Write Operations
 
@@ -296,15 +289,14 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
-        tx
-        |> clear("user:123")
-        |> clear("index:email:" <> email)
+      transact(fn ->
+        clear("user:123")
+        clear("index:email:" <> email)
       end)
 
   """
-  @callback clear(t(), Key.t()) :: t()
-  @callback clear(t(), Key.t(), opts :: [no_write_conflict: boolean()]) :: t()
+  @callback clear(Key.t()) :: :ok
+  @callback clear(Key.t(), opts :: [no_write_conflict: boolean()]) :: :ok
 
   @doc """
   Sets a key to a value within the transaction.
@@ -318,15 +310,15 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transact(fn tx ->
-        tx
-        |> put("user:123", user_data)
-        |> put("index:email:" <> email, "user:123")
+      transact(fn ->
+        put("user:123", user_data)
+        put("index:email:" <> email, "user:123")
+        {:ok, :ok}
       end)
 
   """
-  @callback put(t(), Key.t(), value :: binary()) :: t()
-  @callback put(t(), Key.t(), value :: binary(), opts :: [no_write_conflict: boolean()]) :: t()
+  @callback put(Key.t(), value :: binary()) :: :ok
+  @callback put(Key.t(), value :: binary(), opts :: [no_write_conflict: boolean()]) :: :ok
 
   # Atomic Operations
   #
@@ -347,15 +339,16 @@ defmodule Bedrock.Repo do
   # ## Examples of Conflict-Free Usage
   #
   #     # Multiple concurrent transactions can increment without any conflicts
-  #     transaction fn tx ->
-  #       add(tx, "global_counter", 1)  # No conflicts at all
+  #     transaction fn ->
+  #       add("global_counter", 1)  # No conflicts at all
+  #       {:ok, :ok}
   #     end
   #
   #     # Reading after atomic operations computes locally
-  #     transaction fn tx ->
-  #       tx = add(tx, "counter", 5)
-  #       {:ok, computed_value} = get(tx, "counter")  # Returns computed value
-  #       tx
+  #     transaction fn ->
+  #       add("counter", 5)
+  #       {:ok, computed_value} = get("counter")  # Returns computed value
+  #       {:ok, computed_value}
   #     end
 
   @doc """
@@ -378,19 +371,20 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # High-concurrency counter without read conflicts
-      transaction fn tx ->
-        add(tx, "global_counter", 1)  # Many can run concurrently
+      transaction fn ->
+        add("global_counter", 1)  # Many can run concurrently
+        {:ok, :ok}
       end
 
       # Computing values locally within transaction
-      transaction fn tx ->
-        tx = add(tx, "counter", 5)
-        {:ok, value} = get(tx, "counter")  # Returns computed value (5 if key was missing)
-        tx
+      transaction fn ->
+        add("counter", 5)
+        {:ok, value} = get("counter")  # Returns computed value (5 if key was missing)
+        {:ok, value}
       end
 
   """
-  @callback add(t(), Key.t(), value :: binary()) :: t()
+  @callback add(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically sets the key to the minimum of the existing value and the provided value.
@@ -413,19 +407,20 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Setting minimum thresholds without conflicts
-      transaction fn tx ->
-        min(tx, "max_connections", 100)  # Many can set limits concurrently
+      transaction fn ->
+        min("max_connections", 100)  # Many can set limits concurrently
+        {:ok, :ok}
       end
 
       # Computing values locally within transaction
-      transaction fn tx ->
-        tx = min(tx, "threshold", 50)
-        {:ok, value} = get(tx, "threshold")  # Returns min(current_value, 50)
-        tx
+      transaction fn ->
+        min("threshold", 50)
+        {:ok, value} = get("threshold")  # Returns min(current_value, 50)
+        {:ok, value}
       end
 
   """
-  @callback min(t(), Key.t(), value :: binary()) :: t()
+  @callback min(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically sets the key to the maximum of the existing value and the provided value.
@@ -448,19 +443,20 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Setting maximum values without conflicts
-      transaction fn tx ->
-        max(tx, "high_score", 1000)  # Many can update scores concurrently
+      transaction fn ->
+        max("high_score", 1000)  # Many can update scores concurrently
+        {:ok, :ok}
       end
 
       # Computing values locally within transaction
-      transaction fn tx ->
-        tx = max(tx, "peak_usage", 250)
-        {:ok, value} = get(tx, "peak_usage")  # Returns max(current_value, 250)
-        tx
+      transaction fn ->
+        max("peak_usage", 250)
+        {:ok, value} = get("peak_usage")  # Returns max(current_value, 250)
+        {:ok, value}
       end
 
   """
-  @callback max(t(), Key.t(), value :: binary()) :: t()
+  @callback max(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically performs bitwise AND on the key with the provided value.
@@ -478,19 +474,20 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Clear specific bits without conflicts
-      transaction fn tx ->
-        bit_and(tx, "permission_flags", <<0b11110000>>)  # Clear lower 4 bits
+      transaction fn ->
+        bit_and("permission_flags", <<0b11110000>>)  # Clear lower 4 bits
+        {:ok, :ok}
       end
 
       # Computing values locally within transaction
-      transaction fn tx ->
-        tx = bit_and(tx, "flags", <<0b11001100>>)
-        {:ok, value} = get(tx, "flags")  # Returns computed AND result
-        tx
+      transaction fn ->
+        bit_and("flags", <<0b11001100>>)
+        {:ok, value} = get("flags")  # Returns computed AND result
+        {:ok, value}
       end
 
   """
-  @callback bit_and(t(), Key.t(), value :: binary()) :: t()
+  @callback bit_and(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically performs bitwise OR on the key with the provided value.
@@ -508,12 +505,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Set specific bits without conflicts
-      transaction fn tx ->
-        bit_or(tx, "permission_flags", <<0b00001111>>)  # Set lower 4 bits
+      transaction fn ->
+        bit_or("permission_flags", <<0b00001111>>)  # Set lower 4 bits
+        {:ok, :ok}
       end
 
   """
-  @callback bit_or(t(), Key.t(), value :: binary()) :: t()
+  @callback bit_or(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically performs bitwise XOR on the key with the provided value.
@@ -531,12 +529,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Toggle specific bits without conflicts
-      transaction fn tx ->
-        bit_xor(tx, "toggle_flags", <<0b10101010>>)  # Toggle alternate bits
+      transaction fn ->
+        bit_xor("toggle_flags", <<0b10101010>>)  # Toggle alternate bits
+        {:ok, :ok}
       end
 
   """
-  @callback bit_xor(t(), Key.t(), value :: binary()) :: t()
+  @callback bit_xor(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically sets the key to the lexicographically smaller of the existing value and the provided value.
@@ -553,12 +552,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Set minimum string value without conflicts
-      transaction fn tx ->
-        byte_min(tx, "earliest_date", "2024-01-01")
+      transaction fn ->
+        byte_min("earliest_date", "2024-01-01")
+        {:ok, :ok}
       end
 
   """
-  @callback byte_min(t(), Key.t(), value :: binary()) :: t()
+  @callback byte_min(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically sets the key to the lexicographically larger of the existing value and the provided value.
@@ -575,12 +575,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Set maximum string value without conflicts
-      transaction fn tx ->
-        byte_max(tx, "latest_version", "1.2.3")
+      transaction fn ->
+        byte_max("latest_version", "1.2.3")
+        {:ok, :ok}
       end
 
   """
-  @callback byte_max(t(), Key.t(), value :: binary()) :: t()
+  @callback byte_max(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically appends the value to the existing key if the result would fit within the size limit.
@@ -598,12 +599,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Append to log entries without conflicts
-      transaction fn tx ->
-        append_if_fits(tx, "log_buffer", "New log entry\\n")
+      transaction fn ->
+        append_if_fits("log_buffer", "New log entry\\n")
+        {:ok, :ok}
       end
 
   """
-  @callback append_if_fits(t(), Key.t(), value :: binary()) :: t()
+  @callback append_if_fits(Key.t(), value :: binary()) :: :ok
 
   @doc """
   Atomically clears the key if the current value matches the expected value.
@@ -620,12 +622,13 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Clear a flag only if it has a specific value without conflicts
-      transaction fn tx ->
-        compare_and_clear(tx, "feature_flag", "enabled")
+      transaction fn ->
+        compare_and_clear("feature_flag", "enabled")
+        {:ok, :ok}
       end
 
   """
-  @callback compare_and_clear(t(), Key.t(), expected :: binary()) :: t()
+  @callback compare_and_clear(Key.t(), expected :: binary()) :: :ok
 
   @doc """
   Performs an atomic operation on a key with the provided value.
@@ -636,11 +639,25 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # These are equivalent:
-      add(tx, "counter", 5)
-      atomic(tx, :add, "counter", <<5::64-little>>)
+      add("counter", 5)
+      atomic(:add, "counter", <<5::64-little>>)
 
   """
-  @callback atomic(t(), operation :: atom(), Key.t(), value :: binary()) :: t()
+  @callback atomic(
+              operation ::
+                :add
+                | :min
+                | :max
+                | :bit_and
+                | :bit_or
+                | :bit_xor
+                | :byte_min
+                | :byte_max
+                | :append_if_fits
+                | :compare_and_clear,
+              Key.t(),
+              value :: binary()
+            ) :: :ok
 
   defmacro __using__(opts) do
     cluster = Keyword.fetch!(opts, :cluster)
@@ -660,155 +677,173 @@ defmodule Bedrock.Repo do
       # Transaction Control
 
       @impl true
-      def transact(fun, opts \\ []), do: Repo.transact(@cluster, fun, opts)
+      def transact(fun, opts \\ []), do: Repo.transact(@cluster, __MODULE__, fun, opts)
 
       @impl true
       defdelegate rollback(reason), to: Repo
 
       @impl true
-      defdelegate add_read_conflict_key(t, key), to: Repo
+      def add_read_conflict_key(key), do: Repo.add_read_conflict_key(__MODULE__, key)
 
       @impl true
-      def add_write_conflict_range(t, subspace_or_range)
-      def add_write_conflict_range(t, %Subspace{} = subspace), do: add_write_conflict_range(t, Subspace.range(subspace))
-      def add_write_conflict_range(t, {start_key, end_key}), do: Repo.add_write_conflict_range(t, start_key, end_key)
+      def add_write_conflict_range(subspace_or_range)
+      def add_write_conflict_range(%Subspace{} = subspace), do: add_write_conflict_range(Subspace.range(subspace))
+
+      def add_write_conflict_range({start_key, end_key}),
+        do: Repo.add_write_conflict_range(__MODULE__, start_key, end_key)
 
       @impl true
-      defdelegate add_write_conflict_range(t, start_key, end_key), to: Repo
+      def add_write_conflict_range(start_key, end_key),
+        do: Repo.add_write_conflict_range(__MODULE__, start_key, end_key)
 
       # Read Operations
 
       @impl true
-      def get(t, key) when not is_binary(key) or byte_size(key) > 16_384,
+      def get(key) when not is_binary(key) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
 
-      def get(t, key), do: Repo.get(t, key, [])
+      def get(key), do: Repo.get(__MODULE__, key, [])
 
       @impl true
-      def get(t, key, opts) when not is_binary(key) or not is_list(opts) or byte_size(key) > 16_384,
+      def get(key, opts) when not is_binary(key) or not is_list(opts) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, opts must be list")
 
-      def get(t, key, opts), do: Repo.get(t, key, opts)
+      def get(key, opts), do: Repo.get(__MODULE__, key, opts)
 
       @impl true
-      defdelegate select(t, key_selector, opts \\ []), to: Repo
+      def select(key_selector, opts \\ []), do: Repo.select(__MODULE__, key_selector, opts)
 
       # Write Operations
 
       @impl true
-      def clear(t, key) when not is_binary(key) or byte_size(key) > 16_384,
+      def clear(key) when not is_binary(key) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
 
-      def clear(t, key), do: Repo.clear(t, key)
+      def clear(key), do: Repo.clear(__MODULE__, key)
 
       @impl true
-      def clear(t, key, _opts) when not is_binary(key) or byte_size(key) > 16_384,
+      def clear(key, _opts) when not is_binary(key) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
 
-      def clear(t, key, opts), do: Repo.clear(t, key, opts)
+      def clear(key, opts), do: Repo.clear(__MODULE__, key, opts)
 
       @impl true
-      def put(t, key, value)
+      def put(key, value)
           when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384 or byte_size(value) > 131_072,
           do: raise(ArgumentError, "key/value must be binary, key <= 16KiB, value <= 128KiB")
 
-      def put(t, key, value), do: Repo.put(t, key, value)
+      def put(key, value), do: Repo.put(__MODULE__, key, value)
 
       @impl true
-      def put(t, key, value, _opts)
+      def put(key, value, _opts)
           when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384 or byte_size(value) > 131_072,
           do: raise(ArgumentError, "key/value must be binary, key <= 16KiB, value <= 128KiB")
 
-      def put(t, key, value, opts), do: Repo.put(t, key, value, opts)
+      def put(key, value, opts), do: Repo.put(__MODULE__, key, value, opts)
 
       # Range Operations
 
       @impl true
-      def get_range(t, subspace_or_range, opts \\ [])
-      def get_range(t, %Subspace{} = subspace, opts), do: get_range(t, Subspace.range(subspace), opts)
-      def get_range(t, {start_key, end_key}, opts), do: Repo.get_range(t, start_key, end_key, opts)
-      def get_range(t, start_key, end_key), do: Repo.get_range(t, start_key, end_key, [])
+      def get_range(subspace_or_range, opts \\ [])
+      def get_range(%Subspace{} = subspace, opts), do: get_range(Subspace.range(subspace), opts)
+      def get_range({start_key, end_key}, opts), do: Repo.get_range(__MODULE__, start_key, end_key, opts)
+      def get_range(start_key, end_key), do: Repo.get_range(__MODULE__, start_key, end_key, [])
 
       @impl true
-      defdelegate get_range(t, start_key, end_key, opts), to: Repo
+      def get_range(start_key, end_key, opts), do: Repo.get_range(__MODULE__, start_key, end_key, opts)
 
       @impl true
-      def clear_range(t, subspace_or_range, opts \\ [])
-      def clear_range(t, %Subspace{} = subspace, opts), do: clear_range(t, Subspace.range(subspace), opts)
-      def clear_range(t, {start_key, end_key}, opts), do: Repo.clear_range(t, start_key, end_key, opts)
-      def clear_range(t, start_key, end_key), do: Repo.clear_range(t, start_key, end_key, [])
+      def clear_range(subspace_or_range, opts \\ [])
+      def clear_range(%Subspace{} = subspace, opts), do: clear_range(Subspace.range(subspace), opts)
+      def clear_range({start_key, end_key}, opts), do: Repo.clear_range(__MODULE__, start_key, end_key, opts)
+      def clear_range(start_key, end_key), do: Repo.clear_range(__MODULE__, start_key, end_key, [])
 
       @impl true
-      defdelegate clear_range(t, start_key, end_key, opts), to: Repo
+      def clear_range(start_key, end_key, opts), do: Repo.clear_range(__MODULE__, start_key, end_key, opts)
 
       # Atomic Operations
 
       @impl true
-      def add(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def add(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def add(t, key, value), do: Repo.atomic(t, :add, key, value)
+      def add(key, value), do: Repo.atomic(__MODULE__, :add, key, value)
 
       @impl true
-      def min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def min(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def min(t, key, value), do: Repo.atomic(t, :min, key, value)
+      def min(key, value), do: Repo.atomic(__MODULE__, :min, key, value)
 
       @impl true
-      def max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def max(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def max(t, key, value), do: Repo.atomic(t, :max, key, value)
+      def max(key, value), do: Repo.atomic(__MODULE__, :max, key, value)
 
       @impl true
-      def bit_and(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def bit_and(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_and(t, key, value), do: Repo.atomic(t, :bit_and, key, value)
+      def bit_and(key, value), do: Repo.atomic(__MODULE__, :bit_and, key, value)
 
       @impl true
-      def bit_or(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def bit_or(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_or(t, key, value), do: Repo.atomic(t, :bit_or, key, value)
+      def bit_or(key, value), do: Repo.atomic(__MODULE__, :bit_or, key, value)
 
       @impl true
-      def bit_xor(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def bit_xor(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def bit_xor(t, key, value), do: Repo.atomic(t, :bit_xor, key, value)
+      def bit_xor(key, value), do: Repo.atomic(__MODULE__, :bit_xor, key, value)
 
       @impl true
-      def byte_min(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def byte_min(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def byte_min(t, key, value), do: Repo.atomic(t, :byte_min, key, value)
+      def byte_min(key, value), do: Repo.atomic(__MODULE__, :byte_min, key, value)
 
       @impl true
-      def byte_max(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def byte_max(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def byte_max(t, key, value), do: Repo.atomic(t, :byte_max, key, value)
+      def byte_max(key, value), do: Repo.atomic(__MODULE__, :byte_max, key, value)
 
       @impl true
-      def append_if_fits(t, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def append_if_fits(key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      def append_if_fits(t, key, value), do: Repo.atomic(t, :append_if_fits, key, value)
+      def append_if_fits(key, value), do: Repo.atomic(__MODULE__, :append_if_fits, key, value)
 
       @impl true
-      def compare_and_clear(t, key, expected)
+      def compare_and_clear(key, expected)
           when not is_binary(key) or not is_binary(expected) or byte_size(key) > 16_384,
           do: raise(ArgumentError, "key must be binary and no larger than 16KiB, expected must be binary")
 
-      def compare_and_clear(t, key, expected), do: Repo.atomic(t, :compare_and_clear, key, expected)
+      def compare_and_clear(key, expected), do: Repo.atomic(__MODULE__, :compare_and_clear, key, expected)
 
       @impl true
-      def atomic(t, op, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
+      def atomic(op, _key, _value)
+          when op not in [
+                 :add,
+                 :min,
+                 :max,
+                 :bit_and,
+                 :bit_or,
+                 :bit_xor,
+                 :byte_min,
+                 :byte_max,
+                 :append_if_fits,
+                 :compare_and_clear
+               ],
+          do: raise(ArgumentError, "Invalid operation; #{op}")
+
+      def atomic(op, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")
 
-      defdelegate atomic(t, op, key, value), to: Repo
+      def atomic(op, key, value), do: Repo.atomic(__MODULE__, op, key, value)
     end
   end
 end

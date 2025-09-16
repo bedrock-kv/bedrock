@@ -7,7 +7,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -105,25 +105,25 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
       MockRepo
       # Version checks (2 calls)
-      |> expect(:get, fn :mock_txn, ^version_key -> current_version end)
-      |> expect(:get, fn :mock_txn, ^version_key -> current_version end)
+      |> expect(:get, fn ^version_key -> current_version end)
+      |> expect(:get, fn ^version_key -> current_version end)
       # Source exists check
-      |> expect(:get, fn :mock_txn, ^old_key -> source_data end)
+      |> expect(:get, fn ^old_key -> source_data end)
       # Destination doesn't exist check
-      |> expect(:get, fn :mock_txn, ^new_key -> nil end)
+      |> expect(:get, fn ^new_key -> nil end)
       # Source fetch for move operation (gets called again)
-      |> expect(:get, fn :mock_txn, ^old_key -> source_data end)
+      |> expect(:get, fn ^old_key -> source_data end)
       # Range scan to get source + all children
-      |> expect(:get_range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+      |> expect(:get_range, fn {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
         [{old_key, source_data}]
       end)
       # Put destination directory
-      |> expect(:put, fn :mock_txn, ^new_key, value ->
+      |> expect(:put, fn ^new_key, value ->
         assert {<<0, 42>>, ""} == Bedrock.Key.unpack(value)
         :ok
       end)
       # Clear source range
-      |> expect(:clear_range, fn :mock_txn, {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+      |> expect(:clear_range, fn {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
         :ok
       end)
 
@@ -134,7 +134,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
     test "list operation checks version for reads" do
       MockRepo
       |> expect_version_check()
-      |> expect(:get_range, fn :mock_txn, _range -> [] end)
+      |> expect(:get_range, fn _range -> [] end)
 
       layer = Directory.root(MockRepo)
       assert {:ok, []} = Directory.list(layer, [])

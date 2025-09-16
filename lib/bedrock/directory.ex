@@ -250,7 +250,7 @@ defmodule Bedrock.Directory do
   def create(%Layer{repo: repo} = layer, path, opts) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_create_root} do
-      repo.transact(fn txn -> do_create(layer, txn, path, opts) end)
+      repo.transact(fn -> do_create(layer, nil, path, opts) end)
     end
   end
 
@@ -274,7 +274,7 @@ defmodule Bedrock.Directory do
   def open(%Layer{repo: repo} = layer, path) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_open_root} do
-      repo.transact(fn txn -> do_open(layer, txn, path) end)
+      repo.transact(fn -> do_open(layer, nil, path) end)
     end
   end
 
@@ -306,10 +306,10 @@ defmodule Bedrock.Directory do
   def create_or_open(%Layer{repo: repo} = layer, path, opts) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_create_or_open_root} do
-      repo.transact(fn txn ->
-        case do_open(layer, txn, path) do
+      repo.transact(fn ->
+        case do_open(layer, nil, path) do
           {:ok, node} -> {:ok, node}
-          {:error, :directory_does_not_exist} -> do_create(layer, txn, path, opts)
+          {:error, :directory_does_not_exist} -> do_create(layer, nil, path, opts)
         end
       end)
     end
@@ -334,7 +334,7 @@ defmodule Bedrock.Directory do
   end
 
   def move(%Layer{repo: repo} = layer, old_path, new_path),
-    do: repo.transact(fn txn -> do_move(layer, txn, old_path, new_path) end)
+    do: repo.transact(fn -> do_move(layer, nil, old_path, new_path) end)
 
   @doc """
   Removes a directory and all its subdirectories.
@@ -349,7 +349,7 @@ defmodule Bedrock.Directory do
     remove(layer, path)
   end
 
-  def remove(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_remove(layer, txn, path) end)
+  def remove(%Layer{repo: repo} = layer, path), do: repo.transact(fn -> do_remove(layer, nil, path) end)
 
   @doc """
   Removes a directory if it exists.
@@ -365,8 +365,8 @@ defmodule Bedrock.Directory do
   end
 
   def remove_if_exists(%Layer{repo: repo} = layer, path) do
-    repo.transact(fn txn ->
-      case do_remove(layer, txn, path) do
+    repo.transact(fn ->
+      case do_remove(layer, nil, path) do
         :ok -> :ok
         {:error, :directory_does_not_exist} -> :ok
         {:error, :cannot_remove_root} = error -> error
@@ -390,7 +390,7 @@ defmodule Bedrock.Directory do
     list(layer, path)
   end
 
-  def list(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_list(layer, txn, path) end)
+  def list(%Layer{repo: repo} = layer, path), do: repo.transact(fn -> do_list(layer, nil, path) end)
 
   @doc """
   Checks if a directory exists at the given path.
@@ -403,7 +403,7 @@ defmodule Bedrock.Directory do
     exists?(layer, path)
   end
 
-  def exists?(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_exists?(layer, txn, path) end)
+  def exists?(%Layer{repo: repo} = layer, path), do: repo.transact(fn -> do_exists?(layer, path) end)
 
   @doc """
   Returns the path of this directory as a list of strings.
@@ -554,11 +554,11 @@ defmodule Bedrock.Directory do
 
   # Version management implementation
 
-  defp check_version(%Layer{repo: repo} = layer, txn, allow_writes) do
+  defp check_version(%Layer{repo: repo} = layer, allow_writes) do
     # Version key is at the root of the node subspace
     version_key = Subspace.pack(layer.node_subspace, [@version_key])
 
-    case repo.get(txn, version_key) do
+    case repo.get(version_key) do
       nil ->
         # No version stored yet - writing operations will initialize
         :ok
@@ -569,20 +569,20 @@ defmodule Bedrock.Directory do
     end
   end
 
-  defp ensure_version_initialized(%Layer{repo: repo} = layer, txn) do
+  defp ensure_version_initialized(%Layer{repo: repo} = layer, _txn) do
     # Version key is at the root of the node subspace
     version_key = Subspace.pack(layer.node_subspace, [@version_key])
 
-    case repo.get(txn, version_key) do
-      nil -> init_version(layer, txn)
+    case repo.get(version_key) do
+      nil -> init_version(layer)
       _ -> :ok
     end
   end
 
-  defp init_version(%Layer{repo: repo} = layer, txn) do
+  defp init_version(%Layer{repo: repo} = layer) do
     version_key = Subspace.pack(layer.node_subspace, [@version_key])
     version_binary = encode_version(@layer_version)
-    repo.put(txn, version_key, version_binary)
+    repo.put(version_key, version_binary)
     :ok
   end
 
@@ -600,7 +600,7 @@ defmodule Bedrock.Directory do
 
   # Prefix collision detection
 
-  def is_prefix_free?(%Layer{repo: repo, content_subspace: content_subspace}, txn, prefix) when is_binary(prefix) do
+  def is_prefix_free?(%Layer{repo: repo, content_subspace: content_subspace}, _txn, prefix) when is_binary(prefix) do
     # Check if this prefix would collide with any existing keys
     # A prefix is free if:
     # 1. Not a reserved prefix
@@ -616,11 +616,11 @@ defmodule Bedrock.Directory do
       full_prefix = Subspace.key(content_subspace) <> prefix
       prefix_range = KeyRange.from_prefix(full_prefix)
 
-      case repo.get_range(txn, prefix_range, limit: 1) do
+      case repo.get_range(prefix_range, limit: 1) do
         [] ->
           # No keys start with our prefix, now check the reverse
           # Are there any existing keys that our prefix starts with?
-          check_prefix_ancestors(repo, txn, content_subspace, prefix)
+          check_prefix_ancestors(repo, content_subspace, prefix)
 
         _ ->
           # Found keys that start with our prefix
@@ -636,10 +636,10 @@ defmodule Bedrock.Directory do
     end)
   end
 
-  defp check_prefix_ancestors(_repo, _txn, _content_subspace, <<>>), do: true
-  defp check_prefix_ancestors(_repo, _txn, _content_subspace, <<_>>), do: true
+  defp check_prefix_ancestors(_repo, _content_subspace, <<>>), do: true
+  defp check_prefix_ancestors(_repo, _content_subspace, <<_>>), do: true
 
-  defp check_prefix_ancestors(repo, txn, content_subspace, prefix) when byte_size(prefix) > 1 do
+  defp check_prefix_ancestors(repo, content_subspace, prefix) when byte_size(prefix) > 1 do
     # Check each prefix of our prefix to see if it exists as a key
     # For example, if prefix is <<1, 2, 3>>, check <<1>>, <<1, 2>>
     prefix_size = byte_size(prefix)
@@ -649,7 +649,7 @@ defmodule Bedrock.Directory do
       key = Subspace.key(content_subspace) <> ancestor_prefix
 
       # If this exact key exists, we have a collision
-      txn |> repo.get(key) |> is_nil()
+      key |> repo.get() |> is_nil()
     end)
   end
 
@@ -658,13 +658,13 @@ defmodule Bedrock.Directory do
   def do_create(%Layer{repo: repo} = layer, txn, path, opts) do
     key = node_key(layer, path)
 
-    with :ok <- check_version(layer, txn, true),
+    with :ok <- check_version(layer, true),
          :ok <- ensure_version_initialized(layer, txn) do
-      existing_value = repo.get(txn, key)
+      existing_value = repo.get(key)
 
       case existing_value do
         nil ->
-          if parent_exists?(layer, txn, path) do
+          if parent_exists?(layer, path) do
             create_directory(layer, txn, path, key, opts)
           else
             {:error, :parent_directory_does_not_exist}
@@ -686,7 +686,7 @@ defmodule Bedrock.Directory do
 
       # Store the directory metadata
       encoded_value = encode_node_value(prefix, layer_id, version, metadata)
-      repo.put(txn, key, encoded_value)
+      repo.put(key, encoded_value)
 
       {:ok,
        %Node{
@@ -716,11 +716,11 @@ defmodule Bedrock.Directory do
     end
   end
 
-  def do_open(%Layer{repo: repo} = layer, txn, path) do
+  def do_open(%Layer{repo: repo} = layer, _txn, path) do
     with true <- not root?(path) || {:error, :cannot_open_root},
          key = node_key(layer, path),
-         {:ok, value} <- fetch_directory(repo, txn, key),
-         :ok <- check_version(layer, txn, false) do
+         {:ok, value} <- fetch_directory(repo, key),
+         :ok <- check_version(layer, false) do
       value
       |> decode_node_value()
       |> case do
@@ -747,30 +747,30 @@ defmodule Bedrock.Directory do
     end
   end
 
-  defp fetch_directory(repo, txn, key) do
-    case repo.get(txn, key) do
+  defp fetch_directory(repo, key) do
+    case repo.get(key) do
       nil -> {:error, :directory_does_not_exist}
       value -> {:ok, value}
     end
   end
 
-  def do_exists?(%Layer{repo: repo} = layer, txn, path) do
+  def do_exists?(%Layer{repo: repo} = layer, path) do
     # Root directory always exists (it's virtual)
     if root?(path) do
       true
     else
       key = node_key(layer, path)
 
-      case repo.get(txn, key) do
+      case repo.get(key) do
         nil -> false
         _value -> true
       end
     end
   end
 
-  def do_list(%Layer{repo: repo} = layer, txn, path) do
+  def do_list(%Layer{repo: repo} = layer, _txn, path) do
     # Check version compatibility for reads
-    case check_version(layer, txn, false) do
+    case check_version(layer, false) do
       {:error, _} = error ->
         error
 
@@ -779,8 +779,9 @@ defmodule Bedrock.Directory do
         prefix_size = byte_size(prefix_key)
 
         children =
-          txn
-          |> repo.get_range(KeyRange.from_prefix(prefix_key))
+          prefix_key
+          |> KeyRange.from_prefix()
+          |> repo.get_range()
           |> Stream.map(&extract_child_name(&1, prefix_size))
           |> Stream.reject(&is_nil/1)
           |> Enum.uniq()
@@ -804,13 +805,13 @@ defmodule Bedrock.Directory do
 
   def do_remove(%Layer{repo: repo} = layer, txn, path) do
     with true <- not root?(path) || {:error, :cannot_remove_root},
-         :ok <- check_version(layer, txn, true),
+         :ok <- check_version(layer, true),
          :ok <- ensure_version_initialized(layer, txn),
-         true <- do_exists?(layer, txn, path) || {:error, :directory_does_not_exist} do
+         true <- do_exists?(layer, path) || {:error, :directory_does_not_exist} do
       layer
       |> node_key(path)
       |> KeyRange.from_prefix()
-      |> then(&repo.clear_range(txn, &1))
+      |> repo.clear_range()
 
       :ok
     end
@@ -820,34 +821,34 @@ defmodule Bedrock.Directory do
     with true <- not root?(old_path) || {:error, :cannot_move_root},
          true <- not root?(new_path) || {:error, :cannot_move_to_root},
          true <- not List.starts_with?(new_path, old_path) || {:error, :cannot_move_to_subdirectory},
-         :ok <- check_version(layer, txn, true),
+         :ok <- check_version(layer, true),
          :ok <- ensure_version_initialized(layer, txn),
-         true <- do_exists?(layer, txn, old_path) || {:error, :directory_does_not_exist},
-         true <- not do_exists?(layer, txn, new_path) || {:error, :directory_already_exists},
-         true <- parent_exists?(layer, txn, new_path) || {:error, :parent_directory_does_not_exist} do
+         true <- do_exists?(layer, old_path) || {:error, :directory_does_not_exist},
+         true <- not do_exists?(layer, new_path) || {:error, :directory_already_exists},
+         true <- parent_exists?(layer, new_path) || {:error, :parent_directory_does_not_exist} do
       do_move_recursive(layer, txn, old_path, new_path)
     end
   end
 
-  defp parent_exists?(_layer, _txn, []), do: true
-  defp parent_exists?(layer, txn, path), do: do_exists?(layer, txn, Enum.drop(path, -1))
+  defp parent_exists?(_layer, []), do: true
+  defp parent_exists?(layer, path), do: do_exists?(layer, Enum.drop(path, -1))
 
-  defp do_move_recursive(%Layer{repo: repo} = layer, txn, old_path, new_path) do
+  defp do_move_recursive(%Layer{repo: repo} = layer, _txn, old_path, new_path) do
     old_key = node_key(layer, old_path)
 
-    with {:ok, value} <- fetch_directory(repo, txn, old_key),
+    with {:ok, value} <- fetch_directory(repo, old_key),
          :ok <- check_not_partition(value) do
       key_range = KeyRange.from_prefix(old_key)
 
-      txn
-      |> repo.get_range(key_range)
+      key_range
+      |> repo.get_range()
       |> Enum.each(fn {old_key, value} ->
         relative_path = extract_relative_path(layer, old_key, old_path)
         new_key = build_moved_key(layer, new_path, relative_path)
-        repo.put(txn, new_key, value)
+        repo.put(new_key, value)
       end)
 
-      repo.clear_range(txn, key_range)
+      repo.clear_range(key_range)
       :ok
     end
   end

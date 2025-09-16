@@ -74,9 +74,8 @@ We're now ready to use the database. First, let's write a key-value pair.
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-Repo.transact(fn tx ->
-  Repo.put(tx, "hello", "world")
-  :ok
+Repo.transact(fn ->
+  Repo.put("hello", "world")
 end)
 ```
 
@@ -85,8 +84,8 @@ When this command returns without exception, the modification is durably stored 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-{:ok, result} = Repo.transact(fn tx ->
-  {:ok, Repo.get(tx, "hello")}
+{:ok, result} = Repo.transact(fn ->
+  {:ok, Repo.get("hello")}
 end)
 
 "hello " <> result
@@ -166,11 +165,10 @@ defmodule Scheduling1 do
   @total_seats_available 100
 
   def add_class(course, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
-      Repo.put(tx, key, value)
-      :ok
+      Repo.put(key, value)
     end)
   end
 end
@@ -189,6 +187,7 @@ levels = ["intro", "for dummies", "remedial", "101", "201", "301", "mastery", "l
 types = ["chem", "bio", "cs", "geometry", "calc", "alg", "film", "music", "art", "dance"]
 times = for h <- 2..20, do: "#{h}:00"
 class_names = for i <- times, t <- types, l <- levels, do: "#{i} #{t} #{l}"
+
 "Created #{length(class_names)} sample classes"
 ```
 
@@ -206,9 +205,9 @@ defmodule Scheduling2 do
     # Get the range for the scheduling directory
     scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
 
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       # Clear the directory
-      Repo.clear_range(tx, scheduling_range)
+      Repo.clear_range(scheduling_range)
 
       # Add all classes
       for class_name <- class_names do
@@ -220,11 +219,10 @@ defmodule Scheduling2 do
   end
 
   def add_class(course, class) do
-    Repo.transact(fn tx -> 
+    Repo.transact(fn ->
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
-      Repo.put(tx, key, value)
-      :ok
+      Repo.put(key, value)
     end)
   end
 end
@@ -247,10 +245,9 @@ defmodule Scheduling3 do
   def available_classes(course) do
     course_range = Subspace.range(course)
 
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       classes =
-        tx
-        |> Repo.get_range(course_range)
+        Repo.get_range(course_range)
         |> Stream.map(fn {encoded_class, _v} ->
           Subspace.unpack(course, encoded_class)
         end)
@@ -281,18 +278,16 @@ We finally get to the crucial functions. A student has decided on a class (by na
 ```elixir
 defmodule Scheduling4 do
   def signup(attends, student, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       rec = Subspace.pack(attends, {student, class})
-      Repo.put(tx, rec, <<>>)
-      :ok
+      Repo.put(rec, <<>>)
     end)
   end
 
   def drop(attends, student, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       rec = Subspace.pack(attends, {student, class})
-      Repo.clear(tx, rec)
-      :ok
+      Repo.clear(rec)
     end)
   end
 end
@@ -322,24 +317,23 @@ defmodule Scheduling do
   @total_seats_available 100
 
   def signup(attends, course, student, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       rec = Subspace.pack(attends, {student, class})
 
-      case Repo.get(tx, rec) do
+      case Repo.get(rec) do
         nil ->
           # Not signed up yet, proceed with signup
           class_key = Subspace.pack(course, class)
-          seats_data = Repo.get(tx, class_key)
+          seats_data = Repo.get(class_key)
           seats_left = Key.unpack(seats_data)
 
           if seats_left == 0 do
             {:error, "No remaining seats"}
           else
             # Decrement seats and record signup
-            Repo.put(tx, class_key, Key.pack(seats_left - 1))
-            Repo.put(tx, rec, <<>>)
-            :ok
-          end 
+            Repo.put(class_key, Key.pack(seats_left - 1))
+            Repo.put(rec, <<>>)
+          end
 
         _existing ->
           # Already signed up
@@ -349,10 +343,10 @@ defmodule Scheduling do
   end
 
   def drop(attends, course, student, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       rec = Subspace.pack(attends, {student, class})
 
-      case Repo.get(tx, rec) do
+      case Repo.get(rec) do
         nil ->
           # Not taking this class
           :ok
@@ -360,12 +354,11 @@ defmodule Scheduling do
         _existing ->
           # Increment seats and remove signup
           class_key = Subspace.pack(course, class)
-          seats_data = Repo.get(tx, class_key)
+          seats_data = Repo.get(class_key)
           seats_left = Key.unpack(seats_data)
 
-          Repo.put(tx, class_key, Key.pack(seats_left + 1))
-          Repo.clear(tx, rec)
-          :ok
+          Repo.put(class_key, Key.pack(seats_left + 1))
+          Repo.clear(rec)
       end
     end)
   end
@@ -373,9 +366,8 @@ defmodule Scheduling do
   def available_classes(course) do
     course_range = Subspace.range(course)
 
-    Repo.transact(fn tx ->
-      classes = tx 
-        |> Repo.get_range(course_range)
+    Repo.transact(fn ->
+      classes = Repo.get_range(course_range)
         |> Stream.map(fn {packed_class, packed_seats} ->
           class = Subspace.unpack(course, packed_class)
           availability = Key.unpack(packed_seats)
@@ -391,9 +383,9 @@ defmodule Scheduling do
   def init(scheduling, course, class_names) do
     scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
 
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       # Clear the directory
-      Repo.clear_range(tx, scheduling_range)
+      Repo.clear_range(scheduling_range)
 
       # Add all classes
       for class_name <- class_names do
@@ -405,11 +397,10 @@ defmodule Scheduling do
   end
 
   def add_class(course, class) do
-    Repo.transact(fn tx ->
+    Repo.transact(fn ->
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
-      Repo.put(tx, key, value)
-      :ok
+      Repo.put(key, value)
     end)
   end
 end
@@ -436,9 +427,9 @@ Scheduling.init(scheduling, course, class_names)
 # Select the first class that's not completely full
 popular_class =
   Scheduling.available_classes(course)
-  |> then(fn {:ok, classes} -> classes |> hd() end)
-
-
+  |> elem(1) 
+  |> hd()
+  
 "Popular class: #{popular_class}"
 ```
 
@@ -485,7 +476,8 @@ Let's try it out with some aggressive concurrency:
 ```elixir
 next_popular_class =
   Scheduling.available_classes(course)
-  |> then(fn {:ok, classes} -> classes |> hd() end)
+  |> elem(1) 
+  |> hd()
 
 "Next popular class: #{next_popular_class}"
 ```

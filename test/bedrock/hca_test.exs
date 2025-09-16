@@ -31,23 +31,23 @@ defmodule Bedrock.HighContentionAllocatorTest do
 
   defp expect_base_allocation_calls(mock, hca, window_start, count, candidate, available) do
     mock
-    |> expect(:select, fn :mock_txn, %KeySelector{} = selector ->
+    |> expect(:select, fn %KeySelector{} = selector ->
       assert selector.key == hca.counters_subspace <> <<0xFF>>
       nil
     end)
-    |> expect(:atomic, fn :mock_txn, :add, key, <<1::64-little>> ->
+    |> expect(:atomic, fn :add, key, <<1::64-little>> ->
       assert_counter_key(key, hca, window_start)
       :mock_txn
     end)
-    |> expect(:get, fn :mock_txn, key, [snapshot: true] ->
+    |> expect(:get, fn key, [snapshot: true] ->
       assert_counter_key(key, hca, window_start)
       <<count::64-little>>
     end)
-    |> expect(:select, fn :mock_txn, %KeySelector{} = selector ->
+    |> expect(:select, fn %KeySelector{} = selector ->
       assert selector.key == hca.counters_subspace <> <<0xFF>>
       nil
     end)
-    |> expect(:get, fn :mock_txn, candidate_key, [snapshot: true] ->
+    |> expect(:get, fn candidate_key, [snapshot: true] ->
       assert_recent_key(candidate_key, hca, candidate)
       if available, do: nil, else: "taken"
     end)
@@ -55,11 +55,11 @@ defmodule Bedrock.HighContentionAllocatorTest do
 
   defp expect_availability_dependent_calls(mock, hca, candidate, true) do
     mock
-    |> expect(:put, fn :mock_txn, candidate_key, "", [no_write_conflict: true] ->
+    |> expect(:put, fn candidate_key, "", [no_write_conflict: true] ->
       assert_recent_key(candidate_key, hca, candidate)
       :mock_txn
     end)
-    |> expect(:add_write_conflict_range, fn :mock_txn, start_key, end_key ->
+    |> expect(:add_write_conflict_range, fn start_key, end_key ->
       assert start_key == encode_recent_key(hca, candidate)
       assert end_key == start_key <> <<0>>
       :mock_txn
@@ -103,8 +103,8 @@ defmodule Bedrock.HighContentionAllocatorTest do
       # 2. range to count window entries
 
       MockRepo
-      |> expect(:transact, fn fun -> fun.(:mock_txn) end)
-      |> expect(:select, fn :mock_txn, %KeySelector{} = selector ->
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} = selector ->
         # Verify selector is looking for last counter
         assert selector.key == "test_empty" <> <<0, 255>>
         assert selector.or_equal == false
@@ -112,7 +112,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
         # No counters yet
         nil
       end)
-      |> expect(:get_range, fn :mock_txn, start_key, end_key ->
+      |> expect(:get_range, fn start_key, end_key ->
         # Verify range query parameters for counter counting in stats
         assert start_key == "test_empty" <> <<0>>
         assert end_key == "test_empty" <> <<0, 255>>
@@ -132,7 +132,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
       hca = HighContentionAllocator.new(MockRepo, "test_alloc", random_fn: deterministic_random_fn(42))
 
       MockRepo
-      |> expect(:transact, fn fun -> fun.(:mock_txn) end)
+      |> expect(:transact, fn fun -> fun.() end)
       |> expect_allocation_sequence(hca, 0, 1, expected_candidate)
 
       assert {:ok, encoded_result} = HighContentionAllocator.allocate(hca)
@@ -150,7 +150,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
       hca = HighContentionAllocator.new(MockRepo, "test_many", random_fn: deterministic_random_fn([10, 25]))
 
       MockRepo
-      |> expect(:transact, 2, fn fun -> fun.(:mock_txn) end)
+      |> expect(:transact, 2, fn fun -> fun.() end)
       |> expect_allocation_sequence(hca, 0, 1, first_candidate)
       |> expect_allocation_sequence(hca, 0, 2, second_candidate)
 
@@ -172,7 +172,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
       hca = HighContentionAllocator.new(MockRepo, "test_collision", random_fn: deterministic_random_fn([15, 30]))
 
       MockRepo
-      |> expect(:transact, fn fun -> fun.(:mock_txn) end)
+      |> expect(:transact, fn fun -> fun.() end)
       |> expect_allocation_sequence(hca, 0, 1, first_candidate, false)
       |> expect_allocation_sequence(hca, 0, 2, retry_candidate)
 
@@ -195,7 +195,7 @@ defmodule Bedrock.HighContentionAllocatorTest do
       hca = HighContentionAllocator.new(MockRepo, "test_random", random_fn: deterministic_random_fn(1))
 
       MockRepo
-      |> expect(:transact, fn fun -> fun.(:mock_txn) end)
+      |> expect(:transact, fn fun -> fun.() end)
       |> expect_allocation_sequence(hca, 0, 1, expected_candidate)
 
       assert {:ok, encoded_result} = HighContentionAllocator.allocate(hca)
@@ -216,9 +216,9 @@ defmodule Bedrock.HighContentionAllocatorTest do
       # This is verified through the range queries in stats
 
       MockRepo
-      |> expect(:transact, fn fun -> fun.(:mock_txn) end)
-      |> expect(:select, fn :mock_txn, %KeySelector{} -> nil end)
-      |> expect(:get_range, fn :mock_txn, start_key, end_key ->
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:get_range, fn start_key, end_key ->
         # Verify counter range query in stats
         assert start_key == "test" <> <<0>>
         assert end_key == "test" <> <<0, 255>>

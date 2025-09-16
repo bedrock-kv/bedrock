@@ -7,7 +7,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -17,7 +17,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
   defp expect_range_query(repo, path, results) do
     expected_range = Bedrock.KeyRange.from_prefix(build_directory_key(path))
 
-    expect(repo, :get_range, fn :mock_txn, ^expected_range -> results end)
+    expect(repo, :get_range, fn ^expected_range -> results end)
   end
 
   describe "root directory restrictions" do
@@ -47,8 +47,8 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
 
     test "can create root directory" do
       # With the new API, root directory is automatically created with empty prefix
-      stub(MockRepo, :get, fn :mock_txn, _key -> nil end)
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :get, fn _key -> nil end)
+      stub(MockRepo, :put, fn _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo)
 
@@ -60,7 +60,7 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
       root_data = Bedrock.Key.pack({<<>>, ""})
       root_key = build_directory_key([])
 
-      stub(MockRepo, :get, fn :mock_txn, ^root_key -> root_data end)
+      stub(MockRepo, :get, fn ^root_key -> root_data end)
       layer = Directory.root(MockRepo)
 
       assert Directory.exists?(layer, []) == true

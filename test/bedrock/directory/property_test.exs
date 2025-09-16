@@ -8,7 +8,7 @@ defmodule Bedrock.Directory.PropertyTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -61,10 +61,10 @@ defmodule Bedrock.Directory.PropertyTest do
           ) do
       # Use stubs to avoid signature mismatches
       stub(MockRepo, :get, fn
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
+        <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
           nil
 
-        :mock_txn, key ->
+        key ->
           cond do
             key == build_directory_key(path) -> nil
             key == build_directory_key([]) -> Bedrock.Key.pack({<<>>, ""})
@@ -73,7 +73,7 @@ defmodule Bedrock.Directory.PropertyTest do
           end
       end)
 
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :put, fn _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, :rand.uniform(255)>> end)
 
@@ -122,10 +122,10 @@ defmodule Bedrock.Directory.PropertyTest do
 
       # Use stubs to avoid signature mismatches
       stub(MockRepo, :get, fn
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
+        <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
           nil
 
-        :mock_txn, key ->
+        key ->
           cond do
             # Root directory always exists
             key == build_directory_key([]) ->
@@ -159,7 +159,7 @@ defmodule Bedrock.Directory.PropertyTest do
           end
       end)
 
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :put, fn _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
 
@@ -215,29 +215,29 @@ defmodule Bedrock.Directory.PropertyTest do
 
       stub(MockRepo, :get, fn
         # Version checks
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
+        <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
           nil
 
         # Directory existence checks and open operations
-        :mock_txn, key when key == expected_directory_key ->
+        key when key == expected_directory_key ->
           exists = :atomics.get(directory_exists, 1)
           if exists == 1, do: stored_value
 
         # Parent (root) check
-        :mock_txn, ^root_key ->
+        ^root_key ->
           Bedrock.Key.pack({<<>>, ""})
 
-        :mock_txn, _key ->
+        _key ->
           nil
       end)
 
       stub(MockRepo, :put, fn
-        :mock_txn, key, _value when key == expected_directory_key ->
+        key, _value when key == expected_directory_key ->
           # Mark directory as existing after put
           :atomics.put(directory_exists, 1, 1)
           :ok
 
-        :mock_txn, _key, _value ->
+        _key, _value ->
           :ok
       end)
 

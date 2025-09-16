@@ -324,7 +324,7 @@ alias Example.Repo
 
 ```elixir
 # Create accounts with different types using subspace organization
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   {:ok, jim_balance} = Bank.create_account(tx, "jim", 1000, type: "checking")
   {:ok, tina_balance} = Bank.create_account(tx, "tina", 2500, type: "savings")
   {:ok, alice_balance} = Bank.create_account(tx, "alice", 750, type: "checking")
@@ -344,7 +344,7 @@ end)
 
 ```elixir
 # Transfer money - this will create transaction history in the transactions subspace
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   case Bank.move_money(tx, 250, "tina", "jim") do
     {:ok, tina_balance, jim_balance} ->
       IO.puts("Transfer successful!")
@@ -362,7 +362,7 @@ end)
 
 ```elixir
 # Demonstrate subspace-based account information retrieval
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   IO.puts("=== Account Information ===")
 
   ["jim", "tina", "alice", "bob"]
@@ -375,6 +375,8 @@ Repo.transaction(fn tx ->
         IO.puts("#{String.capitalize(account)}: Account not found")
     end
   end)
+
+  :ok
 end)
 ```
 
@@ -382,7 +384,7 @@ end)
 
 ```elixir
 # List all accounts using subspace range operations
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   case Bank.list_accounts(tx) do
     {:ok, accounts} ->
       IO.puts("=== All Accounts (Subspace Range Query) ===")
@@ -398,7 +400,7 @@ end)
 
 ```elixir
 # Get transaction history for an account - demonstrates transaction subspace
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   IO.puts("=== Transaction History for Jim ===")
   case Bank.get_transaction_history(tx, "jim") do
     {:ok, transactions} ->
@@ -423,7 +425,7 @@ end)
 
 ```elixir
 # List accounts by type - demonstrates metadata subspace usage
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   IO.puts("=== Checking Accounts ===")
   case Bank.list_accounts_by_type(tx, "checking") do
     {:ok, checking_accounts} ->
@@ -446,7 +448,7 @@ end)
 
 ```elixir
 # Enhanced bank summary with account type breakdown
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   case Bank.account_summary(tx) do
     {:ok, summary} ->
       IO.puts("=== Enhanced Bank Summary ===")
@@ -468,7 +470,7 @@ end)
 
 ```elixir
 # Demonstrate atomic multi-subspace operations with rollback
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   IO.puts("=== Testing Multi-Subspace Rollback ===")
 
   # This transaction will create data across all three subspaces, then roll back
@@ -483,22 +485,24 @@ Repo.transaction(fn tx ->
   IO.puts("Transaction history entries: #{history |> Enum.count()}")
 
   # Rollback by returning error
-  Repo.rollback("Intentionally rolled back to demonstrate atomicity")
+  {:error, "Intentionally rolled back to demonstrate atomicity"}
 end)
 ```
 
 ```elixir
 # Verify rollback worked - temp_user should not exist
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   case Bank.get_account_info(tx, "temp_user") do
     {:ok, _info} ->
       IO.puts("❌ Rollback failed - temp_user still exists")
+      :ok
     {:error, :account_not_found} ->
       IO.puts("✅ Rollback successful - temp_user was properly removed")
 
       # Also verify Jim's balance wasn't affected
       {:ok, jim_info} = Bank.get_account_info(tx, "jim")
       IO.puts("Jim's balance unchanged: $#{jim_info.balance}")
+      :ok
   end
 end)
 ```

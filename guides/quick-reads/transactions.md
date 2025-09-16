@@ -26,9 +26,10 @@ Bedrock provides strict ACID guarantees using MVCC[^1] with per-transaction proc
 
 ```elixir
 # Basic transaction
-Repo.transaction(fn repo ->
+Repo.transact(fn repo ->
   value = Repo.fetch(repo, key)      # Read at consistent snapshot
   Repo.put(repo, key, new_value)     # Write locally, commit later
+  :ok
 end)
 
 # Read-only snapshot (faster, no commit phase)
@@ -40,13 +41,15 @@ end)
 ## Nested Transaction Usage
 
 ```elixir
-Repo.transaction(fn repo ->
+Repo.transact(fn repo ->
   Repo.put(repo, :outer, "value")
-  
-  Repo.transaction(fn inner ->
+
+  Repo.transact(fn inner ->
     Repo.fetch(inner, :outer)  # Sees parent writes
     Repo.put(inner, :inner, "nested")
+    :ok
   end)  # Local merge, no network traffic
+  :ok
 end)  # Only this commits to distributed system
 ```
 

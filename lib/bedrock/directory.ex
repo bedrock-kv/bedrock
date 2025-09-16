@@ -250,7 +250,7 @@ defmodule Bedrock.Directory do
   def create(%Layer{repo: repo} = layer, path, opts) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_create_root} do
-      repo.transaction(fn txn -> do_create(layer, txn, path, opts) end)
+      repo.transact(fn txn -> do_create(layer, txn, path, opts) end)
     end
   end
 
@@ -274,7 +274,7 @@ defmodule Bedrock.Directory do
   def open(%Layer{repo: repo} = layer, path) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_open_root} do
-      repo.transaction(fn txn -> do_open(layer, txn, path) end)
+      repo.transact(fn txn -> do_open(layer, txn, path) end)
     end
   end
 
@@ -306,7 +306,7 @@ defmodule Bedrock.Directory do
   def create_or_open(%Layer{repo: repo} = layer, path, opts) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_create_or_open_root} do
-      repo.transaction(fn txn ->
+      repo.transact(fn txn ->
         case do_open(layer, txn, path) do
           {:ok, node} -> {:ok, node}
           {:error, :directory_does_not_exist} -> do_create(layer, txn, path, opts)
@@ -334,7 +334,7 @@ defmodule Bedrock.Directory do
   end
 
   def move(%Layer{repo: repo} = layer, old_path, new_path),
-    do: repo.transaction(fn txn -> do_move(layer, txn, old_path, new_path) end)
+    do: repo.transact(fn txn -> do_move(layer, txn, old_path, new_path) end)
 
   @doc """
   Removes a directory and all its subdirectories.
@@ -349,7 +349,7 @@ defmodule Bedrock.Directory do
     remove(layer, path)
   end
 
-  def remove(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_remove(layer, txn, path) end)
+  def remove(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_remove(layer, txn, path) end)
 
   @doc """
   Removes a directory if it exists.
@@ -365,7 +365,7 @@ defmodule Bedrock.Directory do
   end
 
   def remove_if_exists(%Layer{repo: repo} = layer, path) do
-    repo.transaction(fn txn ->
+    repo.transact(fn txn ->
       case do_remove(layer, txn, path) do
         :ok -> :ok
         {:error, :directory_does_not_exist} -> :ok
@@ -390,7 +390,7 @@ defmodule Bedrock.Directory do
     list(layer, path)
   end
 
-  def list(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_list(layer, txn, path) end)
+  def list(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_list(layer, txn, path) end)
 
   @doc """
   Checks if a directory exists at the given path.
@@ -403,7 +403,7 @@ defmodule Bedrock.Directory do
     exists?(layer, path)
   end
 
-  def exists?(%Layer{repo: repo} = layer, path), do: repo.transaction(fn txn -> do_exists?(layer, txn, path) end)
+  def exists?(%Layer{repo: repo} = layer, path), do: repo.transact(fn txn -> do_exists?(layer, txn, path) end)
 
   @doc """
   Returns the path of this directory as a list of strings.

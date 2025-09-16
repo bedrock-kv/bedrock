@@ -9,7 +9,7 @@ defmodule Bedrock.Directory.MoveTest do
   alias Bedrock.KeyRange
 
   setup do
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
     :ok
   end
 

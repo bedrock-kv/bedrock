@@ -74,7 +74,7 @@ We're now ready to use the database. First, let's write a key-value pair.
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-Repo.transaction(fn tx ->
+Repo.transact(fn tx ->
   Repo.put(tx, "hello", "world")
   :ok
 end)
@@ -85,8 +85,8 @@ When this command returns without exception, the modification is durably stored 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-result = Repo.transaction(fn tx ->
-  Repo.get(tx, "hello")
+{:ok, result} = Repo.transact(fn tx ->
+  {:ok, Repo.get(tx, "hello")}
 end)
 
 "hello " <> result
@@ -166,7 +166,7 @@ defmodule Scheduling1 do
   @total_seats_available 100
 
   def add_class(course, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
@@ -176,7 +176,7 @@ defmodule Scheduling1 do
 end
 ```
 
-In the `add_class/2` function, the transaction is automatically handled by `Repo.transaction/1`. All Bedrock functions that work with the database accept a transaction context as the first argument.
+In the `add_class/2` function, the transaction is automatically handled by `Repo.transact/1`. All Bedrock functions that work with the database accept a transaction context as the first argument.
 
 ## Making some sample classes
 
@@ -206,7 +206,7 @@ defmodule Scheduling2 do
     # Get the range for the scheduling directory
     scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
 
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       # Clear the directory
       Repo.clear_range(tx, scheduling_range)
 
@@ -220,7 +220,7 @@ defmodule Scheduling2 do
   end
 
   def add_class(course, class) do
-    Repo.transaction(fn tx -> 
+    Repo.transact(fn tx -> 
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
@@ -247,13 +247,16 @@ defmodule Scheduling3 do
   def available_classes(course) do
     course_range = Subspace.range(course)
 
-    Repo.transaction(fn tx ->
-      tx
-      |> Repo.get_range(course_range)
-      |> Stream.map(fn {encoded_class, _v} ->
-        Subspace.unpack(course, encoded_class)
-      end)
-      |> Enum.to_list()
+    Repo.transact(fn tx ->
+      classes =
+        tx
+        |> Repo.get_range(course_range)
+        |> Stream.map(fn {encoded_class, _v} ->
+          Subspace.unpack(course, encoded_class)
+        end)
+        |> Enum.to_list()
+
+      {:ok, classes}
     end)
   end
 end
@@ -262,7 +265,7 @@ end
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-available = Scheduling3.available_classes(course)
+{:ok, available} = Scheduling3.available_classes(course)
 IO.puts("Found #{length(available)} available classes")
 IO.puts("First few: #{available |> Enum.take(5) |> inspect}")
 ```
@@ -278,7 +281,7 @@ We finally get to the crucial functions. A student has decided on a class (by na
 ```elixir
 defmodule Scheduling4 do
   def signup(attends, student, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       rec = Subspace.pack(attends, {student, class})
       Repo.put(tx, rec, <<>>)
       :ok
@@ -286,7 +289,7 @@ defmodule Scheduling4 do
   end
 
   def drop(attends, student, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       rec = Subspace.pack(attends, {student, class})
       Repo.clear(tx, rec)
       :ok
@@ -319,7 +322,7 @@ defmodule Scheduling do
   @total_seats_available 100
 
   def signup(attends, course, student, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       rec = Subspace.pack(attends, {student, class})
 
       case Repo.get(tx, rec) do
@@ -329,12 +332,14 @@ defmodule Scheduling do
           seats_data = Repo.get(tx, class_key)
           seats_left = Key.unpack(seats_data)
 
-          if seats_left == 0, do: raise("No remaining seats")
-
-          # Decrement seats and record signup
-          Repo.put(tx, class_key, Key.pack(seats_left - 1))
-          Repo.put(tx, rec, <<>>)
-          :ok
+          if seats_left == 0 do
+            {:error, "No remaining seats"}
+          else
+            # Decrement seats and record signup
+            Repo.put(tx, class_key, Key.pack(seats_left - 1))
+            Repo.put(tx, rec, <<>>)
+            :ok
+          end 
 
         _existing ->
           # Already signed up
@@ -344,7 +349,7 @@ defmodule Scheduling do
   end
 
   def drop(attends, course, student, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       rec = Subspace.pack(attends, {student, class})
 
       case Repo.get(tx, rec) do
@@ -368,24 +373,25 @@ defmodule Scheduling do
   def available_classes(course) do
     course_range = Subspace.range(course)
 
-    Repo.transaction(fn tx ->
-      tx
-      |> Repo.get_range(course_range)
-      |> Stream.map(fn {packed_class, packed_seats} ->
-        class = Subspace.unpack(course, packed_class)
-        availability = Key.unpack(packed_seats)
-        {class, availability}
-      end)
-      |> Stream.filter(fn {_class, availability} -> availability > 0 end)
-      |> Stream.map(fn {class, _availability} -> class end)
-      |> Enum.to_list()
+    Repo.transact(fn tx ->
+      classes = tx 
+        |> Repo.get_range(course_range)
+        |> Stream.map(fn {packed_class, packed_seats} ->
+          class = Subspace.unpack(course, packed_class)
+          availability = Key.unpack(packed_seats)
+          {class, availability}
+        end)
+        |> Stream.filter(fn {_class, availability} -> availability > 0 end)
+        |> Stream.map(fn {class, _availability} -> class end)
+        |> Enum.to_list()
+      {:ok, classes}
     end)
   end
 
   def init(scheduling, course, class_names) do
     scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
 
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       # Clear the directory
       Repo.clear_range(tx, scheduling_range)
 
@@ -399,7 +405,7 @@ defmodule Scheduling do
   end
 
   def add_class(course, class) do
-    Repo.transaction(fn tx ->
+    Repo.transact(fn tx ->
       key = Subspace.pack(course, class)
       value = Key.pack(@total_seats_available)
       Repo.put(tx, key, value)
@@ -430,7 +436,8 @@ Scheduling.init(scheduling, course, class_names)
 # Select the first class that's not completely full
 popular_class =
   Scheduling.available_classes(course)
-  |> hd()
+  |> then(fn {:ok, classes} -> classes |> hd() end)
+
 
 "Popular class: #{popular_class}"
 ```
@@ -453,14 +460,14 @@ Enum.each(
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-# This should raise "No remaining seats"
-try do
-  Scheduling.signup(attends, course, "Charlie", popular_class)
-  "❌ Charlie signed up (this shouldn't happen)"
-catch
-  :error, %RuntimeError{message: "No remaining seats"} ->
+# There should be no remaining seats
+case Scheduling.signup(attends, course, "Charlie", popular_class) do
+  :ok -> 
+    "❌ Charlie signed up (this shouldn't happen)"
+  {:error, "No remaining seats"} -> 
     "✅ Charlie correctly rejected - no remaining seats"
 end
+
 ```
 
 ## Concurrency and consistency
@@ -478,7 +485,7 @@ Let's try it out with some aggressive concurrency:
 ```elixir
 next_popular_class =
   Scheduling.available_classes(course)
-  |> hd()
+  |> then(fn {:ok, classes} -> classes |> hd() end)
 
 "Next popular class: #{next_popular_class}"
 ```
@@ -500,12 +507,11 @@ the_dans
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-# This should raise "No remaining seats"
-try do
-  Scheduling.signup(attends, course, "Charlie", next_popular_class)
-  "❌ Charlie signed up (this shouldn't happen)"
-catch
-  :error, %RuntimeError{message: "No remaining seats"} ->
+# There should be no remaining seats
+case Scheduling.signup(attends, course, "Charlie", next_popular_class) do
+  :ok -> 
+    "❌ Charlie signed up (this shouldn't happen)"
+  {:error, "No remaining seats"} -> 
     "✅ Charlie correctly rejected - no remaining seats"
 end
 ```
@@ -515,7 +521,7 @@ As expected, the `next_popular_class` is no longer available:
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-available_now = Scheduling.available_classes(course)
+{:ok, available_now} = Scheduling.available_classes(course)
 "Classes available now: #{length(available_now)}"
 ```
 
@@ -529,9 +535,11 @@ Fortunately, we have Bedrock, and this sounds an awful lot like the transactiona
 
 ```elixir
 def switch(attends, course, student, old_class, new_class) do
-  Repo.transaction(fn _tx ->
-    signup(attends, course, student, new_class)
-    drop(attets, course, student, old_class)
+  Repo.transact(fn ->
+    with :ok <- signup(attends, course, student, new_class),
+         :ok <- drop(attends, course, student, old_class) do
+      {:ok, :switched}
+    end
   end)
 end
 ```

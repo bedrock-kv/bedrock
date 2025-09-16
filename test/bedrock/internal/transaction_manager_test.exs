@@ -109,38 +109,38 @@ defmodule Bedrock.Internal.TransactionManagerTest do
     test "successful transaction with :ok return" do
       {_gateway_pid, user_fun} = setup_successful_transaction(:ok)
 
-      result = Repo.transaction(MockCluster, user_fun, [])
+      result = Repo.transact(MockCluster, user_fun, [])
       assert result == :ok
     end
 
     test "successful transaction with {:ok, value} return" do
       {_gateway_pid, user_fun} = setup_successful_transaction({:ok, "success"})
 
-      result = Repo.transaction(MockCluster, user_fun, [])
+      result = Repo.transact(MockCluster, user_fun, [])
       assert result == {:ok, "success"}
     end
 
     test "successful transaction returns binary value from callback" do
       binary_result = <<1, 2, 3, 4>>
-      {_gateway_pid, user_fun} = setup_successful_transaction(binary_result)
+      {_gateway_pid, user_fun} = setup_successful_transaction({:ok, binary_result})
 
-      result = Repo.transaction(MockCluster, user_fun, [])
-      assert result == binary_result
+      result = Repo.transact(MockCluster, user_fun, [])
+      assert result == {:ok, binary_result}
     end
 
     test "successful transaction returns complex data structures from callback" do
       complex_result = %{prefix: <<0, 1, 2>>, layer: "test", metadata: %{version: 1}}
-      {_gateway_pid, user_fun} = setup_successful_transaction(complex_result)
+      {_gateway_pid, user_fun} = setup_successful_transaction({:ok, complex_result})
 
-      result = Repo.transaction(MockCluster, user_fun, [])
-      assert result == complex_result
+      result = Repo.transact(MockCluster, user_fun, [])
+      assert result == {:ok, complex_result}
     end
 
     test "non-ok return value triggers rollback" do
       {_gateway_pid} = setup_failed_transaction(:rollback_only)
       user_fun = fn _txn -> {:error, "failed"} end
 
-      result = Repo.transaction(MockCluster, user_fun, [])
+      result = Repo.transact(MockCluster, user_fun, [])
       assert result == {:error, "failed"}
     end
 
@@ -149,7 +149,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       user_fun = fn _txn -> raise RuntimeError, "user error" end
 
       assert_raise RuntimeError, "user error", fn ->
-        Repo.transaction(MockCluster, user_fun, [])
+        Repo.transact(MockCluster, user_fun, [])
       end
     end
 
@@ -159,7 +159,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       user_fun = fn _txn -> :ok end
 
       assert_raise MatchError, fn ->
-        Repo.transaction(MockCluster, user_fun, [])
+        Repo.transact(MockCluster, user_fun, [])
       end
     end
 
@@ -180,7 +180,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
       # Should retry once on :timeout, then hit retry limit and fail
       assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
-        Repo.transaction(MockCluster, user_fun, retry_limit: 1)
+        Repo.transact(MockCluster, user_fun, retry_limit: 1)
       end
 
       # Verify it was called exactly twice (first call + one retry before hitting limit)
@@ -204,7 +204,7 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
       # Should fail immediately without any retries
       assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
-        Repo.transaction(MockCluster, user_fun, retry_limit: 0)
+        Repo.transact(MockCluster, user_fun, retry_limit: 0)
       end
 
       # Verify it was called exactly once (no retries allowed)
@@ -217,21 +217,21 @@ defmodule Bedrock.Internal.TransactionManagerTest do
     test "commit timeout triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:timeout, :ok, 3)
 
-      result = Repo.transaction(MockCluster, user_fun, opts)
+      result = Repo.transact(MockCluster, user_fun, opts)
       assert result == :ok
     end
 
     test "commit aborted triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:aborted, {:ok, "retried"}, 2)
 
-      result = Repo.transaction(MockCluster, user_fun, opts)
+      result = Repo.transact(MockCluster, user_fun, opts)
       assert result == {:ok, "retried"}
     end
 
     test "commit unavailable triggers retry with retry_count > 0" do
       {user_fun, opts} = setup_retry_test(:unavailable, {:ok, "final_try"}, 1)
 
-      result = Repo.transaction(MockCluster, user_fun, opts)
+      result = Repo.transact(MockCluster, user_fun, opts)
       assert result == {:ok, "final_try"}
     end
   end
@@ -246,10 +246,10 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       Process.put(tx_key, txn_pid)
 
       try do
-        user_fun = fn _txn -> :nested_ok end
+        user_fun = fn _txn -> :ok end
 
-        result = Repo.transaction(MockCluster, user_fun, [])
-        assert result == :nested_ok
+        result = Repo.transact(MockCluster, user_fun, [])
+        assert result == :ok
       after
         Process.delete(tx_key)
       end

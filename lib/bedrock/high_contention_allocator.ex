@@ -74,8 +74,8 @@ defmodule Bedrock.HighContentionAllocator do
 
   ## Examples
 
-      iex> MyApp.Repo.transaction(fn txn ->
-      ...>   Bedrock.HighContentionAllocator.allocate_many(hca, txn, 5)
+      iex> MyApp.Repo.transact(fn txn ->
+      ...>   {:ok, Bedrock.HighContentionAllocator.allocate_many(hca, txn, 5)}
       ...> end)
       {:ok, [<<21, 0>>, <<21, 1>>, <<21, 2>>, <<21, 3>>, <<21, 4>>]}
   """
@@ -102,18 +102,18 @@ defmodule Bedrock.HighContentionAllocator do
 
   ## Examples
 
-      iex> MyApp.Repo.transaction(fn txn ->
-      ...>   Bedrock.HighContentionAllocator.allocate(hca, txn)
+      iex> MyApp.Repo.transact(fn txn ->
+      ...>   {:ok, Bedrock.HighContentionAllocator.allocate(hca, txn)}
       ...> end)
       {:ok, <<21, 42>>}  # Key-encoded binary
   """
 
   @spec allocate(t()) :: {:ok, binary()} | {:error, term()}
   def allocate(%__MODULE__{repo: repo} = hca) do
-    case repo.transaction(&do_allocate(hca, &1)) do
-      {:error, _reason} = error -> error
-      result -> {:ok, result}
-    end
+    repo.transact(fn txn ->
+      result = do_allocate(hca, txn)
+      {:ok, result}
+    end)
   rescue
     error -> {:error, error}
   end
@@ -263,7 +263,7 @@ defmodule Bedrock.HighContentionAllocator do
           estimated_allocated: non_neg_integer()
         }
   def stats(%__MODULE__{repo: repo} = hca) do
-    repo.transaction(fn txn ->
+    repo.transact(fn txn ->
       latest_start = current_start(hca, txn)
 
       # Count total counter entries
@@ -280,11 +280,12 @@ defmodule Bedrock.HighContentionAllocator do
           {_key, _value}, acc -> acc
         end)
 
-      %{
-        latest_window_start: latest_start,
-        total_counters: total_counters,
-        estimated_allocated: estimated_allocated
-      }
+      {:ok,
+       %{
+         latest_window_start: latest_start,
+         total_counters: total_counters,
+         estimated_allocated: estimated_allocated
+       }}
     end)
   end
 end

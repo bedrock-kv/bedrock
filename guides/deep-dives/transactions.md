@@ -165,7 +165,7 @@ This approach improves efficiency and reduces data transfer overhead between com
 
 **Process**:
 
-1. Client calls `Bedrock.Repo.transaction/1`
+1. Client calls `Bedrock.Repo.transact/1`
 2. Gateway creates a new Transaction Builder process via `start_link/1`
 3. Transaction Builder initializes with gateway reference and transaction system layout
 4. Client receives transaction builder PID for subsequent operations
@@ -477,7 +477,7 @@ Based on the BedrockEx test harness, here are practical examples of how applicat
 ```elixir
 # Basic put operation
 def hello do
-  Repo.transaction(fn repo ->
+  Repo.transact(fn repo ->
     Repo.put(repo, "hello", "world")
     :ok
   end)
@@ -485,8 +485,8 @@ end
 
 # Basic get operation  
 def hello2 do
-  Repo.transaction(fn repo ->
-    Repo.get(repo, "hello")
+  Repo.transact(fn repo ->
+    {:ok, Repo.get(repo, "hello")}
   end)
 end
 ```
@@ -495,7 +495,7 @@ end
 
 ```elixir
 def move_money(amount, account1, account2) do
-  Repo.transaction(fn repo ->
+  Repo.transact(fn repo ->
     with :ok <- check_sufficient_balance_for_transfer(repo, account1, amount),
          {:ok, new_balance1} <- adjust_balance(repo, account1, -amount),
          {:ok, new_balance2} <- adjust_balance(repo, account2, amount) do
@@ -536,7 +536,7 @@ def key_for_account_balance(account), do: {"balances", account}
 
 ```elixir
 def setup_accounts do
-  Repo.transaction(fn repo ->
+  Repo.transact(fn repo ->
     Repo.put(repo, key_for_account_balance("1"), 100)
     Repo.put(repo, key_for_account_balance("2"), 500)
     :ok
@@ -547,7 +547,7 @@ end
 def rando do
   1..10_000
   |> Enum.each(fn _ ->
-    Repo.transaction(fn repo ->
+    Repo.transact(fn repo ->
       1..5
       |> Enum.each(fn _ ->
         key = :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower)
@@ -594,11 +594,12 @@ The money transfer example demonstrates the classic read-modify-write pattern:
 Within a transaction, all reads immediately see previous writes:
 
 ```elixir
-Repo.transaction(fn repo ->
+Repo.transact(fn repo ->
   Repo.put(repo, "key", "value1")
   {:ok, "value1"} = Repo.get(repo, "key")  # Sees the write immediately
-  Repo.put(repo, "key", "value2") 
+  Repo.put(repo, "key", "value2")
   {:ok, "value2"} = Repo.get(repo, "key")  # Sees the updated value
+  :ok
 end)
 ```
 
@@ -617,7 +618,7 @@ key_for_account_balance(account) -> {"balances", account}
 Transactions can return errors that cause rollback:
 
 ```elixir
-case Repo.transaction(fn repo ->
+case Repo.transact(fn repo ->
   case some_operation(repo) do
     {:ok, result} -> result
     {:error, reason} -> {:error, reason}  # Transaction rolls back

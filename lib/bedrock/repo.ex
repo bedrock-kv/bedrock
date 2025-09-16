@@ -25,28 +25,33 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Simple transaction
-      result = transaction(fn tx ->
-        tx
-        |> put("key", "value")
-        |> get("other_key")
+      {:ok, result} = transact(fn tx ->
+        result =
+          tx
+          |> put("key", "value")
+          |> get("other_key")
+
+        {:ok, result}
       end)
 
       # Transaction with retry limit
-      transaction(fn tx ->
+      :ok = transact(fn tx ->
         put(tx, "counter", "1")
+
+        :ok
       end, retry_limit: 5)
 
   """
-  @callback transaction((t() -> result | {:rollback, reason})) :: result | {:rollback, reason}
-            when result: t(), reason: any()
-  @callback transaction(
-              (t() -> result | {:rollback, reason}),
+  @callback transact((t() -> :ok | {:ok, result} | {:error, reason})) :: :ok | {:ok, result} | {:error, reason}
+            when result: term(), reason: term()
+  @callback transact(
+              (t() -> :ok | {:ok, result} | {:error, reason}),
               opts :: [
                 retry_limit: non_neg_integer() | nil,
                 timeout_in_ms: Bedrock.timeout_in_ms()
               ]
-            ) :: result | {:rollback, reason}
-            when result: t(), reason: any()
+            ) :: :ok | {:ok, result} | {:error, reason}
+            when result: term(), reason: any()
 
   @doc """
   Rolls back the transaction, discarding all changes.
@@ -56,7 +61,7 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      {:error, :some_reason} = transaction(fn tx ->
+      {:error, :some_reason} = transact(fn tx ->
         put(tx, "key", "value")
 
         if should_abort? do
@@ -82,12 +87,14 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         # Add conflict on a counter key without reading it
         tx = add_read_conflict_key(tx, "global_counter")
 
         # Do other operations that depend on the counter not changing
         put(tx, "dependent_data", compute_based_on_counter())
+
+        :ok
       end)
 
   """
@@ -105,12 +112,14 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         # Reserve the entire user namespace
         tx = add_write_conflict_range(tx, "user:", "user;")
 
         # Now we can safely assume no other transaction is modifying users
         put(tx, "user:123", user_data)
+
+        :ok
       end)
 
   """
@@ -130,12 +139,14 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         # Regular read with conflict tracking
         user = get(tx, "user:123")
 
         # Snapshot read without conflict tracking
         metadata = get(tx, "metadata", snapshot: true)
+
+        :ok
       end)
 
   """
@@ -154,12 +165,14 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         # Find first key after "user:"
         first_user = select(tx, KeySelector.first_greater_than("user:"))
 
         # Find last key in user namespace
         last_user = select(tx, KeySelector.last_less_or_equal("user;"))
+
+        :ok
       end)
 
   """
@@ -184,27 +197,34 @@ defmodule Bedrock.Repo do
   ## Examples
 
       # Lazy iteration (memory efficient)
-      transaction fn tx ->
-        tx
-        |> get_range(start_key, end_key, limit: 100)
-        |> Enum.take(10)  # Only fetches what's needed
-      end
+      transact(fn tx ->
+        result =
+          tx
+          |> get_range(start_key, end_key, limit: 100)
+          |> Enum.take(10)  # Only fetches what's needed
+
+        {:ok, result}
+      end)
 
       # Collect all results
-      transaction fn tx ->
+      transact(fn tx ->
         results =
           tx
           |> get_range(start_key, end_key)
           |> Enum.to_list()
-      end
+
+        {:ok, results}
+      end)
 
       # Snapshot read without conflicts
-      transaction fn tx ->
+      transact(fn tx ->
         metadata =
           tx
           |> get_range("meta/", "meta0", snapshot: true)
           |> Enum.to_list()
-      end
+
+        {:ok, metadata}
+      end)
 
   """
   @callback get_range(
@@ -247,7 +267,7 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         # Clear all user data using key range
         clear_range(tx, "user:", "user;")
 
@@ -276,7 +296,7 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         tx
         |> clear("user:123")
         |> clear("index:email:" <> email)
@@ -298,7 +318,7 @@ defmodule Bedrock.Repo do
 
   ## Examples
 
-      transaction(fn tx ->
+      transact(fn tx ->
         tx
         |> put("user:123", user_data)
         |> put("index:email:" <> email, "user:123")
@@ -640,7 +660,7 @@ defmodule Bedrock.Repo do
       # Transaction Control
 
       @impl true
-      def transaction(fun, opts \\ []), do: Repo.transaction(@cluster, fun, opts)
+      def transact(fun, opts \\ []), do: Repo.transact(@cluster, fun, opts)
 
       @impl true
       defdelegate rollback(reason), to: Repo

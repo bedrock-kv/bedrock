@@ -201,8 +201,8 @@ defmodule Bedrock.Internal.Repo do
   @spec rollback(reason :: term()) :: no_return()
   def rollback(reason), do: throw({__MODULE__, :rollback, reason})
 
-  @spec transaction(cluster :: module(), (transaction() -> result), opts :: keyword()) :: result when result: any()
-  def transaction(cluster, fun, opts \\ []) do
+  @spec transact(cluster :: module(), (transaction() -> result), opts :: keyword()) :: result when result: any()
+  def transact(cluster, fun, opts \\ []) do
     tx_key = tx_key(cluster)
 
     case Process.get(tx_key) do
@@ -259,12 +259,25 @@ defmodule Bedrock.Internal.Repo do
   end
 
   defp run_transaction(txn, fun) do
-    result = fun.(txn)
+    fun
+    |> Function.info(:arity)
+    |> case do
+      {:arity, 1} -> fun.(txn)
+      {:arity, 0} -> fun.()
+    end
+    |> case do
+      :ok = result ->
+        try_to_commit(txn, result)
 
-    case GenServer.call(txn, :commit) do
-      :ok -> result
-      {:ok, _} -> result
-      {:error, reason} -> throw({__MODULE__, txn, :retryable_failure, reason})
+      {:ok, _result} = result ->
+        try_to_commit(txn, result)
+
+      {:error, _reason} = error ->
+        try_to_rollback(txn)
+        error
+
+      other ->
+        raise "Transaction function must return :ok | {:ok, result} | {:error, reason}, got: #{inspect(other)}"
     end
   rescue
     exception ->
@@ -286,6 +299,14 @@ defmodule Bedrock.Internal.Repo do
     raise Bedrock.TransactionError,
       reason: "Retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}",
       retry_limit: retry_limit
+  end
+
+  defp try_to_commit(txn, result) do
+    case GenServer.call(txn, :commit) do
+      :ok -> result
+      {:ok, _commit_version} -> result
+      {:error, reason} -> throw({__MODULE__, txn, :retryable_failure, reason})
+    end
   end
 
   defp try_to_rollback(nil), do: :ok

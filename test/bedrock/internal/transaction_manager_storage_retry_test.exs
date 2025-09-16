@@ -76,7 +76,7 @@ defmodule Bedrock.Internal.TransactionManagerStorageRetryTest do
         {:ok, value}
       end
 
-      result = Repo.transaction(MockClusterStorage, user_fun)
+      result = Repo.transact(MockClusterStorage, user_fun)
       assert result == {:ok, "success_value"}
     end
 
@@ -107,7 +107,7 @@ defmodule Bedrock.Internal.TransactionManagerStorageRetryTest do
       end
 
       assert_raise TransactionError, fn ->
-        Repo.transaction(MockClusterStorage, user_fun)
+        Repo.transact(MockClusterStorage, user_fun)
       end
     end
 
@@ -170,7 +170,7 @@ defmodule Bedrock.Internal.TransactionManagerStorageRetryTest do
         {:ok, value}
       end
 
-      result = Repo.transaction(MockClusterStorage, user_fun)
+      result = Repo.transact(MockClusterStorage, user_fun)
       assert result == {:ok, "timeout_recovered"}
     end
   end
@@ -212,7 +212,7 @@ defmodule Bedrock.Internal.TransactionManagerStorageRetryTest do
         {:ok, value}
       end
 
-      result = Repo.transaction(MockClusterStorage, user_fun)
+      result = Repo.transact(MockClusterStorage, user_fun)
       assert result == {:ok, "success"}
     end
   end

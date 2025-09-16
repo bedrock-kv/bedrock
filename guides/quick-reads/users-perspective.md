@@ -13,8 +13,9 @@ end
 
 ```elixir
 # Basic transaction
-Repo.transaction(fn repo ->
+Repo.transact(fn repo ->
   value = Repo.get(repo, key)
   Repo.put(repo, key, new_value)
+  :ok
 end)
 ```

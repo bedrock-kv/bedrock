@@ -8,7 +8,7 @@ defmodule Bedrock.Directory.PropertyTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.(:mock_txn) end)
     :ok
   end
 

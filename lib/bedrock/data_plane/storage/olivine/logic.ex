@@ -22,7 +22,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path) do
     with :ok <- ensure_directory_exists(path),
-         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")),
+         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "#{id}.sqlite")),
          {:ok, index_manager} <- IndexManager.recover_from_database(database) do
       {:ok,
        %State{

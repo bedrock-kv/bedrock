@@ -28,21 +28,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       {:ok, tmp_dir: tmp_dir}
     end
 
-    test "open/2 creates and opens a DETS database", %{tmp_dir: tmp_dir} do
+    test "open/2 creates and opens a SQLite database", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-      file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
+      file_path = Path.join(tmp_dir, "test_#{table_name}.sqlite")
 
-      assert {:ok, %{dets_storage: dets_storage, window_size_in_microseconds: 5_000_000} = db} =
+      assert {:ok, %{sqlite_conn: sqlite_conn, window_size_in_microseconds: 5_000_000} = db} =
                Database.open(table_name, file_path)
 
-      assert dets_storage
+      assert sqlite_conn
 
       Database.close(db)
     end
 
     test "open/3 accepts custom window size", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-      file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
+      file_path = Path.join(tmp_dir, "test_#{table_name}.sqlite")
 
       assert {:ok, %{window_size_in_microseconds: 2_000_000} = db} = Database.open(table_name, file_path, 2_000)
 
@@ -51,14 +51,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
 
     test "close/1 properly syncs and closes database", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-      file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
+      file_path = Path.join(tmp_dir, "test_#{table_name}.sqlite")
 
       {:ok, db} = Database.open(table_name, file_path)
       assert :ok = Database.close(db)
     end
 
     test "database persists data across open/close cycles", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "persist_test.dets")
+      file_path = Path.join(tmp_dir, "persist_test.sqlite")
 
       table1 = String.to_atom("persist_test1_#{System.unique_integer([:positive])}")
       {:ok, db1} = Database.open(table1, file_path)
@@ -80,7 +80,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "page operations" do
-    setup context, do: with_db(context, "pages.dets", :pages_test)
+    setup context, do: with_db(context, "pages.sqlite", :pages_test)
 
     @tag :tmp_dir
     test "store_page/3 and load_page/2 work correctly", %{db: db} do
@@ -117,7 +117,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "value operations" do
-    setup context, do: with_db(context, "values.dets", :values_test)
+    setup context, do: with_db(context, "values.sqlite", :values_test)
 
     @tag :tmp_dir
     test "store_value/3 and load_value/2 work correctly", %{db: db} do
@@ -162,7 +162,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "database info and statistics" do
-    setup context, do: with_db(context, "info.dets", :info_test)
+    setup context, do: with_db(context, "info.sqlite", :info_test)
 
     @tag :tmp_dir
     test "info/2 returns database statistics", %{db: db} do
@@ -191,7 +191,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "DETS schema verification" do
-    setup context, do: with_db(context, "schema.dets", :schema_test)
+    setup context, do: with_db(context, "schema.sqlite", :schema_test)
 
     @tag :tmp_dir
     test "natural type separation works correctly", %{db: db} do
@@ -218,7 +218,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "unified value operations" do
-    setup context, do: with_db(context, "unified_values.dets", :unified_test)
+    setup context, do: with_db(context, "unified_values.sqlite", :unified_test)
 
     @tag :tmp_dir
     test "load_value/3 returns values from lookaside buffer for recent versions", %{db: db} do
@@ -292,7 +292,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "durable version management" do
-    setup context, do: with_db(context, "durable_version.dets", :durable_test)
+    setup context, do: with_db(context, "durable_version.sqlite", :durable_test)
 
     @tag :tmp_dir
     test "store_durable_version/2 persists and updates durable version", %{db: db} do
@@ -305,7 +305,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "value_loader function" do
-    setup context, do: with_db(context, "value_loader.dets", :value_loader_test)
+    setup context, do: with_db(context, "value_loader.sqlite", :value_loader_test)
 
     @tag :tmp_dir
     test "value_loader/1 creates function that can load values", %{db: db} do
@@ -333,7 +333,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
   end
 
   describe "persistence optimization" do
-    setup context, do: with_db(context, "persistence.dets", :persistence_test)
+    setup context, do: with_db(context, "persistence.sqlite", :persistence_test)
 
     @tag :tmp_dir
     test "build_dets_tx/2 deduplicates overlapping versions", %{db: db} do

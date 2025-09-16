@@ -71,7 +71,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "server startup with existing data performs recovery", %{tmp_dir: tmp_dir} do
-      {:ok, db1} = Database.open(:session1, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(:session1, Path.join(tmp_dir, "test_id.sqlite"))
 
       page0 = Page.new(0, [{<<"start">>, Version.from_integer(10)}])
 
@@ -129,7 +129,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
     test "corrupted page handling during recovery", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("corrupt_test_#{System.unique_integer([:positive])}")
-      {:ok, db1} = Database.open(table_name, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(table_name, Path.join(tmp_dir, "test_id.sqlite"))
 
       page0 = Page.new(0, [{<<"valid">>, Version.from_integer(100)}])
       page0_binary = PageTestHelpers.from_map(page0)
@@ -148,7 +148,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "large dataset recovery performance", %{tmp_dir: tmp_dir} do
-      {:ok, db1} = Database.open(:large_test, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(:large_test, Path.join(tmp_dir, "test_id.sqlite"))
 
       page_tuples =
         for i <- 0..49 do
@@ -201,7 +201,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
     test "recovery with missing page 0 creates empty state", %{tmp_dir: tmp_dir} do
       # Create database with pages but no page 0
-      {:ok, db1} = Database.open(:no_zero, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(:no_zero, Path.join(tmp_dir, "test_id.sqlite"))
 
       page5 = Page.new(5, [{<<"orphan">>, Version.from_integer(500)}])
       page5_binary = PageTestHelpers.from_map(page5)
@@ -264,7 +264,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
     test "recovery rebuilds page structure correctly", %{tmp_dir: tmp_dir} do
       # Setup: Create complex page structure
-      {:ok, db1} = Database.open(:rebuild_test, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(:rebuild_test, Path.join(tmp_dir, "test_id.sqlite"))
 
       # Chain: 0 -> 3 -> 7 -> 2 -> end (non-sequential for complexity)
       pages_data = [
@@ -306,7 +306,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
 
     test "max_page_id is determined correctly during recovery", %{tmp_dir: tmp_dir} do
       # Create database with scattered page IDs
-      {:ok, db1} = Database.open(:max_id_test, Path.join(tmp_dir, "dets"))
+      {:ok, db1} = Database.open(:max_id_test, Path.join(tmp_dir, "test_id.sqlite"))
 
       # Unordered with large gap
       page_ids = [0, 5, 10, 3, 99, 50]
@@ -341,8 +341,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       setup_tmp_dir(context, "persistence_window_test")
     end
 
-    test "window eviction maintains data integrity in DETS", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "window_eviction.dets")
+    test "window eviction maintains data integrity in SQLite", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "window_eviction.sqlite")
       {:ok, db} = Database.open(:window_test, file_path)
 
       vm = IndexManager.new()
@@ -405,7 +405,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "window persistence integration with advance_window_with_persistence", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "window_persistence.dets")
+      file_path = Path.join(tmp_dir, "window_persistence.sqlite")
       {:ok, db} = Database.open(:window_persist_test, file_path)
 
       vm = IndexManager.new()
@@ -444,7 +444,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "window eviction with page data persistence", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "page_window.dets")
+      file_path = Path.join(tmp_dir, "page_window.sqlite")
       {:ok, db} = Database.open(:page_window_test, file_path)
 
       vm = IndexManager.new()
@@ -497,7 +497,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
     end
 
     test "version window behavior across restarts", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "restart_window.dets")
+      file_path = Path.join(tmp_dir, "restart_window.sqlite")
 
       # Session 1: Create data with timestamps and shut down
       {:ok, db1} = Database.open(:session1, file_path)

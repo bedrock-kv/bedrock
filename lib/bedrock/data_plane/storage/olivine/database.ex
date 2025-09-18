@@ -36,29 +36,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
       pool_size: pool_size,
       journal_mode: :wal,
       synchronous: :normal,
+      transaction_mode: :exclusive,
       temp_store: :memory,
-      foreign_keys: :on,
-      cache_size: -64_000,
-      # Increased timeouts for WAL mode concurrent access
-      # 5 seconds to handle WAL lock contention
-      busy_timeout: 5_000,
-      # Default queue target
-      queue_target: 50,
-      # Default queue processing
+      queue_target: 100,
       queue_interval: 1_000,
-      # Connection retry settings
-      # Exponential backoff
       backoff_type: :exp,
-      # Start at 10ms
       backoff_min: 10,
-      # Max 1s backoff
       backoff_max: 1000,
-      # Pool startup configuration
-      # Don't allow overflow connections
       pool_overflow: 0,
-      # Allow connection restarts
       max_restarts: 5,
-      # Time window for restart limit
       max_seconds: 10
     ]
 

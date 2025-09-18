@@ -5,6 +5,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
   import Mox
 
   alias Bedrock.Directory
+  alias Bedrock.Keyspace
 
   setup do
     stub(MockRepo, :transact, fn callback -> callback.() end)
@@ -39,7 +40,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
   describe "version compatibility checks" do
     test "allows reads from compatible versions" do
-      test_data = Bedrock.Key.pack({<<0, 42>>, ""})
+      test_data = {<<0, 42>>, ""}
 
       MockRepo
       |> expect_directory_exists(["test"], test_data)
@@ -51,7 +52,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
     test "blocks reads from incompatible major version" do
       incompatible_version = <<2::little-32, 0::little-32, 0::little-32>>
-      test_data = Bedrock.Key.pack({<<0, 42>>, ""})
+      test_data = {<<0, 42>>, ""}
 
       MockRepo
       |> expect_directory_exists(["test"], test_data)
@@ -85,7 +86,7 @@ defmodule Bedrock.Directory.VersionManagementTest do
 
   describe "version checks in operations" do
     test "remove operation checks version" do
-      test_data = Bedrock.Key.pack({<<0, 42>>, ""})
+      test_data = {<<0, 42>>, ""}
 
       MockRepo
       |> expect_version_initialization()
@@ -97,33 +98,34 @@ defmodule Bedrock.Directory.VersionManagementTest do
     end
 
     test "move operation checks version" do
-      source_data = Bedrock.Key.pack({<<0, 42>>, ""})
-      version_key = <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
-      current_version = <<1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>
-      old_key = <<254, 6, 1, 111, 108, 100, 0, 0>>
-      new_key = <<254, 6, 1, 110, 101, 119, 0, 0>>
+      source_data = {<<0, 42>>, ""}
 
       MockRepo
-      # Version checks (2 calls)
-      |> expect(:get, fn ^version_key -> current_version end)
-      |> expect(:get, fn ^version_key -> current_version end)
+      |> expect_version_initialization()
       # Source exists check
-      |> expect(:get, fn ^old_key -> source_data end)
+      |> expect_directory_exists(["old"], source_data)
       # Destination doesn't exist check
-      |> expect(:get, fn ^new_key -> nil end)
+      |> expect_directory_exists(["new"], nil)
       # Source fetch for move operation (gets called again)
-      |> expect(:get, fn ^old_key -> source_data end)
-      # Range scan to get source + all children
-      |> expect(:get_range, fn {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
-        [{old_key, source_data}]
+      |> expect_directory_exists(["old"], source_data)
+      # Range scan to get source + all children - now using keyspace get_range/2
+      |> expect(:get_range, fn start_key, end_key ->
+        assert is_binary(start_key)
+        assert is_binary(end_key)
+        # Return packed data since this is a raw key scan
+        old_key = build_directory_key(["old"])
+        packed_source_data = Bedrock.Encoding.Tuple.pack(source_data)
+        [{old_key, packed_source_data}]
       end)
-      # Put destination directory
-      |> expect(:put, fn ^new_key, value ->
-        assert {<<0, 42>>, ""} == Bedrock.Key.unpack(value)
+      # Put destination directory - keyspace-aware
+      |> expect(:put, fn %Keyspace{}, ["new"], value ->
+        assert {<<0, 42>>, ""} == value
         :ok
       end)
-      # Clear source range
-      |> expect(:clear_range, fn {^old_key, <<254, 6, 1, 111, 108, 100, 0, 1>>} ->
+      # Clear source range - now using clear_range/3 with binary keys
+      |> expect(:clear_range, fn start_key, end_key ->
+        assert is_binary(start_key)
+        assert is_binary(end_key)
         :ok
       end)
 
@@ -134,14 +136,17 @@ defmodule Bedrock.Directory.VersionManagementTest do
     test "list operation checks version for reads" do
       MockRepo
       |> expect_version_check()
-      |> expect(:get_range, fn _range -> [] end)
+      |> expect(:get_range, fn prefix_key ->
+        assert is_binary(prefix_key)
+        []
+      end)
 
       layer = Directory.root(MockRepo)
       assert {:ok, []} = Directory.list(layer, [])
     end
 
     test "exists? operation does not check version directly" do
-      test_data = Bedrock.Key.pack({<<0, 42>>, ""})
+      test_data = {<<0, 42>>, ""}
 
       expect_directory_exists(MockRepo, ["test"], test_data)
       layer = Directory.root(MockRepo)

@@ -19,11 +19,11 @@ defmodule Bedrock.HighContentionAllocator do
 
   alias Bedrock.Key
 
-  defstruct [:counters_subspace, :recent_subspace, :repo, :random_fn]
+  defstruct [:counters_keyspace, :recent_keyspace, :repo, :random_fn]
 
   @type t :: %__MODULE__{
-          counters_subspace: binary(),
-          recent_subspace: binary(),
+          counters_keyspace: binary(),
+          recent_keyspace: binary(),
           repo: module(),
           random_fn: (pos_integer() -> pos_integer())
         }
@@ -34,7 +34,7 @@ defmodule Bedrock.HighContentionAllocator do
   ## Parameters
 
     * `repo` - The Bedrock.Repo module to use for transactions
-    * `subspace` - Binary prefix for this allocator's keys
+    * `keyspace` - Binary prefix for this allocator's keys
     * `opts` - Optional configuration
 
   ## Options
@@ -44,10 +44,10 @@ defmodule Bedrock.HighContentionAllocator do
   ## Examples
 
       iex> hca = Bedrock.HighContentionAllocator.new(MyApp.Repo, "my_allocator")
-      iex> hca.counters_subspace
+      iex> hca.counters_keyspace
       "my_allocator\\x00"
 
-      iex> hca.recent_subspace
+      iex> hca.recent_keyspace
       "my_allocator\\x01"
 
       # For testing with controlled randomization
@@ -55,13 +55,13 @@ defmodule Bedrock.HighContentionAllocator do
       iex> hca = Bedrock.HighContentionAllocator.new(MyApp.Repo, "test", random_fn: deterministic_random)
   """
   @spec new(module(), binary(), keyword()) :: t()
-  def new(repo, subspace, opts \\ []) when is_atom(repo) and is_binary(subspace) do
+  def new(repo, keyspace, opts \\ []) when is_atom(repo) and is_binary(keyspace) do
     random_fn = Keyword.get(opts, :random_fn, &:rand.uniform/1)
 
     %__MODULE__{
       repo: repo,
-      counters_subspace: subspace <> <<0>>,
-      recent_subspace: subspace <> <<1>>,
+      counters_keyspace: keyspace <> <<0>>,
+      recent_keyspace: keyspace <> <<1>>,
       random_fn: random_fn
     }
   end
@@ -142,7 +142,7 @@ defmodule Bedrock.HighContentionAllocator do
 
   defp current_start(%{repo: repo} = hca) do
     # Get the latest counter using KeySelector - equivalent to reverse scan with limit 1!
-    counter_range_end = hca.counters_subspace <> <<0xFF>>
+    counter_range_end = hca.counters_keyspace <> <<0xFF>>
 
     # This KeySelector finds the last key before counter_range_end
     # which is the maximum counter key in our range
@@ -155,7 +155,7 @@ defmodule Bedrock.HighContentionAllocator do
 
       {resolved_key, _value} when is_binary(resolved_key) ->
         # Verify the resolved key is actually in our counter range
-        if :binary.match(resolved_key, hca.counters_subspace) == {0, byte_size(hca.counters_subspace)} do
+        if :binary.match(resolved_key, hca.counters_keyspace) == {0, byte_size(hca.counters_keyspace)} do
           decode_counter_key(hca, resolved_key)
         else
           # Key is outside our range, no counters yet
@@ -213,7 +213,9 @@ defmodule Bedrock.HighContentionAllocator do
       nil ->
         repo.put(candidate_key, <<>>, no_write_conflict: true)
         add_write_conflict_key(hca, candidate_key)
-        Key.pack(candidate)
+
+        encoded = :binary.encode_unsigned(candidate, :big)
+        <<byte_size(encoded)::8, encoded::binary>>
 
       _existing_value ->
         # Candidate is taken, retry
@@ -239,17 +241,17 @@ defmodule Bedrock.HighContentionAllocator do
   defp dynamic_window_size(_start), do: 8192
 
   # Key encoding functions
-  defp encode_counter_key(hca, start), do: hca.counters_subspace <> <<start::64-big>>
+  defp encode_counter_key(hca, start), do: hca.counters_keyspace <> <<start::64-big>>
 
   defp decode_counter_key(hca, counter_key) do
-    prefix_size = byte_size(hca.counters_subspace)
+    prefix_size = byte_size(hca.counters_keyspace)
     <<_prefix::binary-size(prefix_size), start::64-big>> = counter_key
     start
   end
 
-  defp encode_recent_key(hca, candidate), do: hca.recent_subspace <> <<candidate::64-big>>
+  defp encode_recent_key(hca, candidate), do: hca.recent_keyspace <> <<candidate::64-big>>
 
-  defp add_write_conflict_key(%{repo: repo}, key), do: repo.add_write_conflict_range(key, Key.key_after(key))
+  defp add_write_conflict_key(%{repo: repo}, key), do: repo.add_write_conflict_range({key, Key.key_after(key)})
 
   @doc """
   Get statistics about the HighContentionAllocator state.
@@ -268,8 +270,8 @@ defmodule Bedrock.HighContentionAllocator do
       latest_start = current_start(hca)
 
       # Count total counter entries
-      counter_start = hca.counters_subspace
-      counter_end = hca.counters_subspace <> <<0xFF>>
+      counter_start = hca.counters_keyspace
+      counter_end = hca.counters_keyspace <> <<0xFF>>
 
       counters = counter_start |> repo.get_range(counter_end) |> Enum.to_list()
       total_counters = length(counters)

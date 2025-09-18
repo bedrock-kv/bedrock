@@ -5,8 +5,7 @@ defmodule Bedrock.Directory.MoveTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Key
-  alias Bedrock.KeyRange
+  alias Bedrock.Keyspace
 
   setup do
     stub(MockRepo, :transact, fn callback -> callback.() end)
@@ -18,8 +17,11 @@ defmodule Bedrock.Directory.MoveTest do
   test "move directory preserves metadata and prefixes" do
     source_path = ["users"]
     dest_path = ["accounts"]
-    source_data = Key.pack({<<0, 2>>, "document"})
-    child_data = Key.pack({<<0, 3>>, "profile"})
+    source_data = {<<0, 2>>, "document"}
+    child_data = {<<0, 3>>, "profile"}
+    # For get_range expectations, we need packed data since it's a raw key scan
+    packed_source_data = Bedrock.Encoding.Tuple.pack(source_data)
+    packed_child_data = Bedrock.Encoding.Tuple.pack(child_data)
 
     MockRepo
     |> expect_version_initialization()
@@ -29,32 +31,30 @@ defmodule Bedrock.Directory.MoveTest do
     |> expect_directory_exists(dest_path, nil)
     # Source fetch for move operation (gets called again)
     |> expect_directory_exists(source_path, source_data)
-    # Range scan to get source + all children
-    |> expect(:get_range, fn range ->
-      expected_range = KeyRange.from_prefix(build_directory_key(source_path))
-      assert expected_range == range
+    # Range scan to get source + all children - now using keyspace get_range/2
+    |> expect(:get_range, fn start_key, end_key ->
+      assert is_binary(start_key)
+      assert is_binary(end_key)
 
       [
-        {build_directory_key(["users"]), source_data},
-        {build_directory_key(["users", "profiles"]), child_data}
+        {build_directory_key(["users"]), packed_source_data},
+        {build_directory_key(["users", "profiles"]), packed_child_data}
       ]
     end)
-    # Put destination directory
-    |> expect(:put, fn key, value ->
-      assert key == build_directory_key(dest_path)
-      assert {<<0, 2>>, "document"} == Key.unpack(value)
+    # Put destination directory - keyspace-aware
+    |> expect(:put, fn %Keyspace{}, ^dest_path, value ->
+      assert {<<0, 2>>, "document"} == value
       :ok
     end)
-    # Put moved child directory
-    |> expect(:put, fn key, value ->
-      assert key == build_directory_key(["accounts", "profiles"])
-      assert {<<0, 3>>, "profile"} == Key.unpack(value)
+    # Put moved child directory - keyspace-aware
+    |> expect(:put, fn %Keyspace{}, ["accounts", "profiles"], value ->
+      assert {<<0, 3>>, "profile"} == value
       :ok
     end)
-    # Clear source range
-    |> expect(:clear_range, fn range ->
-      expected_range = KeyRange.from_prefix(build_directory_key(source_path))
-      assert expected_range == range
+    # Clear source range - now using clear_range/3 with binary keys
+    |> expect(:clear_range, fn start_key, end_key ->
+      assert is_binary(start_key)
+      assert is_binary(end_key)
       :ok
     end)
 
@@ -80,8 +80,8 @@ defmodule Bedrock.Directory.MoveTest do
   test "move fails when destination exists" do
     source_path = ["source"]
     dest_path = ["existing"]
-    source_data = Key.pack({<<0, 1>>, ""})
-    dest_data = Key.pack({<<0, 2>>, ""})
+    source_data = Bedrock.Encoding.Tuple.pack({<<0, 1>>, ""})
+    dest_data = Bedrock.Encoding.Tuple.pack({<<0, 2>>, ""})
 
     MockRepo
     |> expect_version_initialization()

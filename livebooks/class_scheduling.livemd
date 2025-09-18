@@ -3,42 +3,43 @@
 ```elixir
 Mix.install([
   {:bedrock, git: "https://github.com/jallum/bedrock.git", branch: "feature/api-feedback"},
- {:kino, "~> 0.16.0"},
+  {:kino, "~> 0.16.0"},
 ])
 
 # If you've used any of these tutorials before, and want to see the latest-greatest, you'll want 
 # to use the "Setup without cache" option from the menu above.
 ```
 
-## Hey There, Stranger!
+## Welcome to Bedrock!
 
-This tutorial provides a walkthrough of designing and building a simple application in Elixir using Bedrock. In this tutorial, we use a few simple data modeling techniques. This is a translation of the official [FoundationDB Class Scheduling Tutorial](https://apple.github.io/foundationdb/class-scheduling.html) adapted for Bedrock's API.
+We're going to build something fun together: a class scheduling system that students and administrators can use to manage course enrollments. Along the way, you'll discover how Bedrock makes it surprisingly easy to build reliable, concurrent applications.
 
-## First Steps
+This tutorial is adapted from the [FoundationDB Class Scheduling Tutorial](https://apple.github.io/foundationdb/class-scheduling.html), but don't worry if you haven't used FoundationDB before—we'll start from the beginning and build everything step by step.
 
-In order for your application to use Bedrock, we need to define what this node is allowed to do as part of the cluster. Will it paricipate in controlling activities and elections? Will it only handle storage needs? The Cluster definition is where we will set all of that up. Here's a simple definition that will give us a place to put things and get us going.
+## Setting Up Our Database
 
-```elixir
-# Create a temporary folder to persist data to
-
-working_dir = Path.join(System.tmp_dir!(), "bedrock_#{:rand.uniform(99999)}")
-File.mkdir_p!(working_dir)
-working_dir
-```
+Before we can store any data, we need to tell Bedrock what role this node should play in the cluster. Let's start with a simple setup that can handle everything we need:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
+# Create a temporary folder to persist data to
+working_dir = Path.join(System.tmp_dir!(), "bedrock_#{:rand.uniform(99999)}")
+File.mkdir_p!(working_dir)
+
 defmodule Tutorial.Cluster do
   use Bedrock.Cluster,
     otp_app: :tutorial_app,
     name: "tutorial",
     config: [
-      # What is this node allowed to be?
+      # What is this node allowed to be? In Bedrock, nodes can have different capabilities. Some 
+      # might only store data, others might coordinate cluster operations, and some might handle 
+      # both. For production deployments, you'd typically split these roles across different 
+      # machines for better performance and reliability.
       capabilities: [:coordination, :log, :storage],
 
       # Optional tracing of internal operations
-      # trace: [:coordinator, :recovery, :commit_proxy, :log, :storage],
+      trace: [], # :coordinator, :recovery, :commit_proxy, :log, :storage, etc.
 
       # Where does coordinator, storage, log data go?
       coordinator: [path: working_dir],
@@ -48,7 +49,7 @@ defmodule Tutorial.Cluster do
 end
 ```
 
-In a real application, you would start the Bedrock cluster as part of your supervision tree. For this tutorial, we will just start it directly using Kino. You can see the pretty, pretty supervision tree!
+In a real application, you'd start the cluster as part of your supervision tree, but for this tutorial we'll just fire it up directly:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -56,7 +57,7 @@ In a real application, you would start the Bedrock cluster as part of your super
 Kino.start_child!({Tutorial.Cluster, []})
 ```
 
-The Repo module provides a convenient interface for interacting with the database. Let's define one now.
+Now we need a way to talk to our database. The Repo module gives us a clean interface for all our database operations:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -66,10 +67,10 @@ defmodule Tutorial.Repo do
 end
 
 alias Tutorial.Repo
-alias Bedrock.{Directory, Subspace, Key}
+alias Bedrock.{Directory, Keyspace, Key, Encoding}
 ```
 
-We're now ready to use the database. First, let's write a key-value pair.
+Perfect! Let's test our setup with a quick hello world:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -79,7 +80,7 @@ Repo.transact(fn ->
 end)
 ```
 
-When this command returns without exception, the modification is durably stored in Bedrock! Under the covers, this function creates a transaction with a single modification. We’ll see later how to do multiple operations in a single transaction. For now, let’s read back the data:
+When this returns, our data is safely stored in Bedrock. Let's read it back to make sure everything's working:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -91,15 +92,15 @@ end)
 "hello " <> result
 ```
 
-If this is working, we are ready to start building a real application.
+Great! Now we're ready to build something more interesting.
 
-## The application
+## Our Mission: A Class Scheduling System
 
-Let's say we've been asked to build a class scheduling system for students and administrators. We'll walk through the design and implementation of this application.
+Imagine you're building software for a university. Students need to browse available classes, sign up for the ones they want, and drop classes when their plans change. Meanwhile, administrators need to make sure classes don't get overbooked.
 
-## Requirements
+This might sound simple, but there's a catch: hundreds of students might try to sign up for the same popular class at exactly the same time. How do we make sure we don't accidentally let too many people in?
 
-We'll need to let users list available classes and track which students have signed up for which classes. Here's a first cut at the functions we'll need to implement:
+We'll need three core operations:
 
 <!-- livebook:{"force_markdown":true} -->
 
@@ -109,19 +110,23 @@ signup(student_id, class) # signs up a student for a class
 drop(student_id, class)   # drops a student from a class
 ```
 
-## Data model
+## Thinking About Data
 
-First, we need to design a data model. A data model is just a method for storing our application data using keys and values in Bedrock. We seem to have two main types of data: (1) a list of classes and (2) a record of which students will attend which classes. Let's keep attending data like this:
+Before we write any code, let's think about what information we need to track and how to organize it.
+
+We have two main types of data: **classes** (with their seat counts) and **enrollments** (which students are taking which classes). In a key-value database like Bedrock, we need to figure out how to represent these as keys and values.
+
+**For enrollments**, we'll use keys like this:
 
 <!-- livebook:{"force_markdown":true} -->
 
 ```elixir
-{"attends", student, class} = ""
+{"attends", student, class} = <<>>
 ```
 
-We'll just store the key with a blank value to indicate that a student is signed up for a particular class.
+The key tells us which student is enrolled in which class. We don't need to store anything in the value—the existence of the key is enough to show the student is enrolled.
 
-We'll keep data about classes like this:
+**For classes**, we'll track available seats:
 
 <!-- livebook:{"force_markdown":true} -->
 
@@ -129,34 +134,56 @@ We'll keep data about classes like this:
 {"class", class} = seats_available
 ```
 
-Similarly, each such key will represent an available class. We'll use `seats_available` to record the number of seats available.
+Each class gets a key, and the value tells us how many seats are still open. Simple!
 
-## Directories and Subspaces
+## Organizing Our Data
 
-Bedrock includes directories and subspaces that make it easy to model data using this approach. Let's begin by creating a directory:
+Now let's set up the actual storage structure. Think of this like organizing files in folders on your computer—we want to keep our class data separate from our enrollment data so they don't accidentally interfere with each other.
+
+First, we'll create a directory for our scheduling app:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-# Create root directory layer
 root = Directory.root(Repo)
-
-# Create or open scheduling directory
 {:ok, scheduling} = Directory.create_or_open(root, ["scheduling"])
 ```
 
-The directory provides a subspace where we'll store our application data. Each subspace has a fixed prefix it uses when defining keys. We decided that we wanted `"attends"` and `"class"` as our prefixes, so we'll create new subspaces for them within the scheduling subspace:
+Directories are one of Bedrock's most useful organizational tools. Think of them like folders in a file system—they give us a hierarchical way to organize related data. But directories do more than just organization:
+
+* **Shorter keys**: Instead of long, descriptive key names, we can use short names within a directory
+* **Atomic operations**: You can move or copy entire directory trees atomically
+
+Our `scheduling` directory creates a dedicated namespace for all our class-related data. This keeps our keys short and fast while preventing naming conflicts with other parts of a larger application. Plus, if we ever needed to archive a semester's worth of data, we could atomically move the entire directory.
+
+> **🔍 Directory vs Keyspace**
+> 
+> Think of **directories** as managing the "where" (namespace allocation and hierarchy) while **keyspaces** manage the "how" (key/value encoding and access patterns). A directory gives you a unique binary prefix and human-readable path. When you convert it to a keyspace, you get the tools to actually store and retrieve data with automatic encoding/decoding.
+
+Now let's create two "partitions" within our directory—one for classes and one for enrollments. This is where Bedrock's keyspaces become really helpful:
 
 ```elixir
-course = Subspace.create(scheduling, {"class"})
-attends = Subspace.create(scheduling, {"attends"})
+course = Keyspace.partition(scheduling, "class", key_encoding: Encoding.Tuple, value_encoding: Encoding.Tuple)
+attends = Keyspace.partition(scheduling, "attends", key_encoding: Encoding.Tuple)
 ```
 
-Subspaces have a `pack/2` function for defining keys. To store the records for our data model, we can use `Subspace.pack(attends, {student, class})` and `Subspace.pack(course, class)`.
+What's happening here? We're creating two separate namespaces—`course` for our class data and `attends` for our enrollment data. Bedrock automatically handles all the key prefixing and encoding for us, so we can work with normal Elixir data types instead of worrying about binary formats.
 
-## Transactions
+Keyspaces handle two important things for us: **namespace separation** (so our class data and enrollment data can't accidentally collide) and **automatic encoding** (so we can work with Elixir tuples and structs instead of raw binaries).
 
-We're going to rely on the powerful guarantees of transactions to help keep all of our modifications straight, so let's look at how Bedrock lets you write a transactional function. Let's write the very simple `add_class` function we will use to populate the database's class list:
+## Why Transactions Matter
+
+Here's the thing about our scheduling system: we can't just write data and hope for the best. What if our program crashes halfway through signing up a student? What if two students try to grab the last seat in a class at exactly the same time?
+
+Bedrock's transactions solve these problems for us. When we wrap operations in `Repo.transact/1`, we get powerful guarantees:
+
+* **All-or-nothing**: Either all our changes succeed, or none of them do
+* **Isolation**: Multiple operations can run concurrently without stepping on each other
+* **Durability**: Once a transaction completes, the changes are permanent
+
+Even better, transactions can be **nested**. This means we can build complex operations by combining simpler ones, and Bedrock makes sure everything stays consistent.
+
+Let's see this in action:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -166,19 +193,33 @@ defmodule Scheduling1 do
 
   def add_class(course, class) do
     Repo.transact(fn ->
-      key = Subspace.pack(course, class)
-      value = Key.pack(@total_seats_available)
-      Repo.put(key, value)
+      Repo.put(course, class, @total_seats_available)
+    end)
+  end
+
+  def init(scheduling, course, class_names) do
+    Repo.transact(fn ->
+      Repo.clear_range(scheduling)
+
+      for class_name <- class_names do
+        add_class(course, class_name)
+      end
+
+      :ok
     end)
   end
 end
 ```
 
-In the `add_class/2` function, the transaction is automatically handled by `Repo.transact/1`. All Bedrock functions that work with the database accept a transaction context as the first argument.
+The `add_class/2` function is straightforward—it just stores a class with 100 available seats. But `init/3` is more interesting: it first wipes out any existing data, then calls `add_class/2` for each class name.
 
-## Making some sample classes
+Notice that `init/3` calls `add_class/2` from within its own transaction. This is **nested transactions** in action! Bedrock automatically merges the inner transactions into the outer one, so either all classes get added successfully, or none of them do.
 
-Let's make some sample classes and put them in the `class_names` variable.
+Also notice something we're not doing: we don't have to pass around transaction objects or worry about connection management. When you're inside a `Repo.transact/1` block, all database operations automatically use the current transaction.
+
+## Building Our Course Catalog
+
+Now let's create some sample classes to work with. We'll generate a bunch of different combinations to make our testing more realistic:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -191,83 +232,42 @@ class_names = for i <- times, t <- types, l <- levels, do: "#{i} #{t} #{l}"
 "Created #{length(class_names)} sample classes"
 ```
 
-## Initializing the database
+Perfect! Now let's load all these classes into our database:
 
-We initialize the database with our class list:
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+Scheduling1.init(scheduling, course, class_names)
+```
+
+## Browsing Available Classes
+
+Now that we have classes in our database, students need a way to see what's available. Since Bedrock stores data in sorted order, we can grab all classes with a single, efficient range operation:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
 defmodule Scheduling2 do
-  @total_seats_available 100
-
-  def init(scheduling, course, class_names) do
-    # Get the range for the scheduling directory
-    scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
-
-    Repo.transact(fn ->
-      # Clear the directory
-      Repo.clear_range(scheduling_range)
-
-      # Add all classes
-      for class_name <- class_names do
-        add_class(course, class_name)
-      end
-
-      :ok
-    end)
-  end
-
-  def add_class(course, class) do
-    Repo.transact(fn ->
-      key = Subspace.pack(course, class)
-      value = Key.pack(@total_seats_available)
-      Repo.put(key, value)
-    end)
-  end
-end
-```
-
-<!-- livebook:{"reevaluate_automatically":true} -->
-
-```elixir
-Scheduling2.init(scheduling, course, class_names)
-```
-
-## Listing available classes
-
-Before students can do anything else, they need to be able to retrieve a list of available classes from the database. Because Bedrock sorts its data by key and therefore has efficient range-read capability, we can retrieve all of the classes in a single database call. We find this range of keys with `Subspace.range(course)`:
-
-<!-- livebook:{"reevaluate_automatically":true} -->
-
-```elixir
-defmodule Scheduling3 do
   def available_classes(course) do
-    course_range = Subspace.range(course)
-
     Repo.transact(fn ->
-      classes =
-        Repo.get_range(course_range)
-        |> Stream.map(fn {encoded_class, _v} ->
-          Subspace.unpack(course, encoded_class)
-        end)
-        |> Enum.to_list()
-
+      classes = course |> Repo.get_range() |> Enum.to_list()
       {:ok, classes}
     end)
   end
 end
 ```
 
+Look how clean this is! `Repo.get_range(course)` automatically figures out which keys belong to our course keyspace and returns a stream of `{class_name, seat_count}` tuples. No manual key prefixing, no binary decoding—just our data, ready to use.
+
+Let's see what we've got:
+
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-{:ok, available} = Scheduling3.available_classes(course)
+{:ok, available} = Scheduling2.available_classes(course)
 IO.puts("Found #{length(available)} available classes")
-IO.puts("First few: #{available |> Enum.take(5) |> inspect}")
+IO.puts("First five: #{available |> Enum.take(5) |> inspect}")
 ```
-
-The `Subspace.range/1` function returns a 2-tuple containing binaries that represent the start and end (exclusive) of the subspace key range. We retrieve all key-value pairs and unpack the key to extract the class name.
 
 ## Signing up for a class and Dropping a class
 
@@ -276,18 +276,16 @@ We finally get to the crucial functions. A student has decided on a class (by na
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-defmodule Scheduling4 do
+defmodule Scheduling3 do
   def signup(attends, student, class) do
     Repo.transact(fn ->
-      rec = Subspace.pack(attends, {student, class})
-      Repo.put(rec, <<>>)
+      Repo.put(attends, {student, class}, <<>>)
     end)
   end
 
   def drop(attends, student, class) do
     Repo.transact(fn ->
-      rec = Subspace.pack(attends, {student, class})
-      Repo.clear(rec)
+      Repo.clear(attends, {student, class})
     end)
   end
 end
@@ -298,8 +296,8 @@ For `signup`, we simply insert the appropriate record (with a blank value).
 For `drop`, we need to be able to delete a record from the database. We do this with the `clear/2` function.
 
 ```elixir
-Scheduling4.signup(attends, "Alice", "10:00 alg intro")
-Scheduling4.drop(attends, "Alice", "10:00 alg intro")
+Scheduling3.signup(attends, "Alice", "10:00 alg intro")
+Scheduling3.drop(attends, "Alice", "10:00 alg intro")
 ```
 
 ## Done?
@@ -318,25 +316,18 @@ defmodule Scheduling do
 
   def signup(attends, course, student, class) do
     Repo.transact(fn ->
-      rec = Subspace.pack(attends, {student, class})
-
-      case Repo.get(rec) do
+      case Repo.get(attends, {student, class}) do
         nil ->
-          # Not signed up yet, proceed with signup
-          class_key = Subspace.pack(course, class)
-          seats_data = Repo.get(class_key)
-          seats_left = Key.unpack(seats_data)
+          seats_left = Repo.get(course, class)
 
           if seats_left == 0 do
             {:error, "No remaining seats"}
           else
-            # Decrement seats and record signup
-            Repo.put(class_key, Key.pack(seats_left - 1))
-            Repo.put(rec, <<>>)
+            Repo.put(course, class, seats_left - 1)
+            Repo.put(attends, {student, class}, <<>>)
           end
 
         _existing ->
-          # Already signed up
           :ok
       end
     end)
@@ -344,35 +335,23 @@ defmodule Scheduling do
 
   def drop(attends, course, student, class) do
     Repo.transact(fn ->
-      rec = Subspace.pack(attends, {student, class})
-
-      case Repo.get(rec) do
+      case Repo.get(attends, {student, class}) do
         nil ->
-          # Not taking this class
           :ok
 
         _existing ->
-          # Increment seats and remove signup
-          class_key = Subspace.pack(course, class)
-          seats_data = Repo.get(class_key)
-          seats_left = Key.unpack(seats_data)
-
-          Repo.put(class_key, Key.pack(seats_left + 1))
-          Repo.clear(rec)
+          seats_left = Repo.get(course, class)
+          Repo.put(course, class, seats_left + 1)
+          Repo.clear(attends, {student, class})
       end
     end)
   end
 
   def available_classes(course) do
-    course_range = Subspace.range(course)
-
     Repo.transact(fn ->
-      classes = Repo.get_range(course_range)
-        |> Stream.map(fn {packed_class, packed_seats} ->
-          class = Subspace.unpack(course, packed_class)
-          availability = Key.unpack(packed_seats)
-          {class, availability}
-        end)
+      classes = 
+        course
+        |> Repo.get_range()
         |> Stream.filter(fn {_class, availability} -> availability > 0 end)
         |> Stream.map(fn {class, _availability} -> class end)
         |> Enum.to_list()
@@ -381,13 +360,9 @@ defmodule Scheduling do
   end
 
   def init(scheduling, course, class_names) do
-    scheduling_range = scheduling |> Directory.get_subspace() |> Subspace.range()
-
     Repo.transact(fn ->
-      # Clear the directory
-      Repo.clear_range(scheduling_range)
+      Repo.clear_range(scheduling)
 
-      # Add all classes
       for class_name <- class_names do
         add_class(course, class_name)
       end
@@ -398,9 +373,7 @@ defmodule Scheduling do
 
   def add_class(course, class) do
     Repo.transact(fn ->
-      key = Subspace.pack(course, class)
-      value = Key.pack(@total_seats_available)
-      Repo.put(key, value)
+      Repo.put(course, class, @total_seats_available)
     end)
   end
 end
@@ -412,7 +385,7 @@ end
 
 * `drop`: Once again we check to see if the student is signed up and if not, we can just return as we don't want to incorrectly increase the number of seats. We then adjust the number of seats by one by taking the current value, incrementing it by one, and then storing back.
 
-Let's try it out. We choose a course for 100 students named "Bob", and sign them all up. Then, when Charlie attempts to signup, we get the exception.
+Let's try it out. We choose a course for 100 students named "Bob", and sign them all up. Then, when Charlie attempts to signup, we get an error.
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -461,15 +434,17 @@ end
 
 ```
 
-## Concurrency and consistency
+## The Rush for Popular Classes
 
-The `signup` function is starting to get a bit complex; it now reads and writes a few different key-value pairs in the database. One of the tricky issues in this situation is what happens as multiple clients/students read and modify the database at the same time. Couldn't two students both see one remaining seat and sign up at the same time?
+Here's where things get interesting. Imagine registration opens for a super popular class with just one seat left. Two hundred students hit "signup" at exactly the same moment. What happens?
 
-These are tricky issues without simple answers—unless you have transactions! Because these functions are defined as Bedrock transactions, we can have a simple answer: Each transactional function behaves as if it is the only one modifying the database. There is no way for a transaction to 'see' another transaction change the database, and each transaction ensures that either all of its modifications occur or none of them do.
+In a system without transactions, chaos. Students might see the seat as available, but by the time they finish signing up, someone else has already taken it. Or worse, the system might accidentally let both students register, overselling the class.
 
-Looking deeper, it is, of course, possible for two transactions to conflict. For example, if two people both see a class with one seat and sign up at the same time, Bedrock must allow only one to succeed. This causes one of the transactions to fail to commit. The transaction will be retried automatically and will eventually lead to the correct result, a `"No remaining seats"` exception.
+But our system uses transactions, which means each signup attempt gets an **isolated view** of the database. It's like each student gets their own private copy of the registration system for a split second. Either they successfully grab the seat and everyone else sees the class as full, or they see that it's already taken.
 
-Let's try it out with some aggressive concurrency:
+When two transactions conflict (like two students trying for the same last seat), Bedrock automatically picks a winner and retries the other one. The retry sees the updated state and gets the "No remaining seats" error. No overselling, no inconsistency, no problem.
+
+Let's put this to the test with some serious concurrency:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -517,11 +492,11 @@ As expected, the `next_popular_class` is no longer available:
 "Classes available now: #{length(available_now)}"
 ```
 
-#### Composing transactions
+### Class Switching: A Perfect Use Case
 
-Oh, just one last feature, we're told. We have students that are trying to switch from one popular class to another. By the time they drop one class to free up a slot for themselves, the open slot in the other class is gone. By the time they see this and try to re-add their old class, that slot is gone too! So, can we make it so that a student can switch from one class to another without this worry?
+Here's a classic problem: a student wants to switch from one class to another, but both classes are nearly full. If they drop their current class first, someone else might grab their spot before they can sign up for the new one. If they try to sign up for the new class first, it might be full.
 
-Fortunately, we have Bedrock, and this sounds an awful lot like the transactional property of atomicity—the all-or-nothing behavior that we already rely on. All we need to do is to _compose_ the `drop` and `signup` functions into a new `switch` function:
+This is exactly the kind of problem transactions solve. We can make the whole switch operation atomic—either both the drop and signup succeed, or neither does:
 
 <!-- livebook:{"force_markdown":true} -->
 
@@ -536,24 +511,31 @@ def switch(attends, course, student, old_class, new_class) do
 end
 ```
 
-The simplicity of this implementation belies the sophistication of what Bedrock is taking care of for us.
+Beautiful! This simple function gives students a safe way to switch classes without any risk of ending up in neither class or accidentally double-enrolled.
 
-By dropping the old class and signing up for the new one inside a single transaction, we ensure that either both steps happen, or that neither happens. The compositional capability is very powerful.
+Notice how we're **composing transactions**—our `switch` function calls `signup` and `drop`, which are themselves transactional functions. Bedrock automatically nests everything into a single atomic operation. If anything goes wrong at any step, the entire switch gets rolled back.
 
-Also note that, if an exception is raised, for example, in the signup portion, the exception propagates and the transaction object is destroyed, automatically rolling back all database modifications, leaving the database completely unchanged.
+## Mission Accomplished
 
-## Are we done?
+And that's it! We've built a complete class scheduling system that can handle concurrent signups, prevent overbooking, and even support atomic class switching. The best part? We didn't have to write a single line of complex concurrency control code.
 
-Yep, we're done and ready to deploy. This entire application can be deployed and scaled easily since we store all state in Bedrock.
+## What Makes This Scale
 
-## Deploying and scaling
+Because all our state lives in Bedrock, scaling this system is straightforward. Want to handle more students? Spin up more web servers—they can all hit the same database simultaneously without stepping on each other. Need higher availability? Add more Bedrock nodes to your cluster.
 
-Since we store all state for this application in Bedrock, deploying and scaling this solution up is impressively painless. Just run a web server, the UI, this back end, and point the whole thing at Bedrock. We can run as many computers with this setup as we want, and they can all hit the database at the same time because of the transactional integrity of Bedrock. Also, since all of the state in the system is stored in the database, any of these computers can fail without any lasting consequences.
+The transactional guarantees mean you don't have to worry about race conditions or partial failures, even under heavy load. Students can hammer the signup buttons all they want, and the system will maintain consistency.
 
-## Next steps
+## What We've Learned
 
-* See Bedrock's documentation for guidance on using directories, subspaces, and keys for effective data modeling
-* Explore Bedrock's atomic operations for high-concurrency scenarios
-* Try building other data structures using Bedrock's transactional primitives
+In building this scheduling system, we've seen several key Bedrock concepts in action:
 
-This tutorial demonstrates how Bedrock provides the same powerful transactional guarantees and data modeling capabilities as FoundationDB, with a clean Elixir API that feels natural to Elixir developers.
+* **Keyspaces** organize our data and handle encoding automatically
+* **Transactions** give us rock-solid consistency guarantees without the complexity
+* **Nested transactions** let us compose operations safely
+* **Automatic conflict resolution** handles concurrency for us
+
+The beauty of Bedrock is that it makes the hard parts of distributed systems—consistency, concurrency, durability—just work, so you can focus on building your application.
+
+## Keep Exploring
+
+Ready for more? Try building other data structures using Bedrock's transactional primitives, or explore how to model more complex relationships using directories and keyspaces. The same principles we used here scale to much larger, more sophisticated applications.

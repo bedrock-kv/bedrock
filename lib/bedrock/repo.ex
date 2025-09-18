@@ -2,9 +2,8 @@
 defmodule Bedrock.Repo do
   alias Bedrock.Internal.Repo
   alias Bedrock.Key
-  alias Bedrock.KeyRange
   alias Bedrock.KeySelector
-  alias Bedrock.Subspace
+  alias Bedrock.Keyspace
 
   # Transaction Control
 
@@ -122,8 +121,7 @@ defmodule Bedrock.Repo do
       end)
 
   """
-  @callback add_write_conflict_range(Key.t(), Key.t()) :: :ok
-  @callback add_write_conflict_range(Subspace.t() | KeyRange.t()) :: :ok
+  @callback add_write_conflict_range(Bedrock.ToKeyRange.t()) :: :ok
 
   # Read Operations
 
@@ -149,8 +147,11 @@ defmodule Bedrock.Repo do
       end)
 
   """
-  @callback get(Key.t()) :: nil | binary()
-  @callback get(Key.t(), opts :: [snapshot: boolean()]) :: nil | binary()
+  @callback get(key :: binary()) :: nil | binary()
+  @callback get(key :: binary(), opts :: [snapshot: boolean()]) :: nil | binary()
+
+  @callback get(Keyspace.t(), key :: binary()) :: nil | binary()
+  @callback get(Keyspace.t(), key :: binary(), opts :: [snapshot: boolean()]) :: nil | binary()
 
   @doc """
   Selects a key-value pair using a key selector, returning `{key, value}` or `nil` if not found.
@@ -223,20 +224,9 @@ defmodule Bedrock.Repo do
       end)
 
   """
-  @callback get_range(Subspace.t() | KeyRange.t()) :: Enumerable.t(Bedrock.key_value())
+  @callback get_range(Bedrock.ToKeyRange.t()) :: Enumerable.t(Bedrock.key_value())
   @callback get_range(
-              Subspace.t() | KeyRange.t(),
-              opts :: [
-                batch_size: pos_integer(),
-                limit: non_neg_integer(),
-                snapshot: boolean(),
-                timeout: non_neg_integer()
-              ]
-            ) :: Enumerable.t(Bedrock.key_value())
-  @callback get_range(Key.t(), Key.t()) :: Enumerable.t(Bedrock.key_value())
-  @callback get_range(
-              Key.t(),
-              Key.t(),
+              Bedrock.ToKeyRange.t(),
               opts :: [
                 batch_size: pos_integer(),
                 limit: non_neg_integer(),
@@ -263,17 +253,15 @@ defmodule Bedrock.Repo do
         clear_range("user:", "user;")
 
         # Clear using subspace
-        user_space = Subspace.new("users")
+        user_space = Keyspace.new("users")
         clear_range(user_space)
 
         {:ok, :ok}
       end)
 
   """
-  @callback clear_range(Subspace.t() | KeyRange.t()) :: :ok
-  @callback clear_range(Subspace.t() | KeyRange.t(), opts :: [no_write_conflict: boolean()]) :: :ok
-  @callback clear_range(Key.t(), Key.t()) :: :ok
-  @callback clear_range(Key.t(), Key.t(), opts :: [no_write_conflict: boolean()]) :: :ok
+  @callback clear_range(Bedrock.ToKeyRange.t()) :: :ok
+  @callback clear_range(Bedrock.ToKeyRange.t(), opts :: [no_write_conflict: boolean()]) :: :ok
 
   # Write Operations
 
@@ -298,6 +286,9 @@ defmodule Bedrock.Repo do
   @callback clear(Key.t()) :: :ok
   @callback clear(Key.t(), opts :: [no_write_conflict: boolean()]) :: :ok
 
+  @callback clear(Keyspace.t(), key :: binary()) :: :ok
+  @callback clear(Keyspace.t(), key :: binary(), opts :: [no_write_conflict: boolean()]) :: :ok
+
   @doc """
   Sets a key to a value within the transaction.
 
@@ -319,6 +310,9 @@ defmodule Bedrock.Repo do
   """
   @callback put(Key.t(), value :: binary()) :: :ok
   @callback put(Key.t(), value :: binary(), opts :: [no_write_conflict: boolean()]) :: :ok
+
+  @callback put(Keyspace.t(), key :: binary(), value :: term()) :: :ok
+  @callback put(Keyspace.t(), key :: binary(), value :: term(), opts :: [no_write_conflict: boolean()]) :: :ok
 
   # Atomic Operations
   #
@@ -666,7 +660,8 @@ defmodule Bedrock.Repo do
       @behaviour Bedrock.Repo
 
       alias Bedrock.Internal.Repo
-      alias Bedrock.Subspace
+      alias Bedrock.Keyspace
+      alias Bedrock.ToKeyRange
 
       @cluster unquote(cluster)
 
@@ -686,29 +681,38 @@ defmodule Bedrock.Repo do
       def add_read_conflict_key(key), do: Repo.add_read_conflict_key(__MODULE__, key)
 
       @impl true
-      def add_write_conflict_range(subspace_or_range)
-      def add_write_conflict_range(%Subspace{} = subspace), do: add_write_conflict_range(Subspace.range(subspace))
-
-      def add_write_conflict_range({start_key, end_key}),
-        do: Repo.add_write_conflict_range(__MODULE__, start_key, end_key)
-
-      @impl true
-      def add_write_conflict_range(start_key, end_key),
-        do: Repo.add_write_conflict_range(__MODULE__, start_key, end_key)
+      def add_write_conflict_range(range) do
+        {start_key, end_key} = ToKeyRange.to_key_range(range)
+        Repo.add_write_conflict_range(__MODULE__, start_key, end_key)
+      end
 
       # Read Operations
 
       @impl true
-      def get(key) when not is_binary(key) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
-
-      def get(key), do: Repo.get(__MODULE__, key, [])
+      def get(key) when is_binary(key), do: raw_get(key, [])
 
       @impl true
-      def get(key, opts) when not is_binary(key) or not is_list(opts) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB, opts must be list")
+      def get(key, opts) when is_binary(key), do: raw_get(key, opts)
 
-      def get(key, opts), do: Repo.get(__MODULE__, key, opts)
+      @impl true
+      def get(%Keyspace{} = keyspace, key), do: keyspace_get(keyspace, key, [])
+
+      @impl true
+      def get(%Keyspace{} = keyspace, key, opts), do: keyspace_get(keyspace, key, opts)
+
+      @spec keyspace_get(Keyspace.t(), key :: term(), opts :: keyword()) :: nil | term()
+      def keyspace_get(keyspace, key, opts) do
+        case raw_get(Keyspace.pack(keyspace, key), opts) do
+          nil -> nil
+          value when is_nil(keyspace.value_encoding) -> value
+          value -> keyspace.value_encoding.unpack(value)
+        end
+      end
+
+      def raw_get(key) when not is_binary(key) or byte_size(key) > 16_384,
+        do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
+
+      defp raw_get(key, opts), do: Repo.get(__MODULE__, key, opts)
 
       @impl true
       def select(key_selector, opts \\ []), do: Repo.select(__MODULE__, key_selector, opts)
@@ -716,50 +720,67 @@ defmodule Bedrock.Repo do
       # Write Operations
 
       @impl true
-      def clear(key) when not is_binary(key) or byte_size(key) > 16_384,
+      def clear(%Keyspace{} = keyspace, key), do: keyspace_clear(keyspace, key, [])
+
+      @impl true
+      def clear(%Keyspace{} = keyspace, key, opts), do: keyspace_clear(keyspace, key, opts)
+
+      @impl true
+      def clear(key), do: raw_clear(key, [])
+
+      @impl true
+      def clear(key, opts), do: raw_clear(key, opts)
+
+      defp keyspace_clear(keyspace, key, opts), do: raw_clear(Keyspace.pack(keyspace, key), opts)
+
+      defp raw_clear(key) when not is_binary(key) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
 
-      def clear(key), do: Repo.clear(__MODULE__, key)
+      defp raw_clear(key, opts), do: Repo.clear(__MODULE__, key, opts)
 
       @impl true
-      def clear(key, _opts) when not is_binary(key) or byte_size(key) > 16_384,
-        do: raise(ArgumentError, "key must be binary and no larger than 16KiB")
-
-      def clear(key, opts), do: Repo.clear(__MODULE__, key, opts)
+      def put(%Keyspace{} = keyspace, key, value), do: keyspace_put(keyspace, key, value, [])
 
       @impl true
-      def put(key, value)
-          when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384 or byte_size(value) > 131_072,
-          do: raise(ArgumentError, "key/value must be binary, key <= 16KiB, value <= 128KiB")
-
-      def put(key, value), do: Repo.put(__MODULE__, key, value)
+      def put(%Keyspace{} = keyspace, key, value, opts), do: keyspace_put(keyspace, key, value, opts)
 
       @impl true
-      def put(key, value, _opts)
-          when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384 or byte_size(value) > 131_072,
-          do: raise(ArgumentError, "key/value must be binary, key <= 16KiB, value <= 128KiB")
+      def put(key, value), do: raw_put(key, value, [])
 
-      def put(key, value, opts), do: Repo.put(__MODULE__, key, value, opts)
+      @impl true
+      def put(key, value, opts), do: raw_put(key, value, opts)
+
+      defp raw_put(key, value, _opts)
+           when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384 or byte_size(value) > 131_072,
+           do: raise(ArgumentError, "key/value must be binary, key <= 16KiB, value <= 128KiB")
+
+      defp raw_put(key, value, opts), do: Repo.put(__MODULE__, key, value, opts)
+
+      defp keyspace_put(keyspace, key, value, opts) do
+        packed_key = Keyspace.pack(keyspace, key)
+        packed_value = if keyspace.value_encoding, do: keyspace.value_encoding.pack(value), else: value
+        put(packed_key, packed_value, opts)
+      end
 
       # Range Operations
 
       @impl true
-      def get_range(subspace_or_range, opts \\ [])
-      def get_range(%Subspace{} = subspace, opts), do: get_range(Subspace.range(subspace), opts)
-      def get_range({start_key, end_key}, opts), do: Repo.get_range(__MODULE__, start_key, end_key, opts)
-      def get_range(start_key, end_key), do: Repo.get_range(__MODULE__, start_key, end_key, [])
+      def get_range(range, opts \\ [])
+
+      def get_range(%Keyspace{} = keyspace, opts), do: Keyspace.get_range_from_repo(keyspace, __MODULE__, opts)
+
+      def get_range(range, opts) do
+        {start_key, end_key} = ToKeyRange.to_key_range(range)
+        Repo.get_range(__MODULE__, start_key, end_key, opts)
+      end
 
       @impl true
-      def get_range(start_key, end_key, opts), do: Repo.get_range(__MODULE__, start_key, end_key, opts)
+      def clear_range(range, opts \\ [])
 
-      @impl true
-      def clear_range(subspace_or_range, opts \\ [])
-      def clear_range(%Subspace{} = subspace, opts), do: clear_range(Subspace.range(subspace), opts)
-      def clear_range({start_key, end_key}, opts), do: Repo.clear_range(__MODULE__, start_key, end_key, opts)
-      def clear_range(start_key, end_key), do: Repo.clear_range(__MODULE__, start_key, end_key, [])
-
-      @impl true
-      def clear_range(start_key, end_key, opts), do: Repo.clear_range(__MODULE__, start_key, end_key, opts)
+      def clear_range(range, opts) do
+        {start_key, end_key} = ToKeyRange.to_key_range(range)
+        Repo.clear_range(__MODULE__, start_key, end_key, opts)
+      end
 
       # Atomic Operations
 

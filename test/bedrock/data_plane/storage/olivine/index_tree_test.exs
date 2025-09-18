@@ -101,9 +101,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
 
     test "handles complex overlapping scenario" do
       # Create a scenario similar to the original bug report:
-      # Mix of "class" and "attends" subspaces that should be properly ordered
+      # Mix of "class" and "attends" keyspaces that should be properly ordered
 
-      # Simulate subspace-prefixed keys
+      # Simulate keyspace-prefixed keys
       # 'c' for "class"
       class_prefix = <<0x63>>
       # 'a' for "attends"

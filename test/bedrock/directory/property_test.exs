@@ -2,13 +2,13 @@ defmodule Bedrock.Directory.PropertyTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  import Bedrock.Test.DirectoryHelpers
   import Mox
 
   alias Bedrock.Directory
+  alias Bedrock.Keyspace
 
   setup do
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -59,21 +59,24 @@ defmodule Bedrock.Directory.PropertyTest do
             path <- valid_directory_path(),
             layer_name <- valid_layer_name()
           ) do
-      # Use stubs to avoid signature mismatches
-      stub(MockRepo, :get, fn
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
-          nil
+      # Use keyspace-aware stubs
+      parent_path = if length(path) > 0, do: Enum.drop(path, -1)
 
-        :mock_txn, key ->
-          cond do
-            key == build_directory_key(path) -> nil
-            key == build_directory_key([]) -> Bedrock.Key.pack({<<>>, ""})
-            key == build_directory_key(Enum.drop(path, -1)) -> Bedrock.Key.pack({<<0, 1>>, ""})
-            true -> nil
-          end
+      stub(MockRepo, :get, fn _keyspace, key ->
+        case key do
+          # Version not initialized
+          ["version"] -> nil
+          # Directory doesn't exist yet
+          ^path -> nil
+          # Root directory
+          [] -> {<<>>, ""}
+          # Parent exists
+          ^parent_path when not is_nil(parent_path) -> {<<0, 1>>, ""}
+          _ -> nil
+        end
       end)
 
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :put, fn %Keyspace{}, _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo, next_prefix_fn: fn -> <<0, :rand.uniform(255)>> end)
 
@@ -83,8 +86,10 @@ defmodule Bedrock.Directory.PropertyTest do
           assert %{path: ^path, layer: ^layer_name, prefix: prefix} = node
           assert is_binary(prefix)
 
-          # Should be able to get subspace
-          assert %Bedrock.Subspace{prefix: ^prefix} = Directory.get_subspace(node)
+          # Should be able to get keyspace with a name
+          keyspace = node |> Directory.to_keyspace() |> Keyspace.partition("data")
+          # Keyspace prefix should include the node prefix plus the name
+          assert String.starts_with?(keyspace.prefix, prefix)
 
         {:error, reason} ->
           # Only acceptable errors for property testing
@@ -120,46 +125,22 @@ defmodule Bedrock.Directory.PropertyTest do
         <<n::32>>
       end
 
-      # Use stubs to avoid signature mismatches
-      stub(MockRepo, :get, fn
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
-          nil
-
-        :mock_txn, key ->
-          cond do
-            # Root directory always exists
-            key == build_directory_key([]) ->
-              Bedrock.Key.pack({<<>>, ""})
-
-            # Check if this is a directory path being checked for existence
-            Enum.any?(sorted_paths, fn path -> build_directory_key(path) == key end) ->
-              nil
-
-            # Parent existence checks - root always exists, others based on created_dirs
-            true ->
-              parent_path =
-                Enum.find_value(sorted_paths, fn path ->
-                  if path != [] do
-                    parent = Enum.drop(path, -1)
-                    if build_directory_key(parent) == key, do: parent
-                  end
-                end)
-
-              case parent_path do
-                # Root always exists
-                [] ->
-                  Bedrock.Key.pack({<<>>, ""})
-
-                path when not is_nil(path) ->
-                  if MapSet.member?(created_dirs, path), do: Bedrock.Key.pack({<<0, 1>>, ""})
-
-                nil ->
-                  nil
-              end
-          end
+      # Use keyspace-aware stubs
+      stub(MockRepo, :get, fn _keyspace, key ->
+        cond do
+          # Version not initialized
+          key == ["version"] -> nil
+          # Directory doesn't exist yet
+          key in sorted_paths -> nil
+          # Root directory always exists
+          key == [] -> {<<>>, ""}
+          # Parent exists
+          MapSet.member?(created_dirs, key) -> {<<0, 1>>, ""}
+          true -> nil
+        end
       end)
 
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :put, fn %Keyspace{}, _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
 
@@ -205,40 +186,39 @@ defmodule Bedrock.Directory.PropertyTest do
           ) do
       # Generate a random prefix for this test
       prefix = <<:rand.uniform(255), :rand.uniform(255)>>
-      stored_value = Bedrock.Key.pack({prefix, layer_name || ""})
-      expected_directory_key = build_directory_key(path)
-      root_key = build_directory_key([])
+      stored_value = {prefix, layer_name || ""}
 
-      # Use stubs to avoid signature mismatches
+      # Use keyspace-aware stubs
       # Track directory state - initially doesn't exist, then exists after creation
       directory_exists = :atomics.new(1, [])
 
-      stub(MockRepo, :get, fn
-        # Version checks
-        :mock_txn, <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>> ->
-          nil
+      stub(MockRepo, :get, fn _keyspace, key ->
+        case key do
+          # Version checks
+          ["version"] ->
+            nil
 
-        # Directory existence checks and open operations
-        :mock_txn, key when key == expected_directory_key ->
-          exists = :atomics.get(directory_exists, 1)
-          if exists == 1, do: stored_value
+          # Directory existence checks and open operations
+          ^path ->
+            exists = :atomics.get(directory_exists, 1)
+            if exists == 1, do: stored_value
 
-        # Parent (root) check
-        :mock_txn, ^root_key ->
-          Bedrock.Key.pack({<<>>, ""})
+          # Parent (root) check
+          [] ->
+            {<<>>, ""}
 
-        :mock_txn, _key ->
-          nil
+          _key ->
+            nil
+        end
       end)
 
-      stub(MockRepo, :put, fn
-        :mock_txn, key, _value when key == expected_directory_key ->
+      stub(MockRepo, :put, fn %Keyspace{}, key, _value ->
+        if key == path do
           # Mark directory as existing after put
           :atomics.put(directory_exists, 1, 1)
-          :ok
+        end
 
-        :mock_txn, _key, _value ->
-          :ok
+        :ok
       end)
 
       layer = Directory.root(MockRepo, next_prefix_fn: fn -> prefix end)

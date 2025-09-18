@@ -7,17 +7,19 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
   setup :verify_on_exit!
 
   # Helper function specific to root restrictions tests
-  defp expect_range_query(repo, path, results) do
-    expected_range = Bedrock.KeyRange.from_prefix(build_directory_key(path))
-
-    expect(repo, :range, fn :mock_txn, ^expected_range -> results end)
+  defp expect_range_query(repo, _path, results) do
+    # The do_list implementation calls get_range/1 with a binary prefix
+    expect(repo, :get_range, fn prefix_key ->
+      assert is_binary(prefix_key)
+      results
+    end)
   end
 
   describe "root directory restrictions" do
@@ -47,8 +49,8 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
 
     test "can create root directory" do
       # With the new API, root directory is automatically created with empty prefix
-      stub(MockRepo, :get, fn :mock_txn, _key -> nil end)
-      stub(MockRepo, :put, fn :mock_txn, _key, _value -> :ok end)
+      stub(MockRepo, :get, fn _key -> nil end)
+      stub(MockRepo, :put, fn _key, _value -> :ok end)
 
       layer = Directory.root(MockRepo)
 
@@ -57,10 +59,10 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
     end
 
     test "can check if root exists" do
-      root_data = Bedrock.Key.pack({<<>>, ""})
+      root_data = Bedrock.Encoding.Tuple.pack({<<>>, ""})
       root_key = build_directory_key([])
 
-      stub(MockRepo, :get, fn :mock_txn, ^root_key -> root_data end)
+      stub(MockRepo, :get, fn ^root_key -> root_data end)
       layer = Directory.root(MockRepo)
 
       assert Directory.exists?(layer, []) == true
@@ -68,8 +70,8 @@ defmodule Bedrock.Directory.RootRestrictionsTest do
 
     test "can list root directory children" do
       children_results = [
-        {build_directory_key(["users"]), Bedrock.Key.pack({<<0, 2>>, ""})},
-        {build_directory_key(["docs"]), Bedrock.Key.pack({<<0, 3>>, ""})}
+        {build_directory_key(["users"]), Bedrock.Encoding.Tuple.pack({<<0, 2>>, ""})},
+        {build_directory_key(["docs"]), Bedrock.Encoding.Tuple.pack({<<0, 3>>, ""})}
       ]
 
       MockRepo

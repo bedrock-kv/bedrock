@@ -43,8 +43,11 @@ defmodule Bedrock.Cluster.Gateway.Discovery do
     end
   end
 
-  defp fallback_to_discovery_if_needed(:fallback_needed, %{descriptor: %Bedrock.Cluster.Descriptor{coordinator_nodes: nodes}} = t),
-    do: discover_leader_coordinator(t.cluster, nodes)
+  defp fallback_to_discovery_if_needed(
+         :fallback_needed,
+         %{descriptor: %Bedrock.Cluster.Descriptor{coordinator_nodes: nodes}} = t
+       ),
+       do: discover_leader_coordinator(t.cluster, nodes)
 
   defp fallback_to_discovery_if_needed(result, _t), do: result
 

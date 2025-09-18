@@ -4,6 +4,10 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   alias Bedrock.Internal.Repo
   alias Bedrock.KeySelector
 
+  defmodule TestRepo do
+    use Bedrock.Repo, cluster: MockCluster
+  end
+
   # Mock transaction process to test the conflict clearing behavior
   defmodule MockTransaction do
     @moduledoc false
@@ -112,30 +116,34 @@ defmodule Bedrock.Internal.RepoSimpleTest do
   describe "get/2 (no options)" do
     test "returns value when fetch succeeds" do
       txn_pid = spawn_get_mock("get_key", {:ok, "get_value"})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      assert Repo.get(txn_pid, "get_key") == "get_value"
+      assert Repo.get(TestRepo, "get_key") == "get_value"
     end
 
     test "returns nil when fetch returns error" do
       txn_pid = spawn_get_mock("missing_get_key", {:error, :not_found})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      assert Repo.get(txn_pid, "missing_get_key") == nil
+      assert Repo.get(TestRepo, "missing_get_key") == nil
     end
   end
 
   describe "get/3 with options" do
     test "returns value when key exists" do
       {:ok, tx} = MockTransaction.start_link(%{"test_key" => "test_value"})
+      Process.put({:transaction, TestRepo}, tx)
 
-      assert Repo.get(tx, "test_key", []) == "test_value"
-      assert Repo.get(tx, "test_key", snapshot: true) == "test_value"
+      assert Repo.get(TestRepo, "test_key", []) == "test_value"
+      assert Repo.get(TestRepo, "test_key", snapshot: true) == "test_value"
     end
 
     test "returns nil for non-existent keys" do
       {:ok, tx} = MockTransaction.start_link(%{})
+      Process.put({:transaction, TestRepo}, tx)
 
-      assert Repo.get(tx, "non_existent", []) == nil
-      assert Repo.get(tx, "non_existent", snapshot: true) == nil
+      assert Repo.get(TestRepo, "non_existent", []) == nil
+      assert Repo.get(TestRepo, "non_existent", snapshot: true) == nil
     end
   end
 
@@ -144,10 +152,11 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       txn_pid = self()
       key = "put_key"
       value = "put_value"
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      result = Repo.put(txn_pid, key, value)
+      result = Repo.put(TestRepo, key, value)
 
-      assert result == txn_pid
+      assert result == :ok
       assert_receive {:"$gen_cast", {:set_key, "put_key", "put_value", []}}
     end
   end
@@ -172,7 +181,8 @@ defmodule Bedrock.Internal.RepoSimpleTest do
           [{"key_c", "value_c"}]
         )
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 2)
+      Process.put({:transaction, TestRepo}, txn_pid)
+      stream = Repo.get_range(TestRepo, "key_a", "key_z", batch_size: 2)
       results = stream |> Enum.to_list() |> List.flatten()
 
       assert results == [{"key_b", "value_b"}, {"key_c", "value_c"}]
@@ -180,8 +190,9 @@ defmodule Bedrock.Internal.RepoSimpleTest do
 
     test "handles empty results gracefully" do
       txn_pid = spawn_range_mock("key_a", "key_z", 10, {:ok, {[], false}})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10)
+      stream = Repo.get_range(TestRepo, "key_a", "key_z", batch_size: 10)
       results = Enum.to_list(stream)
 
       assert results == []
@@ -190,8 +201,9 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     test "respects limit option" do
       expected_results = [{"key_b", "value_b"}, {"key_c", "value_c"}]
       txn_pid = spawn_range_mock_with_limit("key_a", "key_z", 2, 2, expected_results)
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      stream = Repo.range(txn_pid, "key_a", "key_z", batch_size: 10, limit: 2)
+      stream = Repo.get_range(TestRepo, "key_a", "key_z", batch_size: 10, limit: 2)
       results = stream |> Enum.to_list() |> List.flatten()
 
       assert results == expected_results
@@ -204,7 +216,8 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       key_selector = KeySelector.first_greater_or_equal("test_key")
 
       spawn(fn ->
-        Repo.select(txn_pid, key_selector)
+        Process.put({:transaction, TestRepo}, txn_pid)
+        Repo.select(TestRepo, key_selector)
       end)
 
       assert_receive {:"$gen_call", _from, {:get_key_selector, ^key_selector, []}}
@@ -213,23 +226,26 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     test "returns success result with resolved key-value pair" do
       key_selector = KeySelector.first_greater_or_equal("mykey")
       txn_pid = spawn_select_mock(key_selector, {:ok, {"resolved_key", "resolved_value"}})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      assert {"resolved_key", "resolved_value"} = Repo.select(txn_pid, key_selector)
+      assert {"resolved_key", "resolved_value"} = Repo.select(TestRepo, key_selector)
     end
 
     test "returns nil when KeySelector resolution fails with not_found" do
       key_selector = KeySelector.first_greater_than("nonexistent")
       txn_pid = spawn_select_mock(key_selector, {:error, :not_found})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      assert nil == Repo.select(txn_pid, key_selector)
+      assert nil == Repo.select(TestRepo, key_selector)
     end
 
     test "throws TransactionError tuple on version errors" do
       key_selector = KeySelector.first_greater_or_equal("versioned_key")
       txn_pid = spawn_select_mock(key_selector, {:error, :version_too_old})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
       {Repo, failed_txn, :transaction_error, :version_too_old, :select, ^key_selector} =
-        catch_throw(Repo.select(txn_pid, key_selector))
+        catch_throw(Repo.select(TestRepo, key_selector))
 
       assert failed_txn == txn_pid
     end
@@ -237,8 +253,9 @@ defmodule Bedrock.Internal.RepoSimpleTest do
     test "handles clamped errors from cross-shard operations" do
       key_selector = "cross_shard" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
       txn_pid = spawn_select_mock(key_selector, {:error, :not_found})
+      Process.put({:transaction, TestRepo}, txn_pid)
 
-      assert Repo.select(txn_pid, key_selector) == nil
+      assert Repo.select(TestRepo, key_selector) == nil
     end
   end
 end

@@ -7,9 +7,8 @@ defmodule Bedrock.Test.DirectoryHelpers do
   import ExUnit.Assertions
   import Mox
 
-  alias Bedrock.Key
   alias Bedrock.KeyRange
-  alias Bedrock.Subspace
+  alias Bedrock.Keyspace
 
   # Version constants
   @version_key <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
@@ -21,9 +20,9 @@ defmodule Bedrock.Test.DirectoryHelpers do
   """
   def expect_version_initialization(repo, storage \\ nil) do
     repo
-    |> expect(:get, fn :mock_txn, @version_key -> nil end)
-    |> expect(:get, fn :mock_txn, @version_key -> nil end)
-    |> expect(:put, fn :mock_txn, @version_key, @current_version ->
+    |> expect(:get, fn %Keyspace{}, ["version"] -> nil end)
+    |> expect(:get, fn %Keyspace{}, ["version"] -> nil end)
+    |> expect(:put, fn %Keyspace{}, ["version"], @current_version ->
       if storage, do: Agent.update(storage, &Map.put(&1, @version_key, @current_version))
       :ok
     end)
@@ -33,25 +32,22 @@ defmodule Bedrock.Test.DirectoryHelpers do
   Expects a single version check for read operations.
   """
   def expect_version_check(repo, version \\ @current_version) do
-    expect(repo, :get, fn :mock_txn, @version_key -> version end)
+    expect(repo, :get, fn %Keyspace{}, ["version"] -> version end)
   end
 
   @doc """
   Expects a directory existence check.
   """
   def expect_directory_exists(repo, path, result) do
-    expected_key = build_directory_key(path)
-    expect(repo, :get, fn :mock_txn, ^expected_key -> result end)
+    expect(repo, :get, fn %Keyspace{}, ^path -> result end)
   end
 
   @doc """
   Expects directory creation with the given packed value.
   """
-  def expect_directory_creation(repo, path, packed_value) do
-    expected_key = build_directory_key(path)
-
-    expect(repo, :put, fn :mock_txn, ^expected_key, value ->
-      assert ^packed_value = Key.unpack(value)
+  def expect_directory_creation(repo, path, expected_tuple_value) do
+    expect(repo, :put, fn %Keyspace{}, ^path, value ->
+      assert ^expected_tuple_value = value
       :ok
     end)
   end
@@ -60,8 +56,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   Expects directory creation without value assertion.
   """
   def expect_directory_creation(repo, path) do
-    expected_key = build_directory_key(path)
-    expect(repo, :put, fn :mock_txn, ^expected_key, _value -> :ok end)
+    expect(repo, :put, fn %Keyspace{}, ^path, _value -> :ok end)
   end
 
   @doc """
@@ -74,9 +69,9 @@ defmodule Bedrock.Test.DirectoryHelpers do
     else
       parent_path = Enum.drop(path, -1)
       parent_key = build_directory_key(parent_path)
-      result = result || Key.pack({<<0, 1>>, ""})
+      result = result || Bedrock.Encoding.Tuple.pack({<<0, 1>>, ""})
 
-      expect(repo, :get, fn :mock_txn, ^parent_key -> result end)
+      expect(repo, :get, fn ^parent_key -> result end)
     end
   end
 
@@ -85,7 +80,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   """
   def expect_range_scan(repo, path, results) do
     expected_range = KeyRange.from_prefix(build_directory_key(path))
-    expect(repo, :range, fn :mock_txn, ^expected_range -> results end)
+    expect(repo, :get_range, fn ^expected_range -> results end)
   end
 
   @doc """
@@ -94,7 +89,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   def expect_range_scan(repo, path, results, opts) do
     expected_range = KeyRange.from_prefix(build_directory_key(path))
 
-    expect(repo, :range, fn :mock_txn, ^expected_range, actual_opts ->
+    expect(repo, :get_range, fn ^expected_range, actual_opts ->
       # Assert on any specific options we care about
       if opts[:limit], do: assert(actual_opts[:limit] == opts[:limit])
       results
@@ -106,7 +101,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   """
   def expect_range_clear(repo, path) do
     expected_range = KeyRange.from_prefix(build_directory_key(path))
-    expect(repo, :clear_range, fn :mock_txn, ^expected_range -> :ok end)
+    expect(repo, :clear_range, fn ^expected_range -> :ok end)
   end
 
   @doc """
@@ -118,18 +113,18 @@ defmodule Bedrock.Test.DirectoryHelpers do
     expected_range = KeyRange.from_prefix(prefix)
 
     repo
-    |> expect(:range, fn :mock_txn, ^expected_range, opts ->
+    |> expect(:get_range, fn ^expected_range, opts ->
       assert opts[:limit] == 1
       results
     end)
-    |> expect(:get, fn :mock_txn, ^prefix -> nil end)
+    |> expect(:get, fn ^prefix -> nil end)
   end
 
   @doc """
   Builds the database key for a directory path using the same format as the current implementation.
   """
-  def build_directory_key([]), do: <<254>> |> Subspace.new() |> Subspace.key()
-  def build_directory_key(path), do: <<254>> |> Subspace.new() |> Subspace.pack(path)
+  def build_directory_key([]), do: <<254>> |> Keyspace.new() |> Keyspace.prefix()
+  def build_directory_key(path), do: <<254>> |> Keyspace.new() |> Keyspace.pack(Bedrock.Encoding.Tuple.pack(path))
 
   @doc """
   Helper for prefix collision range check only.
@@ -138,7 +133,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   def expect_collision_check(repo, prefix) do
     expected_range = KeyRange.from_prefix(prefix)
 
-    expect(repo, :range, fn :mock_txn, ^expected_range, opts ->
+    expect(repo, :get_range, fn ^expected_range, opts ->
       assert opts[:limit] == 1
       []
     end)
@@ -149,7 +144,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   Expects a GET call for an ancestor prefix and returns nil (no collision).
   """
   def expect_ancestor_check(repo, ancestor_prefix) do
-    expect(repo, :get, fn :mock_txn, ^ancestor_prefix -> nil end)
+    expect(repo, :get, fn ^ancestor_prefix -> nil end)
   end
 
   @doc """
@@ -157,16 +152,16 @@ defmodule Bedrock.Test.DirectoryHelpers do
   Expects multiple GET calls for any ancestor prefixes and returns nil (no collision).
   """
   def expect_ancestor_checks(repo, count) do
-    expect(repo, :get, count, fn :mock_txn, _ancestor_prefix -> nil end)
+    expect(repo, :get, count, fn _ancestor_prefix -> nil end)
   end
 
   @doc """
-  Helper to pack directory node data.
+  Helper to create directory node data.
   Mirrors the encode_node_value function in the actual directory layer.
   """
   def pack_directory_value(prefix, layer \\ nil, version \\ nil, metadata \\ nil)
-  def pack_directory_value(prefix, layer, nil, nil), do: Key.pack({prefix, layer || ""})
-  def pack_directory_value(prefix, layer, version, nil), do: Key.pack({prefix, layer || "", version})
-  def pack_directory_value(prefix, layer, nil, metadata), do: Key.pack({prefix, layer || "", nil, metadata})
-  def pack_directory_value(prefix, layer, version, metadata), do: Key.pack({prefix, layer || "", version, metadata})
+  def pack_directory_value(prefix, layer, nil, nil), do: {prefix, layer || ""}
+  def pack_directory_value(prefix, layer, version, nil), do: {prefix, layer || "", version}
+  def pack_directory_value(prefix, layer, nil, metadata), do: {prefix, layer || "", nil, metadata}
+  def pack_directory_value(prefix, layer, version, metadata), do: {prefix, layer || "", version, metadata}
 end

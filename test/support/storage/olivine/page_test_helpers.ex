@@ -37,21 +37,25 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @spec persist_pages_batch([Page.t()], Database.t()) :: :ok | {:error, term()}
   def persist_pages_batch(pages, database) do
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
-    result = Enum.reduce_while(pages, :ok, fn page, :ok ->
-      binary = from_map(page)
-      next_id = if is_map(page), do: page.next_id, else: 0
 
-      case Database.store_page_version(database, Page.id(page), version, {binary, next_id}) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
+    result =
+      Enum.reduce_while(pages, :ok, fn page, :ok ->
+        binary = from_map(page)
+        next_id = if is_map(page), do: page.next_id, else: 0
+
+        case Database.store_page_version(database, Page.id(page), version, {binary, next_id}) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
 
     case result do
       :ok ->
         {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
         :ok
-      error -> error
+
+      error ->
+        error
     end
   end
 

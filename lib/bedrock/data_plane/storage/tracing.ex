@@ -46,6 +46,9 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
         "Log pull started at #{Bedrock.DataPlane.Version.to_string(timestamp)} for version #{Bedrock.DataPlane.Version.to_string(next_version)}"
       )
 
+  def log_event(:pull_start, _, %{start_after: start_after}),
+    do: debug("Log pull started after #{inspect(start_after)}")
+
   def log_event(:pull_succeeded, _, %{timestamp: timestamp, n_transactions: n_transactions}),
     do:
       debug(

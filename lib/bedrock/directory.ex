@@ -206,7 +206,7 @@ defmodule Bedrock.Directory do
 
     # Return the root directory directly
     %Node{
-      prefix: Subspace.key(content_subspace),
+      prefix: Subspace.prefix(content_subspace),
       path: [],
       layer: nil,
       directory_layer: layer,
@@ -525,7 +525,7 @@ defmodule Bedrock.Directory do
   # Key encoding for node metadata
   defp node_key(%Layer{node_subspace: node_subspace, path: base_path}, path) do
     case base_path ++ path do
-      [] -> Subspace.key(node_subspace)
+      [] -> Subspace.prefix(node_subspace)
       full_path -> Subspace.pack(node_subspace, full_path)
     end
   end
@@ -613,7 +613,7 @@ defmodule Bedrock.Directory do
     else
       # Second check: Are there any keys that start with our prefix?
       # The content subspace prefix combined with the directory prefix
-      full_prefix = Subspace.key(content_subspace) <> prefix
+      full_prefix = Subspace.prefix(content_subspace) <> prefix
       prefix_range = KeyRange.from_prefix(full_prefix)
 
       case repo.get_range(prefix_range, limit: 1) do
@@ -646,7 +646,7 @@ defmodule Bedrock.Directory do
 
     Enum.all?(1..(prefix_size - 1), fn size ->
       ancestor_prefix = binary_part(prefix, 0, size)
-      key = Subspace.key(content_subspace) <> ancestor_prefix
+      key = Subspace.prefix(content_subspace) <> ancestor_prefix
 
       # If this exact key exists, we have a collision
       key |> repo.get() |> is_nil()
@@ -864,7 +864,7 @@ defmodule Bedrock.Directory do
   end
 
   defp extract_relative_path(%Layer{} = layer, key, base_path) do
-    node_subspace_prefix = Subspace.key(layer.node_subspace)
+    node_subspace_prefix = Subspace.prefix(layer.node_subspace)
 
     case key do
       <<^node_subspace_prefix::binary, remaining::binary>> ->

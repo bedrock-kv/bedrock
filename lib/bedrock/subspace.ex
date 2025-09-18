@@ -66,14 +66,8 @@ defmodule Bedrock.Subspace do
   @doc """
   Get the raw prefix bytes of the subspace.
   """
-  @spec key(t()) :: binary()
-  def key(%__MODULE__{prefix: prefix}), do: prefix
-
-  @doc """
-  Get the raw prefix bytes of the subspace (alias for key/1).
-  """
-  @spec bytes(t()) :: binary()
-  def bytes(%__MODULE__{} = subspace), do: key(subspace)
+  @spec prefix(t()) :: binary()
+  def prefix(%__MODULE__{prefix: prefix}), do: prefix
 
   @doc """
   Pack a list or tuple within this subspace.

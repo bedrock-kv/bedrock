@@ -86,17 +86,16 @@ defmodule Bedrock.SubspaceTest do
     end
   end
 
-  describe "key/1 and bytes/1" do
-    test "key/1 returns raw prefix bytes" do
+  describe "prefix/1" do
+    test "prefix/1 returns raw prefix bytes" do
       prefix = <<1, 2, 3, 4>>
-      assert Subspace.key(Subspace.new(prefix)) == prefix
+      assert Subspace.prefix(Subspace.new(prefix)) == prefix
     end
 
-    test "bytes/1 returns same as key/1" do
+    test "prefix/1 works with string prefixes" do
       prefix = <<"test_prefix">>
       subspace = Subspace.new(prefix)
-      assert Subspace.bytes(subspace) == Subspace.key(subspace)
-      assert Subspace.bytes(subspace) == prefix
+      assert Subspace.prefix(subspace) == prefix
     end
   end
 

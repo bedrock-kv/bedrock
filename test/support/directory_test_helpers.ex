@@ -128,7 +128,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   @doc """
   Builds the database key for a directory path using the same format as the current implementation.
   """
-  def build_directory_key([]), do: <<254>> |> Subspace.new() |> Subspace.key()
+  def build_directory_key([]), do: <<254>> |> Subspace.new() |> Subspace.prefix()
   def build_directory_key(path), do: <<254>> |> Subspace.new() |> Subspace.pack(path)
 
   @doc """

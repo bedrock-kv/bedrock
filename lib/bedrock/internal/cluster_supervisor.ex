@@ -60,6 +60,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
             ~s[Bedrock: This node is not part of a cluster (use the "--name" or "--sname" option when starting the Erlang VM)]
           )
 
+          nil
+
         {:error, _reason} ->
           nil
       end

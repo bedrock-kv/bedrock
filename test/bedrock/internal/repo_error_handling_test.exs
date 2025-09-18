@@ -3,6 +3,10 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
 
   alias Bedrock.Internal.Repo
 
+  defmodule TestRepo do
+    use Bedrock.Repo, cluster: MockCluster
+  end
+
   describe "get/3 error handling" do
     test "returns nil for :not_found error" do
       txn =
@@ -13,7 +17,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      assert Repo.get(txn, "test_key") == nil
+      Process.put({:transaction, TestRepo}, txn)
+
+      assert Repo.get(TestRepo, "test_key") == nil
     end
 
     test "returns value for successful get" do
@@ -25,7 +31,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      assert Repo.get(txn, "test_key") == "test_value"
+      Process.put({:transaction, TestRepo}, txn)
+
+      assert Repo.get(TestRepo, "test_key") == "test_value"
     end
 
     test "throws tuple for :unavailable error" do
@@ -37,7 +45,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      {Repo, failed_txn, :retryable_failure, :unavailable} = catch_throw(Repo.get(txn, "test_key"))
+      Process.put({:transaction, TestRepo}, txn)
+
+      {Repo, failed_txn, :retryable_failure, :unavailable} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert failed_txn == txn
     end
 
@@ -50,7 +60,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      {Repo, failed_txn, :retryable_failure, :timeout} = catch_throw(Repo.get(txn, "test_key"))
+      Process.put({:transaction, TestRepo}, txn)
+
+      {Repo, failed_txn, :retryable_failure, :timeout} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert failed_txn == txn
     end
 
@@ -63,7 +75,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(txn, "test_key"))
+      Process.put({:transaction, TestRepo}, txn)
+
+      {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert module == Repo
       assert failed_txn == txn
       assert type == :transaction_error
@@ -82,7 +96,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      {module, failed_txn, error_type, reason} = catch_throw(Repo.get(txn, "specific_test_key"))
+      Process.put({:transaction, TestRepo}, txn)
+
+      {module, failed_txn, error_type, reason} = catch_throw(Repo.get(TestRepo, "specific_test_key"))
 
       assert module == Repo
       assert failed_txn == txn
@@ -101,8 +117,10 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("test_key")
-      assert Repo.select(txn, selector) == nil
+      assert Repo.select(TestRepo, selector) == nil
     end
 
     test "returns nil for not_found response" do
@@ -114,8 +132,10 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("test_key")
-      assert Repo.select(txn, selector) == nil
+      assert Repo.select(TestRepo, selector) == nil
     end
 
     test "returns key-value tuple for successful select" do
@@ -127,8 +147,10 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("test_key")
-      assert Repo.select(txn, selector) == {"resolved_key", "value"}
+      assert Repo.select(TestRepo, selector) == {"resolved_key", "value"}
     end
 
     test "throws tuple for :unavailable error" do
@@ -140,9 +162,11 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("test_key")
 
-      {Repo, failed_txn, :retryable_failure, :unavailable} = catch_throw(Repo.select(txn, selector))
+      {Repo, failed_txn, :retryable_failure, :unavailable} = catch_throw(Repo.select(TestRepo, selector))
       assert failed_txn == txn
     end
 
@@ -155,9 +179,11 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("test_key")
 
-      {Repo, failed_txn, :retryable_failure, :timeout} = catch_throw(Repo.select(txn, selector))
+      {Repo, failed_txn, :retryable_failure, :timeout} = catch_throw(Repo.select(TestRepo, selector))
       assert failed_txn == txn
     end
 
@@ -170,9 +196,11 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
+      Process.put({:transaction, TestRepo}, txn)
+
       selector = Bedrock.KeySelector.first_greater_than("selector_test_key")
 
-      {module, failed_txn, error_type, reason} = catch_throw(Repo.select(txn, selector))
+      {module, failed_txn, error_type, reason} = catch_throw(Repo.select(TestRepo, selector))
 
       assert module == Repo
       assert failed_txn == txn
@@ -194,7 +222,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
             end
           end)
 
-        {module, failed_txn, error_type, reason} = catch_throw(Repo.get(txn, "test_key"))
+        Process.put({:transaction, TestRepo}, txn)
+
+        {module, failed_txn, error_type, reason} = catch_throw(Repo.get(TestRepo, "test_key"))
 
         assert module == Repo
         assert failed_txn == txn
@@ -215,7 +245,9 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
             end
           end)
 
-        {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(txn, "test_key"))
+        Process.put({:transaction, TestRepo}, txn)
+
+        {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(TestRepo, "test_key"))
         assert module == Repo
         assert failed_txn == txn
         assert type == :transaction_error

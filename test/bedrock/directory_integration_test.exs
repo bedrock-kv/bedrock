@@ -7,7 +7,7 @@ defmodule Bedrock.DirectoryIntegrationTest do
   alias Bedrock.Directory
 
   setup do
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -45,7 +45,9 @@ defmodule Bedrock.DirectoryIntegrationTest do
     assert {:ok, users_dir} = Directory.create(root, ["users"], layer: "document")
     assert %{layer: "document", path: ["users"], prefix: <<0, 0, 0, 0>>} = users_dir
 
-    # Test subspace generation uses the correct prefix
-    assert %Bedrock.Subspace{prefix: <<0, 0, 0, 0>>} = Directory.get_subspace(users_dir)
+    # Test keyspace generation uses the correct base prefix
+    keyspace = users_dir |> Directory.to_keyspace() |> Bedrock.Keyspace.partition("data")
+    # Should start with the users_dir prefix
+    assert String.starts_with?(keyspace.prefix, <<0, 0, 0, 0>>)
   end
 end

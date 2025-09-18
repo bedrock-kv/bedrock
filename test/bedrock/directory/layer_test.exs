@@ -5,11 +5,11 @@ defmodule Bedrock.Directory.LayerTest do
   import Mox
 
   alias Bedrock.Directory
-  alias Bedrock.Key
+  alias Bedrock.Keyspace
 
   setup do
     # Automatically stub transaction to execute callbacks immediately
-    stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
+    stub(MockRepo, :transact, fn callback -> callback.() end)
     :ok
   end
 
@@ -36,7 +36,7 @@ defmodule Bedrock.Directory.LayerTest do
     test "fails when directory already exists" do
       MockRepo
       |> expect_version_initialization()
-      |> expect_directory_exists(["users"], Key.pack({<<0, 1>>, ""}))
+      |> expect_directory_exists(["users"], {<<0, 1>>, ""})
 
       layer = Directory.root(MockRepo)
       assert {:error, :directory_already_exists} = Directory.create(layer, ["users"])
@@ -58,7 +58,7 @@ defmodule Bedrock.Directory.LayerTest do
   describe "open/3" do
     test "opens existing directory" do
       MockRepo
-      |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document"}))
+      |> expect_directory_exists(["users"], {<<0, 42>>, "document"})
       |> expect_version_check()
 
       layer = Directory.root(MockRepo)
@@ -68,14 +68,17 @@ defmodule Bedrock.Directory.LayerTest do
     end
 
     test "fails when directory doesn't exist" do
-      expect_directory_exists(MockRepo, ["nonexistent"], nil)
+      MockRepo
+      |> expect_directory_exists(["nonexistent"], nil)
+      |> expect_version_check()
+
       layer = Directory.root(MockRepo)
       assert {:error, :directory_does_not_exist} = Directory.open(layer, ["nonexistent"])
     end
   end
 
-  describe "get_subspace/1" do
-    test "returns subspace for directory node" do
+  describe "get_keyspace/2" do
+    test "returns keyspace for directory node" do
       node = %Directory.Node{
         prefix: <<0, 42>>,
         path: ["users"],
@@ -83,14 +86,15 @@ defmodule Bedrock.Directory.LayerTest do
         directory_layer: nil
       }
 
-      subspace = Directory.get_subspace(node)
-      assert subspace.prefix == <<0, 42>>
+      keyspace = node |> Directory.to_keyspace() |> Keyspace.partition("data")
+      # The keyspace should be the node prefix plus the raw name
+      assert keyspace.prefix == <<0, 42>> <> "data"
     end
   end
 
   describe "exists?/3" do
     test "returns true when directory exists" do
-      expect_directory_exists(MockRepo, ["users"], Key.pack({<<0, 1>>, ""}))
+      expect_directory_exists(MockRepo, ["users"], {<<0, 1>>, ""})
       layer = Directory.root(MockRepo)
       assert Directory.exists?(layer, ["users"]) == true
     end
@@ -117,7 +121,7 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "opens directory with existing metadata fields" do
       MockRepo
-      |> expect_directory_exists(["users"], Key.pack({<<0, 42>>, "document", "2.0", {"updated", 1}}))
+      |> expect_directory_exists(["users"], {<<0, 42>>, "document", "2.0", {"updated", 1}})
       |> expect_version_check()
 
       layer = Directory.root(MockRepo)
@@ -134,7 +138,7 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "handles legacy 2-tuple format for backward compatibility" do
       MockRepo
-      |> expect_directory_exists(["legacy"], Key.pack({<<0, 42>>, "legacy"}))
+      |> expect_directory_exists(["legacy"], {<<0, 42>>, "legacy"})
       |> expect_version_check()
 
       layer = Directory.root(MockRepo)
@@ -151,7 +155,7 @@ defmodule Bedrock.Directory.LayerTest do
 
     test "handles 3-tuple format with version only" do
       MockRepo
-      |> expect_directory_exists(["versioned"], Key.pack({<<0, 42>>, "versioned", "1.5"}))
+      |> expect_directory_exists(["versioned"], {<<0, 42>>, "versioned", "1.5"})
       |> expect_version_check()
 
       layer = Directory.root(MockRepo)
@@ -170,7 +174,7 @@ defmodule Bedrock.Directory.LayerTest do
       MockRepo
       |> expect_directory_exists(
         ["isolated_space"],
-        Key.pack({<<0, 42>>, "partition", "1.0", {"type", "isolated"}})
+        {<<0, 42>>, "partition", "1.0", {"type", "isolated"}}
       )
       |> expect_version_check()
 

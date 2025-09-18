@@ -2,7 +2,7 @@ defmodule Bedrock.Key.TupleTest do
   use ExUnit.Case
   use ExUnitProperties
 
-  alias Bedrock.Key
+  alias Bedrock.Encoding.Tuple, as: Key
 
   doctest Key
 

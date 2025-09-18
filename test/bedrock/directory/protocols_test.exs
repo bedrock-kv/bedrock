@@ -4,7 +4,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
   alias Bedrock.Directory.Layer
   alias Bedrock.Directory.Node
   alias Bedrock.Directory.Partition
-  alias Bedrock.Subspace
+  alias Bedrock.Keyspace
 
   describe "String.Chars for Node" do
     test "formats path and layer correctly" do
@@ -17,7 +17,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(node) == ~s{DirectoryNode<users/profile@"profile_data">}
+      assert to_string(node) == ~s{Directory<Node|path:users/profile@"profile_data">}
     end
 
     test "handles nil layer" do
@@ -30,7 +30,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(node) == "DirectoryNode<system>"
+      assert to_string(node) == "Directory<Node|path:system>"
     end
 
     test "handles empty string layer" do
@@ -43,7 +43,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(node) == "DirectoryNode<config>"
+      assert to_string(node) == "Directory<Node|path:config>"
     end
 
     test "handles empty path" do
@@ -56,7 +56,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(node) == ~s{DirectoryNode<@"root_layer">}
+      assert to_string(node) == ~s{Directory<Node|path:@"root_layer">}
     end
 
     test "handles single path element" do
@@ -69,7 +69,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(node) == ~s{DirectoryNode<users@"user_data">}
+      assert to_string(node) == ~s{Directory<Node|path:users@"user_data">}
     end
   end
 
@@ -83,7 +83,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(partition) == "DirectoryPartition<app/data>"
+      assert to_string(partition) == "Directory<Partition|app/data>"
     end
 
     test "handles empty path" do
@@ -95,7 +95,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(partition) == "DirectoryPartition<>"
+      assert to_string(partition) == "Directory<Partition|>"
     end
 
     test "handles single path element" do
@@ -107,7 +107,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert to_string(partition) == "DirectoryPartition<main>"
+      assert to_string(partition) == "Directory<Partition|main>"
     end
   end
 
@@ -115,37 +115,37 @@ defmodule Bedrock.Directory.ProtocolsTest do
     test "formats path correctly" do
       layer = %Layer{
         path: ["root"],
-        node_subspace: Subspace.new(<<1>>),
-        content_subspace: Subspace.new(<<2>>),
+        node_keyspace: Keyspace.new(<<1>>),
+        content_keyspace: Keyspace.new(<<2>>),
         repo: MyApp.Repo,
         next_prefix_fn: nil
       }
 
-      assert to_string(layer) == "DirectoryLayer<root>"
+      assert to_string(layer) == "Directory<Layer|root>"
     end
 
     test "handles empty path" do
       layer = %Layer{
         path: [],
-        node_subspace: nil,
-        content_subspace: nil,
+        node_keyspace: nil,
+        content_keyspace: nil,
         repo: nil,
         next_prefix_fn: nil
       }
 
-      assert to_string(layer) == "DirectoryLayer<>"
+      assert to_string(layer) == "Directory<Layer|>"
     end
 
     test "handles complex nested path" do
       layer = %Layer{
         path: ["app", "services", "auth"],
-        node_subspace: nil,
-        content_subspace: nil,
+        node_keyspace: nil,
+        content_keyspace: nil,
         repo: nil,
         next_prefix_fn: nil
       }
 
-      assert to_string(layer) == "DirectoryLayer<app/services/auth>"
+      assert to_string(layer) == "Directory<Layer|app/services/auth>"
     end
   end
 
@@ -160,7 +160,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(node) == ~s{#DirectoryNode<users/profile@"profile_data", prefix: <<1, 2, 3>>>}
+      assert inspect(node) == ~s{#Directory<Node|path:users/profile@"profile_data",prefix:0x010203>}
     end
 
     test "handles nil layer in inspect" do
@@ -173,7 +173,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(node) == "#DirectoryNode<system, prefix: \"\\a\\b\">"
+      assert inspect(node) == "#Directory<Node|path:system,prefix:0x0708>"
     end
 
     test "handles empty string layer in inspect" do
@@ -186,7 +186,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(node) == "#DirectoryNode<config, prefix: \"\\t\\n\">"
+      assert inspect(node) == "#Directory<Node|path:config,prefix:0x090a>"
     end
 
     test "handles binary layer data" do
@@ -199,7 +199,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(node) == "#DirectoryNode<binary_test@<<0, 1, 2>>, prefix: <<3, 4>>>"
+      assert inspect(node) == "#Directory<Node|path:binary_test@<<0, 1, 2>>,prefix:0x0304>"
     end
   end
 
@@ -213,7 +213,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(partition) == "#DirectoryPartition<app/data, prefix: <<4, 5, 6>>>"
+      assert inspect(partition) == "#Directory<Partition|path:app/data,prefix:0x040506>"
     end
 
     test "handles empty prefix" do
@@ -225,7 +225,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
         metadata: nil
       }
 
-      assert inspect(partition) == "#DirectoryPartition<test, prefix: \"\">"
+      assert inspect(partition) == "#Directory<Partition|path:test,prefix:0x>"
     end
   end
 
@@ -233,37 +233,37 @@ defmodule Bedrock.Directory.ProtocolsTest do
     test "includes path and repo" do
       layer = %Layer{
         path: ["root"],
-        node_subspace: Subspace.new(<<1>>),
-        content_subspace: Subspace.new(<<2>>),
+        node_keyspace: Keyspace.new(<<1>>),
+        content_keyspace: Keyspace.new(<<2>>),
         repo: MyApp.Repo,
         next_prefix_fn: nil
       }
 
-      assert inspect(layer) == "#DirectoryLayer<root, repo: MyApp.Repo>"
+      assert inspect(layer) == "#Directory<Layer|path:root,repo:MyApp.Repo>"
     end
 
     test "handles nil repo" do
       layer = %Layer{
         path: ["test"],
-        node_subspace: nil,
-        content_subspace: nil,
+        node_keyspace: nil,
+        content_keyspace: nil,
         repo: nil,
         next_prefix_fn: nil
       }
 
-      assert inspect(layer) == "#DirectoryLayer<test, repo: nil>"
+      assert inspect(layer) == "#Directory<Layer|path:test,repo:nil>"
     end
 
     test "handles module repo" do
       layer = %Layer{
         path: ["services"],
-        node_subspace: nil,
-        content_subspace: nil,
+        node_keyspace: nil,
+        content_keyspace: nil,
         repo: Bedrock.TestRepo,
         next_prefix_fn: nil
       }
 
-      assert inspect(layer) == "#DirectoryLayer<services, repo: Bedrock.TestRepo>"
+      assert inspect(layer) == "#Directory<Layer|path:services,repo:Bedrock.TestRepo>"
     end
   end
 
@@ -288,7 +288,7 @@ defmodule Bedrock.Directory.ProtocolsTest do
       assert inspect_result =~ "data"
 
       # Inspect should include additional details
-      assert inspect_result =~ "prefix: <<1, 2>>"
+      assert inspect_result =~ "prefix:0x0102"
       refute string_chars =~ "prefix:"
 
       # String.Chars should be shorter/cleaner

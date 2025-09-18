@@ -13,7 +13,10 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   def persist_page_to_database(_index_manager, database, page) when is_map(page) do
     binary = from_map(page)
     next_id = page.next_id
-    Database.store_page(database, Page.id(page), {binary, next_id})
+    version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+    :ok = Database.store_page_version(database, Page.id(page), version, {binary, next_id})
+    {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
+    :ok
   end
 
   def persist_page_to_database(_index_manager, database, page) when is_binary(page) do
@@ -22,7 +25,10 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
     binary = from_map(page)
     # Default next_id for most test pages
     next_id = 0
-    Database.store_page(database, Page.id(page), {binary, next_id})
+    version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+    :ok = Database.store_page_version(database, Page.id(page), version, {binary, next_id})
+    {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
+    :ok
   end
 
   @doc """
@@ -30,15 +36,27 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   """
   @spec persist_pages_batch([Page.t()], Database.t()) :: :ok | {:error, term()}
   def persist_pages_batch(pages, database) do
-    Enum.reduce_while(pages, :ok, fn page, :ok ->
-      binary = from_map(page)
-      next_id = if is_map(page), do: page.next_id, else: 0
+    version = <<0, 0, 0, 0, 0, 0, 0, 1>>
 
-      case Database.store_page(database, Page.id(page), {binary, next_id}) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
+    result =
+      Enum.reduce_while(pages, :ok, fn page, :ok ->
+        binary = from_map(page)
+        next_id = if is_map(page), do: page.next_id, else: 0
+
+        case Database.store_page_version(database, Page.id(page), version, {binary, next_id}) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      :ok ->
+        {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
+        :ok
+
+      error ->
+        error
+    end
   end
 
   @doc """

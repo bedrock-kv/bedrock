@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.AtomicOperationsTest do
       File.mkdir_p!(temp_dir)
 
       db_file_path = Path.join(temp_dir, "olivine_test.sqlite")
-      {:ok, database} = OlivineDatabase.open(:"test_db_#{System.unique_integer()}", db_file_path)
+      {:ok, database} = OlivineDatabase.open(:"test_db_#{System.unique_integer()}", db_file_path, pool_size: 1)
       index_manager = IndexManager.new()
 
       on_exit(fn ->

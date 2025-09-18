@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
@@ -16,7 +18,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     tmp_dir = System.tmp_dir!()
     db_file = Path.join(tmp_dir, "test_db_#{System.unique_integer([:positive])}.sqlite")
     table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-    {:ok, database} = Database.open(table_name, db_file)
+
+    # Suppress expected connection retry logs during database open
+    {result, _logs} =
+      with_log(fn ->
+        Database.open(table_name, db_file, pool_size: 1)
+      end)
+
+    {:ok, database} = result
     database
   end
 

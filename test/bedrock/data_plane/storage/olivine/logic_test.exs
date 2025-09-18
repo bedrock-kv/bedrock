@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Logic
@@ -12,7 +14,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
     File.rm_rf!(test_dir)
 
     on_exit(fn ->
-      File.rm_rf!(test_dir)
+      # Give WAL files time to be released after shutdown
+      Process.sleep(50)
+      # Try cleanup multiple times to handle WAL file locks
+      Enum.reduce_while(1..3, :error, fn _attempt, _acc ->
+        case File.rm_rf(test_dir) do
+          {:ok, _} ->
+            {:halt, :ok}
+
+          _error ->
+            Process.sleep(50)
+            {:cont, :error}
+        end
+      end)
     end)
 
     {:ok, test_dir: test_dir}
@@ -20,7 +34,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
 
   # Helper function to create and start a test logic state
   defp create_test_state(test_dir, otp_name \\ :test_storage, id \\ "test") do
-    {:ok, state} = Logic.startup(otp_name, self(), id, test_dir)
+    # Suppress expected connection retry logs during logic startup
+    {result, _logs} =
+      with_log(fn ->
+        Logic.startup(otp_name, self(), id, test_dir, pool_size: 1)
+      end)
+
+    {:ok, state} = result
     state
   end
 
@@ -30,6 +50,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       foreman = self()
       id = "test_shard"
 
+      {result, _logs} =
+        with_log(fn ->
+          Logic.startup(otp_name, foreman, id, test_dir, pool_size: 1)
+        end)
+
       assert {:ok,
               %State{
                 path: ^test_dir,
@@ -38,7 +63,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
                 foreman: ^foreman,
                 database: %Database{},
                 index_manager: %IndexManager{}
-              } = state} = Logic.startup(otp_name, foreman, id, test_dir)
+              } = state} = result
 
       assert File.dir?(test_dir)
       Logic.shutdown(state)
@@ -47,7 +72,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
     test "handles directory creation failure" do
       invalid_path = "/invalid/read-only/path"
 
-      result = Logic.startup(:test_storage, self(), "test", invalid_path)
+      result = Logic.startup(:test_storage, self(), "test", invalid_path, pool_size: 1)
       assert {:error, _posix_error} = result
     end
   end

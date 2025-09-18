@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Server
@@ -17,7 +19,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
     test "basic SQLite operations work" do
       temp_path = "/tmp/test_olivine_#{System.unique_integer([:positive])}.sqlite"
 
-      assert {:ok, db} = Database.open(:test_olivine, temp_path)
+      {result, _logs} = with_log(fn -> Database.open(:test_olivine, temp_path, pool_size: 1) end)
+      assert {:ok, db} = result
       assert :ok = Database.close(db)
 
       File.rm(temp_path)

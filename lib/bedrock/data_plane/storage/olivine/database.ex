@@ -418,6 +418,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   defp persist_metadata(conn, key, value) do
     query = "INSERT OR REPLACE INTO metadata (key, value) VALUES ($1, $2)"
     DBConnection.execute!(conn, %Exqlite.Query{statement: query}, [key, {:blob, value}])
+    :ok
   end
 
   defp persist_pages(_conn, pages) when map_size(pages) == 0, do: :ok

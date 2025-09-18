@@ -9,7 +9,7 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @doc """
   Persists a single page to the database.
   """
-  @spec persist_page_to_database(any(), Database.t(), Page.t()) :: :ok | {:error, term()}
+  @spec persist_page_to_database(any(), Database.t(), Page.t()) :: :ok
   def persist_page_to_database(_index_manager, database, page) when is_map(page) do
     binary = from_map(page)
     next_id = page.next_id
@@ -34,29 +34,18 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @doc """
   Persists multiple pages to the database in batch.
   """
-  @spec persist_pages_batch([Page.t()], Database.t()) :: :ok | {:error, term()}
+  @spec persist_pages_batch([Page.t()], Database.t()) :: :ok
   def persist_pages_batch(pages, database) do
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
 
-    result =
-      Enum.reduce_while(pages, :ok, fn page, :ok ->
-        binary = from_map(page)
-        next_id = if is_map(page), do: page.next_id, else: 0
+    Enum.each(pages, fn page ->
+      binary = from_map(page)
+      next_id = if is_map(page), do: page.next_id, else: 0
+      :ok = Database.store_page_version(database, Page.id(page), version, {binary, next_id})
+    end)
 
-        case Database.store_page_version(database, Page.id(page), version, {binary, next_id}) do
-          :ok -> {:cont, :ok}
-          error -> {:halt, error}
-        end
-      end)
-
-    case result do
-      :ok ->
-        {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
-        :ok
-
-      error ->
-        error
-    end
+    {:ok, _updated_db} = Database.advance_durable_version(database, version, [version])
+    :ok
   end
 
   @doc """

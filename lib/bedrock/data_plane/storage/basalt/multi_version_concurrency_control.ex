@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
 
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.Atomics
 
   @opaque t :: :ets.table()
 
@@ -91,6 +92,63 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
             Map.put(acc, start_key, nil)
           else
             acc
+          end
+
+        {:atomic, :add, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.add(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :min, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.min(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :max, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.max(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :bit_and, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.bit_and(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :bit_or, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.bit_or(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :bit_xor, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.bit_xor(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :byte_min, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.byte_min(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :byte_max, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.byte_max(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :append_if_fits, key, value}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.append_if_fits(current_value, value)
+          Map.put(acc, key, new_value)
+
+        {:atomic, :compare_and_clear, key, expected}, acc ->
+          current_value = get_current_value_for_atomic_op(mvcc, key, version)
+          new_value = Atomics.compare_and_clear(current_value, expected)
+
+          if new_value == nil do
+            # Clear the key
+            Map.put(acc, key, nil)
+          else
+            # Keep existing value
+            Map.put(acc, key, new_value)
           end
       end)
 
@@ -265,4 +323,25 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControl do
   defp match_version_lt(version), do: [{{{:_, :"$1"}, :_}, [{:<, :"$1", version}], [true]}]
 
   defp versioned_key(key, version), do: {key, version}
+
+  # Atomic operation helpers
+
+  @spec get_current_value_for_atomic_op(t(), Bedrock.key(), Bedrock.version()) :: binary()
+  defp get_current_value_for_atomic_op(mvcc, key, version) do
+    # Get the most recent version of this key that's less than the current version
+    # We subtract 1 microsecond to get the previous version for read-before-write
+    previous_version = Version.subtract(version, 1)
+
+    case fetch(mvcc, key, previous_version) do
+      {:ok, value} when is_binary(value) ->
+        value
+
+      {:error, :not_found} ->
+        # Return empty binary for missing values - atomics will handle padding
+        <<>>
+    end
+  rescue
+    # Handle any version arithmetic errors by returning empty binary
+    ArgumentError -> <<>>
+  end
 end

@@ -59,24 +59,25 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   use GenServer
 
-  import __MODULE__.Committing, only: [do_commit: 1]
-  import __MODULE__.PointReads, only: [fetch_key: 2, fetch_key_selector: 2]
-  import __MODULE__.Putting, only: [do_put: 3]
-  import __MODULE__.RangeReads, only: [fetch_range: 4, fetch_range_selectors: 5]
+  import __MODULE__.Finalization, only: [commit: 1, rollback: 1]
+  import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 3]
+  import __MODULE__.RangeReads, only: [get_range: 4, get_range_selectors: 5]
   import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
 
+  alias __MODULE__.Tx
   alias Bedrock.Cluster.Gateway
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutUtils
+  alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Internal.Time
+  alias Bedrock.KeySelector
 
   @doc false
   @spec start_link(
           opts :: [
             gateway: Gateway.ref(),
-            transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
-            read_version: non_neg_integer() | nil,
+            transaction_system_layout: TransactionSystemLayout.t(),
             time_fn: (-> integer())
           ]
         ) ::
@@ -84,12 +85,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   def start_link(opts) do
     gateway = Keyword.fetch!(opts, :gateway)
     transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
-    read_version = Keyword.get(opts, :read_version)
-    time_fn = Keyword.get(opts, :time_fn, &Time.monotonic_now_in_ms/0)
 
     GenServer.start_link(
       __MODULE__,
-      {gateway, transaction_system_layout, read_version, time_fn}
+      {gateway, transaction_system_layout}
     )
   end
 
@@ -98,37 +97,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
 
   @impl true
   def handle_continue(:initialization, {gateway, transaction_system_layout}) do
-    handle_continue(
-      :initialization,
-      {gateway, transaction_system_layout, nil, &Time.monotonic_now_in_ms/0}
-    )
-  end
-
-  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version}) do
-    handle_continue(
-      :initialization,
-      {gateway, transaction_system_layout, read_version, &Time.monotonic_now_in_ms/0}
-    )
-  end
-
-  def handle_continue(:initialization, {gateway, transaction_system_layout, read_version, time_fn}) do
     # Build the layout index once during initialization for O(log n) lookups
-    layout_index = LayoutUtils.build_layout_index(transaction_system_layout)
-
-    # For tests, if read_version is provided, set a far-future lease expiration
-    read_version_lease_expiration =
-      if read_version == nil,
-        # 60 seconds from now
-        do: nil,
-        else: time_fn.() + 60_000
+    layout_index = LayoutIndex.build_index(transaction_system_layout)
 
     noreply(%State{
       state: :valid,
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       layout_index: layout_index,
-      read_version: read_version,
-      read_version_lease_expiration: read_version_lease_expiration
+      read_version: nil,
+      read_version_lease_expiration: nil
     })
   end
 
@@ -148,62 +126,122 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   end
 
   @impl true
-  def handle_call(:nested_transaction, _from, t) do
-    reply(%{t | stack: [t.tx | t.stack]}, :ok)
-  end
+  def handle_call(:nested_transaction, _from, t), do: reply(%{t | stack: [t.tx | t.stack]}, :ok)
 
   def handle_call(:commit, _from, t) do
-    case do_commit(t) do
-      {:ok, t} -> reply(t, {:ok, t.commit_version}, continue: :stop)
-      {:error, _reason} = error -> reply(t, error)
+    t
+    |> commit()
+    |> case do
+      {:ok, new_t} when t.stack == [] ->
+        # Outermost transaction committed - stop the process
+        reply(new_t, {:ok, new_t.commit_version}, continue: :stop)
+
+      {:ok, new_t} ->
+        # Nested transaction committed (stack popped) - continue
+        reply(new_t, :ok)
+
+      {:error, _reason} = error ->
+        reply(t, error)
     end
   end
 
-  def handle_call({:fetch, key}, _from, t) do
-    case fetch_key(t, key) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+  def handle_call({:get, key}, from, t) when is_binary(key), do: handle_call({:get, key, []}, from, t)
+
+  def handle_call({:get, key, opts}, _from, t) when is_binary(key) and is_list(opts) do
+    t
+    |> get_key(key, opts)
+    |> then(fn
+      {t, {:error, _} = error} ->
+        reply(t, error, continue: :update_version_lease_if_needed)
+
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, {:ok, {^key, value}}} ->
+        reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
+    end)
   end
 
-  def handle_call({:fetch_key_selector, key_selector}, _from, t) do
-    case fetch_key_selector(t, key_selector) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+  def handle_call({:get_key_selector, %KeySelector{} = key_selector, opts}, _from, t) do
+    t
+    |> get_key_selector(key_selector, opts)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
-  def handle_call({:range_batch, start_key, end_key, batch_size, opts}, _from, t) do
-    case fetch_range(t, {start_key, end_key}, batch_size, opts) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+  def handle_call({:get_range, start_key, end_key, batch_size, opts}, _from, t)
+      when is_binary(start_key) and is_binary(end_key) do
+    t
+    |> get_range({start_key, end_key}, batch_size, opts)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
-  def handle_call({:range_fetch_key_selectors, start_selector, end_selector, opts}, _from, t) do
+  def handle_call(
+        {:get_range_selectors, %KeySelector{} = start_selector, %KeySelector{} = end_selector, opts},
+        _from,
+        t
+      ) do
     batch_size = Keyword.get(opts, :limit, 10_000)
 
-    case fetch_range_selectors(t, start_selector, end_selector, batch_size, opts) do
-      {t, result} -> reply(t, result, continue: :update_version_lease_if_needed)
-    end
+    t
+    |> get_range_selectors(start_selector, end_selector, batch_size, opts)
+    |> then(fn
+      {t, {:failure, failures_by_reason}} ->
+        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+
+      {t, result} ->
+        reply(t, result, continue: :update_version_lease_if_needed)
+    end)
   end
 
   @impl true
-  def handle_cast({:put, key, value}, t) do
-    case do_put(t, key, value) do
-      {:ok, t} -> noreply(t)
-      :key_error -> raise KeyError, "key must be a binary"
-    end
-  end
+  def handle_cast({:set_key, key, value}, t) when is_binary(key) and is_binary(value),
+    do: noreply(%{t | tx: Tx.set(t.tx, key, value, [])})
+
+  def handle_cast({:set_key, key, nil, opts}, t) when is_binary(key), do: noreply(%{t | tx: Tx.clear(t.tx, key, opts)})
+
+  def handle_cast({:set_key, key, value, opts}, t) when is_binary(key) and is_binary(value),
+    do: noreply(%{t | tx: Tx.set(t.tx, key, value, opts)})
+
+  def handle_cast({:atomic, op, key, value}, t) when is_atom(op) and is_binary(key) and is_binary(value),
+    do: noreply(%{t | tx: Tx.atomic_operation(t.tx, key, op, value)})
+
+  def handle_cast({:clear, key, opts}, t) when is_binary(key), do: noreply(%{t | tx: Tx.clear(t.tx, key, opts)})
+
+  def handle_cast({:clear_range, start_key, end_key, opts}, t) when is_binary(start_key) and is_binary(end_key),
+    do: noreply(%{t | tx: Tx.clear_range(t.tx, start_key, end_key, opts)})
+
+  def handle_cast({:add_read_conflict_key, key}, t) when is_binary(key),
+    do: noreply(%{t | tx: Tx.add_read_conflict_key(t.tx, key)})
+
+  def handle_cast({:add_write_conflict_range, start_key, end_key}, t) when is_binary(start_key) and is_binary(end_key),
+    do: noreply(%{t | tx: Tx.add_write_conflict_range(t.tx, start_key, end_key)})
 
   def handle_cast(:rollback, t) do
-    case do_rollback(t) do
+    t
+    |> rollback()
+    |> then(fn
       :stop -> noreply(t, continue: :stop)
       t -> noreply(t)
-    end
+    end)
   end
 
   @impl true
   def handle_info(:timeout, t), do: {:stop, :normal, t}
 
-  @spec do_rollback(State.t()) :: :stop | State.t()
-  def do_rollback(%{stack: []}), do: :stop
-  def do_rollback(%{stack: [tx | stack]} = t), do: %{t | tx: tx, stack: stack}
+  defp choose_a_reason(%{timeout: _}), do: :timeout
+  defp choose_a_reason(%{unavailable: _}), do: :unavailable
+  defp choose_a_reason(%{version_too_new: _}), do: :version_too_new
+  defp choose_a_reason(failures_by_reason), do: failures_by_reason |> Map.keys() |> hd()
 end

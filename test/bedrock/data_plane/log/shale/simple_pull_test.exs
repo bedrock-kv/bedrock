@@ -38,9 +38,7 @@ defmodule Bedrock.DataPlane.Log.Shale.SimplePullTest do
 
   test "server starts and can respond to info", %{log: log} do
     # Just test that the server is alive and responsive
-    result = Log.info(log, [:last_version])
-    assert {:ok, info} = result
-    assert Map.has_key?(info, :last_version)
+    assert {:ok, %{last_version: _}} = Log.info(log, [:last_version])
   end
 
   test "boundary condition test - pull at exactly last_version", %{log: log} do
@@ -63,15 +61,11 @@ defmodule Bedrock.DataPlane.Log.Shale.SimplePullTest do
     # This test verifies that empty log pulls don't crash
     # Previously this would crash with KeyError when active_segment was nil
 
-    # Pull from version 0 should return error immediately when no willing_to_wait
-    result = Log.pull(log, Version.from_integer(0), timeout_in_ms: 100)
-    assert {:error, :version_too_new} = result
+    # Both pull scenarios should return error immediately when no willing_to_wait
+    version_0 = Version.from_integer(0)
+    assert {:error, :version_too_new} = Log.pull(log, version_0, timeout_in_ms: 100)
+    assert {:error, :version_too_new} = Log.pull(log, version_0, [])
 
-    # Pull with no timeout should also return error immediately
-    result = Log.pull(log, Version.from_integer(0), [])
-    assert {:error, :version_too_new} = result
-
-    # The key thing is we get here without crashing
-    assert true
+    # The key verification is that we reach here without crashing
   end
 end

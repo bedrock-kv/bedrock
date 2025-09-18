@@ -8,9 +8,10 @@ defmodule Bedrock.Service.ForemanTest do
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Manifest
 
-  describe "storage_workers/2" do
-    test "returns empty list when no workers exist" do
-      state = %State{
+  # Test setup helpers
+  defp base_state(overrides \\ %{}) do
+    Map.merge(
+      %State{
         cluster: TestCluster,
         capabilities: [:storage, :log],
         health: :ok,
@@ -18,58 +19,58 @@ defmodule Bedrock.Service.ForemanTest do
         path: "/tmp/test",
         waiting_for_healthy: [],
         workers: %{}
-      }
+      },
+      overrides
+    )
+  end
 
-      result = Impl.do_fetch_storage_workers(state)
-      assert result == []
+  defp storage_manifest(id) do
+    %Manifest{
+      cluster: "test_cluster",
+      id: id,
+      worker: Basalt,
+      params: %{}
+    }
+  end
+
+  defp log_manifest(id) do
+    %Manifest{
+      cluster: "test_cluster",
+      id: id,
+      worker: Shale,
+      params: %{}
+    }
+  end
+
+  defp worker_info(id, opts) when is_list(opts) do
+    manifest = opts[:manifest]
+    health = opts[:health] || {:ok, self()}
+    otp_name = opts[:otp_name] || String.to_atom("#{id}_worker")
+
+    %WorkerInfo{
+      id: id,
+      path: "/tmp/test/#{id}",
+      health: health,
+      manifest: manifest,
+      otp_name: otp_name
+    }
+  end
+
+  describe "do_fetch_storage_workers/1" do
+    test "returns empty list when no workers exist" do
+      state = base_state()
+      assert [] = Impl.do_fetch_storage_workers(state)
     end
 
     test "returns only storage workers when mixed workers exist" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
-
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "storage_1" => %WorkerInfo{
-            id: "storage_1",
-            path: "/tmp/test/storage_1",
-            health: {:ok, self()},
-            manifest: storage_manifest,
-            otp_name: :storage_1_worker
-          },
-          "log_1" => %WorkerInfo{
-            id: "log_1",
-            path: "/tmp/test/log_1",
-            health: {:ok, self()},
-            manifest: log_manifest,
-            otp_name: :log_1_worker
-          },
-          "storage_2" => %WorkerInfo{
-            id: "storage_2",
-            path: "/tmp/test/storage_2",
-            health: {:ok, self()},
-            manifest: %{storage_manifest | id: "storage_2"},
-            otp_name: :storage_2_worker
+      state =
+        base_state(%{
+          workers: %{
+            "storage_1" => worker_info("storage_1", manifest: storage_manifest("storage_1")),
+            "log_1" => worker_info("log_1", manifest: log_manifest("log_1")),
+            "storage_2" => worker_info("storage_2", manifest: storage_manifest("storage_2"))
           }
-        }
-      }
+        })
 
       result = Impl.do_fetch_storage_workers(state)
       assert length(result) == 2
@@ -79,482 +80,177 @@ defmodule Bedrock.Service.ForemanTest do
     end
 
     test "handles workers with nil manifest gracefully" do
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "broken_worker" => %WorkerInfo{
-            id: "broken_worker",
-            path: "/tmp/test/broken",
-            health: :stopped,
-            manifest: nil,
-            otp_name: :broken_worker
+      state =
+        base_state(%{
+          workers: %{
+            "broken_worker" =>
+              worker_info("broken_worker",
+                manifest: nil,
+                health: :stopped,
+                otp_name: :broken_worker
+              )
           }
-        }
-      }
+        })
 
-      result = Impl.do_fetch_storage_workers(state)
-      assert result == []
+      assert [] = Impl.do_fetch_storage_workers(state)
     end
 
     test "handles workers with manifest but nil worker module" do
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "incomplete_worker" => %WorkerInfo{
-            id: "incomplete_worker",
-            path: "/tmp/test/incomplete",
-            health: :stopped,
-            manifest: %Manifest{
-              cluster: "test_cluster",
-              id: "incomplete_worker",
-              worker: nil,
-              params: %{}
-            },
-            otp_name: :incomplete_worker
-          }
-        }
-      }
-
-      result = Impl.do_fetch_storage_workers(state)
-      assert result == []
-    end
-  end
-
-  describe "storage_worker?/1 helper function" do
-    test "returns true for storage worker" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      worker_info = %WorkerInfo{
-        id: "storage_1",
-        path: "/tmp/test/storage_1",
-        health: {:ok, self()},
-        manifest: storage_manifest,
-        otp_name: :storage_1_worker
-      }
-
-      assert Impl.storage_worker?(worker_info) == true
-    end
-
-    test "returns false for log worker" do
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
-
-      worker_info = %WorkerInfo{
-        id: "log_1",
-        path: "/tmp/test/log_1",
-        health: {:ok, self()},
-        manifest: log_manifest,
-        otp_name: :log_1_worker
-      }
-
-      assert Impl.storage_worker?(worker_info) == false
-    end
-
-    test "returns false for worker with nil manifest" do
-      worker_info = %WorkerInfo{
-        id: "broken_worker",
-        path: "/tmp/test/broken",
-        health: :stopped,
-        manifest: nil,
-        otp_name: :broken_worker
-      }
-
-      assert Impl.storage_worker?(worker_info) == false
-    end
-
-    test "returns false for worker with nil worker module" do
-      manifest = %Manifest{
+      incomplete_manifest = %Manifest{
         cluster: "test_cluster",
         id: "incomplete_worker",
         worker: nil,
         params: %{}
       }
 
-      worker_info = %WorkerInfo{
-        id: "incomplete_worker",
-        path: "/tmp/test/incomplete",
-        health: :stopped,
-        manifest: manifest,
-        otp_name: :incomplete_worker
-      }
+      state =
+        base_state(%{
+          workers: %{
+            "incomplete_worker" =>
+              worker_info("incomplete_worker",
+                manifest: incomplete_manifest,
+                health: :stopped,
+                otp_name: :incomplete_worker
+              )
+          }
+        })
 
-      assert Impl.storage_worker?(worker_info) == false
+      assert [] = Impl.do_fetch_storage_workers(state)
     end
   end
 
-  describe "wait_for_healthy functionality" do
-    test "wait_for_healthy returns :ok when foreman is already healthy" do
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{}
-      }
-
-      result = Impl.do_wait_for_healthy(state, self())
-      assert result == :ok
+  describe "storage_worker?/1" do
+    test "returns true for storage worker" do
+      worker = worker_info("storage_1", manifest: storage_manifest("storage_1"))
+      assert Impl.storage_worker?(worker)
     end
 
-    test "wait_for_healthy adds caller to waiting list when not healthy" do
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :starting,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{}
-      }
+    test "returns false for log worker" do
+      worker = worker_info("log_1", manifest: log_manifest("log_1"))
+      refute Impl.storage_worker?(worker)
+    end
 
+    test "returns false for invalid manifests" do
+      nil_manifest_worker = worker_info("broken", manifest: nil, health: :stopped)
+
+      nil_worker_manifest =
+        worker_info("incomplete",
+          manifest: %Manifest{cluster: "test", id: "incomplete", worker: nil, params: %{}},
+          health: :stopped
+        )
+
+      refute Impl.storage_worker?(nil_manifest_worker)
+      refute Impl.storage_worker?(nil_worker_manifest)
+    end
+  end
+
+  describe "do_wait_for_healthy/2" do
+    test "returns :ok when foreman is already healthy" do
+      state = base_state()
+      assert :ok = Impl.do_wait_for_healthy(state, self())
+    end
+
+    test "adds caller to waiting list when not healthy" do
       caller_pid = self()
-      result = Impl.do_wait_for_healthy(state, caller_pid)
+      state = base_state(%{health: :starting})
 
-      assert result.waiting_for_healthy == [caller_pid]
-      assert result.health == :starting
+      assert %State{
+               waiting_for_healthy: [^caller_pid],
+               health: :starting
+             } = Impl.do_wait_for_healthy(state, caller_pid)
     end
   end
 
-  describe "get_all_running_services/1" do
+  describe "do_get_all_running_services/1" do
     test "returns empty list when no workers exist" do
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{}
-      }
-
-      result = Impl.do_get_all_running_services(state)
-      assert result == []
+      state = base_state()
+      assert [] = Impl.do_get_all_running_services(state)
     end
 
     test "returns all healthy workers with correct service info format" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
-
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "storage_1" => %WorkerInfo{
-            id: "storage_1",
-            path: "/tmp/test/storage_1",
-            health: {:ok, self()},
-            manifest: storage_manifest,
-            otp_name: :storage_1_worker
-          },
-          "log_1" => %WorkerInfo{
-            id: "log_1",
-            path: "/tmp/test/log_1",
-            health: {:ok, self()},
-            manifest: log_manifest,
-            otp_name: :log_1_worker
+      state =
+        base_state(%{
+          workers: %{
+            "storage_1" => worker_info("storage_1", manifest: storage_manifest("storage_1")),
+            "log_1" => worker_info("log_1", manifest: log_manifest("log_1"))
           }
-        }
-      }
+        })
 
       result = Impl.do_get_all_running_services(state)
-
       assert length(result) == 2
-
-      # Check storage service info (compact format)
-      storage_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :storage end)
-      assert storage_service == {"storage_1", :storage, :storage_1_worker}
-
-      # Check log service info (compact format)
-      log_service = Enum.find(result, fn {_service_id, kind, _name} -> kind == :log end)
-      assert log_service == {"log_1", :log, :log_1_worker}
+      assert {"storage_1", :storage, :storage_1_worker} in result
+      assert {"log_1", :log, :log_1_worker} in result
     end
 
     test "excludes unhealthy workers" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
-
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "storage_1" => %WorkerInfo{
-            id: "storage_1",
-            path: "/tmp/test/storage_1",
-            health: {:ok, self()},
-            manifest: storage_manifest,
-            otp_name: :storage_1_worker
-          },
-          "log_1" => %WorkerInfo{
-            id: "log_1",
-            path: "/tmp/test/log_1",
-            health: :stopped,
-            manifest: log_manifest,
-            otp_name: :log_1_worker
-          },
-          "storage_2" => %WorkerInfo{
-            id: "storage_2",
-            path: "/tmp/test/storage_2",
-            health: {:failed_to_start, :timeout},
-            manifest: %{storage_manifest | id: "storage_2"},
-            otp_name: :storage_2_worker
+      state =
+        base_state(%{
+          workers: %{
+            "storage_1" => worker_info("storage_1", manifest: storage_manifest("storage_1")),
+            "log_1" => worker_info("log_1", manifest: log_manifest("log_1"), health: :stopped),
+            "storage_2" =>
+              worker_info("storage_2",
+                manifest: storage_manifest("storage_2"),
+                health: {:failed_to_start, :timeout}
+              )
           }
-        }
-      }
+        })
 
-      result = Impl.do_get_all_running_services(state)
-
-      assert length(result) == 1
-      assert result == [{"storage_1", :storage, :storage_1_worker}]
+      assert [{"storage_1", :storage, :storage_1_worker}] = Impl.do_get_all_running_services(state)
     end
 
-    test "handles workers with nil manifest gracefully" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "storage_1" => %WorkerInfo{
-            id: "storage_1",
-            path: "/tmp/test/storage_1",
-            health: {:ok, self()},
-            manifest: storage_manifest,
-            otp_name: :storage_1_worker
-          },
-          "broken_worker" => %WorkerInfo{
-            id: "broken_worker",
-            path: "/tmp/test/broken",
-            health: {:ok, self()},
-            manifest: nil,
-            otp_name: :broken_worker
+    test "filters out invalid workers (nil manifest or unhealthy)" do
+      state =
+        base_state(%{
+          workers: %{
+            "storage_1" => worker_info("storage_1", manifest: storage_manifest("storage_1")),
+            "broken_worker" => worker_info("broken_worker", manifest: nil),
+            "unhealthy_worker" =>
+              worker_info("unhealthy_worker",
+                manifest: storage_manifest("unhealthy_worker"),
+                health: :stopped
+              )
           }
-        }
-      }
+        })
 
-      # Should exclude workers with nil manifest and only return valid ones
-      result = Impl.do_get_all_running_services(state)
-      assert length(result) == 1
-      assert result == [{"storage_1", :storage, :storage_1_worker}]
-    end
-
-    test "only includes workers that are both healthy and have valid manifests" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
-
-      state = %State{
-        cluster: TestCluster,
-        capabilities: [:storage, :log],
-        health: :ok,
-        otp_name: :test_foreman,
-        path: "/tmp/test",
-        waiting_for_healthy: [],
-        workers: %{
-          "storage_1" => %WorkerInfo{
-            id: "storage_1",
-            path: "/tmp/test/storage_1",
-            health: {:ok, self()},
-            manifest: storage_manifest,
-            otp_name: :storage_1_worker
-          },
-          "unhealthy_worker" => %WorkerInfo{
-            id: "unhealthy_worker",
-            path: "/tmp/test/unhealthy",
-            health: :stopped,
-            manifest: %{storage_manifest | id: "unhealthy_worker"},
-            otp_name: :unhealthy_worker
-          }
-        }
-      }
-
-      result = Impl.do_get_all_running_services(state)
-      assert length(result) == 1
-      assert result == [{"storage_1", :storage, :storage_1_worker}]
+      assert [{"storage_1", :storage, :storage_1_worker}] = Impl.do_get_all_running_services(state)
     end
   end
 
-  describe "compact_service_info_from_worker_info/1 helper function" do
-    test "extracts compact service info from storage worker" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
+  describe "service info extraction functions" do
+    test "compact_service_info_from_worker_info/1 extracts compact format" do
+      storage_worker = worker_info("storage_1", manifest: storage_manifest("storage_1"))
+      log_worker = worker_info("log_1", manifest: log_manifest("log_1"))
 
-      worker_info = %WorkerInfo{
-        id: "storage_1",
-        path: "/tmp/test/storage_1",
-        health: {:ok, self()},
-        manifest: storage_manifest,
-        otp_name: :storage_1_worker
-      }
+      assert {"storage_1", :storage, :storage_1_worker} =
+               Impl.compact_service_info_from_worker_info(storage_worker)
 
-      result = Impl.compact_service_info_from_worker_info(worker_info)
-      assert result == {"storage_1", :storage, :storage_1_worker}
+      assert {"log_1", :log, :log_1_worker} =
+               Impl.compact_service_info_from_worker_info(log_worker)
     end
 
-    test "extracts compact service info from log worker" do
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
+    test "service_info_from_worker_info/1 extracts full format" do
+      storage_worker = worker_info("storage_1", manifest: storage_manifest("storage_1"))
+      log_worker = worker_info("log_1", manifest: log_manifest("log_1"))
+      current_node = Node.self()
 
-      worker_info = %WorkerInfo{
-        id: "log_1",
-        path: "/tmp/test/log_1",
-        health: {:ok, self()},
-        manifest: log_manifest,
-        otp_name: :log_1_worker
-      }
+      assert {"storage_1", :storage, {:storage_1_worker, ^current_node}} =
+               Impl.service_info_from_worker_info(storage_worker)
 
-      result = Impl.compact_service_info_from_worker_info(worker_info)
-      assert result == {"log_1", :log, :log_1_worker}
+      assert {"log_1", :log, {:log_1_worker, ^current_node}} =
+               Impl.service_info_from_worker_info(log_worker)
     end
   end
 
-  describe "service_info_from_worker_info/1 helper function" do
-    test "extracts correct service info from storage worker" do
-      storage_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "storage_1",
-        worker: Basalt,
-        params: %{}
-      }
+  describe "worker_healthy?/1" do
+    test "correctly identifies worker health status" do
+      healthy_worker = worker_info("test", manifest: nil, health: {:ok, self()})
+      stopped_worker = worker_info("test", manifest: nil, health: :stopped)
+      failed_worker = worker_info("test", manifest: nil, health: {:failed_to_start, :timeout})
 
-      worker_info = %WorkerInfo{
-        id: "storage_1",
-        path: "/tmp/test/storage_1",
-        health: {:ok, self()},
-        manifest: storage_manifest,
-        otp_name: :storage_1_worker
-      }
-
-      result = Impl.service_info_from_worker_info(worker_info)
-      assert result == {"storage_1", :storage, {:storage_1_worker, Node.self()}}
-    end
-
-    test "extracts correct service info from log worker" do
-      log_manifest = %Manifest{
-        cluster: "test_cluster",
-        id: "log_1",
-        worker: Shale,
-        params: %{}
-      }
-
-      worker_info = %WorkerInfo{
-        id: "log_1",
-        path: "/tmp/test/log_1",
-        health: {:ok, self()},
-        manifest: log_manifest,
-        otp_name: :log_1_worker
-      }
-
-      result = Impl.service_info_from_worker_info(worker_info)
-      assert result == {"log_1", :log, {:log_1_worker, Node.self()}}
-    end
-  end
-
-  describe "worker_healthy?/1 helper function" do
-    test "returns true for healthy worker" do
-      worker_info = %WorkerInfo{
-        id: "test_worker",
-        path: "/tmp/test",
-        health: {:ok, self()},
-        manifest: nil,
-        otp_name: :test_worker
-      }
-
-      assert Impl.worker_healthy?(worker_info) == true
-    end
-
-    test "returns false for stopped worker" do
-      worker_info = %WorkerInfo{
-        id: "test_worker",
-        path: "/tmp/test",
-        health: :stopped,
-        manifest: nil,
-        otp_name: :test_worker
-      }
-
-      assert Impl.worker_healthy?(worker_info) == false
-    end
-
-    test "returns false for failed to start worker" do
-      worker_info = %WorkerInfo{
-        id: "test_worker",
-        path: "/tmp/test",
-        health: {:failed_to_start, :timeout},
-        manifest: nil,
-        otp_name: :test_worker
-      }
-
-      assert Impl.worker_healthy?(worker_info) == false
+      assert Impl.worker_healthy?(healthy_worker)
+      refute Impl.worker_healthy?(stopped_worker)
+      refute Impl.worker_healthy?(failed_worker)
     end
   end
 

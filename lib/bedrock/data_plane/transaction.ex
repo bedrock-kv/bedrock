@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Transaction do
   - **Section omission**: All sections are optional - empty sections are completely omitted to save space
   - **Efficient operations**: Extract specific sections without full decode
   - **Robust validation**: Self-validating CRCs detect any bit corruption
-  - **Simple opcode format**: 5-bit operations + 3-bit variants with size optimization
+  - **16-bit instruction format**: 5-bit operations + 3-bit reserved + 8-bit parameters with optimized length encoding
 
   ## Transaction Structure
 
@@ -19,7 +19,7 @@ defmodule Bedrock.DataPlane.Transaction do
   ```elixir
   %{
     commit_version: Bedrock.version()               # assigned by commit proxy
-    mutations: [Tx.mutation()],                     # {:set, binary(), binary()} | {:clear_range, binary(), binary()}
+    mutations: [Tx.mutation()],                     # {:set, binary(), binary()} | {:clear_range, binary(), binary()} | atomic operations
     read_conflicts: {read_version, [key_range()]},
     write_conflicts: [key_range()}],
   }
@@ -73,25 +73,45 @@ defmodule Bedrock.DataPlane.Transaction do
   **Resolver:** write_conflicts, read_conflicts (if any), commit_version
   **Commit Proxy:** mutations, read_conflicts (if reads performed), write_conflicts
 
-  ## Opcode Format
+  ## 16-bit Header Mutation Format
 
-  Mutations use a 5-bit operation + 3-bit variant structure for optimal size:
+  All mutations use a 16-bit header format with 4-tier variable-length encoding:
 
-  **SET Operation (0x00 << 3):**
-  - 0x00: 16-bit key + 32-bit value lengths
-  - 0x01: 8-bit key + 16-bit value lengths
-  - 0x02: 8-bit key + 8-bit value lengths (most compact)
+  **Header Structure (16 bits):**
+  - **5 bits: opcode** (0-31 operations)
+  - **3 bits: reserved** (future extensibility)
+  - **8 bits: parameters** (format encoding - see below)
 
-  **CLEAR Operation (0x01 << 3):**
-  - 0x08: Single key, 16-bit length
-  - 0x09: Single key, 8-bit length
-  - 0x0A: Range, 16-bit lengths
-  - 0x0B: Range, 8-bit lengths (most compact)
+  **Operation Codes:**
+  - 0x00: SET - Set key to value
+  - 0x01: CLEAR - Clear single key
+  - 0x02: CLEAR_RANGE - Clear key range
+  - 0x03: ATOMIC_ADD - Atomic add operation
+  - 0x04: ATOMIC_MIN - Atomic minimum operation
+  - 0x05: ATOMIC_MAX - Atomic maximum operation
 
-  Size optimization automatically selects the most compact variant.
+  **Parameters Field Encoding:**
+
+  For two-parameter mutations (SET, CLEAR_RANGE):
+  - **Upper 4 bits (f1::4)**: Format for first parameter (key/start_key)
+  - **Lower 4 bits (f2::4)**: Format for second parameter (value/end_key)
+
+  For single-parameter mutations (CLEAR, atomics):
+  - **Upper 4 bits (f::4)**: Format for parameter (key)
+  - **Lower 4 bits**: Zero (reserved)
+
+  **4-Tier Variable-Length Format Values:**
+  - **Direct encoding (0-11)**: Values 0-11 encoded directly as format value
+  - **1-byte extended (1-256)**: Format 12 (0b1100) + (len-1) in next byte
+  - **1-byte extended (257-512)**: Format 13 (0b1101) + (len-1 & 0xFF) in next byte, 9th bit encoded in format
+  - **2-byte extended (1-65536)**: Format 14 (0b1110) + (len-1) in next 2 bytes
+  - **2-byte extended (65537-131072)**: Format 15 (0b1111) + (len-1 & 0xFFFF) in next 2 bytes, 17th bit encoded in format
+
+  The system automatically selects the most compact format for each parameter.
   """
 
-  import Bitwise, only: [>>>: 2, &&&: 2, <<<: 2, |||: 2]
+  import Bitwise
+  import Bitwise, only: [>>>: 2, &&&: 2]
 
   alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
 
@@ -100,7 +120,6 @@ defmodule Bedrock.DataPlane.Transaction do
   @type encoded :: binary()
 
   @type section_tag :: 0x01..0xFF
-  @type opcode :: 0x00..0xFF
 
   @magic_number 0x42524454
   @format_version 0x01
@@ -109,18 +128,6 @@ defmodule Bedrock.DataPlane.Transaction do
   @read_conflicts_tag 0x02
   @write_conflicts_tag 0x03
   @commit_version_tag 0x04
-
-  @set_16_32 0x00
-  @set_8_16 0x01
-  @set_8_8 0x02
-
-  @clear_single_16 0x08
-  @clear_single_8 0x09
-  @clear_range_16 0x0A
-  @clear_range_8 0x0B
-
-  @set_operation 0x00
-  @clear_operation 0x01
 
   @doc """
   Encodes a transaction map into the tagged binary format.
@@ -630,46 +637,30 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
-  # ============================================================================
-  # DYNAMIC OPCODE CONSTRUCTION
-  # ============================================================================
+  # Constant header-only transaction for version advancement (no sections at all)
+  @empty_transaction <<
+    @magic_number::unsigned-big-32,
+    @format_version,
+    0x00,
+    0::unsigned-big-16
+  >>
 
-  @spec build_opcode(operation :: 0..31, variant :: 0..7) :: opcode()
-  defp build_opcode(operation, variant) when operation <= 31 and variant <= 7, do: operation <<< 3 ||| variant
+  @doc """
+  Returns a minimal header-only transaction with no sections for version advancement.
 
-  @spec extract_variant(opcode()) :: 0..7
-  defp extract_variant(opcode) when opcode <= 255, do: opcode &&& 0x07
-
-  @spec optimize_set_opcode(key_size :: non_neg_integer(), value_size :: non_neg_integer()) ::
-          opcode()
-  defp optimize_set_opcode(key_size, value_size) do
-    cond do
-      key_size <= 255 and value_size <= 255 ->
-        build_opcode(@set_operation, 2)
-
-      key_size <= 255 and value_size <= 65_535 ->
-        build_opcode(@set_operation, 1)
-
-      true ->
-        build_opcode(@set_operation, 0)
-    end
-  end
-
-  @spec optimize_clear_opcode(key_size :: non_neg_integer(), is_range :: boolean()) :: opcode()
-  defp optimize_clear_opcode(key_size, false = _is_range) when key_size <= 255, do: build_opcode(@clear_operation, 1)
-
-  defp optimize_clear_opcode(_key_size, false = _is_range), do: build_opcode(@clear_operation, 0)
-
-  defp optimize_clear_opcode(max_key_size, true = _is_range) when max_key_size <= 255,
-    do: build_opcode(@clear_operation, 3)
-
-  defp optimize_clear_opcode(_max_key_size, true = _is_range), do: build_opcode(@clear_operation, 2)
+  This is more efficient than encoding an empty transaction map as it contains
+  only the transaction header with zero sections, making it the smallest possible
+  valid transaction binary.
+  """
+  @spec empty_transaction() :: encoded()
+  def empty_transaction, do: @empty_transaction
 
   # ============================================================================
   # ENCODING IMPLEMENTATION
   # ============================================================================
 
-  defp encode_overall_header(section_count) do
+  @doc false
+  def encode_overall_header(section_count) do
     <<
       @magic_number::unsigned-big-32,
       @format_version,
@@ -678,7 +669,8 @@ defmodule Bedrock.DataPlane.Transaction do
     >>
   end
 
-  defp encode_section(tag, payload) do
+  @doc false
+  def encode_section(tag, payload) do
     payload_size = byte_size(payload)
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
     section_crc = :erlang.crc32(section_content)
@@ -692,53 +684,8 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp encode_mutations_payload(mutations) do
-    mutations_data = Enum.map(mutations, &encode_mutation_opcode/1)
+    mutations_data = Enum.map(mutations, &encode_mutation/1)
     IO.iodata_to_binary(mutations_data)
-  end
-
-  defp encode_mutation_opcode({:set, key, value}) do
-    key_len = byte_size(key)
-    value_len = byte_size(value)
-    opcode = optimize_set_opcode(key_len, value_len)
-
-    case extract_variant(opcode) do
-      2 ->
-        <<opcode, key_len::unsigned-8, key::binary, value_len::unsigned-8, value::binary>>
-
-      1 ->
-        <<opcode, key_len::unsigned-8, key::binary, value_len::unsigned-big-16, value::binary>>
-
-      0 ->
-        <<opcode, key_len::unsigned-big-16, key::binary, value_len::unsigned-big-32, value::binary>>
-    end
-  end
-
-  defp encode_mutation_opcode({:clear, key}) do
-    key_len = byte_size(key)
-    opcode = optimize_clear_opcode(key_len, false)
-
-    case extract_variant(opcode) do
-      1 ->
-        <<opcode, key_len::unsigned-8, key::binary>>
-
-      0 ->
-        <<opcode, key_len::unsigned-big-16, key::binary>>
-    end
-  end
-
-  defp encode_mutation_opcode({:clear_range, start_key, end_key}) do
-    start_len = byte_size(start_key)
-    end_len = byte_size(end_key)
-    max_key_len = max(start_len, end_len)
-    opcode = optimize_clear_opcode(max_key_len, true)
-
-    case extract_variant(opcode) do
-      3 ->
-        <<opcode, start_len::unsigned-8, start_key::binary, end_len::unsigned-8, end_key::binary>>
-
-      2 ->
-        <<opcode, start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
-    end
   end
 
   defp encode_read_conflicts_payload(read_conflicts, read_version) do
@@ -768,10 +715,18 @@ defmodule Bedrock.DataPlane.Transaction do
     ])
   end
 
-  defp encode_conflict_range({start_key, end_key}) do
+  @doc false
+  def encode_conflict_range({start_key, end_key}) do
     start_len = byte_size(start_key)
-    end_len = byte_size(end_key)
-    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
+
+    # Handle :end case for ConflictSharding
+    {end_key_binary, end_len} =
+      case end_key do
+        :end -> {"\xFF\xFF\xFF", 3}
+        key -> {key, byte_size(key)}
+      end
+
+    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key_binary::binary>>
   end
 
   # ============================================================================
@@ -779,10 +734,7 @@ defmodule Bedrock.DataPlane.Transaction do
   # ============================================================================
 
   # Parse all sections into map using unified iterator
-  defp parse_sections(sections_data, section_count) do
-    # This function needs to extract all payloads for decode/1, so keep the old efficient approach
-    parse_sections_old(sections_data, section_count, %{})
-  end
+  defp parse_sections(sections_data, section_count), do: parse_sections_old(sections_data, section_count, %{})
 
   defp parse_sections_old(_data, 0, sections_map), do: {:ok, sections_map}
 
@@ -807,8 +759,10 @@ defmodule Bedrock.DataPlane.Transaction do
     with {:ok, transaction} <-
            maybe_decode_mutations(transaction, Map.get(sections, @mutations_tag)),
          {:ok, transaction} <-
-           maybe_decode_read_conflicts(transaction, Map.get(sections, @read_conflicts_tag)) do
-      maybe_decode_write_conflicts(transaction, Map.get(sections, @write_conflicts_tag))
+           maybe_decode_read_conflicts(transaction, Map.get(sections, @read_conflicts_tag)),
+         {:ok, transaction} <-
+           maybe_decode_write_conflicts(transaction, Map.get(sections, @write_conflicts_tag)) do
+      maybe_decode_commit_version(transaction, Map.get(sections, @commit_version_tag))
     end
   end
 
@@ -821,94 +775,16 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp decode_mutations_payload(payload) do
-    payload
-    |> mutations_opcodes([])
-    |> case do
-      {:ok, mutations} -> {:ok, Enum.reverse(mutations)}
-      error -> error
-    end
-  end
+    stream =
+      Stream.resource(
+        fn -> payload end,
+        &stream_next_mutation/1,
+        fn _ -> :ok end
+      )
 
-  defp mutations_opcodes(<<>>, mutations), do: {:ok, mutations}
-
-  defp mutations_opcodes(
-         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
-           value::binary-size(value_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:set, key, value}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(
-         <<@set_8_16, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-big-16,
-           value::binary-size(value_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:set, key, value}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(
-         <<@set_8_8, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-8,
-           value::binary-size(value_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:set, key, value}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(
-         <<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:clear, key}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(<<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>, mutations) do
-    mutation = {:clear, key}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(
-         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
-           end_key::binary-size(end_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:clear_range, start_key, end_key}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(
-         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len), end_len::unsigned-8,
-           end_key::binary-size(end_len), rest::binary>>,
-         mutations
-       ) do
-    mutation = {:clear_range, start_key, end_key}
-    mutations_opcodes(rest, [mutation | mutations])
-  end
-
-  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x03..0x07 do
-    {:error, {:reserved_set_variant, opcode}}
-  end
-
-  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x0C..0x0F do
-    {:error, {:reserved_clear_variant, opcode}}
-  end
-
-  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) when opcode in 0x10..0xFF do
-    operation_type = opcode >>> 3
-    variant = opcode &&& 0x07
-    {:error, {:unsupported_operation, operation_type, variant}}
-  end
-
-  defp mutations_opcodes(<<opcode, _rest::binary>>, _mutations) do
-    {:error, {:invalid_opcode, opcode}}
-  end
-
-  defp mutations_opcodes(_truncated_data, _mutations) do
-    {:error, :truncated_mutation_data}
+    {:ok, Enum.to_list(stream)}
+  rescue
+    e -> {:error, {:decode_exception, Exception.message(e)}}
   end
 
   defp maybe_decode_read_conflicts(transaction, nil) do
@@ -941,6 +817,19 @@ defmodule Bedrock.DataPlane.Transaction do
   defp maybe_decode_write_conflicts(transaction, payload) do
     with {:ok, write_conflicts} <- decode_write_conflicts_payload(payload) do
       {:ok, %{transaction | write_conflicts: write_conflicts}}
+    end
+  end
+
+  defp maybe_decode_commit_version(transaction, nil), do: {:ok, transaction}
+
+  defp maybe_decode_commit_version(transaction, payload) do
+    case payload do
+      <<commit_version::binary-size(8)>> ->
+        # Include commit_version in the transaction structure when present
+        {:ok, Map.put(transaction, :commit_version, commit_version)}
+
+      _ ->
+        {:error, :invalid_commit_version_format}
     end
   end
 
@@ -1007,67 +896,149 @@ defmodule Bedrock.DataPlane.Transaction do
   # STREAMING IMPLEMENTATION
   # ============================================================================
 
+  defp stream_next_mutation(<<opcode::5, _reserved::3, params::8, rest::binary>>) do
+    {mutation, remaining_data} = decode_mutation(opcode, params, rest)
+    {[mutation], remaining_data}
+  end
+
   defp stream_next_mutation(<<>>), do: {:halt, <<>>}
 
-  defp stream_next_mutation(
-         <<@set_16_32, key_len::unsigned-big-16, key::binary-size(key_len), value_len::unsigned-big-32,
-           value::binary-size(value_len), rest::binary>>
-       ) do
-    mutation = {:set, key, value}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(
-         <<@set_8_16, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-big-16,
-           value::binary-size(value_len), rest::binary>>
-       ) do
-    mutation = {:set, key, value}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(
-         <<@set_8_8, key_len::unsigned-8, key::binary-size(key_len), value_len::unsigned-8,
-           value::binary-size(value_len), rest::binary>>
-       ) do
-    mutation = {:set, key, value}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(<<@clear_single_16, key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>) do
-    mutation = {:clear, key}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(<<@clear_single_8, key_len::unsigned-8, key::binary-size(key_len), rest::binary>>) do
-    mutation = {:clear, key}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(
-         <<@clear_range_16, start_len::unsigned-big-16, start_key::binary-size(start_len), end_len::unsigned-big-16,
-           end_key::binary-size(end_len), rest::binary>>
-       ) do
-    mutation = {:clear_range, start_key, end_key}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(
-         <<@clear_range_8, start_len::unsigned-8, start_key::binary-size(start_len), end_len::unsigned-8,
-           end_key::binary-size(end_len), rest::binary>>
-       ) do
-    mutation = {:clear_range, start_key, end_key}
-    {[mutation], rest}
-  end
-
-  defp stream_next_mutation(<<opcode, _rest::binary>>) when opcode >= 0x10 do
-    operation_type = opcode >>> 3
-    variant = opcode &&& 0x07
-    {:halt, {:unknown_opcode, operation_type, variant}}
-  end
-
-  defp stream_next_mutation(_invalid_data), do: {:halt, <<>>}
-
   # ============================================================================
-  # BINARY OPERATIONS IMPLEMENTATION
+  # 16-BIT MUTATION FORMAT WITH OPTIMIZED LENGTH ENCODING
   # ============================================================================
+
+  # 4-Tier Variable-Length Encoding Constants
+  # Direct encoding: 0-11 encoded as format value
+  @length_direct_max 11
+  # Maximum length boundaries for 4-tier encoding
+  # 2^9 - Maximum for 1-byte extended encoding
+  @length_1b_max 512
+  # 2^17 - Maximum for 2-byte extended encoding
+  @length_2b_max 131_072
+
+  # 16-bit header operation codes
+  @op16_set 0x00
+  @op16_clear 0x01
+  @op16_clear_range 0x02
+  @op16_add 0x03
+  @op16_min 0x04
+  @op16_max 0x05
+  @op16_bit_and 0x06
+  @op16_bit_or 0x07
+  @op16_bit_xor 0x08
+  @op16_byte_min 0x09
+  @op16_byte_max 0x0A
+  @op16_append_if_fits 0x0B
+  @op16_compare_and_clear 0x0C
+
+  # 16-bit format mutation encoding using pattern matching for clean separation
+  defp encode_mutation({:set, key, value}), do: encode_op2vb(@op16_set, key, value)
+  defp encode_mutation({:clear, key}), do: encode_op1vb(@op16_clear, key)
+  defp encode_mutation({:clear_range, start_key, end_key}), do: encode_op2vb(@op16_clear_range, start_key, end_key)
+  defp encode_mutation({:atomic, :add, key, value}), do: encode_op2vb(@op16_add, key, value)
+  defp encode_mutation({:atomic, :min, key, value}), do: encode_op2vb(@op16_min, key, value)
+  defp encode_mutation({:atomic, :max, key, value}), do: encode_op2vb(@op16_max, key, value)
+  defp encode_mutation({:atomic, :bit_and, key, value}), do: encode_op2vb(@op16_bit_and, key, value)
+  defp encode_mutation({:atomic, :bit_or, key, value}), do: encode_op2vb(@op16_bit_or, key, value)
+  defp encode_mutation({:atomic, :bit_xor, key, value}), do: encode_op2vb(@op16_bit_xor, key, value)
+  defp encode_mutation({:atomic, :byte_min, key, value}), do: encode_op2vb(@op16_byte_min, key, value)
+  defp encode_mutation({:atomic, :byte_max, key, value}), do: encode_op2vb(@op16_byte_max, key, value)
+  defp encode_mutation({:atomic, :append_if_fits, key, value}), do: encode_op2vb(@op16_append_if_fits, key, value)
+
+  defp encode_mutation({:atomic, :compare_and_clear, key, expected}),
+    do: encode_op2vb(@op16_compare_and_clear, key, expected)
+
+  # operation with one varbinary parameters
+  defp encode_op1vb(op, p) do
+    {f, v} = encode_varbinary_param(p)
+    [<<op::5, 0::3, f::4, 0::4>>, v]
+  end
+
+  # operation with two varbinary parameters
+  defp encode_op2vb(op, p1, p2) do
+    {f1, v1} = encode_varbinary_param(p1)
+    {f2, v2} = encode_varbinary_param(p2)
+    [<<op::5, 0::3, f1::4, f2::4>>, v1, v2]
+  end
+
+  defp encode_varbinary_param(p) when byte_size(p) <= @length_direct_max, do: {byte_size(p), p}
+
+  defp encode_varbinary_param(p) when byte_size(p) <= @length_1b_max / 2,
+    do: {0b1100, [<<byte_size(p) - 1 &&& 0xFF::8>>, p]}
+
+  defp encode_varbinary_param(p) when byte_size(p) <= @length_1b_max,
+    do: {0b1101, [<<byte_size(p) - 1 &&& 0xFF::8>>, p]}
+
+  defp encode_varbinary_param(p) when byte_size(p) <= @length_2b_max / 2,
+    do: {0b1110, [<<byte_size(p) - 1 &&& 0xFFFF::big-16>>, p]}
+
+  defp encode_varbinary_param(p) when byte_size(p) <= @length_2b_max,
+    do: {0b1111, [<<byte_size(p) - 1 &&& 0xFFFF::big-16>>, p]}
+
+  # Pattern matching for clean shape-based decoding (matches encoding structure)
+  defp decode_mutation(@op16_clear, params, data), do: decode_op1vb(:clear, params, data)
+  defp decode_mutation(@op16_set, params, data), do: decode_op2vb(:set, params, data)
+  defp decode_mutation(@op16_clear_range, params, data), do: decode_op2vb(:clear_range, params, data)
+  defp decode_mutation(@op16_add, params, data), do: decode_atomic_op2vb(:add, params, data)
+  defp decode_mutation(@op16_min, params, data), do: decode_atomic_op2vb(:min, params, data)
+  defp decode_mutation(@op16_max, params, data), do: decode_atomic_op2vb(:max, params, data)
+  defp decode_mutation(@op16_bit_and, params, data), do: decode_atomic_op2vb(:bit_and, params, data)
+  defp decode_mutation(@op16_bit_or, params, data), do: decode_atomic_op2vb(:bit_or, params, data)
+  defp decode_mutation(@op16_bit_xor, params, data), do: decode_atomic_op2vb(:bit_xor, params, data)
+  defp decode_mutation(@op16_byte_min, params, data), do: decode_atomic_op2vb(:byte_min, params, data)
+  defp decode_mutation(@op16_byte_max, params, data), do: decode_atomic_op2vb(:byte_max, params, data)
+  defp decode_mutation(@op16_append_if_fits, params, data), do: decode_atomic_op2vb(:append_if_fits, params, data)
+  defp decode_mutation(@op16_compare_and_clear, params, data), do: decode_atomic_op2vb(:compare_and_clear, params, data)
+  defp decode_mutation(opcode, _params, _data), do: raise("Unsupported 16-bit opcode: #{opcode}")
+
+  # decode operation with one varbinary parameter
+  defp decode_op1vb(operation, params, data) do
+    # upper 4 bits contain format, lower 4 bits are zero
+    f = params >>> 4
+    {key, remaining} = decode_varbinary_param(f, data)
+    {{operation, key}, remaining}
+  end
+
+  # decode operation with two varbinary parameters
+  defp decode_op2vb(operation, params, data) do
+    f1 = params >>> 4
+    f2 = params &&& 0b1111
+
+    {param1, data_after_param1} = decode_varbinary_param(f1, data)
+    {param2, remaining} = decode_varbinary_param(f2, data_after_param1)
+    {{operation, param1, param2}, remaining}
+  end
+
+  # decode atomic operation with two varbinary parameters
+  defp decode_atomic_op2vb(operation, params, data) do
+    f1 = params >>> 4
+    f2 = params &&& 0b1111
+
+    {param1, data_after_param1} = decode_varbinary_param(f1, data)
+    {param2, remaining} = decode_varbinary_param(f2, data_after_param1)
+    {{:atomic, operation, param1, param2}, remaining}
+  end
+
+  # Helper function to decode varbinary parameters from the new format
+  defp decode_varbinary_param(f, data) when f <= @length_direct_max do
+    <<param::binary-size(f), rest::binary>> = data
+    {param, rest}
+  end
+
+  # 1-byte extended - range 12 to 256
+  defp decode_varbinary_param(0b1100, <<length::8, param::binary-size(length + 1), rest::binary>>), do: {param, rest}
+
+  # 1-byte extended - range 257 to 512 (9th bit encoded in format)
+  defp decode_varbinary_param(0b1101, <<length::8, param::binary-size(length + 1 + 256), rest::binary>>),
+    do: {param, rest}
+
+  # 2-byte extended - range 513 to 65,536
+  defp decode_varbinary_param(0b1110, <<length::big-16, param::binary-size(length + 1), rest::binary>>),
+    do: {param, rest}
+
+  # 2-byte extended - range 65,537 to 131,072 (17th bit encoded in format)
+  defp decode_varbinary_param(0b1111, <<length::big-16, param::binary-size(length + 1 + 65_536), rest::binary>>),
+    do: {param, rest}
+
+  defp decode_varbinary_param(f, _data), do: raise("Invalid varbinary format: #{f}")
 end

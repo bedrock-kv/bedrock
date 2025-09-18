@@ -46,14 +46,25 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   @spec do_pending_pushes(State.t()) ::
           {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
   def do_pending_pushes(t) do
-    case Map.pop(t.pending_pushes, t.last_version) do
+    next_expected_version = t.last_version
+
+    case Map.pop(t.pending_pushes, next_expected_version) do
       {nil, _} ->
         {:ok, t}
 
       {{encoded_transaction, ack_fn}, pending_pushes} ->
-        :ok = ack_fn.(:ok)
+        t_with_updated_pending = %{t | pending_pushes: pending_pushes}
 
-        push(%{t | pending_pushes: pending_pushes}, t.last_version, encoded_transaction, ack_fn)
+        case write_encoded_transaction(t_with_updated_pending, encoded_transaction) do
+          {:ok, new_t} ->
+            trace_push_transaction(encoded_transaction)
+            :ok = ack_fn.(:ok)
+            do_pending_pushes(new_t)
+
+          {:error, reason} ->
+            :ok = ack_fn.({:error, reason})
+            {:error, reason}
+        end
     end
   end
 
@@ -93,7 +104,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {:ok, version} ->
         case Writer.append(t.writer, encoded_transaction, version) do
           {:ok, writer} ->
-            {:ok, %{t | writer: writer, last_version: version}}
+            # Update the active segment's transaction cache to keep it coherent with disk
+            updated_active_segment = update_segment_transaction_cache(t.active_segment, encoded_transaction)
+            {:ok, %{t | writer: writer, last_version: version, active_segment: updated_active_segment}}
 
           {:error, :segment_full} ->
             with :ok <- Writer.close(t.writer) do
@@ -103,6 +116,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
       {:error, reason} ->
         {:error, {:version_extraction_failed, reason}}
+    end
+  end
+
+  @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()
+  defp update_segment_transaction_cache(segment, encoded_transaction) do
+    case segment.transactions do
+      nil ->
+        # If transactions not loaded, initialize with the new transaction
+        %{segment | transactions: [encoded_transaction]}
+
+      existing_transactions ->
+        # Prepend new transaction to maintain newest-first order
+        %{segment | transactions: [encoded_transaction | existing_transactions]}
     end
   end
 end

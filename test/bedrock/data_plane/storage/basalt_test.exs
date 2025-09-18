@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.BasaltTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.GenServerTestHelpers
+  import Bedrock.Test.Common.GenServerTestHelpers
 
   alias Bedrock.DataPlane.Storage.Basalt
 
@@ -58,9 +58,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       # We expect the worker to eventually send a message to the director
       # when it's ready to accept requests.
-      assert_cast_received({:worker_health, worker_id, health_status}, 5_000) do
-        assert worker_id == expected_id
-        assert {:ok, pid} = health_status
+      assert_cast_received({:worker_health, ^expected_id, {:ok, pid}}, 5_000) do
         assert is_pid(pid)
       end
 
@@ -84,9 +82,7 @@ defmodule Bedrock.DataPlane.Storage.BasaltTest do
 
       assert {:ok, all_supported_info} = Basalt.Logic.info(state, supported_info)
 
-      assert all_supported_info
-             |> Map.keys()
-             |> Enum.sort() == Enum.sort(supported_info)
+      assert Enum.sort(Map.keys(all_supported_info)) == Enum.sort(supported_info)
     end
   end
 end

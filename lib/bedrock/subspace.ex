@@ -10,12 +10,19 @@ defmodule Bedrock.Subspace do
 
   Based on the pattern from other FoundationDB language bindings (Go, Rust, C++).
   """
-  alias Bedrock.Tuple
+  alias Bedrock.Key
 
   # Define the subspace struct
   defstruct [:prefix]
 
   @type t :: %__MODULE__{prefix: binary()}
+
+  defprotocol Subspaceable do
+    @type t :: term()
+
+    @spec to_subspace(any()) :: Bedrock.Subspace.t()
+    def to_subspace(data)
+  end
 
   @doc """
   Create a new subspace from raw bytes prefix.
@@ -24,7 +31,7 @@ defmodule Bedrock.Subspace do
   def new(prefix) when is_binary(prefix), do: %__MODULE__{prefix: prefix}
 
   @spec new(tuple()) :: t()
-  def new(tuple) when is_tuple(tuple), do: %__MODULE__{prefix: Tuple.pack(tuple)}
+  def new(tuple) when is_tuple(tuple), do: %__MODULE__{prefix: Key.pack(tuple)}
 
   @doc """
   Create a subspace that contains all keys in the database.
@@ -36,9 +43,11 @@ defmodule Bedrock.Subspace do
   Create a new subspace with the given tuple and raw prefix.
   The tuple is packed and appended to the raw prefix.
   """
-  @spec create(t(), tuple()) :: t()
+  @spec create(t() | Subspaceable.t(), tuple()) :: t()
   def create(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
-    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Tuple.to_iolist(tuple)])}
+    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist(tuple)])}
+
+  def create(term, tuple) when is_tuple(tuple), do: term |> Subspaceable.to_subspace() |> create(tuple)
 
   @doc """
   Add an item to the subspace, creating a new subspace.
@@ -46,7 +55,7 @@ defmodule Bedrock.Subspace do
   """
   @spec add(t(), term()) :: t()
   def add(%__MODULE__{prefix: prefix}, item),
-    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Tuple.to_iolist({item})])}
+    do: %__MODULE__{prefix: :erlang.iolist_to_binary([prefix | Key.to_iolist({item})])}
 
   @doc """
   Create a nested subspace by extending this subspace with the given tuple.
@@ -67,28 +76,23 @@ defmodule Bedrock.Subspace do
   def bytes(%__MODULE__{} = subspace), do: key(subspace)
 
   @doc """
-  Pack a tuple within this subspace.
-  The tuple will be packed and prefixed with the subspace's prefix.
+  Pack a list or tuple within this subspace.
+  The list/tuple/number/binary will be packed and prefixed with the subspace's prefix.
   """
-  @spec pack(t(), tuple()) :: binary()
-  def pack(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple),
-    do: :erlang.iolist_to_binary([prefix | Tuple.to_iolist(tuple)])
-
-  # @doc """
-  # Pack a tuple with version stamp within this subspace.
-  # """
-  # @spec pack_vs(t(), tuple()) :: binary()
-  # def pack_vs(%__MODULE__{prefix: prefix}, tuple) when is_tuple(tuple), do: prefix <> Tuple.pack_vs(tuple)
+  @spec pack(t(), list() | tuple() | number() | binary()) :: binary()
+  def pack(%__MODULE__{prefix: prefix}, value)
+      when is_list(value) or is_tuple(value) or is_number(value) or is_binary(value),
+      do: :erlang.iolist_to_binary([prefix | Key.to_iolist(value)])
 
   @doc """
   Unpack a key that belongs to this subspace.
-  Returns the tuple with the subspace prefix removed.
+  Returns the list or tuple with the subspace prefix removed.
   Raises an error if the key doesn't belong to this subspace.
   """
-  @spec unpack(t(), binary()) :: tuple()
+  @spec unpack(t(), binary()) :: list() | tuple() | number() | binary()
   def unpack(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
     case key do
-      <<^prefix::binary, remaining_key::binary>> -> Tuple.unpack(remaining_key)
+      <<^prefix::binary, remaining_key::binary>> -> Key.unpack(remaining_key)
       _ -> raise(ArgumentError, "Key does not belong to this subspace")
     end
   end
@@ -120,7 +124,7 @@ defmodule Bedrock.Subspace do
   Returns a tuple of {start_key, end_key} suitable for range operations.
   """
   @spec range(t(), tuple() | binary()) :: {binary(), binary()}
-  def range(%__MODULE__{prefix: prefix}, key) when is_tuple(key), do: new_range(prefix, Tuple.to_iolist(key))
+  def range(%__MODULE__{prefix: prefix}, key) when is_tuple(key), do: new_range(prefix, Key.to_iolist(key))
   def range(%__MODULE__{prefix: prefix}, key) when is_binary(key), do: new_range(prefix, key)
 
   defp new_range(prefix, key),

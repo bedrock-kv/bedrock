@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   """
   use GenServer
 
-  import Bedrock.DataPlane.Resolver.ConflictResolution, only: [resolve: 3]
+  import Bedrock.DataPlane.Resolver.ConflictResolution, only: [resolve: 3, remove_old_transactions: 2]
 
   import Bedrock.DataPlane.Resolver.Telemetry,
     only: [
@@ -32,6 +32,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   alias Bedrock.DataPlane.Resolver.Tree
   alias Bedrock.DataPlane.Resolver.Validation
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.Time
   alias Bedrock.Internal.WaitingList
 
   @type reply_fn :: (result :: {:ok, [non_neg_integer()]} | {:error, any()} -> :ok)
@@ -45,7 +46,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
             epoch: Bedrock.epoch(),
             last_version: Bedrock.version(),
             director: pid(),
-            cluster: module()
+            cluster: module(),
+            sweep_interval_ms: pos_integer(),
+            version_retention_ms: pos_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -55,6 +58,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     last_version = opts[:last_version] || Version.zero()
     director = opts[:director] || raise "Missing :director option"
     cluster = opts[:cluster] || raise "Missing :cluster option"
+    sweep_interval_ms = opts[:sweep_interval_ms] || 1_000
+    version_retention_ms = opts[:version_retention_ms] || 6_000
 
     %{
       id: {__MODULE__, cluster, key_range, epoch},
@@ -62,14 +67,14 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {lock_token, last_version, epoch, director}
+           {lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({lock_token, last_version, epoch, director}) do
+  def init({lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}) do
     # Monitor the Director - if it dies, this resolver should terminate
     Process.monitor(director)
 
@@ -82,7 +87,10 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         waiting: %{},
         mode: :running,
         epoch: epoch,
-        director: director
+        director: director,
+        sweep_interval_ms: sweep_interval_ms,
+        version_retention_ms: version_retention_ms,
+        last_sweep_time: Time.monotonic_now_in_ms()
       },
       &{:ok, &1}
     )
@@ -183,10 +191,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   def handle_continue({:process_ready, {next_version, transactions, reply_fn}}, t) do
     emit_processing(length(transactions), t.last_version, next_version)
 
-    {new_waiting, _} = WaitingList.remove(t.waiting, t.last_version)
-
     {tree, aborted} = resolve(t.tree, transactions, next_version)
-    t = %{t | tree: tree, last_version: next_version, waiting: new_waiting}
+    t = %{t | tree: tree, last_version: next_version}
 
     emit_completed(
       length(transactions),
@@ -200,21 +206,42 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
     emit_reply_sent(length(transactions), length(aborted), t.last_version, next_version)
 
-    case WaitingList.find(t.waiting, next_version) do
-      nil ->
-        noreply(t, continue: :next_timeout)
+    case WaitingList.remove(t.waiting, next_version) do
+      {updated_waiting, nil} ->
+        noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {_deadline, reply_fn, {next_version, transactions}} ->
-        emit_waiting_resolved(length(transactions), 0, next_version, t.last_version)
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions}}} ->
+        emit_waiting_resolved(length(transactions), 0, waiting_next_version, t.last_version)
 
-        noreply(t, continue: {:process_ready, {next_version, transactions, reply_fn}})
+        noreply(%{t | waiting: updated_waiting},
+          continue: {:process_ready, {waiting_next_version, transactions, reply_fn}}
+        )
     end
   end
 
   @impl true
   def handle_continue(:next_timeout, t) do
     timeout = WaitingList.next_timeout(t.waiting)
-    noreply(t, timeout: timeout)
+    time_since_last_sweep = Time.elapsed_monotonic_in_ms(t.last_sweep_time)
+    should_sweep = timeout == :infinity || time_since_last_sweep >= t.sweep_interval_ms
+
+    if should_sweep do
+      retention_microseconds = t.version_retention_ms * 1000
+      current_version_int = Version.to_integer(t.last_version)
+
+      updated_state =
+        if current_version_int >= retention_microseconds do
+          new_tree = remove_old_transactions(t.tree, Version.subtract(t.last_version, retention_microseconds))
+          %{t | tree: new_tree, last_sweep_time: Time.monotonic_now_in_ms()}
+        else
+          %{t | last_sweep_time: Time.monotonic_now_in_ms()}
+        end
+
+      noreply(updated_state, timeout: min(timeout, t.sweep_interval_ms))
+    else
+      time_until_next_sweep = t.sweep_interval_ms - time_since_last_sweep
+      noreply(t, timeout: min(timeout, time_until_next_sweep))
+    end
   end
 
   @spec reply_fn(GenServer.from()) :: reply_fn()

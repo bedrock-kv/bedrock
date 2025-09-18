@@ -1,44 +1,26 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
   alias Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Version
 
+  # Helper function for common empty recovery attempt setup
+  defp empty_recovery_attempt(version_tuple \\ {10, 50}) do
+    recovery_attempt()
+    |> with_logs(%{})
+    |> with_version_vector(version_tuple)
+    |> Map.put(:old_log_ids_to_copy, [])
+    |> Map.put(:available_services, %{})
+    |> Map.put(:service_pids, %{})
+  end
+
   describe "execute/1" do
-    test "successfully advances state with empty logs" do
-      # Test with empty configurations to avoid Log.recover_from calls
-      recovery_attempt =
-        recovery_attempt()
-        |> with_logs(%{})
-        |> with_version_vector({10, 50})
-        |> Map.put(:old_log_ids_to_copy, [])
-        |> Map.put(:available_services, %{})
-        |> Map.put(:service_pids, %{})
-
-      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
-
-      # With empty logs, should advance to next state
-      assert next_phase == SequencerStartupPhase
-    end
-
-    test "handles actual log replay scenarios with stall expectation" do
-      # Test with no old logs to copy AND no new logs - this completely avoids Log.recover_from calls
-      recovery_attempt =
-        recovery_attempt()
-        |> with_logs(%{})
-        |> with_version_vector({10, 50})
-        |> Map.put(:old_log_ids_to_copy, [])
-        |> Map.put(:available_services, %{})
-        |> Map.put(:service_pids, %{})
-
-      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
-
-      # With empty logs, should advance to next state
-      assert next_phase == SequencerStartupPhase
+    test "advances to SequencerStartupPhase with empty logs configuration" do
+      assert {_result, SequencerStartupPhase} = LogReplayPhase.execute(empty_recovery_attempt(), %{node_tracking: nil})
     end
   end
 
@@ -185,7 +167,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
   end
 
   describe "pid_for_log_id/2 (through execute/1)" do
-    test "integration test - pid_for_log_id function extracts correct PIDs" do
+    test "extracts correct PIDs from available_services during execution" do
       test_pid = self()
 
       available_services = %{
@@ -223,71 +205,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
     # and the integration tests in execute/1
 
     test "version vector structure validation" do
-      # Test that version vectors are properly structured tuples
-      version_vector_1 = {0, 50}
-      version_vector_2 = {50, 50}
-      version_vector_3 = {10, 100}
-
-      assert is_tuple(version_vector_1) and tuple_size(version_vector_1) == 2
-      assert is_tuple(version_vector_2) and tuple_size(version_vector_2) == 2
-      assert is_tuple(version_vector_3) and tuple_size(version_vector_3) == 2
-
-      {first_1, last_1} = version_vector_1
-      {first_2, last_2} = version_vector_2
-      {first_3, last_3} = version_vector_3
-
-      assert is_integer(first_1) and is_integer(last_1)
-      assert is_integer(first_2) and is_integer(last_2)
-      assert is_integer(first_3) and is_integer(last_3)
+      # Test that version vectors are properly structured tuples with integer elements
+      for version_vector <- [{0, 50}, {50, 50}, {10, 100}] do
+        assert {first, last} = version_vector
+        assert is_integer(first) and is_integer(last)
+      end
     end
 
     test "pid_for_id function behavior patterns" do
       # Test different pid_for_id function patterns without calling Log.recover_from
+      test_pid = self()
 
       # Always returns :none
       pid_for_id_none = fn _id -> :none end
-      assert pid_for_id_none.({:log, 1}) == :none
-      assert pid_for_id_none.({:log, 2}) == :none
+      assert :none = pid_for_id_none.({:log, 1})
+      assert :none = pid_for_id_none.({:log, 2})
 
-      # Returns specific PIDs
-      test_pid = self()
-
+      # Returns specific PIDs for known logs
       pid_for_id_mixed = fn
         {:log, 1} -> test_pid
         {:log, 10} -> test_pid
         _ -> :none
       end
 
-      assert pid_for_id_mixed.({:log, 1}) == test_pid
-      assert pid_for_id_mixed.({:log, 10}) == test_pid
-      assert pid_for_id_mixed.({:log, 99}) == :none
+      assert ^test_pid = pid_for_id_mixed.({:log, 1})
+      assert ^test_pid = pid_for_id_mixed.({:log, 10})
+      assert :none = pid_for_id_mixed.({:log, 99})
     end
   end
 
   describe "state management" do
-    test "execute advances to repair_data_distribution on success" do
-      # This test can't easily succeed without mocking Log.recover_from
-      # but we can test the structure
-      recovery_attempt =
-        recovery_attempt()
-        |> with_logs(%{})
-        |> with_version_vector({10, 50})
-        |> Map.put(:old_log_ids_to_copy, [])
-        |> Map.put(:available_services, %{})
-        |> Map.put(:service_pids, %{})
-
-      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
-
-      # With empty logs, should succeed
-      assert next_phase == SequencerStartupPhase
-    end
-
-    test "execute preserves other recovery_attempt fields" do
+    test "execute preserves additional recovery_attempt fields" do
       recovery_attempt = %{
         old_log_ids_to_copy: [],
         logs: %{},
         version_vector: {Version.from_integer(10), Version.from_integer(50)},
-        # Add missing durable_version field as binary
         durable_version: Version.from_integer(25),
         available_services: %{},
         service_pids: %{},
@@ -295,10 +247,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         another_field: 42
       }
 
-      {result, _next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
-
-      assert result.extra_field == "preserved"
-      assert result.another_field == 42
+      assert {%{extra_field: "preserved", another_field: 42}, SequencerStartupPhase} =
+               LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
     end
   end
 
@@ -330,10 +280,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       # Mock Log.recover_from to send message to test process instead of calling real log
       _original_function = &Log.recover_from/4
 
-      # For testing, we'll verify the function is called with correct params
-      # Since we can't easily mock the Log module, we'll test the parameters
-      assert Map.has_key?(service_pids, new_log_id)
-      assert old_log_id == :none
+      # Verify the function receives correct parameters
+      assert %{^new_log_id => _} = service_pids
+      assert :none = old_log_id
       assert is_integer(first_version)
       assert is_integer(last_version)
 
@@ -387,10 +336,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       service_pids = %{"new_log" => :new_pid, "old_log" => :old_pid}
 
       # Verify that the function can extract the correct PIDs from the map
-      # (The actual Log.recover_from call would require real log processes,
-      #  but the important fix is that Map.fetch! works for non-:none values)
-      assert Map.fetch!(service_pids, new_log_id) == :new_pid
-      assert Map.fetch!(service_pids, old_log_id) == :old_pid
+      assert :new_pid = Map.fetch!(service_pids, new_log_id)
+      assert :old_pid = Map.fetch!(service_pids, old_log_id)
 
       # The function should not crash on Map.fetch! calls
       # Note: We can't easily test the full Log.recover_from call without

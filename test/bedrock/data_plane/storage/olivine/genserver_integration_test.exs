@@ -23,6 +23,30 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
     end
   end
 
+  defp create_worker_child_spec(tmp_dir, suffix) do
+    worker_id = random_id()
+    unique_int = System.unique_integer([:positive])
+    name_suffix = if suffix, do: "_#{suffix}", else: ""
+    otp_name = String.to_atom("olivine#{name_suffix}_#{unique_int}")
+
+    child_spec =
+      Olivine.child_spec(
+        otp_name: otp_name,
+        foreman: self(),
+        id: worker_id,
+        path: tmp_dir
+      )
+
+    {worker_id, otp_name, child_spec}
+  end
+
+  defp setup_supervised_worker(tmp_dir, suffix) do
+    {worker_id, otp_name, child_spec} = create_worker_child_spec(tmp_dir, suffix)
+    {:ok, pid} = start_supervised(child_spec)
+    wait_for_health_report(worker_id, pid)
+    {worker_id, otp_name, pid}
+  end
+
   setup do
     tmp_dir = "/tmp/olivine_genserver_#{System.unique_integer([:positive])}"
     File.rm_rf(tmp_dir)
@@ -38,23 +62,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
   describe "GenServer Lifecycle Integration" do
     @tag :tmp_dir
     test "complete GenServer startup and initialization workflow", %{tmp_dir: tmp_dir} do
-      worker_id = random_id()
-      otp_name = :"olivine_startup_#{System.unique_integer([:positive])}"
-
-      child_spec =
-        Olivine.child_spec(
-          otp_name: otp_name,
-          foreman: self(),
-          id: worker_id,
-          path: tmp_dir
-        )
+      {worker_id, otp_name, child_spec} = create_worker_child_spec(tmp_dir, "startup")
 
       assert %{
                id: {Olivine.Server, ^worker_id},
                start: {GenServer, :start_link, [Olivine.Server, init_args, [name: ^otp_name]]}
              } = child_spec
 
-      assert {^otp_name, foreman_pid, ^worker_id, ^tmp_dir} = init_args
+      {^otp_name, foreman_pid, ^worker_id, ^tmp_dir} = init_args
       assert is_pid(foreman_pid)
 
       {:ok, pid} = GenServer.start_link(Olivine.Server, init_args, name: otp_name)
@@ -109,9 +124,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       {:ok, supervisor_pid} = Supervisor.start_link([child_spec], strategy: :one_for_one)
 
-      children = Supervisor.which_children(supervisor_pid)
-      assert length(children) == 1
-      [{_child_id, worker_pid, :worker, [GenServer]}] = children
+      assert [{_child_id, worker_pid, :worker, [GenServer]}] = Supervisor.which_children(supervisor_pid)
       assert Process.alive?(worker_pid)
 
       wait_for_health_report(worker_id, worker_pid)
@@ -120,11 +133,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       Process.sleep(100)
 
-      children2 = Supervisor.which_children(supervisor_pid)
-      assert length(children2) == 1
-      [{_child_id2, new_worker_pid, :worker, [GenServer]}] = children2
-      assert new_worker_pid != worker_pid
-      assert Process.alive?(new_worker_pid)
+      assert [{_child_id2, new_worker_pid, :worker, [GenServer]}] = Supervisor.which_children(supervisor_pid)
+      assert new_worker_pid != worker_pid and Process.alive?(new_worker_pid)
 
       wait_for_health_report(worker_id, new_worker_pid)
 
@@ -172,20 +182,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
   describe "Foreman Integration" do
     @tag :tmp_dir
     test "proper health reporting to Foreman during startup", %{tmp_dir: tmp_dir} do
-      worker_id = random_id()
-      otp_name = :"olivine_health_#{System.unique_integer([:positive])}"
-
-      child_spec =
-        Olivine.child_spec(
-          otp_name: otp_name,
-          foreman: self(),
-          id: worker_id,
-          path: tmp_dir
-        )
-
-      {:ok, pid} = start_supervised(child_spec)
-
-      wait_for_health_report(worker_id, pid)
+      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "health")
       assert Process.alive?(pid)
     end
 
@@ -252,35 +249,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
   describe "GenServer Storage Interface" do
     @tag :tmp_dir
     test "fetch calls via GenServer message passing", %{tmp_dir: tmp_dir} do
-      worker_id = random_id()
-      otp_name = :"olivine_fetch_msgs_#{System.unique_integer([:positive])}"
-
-      child_spec =
-        Olivine.child_spec(
-          otp_name: otp_name,
-          foreman: self(),
-          id: worker_id,
-          path: tmp_dir
-        )
-
-      {:ok, pid} = start_supervised(child_spec)
-
-      wait_for_health_report(worker_id, pid)
-
-      result = GenServer.call(pid, {:fetch, "nonexistent", Version.zero(), []}, @timeout)
-
-      assert result in [
-               {:error, :not_found},
-               {:error, :version_too_old}
-             ]
+      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "fetch_msgs")
 
       v0 = Version.zero()
-      result2 = GenServer.call(pid, {:fetch, "test:key", v0, []}, @timeout)
 
-      assert result2 in [
-               {:error, :not_found},
-               {:error, :version_too_old}
-             ]
+      # Both nonexistent and test keys should return the same error patterns
+      for key <- ["nonexistent", "test:key"] do
+        result = GenServer.call(pid, {:get, key, v0, []}, @timeout)
+        assert result in [{:error, :not_found}, {:error, :version_too_old}]
+      end
     end
 
     @tag :tmp_dir
@@ -303,7 +280,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       v0 = Version.zero()
 
       try do
-        result = GenServer.call(pid, {:range_fetch, "start", "end", v0, []}, 1_000)
+        result = GenServer.call(pid, {:get_range, "start", "end", v0, []}, 1_000)
 
         assert result in [
                  {:ok, {[], false}},
@@ -318,20 +295,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
     @tag :tmp_dir
     test "info calls via GenServer return correct metadata", %{tmp_dir: tmp_dir} do
-      worker_id = random_id()
-      otp_name = :"olivine_info_msgs_#{System.unique_integer([:positive])}"
-
-      child_spec =
-        Olivine.child_spec(
-          otp_name: otp_name,
-          foreman: self(),
-          id: worker_id,
-          path: tmp_dir
-        )
-
-      {:ok, pid} = start_supervised(child_spec)
-
-      wait_for_health_report(worker_id, pid)
+      {worker_id, otp_name, pid} = setup_supervised_worker(tmp_dir, "info_msgs")
 
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
       assert {:ok, ^worker_id} = GenServer.call(pid, {:info, :id}, @timeout)
@@ -343,13 +307,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       assert String.contains?(path_result, tmp_dir)
 
       fact_names = [:kind, :id, :pid, :otp_name]
-      {:ok, info_map} = GenServer.call(pid, {:info, fact_names}, @timeout)
 
-      assert is_map(info_map)
-      assert info_map[:kind] == :storage
-      assert info_map[:id] == worker_id
-      assert info_map[:pid] == pid
-      assert info_map[:otp_name] == otp_name
+      assert {:ok, %{kind: :storage, id: ^worker_id, pid: ^pid, otp_name: ^otp_name}} =
+               GenServer.call(pid, {:info, fact_names}, @timeout)
     end
 
     @tag :tmp_dir
@@ -381,17 +341,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
           # Recovery info might be returned as a map rather than keyword list
           assert is_list(recovery_info) or is_map(recovery_info)
 
-          # Should contain required recovery info
+          # Should contain required recovery info with :storage kind
           if is_list(recovery_info) do
-            assert Keyword.has_key?(recovery_info, :kind)
-            assert Keyword.has_key?(recovery_info, :durable_version)
-            assert Keyword.has_key?(recovery_info, :oldest_durable_version)
-            assert Keyword.get(recovery_info, :kind) == :storage
+            assert [kind: :storage, durable_version: _, oldest_durable_version: _] =
+                     Keyword.take(recovery_info, [:kind, :durable_version, :oldest_durable_version])
           else
-            assert Map.has_key?(recovery_info, :kind)
-            assert Map.has_key?(recovery_info, :durable_version)
-            assert Map.has_key?(recovery_info, :oldest_durable_version)
-            assert Map.get(recovery_info, :kind) == :storage
+            assert %{kind: :storage, durable_version: _, oldest_durable_version: _} = recovery_info
           end
 
           # Test unlock after recovery
@@ -489,6 +444,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       # Wait for startup
       wait_for_health_report(worker_id, pid)
 
+      v0 = Version.zero()
+      expected_errors = [{:error, :not_found}, {:error, :version_too_old}]
+
       # Multiple info calls should return consistent results
       for _i <- 1..10 do
         assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
@@ -496,21 +454,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
         assert {:ok, ^pid} = GenServer.call(pid, {:info, :pid}, @timeout)
       end
 
-      # Interleave different types of calls
-      fetch_result1 = GenServer.call(pid, {:fetch, "test", Version.zero(), []}, @timeout)
-
-      assert fetch_result1 in [
-               {:error, :not_found},
-               {:error, :version_too_old}
-             ]
-
-      assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
-      fetch_result2 = GenServer.call(pid, {:fetch, "another_test", Version.zero(), []}, @timeout)
-
-      assert fetch_result2 in [
-               {:error, :not_found},
-               {:error, :version_too_old}
-             ]
+      # Interleave different types of calls - all fetch calls should behave consistently
+      for key <- ["test", "another_test"] do
+        fetch_result = GenServer.call(pid, {:get, key, v0, []}, @timeout)
+        assert fetch_result in expected_errors
+        assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
+      end
 
       assert {:ok, ^worker_id} = GenServer.call(pid, {:info, :id}, @timeout)
 
@@ -561,7 +510,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
   describe "Integration with Bedrock Storage Interface" do
     @tag :tmp_dir
-    test "Storage.fetch/4 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
+    test "Storage.get/4 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
       worker_id = random_id()
       otp_name = :"olivine_storage_fetch_#{System.unique_integer([:positive])}"
 
@@ -583,7 +532,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       # Test with timeout option (use shorter timeout for MVP)
       try do
-        result = Storage.fetch(pid, "test:key", v0, timeout: 1_000)
+        result = Storage.get(pid, "test:key", v0, timeout: 1_000)
 
         case result do
           {:ok, value} when is_binary(value) -> :ok
@@ -600,7 +549,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       end
 
       # Test without options
-      result2 = Storage.fetch(pid, "another:key", v0)
+      result2 = Storage.get(pid, "another:key", v0)
 
       case result2 do
         {:ok, value} when is_binary(value) -> :ok
@@ -611,7 +560,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
     end
 
     @tag :tmp_dir
-    test "Storage.range_fetch/5 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
+    test "Storage.get_range/5 function works with Olivine GenServer", %{tmp_dir: tmp_dir} do
       worker_id = random_id()
       otp_name = :"olivine_storage_range_#{System.unique_integer([:positive])}"
 
@@ -632,7 +581,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       # Test range fetch via Storage interface (may timeout in MVP)
       try do
-        result = Storage.range_fetch(pid, "start:key", "end:key", v0, timeout: 1_000)
+        result = Storage.get_range(pid, "start:key", "end:key", v0, timeout: 1_000)
 
         # Should return valid response
         assert result in [
@@ -693,9 +642,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
   describe "Error Handling and Edge Cases" do
     @tag :tmp_dir
-    test "GenServer handles timeout scenarios", %{tmp_dir: tmp_dir} do
+    test "GenServer handles timeout and malformed message scenarios", %{tmp_dir: tmp_dir} do
       worker_id = random_id()
-      otp_name = :"olivine_timeout_#{System.unique_integer([:positive])}"
+      otp_name = :"olivine_stress_#{System.unique_integer([:positive])}"
 
       child_spec =
         Olivine.child_spec(
@@ -706,53 +655,29 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
         )
 
       {:ok, pid} = start_supervised(child_spec)
-
-      # Wait for startup
       wait_for_health_report(worker_id, pid)
 
-      # Test with very short timeout
+      # Test timeout scenarios - should either succeed or timeout gracefully
       result = GenServer.call(pid, {:info, :kind}, 1)
 
-      # Should either succeed quickly or timeout
       case result do
-        # Success
-        {:ok, :storage} ->
-          :ok
-
-        _ ->
-          # Call may have timed out, but process should still be alive
-          assert Process.alive?(pid)
+        {:ok, :storage} -> :ok
+        # Process should survive timeout
+        _ -> assert Process.alive?(pid)
       end
-    end
 
-    @tag :tmp_dir
-    test "GenServer handles malformed messages", %{tmp_dir: tmp_dir} do
-      worker_id = random_id()
-      otp_name = :"olivine_malformed_#{System.unique_integer([:positive])}"
+      # Test malformed messages - process should survive all of these
+      malformed_messages = [
+        :malformed_info,
+        {:malformed_call, :with, :args},
+        {:transactions_applied, :invalid_version}
+      ]
 
-      child_spec =
-        Olivine.child_spec(
-          otp_name: otp_name,
-          foreman: self(),
-          id: worker_id,
-          path: tmp_dir
-        )
-
-      {:ok, pid} = start_supervised(child_spec)
-
-      # Wait for startup
-      wait_for_health_report(worker_id, pid)
-
-      # Send malformed info message
-      send(pid, :malformed_info)
-      send(pid, {:malformed_call, :with, :args})
-      send(pid, {:transactions_applied, :invalid_version})
-
-      # Process should survive
+      for msg <- malformed_messages, do: send(pid, msg)
       Process.sleep(3)
-      assert Process.alive?(pid)
 
-      # Should still be functional
+      # Process should survive and remain functional
+      assert Process.alive?(pid)
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
     end
   end

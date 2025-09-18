@@ -62,6 +62,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
     end)
   end
 
+  def ordered_key_pair_generator do
+    # Generate two keys and ensure they are ordered
+    {key_generator(), key_generator()}
+    |> StreamData.tuple()
+    |> StreamData.map(fn {key1, key2} ->
+      if key1 <= key2 do
+        {key1, key2}
+      else
+        {key2, key1}
+      end
+    end)
+  end
+
   def page_data_generator do
     # Generate realistic page data with varying densities
     1..100
@@ -90,15 +103,20 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
           versions = List.duplicate(<<0, 0, 0, 0, 0, 0, 0, 1>>, 50)
           key_versions = Enum.zip(keys, versions)
           next_id = if page_id == page_count - 1, do: 0, else: page_id + 1
-          Page.new(page_id, key_versions, next_id)
+          page = Page.new(page_id, key_versions)
+          {page, next_id}
         end
 
       create_index_from_pages(pages)
     end)
   end
 
-  defp create_index_from_pages(pages) do
-    page_map = Map.new(pages, &{Page.id(&1), &1})
+  defp create_index_from_pages(page_tuples) do
+    page_map =
+      Map.new(page_tuples, fn {page, next_id} ->
+        {Page.id(page), {page, next_id}}
+      end)
+
     tree = Tree.from_page_map(page_map)
     %Index{tree: tree, page_map: page_map}
   end
@@ -107,7 +125,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
 
   property "KeySelector resolution either succeeds or returns a boundary error" do
     check all({index, key_selector} <- StreamData.tuple({multi_page_index_generator(), key_selector_generator()})) do
-      case IndexManager.page_for_key(%IndexManager{versions: [{1, index}], current_version: 1}, key_selector, 1) do
+      index_manager = create_index_manager(index)
+
+      case IndexManager.page_for_key(index_manager, key_selector, 1) do
         {:ok, _resolved_key, _page} -> true
         {:error, :not_found} -> true
         _other -> false
@@ -117,30 +137,24 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
 
   property "Forward offset arithmetic - larger offsets give lexicographically later keys" do
     check all(
-            {index, key, offset1, offset2} <-
+            {index, key, offset1, offset_delta} <-
               StreamData.tuple({
                 multi_page_index_generator(),
                 key_generator(),
                 StreamData.integer(0..50),
-                StreamData.integer(0..50)
+                StreamData.integer(1..50)
               })
           ) do
-      # Only test when offset1 < offset2
-      if offset1 < offset2 do
-        selector1 = key |> KeySelector.first_greater_or_equal() |> KeySelector.add(offset1)
-        selector2 = key |> KeySelector.first_greater_or_equal() |> KeySelector.add(offset2)
+      offset2 = offset1 + offset_delta
+      selector1 = key |> KeySelector.first_greater_or_equal() |> KeySelector.add(offset1)
+      selector2 = key |> KeySelector.first_greater_or_equal() |> KeySelector.add(offset2)
+      index_manager = create_index_manager(index)
 
-        index_manager = %IndexManager{versions: [{1, index}], current_version: 1}
-
-        case {IndexManager.page_for_key(index_manager, selector1, 1),
-              IndexManager.page_for_key(index_manager, selector2, 1)} do
-          {{:ok, key1, _}, {:ok, key2, _}} -> key1 <= key2
-          # If either fails to resolve, we can't compare
-          _ -> true
-        end
-      else
-        # Skip cases where condition doesn't hold
-        true
+      case {IndexManager.page_for_key(index_manager, selector1, 1),
+            IndexManager.page_for_key(index_manager, selector2, 1)} do
+        {{:ok, key1, _}, {:ok, key2, _}} when key1 <= key2 -> true
+        # If either fails to resolve, we can't compare
+        _ -> true
       end
     end
   end
@@ -149,13 +163,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
     check all(index <- multi_page_index_generator()) do
       # Create a KeySelector with a very large offset that would require many page hops
       extreme_selector = "" |> KeySelector.first_greater_or_equal() |> KeySelector.add(10_000)
-
-      index_manager = %IndexManager{versions: [{1, index}], current_version: 1}
+      index_manager = create_index_manager(index)
 
       case IndexManager.page_for_key(index_manager, extreme_selector, 1) do
-        # Legitimately not found
         {:error, :not_found} -> true
-        # Somehow resolved (very unlikely but acceptable)
         {:ok, _key, _page} -> true
         _other -> false
       end
@@ -163,63 +174,50 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
   end
 
   property "KeySelector offset of 0 resolves to reference key if it exists" do
-    check all(index <- multi_page_index_generator()) do
-      # Pick a key that actually exists in the index
-      all_keys = get_all_keys_from_index(index)
+    check all(
+            index <- multi_page_index_generator(),
+            all_keys = get_all_keys_from_index(index),
+            length(all_keys) > 0
+          ) do
+      existing_key = Enum.random(all_keys)
+      selector = existing_key |> KeySelector.first_greater_or_equal() |> KeySelector.add(0)
+      index_manager = create_index_manager(index)
 
-      if length(all_keys) > 0 do
-        existing_key = Enum.random(all_keys)
-        selector = existing_key |> KeySelector.first_greater_or_equal() |> KeySelector.add(0)
-
-        index_manager = %IndexManager{versions: [{1, index}], current_version: 1}
-
-        case IndexManager.page_for_key(index_manager, selector, 1) do
-          {:ok, resolved_key, _page} -> resolved_key == existing_key
-          _ -> false
-        end
-      else
-        # Skip empty indices
-        true
-      end
+      assert {:ok, ^existing_key, _page} = IndexManager.page_for_key(index_manager, selector, 1)
     end
   end
 
   property "Range KeySelector results have consistent bounds" do
     check all(
             {index, start_key, end_key} <-
-              StreamData.tuple({
+              {
                 multi_page_index_generator(),
-                key_generator(),
-                key_generator()
-              })
+                ordered_key_pair_generator()
+              }
+              |> StreamData.tuple()
+              |> StreamData.map(fn {index, {start_key, end_key}} -> {index, start_key, end_key} end)
           ) do
-      if start_key <= end_key do
-        start_selector = KeySelector.first_greater_or_equal(start_key)
-        end_selector = KeySelector.first_greater_than(end_key)
+      start_selector = KeySelector.first_greater_or_equal(start_key)
+      end_selector = KeySelector.first_greater_than(end_key)
+      index_manager = create_index_manager(index)
 
-        index_manager = %IndexManager{versions: [{1, index}], current_version: 1}
-
-        case IndexManager.pages_for_range(index_manager, start_selector, end_selector, 1) do
-          {:ok, {resolved_start, resolved_end}, _pages} ->
-            resolved_start <= resolved_end
-
-          {:error, _} ->
-            # Errors are acceptable
-            true
-        end
-      else
-        # Skip invalid ranges
-        true
+      case IndexManager.pages_for_range(index_manager, start_selector, end_selector, 1) do
+        {:ok, {resolved_start, resolved_end}, _pages} when resolved_start <= resolved_end -> true
+        # Errors are acceptable
+        {:error, _} -> true
+        _ -> false
       end
     end
   end
 
   # Helper functions
 
+  defp create_index_manager(index), do: %IndexManager{versions: [{1, index}], current_version: 1}
+
   defp get_all_keys_from_index(%Index{page_map: page_map}) do
     page_map
     |> Map.values()
-    |> Enum.flat_map(&Page.keys/1)
+    |> Enum.flat_map(fn {page, _next_id} -> Page.keys(page) end)
     |> Enum.sort()
     |> Enum.uniq()
   end

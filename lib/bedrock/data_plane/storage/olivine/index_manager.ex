@@ -211,18 +211,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec last_committed_version(index_manager :: t()) :: Bedrock.version()
   def last_committed_version(index_manager), do: index_manager.current_version
 
-  # These functions are deprecated - durable version is now managed by Database
-  @spec last_durable_version(index_manager :: t()) :: nil
-  def last_durable_version(_index_manager), do: nil
-
-  @spec oldest_durable_version(index_manager :: t()) :: nil
-  def oldest_durable_version(_index_manager), do: nil
-
-  @spec purge_transactions_newer_than(index_manager :: t(), version :: Bedrock.version()) :: :ok
-  def purge_transactions_newer_than(_index_manager, _version) do
-    :ok
-  end
-
   @spec info(index_manager :: t(), atom()) :: term()
   def info(index_manager, stat) do
     case stat do
@@ -451,8 +439,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           | {:error, :not_found}
   defp resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
     # Extract header info once for efficient binary operations
-    <<_id::unsigned-big-32, _next::unsigned-big-32, key_count::unsigned-big-16, _offset::unsigned-big-32,
-      _reserved::unsigned-big-16, entries::binary>> = page
+    <<_id::unsigned-big-32, key_count::unsigned-big-16, _offset::unsigned-big-32, _reserved::unsigned-big-48,
+      entries::binary>> = page
 
     # Use optimized binary search that stops early when key > ref_key
     case Page.search_entries_with_position(entries, key_count, ref_key) do
@@ -517,7 +505,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec calculate_forward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
   defp calculate_forward_page_continuation(index, current_page, key_selector, keys_available) do
-    case Page.next_id(current_page) do
+    # Get the cached next_id from the page_map instead of parsing the page binary
+    {_page, next_id} = Index.get_page_with_next_id!(index, Page.id(current_page))
+
+    case next_id do
       0 ->
         # No next page - we've hit the end of the index
         {:error, :not_found}
@@ -588,8 +579,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   defp find_previous_page(%Index{page_map: page_map}, target_page_id) do
     # Search through all pages to find the one whose next_id points to our target
     page_map
-    |> Enum.find_value(fn {_page_id, page} ->
-      if Page.next_id(page) == target_page_id, do: page
+    |> Enum.find_value(fn {_page_id, {page, next_id}} ->
+      if next_id == target_page_id, do: page
     end)
     |> case do
       nil -> {:error, :not_found}
@@ -671,7 +662,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
       {_first_key, last_key} when ref_key > last_key ->
         # Key comes after this page
-        case Page.next_id(page) do
+        # Get the cached next_id from the page_map instead of parsing the page binary
+        {_page, next_id} = Index.get_page_with_next_id!(index, page_id)
+
+        case next_id do
           0 ->
             {:ok, :after_all_pages}
 
@@ -693,28 +687,28 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     # Start with page 0 and follow the chain to find the first non-empty page
     case Map.get(page_map, 0) do
       nil -> {:error, :not_found}
-      page -> find_first_non_empty_page(page_map, page)
+      {page, next_id} -> find_first_non_empty_page(page_map, page, next_id)
     end
   end
 
-  defp find_first_non_empty_page(page_map, page) do
+  defp find_first_non_empty_page(page_map, page, next_id) do
     case Page.left_key(page) do
-      nil -> try_next_page(page_map, page)
+      nil -> try_next_page(page_map, next_id)
       first_key -> {:ok, page, first_key}
     end
   end
 
-  defp try_next_page(page_map, page) do
-    case Page.next_id(page) do
+  defp try_next_page(page_map, next_id) do
+    case next_id do
       0 -> {:error, :not_found}
-      next_id -> get_and_check_next_page(page_map, next_id)
+      _ -> get_and_check_next_page(page_map, next_id)
     end
   end
 
   defp get_and_check_next_page(page_map, next_id) do
     case Map.get(page_map, next_id) do
       nil -> {:error, :not_found}
-      next_page -> find_first_non_empty_page(page_map, next_page)
+      {next_page, next_next_id} -> find_first_non_empty_page(page_map, next_page, next_next_id)
     end
   end
 
@@ -724,8 +718,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   defp find_last_page(%Index{page_map: page_map}) do
     # Find the page with next_id = 0 (last in chain)
     page_map
-    |> Enum.find_value(fn {_page_id, page} ->
-      if Page.next_id(page) == 0 and Page.right_key(page) != nil do
+    |> Enum.find_value(fn {_page_id, {page, next_id}} ->
+      if next_id == 0 and Page.right_key(page) != nil do
         {page, Page.right_key(page)}
       end
     end)

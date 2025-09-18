@@ -1,22 +1,31 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
-  alias Bedrock.DataPlane.Storage.Olivine.PageTestHelpers
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
   # Helper functions for cleaner test assertions
 
   # Helper function to create a test database for unit tests
   defp create_test_database do
     tmp_dir = System.tmp_dir!()
-    db_file = Path.join(tmp_dir, "test_db_#{System.unique_integer([:positive])}.dets")
+    db_file = Path.join(tmp_dir, "test_db_#{System.unique_integer([:positive])}.sqlite")
     table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-    {:ok, database} = Database.open(table_name, db_file)
+
+    # Suppress expected connection retry logs during database open
+    {result, _logs} =
+      with_log(fn ->
+        Database.open(table_name, db_file, pool_size: 1)
+      end)
+
+    {:ok, database} = result
     database
   end
 
@@ -42,10 +51,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
 
   describe "basic functionality" do
     test "new/0 creates a new version manager" do
-      vm = IndexManager.new()
-      assert vm.page_allocator.max_page_id == 0
-      assert vm.page_allocator.free_page_ids == []
-      assert vm.current_version == Version.zero()
+      assert %{
+               page_allocator: %{max_page_id: 0, free_page_ids: []},
+               current_version: version
+             } = IndexManager.new()
+
+      assert version == Version.zero()
     end
 
     test "info/2 returns page management information" do
@@ -62,25 +73,25 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "new/3 creates a page with key-version tuples" do
       keys = [<<"key1">>, <<"key2">>, <<"key3">>]
       versions = [100, 200, 300]
+      expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
 
-      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
+      page = Page.new(1, expected_key_versions)
 
       assert Page.id(page) == 1
-      assert Page.next_id(page) == 0
-      expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
+      # next_id defaults to 0 when not specified
       assert Page.key_versions(page) == expected_key_versions
     end
 
     test "new/3 creates a page with keys and default versions" do
       keys = [<<"key1">>, <<"key2">>]
+      expected_key_versions = Enum.map(keys, &{&1, Version.zero()})
 
-      page = Page.new(1, Enum.map(keys, &{&1, Version.zero()}))
+      page = Page.new(1, expected_key_versions)
 
       assert Page.id(page) == 1
-      assert Page.next_id(page) == 0
+      # next_id defaults to 0 when not specified
       assert Page.keys(page) == keys
-      versions = Enum.map(Page.key_versions(page), fn {_key, version} -> version end)
-      assert versions == [Version.zero(), Version.zero()]
+      assert Page.key_versions(page) == expected_key_versions
     end
 
     test "key_count/1 returns correct key count" do
@@ -102,59 +113,55 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "from_map/1 and to_map/1 round-trip correctly" do
       keys = [<<"apple">>, <<"banana">>, <<"cherry">>]
       versions = [100, 200, 300]
-      page = Page.new(42, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)), 99)
+      expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
+      page = Page.new(42, expected_key_versions)
 
-      encoded = Page.from_map(page)
-      {:ok, decoded_page} = Page.to_map(encoded)
+      encoded = PageTestHelpers.from_map(page)
+      assert {:ok, decoded_page} = PageTestHelpers.to_map(encoded)
 
       assert Page.id(decoded_page) == 42
-      assert Page.next_id(decoded_page) == 99
-      expected_key_versions = Enum.zip(keys, Enum.map(versions, &Version.from_integer/1))
+      assert decoded_page.next_id == 0
       assert Page.key_versions(decoded_page) == expected_key_versions
     end
 
     test "from_map/1 creates proper binary format" do
       keys = [<<"a">>, <<"bb">>]
       versions = Enum.map([1000, 2000], &Version.from_integer/1)
-      page = Page.new(5, Enum.zip(keys, versions), 10)
+      page = Page.new(5, Enum.zip(keys, versions))
 
-      encoded = Page.from_map(page)
+      encoded = PageTestHelpers.from_map(page)
 
-      <<id::integer-32-big, next_id::integer-32-big, key_count::integer-16-big, last_key_offset::integer-32-big,
-        _reserved::unsigned-big-16, rest::binary>> = encoded
+      # Validate header format
+      assert <<5::integer-32-big, 2::integer-16-big, last_key_offset::integer-32-big, _reserved::unsigned-big-48,
+               rest::binary>> = encoded
 
-      assert id == 5
-      assert next_id == 10
-      assert key_count == 2
       assert last_key_offset > 0
 
-      # New interleaved format: version1, key1_len, key1, version2, key2_len, key2
-      <<version1::binary-size(8), key1_len::integer-16-big, key1::binary-size(key1_len), version2::binary-size(8),
-        key2_len::integer-16-big, key2::binary-size(key2_len)>> = rest
+      # Validate interleaved format: version1, key1_len, key1, version2, key2_len, key2
+      assert <<version1::binary-size(8), 1::integer-16-big, key1::binary-size(1), version2::binary-size(8),
+               2::integer-16-big, key2::binary-size(2)>> = rest
 
       assert Version.to_integer(version1) == 1000
       assert Version.to_integer(version2) == 2000
-      assert key1_len == 1
       assert key1 == <<"a">>
-      assert key2_len == 2
       assert key2 == <<"bb">>
     end
 
     test "to_map/1 handles empty page" do
       empty_page = Page.new(1, [])
-      encoded = Page.from_map(empty_page)
+      encoded = PageTestHelpers.from_map(empty_page)
 
-      {:ok, decoded} = Page.to_map(encoded)
+      {:ok, decoded} = PageTestHelpers.to_map(encoded)
       assert Page.empty?(decoded)
     end
 
     test "to_map/1 handles malformed page data" do
-      assert {:error, :invalid_page} = Page.to_map(<<1::32>>)
+      assert {:error, :invalid_page} = PageTestHelpers.to_map(<<1::32>>)
 
       # Invalid header with incorrect field sizes or incomplete entries
-      invalid_header = <<1::32, 0::32, 1::16, 0::32, 0::16>>
+      invalid_header = <<1::32, 1::16, 0::32, 0::48>>
       invalid_data = <<invalid_header::binary, "incomplete">>
-      assert {:error, :invalid_entries} = Page.to_map(invalid_data)
+      assert {:error, :invalid_entries} = PageTestHelpers.to_map(invalid_data)
     end
   end
 
@@ -164,9 +171,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       versions = [100, 200, 300]
       page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
 
-      {:ok, version_apple} = Page.version_for_key(page, <<"apple">>)
-      {:ok, version_banana} = Page.version_for_key(page, <<"banana">>)
-      {:ok, version_cherry} = Page.version_for_key(page, <<"cherry">>)
+      assert {:ok, version_apple} = Page.version_for_key(page, <<"apple">>)
+      assert {:ok, version_banana} = Page.version_for_key(page, <<"banana">>)
+      assert {:ok, version_cherry} = Page.version_for_key(page, <<"cherry">>)
 
       assert version_apple == Version.from_integer(100)
       assert version_banana == Version.from_integer(200)
@@ -244,7 +251,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       mid_point = div(key_count, 2)
       new_page_id = 999
 
-      {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      assert {{left_page, _left_next_id}, {right_page, _right_next_id}} =
+               Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify the split worked
       assert Page.key_count(left_page) == mid_point
@@ -256,19 +264,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "split_page/3 splits pages over threshold" do
       keys = for i <- 1..300, do: <<"key_#{String.pad_leading(to_string(i), 3, "0")}">>
       versions = Enum.map(1..300, & &1)
-      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)), 99)
+      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
 
       key_count = Page.key_count(page)
       mid_point = div(key_count, 2)
       new_page_id = 2
 
-      {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      assert {{left_page, left_next_id}, {right_page, right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify split results
       assert Page.id(left_page) == 1
       assert Page.id(right_page) == new_page_id
-      assert Page.next_id(right_page) == 99
-      assert Page.next_id(left_page) == Page.id(right_page)
+      assert right_next_id == 0
+      assert left_next_id == Page.id(right_page)
 
       # Keys should be split roughly in half
       left_keys = Page.keys(left_page)
@@ -298,7 +306,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       mid_point = div(key_count, 2)
       new_page_id = 2
 
-      {left_page, right_page} = Page.split_page(page, mid_point, new_page_id)
+      {{left_page, _left_next_id}, {right_page, _right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
 
       # Verify all key-version pairs are preserved
       left_key_versions = Page.key_versions(left_page)
@@ -411,10 +419,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
 
       transaction = test_transaction(mutations, Version.from_integer(1000))
 
-      vm_updated = IndexManager.apply_transaction(vm, transaction, database)
+      assert %{current_version: current_version} =
+               IndexManager.apply_transaction(vm, transaction, database)
 
-      # Version should be updated
-      assert vm_updated.current_version == Version.from_integer(1000)
+      assert current_version == Version.from_integer(1000)
 
       Database.close(database)
     end
@@ -498,16 +506,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       vm = IndexManager.new()
       db = create_test_database()
 
-      transaction1 = test_transaction([{:set, <<"key1">>, <<"value1">>}], Version.from_integer(1000))
-      transaction2 = test_transaction([{:set, <<"key2">>, <<"value2">>}], Version.from_integer(1100))
-      transaction3 = test_transaction([{:set, <<"key3">>, <<"value3">>}], Version.from_integer(1200))
+      transactions = [
+        test_transaction([{:set, <<"key1">>, <<"value1">>}], Version.from_integer(1000)),
+        test_transaction([{:set, <<"key2">>, <<"value2">>}], Version.from_integer(1100)),
+        test_transaction([{:set, <<"key3">>, <<"value3">>}], Version.from_integer(1200))
+      ]
 
-      vm_updated = IndexManager.apply_transactions(vm, [transaction1, transaction2, transaction3], db)
+      assert %{current_version: current_version} =
+               IndexManager.apply_transactions(vm, transactions, db)
 
-      # Current version should be the latest
-      assert vm_updated.current_version == Version.from_integer(1200)
-
-      # Note: Value access testing moved to Database tests since IndexManager no longer handles values
+      assert current_version == Version.from_integer(1200)
 
       Database.close(db)
     end
@@ -547,18 +555,25 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
 
       window_start = Version.from_integer(5_000_000)
 
-      {kept, evicted} = IndexManager.split_versions_at_window(versions, window_start)
+      # Pattern match expected results directly
+      assert {kept, evicted} = IndexManager.split_versions_at_window(versions, window_start)
 
       # Versions 10M, 8M, 6M should be kept (in window)
-      assert length(kept) == 3
-      assert elem(Enum.at(kept, 0), 0) == Version.from_integer(10_000_000)
-      assert elem(Enum.at(kept, 1), 0) == Version.from_integer(8_000_000)
-      assert elem(Enum.at(kept, 2), 0) == Version.from_integer(6_000_000)
+      expected_kept = [
+        {Version.from_integer(10_000_000), :data1},
+        {Version.from_integer(8_000_000), :data2},
+        {Version.from_integer(6_000_000), :data3}
+      ]
+
+      assert kept == expected_kept
 
       # Versions 4M, 2M should be evicted (outside window)
-      assert length(evicted) == 2
-      assert elem(Enum.at(evicted, 0), 0) == Version.from_integer(4_000_000)
-      assert elem(Enum.at(evicted, 1), 0) == Version.from_integer(2_000_000)
+      expected_evicted = [
+        {Version.from_integer(4_000_000), :data4},
+        {Version.from_integer(2_000_000), :data5}
+      ]
+
+      assert evicted == expected_evicted
     end
   end
 
@@ -712,8 +727,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   end
 
   describe "Page binary optimization helpers" do
+    # Helper to extract entries from page binary
+    defp extract_entries(page) do
+      <<_id::32, key_count::16, _offset::32, _reserved::48, entries::binary>> = page
+      {entries, key_count}
+    end
+
     test "search_entries_with_position finds exact key" do
-      # Create test page with known keys
       key_versions = [
         {"apple", <<0, 0, 0, 0, 0, 0, 0, 1>>},
         {"banana", <<0, 0, 0, 0, 0, 0, 0, 2>>},
@@ -721,9 +741,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       ]
 
       page = Page.new(1, key_versions)
-
-      # Extract entries binary
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      {entries, key_count} = extract_entries(page)
 
       # Test finding exact keys
       assert {:found, 0} = Page.search_entries_with_position(entries, key_count, "apple")
@@ -734,13 +752,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "search_entries_with_position finds insertion points" do
       key_versions = [{"banana", <<0, 0, 0, 0, 0, 0, 0, 1>>}, {"cherry", <<0, 0, 0, 0, 0, 0, 0, 2>>}]
       page = Page.new(1, key_versions)
-
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      {entries, key_count} = extract_entries(page)
 
       # Test insertion points for non-existent keys
       # Before all
       assert {:not_found, 0} = Page.search_entries_with_position(entries, key_count, "apple")
-      # Between banana and cherry
+      # Between
       assert {:not_found, 1} = Page.search_entries_with_position(entries, key_count, "blueberry")
       # After all
       assert {:not_found, 2} = Page.search_entries_with_position(entries, key_count, "date")
@@ -754,8 +771,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       ]
 
       page = Page.new(1, key_versions)
-
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      {entries, key_count} = extract_entries(page)
 
       # Should stop at position 1 when looking for "b" (since "c" > "b")
       assert {:not_found, 1} = Page.search_entries_with_position(entries, key_count, "b")
@@ -769,8 +785,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       ]
 
       page = Page.new(1, key_versions)
-
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      {entries, key_count} = extract_entries(page)
 
       # Test extracting entries at different positions
       assert {:ok, {"first", <<1, 1, 1, 1, 1, 1, 1, 1>>}} = Page.decode_entry_at_position(entries, 0, key_count)
@@ -781,8 +796,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     test "decode_entry_at_position handles bounds correctly" do
       key_versions = [{"only", <<1, 1, 1, 1, 1, 1, 1, 1>>}]
       page = Page.new(1, key_versions)
-
-      <<_id::32, _next::32, key_count::16, _offset::32, _reserved::16, entries::binary>> = page
+      {entries, key_count} = extract_entries(page)
 
       # Test out of bounds conditions
       # Beyond last
@@ -819,25 +833,20 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       {:ok, manager: updated_manager, database: database}
     end
 
-    test "page_for_key/3 with KeySelector - version_too_new error", %{manager: manager} do
+    test "page_for_key/3 with KeySelector handles version errors", %{manager: manager} do
       key_selector = KeySelector.first_greater_or_equal("test_key")
-      future_version = Version.from_integer(999)
 
-      result = IndexManager.page_for_key(manager, key_selector, future_version)
-      assert {:error, :version_too_new} = result
-    end
+      # Future version should fail
+      assert {:error, :version_too_new} =
+               IndexManager.page_for_key(manager, key_selector, Version.from_integer(999))
 
-    test "page_for_key/3 with KeySelector - version_too_old error", %{manager: manager} do
-      # Create manager with higher current version
+      # Old version with higher current version should fail
       updated_manager = %{manager | current_version: Version.from_integer(10)}
 
-      key_selector = KeySelector.first_greater_or_equal("test_key")
-      old_version = Version.from_integer(0)
+      assert {:error, reason} =
+               IndexManager.page_for_key(updated_manager, key_selector, Version.from_integer(0))
 
-      result = IndexManager.page_for_key(updated_manager, key_selector, old_version)
-      # May return :version_too_old or :not_found depending on implementation details
-      assert {:error, _reason} = result
-      assert elem(result, 1) in [:version_too_old, :not_found]
+      assert reason in [:version_too_old, :not_found]
     end
 
     test "page_for_key/3 with KeySelector - successful resolution", %{manager: manager} do
@@ -881,27 +890,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       assert is_binary(page) or is_map(page)
     end
 
-    test "pages_for_range/4 with KeySelectors - version_too_new error", %{manager: manager} do
+    test "pages_for_range/4 with KeySelectors handles version errors", %{manager: manager} do
       start_selector = KeySelector.first_greater_or_equal("range:a")
       end_selector = KeySelector.first_greater_than("range:z")
-      future_version = Version.from_integer(999)
 
-      result = IndexManager.pages_for_range(manager, start_selector, end_selector, future_version)
-      assert {:error, :version_too_new} = result
-    end
+      # Future version should fail
+      assert {:error, :version_too_new} =
+               IndexManager.pages_for_range(manager, start_selector, end_selector, Version.from_integer(999))
 
-    test "pages_for_range/4 with KeySelectors - version_too_old error", %{manager: manager} do
-      # Create manager with higher current version
+      # Old version with higher current version should fail
       updated_manager = %{manager | current_version: Version.from_integer(10)}
 
-      start_selector = KeySelector.first_greater_or_equal("range:a")
-      end_selector = KeySelector.first_greater_than("range:z")
-      old_version = Version.from_integer(0)
+      assert {:error, reason} =
+               IndexManager.pages_for_range(updated_manager, start_selector, end_selector, Version.from_integer(0))
 
-      result = IndexManager.pages_for_range(updated_manager, start_selector, end_selector, old_version)
-      # May return :version_too_old or :not_found depending on implementation details
-      assert {:error, _reason} = result
-      assert elem(result, 1) in [:version_too_old, :not_found]
+      assert reason in [:version_too_old, :not_found]
     end
 
     test "pages_for_range/4 with KeySelectors - successful resolution", %{manager: manager} do

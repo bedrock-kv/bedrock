@@ -20,6 +20,8 @@ defmodule DefaultTestCluster do
 end
 
 Mox.defmock(Bedrock.Raft.MockInterface, for: Bedrock.Raft.Interface)
+Mox.defmock(MockRepo, for: Bedrock.Repo)
+Mox.stub(MockRepo, :transaction, fn callback -> callback.(:mock_txn) end)
 
 # Define behavior for Resolver testing
 defmodule Bedrock.DataPlane.Resolver.Behaviour do

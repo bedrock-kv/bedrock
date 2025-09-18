@@ -15,30 +15,48 @@ defmodule Bedrock.DataPlane.Resolver do
   [Resolver documentation](../../../../docs/components/resolver.md).
   """
 
-  use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
+  alias Bedrock.DataPlane.Transaction
 
   @type ref :: pid() | atom() | {atom(), node()}
-
-  @type read_info :: {version :: Bedrock.version(), keys :: [Bedrock.key() | Bedrock.key_range()]}
-
-  # Binary transaction containing only conflict sections (read_conflicts and write_conflicts)
-  @type transaction_summary :: binary()
 
   @spec resolve_transactions(
           ref(),
           epoch :: Bedrock.epoch(),
           last_version :: Bedrock.version(),
           commit_version :: Bedrock.version(),
-          [transaction_summary()],
+          [Transaction.encoded()],
           opts :: [timeout: Bedrock.timeout_in_ms()]
         ) ::
           {:ok, aborted :: [transaction_index :: non_neg_integer()]}
-          | {:error, :timeout | :unavailable | :unknown}
+          | {:failure, :timeout, ref()}
+          | {:failure, :unavailable, ref()}
   def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, opts \\ []) do
-    call(
-      ref,
-      {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries},
-      opts[:timeout] || :infinity
+    timeout = opts[:timeout] || :infinity
+
+    :telemetry.span(
+      [:bedrock, :data_plane, :resolver, :call, :resolve_transactions],
+      %{
+        resolver_id: ref,
+        epoch: epoch,
+        last_version: last_version,
+        commit_version: commit_version,
+        transaction_summaries: transaction_summaries,
+        timeout_ms: timeout
+      },
+      fn ->
+        ref
+        |> GenServer.call(
+          {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries},
+          timeout
+        )
+        |> case do
+          {:ok, aborted} -> {{:ok, aborted}, %{aborted: aborted}}
+          {:error, reason} -> {{:error, reason}, %{}}
+        end
+      end
     )
+  catch
+    :exit, {:timeout, _} -> {:failure, :timeout, ref}
+    :exit, _reason -> {:failure, :unavailable, ref}
   end
 end

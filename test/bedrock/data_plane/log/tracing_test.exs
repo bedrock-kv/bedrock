@@ -4,8 +4,8 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.DataPlane.Log.Tracing
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   # Mock cluster module for testing
   defmodule MockCluster do
@@ -51,68 +51,48 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       {:ok, cluster: MockCluster}
     end
 
-    test "handles :started event", %{cluster: cluster} do
-      measurements = %{}
+    # Helper function to capture and assert log content
+    defp assert_log_contains(event, measurements, metadata, expected_content) do
+      log =
+        capture_log(fn ->
+          Tracing.handler([:bedrock, :log, event], measurements, metadata, nil)
+        end)
 
+      assert log =~ expected_content
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+    end
+
+    test "handles :started event", %{cluster: cluster} do
       metadata = %{
         cluster: cluster,
         id: "test_log_1",
         otp_name: :test_log_server
       }
 
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :started], measurements, metadata, nil)
-        end)
-
-      assert log =~ "Started log service: test_log_server"
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(:started, %{}, metadata, "Started log service: test_log_server")
     end
 
     test "handles :lock_for_recovery event" do
-      measurements = %{}
-      metadata = %{epoch: 5}
-
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :lock_for_recovery], measurements, metadata, nil)
-        end)
-
-      assert log =~ "Lock for recovery in epoch 5"
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(:lock_for_recovery, %{}, %{epoch: 5}, "Lock for recovery in epoch 5")
     end
 
     test "handles :recover_from event with no source" do
-      measurements = %{}
-      metadata = %{source_log: :none}
-
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :recover_from], measurements, metadata, nil)
-        end)
-
-      assert log =~ "Reset to initial version"
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(:recover_from, %{}, %{source_log: :none}, "Reset to initial version")
     end
 
     test "handles :recover_from event with source log" do
-      measurements = %{}
-
       metadata = %{
         source_log: :log_server_2,
         first_version: Version.from_integer(100),
         last_version: Version.from_integer(150)
       }
 
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :recover_from], measurements, metadata, nil)
-        end)
-
-      assert log =~
-               "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
-
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(
+        :recover_from,
+        %{},
+        metadata,
+        "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
+      )
     end
 
     test "handles :push event" do
@@ -124,54 +104,40 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
           %{"key1" => "value1", "key2" => "value2", "key3" => "value3"}
         )
 
-      measurements = %{}
-      metadata = %{transaction: encoded_transaction}
-
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :push], measurements, metadata, nil)
-        end)
-
-      assert log =~ "Push transaction (3 keys) with expected version <0,0,0,0,0,0,0,200>"
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(
+        :push,
+        %{},
+        %{transaction: encoded_transaction},
+        "Push transaction (3 keys) with expected version <0,0,0,0,0,0,0,200>"
+      )
     end
 
     test "handles :push_out_of_order event" do
-      measurements = %{}
-
       metadata = %{
         expected_version: Version.from_integer(205),
         current_version: Version.from_integer(200)
       }
 
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :push_out_of_order], measurements, metadata, nil)
-        end)
-
-      assert log =~
-               "Rejected out-of-order transaction: expected <0,0,0,0,0,0,0,205>, current <0,0,0,0,0,0,0,200>"
-
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(
+        :push_out_of_order,
+        %{},
+        metadata,
+        "Rejected out-of-order transaction: expected <0,0,0,0,0,0,0,205>, current <0,0,0,0,0,0,0,200>"
+      )
     end
 
     test "handles :pull event" do
-      measurements = %{}
-
       metadata = %{
         from_version: Version.from_integer(100),
         opts: [timeout: 5000]
       }
 
-      log =
-        capture_log(fn ->
-          Tracing.handler([:bedrock, :log, :pull], measurements, metadata, nil)
-        end)
-
-      assert log =~
-               "Pull transactions from version <0,0,0,0,0,0,0,100> with options [timeout: 5000]"
-
-      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+      assert_log_contains(
+        :pull,
+        %{},
+        metadata,
+        "Pull transactions from version <0,0,0,0,0,0,0,100> with options [timeout: 5000]"
+      )
     end
   end
 end

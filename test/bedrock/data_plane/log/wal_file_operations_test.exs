@@ -10,28 +10,20 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Version
-  alias Bedrock.DataPlane.WALTestSupport
+  alias Bedrock.Test.DataPlane.WALTestSupport
 
   describe "Log.pull/3 with start_after semantics" do
     setup [:create_test_log]
 
     test "retrieves transactions after specified version (exclusive)", %{log: log} do
-      transactions = [
-        WALTestSupport.create_test_transaction(100, [{"key1", "value1"}]),
-        WALTestSupport.create_test_transaction(200, [{"key2", "value2"}]),
-        WALTestSupport.create_test_transaction(300, [{"key3", "value3"}])
-      ]
-
+      transactions = create_sequential_transactions([100, 200, 300])
       assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
       # Pull after version 100 should return transactions 200 and 300, not 100
       assert {:ok, retrieved_txs} = Log.pull(log, Version.from_integer(100), limit: 10)
-      versions = Enum.map(retrieved_txs, &WALTestSupport.extract_version/1)
 
-      # Should NOT include version 100 (pull is exclusive)
-      refute Version.from_integer(100) in versions
-      assert Version.from_integer(200) in versions
-      assert Version.from_integer(300) in versions
+      # Use pattern matching to verify expected versions are present and 100 is excluded
+      assert_versions_present_and_excluded(retrieved_txs, [200, 300], [100])
     end
 
     test "pull after latest version returns appropriate response", %{log: log} do
@@ -47,52 +39,32 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
     end
 
     test "pull after intermediate version returns later transactions", %{log: log} do
-      transactions = [
-        WALTestSupport.create_test_transaction(100, [{"key1", "value1"}]),
-        WALTestSupport.create_test_transaction(200, [{"key2", "value2"}]),
-        WALTestSupport.create_test_transaction(300, [{"key3", "value3"}])
-      ]
-
+      transactions = create_sequential_transactions([100, 200, 300])
       assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
       # Pull after version 150 should only return versions 200 and 300
       assert {:ok, retrieved_txs} = Log.pull(log, Version.from_integer(150), limit: 10)
-      versions = Enum.map(retrieved_txs, &WALTestSupport.extract_version/1)
 
-      refute Version.from_integer(100) in versions
-      assert Version.from_integer(200) in versions
-      assert Version.from_integer(300) in versions
+      assert_versions_present_and_excluded(retrieved_txs, [200, 300], [100])
     end
 
     test "reproduces production scenario - pull after ancient version", %{log: log} do
       # Simulate the production scenario: storage has version <<0,0,0,0,2,45,220,105>>
       # and asks for transactions after it
       ancient_version = <<0, 0, 0, 0, 2, 45, 220, 105>>
+      transactions = create_sequential_transactions([1000, 2000])
+      assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
-      modern_tx1 = WALTestSupport.create_test_transaction(1000, [{"key1", "value1"}])
-      modern_tx2 = WALTestSupport.create_test_transaction(2000, [{"key2", "value2"}])
-
-      assert :ok = WALTestSupport.push_transactions_to_log(log, [modern_tx1, modern_tx2])
-
-      # This should either:
-      # 1. Return the modern transactions (if ancient_version < 1000)
-      # 2. Return :error with appropriate reason (if ancient_version is too old)
-      # 3. NOT return {:error, :not_found} unless genuinely nothing exists
+      # This should either return modern transactions or appropriate error, NOT :not_found
       case Log.pull(log, ancient_version, limit: 10) do
         {:ok, txs} ->
-          # If successful, should contain our modern transactions
-          versions = Enum.map(txs, &WALTestSupport.extract_version/1)
-          assert Version.from_integer(1000) in versions or Version.from_integer(2000) in versions
+          # If successful, should contain our modern transactions using pattern matching
+          assert_any_version_present(txs, [1000, 2000])
 
-        {:error, :version_too_old} ->
-          :ok
-
-        {:error, :version_too_new} ->
+        {:error, error} when error in [:version_too_old, :version_too_new] ->
           :ok
 
         {:error, :not_found} ->
-          # This is the bug we're investigating - should not happen
-          # if log claims to have version ranges that include newer transactions
           flunk("Got :not_found error - this indicates the version range bug")
 
         {:waiting_for, _version} ->
@@ -101,37 +73,27 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
     end
 
     test "handles version boundaries with correct exclusion semantics", %{log: log} do
-      tx1 = WALTestSupport.create_test_transaction(100, [{"key1", "value1"}])
-      tx2 = WALTestSupport.create_test_transaction(200, [{"key2", "value2"}])
-
-      assert :ok = WALTestSupport.push_transactions_to_log(log, [tx1, tx2])
+      transactions = create_sequential_transactions([100, 200])
+      assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
       assert {:ok, txs_after_99} = Log.pull(log, Version.from_integer(99), limit: 10)
-      versions_after_99 = Enum.map(txs_after_99, &WALTestSupport.extract_version/1)
-      assert Version.from_integer(100) in versions_after_99
-      assert Version.from_integer(200) in versions_after_99
+      assert_versions_present_and_excluded(txs_after_99, [100, 200], [])
 
       # Pull after version 100 should only include 200 (exclusive)
       assert {:ok, txs_after_100} = Log.pull(log, Version.from_integer(100), limit: 10)
-      versions_after_100 = Enum.map(txs_after_100, &WALTestSupport.extract_version/1)
-      refute Version.from_integer(100) in versions_after_100
-      assert Version.from_integer(200) in versions_after_100
+      assert_versions_present_and_excluded(txs_after_100, [200], [100])
     end
 
     test "respects pull limits with correct semantics", %{log: log} do
-      transactions =
-        for i <- 1..10 do
-          WALTestSupport.create_test_transaction(i * 100, [{"key#{i}", "value#{i}"}])
-        end
-
+      transaction_versions = for i <- 1..10, do: i * 100
+      transactions = create_sequential_transactions(transaction_versions)
       assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
       assert {:ok, limited_txs} = Log.pull(log, Version.from_integer(250), limit: 3)
       assert length(limited_txs) <= 3
 
-      # Should only contain versions after 250
-      versions = Enum.map(limited_txs, &WALTestSupport.extract_version/1)
-      Enum.each(versions, fn v -> assert Version.newer?(v, Version.from_integer(250)) end)
+      # Should only contain versions after 250 using pattern matching verification
+      assert_all_versions_newer_than(limited_txs, Version.from_integer(250))
     end
   end
 
@@ -140,56 +102,33 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
 
     test "log version claims must match actual retrievability", %{log: log} do
       # This is the critical test that would catch the version range inconsistency bug
-
-      transactions = [
-        WALTestSupport.create_test_transaction(100, [{"key1", "value1"}]),
-        WALTestSupport.create_test_transaction(200, [{"key2", "value2"}]),
-        WALTestSupport.create_test_transaction(300, [{"key3", "value3"}])
-      ]
-
+      transactions = create_sequential_transactions([100, 200, 300])
       assert :ok = WALTestSupport.push_transactions_to_log(log, transactions)
 
-      # Get the version range that the log claims to have
-      # This would typically be done through info/1 or similar introspection
-      # For now, we know we have versions 100-300
-
-      test_versions = [
-        # Before first - should get all
-        Version.from_integer(99),
-        # At first - should get 200, 300
-        Version.from_integer(100),
-        # Between - should get 200, 300
-        Version.from_integer(150),
-        # At second - should get 300
-        Version.from_integer(200),
-        # Between - should get 300
-        Version.from_integer(250),
-        # At last - should get empty
-        Version.from_integer(300)
+      # Test various version boundaries to ensure consistency
+      test_scenarios = [
+        {99, "should get all"},
+        {100, "should get 200, 300"},
+        {150, "should get 200, 300"},
+        {200, "should get 300"},
+        {250, "should get 300"},
+        {300, "should get empty"}
       ]
 
-      Enum.each(test_versions, fn start_after ->
+      Enum.each(test_scenarios, fn {version_int, _description} ->
+        start_after = Version.from_integer(version_int)
+
         case Log.pull(log, start_after, limit: 10) do
           {:ok, txs} ->
-            # Verify all returned transactions have versions > start_after
-            versions = Enum.map(txs, &WALTestSupport.extract_version/1)
+            assert_all_versions_newer_than(txs, start_after)
 
-            Enum.each(versions, fn v ->
-              assert Version.newer?(v, start_after),
-                     "Transaction version #{inspect(v)} should be newer than start_after #{inspect(start_after)}"
-            end)
-
-          {:error, :version_too_old} ->
-            :ok
-
-          {:error, :version_too_new} ->
+          {:error, error} when error in [:version_too_old, :version_too_new] ->
             :ok
 
           {:waiting_for, _} ->
             :ok
 
           {:error, :not_found} ->
-            # This should NOT happen if we claim to have data in this range
             flunk("Log.pull returned :not_found for start_after #{inspect(start_after)} - indicates version range bug")
         end
       end)
@@ -197,7 +136,6 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
 
     test "storage server workflow simulation", %{log: log} do
       # Simulate the exact workflow that storage servers use
-
       transactions = [
         WALTestSupport.create_test_transaction(1000, [{"account", "alice"}, {"balance", "100"}]),
         WALTestSupport.create_test_transaction(2000, [{"account", "bob"}, {"balance", "200"}])
@@ -208,18 +146,12 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
       # Storage server starts with some last applied version and asks for newer transactions
       storage_last_applied = Version.from_integer(500)
 
-      case Log.pull(log, storage_last_applied, limit: 100) do
-        {:ok, pulled_txs} ->
-          # Should get both transactions since they're after version 500
-          assert length(pulled_txs) == 2
-          versions = Enum.map(pulled_txs, &WALTestSupport.extract_version/1)
-          assert Version.from_integer(1000) in versions
-          assert Version.from_integer(2000) in versions
+      assert {:ok, pulled_txs} = Log.pull(log, storage_last_applied, limit: 100)
+      # Should get both transactions since they're after version 500
+      assert length(pulled_txs) == 2
+      assert_versions_present_and_excluded(pulled_txs, [1000, 2000], [])
 
-        error ->
-          flunk("Storage server pull failed: #{inspect(error)}")
-      end
-
+      # Second pull after applying all transactions
       new_storage_last_applied = Version.from_integer(2000)
 
       case Log.pull(log, new_storage_last_applied, limit: 100) do
@@ -242,5 +174,53 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
     {:ok, log} = WALTestSupport.create_test_log()
     on_exit(fn -> WALTestSupport.cleanup_test_log(log) end)
     %{log: log}
+  end
+
+  # Helper functions to reduce repetition and improve assertion clarity
+
+  defp create_sequential_transactions(version_integers) do
+    version_integers
+    |> Enum.with_index(1)
+    |> Enum.map(fn {version, index} ->
+      WALTestSupport.create_test_transaction(version, [{"key#{index}", "value#{index}"}])
+    end)
+  end
+
+  defp assert_versions_present_and_excluded(transactions, expected_present, expected_excluded) do
+    versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
+
+    # Assert expected versions are present
+    Enum.each(expected_present, fn version_int ->
+      assert Version.from_integer(version_int) in versions,
+             "Expected version #{version_int} to be present in #{inspect(versions)}"
+    end)
+
+    # Assert excluded versions are not present
+    Enum.each(expected_excluded, fn version_int ->
+      refute Version.from_integer(version_int) in versions,
+             "Expected version #{version_int} to be excluded from #{inspect(versions)}"
+    end)
+  end
+
+  defp assert_all_versions_newer_than(transactions, start_after_version) do
+    versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
+
+    Enum.each(versions, fn version ->
+      assert Version.newer?(version, start_after_version),
+             "Transaction version #{inspect(version)} should be newer than #{inspect(start_after_version)}"
+    end)
+  end
+
+  defp assert_any_version_present(transactions, expected_version_integers) do
+    versions = Enum.map(transactions, &WALTestSupport.extract_version/1)
+    expected_versions = Enum.map(expected_version_integers, &Version.from_integer/1)
+
+    has_any_expected =
+      Enum.any?(expected_versions, fn expected_version ->
+        expected_version in versions
+      end)
+
+    assert has_any_expected,
+           "Expected at least one of #{inspect(expected_version_integers)} to be present in #{inspect(versions)}"
   end
 end

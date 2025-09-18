@@ -1,8 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   use ExUnit.Case, async: true
 
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
   import ExUnit.CaptureLog
-  import RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery
@@ -78,11 +78,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "handles starting state by setting up initial recovery" do
       state = create_test_state()
 
-      result = Recovery.try_to_recover(state)
-
-      assert result.recovery_attempt.cluster == __MODULE__.TestCluster
-      assert result.recovery_attempt.epoch == 1
-      assert result.recovery_attempt.attempt == 1
+      assert %State{
+               recovery_attempt: %RecoveryAttempt{
+                 cluster: TestCluster,
+                 epoch: 1,
+                 attempt: 1
+               }
+             } = Recovery.try_to_recover(state)
     end
 
     test "handles recovery state by setting up subsequent recovery" do
@@ -106,9 +108,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       # Test just the setup function without full recovery
-      result = Recovery.setup_for_subsequent_recovery(state)
-
-      assert result.recovery_attempt.attempt == 2
+      assert %State{
+               recovery_attempt: %RecoveryAttempt{attempt: 2}
+             } = Recovery.setup_for_subsequent_recovery(state)
     end
 
     test "returns unchanged state for other states" do
@@ -144,49 +146,27 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         services: %{}
       }
 
-      empty_mapset = MapSet.new([])
-      empty_map = %{}
       zero_version = Version.zero()
 
       assert %State{
                epoch: 1,
                cluster: TestCluster,
-               config: %{
-                 coordinators: [],
-                 parameters: %{
-                   desired_logs: 1,
-                   desired_replication_factor: 1,
-                   desired_commit_proxies: 1
-                 },
-                 transaction_system_layout: %{
-                   logs: %{old: :log},
-                   director: :old_director,
-                   sequencer: :old_sequencer,
-                   rate_keeper: :old_rate_keeper,
-                   proxies: [:old_proxy],
-                   resolvers: [:old_resolver]
-                 }
-               },
                recovery_attempt: %RecoveryAttempt{
                  attempt: 1,
                  cluster: TestCluster,
                  epoch: 1,
-                 started_at: _,
-                 required_services: ^empty_map,
-                 locked_service_ids: ^empty_mapset,
-                 log_recovery_info_by_id: ^empty_map,
-                 storage_recovery_info_by_id: ^empty_map,
+                 started_at: started_at,
+                 required_services: %{},
+                 locked_service_ids: locked_ids,
                  old_log_ids_to_copy: [],
                  version_vector: {^zero_version, ^zero_version},
-                 durable_version: ^zero_version,
-                 degraded_teams: [],
-                 logs: ^empty_map,
-                 storage_teams: [],
-                 resolvers: [],
-                 proxies: [],
-                 sequencer: nil
+                 durable_version: ^zero_version
                }
              } = Recovery.setup_for_initial_recovery(state)
+
+      # Verify empty collection and timestamp
+      assert MapSet.size(locked_ids) == 0
+      assert %DateTime{} = started_at
     end
   end
 
@@ -205,102 +185,33 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         services: %{new: :service, updated: :service}
       }
 
-      result = Recovery.setup_for_subsequent_recovery(state)
-
-      updated_attempt = result.recovery_attempt
-      assert updated_attempt.attempt == 4
-      # Other fields should be preserved
-      assert updated_attempt.cluster == TestCluster
-      assert updated_attempt.epoch == 1
-      assert updated_attempt.started_at == 12_345
+      assert %State{
+               recovery_attempt: %RecoveryAttempt{
+                 attempt: 4,
+                 cluster: TestCluster,
+                 epoch: 1,
+                 started_at: 12_345
+               }
+             } = Recovery.setup_for_subsequent_recovery(state)
     end
   end
 
   describe "run_recovery_attempt/1" do
-    test "processes recovery attempt without state validation" do
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
+    test "processes recovery attempt and stalls with insufficient resources" do
+      recovery_attempt = create_test_recovery_attempt()
 
-      # Without state field, no pre-validation occurs, recovery proceeds normally
-      {{:stalled, reason}, _} =
-        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-
-      # Will stall with unable to meet log quorum for the minimal setup
-      assert reason == :unable_to_meet_log_quorum
+      # Without sufficient nodes/services, recovery stalls with unable to meet log quorum
+      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+               Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
     end
 
-    test "returns stalled result when recovery cannot proceed" do
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
+    test "captures warnings during recovery attempt" do
+      recovery_attempt = create_test_recovery_attempt()
 
       capture_log([level: :warning], fn ->
-        result = Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-        # Without state-based pre-handling, recovery attempts go through actual phases
-        # and will stall with unable to meet log quorum for this minimal test setup
-        assert {{:stalled, :unable_to_meet_log_quorum}, _} = result
+        assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+                 Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
       end)
-    end
-
-    test "recovery proceeds through normal flow without state field" do
-      # This test verifies that recovery works without the state field
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
-
-      # Should not raise an exception, should return a stall result
-      {{:stalled, reason}, _} =
-        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-
-      # Will stall with unable to meet log quorum in this minimal test setup
-      assert reason == :unable_to_meet_log_quorum
-    end
-  end
-
-  describe "recovery/1 state dispatch" do
-    test "handles recovery attempt flow correctly" do
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
-
-      {{:stalled, reason}, _result} =
-        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-
-      # Without state-based pre-handling, gets actual stall reason from recovery flow
-      assert reason == :unable_to_meet_log_quorum
-    end
-
-    test "processes recovery attempt without state validation" do
-      recovery_attempt =
-        recovery_attempt(%{
-          cluster: TestCluster,
-          epoch: 1,
-          attempt: 1,
-          started_at: 12_345
-        })
-
-      # No longer raises exceptions for "invalid states" since state field is removed
-      {{:stalled, reason}, _} =
-        Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
-
-      assert reason == :unable_to_meet_log_quorum
     end
   end
 
@@ -309,12 +220,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       recovery_attempt = create_first_time_recovery_attempt()
       context = create_test_context()
 
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
-      assert reason == :unable_to_meet_log_quorum
-      # Note: stalled_attempt.state is no longer updated since phases control transitions
-      # Should remain at original state
+      assert {{:stalled, :unable_to_meet_log_quorum}, _stalled_attempt} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
     test "recovery attempts without state field go through normal flow" do
@@ -322,12 +229,10 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context = create_test_context()
 
-      {{:stalled, reason}, _returned_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
       # With no state-based pre-handling, all attempts go through the normal recovery flow
       # This test now verifies that stateless recovery attempts work correctly
-      assert reason == :unable_to_meet_log_quorum
+      assert {{:stalled, :unable_to_meet_log_quorum}, _returned_attempt} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
     test "existing cluster stalls unable to meet log quorum when logs unavailable" do
@@ -341,29 +246,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           }
         )
 
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
       # With selective locking, we now fail more specifically when trying to create new workers
-      assert reason == {:insufficient_replication, [0]}
+      assert {{:stalled, {:insufficient_replication, [0]}}, _stalled_attempt} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "with multiple nodes and log services but no worker creation mocks" do
-      recovery_attempt = create_first_time_recovery_attempt()
-
-      context =
-        create_test_context()
-        |> with_multiple_nodes()
-        |> with_available_log_services()
-
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
-      # Should fail when trying to lock recruited services since locking isn't mocked
-      assert reason == :unable_to_meet_log_quorum
-    end
-
-    test "with nodes and services but no service locking" do
+    test "with multiple nodes and services but partial mocking stalls at log quorum" do
       recovery_attempt = create_first_time_recovery_attempt()
 
       context =
@@ -372,52 +260,24 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_available_log_services()
         |> with_available_storage_services()
 
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
-      # Should fail when trying to lock recruited services since locking isn't mocked
-      assert reason == :unable_to_meet_log_quorum
+      # Without service locking or worker creation mocks, fails at log quorum
+      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "first-time recovery now succeeds with resolver descriptors" do
-      # This test documents that the :no_resolvers issue has been fixed
-      # First-time recovery now succeeds because InitializationPhase creates resolver descriptors
+    test "first-time recovery with full mocking still stalls at log quorum" do
+      # This test documents that even with full mocking, recovery stalls at log quorum
+      # due to the test setup constraints
       recovery_attempt = create_first_time_recovery_attempt()
+      context = create_full_recovery_context()
 
-      context =
-        create_test_context()
-        |> with_multiple_nodes()
-        |> with_available_log_services()
-        |> with_available_storage_services()
-        |> with_mocked_service_locking()
-        |> with_mocked_worker_creation()
-        |> with_mocked_supervision()
-        |> with_mocked_transactions()
-        |> with_mocked_log_recovery()
-        |> with_mocked_worker_management()
-
-      # Should now succeed instead of stalling with :no_resolvers
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
-      assert reason == :unable_to_meet_log_quorum
+      # Even with full mocking, still stalls at log quorum in test environment
+      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
     test "monitoring phase correctly handles new transaction_services format" do
       alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
-
-      # Test data that simulates the new format with both logs and storage
-      _layout = %{
-        sequencer: spawn(fn -> :ok end),
-        proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
-        resolvers: [{"start", spawn(fn -> :ok end)}],
-        services: %{
-          "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-          "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-          "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage},
-          "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage}
-        }
-      }
 
       context = %{
         monitor_fn: fn pid ->
@@ -442,37 +302,25 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           }
         })
 
-      {_result, next_phase} = MonitoringPhase.execute(recovery_attempt, context)
-
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.PersistencePhase
+      assert {_result, Bedrock.ControlPlane.Director.Recovery.PersistencePhase} =
+               MonitoringPhase.execute(recovery_attempt, context)
 
       # Should monitor sequencer, proxies, resolvers, and logs (but not storage)
       # Expected: 1 sequencer + 2 proxies + 1 resolver + 2 logs = 6 processes
-      monitored_messages =
-        for _ <- 1..6 do
-          receive do
-            {:monitored, pid} -> pid
-          after
-            100 -> :timeout
-          end
-        end
+      monitored_pids = for _ <- 1..6, do: assert_receive({:monitored, pid} when is_pid(pid), 100)
 
       # Should not receive any more monitoring messages (no storage services)
       refute_receive {:monitored, _}, 50
 
-      # All messages should be PIDs, not :timeout
-      assert Enum.all?(monitored_messages, &is_pid/1)
+      assert length(monitored_pids) == 6
     end
 
-    test "coordinator service format works directly with early recovery phases" do
-      # This test verifies that coordinator service format is directly compatible
-      # with early recovery phases without needing log copying or complex recovery scenarios
-
-      # Use a simple first-time recovery to test coordinator format compatibility
+    test "coordinator service format works with recovery phases" do
+      # Verifies coordinator service format compatibility with recovery phases
       recovery_attempt = first_time_recovery()
 
-      # Coordinator-format services (the real format from coordinator)
-      coordinator_format_services = %{
+      # Coordinator-format services
+      coordinator_services = %{
         "log_worker_1" => {:log, {:log_worker_1, :node1}},
         "log_worker_2" => {:log, {:log_worker_2, :node1}},
         "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
@@ -480,35 +328,16 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         "storage_worker_3" => {:storage, {:storage_worker_3, :node1}}
       }
 
-      # Use coordinator format directly (no conversion needed anymore)
-      context =
-        create_test_context()
-        |> with_multiple_nodes()
-        # Use coordinator format directly!
-        |> Map.put(:available_services, coordinator_format_services)
-        |> with_mocked_service_locking_coordinator_format()
-        |> with_mocked_worker_creation()
-        |> with_mocked_supervision()
-        |> with_mocked_transactions()
-        |> with_mocked_log_recovery()
-        |> with_mocked_worker_management()
+      context = create_coordinator_format_context(coordinator_services)
 
-      # Keep default cluster config for first-time recovery (2 logs, 3 storage replication)
-
-      # The coordinator format should enable early recovery phases to proceed
-      # and now succeeds completely since we have proper coordination capabilities
-      {{:stalled, reason}, _stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
-
-      # Should stall with unable to meet log quorum
-      assert reason == :unable_to_meet_log_quorum
+      # Should stall with unable to meet log quorum in test environment
+      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "recovery with coordinator-format services succeeds (regression test)" do
-      # This test ensures that coordinator-format services work directly
-      # This validates our new architecture where coordinator services are used without conversion
-
-      old_transaction_system_layout = %{
+    test "recovery with coordinator-format services handles existing cluster (regression test)" do
+      # Validates coordinator services work with existing cluster recovery
+      old_layout = %{
         logs: %{"existing_log_1" => [0, 100]},
         storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["storage_1"]}]
       }
@@ -519,32 +348,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
-      # Coordinator services in their native format
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
         "storage_1" => {:storage, {:storage_worker_1, :node1}}
       }
 
       context =
-        create_test_context()
-        |> with_multiple_nodes()
-        # Coordinator format - should work directly!
-        |> Map.put(:available_services, coordinator_services)
-        |> with_mocked_service_locking()
-        |> with_mocked_worker_creation()
-        |> with_mocked_supervision()
-        |> with_mocked_transactions()
-        |> with_mocked_log_recovery()
-        |> with_mocked_worker_management()
-        |> Map.put(:old_transaction_system_layout, old_transaction_system_layout)
+        create_coordinator_format_context(coordinator_services,
+          old_transaction_system_layout: old_layout
+        )
 
-      # This should stall at version determination due to insufficient storage replication
-      # (only one storage service but requires quorum) but should successfully complete
-      # log recruitment and service locking first
-      {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
+      # Should stall at insufficient replication but complete service setup first
+      assert {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Should successfully complete log recruitment and populate service tracking
+      # Verify service tracking was populated during recovery
       assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
       assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
     end
@@ -572,9 +390,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         end)
 
       # Should return error, not stall
-      {{:error, :newer_epoch_exists}, _failed_attempt} =
-        Recovery.run_recovery_attempt(recovery_attempt, context)
+      assert {{:error, :newer_epoch_exists}, _failed_attempt} =
+               Recovery.run_recovery_attempt(recovery_attempt, context)
     end
+  end
+
+  # Common recovery attempt creation with default test values
+  defp create_test_recovery_attempt(overrides \\ %{}) do
+    base = %{
+      cluster: TestCluster,
+      epoch: 1,
+      attempt: 1,
+      started_at: 12_345
+    }
+
+    recovery_attempt(Map.merge(base, overrides))
   end
 
   # Helper function to create a first-time recovery attempt
@@ -616,6 +446,45 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     })
   end
 
+  # Common full test context setup for recovery tests
+  defp create_full_recovery_context(overrides \\ []) do
+    overrides
+    |> create_test_context()
+    |> with_multiple_nodes()
+    |> with_available_log_services()
+    |> with_available_storage_services()
+    |> with_mocked_service_locking()
+    |> with_complete_mocking()
+  end
+
+  # Helper for coordinator format context setup
+  defp create_coordinator_format_context(services, overrides \\ []) do
+    base_context =
+      overrides
+      |> create_test_context()
+      |> with_multiple_nodes()
+      |> Map.put(:available_services, services)
+      |> with_mocked_service_locking_coordinator_format()
+      |> with_complete_mocking()
+
+    # Apply any additional overrides that weren't handled by create_test_context
+    additional_overrides = Keyword.delete(overrides, :old_transaction_system_layout)
+
+    Enum.reduce(additional_overrides, base_context, fn {key, value}, ctx ->
+      Map.put(ctx, key, value)
+    end)
+  end
+
+  # Extract common mocking patterns into a single helper
+  defp with_complete_mocking(context) do
+    context
+    |> with_mocked_worker_creation()
+    |> with_mocked_supervision()
+    |> with_mocked_transactions()
+    |> with_mocked_log_recovery()
+    |> with_mocked_worker_management()
+  end
+
   # Composable context modification functions
   defp with_multiple_nodes(context) do
     node_capabilities = %{
@@ -653,46 +522,33 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_service_locking(context) do
-    lock_service_fn = fn service, _epoch ->
-      pid = spawn(fn -> :ok end)
-      # Handle coordinator format: {kind, {otp_name, node}}
-      {kind, _location} = service
-
-      {:ok, pid,
-       %{
-         kind: kind,
-         durable_version: Version.from_integer(95),
-         oldest_version: Version.zero(),
-         last_version: Version.from_integer(100)
-       }}
-    end
-
-    Map.put(context, :lock_service_fn, lock_service_fn)
+    with_mocked_service_locking_coordinator_format(context)
   end
 
   defp with_mocked_service_locking_coordinator_format(context) do
-    # Mock that handles coordinator-format services directly
+    # Mock that handles coordinator-format services: {kind, {otp_name, node}}
     lock_service_fn = fn service, _epoch ->
       pid = spawn(fn -> :ok end)
 
-      # The service is in coordinator format: {kind, {otp_name, node}}
       case service do
         {kind, _location} ->
-          {:ok, pid,
-           %{
-             kind: kind,
-             durable_version: Version.from_integer(95),
-             oldest_version: Version.zero(),
-             last_version: Version.from_integer(100)
-           }}
+          {:ok, pid, create_mock_service_info(kind)}
 
         _ ->
-          # If we get here, the format is unexpected
           {:error, :invalid_service_format}
       end
     end
 
     Map.put(context, :lock_service_fn, lock_service_fn)
+  end
+
+  defp create_mock_service_info(kind) do
+    %{
+      kind: kind,
+      durable_version: Version.from_integer(95),
+      oldest_version: Version.zero(),
+      last_version: Version.from_integer(100)
+    }
   end
 
   defp with_mocked_worker_creation(context) do

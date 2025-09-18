@@ -3,12 +3,23 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
   import Mox
 
-  alias Bedrock.Internal.TransactionManager
+  alias Bedrock.Internal.Repo
 
   # Set up mock for cluster behavior
   defmock(MockCluster, for: Bedrock.Cluster)
 
   setup :verify_on_exit!
+
+  # Helper function for gateway that counts calls and always fails with retryable error
+  defp gateway_loop_with_counter(counter_agent) do
+    receive do
+      {:"$gen_call", from, {:begin_transaction, _opts}} ->
+        _call_count = Agent.get_and_update(counter_agent, &{&1, &1 + 1})
+        # Always return retryable error to test retry limit
+        GenServer.reply(from, {:error, :timeout})
+        gateway_loop_with_counter(counter_agent)
+    end
+  end
 
   # Helper to create a mock gateway that handles begin_transaction and returns
   # a transaction process that can handle various operations
@@ -20,6 +31,36 @@ defmodule Bedrock.Internal.TransactionManagerTest do
           GenServer.reply(from, {:ok, txn_pid})
       end
     end)
+  end
+
+  # Common setup for successful transaction tests
+  defp setup_successful_transaction(return_value) do
+    gateway_pid = create_mock_gateway(:commit_success)
+    expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+    user_fun = fn _txn -> return_value end
+    {gateway_pid, user_fun}
+  end
+
+  # Common setup for failed transaction tests
+  defp setup_failed_transaction(behavior) do
+    gateway_pid = create_mock_gateway(behavior)
+    expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+    {gateway_pid}
+  end
+
+  # Helper for retry test setup
+  defp setup_retry_test(first_error, expected_result, retry_count) do
+    call_count = :counters.new(1, [])
+
+    gateway_pid =
+      spawn(fn ->
+        handle_retry_scenario(call_count, first_error, :commit_success)
+      end)
+
+    expect(MockCluster, :fetch_gateway, 2, fn -> {:ok, gateway_pid} end)
+    user_fun = fn _txn -> expected_result end
+    opts = [retry_count: retry_count]
+    {user_fun, opts}
   end
 
   defp create_mock_transaction(behavior) do
@@ -51,57 +92,64 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
         :rollback_only ->
           receive do
-            {:"$gen_cast", :rollback} -> :ok
+            {:"$gen_call", from, :commit} ->
+              GenServer.reply(from, {:ok, 456})
+
+            {:"$gen_cast", :rollback} ->
+              :ok
           end
 
         :nested_transaction ->
-          receive do
-            {:"$gen_call", from, :nested_transaction} ->
-              GenServer.reply(from, :ok)
-          end
+          handle_nested_transaction_loop()
       end
     end)
   end
 
   describe "transaction/3" do
     test "successful transaction with :ok return" do
-      gateway_pid = create_mock_gateway(:commit_success)
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+      {_gateway_pid, user_fun} = setup_successful_transaction(:ok)
 
-      user_fun = fn _txn -> :ok end
-
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == :ok
     end
 
     test "successful transaction with {:ok, value} return" do
-      gateway_pid = create_mock_gateway(:commit_success)
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+      {_gateway_pid, user_fun} = setup_successful_transaction({:ok, "success"})
 
-      user_fun = fn _txn -> {:ok, "success"} end
-
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == {:ok, "success"}
     end
 
-    test "non-ok return value triggers rollback" do
-      gateway_pid = create_mock_gateway(:rollback_only)
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+    test "successful transaction returns binary value from callback" do
+      binary_result = <<1, 2, 3, 4>>
+      {_gateway_pid, user_fun} = setup_successful_transaction(binary_result)
 
+      result = Repo.transaction(MockCluster, user_fun, [])
+      assert result == binary_result
+    end
+
+    test "successful transaction returns complex data structures from callback" do
+      complex_result = %{prefix: <<0, 1, 2>>, layer: "test", metadata: %{version: 1}}
+      {_gateway_pid, user_fun} = setup_successful_transaction(complex_result)
+
+      result = Repo.transaction(MockCluster, user_fun, [])
+      assert result == complex_result
+    end
+
+    test "non-ok return value triggers rollback" do
+      {_gateway_pid} = setup_failed_transaction(:rollback_only)
       user_fun = fn _txn -> {:error, "failed"} end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
+      result = Repo.transaction(MockCluster, user_fun, [])
       assert result == {:error, "failed"}
     end
 
     test "exception in user function triggers rollback and reraises" do
-      gateway_pid = create_mock_gateway(:rollback_only)
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
-
+      {_gateway_pid} = setup_failed_transaction(:rollback_only)
       user_fun = fn _txn -> raise RuntimeError, "user error" end
 
       assert_raise RuntimeError, "user error", fn ->
-        TransactionManager.transaction(MockCluster, user_fun, [])
+        Repo.transaction(MockCluster, user_fun, [])
       end
     end
 
@@ -110,94 +158,81 @@ defmodule Bedrock.Internal.TransactionManagerTest do
 
       user_fun = fn _txn -> :ok end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
-      assert result == {:error, :unavailable}
+      assert_raise MatchError, fn ->
+        Repo.transaction(MockCluster, user_fun, [])
+      end
     end
 
     test "transaction begin failure returns error" do
-      # Create a gateway that fails begin_transaction
+      # Create a simple counter to track calls
+      {:ok, counter_agent} = Agent.start_link(fn -> 0 end)
+
+      # Create a gateway that always fails with retryable error
       gateway_pid =
         spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:begin_transaction, []}} ->
-              GenServer.reply(from, {:error, :timeout})
-          end
+          gateway_loop_with_counter(counter_agent)
         end)
 
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+      # Use stub to allow unlimited calls
+      stub(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
 
       user_fun = fn _txn -> :ok end
 
-      result = TransactionManager.transaction(MockCluster, user_fun, [])
-      assert result == {:error, :timeout}
+      # Should retry once on :timeout, then hit retry limit and fail
+      assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
+        Repo.transaction(MockCluster, user_fun, retry_limit: 1)
+      end
+
+      # Verify it was called exactly twice (first call + one retry before hitting limit)
+      call_count = Agent.get(counter_agent, & &1)
+      assert call_count == 2
+    end
+
+    test "transaction retry limit of 0 means no retries" do
+      # Create a simple counter to track calls
+      {:ok, counter_agent} = Agent.start_link(fn -> 0 end)
+
+      # Create a gateway that always fails
+      gateway_pid =
+        spawn(fn ->
+          gateway_loop_with_counter(counter_agent)
+        end)
+
+      stub(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
+
+      user_fun = fn _txn -> :ok end
+
+      # Should fail immediately without any retries
+      assert_raise Bedrock.TransactionError, ~r/Retry limit exceeded/, fn ->
+        Repo.transaction(MockCluster, user_fun, retry_limit: 0)
+      end
+
+      # Verify it was called exactly once (no retries allowed)
+      call_count = Agent.get(counter_agent, & &1)
+      assert call_count == 1
     end
   end
 
   describe "retry logic" do
     test "commit timeout triggers retry with retry_count > 0" do
-      call_count = :counters.new(1, [])
+      {user_fun, opts} = setup_retry_test(:timeout, :ok, 3)
 
-      # Create a gateway that handles multiple begin_transaction calls
-      gateway_pid =
-        spawn(fn ->
-          handle_retry_scenario(call_count, :timeout, :commit_success)
-        end)
-
-      expect(MockCluster, :fetch_gateway, 2, fn -> {:ok, gateway_pid} end)
-
-      user_fun = fn _txn -> :ok end
-      opts = [retry_count: 3]
-
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == :ok
     end
 
     test "commit aborted triggers retry with retry_count > 0" do
-      call_count = :counters.new(1, [])
+      {user_fun, opts} = setup_retry_test(:aborted, {:ok, "retried"}, 2)
 
-      # Create a gateway that handles multiple begin_transaction calls
-      gateway_pid =
-        spawn(fn ->
-          handle_retry_scenario(call_count, :aborted, :commit_success)
-        end)
-
-      expect(MockCluster, :fetch_gateway, 2, fn -> {:ok, gateway_pid} end)
-
-      user_fun = fn _txn -> {:ok, "retried"} end
-      opts = [retry_count: 2]
-
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == {:ok, "retried"}
     end
 
     test "commit unavailable triggers retry with retry_count > 0" do
-      call_count = :counters.new(1, [])
+      {user_fun, opts} = setup_retry_test(:unavailable, {:ok, "final_try"}, 1)
 
-      # Create a gateway that handles multiple begin_transaction calls
-      gateway_pid =
-        spawn(fn ->
-          handle_retry_scenario(call_count, :unavailable, :commit_success)
-        end)
-
-      expect(MockCluster, :fetch_gateway, 2, fn -> {:ok, gateway_pid} end)
-
-      user_fun = fn _txn -> {:ok, "final_try"} end
-      opts = [retry_count: 1]
-
-      result = TransactionManager.transaction(MockCluster, user_fun, opts)
+      result = Repo.transaction(MockCluster, user_fun, opts)
       assert result == {:ok, "final_try"}
-    end
-
-    test "retry count exhaustion raises exception" do
-      gateway_pid = create_mock_gateway(:commit_timeout)
-      expect(MockCluster, :fetch_gateway, fn -> {:ok, gateway_pid} end)
-
-      user_fun = fn _txn -> :ok end
-      opts = [retry_count: 0]
-
-      assert_raise RuntimeError, "Transaction failed: :timeout", fn ->
-        TransactionManager.transaction(MockCluster, user_fun, opts)
-      end
     end
   end
 
@@ -207,30 +242,35 @@ defmodule Bedrock.Internal.TransactionManagerTest do
       txn_pid = create_mock_transaction(:nested_transaction)
 
       # Put it in process dictionary to simulate existing transaction
-      Process.put(TransactionManager.tx_key(MockCluster), txn_pid)
+      tx_key = {:transaction, MockCluster}
+      Process.put(tx_key, txn_pid)
 
       try do
         user_fun = fn _txn -> :nested_ok end
 
-        result = TransactionManager.transaction(MockCluster, user_fun, [])
+        result = Repo.transaction(MockCluster, user_fun, [])
         assert result == :nested_ok
       after
-        Process.delete(TransactionManager.tx_key(MockCluster))
+        Process.delete(tx_key)
       end
     end
   end
 
-  describe "tx_key/1" do
-    test "returns consistent key for cluster" do
-      key1 = TransactionManager.tx_key(MockCluster)
-      key2 = TransactionManager.tx_key(MockCluster)
+  # Helper function to handle retry scenarios
+  defp handle_nested_transaction_loop do
+    receive do
+      {:"$gen_call", from, :nested_transaction} ->
+        GenServer.reply(from, :ok)
+        handle_nested_transaction_loop()
 
-      assert key1 == key2
-      assert key1 == {:transaction, MockCluster}
+      {:"$gen_call", from, :commit} ->
+        GenServer.reply(from, {:ok, 123})
+
+      {:"$gen_cast", :rollback} ->
+        :ok
     end
   end
 
-  # Helper function to handle retry scenarios
   defp handle_retry_scenario(call_count, first_error, second_behavior) do
     receive do
       {:"$gen_call", from, {:begin_transaction, _opts}} ->

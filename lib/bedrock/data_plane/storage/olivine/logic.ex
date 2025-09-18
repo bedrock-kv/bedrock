@@ -18,11 +18,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
 
-  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
+  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), db_opts :: keyword()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
-  def startup(otp_name, foreman, id, path) do
+  def startup(otp_name, foreman, id, path, db_opts \\ []) do
     with :ok <- ensure_directory_exists(path),
-         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")),
+         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "#{id}.sqlite"), db_opts),
          {:ok, index_manager} <- IndexManager.recover_from_database(database) do
       {:ok,
        %State{
@@ -69,40 +69,38 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    with :ok <- IndexManager.purge_transactions_newer_than(t.index_manager, durable_version) do
-      t = stop_pulling(t)
-      main_process_pid = self()
+    t = stop_pulling(t)
+    main_process_pid = self()
 
-      apply_and_notify_fn = fn transactions ->
-        send(main_process_pid, {:apply_transactions, transactions})
-        last_transaction = List.last(transactions)
-        Transaction.commit_version!(last_transaction)
-      end
-
-      puller =
-        Pulling.start_pulling(
-          durable_version,
-          t.id,
-          logs,
-          services,
-          apply_and_notify_fn,
-          fn ->
-            try do
-              case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
-                {:ok, version} -> version
-                _ -> raise "Failed to get current durable version"
-              end
-            catch
-              :exit, _ -> raise "Failed to get current durable version"
-            end
-          end
-        )
-
-      t
-      |> update_mode(:running)
-      |> put_puller(puller)
-      |> then(&{:ok, &1})
+    apply_and_notify_fn = fn transactions ->
+      send(main_process_pid, {:apply_transactions, transactions})
+      last_transaction = List.last(transactions)
+      Transaction.commit_version!(last_transaction)
     end
+
+    puller =
+      Pulling.start_pulling(
+        durable_version,
+        t.id,
+        logs,
+        services,
+        apply_and_notify_fn,
+        fn ->
+          try do
+            case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
+              {:ok, version} -> version
+              _ -> raise "Failed to get current durable version"
+            end
+          catch
+            :exit, _ -> raise "Failed to get current durable version"
+          end
+        end
+      )
+
+    t
+    |> update_mode(:running)
+    |> put_puller(puller)
+    |> then(&{:ok, &1})
   end
 
   @doc """
@@ -111,15 +109,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   When reply_fn is provided in opts, returns :ok immediately and delivers results via callback.
   When reply_fn is not provided, returns results synchronously (primarily for testing).
   """
-  def fetch(state, key_or_selector, version, opts \\ [])
+  def get(state, key_or_selector, version, opts \\ [])
 
-  @spec fetch(State.t(), Bedrock.key(), Bedrock.version(), opts :: [reply_fn: function()]) ::
+  @spec get(State.t(), Bedrock.key(), Bedrock.version(), opts :: [reply_fn: function()]) ::
           {:ok, binary()}
           | {:ok, pid()}
           | {:error, :not_found}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-  def fetch(%State{} = t, key, version, opts) when is_binary(key) do
+  def get(%State{} = t, key, version, opts) when is_binary(key) do
     t.index_manager
     |> IndexManager.page_for_key(key, version)
     |> case do
@@ -135,13 +133,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     end
   end
 
-  @spec fetch(State.t(), KeySelector.t(), Bedrock.version(), opts :: [reply_fn: function()]) ::
+  @spec get(State.t(), KeySelector.t(), Bedrock.version(), opts :: [reply_fn: function()]) ::
           {:ok, {resolved_key :: binary(), value :: binary()}}
           | {:ok, pid()}
           | {:error, :not_found}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-  def fetch(%State{} = t, %KeySelector{} = key_selector, version, opts) do
+  def get(%State{} = t, %KeySelector{} = key_selector, version, opts) do
     case IndexManager.page_for_key(t.index_manager, key_selector, version) do
       {:ok, resolved_key, page} ->
         load_fn = Database.value_loader(t.database)
@@ -173,9 +171,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   When reply_fn is provided in opts, returns :ok immediately and delivers results via callback.
   When reply_fn is not provided, returns results synchronously (primarily for testing).
   """
-  def range_fetch(t, start_key_or_selector, end_key_or_selector, version, opts \\ [])
+  def get_range(t, start_key_or_selector, end_key_or_selector, version, opts \\ [])
 
-  @spec range_fetch(
+  @spec get_range(
           State.t(),
           Bedrock.key(),
           Bedrock.key(),
@@ -186,7 +184,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           | {:ok, pid()}
           | {:error, :version_too_old}
           | {:error, :version_too_new}
-  def range_fetch(t, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key) do
+  def get_range(t, start_key, end_key, version, opts) when is_binary(start_key) and is_binary(end_key) do
     t.index_manager
     |> IndexManager.pages_for_range(start_key, end_key, version)
     |> case do
@@ -203,7 +201,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     end
   end
 
-  @spec range_fetch(
+  @spec get_range(
           State.t(),
           KeySelector.t(),
           KeySelector.t(),
@@ -216,7 +214,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           | {:error, :version_too_new}
           | {:error, :not_found}
           | {:error, :invalid_range}
-  def range_fetch(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts) do
+  def get_range(t, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version, opts) do
     case IndexManager.pages_for_range(t.index_manager, start_selector, end_selector, version) do
       {:ok, {resolved_start_key, resolved_end_key}, pages} ->
         load_fn = Database.value_loader(t.database)
@@ -295,7 +293,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   end
 
   defp run_fetch_and_notify(t, reply_fn, {key, version}) when is_binary(key) do
-    case fetch(t, key, version, reply_fn: reply_fn) do
+    case get(t, key, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
 
@@ -307,7 +305,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
 
   defp run_fetch_and_notify(t, reply_fn, {start_key, end_key, version})
        when is_binary(start_key) and is_binary(end_key) do
-    case range_fetch(t, start_key, end_key, version, reply_fn: reply_fn) do
+    case get_range(t, start_key, end_key, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
 
@@ -318,7 +316,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   end
 
   defp run_fetch_and_notify(t, reply_fn, {%KeySelector{} = key_selector, version}) do
-    case fetch(t, key_selector, version, reply_fn: reply_fn) do
+    case get(t, key_selector, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
 
@@ -329,7 +327,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   end
 
   defp run_fetch_and_notify(t, reply_fn, {%KeySelector{} = start_selector, %KeySelector{} = end_selector, version}) do
-    case range_fetch(t, start_selector, end_selector, version, reply_fn: reply_fn) do
+    case get_range(t, start_selector, end_selector, version, reply_fn: reply_fn) do
       {:ok, pid} ->
         {:ok, pid}
 

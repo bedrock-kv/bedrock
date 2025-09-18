@@ -170,9 +170,8 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   end
 
   @spec insert_no_balance(nil | t(), Bedrock.key() | Bedrock.key_range(), Bedrock.version()) :: t()
-  defp insert_no_balance(nil, {start, end_}, value) do
-    %Tree{start: start, end: end_, value: value, left: nil, right: nil, height: 1}
-  end
+  defp insert_no_balance(nil, {start, end_}, value),
+    do: %Tree{start: start, end: end_, value: value, left: nil, right: nil, height: 1}
 
   defp insert_no_balance(%Tree{} = tree, {start, _end} = range, value) do
     cond do
@@ -187,9 +186,7 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     end
   end
 
-  defp insert_no_balance(tree, key, value) when is_binary(key) do
-    insert_no_balance(tree, {key, key <> <<0>>}, value)
-  end
+  defp insert_no_balance(tree, key, value) when is_binary(key), do: insert_no_balance(tree, {key, key <> <<0>>}, value)
 
   @spec height(t() | nil) :: non_neg_integer()
   def height(nil), do: 0
@@ -241,8 +238,6 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     end
   end
 
-  defp balance(nil), do: nil
-
   @spec rebalance_after_bulk_insert(t() | nil) :: t() | nil
   defp rebalance_after_bulk_insert(nil), do: nil
 
@@ -284,27 +279,38 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   """
 
   @spec filter_by_value(t() | nil, (Bedrock.version() -> boolean())) :: t() | nil
-  def filter_by_value(%Tree{} = tree, predicate) do
-    new_left = filter_by_value(tree.left, predicate)
-    new_right = filter_by_value(tree.right, predicate)
+  def filter_by_value(tree, predicate),
+    do: tree |> filter_by_value_no_balance(predicate) |> rebalance_after_bulk_filter()
 
-    if_result =
-      if predicate.(tree.value) do
-        %{tree | left: new_left, right: new_right}
-      else
-        combine_filtered_subtrees(new_left, new_right)
-      end
+  @spec filter_by_value_no_balance(t() | nil, (Bedrock.version() -> boolean())) :: t() | nil
+  defp filter_by_value_no_balance(nil, _predicate), do: nil
 
-    balance(if_result)
+  defp filter_by_value_no_balance(%Tree{} = tree, predicate) do
+    new_left = filter_by_value_no_balance(tree.left, predicate)
+    new_right = filter_by_value_no_balance(tree.right, predicate)
+
+    if predicate.(tree.value) do
+      %{tree | left: new_left, right: new_right}
+    else
+      combine_filtered_subtrees(new_left, new_right)
+    end
   end
 
-  def filter_by_value(nil, _predicate), do: nil
+  @spec rebalance_after_bulk_filter(t() | nil) :: t() | nil
+  defp rebalance_after_bulk_filter(nil), do: nil
+  defp rebalance_after_bulk_filter(%Tree{} = tree), do: tree |> fix_heights_only() |> balance()
 
   @spec combine_filtered_subtrees(t() | nil, t() | nil) :: t() | nil
   defp combine_filtered_subtrees(nil, nil), do: nil
   defp combine_filtered_subtrees(nil, right), do: right
   defp combine_filtered_subtrees(left, nil), do: left
-  defp combine_filtered_subtrees(left, right), do: %{left | right: right}
+  defp combine_filtered_subtrees(left, right), do: find_and_attach_rightmost(left, right)
+
+  # Helper to properly combine subtrees by finding rightmost node in left tree
+  defp find_and_attach_rightmost(%Tree{right: nil} = node, right_tree), do: %{node | right: right_tree}
+
+  defp find_and_attach_rightmost(%Tree{right: right} = node, right_tree),
+    do: %{node | right: find_and_attach_rightmost(right, right_tree)}
 
   @doc """
   Converts the interval tree into a list of tuples, where each tuple

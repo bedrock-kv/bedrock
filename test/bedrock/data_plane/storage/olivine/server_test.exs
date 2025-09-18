@@ -1,21 +1,26 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Server
 
   describe "module structure" do
     test "all modules compile and load successfully" do
-      assert Code.ensure_loaded(Server) == {:module, Server}
-      assert Code.ensure_loaded(Database) == {:module, Database}
-      assert Code.ensure_loaded(IndexManager) == {:module, IndexManager}
+      modules = [Server, Database, IndexManager]
+
+      for module <- modules do
+        assert {:module, ^module} = Code.ensure_loaded(module)
+      end
     end
 
-    test "basic DETS operations work" do
-      temp_path = "/tmp/test_olivine_#{System.unique_integer([:positive])}.dets"
+    test "basic SQLite operations work" do
+      temp_path = "/tmp/test_olivine_#{System.unique_integer([:positive])}.sqlite"
 
-      assert {:ok, db} = Database.open(:test_olivine, temp_path)
+      {result, _logs} = with_log(fn -> Database.open(:test_olivine, temp_path, pool_size: 1) end)
+      assert {:ok, db} = result
       assert :ok = Database.close(db)
 
       File.rm(temp_path)
@@ -45,8 +50,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
           path: "/tmp/test_olivine"
         )
 
-      assert %{id: {Server, "test_id"}} = spec
-      assert {GenServer, :start_link, _args} = spec.start
+      assert %{
+               id: {Server, "test_id"},
+               start: {GenServer, :start_link, _args}
+             } = spec
     end
 
     test "child_spec raises when required options are missing" do

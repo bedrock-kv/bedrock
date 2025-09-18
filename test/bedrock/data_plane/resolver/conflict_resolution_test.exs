@@ -11,13 +11,13 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
   alias Bedrock.DataPlane.Transaction
 
-  # Generate a random alphanumeric string of length 5 or less.
+  # Generate a random alphanumeric string of length 1-5 characters for use as database keys
   def key_generator do
     string(:alphanumeric, min_length: 1, max_length: 5)
   end
 
-  # Generate a range where the start is always less than the end. If we happen
-  # to generate the same value, we just return the value.
+  # Generate a range where start <= end. Returns a single key if both values are equal,
+  # otherwise returns a properly ordered {start_key, end_key} tuple
   def range_generator do
     StreamData.bind(key_generator(), fn v1 ->
       StreamData.map(key_generator(), fn
@@ -28,11 +28,15 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
     end)
   end
 
-  # Produce a key about 99% of the time, and a range about 1% of the time.
+  # Generate keys (99% probability) or ranges (1% probability) to simulate
+  # realistic database access patterns with occasional range operations
   def key_or_range_generator do
     one_of([range_generator() | 1..99 |> Enum.map(fn _ -> key_generator() end) |> Enum.to_list()])
   end
 
+  # Generate realistic read/write patterns for transactions:
+  # - Reads: 1-10 keys/ranges (simulating queries)
+  # - Writes: 1-5 keys/ranges (simulating updates)
   def reads_and_writes_generator do
     gen all(
           reads <- list_of(key_or_range_generator(), min_length: 1, max_length: 10),
@@ -92,7 +96,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
           Transaction.encode(transaction_map)
         end)
 
-      {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
+      # Pattern match the resolve result to extract failed transaction indexes
+      assert {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
 
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
@@ -101,7 +106,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       Enum.each(failed_indexes, fn index ->
         transactions_up_to_failure = Enum.take(transactions, index)
 
-        {tree, failed_indexes} = resolve(initial_tree, transactions_up_to_failure, write_version)
+        # Resolve transactions up to the failure point to build the conflict tree
+        assert {tree, failed_indexes} = resolve(initial_tree, transactions_up_to_failure, write_version)
 
         # The first transaction has an empty tree and should never conflict
         # with anything.
@@ -118,7 +124,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         # due to version mismatch.
         assert conflict?(tree, failed_transaction, write_version)
 
-        # If we try the transaction that failed, it should abort.
+        # The failed transaction should abort when attempted against the conflict tree
         assert :abort = try_to_resolve_transaction(tree, failed_transaction, index)
       end)
     end

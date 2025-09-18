@@ -2,25 +2,62 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.Finalization
-  alias Bedrock.DataPlane.TransactionTestSupport
   alias Bedrock.DataPlane.Version
-  alias FinalizationTestSupport, as: Support
+  alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  # Common test setup helpers
+  defp create_single_log_layout(log_server \\ nil) do
+    log_server = log_server || Support.create_mock_log_server()
+
+    %{
+      logs: %{"log_1" => [0]},
+      services: %{"log_1" => %{kind: :log, status: {:up, log_server}}}
+    }
+  end
+
+  defp create_multi_log_layout do
+    log_server_1 = Support.create_mock_log_server()
+    log_server_2 = Support.create_mock_log_server()
+
+    %{
+      logs: %{
+        "log_1" => [0, 1],
+        "log_2" => [1, 2]
+      },
+      services: %{
+        "log_1" => %{kind: :log, status: {:up, log_server_1}},
+        "log_2" => %{kind: :log, status: {:up, log_server_2}}
+      }
+    }
+  end
+
+  defp create_failing_log_server(error_reason) do
+    server =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            GenServer.reply(from, {:error, error_reason})
+        end
+      end)
+
+    Support.ensure_process_killed(server)
+    server
+  end
+
+  defp call_push_direct(layout, transactions_by_log, commit_version \\ 100, last_version \\ 99) do
+    Finalization.push_transaction_to_logs_direct(
+      layout,
+      Version.from_integer(last_version),
+      transactions_by_log,
+      Version.from_integer(commit_version),
+      []
+    )
+  end
 
   describe "push_transaction_to_logs_direct/5" do
     test "pushes pre-built transactions directly to logs" do
-      log_server_1 = Support.create_mock_log_server()
-      log_server_2 = Support.create_mock_log_server()
-
-      layout = %{
-        logs: %{
-          "log_1" => [0, 1],
-          "log_2" => [1, 2]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, log_server_1}},
-          "log_2" => %{kind: :log, status: {:up, log_server_2}}
-        }
-      }
+      layout = create_multi_log_layout()
 
       transactions_by_log = %{
         "log_1" =>
@@ -35,155 +72,57 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
           })
       }
 
-      result =
-        Finalization.push_transaction_to_logs_direct(
-          layout,
-          Version.from_integer(99),
-          transactions_by_log,
-          Version.from_integer(100),
-          []
-        )
-
-      assert result == :ok
+      assert :ok = call_push_direct(layout, transactions_by_log)
     end
 
     test "handles empty transactions" do
-      layout = %{
-        logs: %{
-          "log_1" => [0]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, Support.create_mock_log_server()}}
-        }
-      }
+      layout = create_single_log_layout()
+      transactions_by_log = %{"log_1" => TransactionTestSupport.new_log_transaction(100, %{})}
 
-      transactions_by_log = %{
-        "log_1" => TransactionTestSupport.new_log_transaction(100, %{})
-      }
-
-      result =
-        Finalization.push_transaction_to_logs_direct(
-          layout,
-          Version.from_integer(99),
-          transactions_by_log,
-          Version.from_integer(100),
-          []
-        )
-
-      assert result == :ok
+      assert :ok = call_push_direct(layout, transactions_by_log)
     end
 
     test "returns error when log server fails" do
-      failing_log_server =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-              GenServer.reply(from, {:error, :disk_full})
-          end
-        end)
+      failing_server = create_failing_log_server(:disk_full)
+      layout = create_single_log_layout(failing_server)
+      transactions_by_log = %{"log_1" => TransactionTestSupport.new_log_transaction(100, %{"key" => "value"})}
 
-      Support.ensure_process_killed(failing_log_server)
-
-      layout = %{
-        logs: %{
-          "log_1" => [0]
-        },
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, failing_log_server}}
-        }
-      }
-
-      transactions_by_log = %{
-        "log_1" => TransactionTestSupport.new_log_transaction(100, %{"key" => "value"})
-      }
-
-      result =
-        Finalization.push_transaction_to_logs_direct(
-          layout,
-          Version.from_integer(99),
-          transactions_by_log,
-          Version.from_integer(100),
-          []
-        )
-
-      assert {:error, {:log_failures, [{"log_1", :disk_full}]}} = result
+      assert {:error, {:log_failures, [{"log_1", :disk_full}]}} = call_push_direct(layout, transactions_by_log)
     end
   end
 
   describe "try_to_push_transaction_to_log/3" do
+    defp call_try_push(service_descriptor, transaction \\ "mock_encoded_transaction", version \\ 99) do
+      Finalization.try_to_push_transaction_to_log(service_descriptor, transaction, version)
+    end
+
     test "succeeds when log server responds with :ok" do
       log_server = Support.create_mock_log_server()
-
       service_descriptor = %{kind: :log, status: {:up, log_server}}
-      encoded_transaction = "mock_encoded_transaction"
-      last_commit_version = 99
 
-      result =
-        Finalization.try_to_push_transaction_to_log(
-          service_descriptor,
-          encoded_transaction,
-          last_commit_version
-        )
-
-      assert result == :ok
+      assert :ok = call_try_push(service_descriptor)
     end
 
     test "returns error when log server is down" do
       service_descriptor = %{kind: :log, status: {:down, :some_reason}}
-      encoded_transaction = "mock_encoded_transaction"
-      last_commit_version = 99
 
-      result =
-        Finalization.try_to_push_transaction_to_log(
-          service_descriptor,
-          encoded_transaction,
-          last_commit_version
-        )
-
-      assert result == {:error, :unavailable}
+      assert {:error, :unavailable} = call_try_push(service_descriptor)
     end
 
     test "returns error when log server responds with error" do
-      log_server =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
-              GenServer.reply(from, {:error, :disk_full})
-          end
-        end)
+      failing_server = create_failing_log_server(:disk_full)
+      service_descriptor = %{kind: :log, status: {:up, failing_server}}
 
-      Support.ensure_process_killed(log_server)
-
-      service_descriptor = %{kind: :log, status: {:up, log_server}}
-      encoded_transaction = "mock_encoded_transaction"
-      last_commit_version = 99
-
-      result =
-        Finalization.try_to_push_transaction_to_log(
-          service_descriptor,
-          encoded_transaction,
-          last_commit_version
-        )
-
-      assert result == {:error, :disk_full}
+      assert {:error, :disk_full} = call_try_push(service_descriptor)
     end
 
     test "handles log server process exit" do
-      log_server = spawn(fn -> exit(:normal) end)
+      dead_server = spawn(fn -> exit(:normal) end)
       Process.sleep(100)
 
-      service_descriptor = %{kind: :log, status: {:up, log_server}}
-      encoded_transaction = "mock_encoded_transaction"
-      last_commit_version = 99
+      service_descriptor = %{kind: :log, status: {:up, dead_server}}
 
-      result =
-        Finalization.try_to_push_transaction_to_log(
-          service_descriptor,
-          encoded_transaction,
-          last_commit_version
-        )
-
-      assert {:error, _reason} = result
+      assert {:error, _reason} = call_try_push(service_descriptor)
     end
   end
 end

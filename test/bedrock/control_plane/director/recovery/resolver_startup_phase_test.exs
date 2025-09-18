@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
   use ExUnit.Case, async: true
 
-  import RecoveryTestSupport
+  import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase
@@ -13,14 +13,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
     def otp_name(:sup), do: :test_supervisor
   end
 
+  # Helper to capture child specs
+  defp setup_capture_agent do
+    fn -> [] end |> Agent.start_link() |> elem(1)
+  end
+
+  defp capture_start_supervised_fn(agent) do
+    fn child_spec, node ->
+      Agent.update(agent, fn list -> [{child_spec, node} | list] end)
+      {:ok, spawn(fn -> :ok end)}
+    end
+  end
+
+  defp get_captured_calls(agent) do
+    agent |> Agent.get(& &1) |> Enum.reverse()
+  end
+
   describe "execute/1" do
     test "transitions to next phase when resolvers start successfully" do
-      agent = fn -> [] end |> Agent.start_link() |> elem(1)
-
-      start_supervised_fn = fn child_spec, node ->
-        Agent.update(agent, fn list -> [{child_spec, node} | list] end)
-        {:ok, spawn(fn -> :ok end)}
-      end
+      agent = setup_capture_agent()
+      start_supervised_fn = capture_start_supervised_fn(agent)
 
       resolver_descriptors = [
         ResolverDescriptor.resolver_descriptor("a", {:vacancy, 1}),
@@ -42,31 +54,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       {result, next_phase} = ResolverStartupPhase.execute(recovery_attempt, context)
 
-      # Should transition to next phase
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase
-      assert length(result.resolvers) == 2
-      assert Enum.all?(result.resolvers, fn {_start_key, pid} -> is_pid(pid) end)
+      # Should transition to next phase with expected results
+      assert {%{resolvers: resolvers}, Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase} =
+               {result, next_phase}
+
+      assert length(resolvers) == 2
+      assert Enum.all?(resolvers, fn {_start_key, pid} -> is_pid(pid) end)
 
       # Verify the child specs and nodes
-      captured_calls = agent |> Agent.get(& &1) |> Enum.reverse()
+      captured_calls = get_captured_calls(agent)
       assert length(captured_calls) == 2
 
       # Check each resolver child spec
-      captured_calls
-      |> Enum.with_index()
-      |> Enum.each(fn {{child_spec, node}, index} ->
-        # Verify child spec has correct tuple-based ID format
-        assert %{id: {Server, TestCluster, _key_range, 42}} = child_spec
+      Enum.each(captured_calls, fn {child_spec, node} ->
+        # Verify child spec structure and start args in one pattern match
+        assert %{
+                 id: {Server, TestCluster, _key_range, 42},
+                 start: {GenServer, :start_link, [Server, {_lock_token, 100, 42, _director, 1000, 6000}]}
+               } = child_spec
 
-        # Verify start args contain correct parameters
-        assert %{start: {GenServer, :start_link, [Server, start_args]}} = child_spec
-        # last_version=100, epoch=42
-        assert {_lock_token, 100, 42, _director} = start_args
-
-        # Verify round-robin distribution
-        expected_node = if index == 0, do: :node1, else: :node2
-        assert node == expected_node
+        # Verify node assignment (order may vary due to non-deterministic iteration)
+        assert node in [:node1, :node2]
       end)
+
+      # Verify all nodes are used (order may vary due to non-deterministic iteration)
+      nodes_used = Enum.map(captured_calls, fn {_child_spec, node} -> node end)
+      assert Enum.sort(nodes_used) == [:node1, :node2]
     end
 
     test "stalls when no coordination capable nodes available" do
@@ -86,8 +99,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       {result, stall_reason} = ResolverStartupPhase.execute(recovery_attempt, context)
 
-      assert {:stalled, {:insufficient_nodes, :no_coordination_capable_nodes, 1, 0}} = stall_reason
-      assert result.resolvers == resolver_descriptors
+      assert {{:stalled, {:insufficient_nodes, :no_coordination_capable_nodes, 1, 0}}, ^resolver_descriptors} =
+               {stall_reason, result.resolvers}
     end
 
     test "stalls when resolver startup fails" do
@@ -111,8 +124,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       {result, stall_reason} = ResolverStartupPhase.execute(recovery_attempt, context)
 
-      assert {:stalled, {:failed_to_start, :resolver, :node1, :startup_failed}} = stall_reason
-      assert result.resolvers == resolver_descriptors
+      assert {{:stalled, {:failed_to_start, :resolver, :node1, :startup_failed}}, ^resolver_descriptors} =
+               {stall_reason, result.resolvers}
     end
 
     test "uses correct lock token and version from context" do
@@ -141,20 +154,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       {_result, _next_phase} = ResolverStartupPhase.execute(recovery_attempt, context)
 
-      captured_child_spec = Agent.get(agent, & &1)
-      assert %{start: {GenServer, :start_link, [_, start_args]}} = captured_child_spec
-      assert {"special_lock_token", 200, 7, _director} = start_args
+      assert %{
+               start: {GenServer, :start_link, [_, {"special_lock_token", 200, 7, _director, 1000, 6000}]}
+             } = Agent.get(agent, & &1)
     end
   end
 
   describe "define_resolvers/1" do
     test "generates correct key ranges for multiple resolvers" do
-      agent = fn -> [] end |> Agent.start_link() |> elem(1)
-
-      start_supervised_fn = fn child_spec, node ->
-        Agent.update(agent, fn list -> [{child_spec, node} | list] end)
-        {:ok, spawn(fn -> :ok end)}
-      end
+      agent = setup_capture_agent()
+      start_supervised_fn = capture_start_supervised_fn(agent)
 
       resolver_descriptors = [
         ResolverDescriptor.resolver_descriptor("", {:vacancy, 1}),
@@ -178,10 +187,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       # Should be sorted by start_key
       assert [{"", _pid1}, {"m", _pid2}, {"z", _pid3}] = resolvers
 
-      # Verify round-robin node distribution
-      captured_calls = agent |> Agent.get(& &1) |> Enum.reverse()
+      # Verify all nodes are used (order may vary due to non-deterministic iteration)
+      captured_calls = get_captured_calls(agent)
       nodes_used = Enum.map(captured_calls, fn {_child_spec, node} -> node end)
-      assert nodes_used == [:node1, :node2, :node3]
+      assert Enum.sort(nodes_used) == [:node1, :node2, :node3]
     end
 
     test "handles empty resolver list" do
@@ -210,8 +219,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
         cluster: TestCluster
       }
 
-      result = ResolverStartupPhase.define_resolvers(context)
-      assert {:error, {:insufficient_nodes, :no_coordination_capable_nodes, 1, 0}} = result
+      assert {:error, {:insufficient_nodes, :no_coordination_capable_nodes, 1, 0}} =
+               ResolverStartupPhase.define_resolvers(context)
     end
   end
 end

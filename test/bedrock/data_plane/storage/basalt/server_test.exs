@@ -1,7 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Basalt.ServerTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.GenServerTestHelpers
+  import Bedrock.Test.Common.GenServerTestHelpers
 
   alias Bedrock.DataPlane.Storage.Basalt.Server
   alias Bedrock.DataPlane.Storage.Basalt.State

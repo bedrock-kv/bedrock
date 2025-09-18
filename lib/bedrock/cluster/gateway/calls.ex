@@ -34,6 +34,9 @@ defmodule Bedrock.Cluster.Gateway.Calls do
           | {:error, :unavailable}
   defp ensure_current_tsl(%{known_coordinator: :unavailable}), do: {:error, :unavailable}
 
+  defp ensure_current_tsl(%{known_coordinator: _coordinator, transaction_system_layout: nil}),
+    do: {:error, :unavailable}
+
   defp ensure_current_tsl(%{known_coordinator: _coordinator, transaction_system_layout: tsl} = t)
        when not is_nil(tsl) do
     # Use cached TSL (updated via push notifications)

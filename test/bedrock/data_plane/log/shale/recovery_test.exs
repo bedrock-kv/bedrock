@@ -9,6 +9,9 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
   @moduletag :tmp_dir
 
+  # Helper functions for common test patterns
+  defp version(n), do: Version.from_integer(n)
+
   setup %{tmp_dir: tmp_dir} do
     {:ok, recycler} =
       start_supervised({SegmentRecycler, path: tmp_dir, min_available: 1, max_available: 1, segment_size: 1024 * 1024})
@@ -20,8 +23,8 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       active_segment: nil,
       segments: [],
       writer: nil,
-      oldest_version: Version.from_integer(0),
-      last_version: Version.from_integer(0)
+      oldest_version: version(0),
+      last_version: version(0)
     }
 
     {:ok, state: state, tmp_dir: tmp_dir}
@@ -35,66 +38,59 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
                Recovery.recover_from(
                  unlocked_state,
                  :source,
-                 Version.from_integer(1),
-                 Version.from_integer(2)
+                 version(1),
+                 version(2)
                )
     end
 
     test "successfully recovers with no transactions", %{state: state} do
       source_log = setup_mock_log([])
+      expected_version = version(1)
 
-      assert {:ok, recovered} =
+      assert {:ok, %{mode: :running, oldest_version: ^expected_version, last_version: ^expected_version}} =
                Recovery.recover_from(
                  state,
                  source_log,
-                 Version.from_integer(1),
-                 Version.from_integer(1)
+                 expected_version,
+                 expected_version
                )
-
-      assert recovered.mode == :running
-      assert recovered.oldest_version == Version.from_integer(1)
-      assert recovered.last_version == Version.from_integer(1)
     end
 
     test "correctly handles recovery when first_version equals last_version", %{state: state} do
       # This test verifies the fix for the issue where logs would report having
       # version ranges but had no segments loaded, causing :not_found errors
-      version = Version.from_integer(5)
+      v = version(5)
 
-      assert {:ok, recovered} =
+      assert {:ok, %{mode: :running, oldest_version: ^v, last_version: ^v, active_segment: segment, writer: writer}} =
                Recovery.recover_from(
                  state,
                  nil,
-                 version,
-                 version
+                 v,
+                 v
                )
 
-      assert recovered.mode == :running
-      assert recovered.oldest_version == version
-      assert recovered.last_version == version
-      assert recovered.active_segment
-      assert recovered.writer
+      assert segment
+      assert writer
     end
 
     test "successfully recovers with valid transactions", %{state: state} do
+      first_version = version(1)
+      last_version = version(2)
+
       transactions = [
-        create_encoded_tx(Version.from_integer(1), %{"data" => "test1"}),
-        create_encoded_tx(Version.from_integer(2), %{"data" => "test2"})
+        create_encoded_tx(first_version, %{"data" => "test1"}),
+        create_encoded_tx(last_version, %{"data" => "test2"})
       ]
 
       source_log = setup_mock_log(transactions)
 
-      assert {:ok, recovered} =
+      assert {:ok, %{mode: :running, oldest_version: ^first_version, last_version: ^last_version}} =
                Recovery.recover_from(
                  state,
                  source_log,
-                 Version.from_integer(1),
-                 Version.from_integer(2)
+                 first_version,
+                 last_version
                )
-
-      assert recovered.mode == :running
-      assert recovered.oldest_version == Version.from_integer(1)
-      assert recovered.last_version == Version.from_integer(2)
     end
 
     test "handles unavailable source log", %{state: state} do
@@ -104,42 +100,25 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
                Recovery.recover_from(
                  state,
                  source_log,
-                 Version.from_integer(1),
-                 Version.from_integer(2)
+                 version(1),
+                 version(2)
                )
     end
   end
 
   describe "pull_transactions/4" do
-    test "handles empty transaction list", %{state: state} do
+    test "sets versions correctly when first_version equals last_version", %{state: state} do
+      # This test covers both empty transaction list and version consistency scenarios
+      v = version(10)
       source_log = setup_mock_log([])
 
-      assert {:ok, result_state} =
+      assert {:ok, %{oldest_version: ^v, last_version: ^v}} =
                Recovery.pull_transactions(
                  state,
                  source_log,
-                 Version.from_integer(1),
-                 Version.from_integer(1)
+                 v,
+                 v
                )
-
-      assert result_state.oldest_version == Version.from_integer(1)
-      assert result_state.last_version == Version.from_integer(1)
-    end
-
-    test "correctly sets versions when first_version equals last_version", %{state: state} do
-      # This directly tests the fix for the version consistency issue
-      version = Version.from_integer(10)
-
-      assert {:ok, result_state} =
-               Recovery.pull_transactions(
-                 state,
-                 nil,
-                 version,
-                 version
-               )
-
-      assert result_state.oldest_version == version
-      assert result_state.last_version == version
     end
 
     test "handles invalid transaction data", %{state: state} do
@@ -149,8 +128,8 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
                Recovery.pull_transactions(
                  state,
                  source_log,
-                 Version.from_integer(1),
-                 Version.from_integer(2)
+                 version(1),
+                 version(2)
                )
     end
   end

@@ -15,130 +15,129 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReads do
   alias Bedrock.DataPlane.Storage
   alias Bedrock.KeySelector
 
-  @type storage_fetch_fn() :: (pid(), KeySelector.t() | binary(), Bedrock.version(), keyword() ->
-                                 {:ok, binary()} | {:error, atom()})
+  @type storage_get_key_fn() :: (pid(), binary(), Bedrock.version(), keyword() ->
+                                   {:ok, binary()} | {:error, atom()})
+
+  @type storage_get_key_selector_fn() :: (pid(), KeySelector.t(), Bedrock.version(), keyword() ->
+                                            {:ok, binary()} | {:error, atom()})
 
   @doc """
-  Fetch a regular key within the transaction context.
+  Get a regular key within the transaction context.
 
   Expects pre-encoded keys and returns raw values.
   """
-  @spec fetch_key(State.t(), key :: Bedrock.key()) ::
-          {State.t(),
-           {:ok, Bedrock.value()}
-           | {:error, :not_found}
-           | {:error, :version_too_old}
-           | {:error, :version_too_new}
-           | {:error, :unavailable}
-           | {:error, :timeout}}
-  @spec fetch_key(
+  @spec get_key(
           State.t(),
           key :: Bedrock.key(),
-          opts :: [
-            storage_fetch_fn: storage_fetch_fn()
-          ]
+          opts :: [storage_get_key_fn: storage_get_key_fn(), snapshot: boolean()]
         ) ::
           {State.t(),
-           {:ok, Bedrock.value()}
-           | {:error, :not_found | :version_too_old | :version_too_new | :unavailable | :timeout}}
-  def fetch_key(t, key, opts \\ []) do
+           {:ok, {Bedrock.key(), Bedrock.value()}}
+           | {:error, :not_found}
+           | {:failure,
+              %{
+                (:timeout
+                 | :unavailable
+                 | :version_too_old
+                 | :version_too_new
+                 | :no_servers_to_race
+                 | :layout_lookup_failed) => [pid()]
+              }}}
+  def get_key(t, key, opts \\ []) do
     case Tx.repeatable_read(t.tx, key) do
       nil ->
-        operation_fn = fn storage_server, state ->
-          storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
-          wrap_storage_fetch_result(storage_fetch_fn, storage_server, key, state)
-        end
+        storage_get_key_fn = Keyword.get(opts, :storage_get_key_fn, &Storage.get/4)
 
-        case fetch_as_key_value(t, key, key, operation_fn, opts) do
-          {:ok, new_state, {_key, raw_value}} ->
-            {new_state, {:ok, raw_value}}
-
-          {:error, reason, new_state} ->
-            {new_state, {:error, reason}}
-        end
+        t
+        |> ensure_read_version!(opts)
+        |> execute_get_query(
+          key,
+          &case storage_get_key_fn.(&1, key, &2, timeout: &3) do
+            {:ok, raw_value} -> {:ok, {key, raw_value}}
+            {:error, reason} -> {:error, reason}
+            {:failure, reason, storage_id} -> {:failure, reason, storage_id}
+          end,
+          opts
+        )
 
       :clear ->
         {t, {:error, :not_found}}
 
       value ->
-        {t, {:ok, value}}
+        {t, {:ok, {key, value}}}
     end
   end
 
   @doc """
-  Fetch a KeySelector within the transaction context.
+  Get a KeySelector within the transaction context.
   """
-  @spec fetch_key_selector(State.t(), KeySelector.t()) :: {State.t(), {:ok, Bedrock.key_value()} | {:error, atom()}}
-  @spec fetch_key_selector(
+  @spec get_key_selector(
           State.t(),
           KeySelector.t(),
-          opts :: [
-            storage_fetch_fn: storage_fetch_fn()
-          ]
+          opts :: [storage_get_key_selector_fn: storage_get_key_selector_fn()]
         ) ::
           {State.t(),
            {:ok, Bedrock.key_value()}
            | {:error, :not_found}
-           | {:error, :version_too_old}
-           | {:error, :version_too_new}
-           | {:error, :decode_error}
-           | {:error, :unavailable}
-           | {:error, :timeout}}
-  def fetch_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
-    operation_fn = fn storage_server, state ->
-      storage_fetch_fn = Keyword.get(opts, :storage_fetch_fn, &Storage.fetch/4)
+           | {:failure,
+              %{
+                (:timeout
+                 | :unavailable
+                 | :version_too_old
+                 | :version_too_new
+                 | :no_servers_to_race
+                 | :layout_lookup_failed) => [pid()]
+              }}}
+  def get_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
+    storage_get_key_selector_fn = Keyword.get(opts, :storage_get_key_selector_fn, &Storage.get/4)
 
-      case storage_fetch_fn.(storage_server, key_selector, state.read_version, timeout: state.fetch_timeout_in_ms) do
-        {:ok, {resolved_key, value}} -> {:ok, {:ok, {resolved_key, value}}}
-        {:error, reason} -> {:ok, {:error, reason}}
-      end
-    end
-
-    case fetch_as_key_value(t, key_selector.key, :no_merge, operation_fn, opts) do
-      {:ok, new_state, {resolved_key, value}} -> {new_state, {:ok, {resolved_key, value}}}
-      {:error, reason, new_state} -> {new_state, {:error, reason}}
-    end
+    t
+    |> ensure_read_version!(opts)
+    |> execute_get_query(
+      key_selector.key,
+      &case storage_get_key_selector_fn.(&1, key_selector, &2, timeout: &3) do
+        {:ok, nil} -> {:ok, nil}
+        {:ok, {resolved_key, value}} -> {:ok, {resolved_key, value}}
+        {:error, reason} -> {:error, reason}
+        {:failure, reason, storage_id} -> {:failure, reason, storage_id}
+      end,
+      opts
+    )
   end
 
   # Private helper functions
 
-  @spec fetch_as_key_value(
-          State.t(),
-          racing_key :: binary(),
-          merge_key :: binary() | :no_merge,
-          operation_fn :: (pid(), State.t() -> {:ok, any()} | {:error, any()}),
-          opts :: keyword()
-        ) ::
-          {:ok, State.t(), {binary(), binary()}}
-          | {:error, atom(), State.t()}
-  defp fetch_as_key_value(state, racing_key, merge_key, operation_fn, opts) do
+  defp execute_get_query(state, racing_key, operation_fn, opts) do
+    snapshot = Keyword.get(opts, :snapshot, false)
+
     state
-    |> ensure_read_version!(opts)
-    |> StorageRacing.race_storage_servers(racing_key, operation_fn, opts)
+    |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
-      {:ok, {{:ok, {key, value}}, _shard_range}, final_state} ->
-        {:ok, %{final_state | tx: Tx.merge_storage_read(final_state.tx, key, value)}, {key, value}}
+      {state, {:failure, failures_by_reason}} ->
+        {state, {:failure, failures_by_reason}}
 
-      {:ok, {{:error, :not_found}, _shard_range}, final_state} when merge_key != :no_merge ->
-        {:error, :not_found, %{final_state | tx: Tx.merge_storage_read(final_state.tx, merge_key, :not_found)}}
+      {state, {:ok, {nil, _shard_range}}} ->
+        {state, {:error, :not_found}}
 
-      {:ok, {{:error, :not_found}, _shard_range}, final_state} ->
-        {:error, :not_found, final_state}
+      {state, {:ok, {{key, nil}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.merge_storage_read(state.tx, key, :not_found)}
+          end
 
-      {:ok, {{:error, reason}, _shard_range}, final_state} ->
-        {:error, reason, final_state}
+        {state, {:error, :not_found}}
 
-      {:error, reason, state} ->
-        {:error, reason, state}
-    end
-  end
+      {state, {:ok, {{key, value}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.merge_storage_read(state.tx, key, value)}
+          end
 
-  # Helper function to avoid deep nesting in fetch_key operation_fn
-  defp wrap_storage_fetch_result(storage_fetch_fn, storage_server, key, state) do
-    case storage_fetch_fn.(storage_server, key, state.read_version, timeout: state.fetch_timeout_in_ms) do
-      {:ok, raw_value} -> {:ok, {:ok, {key, raw_value}}}
-      {:error, reason} when reason in [:not_found, :version_too_old, :version_too_new] -> {:ok, {:error, reason}}
-      {:error, reason} -> {:error, reason}
+        {state, {:ok, {key, value}}}
     end
   end
 end

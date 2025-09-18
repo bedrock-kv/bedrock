@@ -2,11 +2,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   @moduledoc false
 
   import Bedrock.DataPlane.CommitProxy.Batch,
-    only: [new_batch: 3, add_transaction: 3, set_finalized_at: 2]
+    only: [new_batch: 3, add_transaction: 4, set_finalized_at: 2]
 
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 1]
 
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.ConflictSharding
+  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
 
@@ -31,12 +33,27 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
         {:ok,
          timestamp()
          |> new_batch(last_commit_version, commit_version)
-         |> add_transaction(transaction, reply_fn)
+         |> add_transaction(transaction, reply_fn, nil)
          |> set_finalized_at(timestamp())}
 
       {:error, :unavailable} ->
         {:error, :sequencer_unavailable}
     end
+  end
+
+  @spec create_resolver_task(Transaction.encoded(), LayoutOptimization.precomputed_layout()) :: Task.t()
+  def create_resolver_task(transaction, %{resolver_refs: [single_ref], resolver_ends: _ends}) do
+    Task.async(fn ->
+      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      %{single_ref => sections}
+    end)
+  end
+
+  def create_resolver_task(transaction, %{resolver_refs: refs, resolver_ends: ends}) do
+    Task.async(fn ->
+      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
+    end)
   end
 
   @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}
@@ -52,10 +69,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   def start_batch_if_needed(t), do: t
 
-  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn()) ::
+  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn(), Task.t() | nil) ::
           State.t()
-  def add_transaction_to_batch(t, transaction, reply_fn) when is_binary(transaction),
-    do: %{t | batch: add_transaction(t.batch, transaction, reply_fn)}
+  def add_transaction_to_batch(t, transaction, reply_fn, task) when is_binary(transaction),
+    do: %{t | batch: add_transaction(t.batch, transaction, reply_fn, task)}
 
   @spec apply_finalization_policy(State.t()) ::
           {State.t(), batch_to_finalize :: Batch.t()} | {State.t(), nil}

@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.2.0",
+      version: "0.3.0-rc2",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -27,8 +27,7 @@ defmodule Bedrock.MixProject do
     [
       plt_core_path: "priv/plts",
       plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-      plt_add_apps: [:ex_unit, :mix],
-      ignore_warnings: ".dialyzer_ignore.exs"
+      plt_add_apps: [:ex_unit, :mix]
     ]
   end
 
@@ -44,7 +43,8 @@ defmodule Bedrock.MixProject do
     add_deps_for_dev_and_test([
       {:bedrock_raft, git: "https://github.com/jallum/bedrock_raft.git", tag: "0.9.6"},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.2"}
+      {:telemetry, "~> 1.2"},
+      {:exqlite, "~> 0.33"}
     ])
   end
 

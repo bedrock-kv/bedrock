@@ -5,30 +5,46 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
   alias Bedrock.DataPlane.Sequencer.State
   alias Bedrock.DataPlane.Version
 
+  # Helper function to create a test state with customizable fields
+  defp create_state(overrides \\ []) do
+    defaults = [
+      director: self(),
+      epoch: 1,
+      next_commit_version_int: 101,
+      last_commit_version_int: 100,
+      known_committed_version_int: 100,
+      epoch_baseline_version_int: 100,
+      epoch_start_monotonic_us: System.monotonic_time(:microsecond)
+    ]
+
+    struct(State, Keyword.merge(defaults, overrides))
+  end
+
   describe "sequencer version tracking" do
     test "initialization sets all three version counters correctly" do
       initial_version = Version.from_integer(100)
       {:ok, state} = Server.init({self(), 1, initial_version})
 
-      assert state.next_commit_version_int == 101
-      assert state.last_commit_version_int == 100
-      assert state.known_committed_version_int == 100
-      assert state.epoch_baseline_version_int == 100
-      assert is_integer(state.epoch_start_monotonic_us)
-      assert state.epoch == 1
-      assert state.director == self()
+      assert %State{
+               next_commit_version_int: 101,
+               last_commit_version_int: 100,
+               known_committed_version_int: 100,
+               epoch_baseline_version_int: 100,
+               epoch: 1,
+               director: director,
+               epoch_start_monotonic_us: epoch_start
+             } = state
+
+      assert director == self()
+      assert is_integer(epoch_start)
     end
 
     test "next_commit_version forms proper Lamport clock chain" do
-      initial_state = %State{
-        director: self(),
-        epoch: 1,
-        next_commit_version_int: 101,
-        last_commit_version_int: 100,
-        known_committed_version_int: 95,
-        epoch_baseline_version_int: 90,
-        epoch_start_monotonic_us: System.monotonic_time(:microsecond)
-      }
+      initial_state =
+        create_state(
+          known_committed_version_int: 95,
+          epoch_baseline_version_int: 90
+        )
 
       {:reply, {:ok, last_commit, commit_version}, new_state} =
         Server.handle_call(:next_commit_version, self(), initial_state)
@@ -37,24 +53,27 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       assert last_commit == Version.from_integer(100)
       # With microsecond-based versioning, commit_version should be >= 101
       assert Version.to_integer(commit_version) >= 101
+
+      # Verify state changes with pattern matching
+      assert %State{
+               next_commit_version_int: next_commit,
+               last_commit_version_int: last_commit_int,
+               known_committed_version_int: 95
+             } = new_state
+
       # assignment counter incremented (by at least 1)
-      assert new_state.next_commit_version_int >= 102
+      assert next_commit >= 102
       # last_commit_version updated to what we just assigned
-      assert new_state.last_commit_version_int >= 101
-      # known_committed_version unchanged (Commit Proxy updates this)
-      assert new_state.known_committed_version_int == 95
+      assert last_commit_int >= 101
     end
 
     test "next_read_version returns current known committed version" do
-      state = %State{
-        director: self(),
-        epoch: 1,
-        next_commit_version_int: 105,
-        last_commit_version_int: 104,
-        known_committed_version_int: 103,
-        epoch_baseline_version_int: 100,
-        epoch_start_monotonic_us: System.monotonic_time(:microsecond)
-      }
+      state =
+        create_state(
+          next_commit_version_int: 105,
+          last_commit_version_int: 104,
+          known_committed_version_int: 103
+        )
 
       {:reply, {:ok, version}, ^state} =
         Server.handle_call(:next_read_version, self(), state)
@@ -64,64 +83,58 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
     end
 
     test "report_successful_commit updates known committed version monotonically" do
-      initial_state = %State{
-        director: self(),
-        epoch: 1,
-        next_commit_version_int: 105,
-        last_commit_version_int: 104,
-        known_committed_version_int: 100,
-        epoch_baseline_version_int: 90,
-        epoch_start_monotonic_us: System.monotonic_time(:microsecond)
-      }
+      initial_state =
+        create_state(
+          next_commit_version_int: 105,
+          last_commit_version_int: 104,
+          epoch_baseline_version_int: 90
+        )
 
       # Report commit version 103
       {:reply, :ok, state1} =
         Server.handle_call({:report_successful_commit, Version.from_integer(103)}, self(), initial_state)
 
-      assert state1.known_committed_version_int == 103
-      # unchanged
-      assert state1.next_commit_version_int == 105
-      assert state1.last_commit_version_int == 104
+      assert %State{
+               known_committed_version_int: 103,
+               next_commit_version_int: 105,
+               last_commit_version_int: 104
+             } = state1
 
       # Report older commit version 102 - should not decrease known_committed_version
       {:reply, :ok, state2} =
         Server.handle_call({:report_successful_commit, Version.from_integer(102)}, self(), state1)
 
       # unchanged (monotonic)
-      assert state2.known_committed_version_int == 103
+      assert %State{known_committed_version_int: 103} = state2
 
       # Report newer commit version 104
       {:reply, :ok, state3} =
         Server.handle_call({:report_successful_commit, Version.from_integer(104)}, self(), state2)
 
       # updated
-      assert state3.known_committed_version_int == 104
+      assert %State{known_committed_version_int: 104} = state3
     end
 
     test "version invariants maintained" do
       # Start with properly initialized state
-      state = %State{
-        director: self(),
-        epoch: 1,
-        next_commit_version_int: 101,
-        last_commit_version_int: 100,
-        known_committed_version_int: 100,
-        epoch_baseline_version_int: 100,
-        epoch_start_monotonic_us: System.monotonic_time(:microsecond)
-      }
+      state = create_state()
 
       # Assign several versions
       {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
       {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
       {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
 
-      assert state.next_commit_version_int >= 104
-      assert state.last_commit_version_int >= 103
-      assert state.known_committed_version_int == 100
-      # invariants
-      assert state.known_committed_version_int <= state.last_commit_version_int
+      assert %State{
+               next_commit_version_int: next_commit,
+               last_commit_version_int: last_commit,
+               known_committed_version_int: 100
+             } = state
 
-      assert state.last_commit_version_int < state.next_commit_version_int
+      assert next_commit >= 104
+      assert last_commit >= 103
+      # invariants
+      assert 100 <= last_commit
+      assert last_commit < next_commit
 
       # Report some commits (out of order)
       {:reply, :ok, state} =
@@ -130,13 +143,17 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       {:reply, :ok, state} =
         Server.handle_call({:report_successful_commit, Version.from_integer(101)}, self(), state)
 
-      assert state.next_commit_version_int >= 104
-      assert state.last_commit_version_int >= 103
-      assert state.known_committed_version_int == 102
-      # invariants maintained
-      assert state.known_committed_version_int <= state.last_commit_version_int
+      assert %State{
+               next_commit_version_int: next_commit,
+               last_commit_version_int: last_commit,
+               known_committed_version_int: 102
+             } = state
 
-      assert state.last_commit_version_int < state.next_commit_version_int
+      assert next_commit >= 104
+      assert last_commit >= 103
+      # invariants maintained
+      assert 102 <= last_commit
+      assert last_commit < next_commit
     end
   end
 end

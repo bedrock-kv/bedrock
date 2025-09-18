@@ -6,6 +6,8 @@ defmodule Bedrock.DataPlane.Version do
 
   @type t :: binary()
 
+  defguard is_version(value) when is_binary(value) and byte_size(value) == 8
+
   # Version constants
   @zero_version <<0::unsigned-big-64>>
 

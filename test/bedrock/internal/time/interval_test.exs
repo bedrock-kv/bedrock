@@ -18,15 +18,17 @@ defmodule Bedrock.Internal.Time.IntervalTest do
   end
 
   describe "between/3" do
-    test "calculates interval between two DateTime values" do
+    setup do
       start = ~U[2023-01-01T00:00:00Z]
       stop = ~U[2023-01-01T00:00:10Z]
+      %{start: start, stop: stop}
+    end
+
+    test "calculates interval between two DateTime values", %{start: start, stop: stop} do
       assert Interval.between(start, stop, :second) == {:second, 10}
     end
 
-    test "defaults to seconds if unit is not provided" do
-      start = ~U[2023-01-01T00:00:00Z]
-      stop = ~U[2023-01-01T00:00:10Z]
+    test "defaults to seconds if unit is not provided", %{start: start, stop: stop} do
       assert Interval.between(start, stop) == {:second, 10}
     end
   end
@@ -43,23 +45,35 @@ defmodule Bedrock.Internal.Time.IntervalTest do
 
   describe "normalize/1" do
     test "scales down intervals correctly" do
-      assert Interval.normalize({:week, 0.5}) == {:day, 3.5}
-      assert Interval.normalize({:day, 0.5}) == {:hour, 12.0}
-      assert Interval.normalize({:hour, 0.5}) == {:minute, 30.0}
-      assert Interval.normalize({:minute, 0.5}) == {:second, 30.0}
-      assert Interval.normalize({:second, 0.5}) == {:millisecond, 500.0}
-      assert Interval.normalize({:millisecond, 0.5}) == {:microsecond, 500.0}
-      assert Interval.normalize({:microsecond, 0.5}) == {:nanosecond, 500.0}
+      scale_down_cases = [
+        {{:week, 0.5}, {:day, 3.5}},
+        {{:day, 0.5}, {:hour, 12.0}},
+        {{:hour, 0.5}, {:minute, 30.0}},
+        {{:minute, 0.5}, {:second, 30.0}},
+        {{:second, 0.5}, {:millisecond, 500.0}},
+        {{:millisecond, 0.5}, {:microsecond, 500.0}},
+        {{:microsecond, 0.5}, {:nanosecond, 500.0}}
+      ]
+
+      for {input, expected} <- scale_down_cases do
+        assert Interval.normalize(input) == expected
+      end
     end
 
     test "scales up intervals correctly" do
-      assert Interval.normalize({:nanosecond, 1000}) == {:microsecond, 1}
-      assert Interval.normalize({:microsecond, 1000}) == {:millisecond, 1}
-      assert Interval.normalize({:millisecond, 1000}) == {:second, 1}
-      assert Interval.normalize({:second, 60}) == {:minute, 1}
-      assert Interval.normalize({:minute, 60}) == {:hour, 1}
-      assert Interval.normalize({:hour, 24}) == {:day, 1}
-      assert Interval.normalize({:day, 7}) == {:week, 1}
+      scale_up_cases = [
+        {{:nanosecond, 1000}, {:microsecond, 1}},
+        {{:microsecond, 1000}, {:millisecond, 1}},
+        {{:millisecond, 1000}, {:second, 1}},
+        {{:second, 60}, {:minute, 1}},
+        {{:minute, 60}, {:hour, 1}},
+        {{:hour, 24}, {:day, 1}},
+        {{:day, 7}, {:week, 1}}
+      ]
+
+      for {input, expected} <- scale_up_cases do
+        assert Interval.normalize(input) == expected
+      end
     end
 
     test "rounds float values correctly" do

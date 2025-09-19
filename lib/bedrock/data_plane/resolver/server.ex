@@ -223,7 +223,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   def handle_continue(:next_timeout, t) do
     timeout = WaitingList.next_timeout(t.waiting)
     time_since_last_sweep = Time.elapsed_monotonic_in_ms(t.last_sweep_time)
-    should_sweep = timeout == :infinity || time_since_last_sweep >= t.sweep_interval_ms
+    should_sweep = time_since_last_sweep >= t.sweep_interval_ms
 
     if should_sweep do
       retention_microseconds = t.version_retention_ms * 1000
@@ -237,10 +237,12 @@ defmodule Bedrock.DataPlane.Resolver.Server do
           %{t | last_sweep_time: Time.monotonic_now_in_ms()}
         end
 
-      noreply(updated_state, timeout: min(timeout, t.sweep_interval_ms))
+      next_timeout = max(0, min(timeout, t.sweep_interval_ms))
+      noreply(updated_state, timeout: next_timeout)
     else
-      time_until_next_sweep = t.sweep_interval_ms - time_since_last_sweep
-      noreply(t, timeout: min(timeout, time_until_next_sweep))
+      time_until_next_sweep = max(0, t.sweep_interval_ms - time_since_last_sweep)
+      next_timeout = min(timeout, time_until_next_sweep)
+      noreply(t, timeout: next_timeout)
     end
   end
 

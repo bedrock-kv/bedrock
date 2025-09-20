@@ -13,21 +13,19 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   alias Bedrock.DataPlane.Resolver.Tree
 
   @type t :: %__MODULE__{
-          versions: [{Bedrock.version(), MapSet.t(binary()), Tree.t() | nil}],
-          tree: Tree.t() | nil
+          versions: [{Bedrock.version(), MapSet.t(binary()), Tree.t() | nil}]
         }
 
-  defstruct versions: [], tree: nil
+  defstruct versions: []
 
   @doc """
   Creates a new empty versioned conflicts structure.
   """
   @spec new() :: %__MODULE__{
-          versions: [],
-          tree: nil
+          versions: []
         }
   def new do
-    %__MODULE__{versions: [], tree: nil}
+    %__MODULE__{versions: []}
   end
 
   @doc """
@@ -52,22 +50,41 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   at versions greater than the specified version.
   """
   @spec conflict?(t(), [Bedrock.key_range()], Bedrock.version()) :: boolean()
-  def conflict?(%__MODULE__{versions: versions, tree: tree}, conflicts, version) do
+  def conflict?(%__MODULE__{versions: versions}, conflicts, version) do
     {points, ranges} = separate_conflicts(conflicts)
-
-    point_conflict?(versions, points, version) or range_conflict?(tree, ranges, version)
+    point_conflict?(versions, points, version) or range_conflict?(versions, ranges, version)
   end
+
+  defp point_conflict?([{v, _existing_points, _tree} | _rest], _points, version) when v <= version, do: false
+
+  defp point_conflict?([{_v, existing_points, _tree} | rest], points, version) do
+    if MapSet.disjoint?(points, existing_points) == false do
+      true
+    else
+      point_conflict?(rest, points, version)
+    end
+  end
+
+  defp point_conflict?([], _points, _version), do: false
+
+  defp range_conflict?([{v, _points, _tree} | _rest], _ranges, version) when v <= version, do: false
+
+  defp range_conflict?([{_v, _points, ranges_tree} | rest], ranges, version) do
+    if Enum.any?(ranges, &Tree.overlap?(ranges_tree, &1)) do
+      true
+    else
+      range_conflict?(rest, ranges, version)
+    end
+  end
+
+  defp range_conflict?([], _ranges, _version), do: false
 
   @doc """
   Adds conflicts for a new version to the structure.
   """
   @spec add_conflicts(t(), [Bedrock.key_range()], Bedrock.version()) :: t()
-  def add_conflicts(%__MODULE__{versions: versions, tree: tree} = conflicts, new_conflicts, version) do
+  def add_conflicts(%__MODULE__{versions: versions} = conflicts, new_conflicts, version) do
     {points, ranges} = separate_conflicts(new_conflicts)
-
-    # Add ranges to the global tree
-    range_value_pairs = Enum.map(ranges, &{&1, version})
-    new_tree = Tree.insert_bulk(tree, range_value_pairs)
 
     # Add version entry with points and ranges tree
     range_value_pairs = Enum.map(ranges, &{&1, version})
@@ -75,22 +92,29 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
 
     new_versions = [{version, points, ranges_tree} | versions]
 
-    %{conflicts | versions: new_versions, tree: new_tree}
+    %{conflicts | versions: new_versions}
   end
 
   @doc """
   Removes conflicts older than the specified version.
   """
   @spec remove_old_conflicts(t(), Bedrock.version()) :: t()
-  def remove_old_conflicts(%__MODULE__{versions: versions, tree: tree} = conflicts, min_version) do
-    # Filter versions to keep only those >= min_version
-    new_versions = Enum.filter(versions, fn {version, _points, _tree} -> version >= min_version end)
-
-    # Rebuild global tree with only remaining versions
-    new_tree = Tree.filter_by_value(tree, &(&1 >= min_version))
-
-    %{conflicts | versions: new_versions, tree: new_tree}
+  def remove_old_conflicts(%__MODULE__{versions: versions} = conflicts, min_version) do
+    new_versions = keep_recent_versions(versions, min_version, [])
+    %{conflicts | versions: new_versions}
   end
+
+  # Keep this version and continue
+  defp keep_recent_versions([{version, _points, _tree} = entry | rest], min_version, acc) when version >= min_version,
+    do: keep_recent_versions(rest, min_version, [entry | acc])
+
+  # This version is too old, and all subsequent versions will be even older since versions are in reverse chronological
+  # order - stop here
+  defp keep_recent_versions([{version, _points, _tree} | _rest], min_version, acc) when version < min_version,
+    do: Enum.reverse(acc)
+
+  # All done, reverse accumulated entries to restore original order
+  defp keep_recent_versions([], _min_version, acc), do: Enum.reverse(acc)
 
   @doc """
   Returns metrics about the conflict structure for debugging.
@@ -115,39 +139,7 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
     }
   end
 
-  # Check if any points conflict with existing points at later versions
-  # Early exit when we reach a version <= our version since versions are in reverse chronological order
-  defp point_conflict?(versions, points, version) do
-    point_conflict_recursive(versions, points, version)
-  end
-
-  defp point_conflict_recursive([], _points, _version), do: false
-
-  defp point_conflict_recursive([{v, _existing_points, _tree} | _rest], _points, version) when v <= version do
-    # All subsequent versions will be <= our version, so we can stop
-    false
-  end
-
-  defp point_conflict_recursive([{_v, existing_points, _tree} | rest], points, version) do
-    if MapSet.disjoint?(points, existing_points) == false do
-      # Found a conflict at a later version
-      true
-    else
-      # No conflict at this version, continue checking
-      point_conflict_recursive(rest, points, version)
-    end
-  end
-
-  # Check if any ranges conflict with existing ranges at later versions
-  defp range_conflict?(tree, ranges, version) do
-    predicate = fn v -> v > version end
-    Enum.any?(ranges, &Tree.overlap?(tree, &1, predicate))
-  end
-
   defp count_tree_nodes(nil), do: 0
   defp count_tree_nodes(%Tree{left: nil, right: nil}), do: 1
-
-  defp count_tree_nodes(%Tree{left: left, right: right}) do
-    1 + count_tree_nodes(left) + count_tree_nodes(right)
-  end
+  defp count_tree_nodes(%Tree{left: left, right: right}), do: 1 + count_tree_nodes(left) + count_tree_nodes(right)
 end

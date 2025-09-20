@@ -15,13 +15,13 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   import Bedrock.DataPlane.Resolver.Telemetry,
     only: [
-      emit_received: 4,
-      emit_processing: 3,
-      emit_completed: 5,
-      emit_reply_sent: 4,
-      emit_waiting_list: 4,
-      emit_waiting_list_inserted: 5,
-      emit_waiting_resolved: 4,
+      emit_received: 2,
+      emit_processing: 2,
+      emit_completed: 3,
+      emit_reply_sent: 3,
+      emit_waiting_list: 2,
+      emit_waiting_list_inserted: 3,
+      emit_waiting_resolved: 3,
       emit_validation_error: 2,
       emit_waiting_list_validation_error: 2
     ]
@@ -110,7 +110,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   @impl true
   def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions}, from, t)
       when t.mode == :running and epoch == t.epoch and last_version == t.last_version do
-    emit_received(length(transactions), last_version, next_version, t.last_version)
+    emit_received(transactions, next_version)
 
     transactions
     |> Validation.check_transactions()
@@ -119,7 +119,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         noreply(t, continue: {:process_ready, {next_version, transactions, reply_fn(from)}})
 
       {:error, reason} ->
-        emit_validation_error(length(transactions), reason)
+        emit_validation_error(transactions, reason)
         reply(t, {:error, reason}, continue: :next_timeout)
     end
   end
@@ -127,7 +127,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   @impl true
   def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions}, from, t)
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
-    emit_waiting_list(length(transactions), last_version, next_version, t.last_version)
+    emit_waiting_list(transactions, next_version)
 
     transactions
     |> Validation.check_transactions()
@@ -144,18 +144,12 @@ defmodule Bedrock.DataPlane.Resolver.Server do
             @default_waiting_timeout_ms
           )
 
-        emit_waiting_list_inserted(
-          length(transactions),
-          map_size(new_waiting),
-          last_version,
-          next_version,
-          t.last_version
-        )
+        emit_waiting_list_inserted(transactions, new_waiting, next_version)
 
         noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
 
       {:error, reason} ->
-        emit_waiting_list_validation_error(length(transactions), reason)
+        emit_waiting_list_validation_error(transactions, reason)
         reply(t, {:error, reason}, continue: :next_timeout)
     end
   end
@@ -189,29 +183,21 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_continue({:process_ready, {next_version, transactions, reply_fn}}, t) do
-    emit_processing(length(transactions), t.last_version, next_version)
+    emit_processing(transactions, next_version)
 
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
     t = %{t | conflicts: conflicts, last_version: next_version}
-
-    emit_completed(
-      length(transactions),
-      length(aborted),
-      t.last_version,
-      next_version,
-      t.last_version
-    )
+    emit_completed(transactions, aborted, next_version)
 
     reply_fn.({:ok, aborted})
-
-    emit_reply_sent(length(transactions), length(aborted), t.last_version, next_version)
+    emit_reply_sent(transactions, aborted, next_version)
 
     case WaitingList.remove(t.waiting, next_version) do
       {updated_waiting, nil} ->
         noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
       {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions}}} ->
-        emit_waiting_resolved(length(transactions), 0, waiting_next_version, t.last_version)
+        emit_waiting_resolved(transactions, [], waiting_next_version)
 
         noreply(%{t | waiting: updated_waiting},
           continue: {:process_ready, {waiting_next_version, transactions, reply_fn}}

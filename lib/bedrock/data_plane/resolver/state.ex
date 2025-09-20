@@ -7,12 +7,12 @@ defmodule Bedrock.DataPlane.Resolver.State do
   authentication.
   """
 
-  alias Bedrock.DataPlane.Resolver.VersionedConflicts
+  alias Bedrock.DataPlane.Resolver.Conflicts
 
   @type mode :: :running
 
   @type t :: %__MODULE__{
-          conflicts: VersionedConflicts.t(),
+          conflicts: Conflicts.t(),
           oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
           waiting: Bedrock.Internal.WaitingList.t(),

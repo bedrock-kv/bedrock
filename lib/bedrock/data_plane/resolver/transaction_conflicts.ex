@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
   Each transaction is checked against the interval tree to determine if its reads
   or writes conflict with previously committed transactions at later versions.
   """
-  alias Bedrock.DataPlane.Resolver.VersionedConflicts
+  alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Transaction
 
   @doc """
@@ -31,8 +31,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
 
   Transactions are rolled back in the order they are processed when conflicts are detected.
   """
-  @spec resolve(VersionedConflicts.t(), [Transaction.encoded()], write_version :: Bedrock.version()) ::
-          {VersionedConflicts.t(), aborted :: [non_neg_integer()]}
+  @spec resolve(Conflicts.t(), [Transaction.encoded()], write_version :: Bedrock.version()) ::
+          {Conflicts.t(), aborted :: [non_neg_integer()]}
   def resolve(conflicts, [], _), do: {conflicts, []}
 
   def resolve(conflicts, transactions, write_version) do
@@ -51,8 +51,8 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     {final_conflicts, failed_indexes}
   end
 
-  @spec try_to_resolve_transaction(VersionedConflicts.t(), Transaction.encoded(), Bedrock.version()) ::
-          {:ok, VersionedConflicts.t()} | :abort
+  @spec try_to_resolve_transaction(Conflicts.t(), Transaction.encoded(), Bedrock.version()) ::
+          {:ok, Conflicts.t()} | :abort
   def try_to_resolve_transaction(conflicts, transaction, write_version) do
     if conflict?(conflicts, transaction, write_version) do
       :abort
@@ -61,12 +61,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     end
   end
 
-  @spec conflict?(VersionedConflicts.t(), Transaction.encoded(), Bedrock.version()) :: boolean()
+  @spec conflict?(Conflicts.t(), Transaction.encoded(), Bedrock.version()) :: boolean()
   def conflict?(conflicts, transaction, write_version) do
     {read_info, writes} = extract_conflicts(transaction)
-
-    write_conflict?(conflicts, writes, write_version) or
-      read_write_conflict?(conflicts, read_info)
+    write_conflict?(conflicts, writes, write_version) or read_write_conflict?(conflicts, read_info)
   end
 
   # Extract conflicts from binary transaction using optimized single-pass approach
@@ -86,33 +84,20 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolution do
     end
   end
 
-  @spec write_conflict?(VersionedConflicts.t(), [Bedrock.key_range()], Bedrock.version()) ::
-          boolean()
-  def write_conflict?(conflicts, writes, write_version) do
-    VersionedConflicts.conflict?(conflicts, writes, write_version)
-  end
+  @spec write_conflict?(Conflicts.t(), [Bedrock.key_range()], Bedrock.version()) :: boolean()
+  defp write_conflict?(conflicts, writes, write_version), do: Conflicts.conflict?(conflicts, writes, write_version)
 
-  @spec read_write_conflict?(
-          VersionedConflicts.t(),
-          nil | {Bedrock.version(), [Bedrock.key_range()]}
-        ) ::
-          boolean()
-  def read_write_conflict?(_, nil), do: false
+  @spec read_write_conflict?(Conflicts.t(), nil | {Bedrock.version(), [Bedrock.key_range()]}) :: boolean()
+  defp read_write_conflict?(_, nil), do: false
 
-  def read_write_conflict?(conflicts, {read_version, reads}) do
-    VersionedConflicts.conflict?(conflicts, reads, read_version)
-  end
+  defp read_write_conflict?(conflicts, {read_version, reads}), do: Conflicts.conflict?(conflicts, reads, read_version)
 
-  @spec version_lt(Bedrock.version()) :: (Bedrock.version() -> boolean())
-  def version_lt(version), do: &(&1 > version)
-
-  @spec apply_transaction(VersionedConflicts.t(), Transaction.encoded(), Bedrock.version()) :: VersionedConflicts.t()
+  @spec apply_transaction(Conflicts.t(), Transaction.encoded(), Bedrock.version()) :: Conflicts.t()
   def apply_transaction(conflicts, transaction, write_version) do
     {_read_info, writes} = extract_conflicts(transaction)
-    VersionedConflicts.add_conflicts(conflicts, writes, write_version)
+    Conflicts.add_conflicts(conflicts, writes, write_version)
   end
 
-  @spec remove_old_transactions(VersionedConflicts.t(), Bedrock.version()) :: VersionedConflicts.t()
-  def remove_old_transactions(conflicts, min_version),
-    do: VersionedConflicts.remove_old_conflicts(conflicts, min_version)
+  @spec remove_old_transactions(Conflicts.t(), Bedrock.version()) :: Conflicts.t()
+  def remove_old_transactions(conflicts, min_version), do: Conflicts.remove_old_conflicts(conflicts, min_version)
 end

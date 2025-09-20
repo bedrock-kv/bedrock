@@ -28,9 +28,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Resolver.State
   alias Bedrock.DataPlane.Resolver.Validation
-  alias Bedrock.DataPlane.Resolver.VersionedConflicts
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Time
   alias Bedrock.Internal.WaitingList
@@ -81,7 +81,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     then(
       %State{
         lock_token: lock_token,
-        conflicts: VersionedConflicts.new(),
+        conflicts: Conflicts.new(),
         oldest_version: last_version,
         last_version: last_version,
         waiting: %{},

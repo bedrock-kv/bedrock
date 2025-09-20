@@ -1,4 +1,4 @@
-defmodule Bedrock.DataPlane.Resolver.VersionedConflicts do
+defmodule Bedrock.DataPlane.Resolver.Conflicts do
   @moduledoc """
   Optimized conflict tracking that separates point writes from range operations.
 

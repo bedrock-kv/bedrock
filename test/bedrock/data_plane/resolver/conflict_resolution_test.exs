@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       try_to_resolve_transaction: 3
     ]
 
-  alias Bedrock.DataPlane.Resolver.VersionedConflicts
+  alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Transaction
 
   # Generate a random alphanumeric string of length 1-5 characters for use as database keys
@@ -53,7 +53,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
               list_of(reads_and_writes_generator(), min_length: 10, max_length: 40),
             write_version <- integer(1_000_000..100_000_000)
           ) do
-      initial_conflicts = VersionedConflicts.new()
+      initial_conflicts = Conflicts.new()
 
       # Generate binary transactions with read and write conflicts. The write_version is
       # used to generate the read version for each transaction. The read

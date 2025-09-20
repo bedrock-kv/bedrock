@@ -58,35 +58,39 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     - tree: The interval tree to check for overlaps, or nil if empty.
     - range: A tuple representing the start and end of the range or a single
       key to be checked for overlap with range in the tree.
-    - predicate: An optional function to check if the value associated
-      with an overlapping range satisfies a condition. Defaults to always
-      returning true.
 
   ## Returns
 
-    - `true` if there is an overlap with any range in the tree that satisfies
-      the predicate function, otherwise `false`.
+    - `true` if there is an overlap with any range, otherwise `false`.
   """
   @spec overlap?(t(), Bedrock.key() | Bedrock.key_range()) :: boolean()
-  def overlap?(tree, range, predicate \\ &default_predicate/1)
+  def overlap?(tree, range)
 
-  def overlap?(nil, _, _), do: false
+  def overlap?(nil, _), do: false
 
-  def overlap?(%Tree{start: tree_start, end: tree_end} = tree, {start, end_} = range, predicate) do
-    if start < tree_end and tree_start < end_ and predicate.(tree.value) do
+  def overlap?(%Tree{start: tree_start, end: tree_end} = tree, {start, end_} = range) do
+    if start < tree_end and tree_start < end_ do
       true
     else
       if start < tree.start do
-        overlap?(tree.left, range, predicate)
+        overlap?(tree.left, range)
       else
-        overlap?(tree.right, range, predicate)
+        overlap?(tree.right, range)
       end
     end
   end
 
-  def overlap?(tree, key, predicate) when is_binary(key), do: overlap?(tree, {key, key <> <<0>>}, predicate)
-
-  defp default_predicate(_), do: true
+  def overlap?(%Tree{start: tree_start, end: tree_end} = tree, key) when is_binary(key) do
+    if key >= tree_start and key < tree_end do
+      true
+    else
+      if key < tree_start do
+        overlap?(tree.left, key)
+      else
+        overlap?(tree.right, key)
+      end
+    end
+  end
 
   @doc """
   Inserts a new interval into the tree, balancing it if necessary, and returns

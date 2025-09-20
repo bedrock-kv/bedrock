@@ -21,21 +21,18 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   end
 
   # Telemetry helpers for deterministic testing
-  defp expect_transaction_waitlisted(last_version, next_version) do
+  defp expect_transaction_waitlisted(_last_version, next_version) do
     {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted])
-    assert metadata.last_version == last_version
     assert metadata.next_version == next_version
   end
 
-  defp expect_transaction_processing_start(last_version, next_version) do
+  defp expect_transaction_processing_start(_last_version, next_version) do
     {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :processing])
-    assert metadata.last_version == last_version
     assert metadata.next_version == next_version
   end
 
-  defp expect_transaction_completed(last_version, next_version) do
+  defp expect_transaction_completed(_last_version, next_version) do
     {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :completed])
-    assert metadata.last_version == last_version
     assert metadata.next_version == next_version
   end
 

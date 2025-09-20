@@ -7,12 +7,12 @@ defmodule Bedrock.DataPlane.Resolver.State do
   authentication.
   """
 
-  alias Bedrock.DataPlane.Resolver.Tree
+  alias Bedrock.DataPlane.Resolver.Conflicts
 
   @type mode :: :running
 
   @type t :: %__MODULE__{
-          tree: Tree.t(),
+          conflicts: Conflicts.t(),
           oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
           waiting: Bedrock.Internal.WaitingList.t(),
@@ -24,7 +24,7 @@ defmodule Bedrock.DataPlane.Resolver.State do
           version_retention_ms: pos_integer(),
           last_sweep_time: integer()
         }
-  defstruct tree: nil,
+  defstruct conflicts: nil,
             oldest_version: nil,
             last_version: nil,
             waiting: %{},

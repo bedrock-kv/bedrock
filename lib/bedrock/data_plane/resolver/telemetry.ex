@@ -5,118 +5,83 @@ defmodule Bedrock.DataPlane.Resolver.Telemetry do
 
   alias Bedrock.DataPlane.Version
 
-  @spec emit_received(non_neg_integer(), Version.t(), Version.t(), Version.t()) :: :ok
-  def emit_received(transaction_count, last_version, next_version, resolver_last_version) do
+  @spec emit_received(list(), Version.t()) :: :ok
+  def emit_received(transactions, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :received],
-      %{transaction_count: transaction_count},
-      %{
-        last_version: last_version,
-        next_version: next_version,
-        resolver_last_version: resolver_last_version
-      }
+      %{transactions: transactions},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_processing(non_neg_integer(), Version.t(), Version.t()) :: :ok
-  def emit_processing(transaction_count, last_version, next_version) do
+  @spec emit_processing(list(), Version.t()) :: :ok
+  def emit_processing(transactions, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :processing],
-      %{transaction_count: transaction_count},
-      %{last_version: last_version, next_version: next_version}
+      %{transactions: transactions},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_completed(
-          non_neg_integer(),
-          non_neg_integer(),
-          Version.t(),
-          Version.t(),
-          Version.t()
-        ) :: :ok
-  def emit_completed(transaction_count, aborted_count, last_version, next_version, resolver_last_version_after) do
+  @spec emit_completed(list(), list(), Version.t()) :: :ok
+  def emit_completed(transactions, aborted, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :completed],
-      %{transaction_count: transaction_count, aborted_count: aborted_count},
-      %{
-        last_version: last_version,
-        next_version: next_version,
-        resolver_last_version_after: resolver_last_version_after
-      }
+      %{transactions: transactions, aborted: aborted},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_reply_sent(non_neg_integer(), non_neg_integer(), Version.t(), Version.t()) :: :ok
-  def emit_reply_sent(transaction_count, aborted_count, last_version, next_version) do
+  @spec emit_reply_sent(list(), list(), Version.t()) :: :ok
+  def emit_reply_sent(transactions, aborted, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :reply_sent],
-      %{transaction_count: transaction_count, aborted_count: aborted_count},
-      %{last_version: last_version, next_version: next_version}
+      %{transactions: transactions, aborted: aborted},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_waiting_list(non_neg_integer(), Version.t(), Version.t(), Version.t()) :: :ok
-  def emit_waiting_list(transaction_count, last_version, next_version, resolver_last_version) do
+  @spec emit_waiting_list(list(), Version.t()) :: :ok
+  def emit_waiting_list(transactions, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :waiting_list],
-      %{transaction_count: transaction_count},
-      %{
-        last_version: last_version,
-        next_version: next_version,
-        resolver_last_version: resolver_last_version
-      }
+      %{transactions: transactions},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_waiting_list_inserted(
-          non_neg_integer(),
-          non_neg_integer(),
-          Version.t(),
-          Version.t(),
-          Version.t()
-        ) :: :ok
-  def emit_waiting_list_inserted(
-        transaction_count,
-        waiting_list_size,
-        last_version,
-        next_version,
-        resolver_last_version
-      ) do
+  @spec emit_waiting_list_inserted(list(), map(), Version.t()) :: :ok
+  def emit_waiting_list_inserted(transactions, waiting_list, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted],
-      %{transaction_count: transaction_count, waiting_list_size: waiting_list_size},
-      %{
-        last_version: last_version,
-        next_version: next_version,
-        resolver_last_version: resolver_last_version
-      }
+      %{transactions: transactions, waiting_list: waiting_list},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_waiting_resolved(non_neg_integer(), non_neg_integer(), Version.t(), Version.t()) ::
-          :ok
-  def emit_waiting_resolved(transaction_count, aborted_count, next_version, resolver_last_version_after) do
+  @spec emit_waiting_resolved(list(), list(), Version.t()) :: :ok
+  def emit_waiting_resolved(transactions, aborted, next_version) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :waiting_resolved],
-      %{transaction_count: transaction_count, aborted_count: aborted_count},
-      %{next_version: next_version, resolver_last_version_after: resolver_last_version_after}
+      %{transactions: transactions, aborted: aborted},
+      %{next_version: next_version}
     )
   end
 
-  @spec emit_validation_error(non_neg_integer(), term()) :: :ok
-  def emit_validation_error(transaction_count, reason) do
+  @spec emit_validation_error(list(), term()) :: :ok
+  def emit_validation_error(transactions, reason) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :validation_error],
-      %{transaction_count: transaction_count},
+      %{transactions: transactions},
       %{reason: reason}
     )
   end
 
-  @spec emit_waiting_list_validation_error(non_neg_integer(), term()) :: :ok
-  def emit_waiting_list_validation_error(transaction_count, reason) do
+  @spec emit_waiting_list_validation_error(list(), term()) :: :ok
+  def emit_waiting_list_validation_error(transactions, reason) do
     :telemetry.execute(
       [:bedrock, :resolver, :resolve_transactions, :waiting_list_validation_error],
-      %{transaction_count: transaction_count},
+      %{transactions: transactions},
       %{reason: reason}
     )
   end

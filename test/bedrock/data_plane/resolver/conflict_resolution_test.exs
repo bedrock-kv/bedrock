@@ -5,10 +5,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
   import Bedrock.DataPlane.Resolver.ConflictResolution,
     only: [
       resolve: 3,
-      conflict?: 3,
       try_to_resolve_transaction: 3
     ]
 
+  alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Transaction
 
   # Generate a random alphanumeric string of length 1-5 characters for use as database keys
@@ -46,13 +46,43 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
     end
   end
 
+  describe "version merging optimization" do
+    test "add_conflicts merges when version matches top version" do
+      conflicts = Conflicts.new()
+
+      # Add first conflict at version 100
+      conflicts = Conflicts.add_conflicts(conflicts, [{"key1", "key1\0"}], 100)
+      assert [version_entry] = conflicts.versions
+      assert {100, points1, _tree1} = version_entry
+      assert MapSet.member?(points1, "key1")
+
+      # Add second conflict at same version 100 - should merge
+      conflicts = Conflicts.add_conflicts(conflicts, [{"key2", "key2\0"}], 100)
+      # Still only one entry
+      assert [version_entry] = conflicts.versions
+      assert {100, merged_points, _merged_tree} = version_entry
+      assert MapSet.member?(merged_points, "key1")
+      assert MapSet.member?(merged_points, "key2")
+
+      # Add conflict at different version 200 - should create new entry
+      conflicts = Conflicts.add_conflicts(conflicts, [{"key3", "key3\0"}], 200)
+      # Now two entries
+      assert [entry200, entry100] = conflicts.versions
+      assert {200, points200, _tree200} = entry200
+      assert {100, points100, _tree100} = entry100
+      assert MapSet.member?(points200, "key3")
+      assert MapSet.member?(points100, "key1")
+      assert MapSet.member?(points100, "key2")
+    end
+  end
+
   property "commit/2 commits transactions without conflicts and aborts those with conflicts" do
     check all(
             reads_and_writes <-
               list_of(reads_and_writes_generator(), min_length: 10, max_length: 40),
             write_version <- integer(1_000_000..100_000_000)
           ) do
-      initial_tree = nil
+      initial_conflicts = Conflicts.new()
 
       # Generate binary transactions with read and write conflicts. The write_version is
       # used to generate the read version for each transaction. The read
@@ -97,7 +127,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         end)
 
       # Pattern match the resolve result to extract failed transaction indexes
-      assert {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
+      assert {_final_conflicts, failed_indexes} = resolve(initial_conflicts, transactions, write_version)
 
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
@@ -106,10 +136,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       Enum.each(failed_indexes, fn index ->
         transactions_up_to_failure = Enum.take(transactions, index)
 
-        # Resolve transactions up to the failure point to build the conflict tree
-        assert {tree, failed_indexes} = resolve(initial_tree, transactions_up_to_failure, write_version)
+        # Resolve transactions up to the failure point to build the conflict structure
+        assert {conflicts, failed_indexes} = resolve(initial_conflicts, transactions_up_to_failure, write_version)
 
-        # The first transaction has an empty tree and should never conflict
+        # The first transaction has an empty conflicts structure and should never conflict
         # with anything.
         assert index != 0
 
@@ -120,12 +150,24 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         # Pull out the transaction that failed.
         failed_transaction = Enum.at(transactions, index)
 
-        # The failed transaction should have conflicts either on writes or
-        # due to version mismatch.
-        assert conflict?(tree, failed_transaction, write_version)
+        # The failed transaction should have read-write conflicts
+        case Transaction.read_write_conflicts(failed_transaction) do
+          {:ok, {read_info, _writes}} ->
+            # Only check read-write conflicts
+            case read_info do
+              {read_version, reads} ->
+                assert :abort == Conflicts.check_conflicts(conflicts, reads, read_version)
 
-        # The failed transaction should abort when attempted against the conflict tree
-        assert :abort = try_to_resolve_transaction(tree, failed_transaction, index)
+              _ ->
+                :ok
+            end
+
+          _ ->
+            assert false, "Failed to extract conflicts from transaction"
+        end
+
+        # The failed transaction should abort when attempted against the conflict structure
+        assert :abort = try_to_resolve_transaction(conflicts, failed_transaction, index)
       end)
     end
   end

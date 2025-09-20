@@ -49,10 +49,15 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   Checks if any of the given conflicts overlap with existing conflicts
   at versions greater than the specified version.
   """
-  @spec conflict?(t(), [Bedrock.key_range()], Bedrock.version()) :: boolean()
-  def conflict?(%__MODULE__{versions: versions}, conflicts, version) do
+  @spec check_conflicts(t(), [Bedrock.key_range()], Bedrock.version()) :: :ok | :abort
+  def check_conflicts(%__MODULE__{versions: versions}, conflicts, version) do
     {points, ranges} = separate_conflicts(conflicts)
-    point_conflict?(versions, points, version) or range_conflict?(versions, ranges, version)
+
+    if point_conflict?(versions, points, version) or range_conflict?(versions, ranges, version) do
+      :abort
+    else
+      :ok
+    end
   end
 
   defp point_conflict?([{v, _existing_points, _tree} | _rest], _points, version) when v <= version, do: false
@@ -81,12 +86,32 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
 
   @doc """
   Adds conflicts for a new version to the structure.
+  If the version matches the most recent version, merges the conflicts instead of creating a new entry.
   """
   @spec add_conflicts(t(), [Bedrock.key_range()], Bedrock.version()) :: t()
+  def add_conflicts(
+        %__MODULE__{versions: [{version, existing_points, existing_tree} | rest]} = conflicts,
+        new_conflicts,
+        version
+      ) do
+    {new_points, new_ranges} = separate_conflicts(new_conflicts)
+
+    # Merge with existing version entry
+    merged_points = MapSet.union(existing_points, new_points)
+
+    # Merge ranges by adding new ranges to existing tree
+    new_range_value_pairs = Enum.map(new_ranges, &{&1, version})
+    merged_tree = Tree.insert_bulk(existing_tree, new_range_value_pairs)
+
+    new_versions = [{version, merged_points, merged_tree} | rest]
+
+    %{conflicts | versions: new_versions}
+  end
+
   def add_conflicts(%__MODULE__{versions: versions} = conflicts, new_conflicts, version) do
     {points, ranges} = separate_conflicts(new_conflicts)
 
-    # Add version entry with points and ranges tree
+    # Add new version entry
     range_value_pairs = Enum.map(ranges, &{&1, version})
     ranges_tree = Tree.insert_bulk(nil, range_value_pairs)
 

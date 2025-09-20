@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   # Helper function to create a test database for unit tests
   defp create_test_database do
     tmp_dir = System.tmp_dir!()
-    db_file = Path.join(tmp_dir, "test_db_#{System.unique_integer([:positive])}.sqlite")
+    db_file = Path.join(tmp_dir, "test_db_#{System.unique_integer([:positive])}.dets")
     table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
 
     # Suppress expected connection retry logs during database open

@@ -16,8 +16,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
       end
     end
 
-    test "basic SQLite operations work" do
-      temp_path = "/tmp/test_olivine_#{System.unique_integer([:positive])}.sqlite"
+    test "basic DETS operations work" do
+      temp_path = "/tmp/test_olivine_#{System.unique_integer([:positive])}.dets"
 
       {result, _logs} = with_log(fn -> Database.open(:test_olivine, temp_path, pool_size: 1) end)
       assert {:ok, db} = result

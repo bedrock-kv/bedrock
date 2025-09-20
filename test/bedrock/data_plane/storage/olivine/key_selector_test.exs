@@ -20,7 +20,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorTest do
   # Helper function to create a test state with data
   defp create_test_state_with_data do
     tmp_dir = System.tmp_dir!()
-    db_file = Path.join(tmp_dir, "key_selector_test_#{System.unique_integer([:positive])}.sqlite")
+    db_file = Path.join(tmp_dir, "key_selector_test_#{System.unique_integer([:positive])}.dets")
     table_name = String.to_atom("key_selector_test_#{System.unique_integer([:positive])}")
     {result, _logs} = with_log(fn -> Database.open(table_name, db_file, pool_size: 1) end)
     {:ok, database} = result

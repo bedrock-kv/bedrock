@@ -18,11 +18,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
 
+  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
+          {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), db_opts :: keyword()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path, db_opts \\ []) do
     with :ok <- ensure_directory_exists(path),
-         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "#{id}.sqlite"), db_opts),
+         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets"), db_opts),
          {:ok, index_manager} <- IndexManager.recover_from_database(database) do
       {:ok,
        %State{
@@ -78,6 +80,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       Transaction.commit_version!(last_transaction)
     end
 
+    database = t.database
+
     puller =
       Pulling.start_pulling(
         durable_version,
@@ -85,16 +89,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
         logs,
         services,
         apply_and_notify_fn,
-        fn ->
-          try do
-            case GenServer.call(main_process_pid, {:info, :durable_version}, 1000) do
-              {:ok, version} -> version
-              _ -> raise "Failed to get current durable version"
-            end
-          catch
-            :exit, _ -> raise "Failed to get current durable version"
-          end
-        end
+        fn -> Database.load_current_durable_version(database) end
       )
 
     t

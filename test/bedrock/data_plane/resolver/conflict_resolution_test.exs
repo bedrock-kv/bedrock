@@ -9,6 +9,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       try_to_resolve_transaction: 3
     ]
 
+  alias Bedrock.DataPlane.Resolver.VersionedConflicts
   alias Bedrock.DataPlane.Transaction
 
   # Generate a random alphanumeric string of length 1-5 characters for use as database keys
@@ -52,7 +53,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
               list_of(reads_and_writes_generator(), min_length: 10, max_length: 40),
             write_version <- integer(1_000_000..100_000_000)
           ) do
-      initial_tree = nil
+      initial_conflicts = VersionedConflicts.new()
 
       # Generate binary transactions with read and write conflicts. The write_version is
       # used to generate the read version for each transaction. The read
@@ -97,7 +98,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         end)
 
       # Pattern match the resolve result to extract failed transaction indexes
-      assert {_final_tree, failed_indexes} = resolve(initial_tree, transactions, write_version)
+      assert {_final_conflicts, failed_indexes} = resolve(initial_conflicts, transactions, write_version)
 
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
@@ -106,10 +107,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       Enum.each(failed_indexes, fn index ->
         transactions_up_to_failure = Enum.take(transactions, index)
 
-        # Resolve transactions up to the failure point to build the conflict tree
-        assert {tree, failed_indexes} = resolve(initial_tree, transactions_up_to_failure, write_version)
+        # Resolve transactions up to the failure point to build the conflict structure
+        assert {conflicts, failed_indexes} = resolve(initial_conflicts, transactions_up_to_failure, write_version)
 
-        # The first transaction has an empty tree and should never conflict
+        # The first transaction has an empty conflicts structure and should never conflict
         # with anything.
         assert index != 0
 
@@ -122,10 +123,10 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
 
         # The failed transaction should have conflicts either on writes or
         # due to version mismatch.
-        assert conflict?(tree, failed_transaction, write_version)
+        assert conflict?(conflicts, failed_transaction, write_version)
 
-        # The failed transaction should abort when attempted against the conflict tree
-        assert :abort = try_to_resolve_transaction(tree, failed_transaction, index)
+        # The failed transaction should abort when attempted against the conflict structure
+        assert :abort = try_to_resolve_transaction(conflicts, failed_transaction, index)
       end)
     end
   end

@@ -29,8 +29,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.DataPlane.Resolver.State
-  alias Bedrock.DataPlane.Resolver.Tree
   alias Bedrock.DataPlane.Resolver.Validation
+  alias Bedrock.DataPlane.Resolver.VersionedConflicts
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Time
   alias Bedrock.Internal.WaitingList
@@ -81,7 +81,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     then(
       %State{
         lock_token: lock_token,
-        tree: %Tree{},
+        conflicts: VersionedConflicts.new(),
         oldest_version: last_version,
         last_version: last_version,
         waiting: %{},
@@ -191,8 +191,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   def handle_continue({:process_ready, {next_version, transactions, reply_fn}}, t) do
     emit_processing(length(transactions), t.last_version, next_version)
 
-    {tree, aborted} = resolve(t.tree, transactions, next_version)
-    t = %{t | tree: tree, last_version: next_version}
+    {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
+    t = %{t | conflicts: conflicts, last_version: next_version}
 
     emit_completed(
       length(transactions),
@@ -231,8 +231,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
       updated_state =
         if current_version_int >= retention_microseconds do
-          new_tree = remove_old_transactions(t.tree, Version.subtract(t.last_version, retention_microseconds))
-          %{t | tree: new_tree, last_sweep_time: Time.monotonic_now_in_ms()}
+          new_conflicts = remove_old_transactions(t.conflicts, Version.subtract(t.last_version, retention_microseconds))
+          %{t | conflicts: new_conflicts, last_sweep_time: Time.monotonic_now_in_ms()}
         else
           %{t | last_sweep_time: Time.monotonic_now_in_ms()}
         end

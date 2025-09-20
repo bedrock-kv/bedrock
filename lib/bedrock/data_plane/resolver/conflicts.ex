@@ -52,37 +52,31 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   @spec check_conflicts(t(), [Bedrock.key_range()], Bedrock.version()) :: :ok | :abort
   def check_conflicts(%__MODULE__{versions: versions}, conflicts, version) do
     {points, ranges} = separate_conflicts(conflicts)
+    do_check_conflicts(versions, points, ranges, version, [])
+  end
 
-    if point_conflict?(versions, points, version) or range_conflict?(versions, ranges, version) do
+  defp do_check_conflicts([{v, existing_points, tree} | rest], points, ranges, version, acc) when v > version do
+    # Check points first (fast path)
+    if MapSet.disjoint?(points, existing_points) do
+      # No point conflict - accumulate tree and continue
+      new_acc = if tree, do: [tree | acc], else: acc
+      do_check_conflicts(rest, points, ranges, version, new_acc)
+    else
+      :abort
+    end
+  end
+
+  defp do_check_conflicts(_, points, ranges, _version, acc), do: check_accumulated_conflicts(acc, points, ranges)
+
+  defp check_accumulated_conflicts([], _points, _ranges), do: :ok
+
+  defp check_accumulated_conflicts([tree | trees], points, ranges) do
+    if Enum.any?(points, &Tree.overlap?(tree, &1)) or Enum.any?(ranges, &Tree.overlap?(tree, &1)) do
       :abort
     else
-      :ok
+      check_accumulated_conflicts(trees, points, ranges)
     end
   end
-
-  defp point_conflict?([{v, _existing_points, _tree} | _rest], _points, version) when v <= version, do: false
-
-  defp point_conflict?([{_v, existing_points, _tree} | rest], points, version) do
-    if MapSet.disjoint?(points, existing_points) == false do
-      true
-    else
-      point_conflict?(rest, points, version)
-    end
-  end
-
-  defp point_conflict?([], _points, _version), do: false
-
-  defp range_conflict?([{v, _points, _tree} | _rest], _ranges, version) when v <= version, do: false
-
-  defp range_conflict?([{_v, _points, ranges_tree} | rest], ranges, version) do
-    if Enum.any?(ranges, &Tree.overlap?(ranges_tree, &1)) do
-      true
-    else
-      range_conflict?(rest, ranges, version)
-    end
-  end
-
-  defp range_conflict?([], _ranges, _version), do: false
 
   @doc """
   Adds conflicts for a new version to the structure.

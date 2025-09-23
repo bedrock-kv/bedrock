@@ -28,14 +28,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
         # Verify initial state is ordered
         assert_keys_ordered(index, "Initial state")
 
+        # Calculate expected remaining keys BEFORE applying clears
+        expected_remaining_keys = calculate_remaining_keys_after_clears(keys, clear_ranges)
+
         # Apply range clear operations one by one, checking invariants after each
         final_state = apply_clear_ranges_with_checks(index, allocator, clear_ranges)
 
-        # Calculate expected remaining keys after all clears
-        expected_remaining_keys = calculate_remaining_keys_after_clears(keys, clear_ranges)
-
         # Final verification
         final_index = elem(final_state, 0)
+
         assert_keys_ordered(final_index, "Final state")
         assert_key_completeness(final_index, expected_remaining_keys)
         assert_all_invariants_comprehensive(final_index)
@@ -211,68 +212,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
 
   # Apply only clear mutations without database dependency
   defp apply_clear_mutations_only(index_update, clear_mutations) do
-    Enum.reduce(clear_mutations, index_update, fn
-      {:clear_range, start_key, end_key}, acc ->
-        apply_range_clear_without_db(acc, start_key, end_key)
-
-      # Skip non-clear operations
-      _, acc ->
-        acc
-    end)
-  end
-
-  defp apply_range_clear_without_db(index_update, start_key, end_key) do
-    # Simplified version of apply_range_clear_mutation that doesn't need database
-    pages_in_range = Tree.page_ids_in_range(index_update.index.tree, start_key, end_key)
-
-    case pages_in_range do
-      [] ->
-        index_update
-
-      [single_page_id] ->
-        page = Index.get_page!(index_update.index, single_page_id)
-        keys_to_clear = extract_keys_in_range(page, start_key, end_key)
-
-        clear_ops = Map.new(keys_to_clear, &{&1, :clear})
-        updated_operations = Map.put(index_update.pending_operations, single_page_id, clear_ops)
-
-        %{index_update | pending_operations: updated_operations}
-
-      [first_page_id | remaining_page_ids] ->
-        {middle_page_ids, [last_page_id]} = Enum.split(remaining_page_ids, -1)
-
-        first_page = Index.get_page!(index_update.index, first_page_id)
-        first_keys_to_clear = extract_keys_in_range(first_page, start_key, Page.right_key(first_page) || end_key)
-
-        last_page = Index.get_page!(index_update.index, last_page_id)
-        last_keys_to_clear = extract_keys_in_range(last_page, Page.left_key(last_page) || start_key, end_key)
-
-        %{
-          index_update
-          | index: Index.delete_pages(index_update.index, middle_page_ids),
-            page_allocator: PageAllocator.recycle_page_ids(index_update.page_allocator, middle_page_ids),
-            pending_operations:
-              index_update.pending_operations
-              |> Map.drop(middle_page_ids)
-              |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-              |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
-        }
-    end
-  end
-
-  defp extract_keys_in_range(page, start_key, end_key) do
-    page
-    |> Page.key_versions()
-    |> Enum.filter(fn {key, _version} -> key >= start_key and key <= end_key end)
-    |> Enum.map(fn {key, _version} -> key end)
-  end
-
-  defp add_clear_operations_for_keys(operations, _page_id, []), do: operations
-
-  defp add_clear_operations_for_keys(operations, page_id, keys_to_clear) do
-    Enum.reduce(keys_to_clear, operations, fn key, ops_acc ->
-      Map.update(ops_acc, page_id, %{key => :clear}, &Map.put(&1, key, :clear))
-    end)
+    # Use the real IndexUpdate.apply_mutations implementation
+    IndexUpdate.apply_mutations(index_update, clear_mutations, nil)
   end
 
   # Assertion helpers
@@ -299,11 +240,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.RangeClearOrderingPropertyTest do
   # Helper functions that are still needed (not duplicated in InvariantChecks)
 
   defp calculate_remaining_keys_after_clears(initial_keys, clear_ranges) do
-    Enum.reduce(clear_ranges, initial_keys, fn {start_key, end_key}, remaining_keys ->
-      Enum.reject(remaining_keys, fn key ->
-        key >= start_key and key <= end_key
+    # Simple, foolproof calculation: start with all keys, remove keys in each range
+    sorted_initial_keys = Enum.sort(initial_keys)
+
+    remaining_keys =
+      Enum.reduce(clear_ranges, sorted_initial_keys, fn {start_key, end_key}, current_keys ->
+        # Remove all keys in this range
+        Enum.reject(current_keys, fn key ->
+          key >= start_key and key <= end_key
+        end)
       end)
-    end)
+
+    # Return sorted to match what extract_all_keys returns
+    Enum.sort(remaining_keys)
   end
 
   defp extract_all_keys(index) do

@@ -91,7 +91,7 @@ defmodule Bedrock.Internal.Repo do
   def get_range(repo_module, start_key, end_key, opts) do
     txn = txn!(repo_module)
     batch_size = Keyword.get(opts, :batch_size, 100)
-    timeout = Keyword.get(opts, :timeout, 5000)
+    timeout = Keyword.get(opts, :timeout, 5_000)
 
     # Filter out stream-specific options, keep only TransactionBuilder options
     txn_opts = Keyword.drop(opts, [:batch_size, :timeout])

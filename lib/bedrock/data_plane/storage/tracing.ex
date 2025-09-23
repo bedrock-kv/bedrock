@@ -26,7 +26,9 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
         [:bedrock, :storage, :shutdown_start],
         [:bedrock, :storage, :shutdown_complete],
         [:bedrock, :storage, :shutdown_waiting],
-        [:bedrock, :storage, :shutdown_timeout]
+        [:bedrock, :storage, :shutdown_timeout],
+        [:bedrock, :storage, :read_request_start],
+        [:bedrock, :storage, :read_request_complete]
       ],
       &__MODULE__.handler/4,
       nil
@@ -79,15 +81,18 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
   def log_event(:window_advancement_no_eviction, _, %{worker_id: worker_id}),
     do: debug("Window advancement considered for #{worker_id}, no eviction needed")
 
-  def log_event(:window_advancement_evicting, _, %{
+  def log_event(:window_advancement_evicting, _measurements, %{
         worker_id: worker_id,
         new_durable_version: version,
-        n_evicted: n_evicted
-      }),
-      do:
-        info(
-          "Window advancement for #{worker_id}: evicting #{n_evicted} versions, new durable version #{Bedrock.DataPlane.Version.to_string(version)}"
-        )
+        n_evicted: n_evicted,
+        window_target_version: target_version
+      }) do
+    lag_microseconds = calculate_lag(target_version, version)
+
+    info(
+      "Window advancement for #{worker_id}: evicting #{n_evicted} versions, new durable version #{Bedrock.DataPlane.Version.to_string(version)}, target #{Bedrock.DataPlane.Version.to_string(target_version)}, lag #{format_lag(lag_microseconds)}"
+    )
+  end
 
   def log_event(:window_advancement_complete, _, %{worker_id: worker_id, new_durable_version: version}),
     do: info("Window advancement complete for #{worker_id} at version #{Bedrock.DataPlane.Version.to_string(version)}")
@@ -109,6 +114,60 @@ defmodule Bedrock.DataPlane.Storage.Tracing do
 
   def log_event(:shutdown_timeout, _, %{n_tasks: n_tasks}),
     do: warn("Storage shutdown timeout with #{n_tasks} tasks still running")
+
+  def log_event(:read_request_start, _measurements, metadata) do
+    key_str = format_key(metadata.key)
+    debug("#{metadata.otp_name}: Read request started (operation: #{metadata.operation}, key: #{key_str})")
+  end
+
+  def log_event(:read_request_complete, measurements, metadata) do
+    duration_ms = measurements.duration_us / 1000
+    key_str = format_key(metadata.key)
+
+    info(
+      "#{metadata.otp_name}: Read request completed (operation: #{metadata.operation}, key: #{key_str}, duration: #{Float.round(duration_ms, 2)}ms)"
+    )
+  end
+
+  defp format_key(key) when is_binary(key) do
+    if String.printable?(key) and byte_size(key) <= 50 do
+      "\"#{key}\""
+    else
+      "<<#{byte_size(key)} bytes>>"
+    end
+  end
+
+  defp format_key({start_key, end_key}) do
+    start_str = format_key(start_key)
+    end_str = format_key(end_key)
+    "{#{start_str}, #{end_str}}"
+  end
+
+  defp format_key(key), do: inspect(key)
+
+  defp format_lag(lag_microseconds) when lag_microseconds < 1000 do
+    "#{lag_microseconds}μs"
+  end
+
+  defp format_lag(lag_microseconds) when lag_microseconds < 1_000_000 do
+    "#{Float.round(lag_microseconds / 1000, 1)}ms"
+  end
+
+  defp format_lag(lag_microseconds) do
+    "#{Float.round(lag_microseconds / 1_000_000, 2)}s"
+  end
+
+  defp calculate_lag(target_version, actual_version) do
+    case {target_version, actual_version} do
+      {target, actual} when target >= actual ->
+        target - actual
+
+      _ ->
+        0
+    end
+  rescue
+    _ -> 0
+  end
 
   @spec debug(String.t()) :: :ok
   defp debug(message) do

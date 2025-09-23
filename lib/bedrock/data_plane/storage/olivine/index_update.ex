@@ -33,6 +33,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.Internal.Atomics
 
+  # Constants for range operations
+  @max_key <<255, 255, 255, 255>>
+
   @type t :: %__MODULE__{
           index: Index.t(),
           version: Bedrock.version(),
@@ -69,19 +72,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   def finish(%__MODULE__{index: index, page_allocator: page_allocator}), do: {index, page_allocator}
 
   @doc """
-  Gets the modified pages from the IndexUpdate as a list of pages.
-  """
-  @spec modified_pages(t()) :: [{Page.t(), Page.id()}]
-  def modified_pages(%__MODULE__{index: index, modified_page_ids: modified_page_ids}),
-    do: Enum.map(modified_page_ids, &Index.get_page_with_next_id!(index, &1))
-
-  @doc """
   Stores all modified pages from the IndexUpdate in the database.
   Returns the IndexUpdate for chaining.
   """
   @spec store_modified_pages(t(), Database.t()) :: t()
   def store_modified_pages(%__MODULE__{version: version} = index_update, database) do
-    pages = modified_pages(index_update)
+    pages = Enum.map(index_update.modified_page_ids, &Index.get_page_with_next_id!(index_update.index, &1))
     :ok = Database.store_modified_pages(database, version, pages)
     index_update
   end
@@ -147,18 +143,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
 
   @spec apply_clear_mutation(binary(), Bedrock.version(), t()) :: t()
   defp apply_clear_mutation(key, _target_version, %__MODULE__{} = mutation_tracker) do
-    case Tree.page_for_key(mutation_tracker.index.tree, key) do
-      nil ->
-        mutation_tracker
+    containing_page_id = Tree.page_for_key(mutation_tracker.index.tree, key)
 
-      containing_page_id ->
-        updated_pending_operations =
-          Map.update(mutation_tracker.pending_operations, containing_page_id, %{key => :clear}, fn page_mutations ->
-            Map.put(page_mutations, key, :clear)
-          end)
+    updated_pending_operations =
+      Map.update(mutation_tracker.pending_operations, containing_page_id, %{key => :clear}, fn page_mutations ->
+        Map.put(page_mutations, key, :clear)
+      end)
 
-        %{mutation_tracker | pending_operations: updated_pending_operations}
-    end
+    %{mutation_tracker | pending_operations: updated_pending_operations}
   end
 
   @spec apply_range_clear_mutation(binary(), binary(), Bedrock.version(), t()) :: t()
@@ -180,21 +172,48 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
       [first_page_id | remaining_page_ids] ->
         {middle_page_ids, [last_page_id]} = Enum.split(remaining_page_ids, -1)
 
-        first_page = Index.get_page!(mutation_tracker.index, first_page_id)
-        first_keys_to_clear = extract_keys_in_range(first_page, start_key, Page.right_key(first_page))
+        # NEVER delete page 0 - it should always be preserved even if it's in a range
+        filtered_middle_page_ids = Enum.reject(middle_page_ids, &(&1 == 0))
 
+        first_page = Index.get_page!(mutation_tracker.index, first_page_id)
         last_page = Index.get_page!(mutation_tracker.index, last_page_id)
-        last_keys_to_clear = extract_keys_in_range(last_page, Page.left_key(last_page), end_key)
+
+        # For multi-page ranges, we need to be careful to only clear keys that actually fall within the range
+        first_keys_to_clear =
+          extract_keys_in_range(
+            first_page,
+            max(start_key, Page.left_key(first_page) || <<>>),
+            min(end_key, Page.right_key(first_page) || @max_key)
+          )
+
+        last_keys_to_clear =
+          extract_keys_in_range(
+            last_page,
+            max(start_key, Page.left_key(last_page) || <<>>),
+            min(end_key, Page.right_key(last_page) || @max_key)
+          )
+
+        # Remove pending operations only for pages that will actually be deleted
+        base_operations =
+          mutation_tracker.pending_operations
+          |> Map.drop(filtered_middle_page_ids)
+          |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
+          |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
+
+        final_operations =
+          if 0 in middle_page_ids do
+            page_0 = Index.get_page!(mutation_tracker.index, 0)
+            page_0_keys_to_clear = extract_keys_in_range(page_0, start_key, end_key)
+            add_clear_operations_for_keys(base_operations, 0, page_0_keys_to_clear)
+          else
+            base_operations
+          end
 
         %{
           mutation_tracker
-          | index: Index.delete_pages(mutation_tracker.index, middle_page_ids),
-            page_allocator: PageAllocator.recycle_page_ids(mutation_tracker.page_allocator, middle_page_ids),
-            pending_operations:
-              mutation_tracker.pending_operations
-              |> Map.drop(middle_page_ids)
-              |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-              |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
+          | index: Index.delete_pages(mutation_tracker.index, filtered_middle_page_ids),
+            page_allocator: PageAllocator.recycle_page_ids(mutation_tracker.page_allocator, filtered_middle_page_ids),
+            pending_operations: final_operations
         }
     end
   end
@@ -305,7 +324,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
       key_count == 0 ->
         handle_empty_page(mutation_tracker, page_id, page, updated_page)
 
-      key_count > 256 ->
+      key_count > Index.max_keys_per_page() ->
         handle_oversized_page(mutation_tracker, page_id, updated_page, key_count)
 
       true ->
@@ -329,7 +348,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   end
 
   defp handle_oversized_page(mutation_tracker, page_id, updated_page, key_count) do
-    additional_pages_needed = div(key_count - 1, 256)
+    additional_pages_needed = div(key_count - 1, Index.max_keys_per_page())
 
     {new_page_ids, allocator_after_allocation} =
       PageAllocator.allocate_ids(mutation_tracker.page_allocator, additional_pages_needed)
@@ -392,15 +411,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   @spec find_key_in_index(Index.t(), Bedrock.key()) ::
           {:ok, Page.t(), Bedrock.version()} | {:error, :not_found}
   defp find_key_in_index(index, key) do
-    case Index.page_for_key(index, key) do
-      {:ok, page} ->
-        case Page.version_for_key(page, key) do
-          {:ok, version} -> {:ok, page, version}
-          {:error, :not_found} -> {:error, :not_found}
-        end
+    {:ok, page} = Index.page_for_key(index, key)
 
-      {:error, :not_found} ->
-        {:error, :not_found}
+    case Page.version_for_key(page, key) do
+      {:ok, version} -> {:ok, page, version}
+      {:error, :not_found} -> {:error, :not_found}
     end
   end
 

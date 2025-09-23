@@ -354,9 +354,31 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   @spec advance_durable_version(t(), version :: Bedrock.version(), versions_to_persist :: [Bedrock.version()]) ::
           {:ok, t()} | {:error, term()}
   def advance_durable_version(database, new_durable_version, _versions_to_persist) do
-    with :ok <- :dets.insert(database.dets_storage, build_dets_tx(database, new_durable_version)),
-         :ok <- sync(database),
-         :ok <- cleanup_buffer(database, new_durable_version) do
+    # Build transaction data with timing
+    {build_time_us, dets_tx} = :timer.tc(fn -> build_dets_tx(database, new_durable_version) end)
+    tx_size_bytes = :erlang.external_size(dets_tx)
+    # Subtract 1 for durable_version entry
+    tx_count = length(dets_tx) - 1
+
+    # Emit build metrics
+    :telemetry.execute(
+      [:bedrock, :storage, :dets_tx_build_complete],
+      %{duration_us: build_time_us, tx_size_bytes: tx_size_bytes, tx_count: tx_count},
+      %{durable_version: new_durable_version}
+    )
+
+    # Execute operations with timing and telemetry
+    with {insert_time_us, :ok} <- :timer.tc(fn -> :dets.insert(database.dets_storage, dets_tx) end),
+         :ok <-
+           emit_telemetry(
+             :dets_insert_complete,
+             %{duration_us: insert_time_us, tx_size_bytes: tx_size_bytes, tx_count: tx_count},
+             new_durable_version
+           ),
+         {sync_time_us, :ok} <- :timer.tc(fn -> sync(database) end),
+         :ok <- emit_telemetry(:dets_sync_complete, %{duration_us: sync_time_us}, new_durable_version),
+         {cleanup_time_us, :ok} <- :timer.tc(fn -> cleanup_buffer(database, new_durable_version) end),
+         :ok <- emit_telemetry(:dets_cleanup_complete, %{duration_us: cleanup_time_us}, new_durable_version) do
       {:ok, %{database | durable_version: new_durable_version}}
     end
   end
@@ -390,5 +412,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
         end)
         |> Map.to_list()
     ]
+  end
+
+  # Helper function to emit telemetry events consistently
+  defp emit_telemetry(event_suffix, measurements, durable_version) do
+    :telemetry.execute(
+      [:bedrock, :storage, event_suffix],
+      measurements,
+      %{durable_version: durable_version}
+    )
+
+    :ok
   end
 end

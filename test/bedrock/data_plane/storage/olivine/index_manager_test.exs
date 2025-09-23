@@ -9,6 +9,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Storage.Olivine.IndexManagerTestHelpers
   alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
   # Helper functions for cleaner test assertions
@@ -537,11 +538,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       window_start = Version.from_integer(5_000_000)
 
       # Versions at or after window start should be in window
-      assert IndexManager.version_in_window?(Version.from_integer(5_000_000), window_start) == true
-      assert IndexManager.version_in_window?(Version.from_integer(6_000_000), window_start) == true
+      assert IndexManagerTestHelpers.version_in_window?(Version.from_integer(5_000_000), window_start) == true
+      assert IndexManagerTestHelpers.version_in_window?(Version.from_integer(6_000_000), window_start) == true
 
       # Versions before window start should not be in window
-      assert IndexManager.version_in_window?(Version.from_integer(4_999_999), window_start) == false
+      assert IndexManagerTestHelpers.version_in_window?(Version.from_integer(4_999_999), window_start) == false
     end
 
     test "split_versions_at_window/2 correctly partitions versions" do
@@ -556,7 +557,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
       window_start = Version.from_integer(5_000_000)
 
       # Pattern match expected results directly
-      assert {kept, evicted} = IndexManager.split_versions_at_window(versions, window_start)
+      assert {kept, evicted} = IndexManagerTestHelpers.split_versions_at_window(versions, window_start)
 
       # Versions 10M, 8M, 6M should be kept (in window)
       expected_kept = [

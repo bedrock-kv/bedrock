@@ -14,6 +14,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Olivine.State
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.WaitingList
   alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
@@ -382,35 +383,99 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   defp gather_info(:utilization, t), do: IndexManager.info(t.index_manager, :utilization)
   defp gather_info(_unsupported, _t), do: {:error, :unsupported_info}
 
+  # Window advancement constants
+  # 5 seconds
+  @window_lag_microseconds 5_000_000
+
+  defp max_eviction_size, do: 1 * 1024 * 1024
+
   @doc """
-  Advances the window with persistence coordination between IndexManager and Database.
-  Logic module provides high-level coordination:
-  - IndexManager determines what needs to be done for window advancement
-  - Database handles persistence operations
-  - State gets updated with results
+  Performs size-controlled window advancement based on buffer tracking queue.
+  Uses two-queue architecture:
+  1. Calculate window edge from newest version in buffer
+  2. Take eviction batch (up to max_eviction_size or window edge) from buffer tracking queue
+  3. Advance window to exact eviction point
   """
-  @spec advance_window_with_persistence(State.t()) :: {:ok, State.t()} | {:error, term()}
-  def advance_window_with_persistence(%State{} = state) do
-    case IndexManager.prepare_window_advancement(state.index_manager) do
+  @spec advance_window_with_size_control(State.t()) :: {:ok, State.t()} | {:error, term()}
+  def advance_window_with_size_control(%State{} = state) do
+    case State.get_newest_version_in_buffer(state) do
+      nil ->
+        # No data in buffer, nothing to evict
+        {:ok, state}
+
+      newest_version ->
+        # Calculate window edge (5 seconds ago from newest version)
+        window_edge_version = calculate_window_edge(newest_version)
+
+        # Take eviction batch limited by size and window edge
+        {eviction_batch, state_after_eviction_queue} =
+          State.determine_eviction_batch(state, max_eviction_size(), window_edge_version)
+
+        case eviction_batch do
+          [] ->
+            # No data to evict
+            {:ok, state_after_eviction_queue}
+
+          batch ->
+            # Get the latest version that should be evicted
+            {eviction_version, _} = List.last(batch)
+
+            # Calculate lag: how far behind we are from ideal window edge
+            lag_microseconds = calculate_lag_microseconds(window_edge_version, eviction_version)
+
+            # Trace eviction details
+            Telemetry.trace_window_advancement_evicting(
+              state.id,
+              eviction_version,
+              length(batch),
+              window_edge_version,
+              lag_microseconds
+            )
+
+            # Advance window to exact eviction point
+            advance_window_to_eviction_point(state_after_eviction_queue, eviction_version, state.id)
+        end
+    end
+  end
+
+  defp advance_window_to_eviction_point(state, eviction_version, state_id) do
+    case IndexManager.prepare_window_advancement(state.index_manager, eviction_version) do
       :no_eviction ->
-        # Trace that window advancement was considered but no eviction was needed
         Telemetry.trace_window_advancement_no_eviction(state.id)
         {:ok, state}
 
       {:evict, new_durable_version, evicted_versions, index_manager} ->
-        # Trace that window advancement is evicting data
-        Telemetry.trace_window_advancement_evicting(state.id, new_durable_version, length(evicted_versions))
-
         with {:ok, database} <-
                Database.advance_durable_version(
                  state.database,
                  new_durable_version,
                  evicted_versions
                ) do
-          Telemetry.trace_window_advancement_complete(state.id, new_durable_version)
-          {:ok, %{state | index_manager: index_manager, database: database}}
+          final_state = %{state | index_manager: index_manager, database: database}
+          Telemetry.trace_window_advancement_complete(state_id, eviction_version)
+          {:ok, final_state}
         end
     end
+  end
+
+  defp calculate_window_edge(newest_version) do
+    # Subtract window lag time from newest version
+    Version.subtract(newest_version, @window_lag_microseconds)
+  rescue
+    ArgumentError ->
+      # Underflow - return zero version
+      Version.zero()
+  end
+
+  defp calculate_lag_microseconds(window_edge_version, eviction_version) do
+    # Convert versions to integers for arithmetic (they're 8-byte big-endian timestamps)
+    <<window_edge_int::unsigned-big-64>> = window_edge_version
+    <<eviction_int::unsigned-big-64>> = eviction_version
+
+    # Lag is how far behind the eviction point is from the ideal window edge
+    max(0, window_edge_int - eviction_int)
+  rescue
+    _ -> 0
   end
 
   defp notify_waitlist_shutdown(waiting_fetches) do
@@ -422,27 +487,26 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   end
 
   @doc """
-  Apply transactions from the puller to the storage state.
+  Apply a batch of transactions to the storage state.
+  This is used for incremental processing to avoid large DETS writes.
+  Also adds each transaction to the buffer tracking queue for controlled window advancement.
   """
-  @spec apply_transactions_from_puller(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
-  def apply_transactions_from_puller(%State{} = t, encoded_transactions) do
-    # Apply transactions to get updated index manager
+  @spec apply_transaction_batch(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
+  def apply_transaction_batch(%State{} = t, encoded_transactions) do
+    # Apply just this batch of transactions
     updated_index_manager = IndexManager.apply_transactions(t.index_manager, encoded_transactions, t.database)
     version = updated_index_manager.current_version
 
-    # Update state with new index manager
-    state_with_transactions = %{t | index_manager: updated_index_manager}
+    # Add each transaction to buffer tracking queue
+    state_with_buffer_tracking =
+      Enum.reduce(encoded_transactions, t, fn encoded_tx, acc_state ->
+        tx_version = Transaction.commit_version!(encoded_tx)
+        tx_size = byte_size(encoded_tx)
+        State.add_to_buffer_tracking(acc_state, tx_version, tx_size)
+      end)
 
-    # Advance window to handle durability and cleanup
-    case advance_window_with_persistence(state_with_transactions) do
-      {:ok, final_state} ->
-        {:ok, final_state, version}
-
-      {:error, _reason} ->
-        # Log error but continue - window advancement is important but shouldn't block transaction processing
-        # The window will be advanced on the next batch or via periodic cleanup
-        {:ok, state_with_transactions, version}
-    end
+    state_with_transactions = %{state_with_buffer_tracking | index_manager: updated_index_manager}
+    {:ok, state_with_transactions, version}
   end
 
   #

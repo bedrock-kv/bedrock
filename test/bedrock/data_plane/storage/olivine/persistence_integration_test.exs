@@ -5,7 +5,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Logic
-  alias Bedrock.DataPlane.Storage.Olivine.State
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
@@ -113,18 +112,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       ])
 
       Logic.shutdown(state)
-    end
-
-    test "window advancement triggers persistence correctly", %{tmp_dir: tmp_dir} do
-      {:ok, state} = Logic.startup(:test_window, self(), :test_id, tmp_dir)
-
-      {:ok, updated_state} = Logic.advance_window_with_persistence(state)
-
-      assert %{index_manager: vm, database: db} = updated_state
-      assert vm
-      assert db
-
-      Logic.shutdown(updated_state)
     end
 
     test "corrupted page handling during recovery", %{tmp_dir: tmp_dir} do
@@ -400,45 +387,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PersistenceIntegrationTest do
       # Durable version should be the oldest version (v1, since all are kept in MVP)
       assert {:ok, version} = Database.load_durable_version(db)
       assert version == v1
-
-      Database.close(db)
-    end
-
-    test "window persistence integration with advance_window_with_persistence", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "window_persistence.dets")
-      {:ok, db} = Database.open(:window_persist_test, file_path)
-
-      vm = IndexManager.new()
-      # Create test versions (older to newer)
-      # Old version - will be evicted
-      old_version = Version.from_integer(100)
-      # Recent version - will remain
-      recent_version = Version.from_integer(200)
-
-      vm = %{
-        vm
-        | versions: [
-            {recent_version, {:gb_trees.empty(), %{}}},
-            {old_version, {:gb_trees.empty(), %{}}}
-          ],
-          current_version: recent_version
-      }
-
-      # Store data before window advancement
-      # Store values using new API (key, value) - versions not stored in DETS
-      :ok = Database.store_value(db, <<"old_key">>, <<"old_value">>)
-      :ok = Database.store_value(db, <<"recent_key">>, <<"recent_value">>)
-
-      # Advance window with persistence
-      temp_state = %State{index_manager: vm, database: db}
-      {:ok, updated_state} = Logic.advance_window_with_persistence(temp_state)
-      _updated_vm = updated_state.index_manager
-
-      # Data should be synced to disk (without version since DETS stores version-less)
-      assert_values_in_db(db, [
-        {<<"old_key">>, <<"old_value">>},
-        {<<"recent_key">>, <<"recent_value">>}
-      ])
 
       Database.close(db)
     end

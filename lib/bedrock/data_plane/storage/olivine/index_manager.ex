@@ -11,33 +11,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   - Page creation and key lookup within pages
   - Simple median split algorithm (256 key threshold)
   - Page ID allocation with max_page_id tracking
-
-  ## Binary Page Format
-
-  Pages are encoded as binary data with the following structure:
-
-  ```
-  32-byte header (all big-endian):
-  <<PageId:64/big,           # 8 bytes
-    NextPageId:64/big,       # 8 bytes
-    KeyCount:16/big,         # 2 bytes (supports up to 65535 keys)
-    LastKeyOffset:32/big,    # 4 bytes - byte offset to start of last key
-    Reserved:80/big,         # 10 bytes
-    % Interleaved entries (repeated KeyCount times):
-    Version:64/big,          # 8 bytes
-    KeyLength:16/big,        # 2 bytes
-    Key/binary>>             # KeyLength bytes
-  ```
-
-  Keys and versions are stored as interleaved pairs for better cache locality.
-  LastKeyOffset points to the start of the last key (after its version and length prefix),
-  allowing O(1) access to the last key by reading from that offset to end of binary.
   """
 
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
-  alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.DataPlane.Transaction
@@ -208,9 +186,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   # Helper Functions
 
-  @spec last_committed_version(index_manager :: t()) :: Bedrock.version()
-  def last_committed_version(index_manager), do: index_manager.current_version
-
   @spec info(index_manager :: t(), atom()) :: term()
   def info(index_manager, stat) do
     case stat do
@@ -246,10 +221,22 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           | {:evict, new_durable_version :: Bedrock.version(), evicted_versions :: [Bedrock.version()],
              updated_vm :: t()}
   def prepare_window_advancement(index_manager) do
-    window_start_version = calculate_window_start(index_manager)
+    prepare_window_advancement(index_manager, index_manager.current_version)
+  end
 
+  @doc """
+  Determines what needs to happen for window advancement with exact eviction point.
+  Simply evicts all versions <= eviction_version.
+  No policy decisions - just executes the eviction to the specified point.
+  Returns either :no_eviction or {:evict, new_durable_version, evicted_versions, updated_vm}.
+  """
+  @spec prepare_window_advancement(t(), Bedrock.version()) ::
+          :no_eviction
+          | {:evict, new_durable_version :: Bedrock.version(), evicted_versions :: [Bedrock.version()],
+             updated_vm :: t()}
+  def prepare_window_advancement(index_manager, eviction_version) do
     index_manager.versions
-    |> split_versions_at_window(window_start_version)
+    |> split_versions_at_window(eviction_version)
     |> case do
       {_versions_to_keep, []} ->
         :no_eviction
@@ -280,48 +267,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   end
 
   @doc """
-  Checks if a version falls within the sliding time window.
-  Uses direct binary comparison since versions are lexicographically ordered.
-  """
-  @spec version_in_window?(Bedrock.version(), Bedrock.version()) :: boolean()
-  def version_in_window?(version, window_start_version) do
-    version >= window_start_version
-  end
-
-  @doc """
-  Efficiently splits the versions list at the window boundary.
-  Returns {versions_to_keep, versions_to_evict}.
-  Since versions list is ordered descending (newest first), we can split at the cutoff point.
-  """
-  @spec split_versions_at_window([{Bedrock.version(), version_data()}], Bedrock.version()) ::
-          {versions_to_keep :: [{Bedrock.version(), version_data()}],
-           versions_to_evict :: [{Bedrock.version(), version_data()}]}
-  def split_versions_at_window(versions, window_start_version) do
-    split_versions_at_window(versions, window_start_version, [])
-  end
-
-  # Optimized version splitting using ordered list traversal
-  defp split_versions_at_window([], _window_start_version, kept_versions) do
-    # No more versions to check, all remaining versions are kept
-    {Enum.reverse(kept_versions), []}
-  end
-
-  defp split_versions_at_window(
-         [{version, _data} = version_entry | rest] = all_versions,
-         window_start_version,
-         kept_versions
-       ) do
-    if version_in_window?(version, window_start_version) do
-      # This version is still in window, keep it and continue
-      split_versions_at_window(rest, window_start_version, [version_entry | kept_versions])
-    else
-      # This version is outside window, split here
-      # All remaining versions (including this one) should be evicted
-      {Enum.reverse(kept_versions), all_versions}
-    end
-  end
-
-  @doc """
   Advances the version manager to a new version with window management.
   - Updates current_version to the new version
   - Evicts expired versions outside the 5-second window
@@ -345,16 +290,32 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   # Helper Functions for MVCC Value Retrieval (Phase 3.2)
 
-  @doc """
-  Finds the best version data for fetch operations using MVCC semantics.
-  Returns the latest version that is <= the target version.
-  """
-  @spec find_best_index_for_fetch(
-          [{Bedrock.version(), version_data()}],
-          Bedrock.version()
-        ) ::
-          version_data() | nil
-  def find_best_index_for_fetch(versions, target_version) do
+  defp split_versions_at_window(versions, window_start_version) do
+    split_versions_at_window(versions, window_start_version, [])
+  end
+
+  # Optimized version splitting using ordered list traversal
+  defp split_versions_at_window([], _window_start_version, kept_versions) do
+    # No more versions to check, all remaining versions are kept
+    {Enum.reverse(kept_versions), []}
+  end
+
+  defp split_versions_at_window(
+         [{version, _data} = version_entry | rest] = all_versions,
+         window_start_version,
+         kept_versions
+       ) do
+    if version >= window_start_version do
+      # This version is still in window, keep it and continue
+      split_versions_at_window(rest, window_start_version, [version_entry | kept_versions])
+    else
+      # This version is outside window, split here
+      # All remaining versions (including this one) should be evicted
+      {Enum.reverse(kept_versions), all_versions}
+    end
+  end
+
+  defp find_best_index_for_fetch(versions, target_version) do
     find_first_valid_version(versions, target_version)
   end
 
@@ -378,18 +339,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
          index,
          %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector
        ) do
-    case Index.page_for_key(index, ref_key) do
-      {:ok, page} ->
-        case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
-          {:ok, resolved_key, page} ->
-            {:ok, resolved_key, page}
+    # With gap-free design, every key maps to a page
+    {:ok, page} = Index.page_for_key(index, ref_key)
 
-          {:partial, keys_available} ->
-            handle_cross_page_continuation(index, page, key_selector, keys_available)
-        end
+    case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
+      {:ok, resolved_key, page} ->
+        {:ok, resolved_key, page}
 
-      {:error, :not_found} ->
-        handle_gap_resolution(index, key_selector)
+      {:partial, keys_available} ->
+        handle_cross_page_continuation(index, page, key_selector, keys_available)
     end
   end
 
@@ -405,16 +363,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
         {:error, reason} ->
           {:error, reason}
       end
-    end
-  end
-
-  defp handle_gap_resolution(index, key_selector) do
-    case resolve_gap_key_selector(index, key_selector) do
-      {:ok, continuation_selector} ->
-        resolve_key_selector_in_index(index, continuation_selector)
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -585,147 +533,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     |> case do
       nil -> {:error, :not_found}
       page -> {:ok, page}
-    end
-  end
-
-  @spec resolve_gap_key_selector(Index.t(), KeySelector.t()) ::
-          {:ok, KeySelector.t()} | {:error, :not_found}
-  defp resolve_gap_key_selector(index, %KeySelector{key: ref_key, offset: offset}) do
-    case find_bounding_pages_for_gap(index, ref_key) do
-      {:ok, :before_all_pages} -> handle_before_all_pages_gap(index, offset)
-      {:ok, :after_all_pages} -> handle_after_all_pages_gap(index, offset)
-      {:ok, {:between_pages, _left_page, right_page}} -> handle_between_pages_gap(right_page, offset)
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp handle_before_all_pages_gap(index, offset) do
-    if offset >= 0 do
-      case find_first_page(index) do
-        {:ok, _first_page, first_key} ->
-          {:ok, %KeySelector{key: first_key, or_equal: true, offset: offset}}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:error, :not_found}
-    end
-  end
-
-  defp handle_after_all_pages_gap(index, offset) do
-    if offset < 0 do
-      case find_last_page(index) do
-        {:ok, _last_page, last_key} ->
-          {:ok, %KeySelector{key: last_key, or_equal: true, offset: offset}}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:error, :not_found}
-    end
-  end
-
-  defp handle_between_pages_gap(right_page, offset) do
-    case Page.left_key(right_page) do
-      nil ->
-        {:error, :not_found}
-
-      first_key_of_right when offset >= 0 ->
-        {:ok, %KeySelector{key: first_key_of_right, or_equal: true, offset: offset}}
-
-      _first_key_of_right ->
-        {:error, :not_found}
-    end
-  end
-
-  @spec find_bounding_pages_for_gap(Index.t(), binary()) ::
-          {:ok, :before_all_pages | :after_all_pages | {:between_pages, Page.t(), Page.t()}}
-          | {:error, :not_found}
-  defp find_bounding_pages_for_gap(%Index{tree: tree} = index, ref_key) do
-    # Use the tree to find the insertion point
-    page_id = Tree.page_for_insertion(tree, ref_key)
-    page = Index.get_page!(index, page_id)
-
-    case {Page.left_key(page), Page.right_key(page)} do
-      {nil, nil} ->
-        # Empty page
-        {:ok, :before_all_pages}
-
-      {first_key, _last_key} when ref_key < first_key ->
-        # Key comes before this page - find previous page
-        case find_previous_page(index, page_id) do
-          {:ok, prev_page} -> {:ok, {:between_pages, prev_page, page}}
-          {:error, :not_found} -> {:ok, :before_all_pages}
-        end
-
-      {_first_key, last_key} when ref_key > last_key ->
-        # Key comes after this page
-        # Get the cached next_id from the page_map instead of parsing the page binary
-        {_page, next_id} = Index.get_page_with_next_id!(index, page_id)
-
-        case next_id do
-          0 ->
-            {:ok, :after_all_pages}
-
-          next_page_id ->
-            next_page = Index.get_page!(index, next_page_id)
-            {:ok, {:between_pages, page, next_page}}
-        end
-
-      _ ->
-        # This shouldn't happen since page_for_key already failed
-        {:error, :not_found}
-    end
-  end
-
-  @spec find_first_page(Index.t()) :: {:ok, Page.t(), binary()} | {:error, :not_found}
-  defp find_first_page(%Index{page_map: page_map}) when page_map == %{}, do: {:error, :not_found}
-
-  defp find_first_page(%Index{page_map: page_map}) do
-    # Start with page 0 and follow the chain to find the first non-empty page
-    case Map.get(page_map, 0) do
-      nil -> {:error, :not_found}
-      {page, next_id} -> find_first_non_empty_page(page_map, page, next_id)
-    end
-  end
-
-  defp find_first_non_empty_page(page_map, page, next_id) do
-    case Page.left_key(page) do
-      nil -> try_next_page(page_map, next_id)
-      first_key -> {:ok, page, first_key}
-    end
-  end
-
-  defp try_next_page(page_map, next_id) do
-    case next_id do
-      0 -> {:error, :not_found}
-      _ -> get_and_check_next_page(page_map, next_id)
-    end
-  end
-
-  defp get_and_check_next_page(page_map, next_id) do
-    case Map.get(page_map, next_id) do
-      nil -> {:error, :not_found}
-      {next_page, next_next_id} -> find_first_non_empty_page(page_map, next_page, next_next_id)
-    end
-  end
-
-  @spec find_last_page(Index.t()) :: {:ok, Page.t(), binary()} | {:error, :not_found}
-  defp find_last_page(%Index{page_map: page_map}) when page_map == %{}, do: {:error, :not_found}
-
-  defp find_last_page(%Index{page_map: page_map}) do
-    # Find the page with next_id = 0 (last in chain)
-    page_map
-    |> Enum.find_value(fn {_page_id, {page, next_id}} ->
-      if next_id == 0 and Page.right_key(page) != nil do
-        {page, Page.right_key(page)}
-      end
-    end)
-    |> case do
-      nil -> {:error, :not_found}
-      {page, last_key} -> {:ok, page, last_key}
     end
   end
 end

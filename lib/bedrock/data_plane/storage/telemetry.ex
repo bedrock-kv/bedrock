@@ -105,12 +105,26 @@ defmodule Bedrock.DataPlane.Storage.Telemetry do
     emit_storage_operation(:window_advancement_no_eviction, %{}, %{storage_id: storage_id})
   end
 
-  @spec trace_window_advancement_evicting(term(), term(), integer()) :: :ok
-  def trace_window_advancement_evicting(storage_id, new_durable_version, evicted_count) do
-    emit_storage_operation(:window_advancement_evicting, %{evicted_count: evicted_count}, %{
-      storage_id: storage_id,
-      new_durable_version: new_durable_version
-    })
+  @spec trace_window_advancement_evicting(term(), term(), integer(), term(), integer()) :: :ok
+  def trace_window_advancement_evicting(
+        storage_id,
+        new_durable_version,
+        evicted_count,
+        window_target_version,
+        lag_microseconds
+      ) do
+    emit_storage_operation(
+      :window_advancement_evicting,
+      %{
+        evicted_count: evicted_count,
+        window_target_version: window_target_version,
+        new_durable_version: new_durable_version,
+        lag_microseconds: lag_microseconds
+      },
+      %{
+        storage_id: storage_id
+      }
+    )
   end
 
   @spec trace_window_advancement_complete(term(), term()) :: :ok
@@ -119,5 +133,76 @@ defmodule Bedrock.DataPlane.Storage.Telemetry do
       storage_id: storage_id,
       new_durable_version: new_durable_version
     })
+  end
+
+  # Transaction processing trace functions
+  @spec trace_transactions_queued(term(), integer(), integer()) :: :ok
+  def trace_transactions_queued(otp_name, transaction_count, queue_size) do
+    emit_storage_operation(:transactions_queued, %{transaction_count: transaction_count, queue_size: queue_size}, %{
+      otp_name: otp_name
+    })
+  end
+
+  @spec trace_batch_processing_start(term(), integer()) :: :ok
+  def trace_batch_processing_start(otp_name, batch_size) do
+    trace_batch_processing_start(otp_name, batch_size, 0)
+  end
+
+  @spec trace_batch_processing_start(term(), integer(), integer()) :: :ok
+  def trace_batch_processing_start(otp_name, batch_size, batch_size_bytes) do
+    emit_storage_operation(:batch_processing_start, %{batch_size: batch_size, batch_size_bytes: batch_size_bytes}, %{
+      otp_name: otp_name
+    })
+  end
+
+  @spec trace_batch_processing_complete(term(), integer(), integer()) :: :ok
+  def trace_batch_processing_complete(otp_name, batch_size, duration_microseconds) do
+    trace_batch_processing_complete(otp_name, batch_size, duration_microseconds, 0)
+  end
+
+  @spec trace_batch_processing_complete(term(), integer(), integer(), integer()) :: :ok
+  def trace_batch_processing_complete(otp_name, batch_size, duration_microseconds, batch_size_bytes) do
+    emit_storage_operation(
+      :batch_processing_complete,
+      %{batch_size: batch_size, duration_us: duration_microseconds, batch_size_bytes: batch_size_bytes},
+      %{
+        otp_name: otp_name
+      }
+    )
+  end
+
+  @spec trace_transaction_timeout_scheduled(term()) :: :ok
+  def trace_transaction_timeout_scheduled(otp_name) do
+    emit_storage_operation(:transaction_timeout_scheduled, %{}, %{otp_name: otp_name})
+  end
+
+  # Read operation trace functions
+  @spec trace_read_request_start(term(), term(), term()) :: :ok
+  def trace_read_request_start(otp_name, operation, key) do
+    emit_storage_operation(:read_request_start, %{}, %{otp_name: otp_name, operation: operation, key: key})
+  end
+
+  @spec trace_read_request_complete(term(), term(), term(), integer()) :: :ok
+  def trace_read_request_complete(otp_name, operation, key, duration_microseconds) do
+    emit_storage_operation(:read_request_complete, %{duration_us: duration_microseconds}, %{
+      otp_name: otp_name,
+      operation: operation,
+      key: key
+    })
+  end
+
+  @spec trace_read_request_waitlisted(term(), term(), term()) :: :ok
+  def trace_read_request_waitlisted(otp_name, operation, key) do
+    emit_storage_operation(:read_request_waitlisted, %{}, %{otp_name: otp_name, operation: operation, key: key})
+  end
+
+  @spec trace_read_task_spawned(term(), term(), term()) :: :ok
+  def trace_read_task_spawned(otp_name, operation, key) do
+    emit_storage_operation(:read_task_spawned, %{}, %{otp_name: otp_name, operation: operation, key: key})
+  end
+
+  @spec trace_read_task_complete(term(), pid()) :: :ok
+  def trace_read_task_complete(otp_name, task_pid) do
+    emit_storage_operation(:read_task_complete, %{}, %{otp_name: otp_name, task_pid: task_pid})
   end
 end

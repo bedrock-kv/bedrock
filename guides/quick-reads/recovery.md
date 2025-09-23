@@ -10,8 +10,8 @@ flowchart TD
     TSL --> Decision{Old TSL Exists?}
     Decision -->|No| Init[Initialization Phase]
     Decision -->|Yes| Locking[Service Locking]
-    
-    %% Service locking leads to log planning
+
+    %% Service locking always leads to log planning for existing clusters
     Locking --> LogPlan[Log Recovery Planning]
     
     %% New cluster path (shorter)
@@ -29,9 +29,9 @@ flowchart TD
     Sequencer --> CommitProxy[Commit Proxy Startup]
     CommitProxy --> Resolver[Resolver Startup]
     Resolver --> Layout[Transaction System Layout]
-    Layout --> Persist[Persistence]
-    Persist --> Monitor[Monitoring]
-    Monitor --> Complete[Recovery Complete]
+    Layout --> Monitor[Monitoring]
+    Monitor --> Persist[Persistence]
+    Persist --> Complete[Recovery Complete]
     
     %% Styling
     style Start fill:#e1f5fe
@@ -60,7 +60,7 @@ Recovery proceeds through a carefully orchestrated sequence of phases, each buil
 ### Foundation Phases
 
 0. **[TSL Validation](recovery/tsl-validation.md)** - Validate type safety of recovered TSL data structure
-1. **[Service Locking](recovery/service-locking.md)** - Establish exclusive control over old system services (includes path determination logic)
+1. **[Service Locking](recovery/service-locking.md)** - Establish exclusive control over old system services
 
 ### Data Recovery Path
 
@@ -86,8 +86,8 @@ Recovery proceeds through a carefully orchestrated sequence of phases, each buil
 ### System Finalization
 
 11. **[Transaction System Layout](recovery/transaction-system-layout.md)** - Create the coordination blueprint
-12. **[Persistence](recovery/persistence.md)** - Durably store configuration via system transaction
-13. **[Monitoring](recovery/monitoring.md)** - Establish operational monitoring and mark recovery complete
+12. **[Monitoring](recovery/monitoring.md)** - Establish operational monitoring before final persistence
+13. **[Persistence](recovery/persistence.md)** - Durably store configuration via system transaction and complete recovery
 
 ## Recovery Entry Point
 

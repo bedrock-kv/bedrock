@@ -162,7 +162,7 @@ defmodule Bedrock.Internal.Repo do
       {:ok, {[first_row | rest], has_more}} ->
         emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new, :no_servers_to_race] ->
         throw({__MODULE__, state.txn, :retryable_failure, reason})
 
       {:error, reason} ->

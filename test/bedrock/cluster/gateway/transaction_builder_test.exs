@@ -239,12 +239,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
       assert result == {:ok, "test_value"}
     end
 
-    test ":commit call returns error for empty transaction" do
+    test ":commit call succeeds for empty transaction with version 0" do
       pid = start_transaction_builder()
 
       result = GenServer.call(pid, :commit)
-      assert {:error, _reason} = result
-      assert Process.alive?(pid)
+      assert {:ok, 0} = result
+      refute Process.alive?(pid)
     end
 
     test "multiple :nested_transaction calls stack properly" do

@@ -229,12 +229,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
              )
     end
 
-    test "commit with no writes returns error" do
+    test "commit with no writes succeeds with version 0" do
       pid = start_transaction_builder()
 
-      assert {:error, _reason} = GenServer.call(pid, :commit)
+      assert {:ok, 0} = GenServer.call(pid, :commit)
 
-      assert Process.alive?(pid)
+      refute Process.alive?(pid)
     end
   end
 

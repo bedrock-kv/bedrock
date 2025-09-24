@@ -369,7 +369,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FinalizationTest do
     end
 
     test "read-only transaction (edge case)" do
-      # Transaction has reads but no writes - should return empty writes map
+      # Transaction has reads but no writes - should not call commit proxy
       reads = %{
         "config_value" => "production",
         "feature_flags" => ~s({"new_ui":true,"beta_features":false})
@@ -381,14 +381,38 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FinalizationTest do
       tx = %{Tx.new() | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
-        transaction = decode_transaction(binary_transaction)
-        assert_transaction_fields(transaction, read_version, [], 0, 2)
-        {:ok, 42, 0}
+      commit_fn = fn _proxy, _binary_transaction ->
+        # This should never be called for read-only transactions
+        raise "commit_fn should not be called for read-only transactions"
       end
 
       assert {:ok, result_state} = Finalization.commit(state, commit_fn: commit_fn)
-      assert_successful_commit(result_state)
+
+      # Should use read_version as commit_version
+      assert result_state.state == :committed
+      assert result_state.commit_version == read_version
+    end
+
+    test "read-only transaction with nil read_version" do
+      # Read-only transaction with no reads (pure read-only) should use version 0
+      reads = %{}
+      writes = %{}
+      read_version = nil
+
+      # No reads, no writes
+      tx = Tx.new()
+      state = %{create_test_state(read_version, reads, writes) | tx: tx}
+
+      commit_fn = fn _proxy, _binary_transaction ->
+        # This should never be called for read-only transactions
+        raise "commit_fn should not be called for read-only transactions"
+      end
+
+      assert {:ok, result_state} = Finalization.commit(state, commit_fn: commit_fn)
+
+      # Should use 0 as commit_version when read_version is nil
+      assert result_state.state == :committed
+      assert result_state.commit_version == 0
     end
 
     test "read version handling with version 0" do

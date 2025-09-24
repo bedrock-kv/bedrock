@@ -69,11 +69,12 @@ defmodule CoverageSummary do
   end
 
   def main(_) do
-    IO.puts("Usage: coverage_summary.exs [module_name] [path/to/excoveralls.json]")
-    IO.puts("  - If module_name is provided, shows detailed coverage for that module")
+    IO.puts("Usage: coverage_summary.exs [path/to/excoveralls.json] [module_name]")
+    IO.puts("  - If only json path is provided, shows interactive coverage summary")
+    IO.puts("  - If module_name is also provided, shows detailed coverage for that module")
 
     IO.puts(
-      "  - module_name should be the relative path within the project (e.g., lib/collx/recommendations/popular_items.ex)"
+      "  - module_name should be the relative path within the project (e.g., lib/bedrock/data_plane/storage/olivine/database.ex)"
     )
   end
 

@@ -6,14 +6,22 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
 
   @opaque t :: %__MODULE__{
             dets_storage: :dets.tab_name(),
+            data_file: :file.fd(),
+            data_file_offset: non_neg_integer(),
+            data_file_name: [char()],
             window_size_in_microseconds: pos_integer(),
             buffer: :ets.tab(),
             durable_version: Bedrock.version()
           }
   defstruct dets_storage: nil,
+            data_file: nil,
+            data_file_offset: 0,
+            data_file_name: nil,
             window_size_in_microseconds: 5_000_000,
             buffer: nil,
             durable_version: nil
+
+  @type locator :: <<_::64>>
 
   @spec open(otp_name :: atom(), file_path :: String.t()) ::
           {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
@@ -29,7 +37,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
 
   def open(otp_name, file_path, opts) when is_atom(otp_name) and is_list(opts) do
     window_in_ms = Keyword.get(opts, :window_in_ms, 5_000)
-    # Ignore other options like pool_size which don't apply to DETS
     do_open(otp_name, file_path, window_in_ms)
   end
 
@@ -41,12 +48,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
       {:estimated_no_objects, 1_000_000}
     ]
 
-    case :dets.open_file(otp_name, [{:file, String.to_charlist(file_path)} | storage_opts]) do
+    data_file_name = String.to_charlist(file_path <> ".data")
+    {:ok, data_file} = :file.open(data_file_name, [:raw, :binary, :read, :append])
+    {:ok, offset} = :file.position(data_file, {:eof, 0})
+
+    case :dets.open_file(otp_name, [{:file, String.to_charlist(file_path <> ".idx")} | storage_opts]) do
       {:ok, dets_table} ->
         buffer = :ets.new(:buffer, [:ordered_set, :protected, {:read_concurrency, true}])
 
         durable_version =
-          case load_durable_version_internal(dets_table) do
+          case load_current_durable_version(%{dets_storage: dets_table}) do
             {:ok, version} -> version
             {:error, :not_found} -> Version.zero()
           end
@@ -54,6 +65,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
         {:ok,
          %__MODULE__{
            dets_storage: dets_table,
+           data_file: data_file,
+           data_file_offset: offset,
+           data_file_name: data_file_name,
            window_size_in_microseconds: window_in_ms * 1_000,
            buffer: buffer,
            durable_version: durable_version
@@ -68,6 +82,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   def close(database) do
     try do
       :ets.delete(database.buffer)
+    catch
+      _, _ -> :ok
+    end
+
+    try do
+      :file.close(database.data_file)
     catch
       _, _ -> :ok
     end
@@ -103,38 +123,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
     end
   end
 
-  @spec store_value(t(), key :: Bedrock.key(), value :: Bedrock.value()) ::
-          :ok | {:error, term()}
-  def store_value(database, key, value) do
-    case :dets.insert(database.dets_storage, {key, value}) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  @spec load_value(t(), locator()) :: {:ok, Bedrock.value()} | {:error, :not_found}
+  def load_value(database, locator) do
+    case locator do
+      <<_offset::47, 0::17>> ->
+        {:ok, <<>>}
 
-  @spec load_value(t(), key :: Bedrock.key()) ::
-          {:ok, Bedrock.value()} | {:error, :not_found}
-  def load_value(database, key) do
-    case :dets.lookup(database.dets_storage, key) do
-      [{^key, value}] -> {:ok, value}
-      [] -> {:error, :not_found}
-    end
-  end
-
-  @doc """
-  Unified value load that handles both lookaside buffer and DETS storage.
-  Routes between hot (ETS) and cold (DETS) storage based on version vs durable_version.
-  """
-  @spec load_value(t(), key :: Bedrock.key(), version :: Bedrock.version()) ::
-          {:ok, Bedrock.value()} | {:error, :not_found}
-  def load_value(database, key, version) do
-    if version > database.durable_version do
-      case :ets.lookup(database.buffer, {version, key}) do
-        [{_key_version, value}] -> {:ok, value}
-        [] -> {:error, :not_found}
-      end
-    else
-      load_value(database, key)
+      <<offset::47, size::17>> = locator ->
+        case :ets.lookup(database.buffer, locator) do
+          [{^locator, value}] -> {:ok, value}
+          [] -> load_from_data_file(database.data_file_name, offset, size)
+        end
     end
   end
 
@@ -143,58 +142,49 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   This is used during transaction application for values within the window.
   """
   @spec store_value(t(), key :: Bedrock.key(), version :: Bedrock.version(), value :: Bedrock.value()) ::
-          :ok
-  def store_value(database, key, version, value) do
-    :ets.insert(database.buffer, {{version, key}, value})
-    :ok
+          {:ok, locator(), database :: t()}
+  def store_value(database, _key, _version, value) do
+    offset = database.data_file_offset
+    size = byte_size(value)
+    locator = <<offset::47, size::17>>
+    :ets.insert(database.buffer, {locator, value})
+    {:ok, locator, %{database | data_file_offset: offset + size}}
   end
 
   @doc """
-  Store a page in the lookaside buffer for the given version and page_id.
-  This is used during transaction application for modified pages within the window.
+  Returns a value loader function that captures only the minimal data needed
+  for async value resolution tasks. Avoids copying the entire Database struct.
   """
-  @spec store_page_version(t(), Page.id(), version :: Bedrock.version(), page_tuple :: {Page.t(), Page.id()}) ::
-          :ok
-  def store_page_version(database, page_id, version, {page, next_id}) do
-    :ets.insert(database.buffer, {{version, {:page, page_id}}, {page, next_id}})
-    :ok
+  @spec value_loader(t()) :: (locator() -> {:ok, Bedrock.value()} | {:error, :not_found} | {:error, :shutting_down})
+  def value_loader(database) do
+    data_file_name = database.data_file_name
+    buffer = database.buffer
+
+    fn
+      <<_offset::47, 0::17>> ->
+        {:ok, <<>>}
+
+      <<offset::47, size::17>> = locator ->
+        case :ets.lookup(buffer, locator) do
+          [{^locator, value}] -> {:ok, value}
+          [] -> load_from_data_file(data_file_name, offset, size)
+        end
+    end
   end
 
-  @doc """
-  Store multiple modified pages in the lookaside buffer for the given version.
-  This is used during transaction application for efficient batch storage of modified pages.
-  """
-  @spec store_modified_pages(t(), version :: Bedrock.version(), page_tuples :: [{Page.t(), Page.id()}]) ::
-          :ok
-  def store_modified_pages(database, version, page_tuples) do
-    Enum.each(page_tuples, fn {page, next_id} ->
-      page_id = Page.id(page)
-      :ok = store_page_version(database, page_id, version, {page, next_id})
-    end)
+  defp load_from_data_file(data_file_name, offset, size) do
+    data_file_name
+    |> :file.open([:raw, :binary, :read])
+    |> case do
+      {:ok, file} ->
+        try do
+          :file.pread(file, offset, size)
+        after
+          :file.close(file)
+        end
 
-    :ok
-  end
-
-  @doc """
-  Batch store values and pages in the lookaside buffer for a given version.
-  This enables atomic writes during transaction application.
-  """
-  @spec batch_store_version_data(
-          t(),
-          version :: Bedrock.version(),
-          values :: [{Bedrock.key(), Bedrock.value()}],
-          pages :: [{Page.id(), {binary(), Page.id()}}]
-        ) :: :ok | {:error, term()}
-  def batch_store_version_data(database, version, values, pages) do
-    value_entries = Enum.map(values, fn {key, value} -> {{version, key}, value} end)
-    page_entries = Enum.map(pages, fn {page_id, page_tuple} -> {{version, {:page, page_id}}, page_tuple} end)
-
-    all_entries = value_entries ++ page_entries
-
-    if :ets.insert_new(database.buffer, all_entries) do
-      :ok
-    else
-      {:error, :insert_failed}
+      error ->
+        error
     end
   end
 
@@ -202,102 +192,79 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   Returns a value loader function that captures only the minimal data needed
   for async value resolution tasks. Avoids copying the entire Database struct.
   """
-  @spec value_loader(t()) ::
-          (Bedrock.key(), Bedrock.version() ->
-             {:ok, Bedrock.value()}
+  @spec many_value_loader(t()) ::
+          ([locator()] ->
+             {:ok, %{locator() => Bedrock.value()}}
              | {:error, :not_found}
              | {:error, :shutting_down})
-  def value_loader(database) do
-    dets_storage = database.dets_storage
+  def many_value_loader(database) do
+    data_file_name = database.data_file_name
     buffer = database.buffer
 
-    fn key, version ->
-      # Always check both ETS and DETS since we can't track durable_version updates
-      # Try ETS first (for hot data)
-      case :ets.lookup(buffer, {version, key}) do
-        [{_key_version, value}] -> {:ok, value}
-        [] -> load_from_dets(dets_storage, key)
-      end
+    fn
+      locators when is_list(locators) ->
+        load_many_values(locators, buffer, data_file_name)
     end
   end
 
-  defp load_from_dets(dets_storage, key) do
-    case :dets.lookup(dets_storage, key) do
-      [{^key, value}] -> {:ok, value}
-      [] -> {:error, :not_found}
+  defp load_many_values(locators, buffer, data_file_name) do
+    {result, not_found} = partition_locators_by_availability(locators, buffer)
+    merge_with_disk_values(result, not_found, data_file_name)
+  end
+
+  defp partition_locators_by_availability(locators, buffer) do
+    Enum.reduce(locators, {%{}, []}, fn
+      <<_::47, 0::17>> = locator, {result, not_found} ->
+        {Map.put(result, locator, <<>>), not_found}
+
+      locator, {result, not_found} ->
+        case :ets.lookup(buffer, locator) do
+          [{^locator, value}] -> {Map.put(result, locator, value), not_found}
+          [] -> {result, [locator | not_found]}
+        end
+    end)
+  end
+
+  defp merge_with_disk_values(result, [], _data_file_name), do: {:ok, result}
+
+  defp merge_with_disk_values(result, not_found, data_file_name) do
+    {:ok, values} = load_many_from_data_file(data_file_name, not_found)
+    {:ok, Map.merge(result, not_found |> Enum.zip(values) |> Map.new())}
+  end
+
+  defp load_many_from_data_file(data_file_name, locators) do
+    data_file_name
+    |> :file.open([:raw, :binary, :read])
+    |> case do
+      {:ok, file} ->
+        try do
+          :file.pread(file, Enum.map(locators, fn <<offset::47, size::17>> -> {offset, size} end))
+        after
+          :file.close(file)
+        end
+
+      error ->
+        error
     end
   end
 
-  @spec get_all_page_ids(t()) :: [Page.id()]
-  def get_all_page_ids(database) do
-    :dets.foldl(
-      fn
-        {page_id, {_page_binary, _next_id}}, acc when is_integer(page_id) ->
-          [page_id | acc]
+  @spec durable_version(t()) :: Bedrock.version()
+  def durable_version(database), do: database.durable_version
 
-        {key, _value}, acc when is_binary(key) ->
-          acc
-      end,
-      [],
-      database.dets_storage
-    )
-  end
-
-  @spec batch_store_values(t(), [{Bedrock.key(), Bedrock.value()}]) ::
-          :ok | {:error, term()}
-  def batch_store_values(database, key_value_tuples) do
-    entries =
-      Enum.map(key_value_tuples, fn {key, value} ->
-        {key, value}
-      end)
-
-    case :dets.insert(database.dets_storage, entries) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  @spec store_durable_version(t(), version :: Bedrock.version()) ::
-          {:ok, t()} | {:error, term()}
-  def store_durable_version(database, version) do
-    case :dets.insert(database.dets_storage, {:durable_version, version}) do
-      :ok ->
-        updated_database = %{database | durable_version: version}
-        {:ok, updated_database}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  # Internal function for loading durable version during initialization
-  @spec load_durable_version_internal(:dets.tab_name()) ::
+  @doc """
+  Load durable version directly from DETS storage.
+  This is useful for background processes that may have a stale database struct.
+  """
+  @spec load_current_durable_version(t() | %{dets_storage: :dets.tab_name()}) ::
           {:ok, Bedrock.version()} | {:error, :not_found}
-  defp load_durable_version_internal(dets_storage) do
+  def load_current_durable_version(%{dets_storage: dets_storage}) do
     case :dets.lookup(dets_storage, :durable_version) do
       [{:durable_version, version}] -> {:ok, version}
       [] -> {:error, :not_found}
     end
   end
 
-  @spec load_durable_version(t()) ::
-          {:ok, Bedrock.version()} | {:error, :not_found}
-  def load_durable_version(database) do
-    {:ok, database.durable_version}
-  end
-
-  @doc """
-  Load durable version directly from DETS storage.
-  This is useful for background processes that may have a stale database struct.
-  """
-  @spec load_current_durable_version(t()) ::
-          {:ok, Bedrock.version()} | {:error, :not_found}
-  def load_current_durable_version(database) do
-    load_durable_version_internal(database.dets_storage)
-  end
-
-  @spec info(t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) ::
-          any() | :undefined
+  @spec info(t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) :: any() | :undefined
   def info(database, stat) do
     case stat do
       :n_keys ->
@@ -334,62 +301,107 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
     min(1.0, objects / max(1, file_size / 1000))
   end
 
-  @spec sync(t()) :: :ok
-  def sync(database) do
-    :dets.sync(database.dets_storage)
-    :ok
-  catch
-    _, _ -> :ok
+  @spec advance_durable_version(
+          t(),
+          version :: Bedrock.version(),
+          data_size_in_bytes :: pos_integer()
+        ) ::
+          {:ok, t(), metadata :: map()} | {:error, term()}
+  def advance_durable_version(database, new_durable_version, data_size_in_bytes) do
+    %{
+      start_time: System.monotonic_time(:microsecond),
+      database: database,
+      new_durable_version: new_durable_version,
+      data_size_in_bytes: data_size_in_bytes
+    }
+    |> build_transactions()
+    |> insert_dets_tx()
+    |> write_data_file()
+    |> dets_sync()
+    |> cleanup_buffer()
+    |> then(fn metadata ->
+      total_duration_μs = System.monotonic_time(:microsecond) - metadata.start_time
+      metadata = Map.put(metadata, :total_duration_μs, total_duration_μs)
+
+      case metadata.sync_result do
+        :ok ->
+          {:ok, %{metadata.database | durable_version: metadata.new_durable_version}, metadata}
+
+        error ->
+          error
+      end
+    end)
   end
 
-  @doc """
-  Advances the durable version with full persistence handling.
-  This handles the complete persistence process:
-  - Extracts data for the specified versions from lookaside buffer
-  - Persists all values and pages atomically to DETS
-  - Syncs to disk
-  - Cleans up lookaside buffer
-  - Updates durable version
-  """
-  @spec advance_durable_version(t(), version :: Bedrock.version(), versions_to_persist :: [Bedrock.version()]) ::
-          {:ok, t()} | {:error, term()}
-  def advance_durable_version(database, new_durable_version, _versions_to_persist) do
-    # Build transaction data with timing
-    {build_time_us, dets_tx} = :timer.tc(fn -> build_dets_tx(database, new_durable_version) end)
-    tx_size_bytes = :erlang.external_size(dets_tx)
-    # Subtract 1 for durable_version entry
-    tx_count = length(dets_tx) - 1
+  defp build_transactions(metadata) do
+    {build_time_μs, {dets_tx, write_iolist}} =
+      :timer.tc(fn ->
+        dets_tx = build_dets_tx(metadata.database, metadata.new_durable_version)
+        write_iolist = build_write_iolist(metadata.database, metadata.data_size_in_bytes)
+        {dets_tx, write_iolist}
+      end)
 
-    # Emit build metrics
-    :telemetry.execute(
-      [:bedrock, :storage, :dets_tx_build_complete],
-      %{duration_us: build_time_us, tx_size_bytes: tx_size_bytes, tx_count: tx_count},
-      %{durable_version: new_durable_version}
-    )
+    tx_size_bytes = :erlang.iolist_size(write_iolist)
+    tx_count = length(write_iolist)
 
-    # Execute operations with timing and telemetry
-    with {insert_time_us, :ok} <- :timer.tc(fn -> :dets.insert(database.dets_storage, dets_tx) end),
-         :ok <-
-           emit_telemetry(
-             :dets_insert_complete,
-             %{duration_us: insert_time_us, tx_size_bytes: tx_size_bytes, tx_count: tx_count},
-             new_durable_version
-           ),
-         {sync_time_us, :ok} <- :timer.tc(fn -> sync(database) end),
-         :ok <- emit_telemetry(:dets_sync_complete, %{duration_us: sync_time_us}, new_durable_version),
-         {cleanup_time_us, :ok} <- :timer.tc(fn -> cleanup_buffer(database, new_durable_version) end),
-         :ok <- emit_telemetry(:dets_cleanup_complete, %{duration_us: cleanup_time_us}, new_durable_version) do
-      {:ok, %{database | durable_version: new_durable_version}}
-    end
+    Map.merge(metadata, %{
+      dets_tx: dets_tx,
+      write_iolist: write_iolist,
+      build_time_μs: build_time_μs,
+      tx_size_bytes: tx_size_bytes,
+      tx_count: tx_count
+    })
   end
 
-  # Efficiently removes all entries for versions older than or equal to the durable version.
-  # This is a more efficient way to clean up the lookaside buffer when advancing the durable version.
-  # Uses a single select_delete operation to remove all obsolete entries at once.
-  @spec cleanup_buffer(t(), version :: Bedrock.version()) :: :ok
-  defp cleanup_buffer(database, durable_version) do
-    :ets.select_delete(database.buffer, [{{{:"$1", :_}, :_}, [{:"=<", :"$1", durable_version}], [true]}])
-    :ok
+  defp insert_dets_tx(metadata) do
+    {insert_time_μs, :ok} =
+      :timer.tc(fn -> :dets.insert(metadata.database.dets_storage, metadata.dets_tx) end)
+
+    Map.put(metadata, :insert_time_μs, insert_time_μs)
+  end
+
+  defp write_data_file(metadata) do
+    {write_time_μs, :ok} =
+      :timer.tc(fn ->
+        :file.pwrite(
+          metadata.database.data_file,
+          metadata.data_size_in_bytes - metadata.tx_size_bytes,
+          metadata.write_iolist
+        )
+      end)
+
+    Map.put(metadata, :write_time_μs, write_time_μs)
+  end
+
+  defp dets_sync(metadata) do
+    {sync_time_μs, result} =
+      :timer.tc(fn ->
+        try do
+          :dets.sync(metadata.database.dets_storage)
+          :ok
+        catch
+          _, _ -> :ok
+        end
+      end)
+
+    Map.merge(metadata, %{sync_time_μs: sync_time_μs, sync_result: result})
+  end
+
+  defp cleanup_buffer(metadata) do
+    {cleanup_time_μs, :ok} =
+      :timer.tc(fn ->
+        mark = <<metadata.data_size_in_bytes::47, 0::17>>
+        # Clean up page entries with new key format
+        :ets.select_delete(metadata.database.buffer, [
+          {{{:page, :"$1", :"$2"}, :_}, [{:"=<", :"$1", metadata.new_durable_version}], [true]}
+        ])
+
+        # Clean up value entries with locators below high water mark
+        :ets.select_delete(metadata.database.buffer, [{{:"$1", :_}, [{:<, :"$1", mark}], [true]}])
+        :ok
+      end)
+
+    Map.put(metadata, :cleanup_time_μs, cleanup_time_μs)
   end
 
   # Extract deduplicated values and pages from the lookaside buffer for versions up to the durable version.
@@ -402,24 +414,37 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
     [
       {:durable_version, new_durable_version}
       | database.buffer
-        |> :ets.select_reverse([{{{:"$1", :"$2"}, :"$3"}, [{:"=<", :"$1", new_durable_version}], [{{:"$2", :"$3"}}]}])
-        |> Enum.reduce(%{}, fn
-          {{:page, page_id}, page_tuple}, data_map ->
-            Map.put_new(data_map, page_id, page_tuple)
-
-          {key, value}, data_map when is_binary(key) ->
-            Map.put_new(data_map, key, value)
-        end)
+        |> :ets.select_reverse([
+          # Match page entries with new key format
+          {{{:page, :"$1", :"$2"}, :"$3"}, [{:"=<", :"$1", new_durable_version}], [{{:"$2", :"$3"}}]}
+        ])
+        |> Enum.reduce(%{}, fn {page_id, page_tuple}, data_map -> Map.put_new(data_map, page_id, page_tuple) end)
         |> Map.to_list()
     ]
   end
 
-  # Helper function to emit telemetry events consistently
-  defp emit_telemetry(event_suffix, measurements, durable_version) do
-    :telemetry.execute(
-      [:bedrock, :storage, event_suffix],
-      measurements,
-      %{durable_version: durable_version}
+  def build_write_iolist(database, data_size_in_bytes) do
+    mark = <<data_size_in_bytes::47, 0::17>>
+
+    database.buffer
+    |> :ets.select([{{:"$1", :"$2"}, [{:"=<", :"$1", mark}], [{{:"$1", :"$2"}}]}])
+    |> Enum.reduce([], fn
+      {locator, value}, iolist when is_binary(locator) and is_binary(value) ->
+        [value | iolist]
+
+      _, iolist ->
+        iolist
+    end)
+    |> Enum.reverse()
+  end
+
+  def store_modified_pages(database, version, modified_pages) do
+    :ets.insert(
+      database.buffer,
+      Enum.map(modified_pages, fn {page_id, page_tuple} ->
+        # Use a tuple key to avoid collision with locators
+        {{:page, version, page_id}, page_tuple}
+      end)
     )
 
     :ok

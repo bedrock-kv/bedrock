@@ -6,22 +6,31 @@ defmodule OlivineRangeClearBench do
   to understand the impact of Tree.page_ids_in_range optimization opportunities.
   """
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
-  alias Bedrock.DataPlane.Storage.Olivine.Database
+  alias Bedrock.DataPlane.Storage.Olivine.IdAllocator
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
-  alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
   alias Bedrock.DataPlane.Version
 
   defmodule MockDatabase do
     @moduledoc """
     Mock database for dependency injection - isolates page/index performance.
     """
-    defstruct [:dets_storage, :window_size_in_microseconds, :buffer, :durable_version]
+    defstruct [
+      :dets_storage,
+      :data_file,
+      :data_file_offset,
+      :data_file_name,
+      :window_size_in_microseconds,
+      :buffer,
+      :durable_version
+    ]
 
     def new do
       %__MODULE__{
         dets_storage: :ets.new(:mock_dets, [:set, :public]),
+        data_file: nil,
+        data_file_offset: 0,
+        data_file_name: nil,
         buffer: :ets.new(:mock_buffer, [:ordered_set, :public, {:read_concurrency, true}]),
         durable_version: Version.zero()
       }
@@ -52,13 +61,13 @@ defmodule OlivineRangeClearBench do
 
     # Set up benchmark
     database = MockDatabase.new()
-    page_allocator = PageAllocator.new(0, [])
+    id_allocator = IdAllocator.new(0, [])
     index = Index.new()
     version = Version.zero()
 
     # Create initial data: populate index with many small ranges
     # This will create multiple pages, making range clears more interesting
-    {populated_index, populated_allocator} = populate_index_with_ranges(index, page_allocator, database, version)
+    {populated_index, populated_allocator} = populate_index_with_ranges(index, id_allocator, database, version)
 
     IO.puts("Index populated with #{map_size(populated_index.page_map)} pages")
     IO.puts("")
@@ -86,22 +95,23 @@ defmodule OlivineRangeClearBench do
   end
 
   # Populate index with data across multiple pages
-  defp populate_index_with_ranges(index, page_allocator, database, base_version) do
+  defp populate_index_with_ranges(index, id_allocator, database, base_version) do
     # Create 20 transactions with 100 keys each = 2000 total keys
     # This should create multiple pages due to the 256 key per page limit
     transactions = create_population_transactions(20, 100)
 
     # Apply all transactions to build up the index
-    Enum.reduce(transactions, {index, page_allocator}, fn transaction, {acc_index, acc_allocator} ->
+    Enum.reduce(transactions, {index, id_allocator}, fn transaction, {acc_index, acc_allocator} ->
       version = Version.increment(base_version)
-      index_update = IndexUpdate.new(acc_index, version, acc_allocator)
+      index_update = IndexUpdate.new(acc_index, version, acc_allocator, database)
 
       updated_index_update =
         index_update
-        |> IndexUpdate.apply_mutations(transaction, database)
+        |> IndexUpdate.apply_mutations(transaction)
         |> IndexUpdate.process_pending_operations()
 
-      IndexUpdate.finish(updated_index_update)
+      {updated_index, _database, updated_id_allocator, _stats} = IndexUpdate.finish(updated_index_update)
+      {updated_index, updated_id_allocator}
     end)
   end
 
@@ -122,19 +132,20 @@ defmodule OlivineRangeClearBench do
   end
 
   # Measure a single range clear operation
-  defp measure_range_clear(index, page_allocator, database, start_key, end_key) do
+  defp measure_range_clear(index, id_allocator, database, start_key, end_key) do
     version = Version.increment(Version.zero())
     mutation = {:clear_range, start_key, end_key}
 
-    index_update = IndexUpdate.new(index, version, page_allocator)
+    index_update = IndexUpdate.new(index, version, id_allocator, database)
 
     # Apply the range clear mutation
     updated_index_update =
       index_update
-      |> IndexUpdate.apply_mutations([mutation], database)
+      |> IndexUpdate.apply_mutations([mutation])
       |> IndexUpdate.process_pending_operations()
 
-    IndexUpdate.finish(updated_index_update)
+    {updated_index, _database, updated_id_allocator, _stats} = IndexUpdate.finish(updated_index_update)
+    {updated_index, updated_id_allocator}
   end
 end
 

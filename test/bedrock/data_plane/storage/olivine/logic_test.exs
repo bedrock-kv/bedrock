@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Logic
+  alias Bedrock.DataPlane.Storage.Olivine.ReadingTestHelpers
   alias Bedrock.DataPlane.Storage.Olivine.State
   alias Bedrock.KeySelector
 
@@ -137,7 +138,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
   describe "get/4" do
     test "returns error for missing key in sync mode", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
-      assert {:error, _} = Logic.get(state, "nonexistent_key", 1, [])
+      assert {:error, _} = ReadingTestHelpers.get(state, "nonexistent_key", 1, [])
       Logic.shutdown(state)
     end
 
@@ -146,7 +147,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       reply_fn = fn result -> send(self(), {:async_result, result}) end
 
       # Immediate errors return error, not task pid
-      assert {:error, _} = Logic.get(state, "async_key", 1, reply_fn: reply_fn)
+      assert {:error, _} = ReadingTestHelpers.get(state, "async_key", 1, reply_fn: reply_fn)
       Logic.shutdown(state)
     end
 
@@ -155,7 +156,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       key_selector = KeySelector.first_greater_or_equal("selector_key")
       reply_fn = fn result -> send(self(), {:selector_result, result}) end
 
-      assert {:error, _} = Logic.get(state, key_selector, 1, reply_fn: reply_fn)
+      assert {:error, _} = ReadingTestHelpers.get(state, key_selector, 1, reply_fn: reply_fn)
       Logic.shutdown(state)
     end
 
@@ -163,8 +164,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       state = create_test_state(test_dir)
 
       # Test different versions that trigger error paths
-      assert {:error, _} = Logic.get(state, "key", 0, [])
-      assert {:error, _} = Logic.get(state, "key", 999_999, [])
+      assert {:error, _} = ReadingTestHelpers.get(state, "key", 0, [])
+      assert {:error, _} = ReadingTestHelpers.get(state, "key", 999_999, [])
       Logic.shutdown(state)
     end
   end
@@ -172,7 +173,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
   describe "get_range/5" do
     test "executes synchronously and returns version_too_old for empty database", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
-      assert {:error, :version_too_old} = Logic.get_range(state, "range_key1", "range_key3", 1, [])
+
+      assert {:error, :version_too_old} =
+               ReadingTestHelpers.get_range(state, "range_key1", "range_key3", 1, [])
+
       Logic.shutdown(state)
     end
 
@@ -180,13 +184,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
       state = create_test_state(test_dir)
       reply_fn = fn result -> send(self(), {:range_result, result}) end
 
-      assert {:error, _} = Logic.get_range(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
+      assert {:error, _} =
+               ReadingTestHelpers.get_range(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
+
       Logic.shutdown(state)
     end
 
     test "respects limit parameter in options", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
-      assert {:error, :version_too_old} = Logic.get_range(state, "limit_key1", "limit_key9", 1, limit: 2)
+
+      assert {:error, :version_too_old} =
+               ReadingTestHelpers.get_range(state, "limit_key1", "limit_key9", 1, limit: 2)
+
       Logic.shutdown(state)
     end
   end

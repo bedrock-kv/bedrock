@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
   @moduledoc false
 
-  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Time
 
   require Logger
@@ -15,19 +14,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
       handler_id(),
       [
         [:bedrock, :storage, :transactions_queued],
-        [:bedrock, :storage, :batch_processing_start],
-        [:bedrock, :storage, :batch_processing_complete],
+        [:bedrock, :storage, :transaction_processing_start],
+        [:bedrock, :storage, :transaction_processing_complete],
         [:bedrock, :storage, :transaction_timeout_scheduled],
-        [:bedrock, :storage, :read_request_waitlisted],
-        [:bedrock, :storage, :read_task_spawned],
-        [:bedrock, :storage, :read_task_complete],
-        [:bedrock, :storage, :window_advancement_no_eviction],
-        [:bedrock, :storage, :window_advancement_evicting],
-        [:bedrock, :storage, :window_advancement_complete],
-        [:bedrock, :storage, :dets_tx_build_complete],
-        [:bedrock, :storage, :dets_insert_complete],
-        [:bedrock, :storage, :dets_sync_complete],
-        [:bedrock, :storage, :dets_cleanup_complete]
+        [:bedrock, :storage, :read_operation_complete],
+        [:bedrock, :storage, :window_advanced]
       ],
       &__MODULE__.handler/4,
       nil
@@ -47,97 +38,102 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
     )
   end
 
-  def log_event(:batch_processing_start, measurements, metadata) do
+  def log_event(:transaction_processing_start, measurements, metadata) do
+    batch_size = Map.get(measurements, :batch_size, 0)
     batch_size_bytes = Map.get(measurements, :batch_size_bytes, 0)
+    otp_name = Map.get(metadata, :otp_name, "unknown")
 
-    debug(
-      "#{metadata.otp_name}: Starting batch processing (batch size: #{measurements.batch_size}, #{format_bytes(batch_size_bytes)})"
-    )
+    debug("#{otp_name}: Starting transaction processing (batch size: #{batch_size}, #{format_bytes(batch_size_bytes)})")
   end
 
-  def log_event(:batch_processing_complete, measurements, metadata) do
-    duration_ms = measurements.duration_us / 1000
+  def log_event(:transaction_processing_complete, measurements, metadata) do
+    duration_μs = Map.get(measurements, :duration_μs, 0)
+    batch_size = Map.get(measurements, :batch_size, 0)
     batch_size_bytes = Map.get(measurements, :batch_size_bytes, 0)
+    otp_name = Map.get(metadata, :otp_name, "unknown")
 
     info(
-      "#{metadata.otp_name}: Completed batch processing (batch size: #{measurements.batch_size}, #{format_bytes(batch_size_bytes)}, duration: #{Float.round(duration_ms, 2)}ms)"
+      "#{otp_name}: Completed transaction processing (batch size: #{batch_size}, #{format_bytes(batch_size_bytes)}, duration: #{Time.Interval.humanize({:microsecond, duration_μs})})"
     )
   end
 
   def log_event(:transaction_timeout_scheduled, _measurements, metadata) do
-    debug("#{metadata.otp_name}: Scheduled timeout for transaction processing")
+    otp_name = Map.get(metadata, :otp_name, "unknown")
+    debug("#{otp_name}: Scheduled timeout for transaction processing")
   end
 
-  def log_event(:read_request_waitlisted, _measurements, metadata) do
-    key_str = format_key(metadata.key)
-    info("#{metadata.otp_name}: Read request waitlisted (operation: #{metadata.operation}, key: #{key_str})")
+  def log_event(:read_operation_complete, measurements, metadata) do
+    otp_name = Map.get(metadata, :otp_name, "unknown")
+    operation = Map.get(metadata, :operation, "unknown")
+    key = Map.get(metadata, :key)
+    key_str = format_key(key)
+
+    total_duration_μs = Map.get(measurements, :total_duration_μs, 0)
+    wait_duration_μs = Map.get(measurements, :wait_duration_μs, 0)
+    task_duration_μs = Map.get(measurements, :task_duration_μs, 0)
+
+    info(
+      "#{otp_name}: Read operation complete (operation: #{operation}, key: #{key_str}, " <>
+        "total: #{Time.Interval.humanize({:microsecond, total_duration_μs})}, " <>
+        "wait: #{Time.Interval.humanize({:microsecond, wait_duration_μs})}, " <>
+        "task: #{Time.Interval.humanize({:microsecond, task_duration_μs})})"
+    )
   end
 
-  def log_event(:read_task_spawned, _measurements, metadata) do
-    key_str = format_key(metadata.key)
-    debug("#{metadata.otp_name}: Read task spawned (operation: #{metadata.operation}, key: #{key_str})")
-  end
-
-  def log_event(:read_task_complete, _measurements, metadata) do
-    debug("#{metadata.otp_name}: Read task completed (pid: #{inspect(metadata.task_pid)})")
-  end
-
-  def log_event(:window_advancement_no_eviction, _, %{storage_id: storage_id}) do
-    debug("Window advancement considered for #{storage_id}, no eviction needed")
-  end
-
-  def log_event(:window_advancement_evicting, measurements, %{storage_id: storage_id}) do
+  def log_event(:window_advanced, measurements, metadata) do
+    worker_id = Map.get(metadata, :worker_id) || Map.get(metadata, :storage_id, "unknown")
+    result = Map.get(metadata, :result, :unknown)
+    new_durable_version = Map.get(metadata, :new_durable_version)
+    duration_μs = Map.get(measurements, :duration_μs, 0)
     evicted_count = Map.get(measurements, :evicted_count, 0)
-    version = Map.get(measurements, :new_durable_version)
-    target_version = Map.get(measurements, :window_target_version)
-    lag_microseconds = Map.get(measurements, :lag_microseconds, 0)
+    lag_time_μs = Map.get(measurements, :lag_time_μs, 0)
 
-    info(
-      "Window advancement for #{storage_id}: evicting #{evicted_count} versions, new durable version #{Version.to_string(version)}, target #{Version.to_string(target_version)}, lag #{Time.Interval.humanize({:microsecond, lag_microseconds})}"
-    )
-  end
+    case result do
+      :no_eviction ->
+        debug(
+          "#{worker_id}: Window advancement - no eviction needed " <>
+            "(duration: #{Time.Interval.humanize({:microsecond, duration_μs})})"
+        )
 
-  def log_event(:window_advancement_complete, _measurements, %{storage_id: storage_id}) do
-    info("Window advancement complete for #{storage_id}")
-  end
+      :evicted ->
+        window_target_version = Map.get(metadata, :window_target_version)
+        data_size_in_bytes = Map.get(metadata, :data_size_in_bytes, 0)
 
-  def log_event(:dets_tx_build_complete, measurements, %{durable_version: version}) do
-    duration_ms = measurements.duration_us / 1000
-    tx_size_mb = measurements.tx_size_bytes / (1024 * 1024)
-    tx_count = measurements.tx_count
+        # Database operation metrics
+        db_duration_μs = Map.get(measurements, :durable_version_duration_μs, 0)
+        tx_size_bytes = Map.get(measurements, :tx_size_bytes, 0)
+        tx_count = Map.get(measurements, :tx_count, 0)
 
-    info(
-      "DETS transaction built: #{tx_count} entries, #{Float.round(tx_size_mb, 2)}MB, #{Float.round(duration_ms, 2)}ms (version: #{Version.to_string(version)})"
-    )
-  end
+        # Database operation breakdown
+        db_build_time_μs = Map.get(measurements, :db_build_time_μs, 0)
+        db_insert_time_μs = Map.get(measurements, :db_insert_time_μs, 0)
+        db_write_time_μs = Map.get(measurements, :db_write_time_μs, 0)
+        db_sync_time_μs = Map.get(measurements, :db_sync_time_μs, 0)
+        db_cleanup_time_μs = Map.get(measurements, :db_cleanup_time_μs, 0)
 
-  def log_event(:dets_insert_complete, measurements, %{durable_version: version}) do
-    duration_ms = measurements.duration_us / 1000
-    tx_size_mb = measurements.tx_size_bytes / (1024 * 1024)
-    tx_count = measurements.tx_count
-
-    info(
-      "DETS insert complete: #{tx_count} entries, #{Float.round(tx_size_mb, 2)}MB, #{Float.round(duration_ms, 2)}ms (version: #{Version.to_string(version)})"
-    )
-  end
-
-  def log_event(:dets_sync_complete, measurements, %{durable_version: version}) do
-    duration_ms = measurements.duration_us / 1000
-
-    info("DETS sync complete: #{Float.round(duration_ms, 2)}ms (version: #{Version.to_string(version)})")
-  end
-
-  def log_event(:dets_cleanup_complete, measurements, %{durable_version: version}) do
-    duration_ms = measurements.duration_us / 1000
-
-    info("DETS buffer cleanup complete: #{Float.round(duration_ms, 2)}ms (version: #{Version.to_string(version)})")
+        info(
+          "#{worker_id}: Window advanced - #{evicted_count} versions -> #{Bedrock.DataPlane.Version.to_string(new_durable_version)}, " <>
+            "#{format_bytes(data_size_in_bytes)} data, " <>
+            "target #{Bedrock.DataPlane.Version.to_string(window_target_version)}, " <>
+            "lag #{Time.Interval.humanize({:microsecond, lag_time_μs})}, " <>
+            "duration: #{Time.Interval.humanize({:microsecond, duration_μs})} | " <>
+            "DB: #{tx_count} entries, #{format_bytes(tx_size_bytes)}, " <>
+            "#{Time.Interval.humanize({:microsecond, db_duration_μs})} " <>
+            "(build: #{Time.Interval.humanize({:microsecond, db_build_time_μs})}, " <>
+            "insert: #{Time.Interval.humanize({:microsecond, db_insert_time_μs})}, " <>
+            "write: #{Time.Interval.humanize({:microsecond, db_write_time_μs})}, " <>
+            "sync: #{Time.Interval.humanize({:microsecond, db_sync_time_μs})}, " <>
+            "cleanup: #{Time.Interval.humanize({:microsecond, db_cleanup_time_μs})})"
+        )
+    end
   end
 
   defp format_key(key) when is_binary(key) do
     if String.printable?(key) and byte_size(key) <= 50 do
       "\"#{key}\""
     else
-      "<<#{byte_size(key)} bytes>>"
+      hex = Base.encode16(key, case: :lower)
+      "0x#{hex}"
     end
   end
 

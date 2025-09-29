@@ -5,14 +5,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Storage.Olivine.Logic
+  alias Bedrock.DataPlane.Storage.Olivine.Reading
   alias Bedrock.DataPlane.Storage.Olivine.State
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.Service.Foreman
 
-  # Process transactions up to this size (in bytes) per window advancement
-  # 2MB
-  @max_batch_size_bytes 2 * 1024 * 1024
+  # Transaction count limits for adaptive batching
+  # Small batches for responsiveness during normal operation
+  @continuation_batch_count 5
+  # Larger batches during lulls when no reads are waiting
+  @timeout_batch_count 50
 
   @spec child_spec(opts :: keyword()) :: map()
   def child_spec(opts) do
@@ -39,68 +43,36 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   @impl true
 
   def handle_call({:get, key, version, opts}, from, %State{} = t) do
-    start_time = System.monotonic_time(:microsecond)
-    Telemetry.trace_read_request_start(t.otp_name, :get, key)
+    # Set operation context metadata for this request
+    Telemetry.trace_metadata(%{operation: :get, key: key})
+
     fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    context = Reading.ReadingContext.new(t.index_manager, t.database)
 
-    case Logic.get(t, key, version, fetch_opts) do
-      {:ok, task_pid} ->
-        Telemetry.trace_read_task_spawned(t.otp_name, :get, key)
+    {updated_manager, result} = Reading.handle_get(t.read_request_manager, context, key, version, fetch_opts)
+    updated_state = %{t | read_request_manager: updated_manager}
 
-        t
-        |> State.add_active_task(task_pid)
-        |> noreply_with_transaction_processing()
-
-      {:error, :version_too_new} ->
-        if wait_ms = opts[:wait_ms] do
-          Telemetry.trace_read_request_waitlisted(t.otp_name, :get, key)
-
-          t
-          |> Logic.add_to_waitlist({key, version}, version, reply_fn_for(from), wait_ms)
-          |> noreply_with_transaction_processing()
-        else
-          duration = System.monotonic_time(:microsecond) - start_time
-          Telemetry.trace_read_request_complete(t.otp_name, :get, key, duration)
-          reply(t, {:error, :version_too_new})
-        end
-
-      {:error, _reason} = error ->
-        duration = System.monotonic_time(:microsecond) - start_time
-        Telemetry.trace_read_request_complete(t.otp_name, :get, key, duration)
-        reply(t, error)
+    case result do
+      :ok -> noreply(updated_state, continue: :maybe_process_transactions)
+      {:error, _reason} = error -> reply(updated_state, error)
     end
   end
 
   def handle_call({:get_range, start_key, end_key, version, opts}, from, %State{} = t) do
-    start_time = System.monotonic_time(:microsecond)
-    Telemetry.trace_read_request_start(t.otp_name, :get_range, {start_key, end_key})
+    # Set operation context metadata for this request
+    Telemetry.trace_metadata(%{operation: :get_range, key: {start_key, end_key}})
+
     fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    context = Reading.ReadingContext.new(t.index_manager, t.database)
 
-    case Logic.get_range(t, start_key, end_key, version, fetch_opts) do
-      {:ok, task_pid} ->
-        Telemetry.trace_read_task_spawned(t.otp_name, :get_range, {start_key, end_key})
+    {updated_manager, result} =
+      Reading.handle_get_range(t.read_request_manager, context, start_key, end_key, version, fetch_opts)
 
-        t
-        |> State.add_active_task(task_pid)
-        |> noreply_with_transaction_processing()
+    updated_state = %{t | read_request_manager: updated_manager}
 
-      {:error, :version_too_new} ->
-        if wait_ms = opts[:wait_ms] do
-          Telemetry.trace_read_request_waitlisted(t.otp_name, :get_range, {start_key, end_key})
-
-          t
-          |> Logic.add_to_waitlist({start_key, end_key, version}, version, reply_fn_for(from), wait_ms)
-          |> noreply_with_transaction_processing()
-        else
-          duration = System.monotonic_time(:microsecond) - start_time
-          Telemetry.trace_read_request_complete(t.otp_name, :get_range, {start_key, end_key}, duration)
-          reply(t, {:error, :version_too_new})
-        end
-
-      {:error, _reason} = error ->
-        duration = System.monotonic_time(:microsecond) - start_time
-        Telemetry.trace_read_request_complete(t.otp_name, :get_range, {start_key, end_key}, duration)
-        reply(t, error)
+    case result do
+      :ok -> noreply(updated_state, continue: :maybe_process_transactions)
+      {:error, _reason} = error -> reply(updated_state, error)
     end
   end
 
@@ -129,15 +101,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
 
   @impl true
   def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
-    Telemetry.trace_startup_start(otp_name)
+    # Set persistent telemetry metadata for this server
+    Telemetry.trace_metadata(%{otp_name: otp_name, storage_id: id})
+
+    Telemetry.trace_startup_start()
 
     case Logic.startup(otp_name, foreman, id, path) do
       {:ok, state} ->
-        Telemetry.trace_startup_complete(otp_name)
+        Telemetry.trace_startup_complete()
         noreply(state, continue: :report_health_to_foreman)
 
       {:error, reason} ->
-        Telemetry.trace_startup_failed(otp_name, reason)
+        Telemetry.trace_startup_failed(reason)
         stop(:no_state, reason)
     end
   end
@@ -145,132 +120,115 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   @impl true
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
-    noreply_with_transaction_processing(t)
+    noreply(t, continue: :process_transactions)
   end
 
-  defp maybe_advance_window_and_notify(state, version) do
-    {:ok, final_state} = Logic.advance_window_with_size_control(state)
-    Logic.notify_waiting_fetches(final_state, version)
-  end
+  @impl true
+  def handle_continue(:process_transactions, %State{} = t) do
+    case IntakeQueue.take_batch_by_count(t.intake_queue, @continuation_batch_count) do
+      {[], nil, updated_intake_queue} ->
+        # Queue empty, just wait for new transactions or timeout
+        updated_state = %{t | intake_queue: updated_intake_queue}
+        noreply(updated_state)
 
-  # Helper to resume transaction processing if queue has work
-  defp noreply_with_transaction_processing(state) do
-    if State.queue_empty?(state) do
-      noreply(state)
-    else
-      Telemetry.trace_transaction_timeout_scheduled(state.otp_name)
-      noreply(state, timeout: 0)
+      {batch, _batch_last_version, updated_intake_queue} ->
+        updated_state = %{t | intake_queue: updated_intake_queue}
+        # Process small batch for responsiveness
+        {:ok, state_with_txns, version} = Logic.apply_transaction_batch(updated_state, batch)
+        final_state = notify_waiting_fetches(state_with_txns, version)
+
+        # Check for more transactions to process
+        noreply(final_state, continue: :maybe_process_transactions)
     end
   end
 
   @impl true
-  def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t) do
-    # Discard transactions when locked
-    noreply(t)
+  def handle_continue(:maybe_process_transactions, %State{} = t) do
+    if IntakeQueue.empty?(t.intake_queue) do
+      noreply(t, timeout: 0)
+    else
+      noreply(t, continue: :process_transactions)
+    end
   end
+
+  @impl true
+  def handle_continue(:advance_window, %State{} = t) do
+    case Logic.advance_window(t) do
+      {:ok, state_after_window} ->
+        noreply(state_after_window)
+    end
+  end
+
+  defp notify_waiting_fetches(state, version) do
+    context = Reading.ReadingContext.new(state.index_manager, state.database)
+    updated_manager = Reading.notify_waiting_fetches(state.read_request_manager, context, version)
+    %{state | read_request_manager: updated_manager}
+  end
+
+  @impl true
+  # Discard transactions when locked
+  def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t), do: noreply(t)
 
   @impl true
   def handle_info({:apply_transactions, encoded_transactions}, %State{} = t) do
     # Queue the transactions and start processing
-    updated_state = State.queue_transactions(t, encoded_transactions)
-    queue_size = State.queue_size(updated_state)
-    Telemetry.trace_transactions_queued(t.otp_name, length(encoded_transactions), queue_size)
-    Telemetry.trace_transaction_timeout_scheduled(t.otp_name)
-    noreply(updated_state, timeout: 0)
+    updated_intake_queue = IntakeQueue.add_transactions(t.intake_queue, encoded_transactions)
+    updated_state = %{t | intake_queue: updated_intake_queue}
+    queue_size = IntakeQueue.size(updated_intake_queue)
+    Telemetry.trace_transactions_queued(length(encoded_transactions), queue_size)
+    Telemetry.trace_transaction_timeout_scheduled()
+    noreply(updated_state, continue: :process_transactions)
   end
 
   @impl true
   def handle_info(:timeout, %State{} = t) do
-    case State.take_transaction_batch_by_size(t, @max_batch_size_bytes) do
-      {[], nil, updated_state} ->
-        # No more transactions to process
-        noreply(updated_state)
+    # First, process a larger batch of transactions for throughput
+    case IntakeQueue.take_batch_by_count(t.intake_queue, @timeout_batch_count) do
+      {[], nil, updated_intake_queue} ->
+        # No transactions to process, advance window during this lull
+        updated_state = %{t | intake_queue: updated_intake_queue}
+        noreply(updated_state, continue: :advance_window)
 
-      {batch, _batch_last_version, updated_state} ->
-        # Process this batch
-        batch_size = length(batch)
-        batch_size_bytes = Enum.sum(Enum.map(batch, &byte_size/1))
-        start_time = System.monotonic_time(:microsecond)
-        Telemetry.trace_batch_processing_start(t.otp_name, batch_size, batch_size_bytes)
-
+      {batch, _batch_last_version, updated_intake_queue} ->
+        updated_state = %{t | intake_queue: updated_intake_queue}
+        # Process larger batch for throughput
         {:ok, state_with_txns, version} = Logic.apply_transaction_batch(updated_state, batch)
+        state_after_txns = notify_waiting_fetches(state_with_txns, version)
 
-        # Use new size-controlled window advancement
-        final_state = maybe_advance_window_and_notify(state_with_txns, version)
-
-        duration = System.monotonic_time(:microsecond) - start_time
-        Telemetry.trace_batch_processing_complete(t.otp_name, batch_size, duration, batch_size_bytes)
-        noreply_with_transaction_processing(final_state)
+        # Now advance window after processing transactions
+        {:ok, final_state} = Logic.advance_window(state_after_txns)
+        noreply(final_state, continue: :maybe_process_transactions)
     end
   end
 
   @impl true
   def handle_info({:transactions_applied, version}, %State{} = t) do
     t
-    |> Logic.notify_waiting_fetches(version)
-    |> noreply_with_transaction_processing()
+    |> notify_waiting_fetches(version)
+    |> noreply()
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %State{} = t) do
-    Telemetry.trace_read_task_complete(t.otp_name, pid)
-
-    t
-    |> State.remove_active_task(pid)
-    |> noreply_with_transaction_processing()
+    updated_manager = Reading.remove_active_task(t.read_request_manager, pid)
+    updated_state = %{t | read_request_manager: updated_manager}
+    noreply(updated_state)
   end
 
   @impl true
-  def handle_info(_msg, state) do
-    {:noreply, state}
-  end
+  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
   def terminate(reason, %State{} = t) do
-    Telemetry.trace_shutdown_start(t.otp_name, reason)
-    active_tasks = State.get_active_tasks(t)
-
-    if MapSet.size(active_tasks) > 0 do
-      wait_for_tasks(active_tasks, 5_000, t.otp_name)
-    end
-
+    Telemetry.trace_shutdown_start(reason)
+    Reading.shutdown(t.read_request_manager)
     Logic.shutdown(t)
-    Telemetry.trace_shutdown_complete(t.otp_name)
+    Telemetry.trace_shutdown_complete()
     :ok
   end
 
   @impl true
   def terminate(_reason, _state), do: :ok
-
-  defp wait_for_tasks(tasks, timeout, otp_name) do
-    Telemetry.trace_shutdown_waiting(otp_name, MapSet.size(tasks))
-    do_wait_for_tasks(tasks, timeout)
-  end
-
-  defp do_wait_for_tasks(tasks, timeout) do
-    cond do
-      MapSet.size(tasks) == 0 ->
-        :ok
-
-      timeout <= 0 ->
-        Telemetry.trace_shutdown_timeout(MapSet.size(tasks))
-        :timeout
-
-      true ->
-        start_time = System.monotonic_time(:millisecond)
-
-        receive do
-          {:DOWN, _ref, :process, pid, _reason} ->
-            tasks = MapSet.delete(tasks, pid)
-            elapsed = System.monotonic_time(:millisecond) - start_time
-            do_wait_for_tasks(tasks, timeout - elapsed)
-        after
-          timeout ->
-            Telemetry.trace_shutdown_timeout(MapSet.size(tasks))
-            :timeout
-        end
-    end
-  end
 
   defp reply_fn_for(from), do: fn result -> GenServer.reply(from, result) end
 end

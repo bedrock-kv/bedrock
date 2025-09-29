@@ -24,16 +24,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.TracingTest do
       )
 
       Tracing.handler(
-        [:bedrock, :storage, :batch_processing_complete],
-        %{batch_size: 3, duration_us: 1500},
+        [:bedrock, :storage, :transaction_processing_complete],
+        %{batch_size: 3, duration_μs: 1500},
         %{otp_name: :test_olivine},
-        nil
-      )
-
-      Tracing.handler(
-        [:bedrock, :storage, :read_request_waitlisted],
-        %{},
-        %{otp_name: :test_olivine, operation: :get, key: "test_key"},
         nil
       )
 

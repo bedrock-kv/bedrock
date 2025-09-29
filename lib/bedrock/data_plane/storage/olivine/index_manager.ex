@@ -10,14 +10,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   - Binary page encoding/decoding with 32-byte header format
   - Page creation and key lookup within pages
   - Simple median split algorithm (256 key threshold)
-  - Page ID allocation with max_page_id tracking
+  - Page ID allocation with max_id tracking
   """
 
   alias Bedrock.DataPlane.Storage.Olivine.Database
+  alias Bedrock.DataPlane.Storage.Olivine.IdAllocator
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
-  alias Bedrock.DataPlane.Storage.Olivine.PageAllocator
+  alias Bedrock.DataPlane.Storage.Olivine.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.KeySelector
@@ -31,18 +32,26 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   @type version_data :: Index.t()
   @type version_update_data :: IndexUpdate.t()
-
+  @type version_list :: [{Bedrock.version(), version_data()}]
   @opaque t :: %__MODULE__{
-            versions: [{Bedrock.version(), version_data()}],
+            versions: version_list(),
             current_version: Bedrock.version(),
             window_size_in_microseconds: pos_integer(),
-            page_allocator: PageAllocator.t()
+            id_allocator: IdAllocator.t(),
+            buffer_tracking_queue: :queue.queue(),
+            last_version_ended_at_offset: non_neg_integer(),
+            window_lag_time_μs: pos_integer(),
+            n_keys: non_neg_integer()
           }
   defstruct [
     :versions,
     :current_version,
     :window_size_in_microseconds,
-    :page_allocator
+    :id_allocator,
+    buffer_tracking_queue: :queue.new(),
+    last_version_ended_at_offset: 0,
+    window_lag_time_μs: 5_000_000,
+    n_keys: 0
   ]
 
   @spec new() :: t()
@@ -51,7 +60,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
       versions: [{Version.zero(), Index.new()}],
       current_version: Version.zero(),
       window_size_in_microseconds: 5_000_000,
-      page_allocator: PageAllocator.new(0, [])
+      id_allocator: IdAllocator.new(0, []),
+      n_keys: 0
     }
   end
 
@@ -59,16 +69,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           {:ok, t()} | {:error, :corrupted_page | :broken_chain | :cycle_detected}
   def recover_from_database(database) do
     # Get the durable version from the database
-    {:ok, durable_version} = Database.load_durable_version(database)
+    durable_version = Database.durable_version(database)
 
     # Load the index structure from the database
     case Index.load_from(database) do
-      {:ok, initial_index, max_page_id, free_page_ids} ->
+      {:ok, initial_index, max_id, free_ids, n_keys} ->
         index_manager = %__MODULE__{
           versions: [{durable_version, initial_index}],
           current_version: durable_version,
           window_size_in_microseconds: 5_000_000,
-          page_allocator: PageAllocator.new(max_page_id, free_page_ids)
+          id_allocator: IdAllocator.new(max_id, free_ids),
+          n_keys: n_keys
         }
 
         {:ok, index_manager}
@@ -87,13 +98,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
   def page_for_key(index_manager, key, version) when is_binary(key) do
     index_manager.versions
-    |> find_best_index_for_fetch(version)
+    |> index_for_version(version)
     |> case do
       nil ->
         {:error, :version_too_old}
 
       index ->
-        Index.page_for_key(index, key)
+        {:ok, Index.page_for_key(index, key)}
     end
   end
 
@@ -105,7 +116,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     do: {:error, :version_too_new}
 
   def page_for_key(index_manager, %KeySelector{} = key_selector, version) do
-    case find_best_index_for_fetch(index_manager.versions, version) do
+    case index_for_version(index_manager.versions, version) do
       nil ->
         {:error, :version_too_old}
 
@@ -122,7 +133,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     do: {:error, :version_too_new}
 
   def pages_for_range(index_manager, start_key, end_key, version) when is_binary(start_key) and is_binary(end_key) do
-    case find_best_index_for_fetch(index_manager.versions, version) do
+    case index_for_version(index_manager.versions, version) do
       nil ->
         {:error, :version_too_old}
 
@@ -139,7 +150,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
       do: {:error, :version_too_new}
 
   def pages_for_range(index_manager, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version) do
-    case find_best_index_for_fetch(index_manager.versions, version) do
+    case index_for_version(index_manager.versions, version) do
       nil ->
         {:error, :version_too_old}
 
@@ -148,11 +159,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
-  @spec apply_transactions(index_manager :: t(), encoded_transactions :: [binary()], database :: Database.t()) :: t()
-  def apply_transactions(index_manager, [], _database), do: index_manager
+  @spec apply_transactions(index_manager :: t(), encoded_transactions :: [binary()], database :: Database.t()) ::
+          {t(), Database.t()}
+  def apply_transactions(index_manager, [], database), do: {index_manager, database}
 
   def apply_transactions(index_manager, transactions, database) when is_list(transactions) do
-    Enum.reduce(transactions, index_manager, fn transaction, index_manager ->
+    Enum.reduce(transactions, {index_manager, database}, fn transaction, {index_manager, database} ->
       apply_transaction(index_manager, transaction, database)
     end)
   end
@@ -164,24 +176,39 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   Creates a new version and applies all mutations in the transaction.
   Uses a two-pass approach: first collect all instructions, then process each page.
   """
-  @spec apply_transaction(t(), binary(), Database.t()) :: t()
+  @spec apply_transaction(t(), binary(), Database.t()) :: {t(), Database.t()}
   def apply_transaction(%{versions: [{_version, current_index} | _]} = index_manager, transaction, database) do
     commit_version = Transaction.commit_version!(transaction)
 
-    {new_index, updated_page_allocator} =
+    update =
       current_index
-      |> IndexUpdate.new(commit_version, index_manager.page_allocator)
-      |> IndexUpdate.apply_mutations(Transaction.mutations!(transaction), database)
+      |> IndexUpdate.new(commit_version, index_manager.id_allocator, database)
+      |> IndexUpdate.apply_mutations(Transaction.mutations!(transaction))
       |> IndexUpdate.process_pending_operations()
-      |> IndexUpdate.store_modified_pages(database)
-      |> IndexUpdate.finish()
+      |> IndexUpdate.store_modified_pages()
 
-    %{
-      index_manager
-      | versions: [{commit_version, new_index} | index_manager.versions],
-        current_version: commit_version,
-        page_allocator: updated_page_allocator
-    }
+    new_database = update.database
+
+    %{keys_added: keys_added, keys_removed: keys_removed, keys_changed: keys_changed} = update
+    new_n_keys = index_manager.n_keys + keys_added - keys_removed
+
+    this_version_ended_at_offset = new_database.data_file_offset
+    size_in_bytes = this_version_ended_at_offset - index_manager.last_version_ended_at_offset
+
+    new_queue =
+      :queue.in({commit_version, this_version_ended_at_offset, size_in_bytes}, index_manager.buffer_tracking_queue)
+
+    Telemetry.trace_index_update_complete(keys_added, keys_removed, keys_changed, new_n_keys)
+
+    {%{
+       index_manager
+       | versions: [{commit_version, update.index} | index_manager.versions],
+         current_version: commit_version,
+         id_allocator: update.id_allocator,
+         buffer_tracking_queue: new_queue,
+         last_version_ended_at_offset: this_version_ended_at_offset,
+         n_keys: new_n_keys
+     }, new_database}
   end
 
   # Helper Functions
@@ -189,145 +216,63 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec info(index_manager :: t(), atom()) :: term()
   def info(index_manager, stat) do
     case stat do
-      # Key count tracking will be implemented in a future phase.
-      # This will require maintaining counters of unique keys across
-      # all versions and pages in the version manager.
-      :n_keys -> 0
+      :n_keys ->
+        index_manager.n_keys
+
       # Size tracking will be implemented in a future phase.
       # This will require summing the byte size of all pages and
       # values across versions, including lookaside buffer data.
-      :size_in_bytes -> 0
+      :size_in_bytes ->
+        0
+
       # Utilization tracking will be implemented in a future phase.
       # This will provide metrics on storage efficiency, including
       # page fill ratios and memory usage patterns.
-      :utilization -> 0.0
-      # Key range tracking will be implemented in a future phase.
-      # This will maintain metadata about the range of keys managed
-      # by this version manager for partition coordination.
-      :key_ranges -> []
-      :max_page_id -> index_manager.page_allocator.max_page_id
-      :free_page_ids -> index_manager.page_allocator.free_page_ids
-      _ -> :undefined
+      :utilization ->
+        0.0
+
+      :key_ranges ->
+        get_key_ranges(index_manager)
+
+      :max_id ->
+        index_manager.id_allocator.max_id
+
+      :free_ids ->
+        index_manager.id_allocator.free_ids
+
+      _ ->
+        :undefined
     end
   end
 
-  @doc """
-  Determines what needs to happen for window advancement.
-  Returns either :no_eviction or {:evict, new_durable_version, evicted_versions, updated_vm}.
-  VersionManager handles all the version management logic internally.
-  """
-  @spec prepare_window_advancement(t()) ::
-          :no_eviction
-          | {:evict, new_durable_version :: Bedrock.version(), evicted_versions :: [Bedrock.version()],
-             updated_vm :: t()}
-  def prepare_window_advancement(index_manager) do
-    prepare_window_advancement(index_manager, index_manager.current_version)
+  @spec get_key_ranges(t()) :: [{Bedrock.key(), Bedrock.key()}]
+  defp get_key_ranges(%{versions: [{_, current_index} | _]}), do: [{current_index.min_key, current_index.max_key}]
+  defp get_key_ranges(%{versions: []}), do: []
+
+  # Trims the hot set by removing all versions <= eviction_version.
+  defp trim_hot_set(index_manager, eviction_version) do
+    {versions_to_keep, _versions_to_evict} = split_versions(index_manager.versions, eviction_version)
+    %{index_manager | versions: versions_to_keep}
   end
 
-  @doc """
-  Determines what needs to happen for window advancement with exact eviction point.
-  Simply evicts all versions <= eviction_version.
-  No policy decisions - just executes the eviction to the specified point.
-  Returns either :no_eviction or {:evict, new_durable_version, evicted_versions, updated_vm}.
-  """
-  @spec prepare_window_advancement(t(), Bedrock.version()) ::
-          :no_eviction
-          | {:evict, new_durable_version :: Bedrock.version(), evicted_versions :: [Bedrock.version()],
-             updated_vm :: t()}
-  def prepare_window_advancement(index_manager, eviction_version) do
-    index_manager.versions
-    |> split_versions_at_window(eviction_version)
-    |> case do
-      {_versions_to_keep, []} ->
-        :no_eviction
+  defp split_versions(versions, target, kept_versions \\ [])
 
-      {versions_to_keep, versions_to_evict} ->
-        new_durable_version = elem(List.first(versions_to_evict), 0)
-        evicted_versions = Enum.map(versions_to_evict, fn {version, _} -> version end)
+  # This version is still in window, keep it and continue
+  defp split_versions([{version, _data} = entry | rest], target, kept_versions) when version >= target,
+    do: split_versions(rest, target, [entry | kept_versions])
 
-        {:evict, new_durable_version, evicted_versions, %{index_manager | versions: versions_to_keep}}
-    end
-  end
+  defp split_versions([], _target, kept_versions), do: {Enum.reverse(kept_versions), []}
 
-  @doc """
-  Calculates the start of the sliding window based on the current version.
-  The window is defined relative to the current (highest applied) version.
-  For now, we keep all versions - proper windowing can be implemented later
-  without breaking the version abstraction.
-  """
-  @spec calculate_window_start(t()) :: Bedrock.version()
-  # Calculate window start based on current version (timestamp) minus window size
-  # Versions are microsecond timestamps, so we subtract window_size_in_microseconds
-  def calculate_window_start(index_manager) do
-    Version.subtract(index_manager.current_version, index_manager.window_size_in_microseconds)
-  rescue
-    ArgumentError ->
-      # Underflow - return zero version
-      Version.zero()
-  end
+  # This version is outside window, split here
+  # All remaining versions (including this one) should be evicted
+  defp split_versions(all_versions, _target, kept_versions), do: {Enum.reverse(kept_versions), all_versions}
 
-  @doc """
-  Advances the version manager to a new version with window management.
-  - Updates current_version to the new version
-  - Evicts expired versions outside the 5-second window
-  - Updates durable_version to be the oldest version in the window
+  @spec index_for_version(version_list(), Bedrock.version()) :: version_data() | nil
+  defp index_for_version(versions, target), do: find_target(versions, target)
 
-  Note: Only transaction application should add entries to the versions list.
-  This function only manages version advancement and window eviction.
-  """
-  @spec advance_version(t(), Bedrock.version()) :: t()
-  def advance_version(index_manager, new_version) do
-    window_start_version = calculate_window_start(index_manager)
-
-    {versions_to_keep, _versions_to_evict} = split_versions_at_window(index_manager.versions, window_start_version)
-
-    # Note: advance_version only manages in-memory version eviction
-    # Persistence should be handled by advance_window_with_persistence before calling this function
-    # This separation allows for proper error handling and transaction semantics
-
-    %{index_manager | versions: versions_to_keep, current_version: new_version}
-  end
-
-  # Helper Functions for MVCC Value Retrieval (Phase 3.2)
-
-  defp split_versions_at_window(versions, window_start_version) do
-    split_versions_at_window(versions, window_start_version, [])
-  end
-
-  # Optimized version splitting using ordered list traversal
-  defp split_versions_at_window([], _window_start_version, kept_versions) do
-    # No more versions to check, all remaining versions are kept
-    {Enum.reverse(kept_versions), []}
-  end
-
-  defp split_versions_at_window(
-         [{version, _data} = version_entry | rest] = all_versions,
-         window_start_version,
-         kept_versions
-       ) do
-    if version >= window_start_version do
-      # This version is still in window, keep it and continue
-      split_versions_at_window(rest, window_start_version, [version_entry | kept_versions])
-    else
-      # This version is outside window, split here
-      # All remaining versions (including this one) should be evicted
-      {Enum.reverse(kept_versions), all_versions}
-    end
-  end
-
-  defp find_best_index_for_fetch(versions, target_version) do
-    find_first_valid_version(versions, target_version)
-  end
-
-  defp find_first_valid_version([], _target_version), do: nil
-
-  defp find_first_valid_version([{version, data} | rest], target_version) do
-    if target_version < version do
-      find_first_valid_version(rest, target_version)
-    else
-      data
-    end
-  end
+  defp find_target([{version, _index} | rest], target) when target < version, do: find_target(rest, target)
+  defp find_target([], _target), do: nil
+  defp find_target([{_version, index} | _rest], _target), do: index
 
   # KeySelector Resolution Helper Functions
 
@@ -339,8 +284,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
          index,
          %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector
        ) do
-    # With gap-free design, every key maps to a page
-    {:ok, page} = Index.page_for_key(index, ref_key)
+    page = Index.page_for_key(index, ref_key)
 
     case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
       {:ok, resolved_key, page} ->
@@ -533,6 +477,78 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     |> case do
       nil -> {:error, :not_found}
       page -> {:ok, page}
+    end
+  end
+
+  # Buffer tracking queue functions
+
+  @doc """
+  Advances the window by determining what to evict and updating both buffer tracking and hot set.
+  This is the complete window advancement operation that combines:
+  1. Calculating window edge (newest version in buffer - 5 seconds)
+  2. Determining eviction batch based on size and time constraints
+  3. Trimming hot set to match eviction point
+
+  Returns either {:no_eviction, updated_manager} or {:evict, batch, updated_manager}.
+  """
+  @spec advance_window(t(), pos_integer()) ::
+          {:no_eviction, t()} | {:evict, [{Bedrock.version(), pos_integer(), pos_integer()}], t()}
+  def advance_window(index_manager, max_eviction_size_bytes) do
+    with {:ok, window_edge} <- get_window_edge(index_manager),
+         {:ok, batch, manager_after_queue_update} <-
+           determine_eviction_batch(index_manager, max_eviction_size_bytes, window_edge) do
+      {eviction_version, _data_size_in_bytes, _} = List.last(batch)
+      manager_after_hot_set_trim = trim_hot_set(manager_after_queue_update, eviction_version)
+      {:evict, batch, manager_after_hot_set_trim}
+    else
+      :empty -> {:no_eviction, index_manager}
+      {:no_eviction, updated_manager} -> {:no_eviction, updated_manager}
+    end
+  end
+
+  # Gets the window edge by using the current_version as the reference point.
+  # This provides a stable reference that advances with transaction processing
+  # rather than causing massive evictions during transaction bursts.
+  defp get_window_edge(index_manager) do
+    case :queue.peek_r(index_manager.buffer_tracking_queue) do
+      {:value, _} ->
+        # Use current_version (the latest committed version) as the reference point
+        # This prevents the bug where using the newest buffered version causes
+        # the entire buffer to be evicted during rapid transaction processing
+        try do
+          {:ok, Version.subtract(index_manager.current_version, index_manager.window_lag_time_μs)}
+        rescue
+          # Underflow - return no window edge (zero version)
+          ArgumentError -> :empty
+        end
+
+      :empty ->
+        :empty
+    end
+  end
+
+  # Determines which versions to evict based on size limits and window edge.
+  defp determine_eviction_batch(index_manager, max_size_bytes, window_edge_version) do
+    {batch, new_queue} = take_eviction_batch(index_manager.buffer_tracking_queue, max_size_bytes, window_edge_version)
+
+    if Enum.empty?(batch) do
+      {:no_eviction, index_manager}
+    else
+      {:ok, batch, %{index_manager | buffer_tracking_queue: new_queue}}
+    end
+  end
+
+  # Take versions from oldest end of buffer tracking queue until size limit or window edge
+  defp take_eviction_batch(queue, max_size, window_edge, acc \\ [], current_size \\ 0) do
+    case :queue.peek(queue) do
+      {:value, {version, _data_size_in_bytes, size} = entry}
+      when version <= window_edge and current_size + size < max_size ->
+        {_, new_queue} = :queue.out(queue)
+        take_eviction_batch(new_queue, max_size, window_edge, [entry | acc], current_size + size)
+
+      # Stop if this version is newer than the window edge (should not be evicted)
+      _ ->
+        {Enum.reverse(acc), queue}
     end
   end
 end

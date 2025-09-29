@@ -34,20 +34,22 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
     test "basic telemetry events can be emitted" do
       alias Bedrock.DataPlane.Storage.Telemetry
 
-      assert :ok = Telemetry.trace_startup_start(:test_server)
-      assert :ok = Telemetry.trace_startup_complete(:test_server)
+      # Set metadata first for proper telemetry context
+      Telemetry.trace_metadata(%{otp_name: :test_server, storage_id: "test_id"})
+      assert :ok = Telemetry.trace_startup_start()
+      assert :ok = Telemetry.trace_startup_complete()
       assert :ok = Telemetry.trace_log_pull_start(<<1::64>>, <<2::64>>)
 
+      # Set telemetry metadata
+      Telemetry.trace_metadata(%{otp_name: :test_server})
+
       # Test general storage telemetry events (shared)
-      assert :ok = Telemetry.trace_read_request_start(:test_server, :get, "test_key")
-      assert :ok = Telemetry.trace_read_request_complete(:test_server, :get, "test_key", 1000)
+      assert :ok = Telemetry.trace_read_operation_complete(:get, "test_key", total_duration_μs: 1000)
 
       # Test olivine-specific telemetry events
-      assert :ok = Telemetry.trace_transactions_queued(:test_server, 5, 10)
-      assert :ok = Telemetry.trace_batch_processing_start(:test_server, 3)
-      assert :ok = Telemetry.trace_batch_processing_complete(:test_server, 3, 1500)
-      assert :ok = Telemetry.trace_read_request_waitlisted(:test_server, :get, "test_key")
-      assert :ok = Telemetry.trace_read_task_spawned(:test_server, :get_range, {"start", "end"})
+      assert :ok = Telemetry.trace_transactions_queued(5, 10)
+      assert :ok = Telemetry.trace_transaction_processing_start(3, 0)
+      assert :ok = Telemetry.trace_transaction_processing_complete(3, 1500)
     end
   end
 

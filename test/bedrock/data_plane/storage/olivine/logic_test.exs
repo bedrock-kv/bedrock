@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
 
   import ExUnit.CaptureLog
 
-  alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Logic
   alias Bedrock.DataPlane.Storage.Olivine.ReadingTestHelpers
@@ -62,7 +61,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
                 otp_name: ^otp_name,
                 id: ^id,
                 foreman: ^foreman,
-                database: %Database{},
+                database: {_, _},
                 index_manager: %IndexManager{}
               } = state} = result
 

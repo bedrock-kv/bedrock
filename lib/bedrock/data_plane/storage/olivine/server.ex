@@ -134,7 +134,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
       {batch, _batch_last_version, updated_intake_queue} ->
         updated_state = %{t | intake_queue: updated_intake_queue}
         # Process small batch for responsiveness
-        {:ok, state_with_txns, version} = Logic.apply_transaction_batch(updated_state, batch)
+        {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         final_state = notify_waiting_fetches(state_with_txns, version)
 
         # Check for more transactions to process
@@ -192,7 +192,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
       {batch, _batch_last_version, updated_intake_queue} ->
         updated_state = %{t | intake_queue: updated_intake_queue}
         # Process larger batch for throughput
-        {:ok, state_with_txns, version} = Logic.apply_transaction_batch(updated_state, batch)
+        {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         state_after_txns = notify_waiting_fetches(state_with_txns, version)
 
         # Now advance window after processing transactions

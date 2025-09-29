@@ -14,44 +14,106 @@ defmodule OlivineRangeClearBench do
   defmodule MockDatabase do
     @moduledoc """
     Mock database for dependency injection - isolates page/index performance.
+    Updated to work with the new tuple-based database architecture.
     """
-    defstruct [
-      :dets_storage,
-      :data_file,
-      :data_file_offset,
-      :data_file_name,
-      :window_size_in_microseconds,
-      :buffer,
-      :durable_version
-    ]
 
-    def new do
-      %__MODULE__{
-        dets_storage: :ets.new(:mock_dets, [:set, :public]),
-        data_file: nil,
-        data_file_offset: 0,
-        data_file_name: nil,
-        buffer: :ets.new(:mock_buffer, [:ordered_set, :public, {:read_concurrency, true}]),
-        durable_version: Version.zero()
-      }
-    end
+    defmodule MockDataDatabase do
+      @moduledoc false
+      defstruct [
+        :file,
+        :file_offset,
+        :file_name,
+        :window_size_in_microseconds,
+        :buffer
+      ]
 
-    # Mock store_value - just store in ETS
-    def store_value(database, key, version, value) do
-      :ets.insert(database.buffer, {{key, version}, value})
-      :ok
-    end
+      def new do
+        %__MODULE__{
+          file: nil,
+          file_offset: 0,
+          file_name: nil,
+          window_size_in_microseconds: 5_000_000,
+          buffer: :ets.new(:mock_buffer, [:ordered_set, :public, {:read_concurrency, true}])
+        }
+      end
 
-    # Mock load_value - load from ETS
-    def load_value(database, key, version) do
-      case :ets.lookup(database.buffer, {key, version}) do
-        [{{^key, ^version}, value}] -> {:ok, value}
-        [] -> {:error, :not_found}
+      def store_value(data_db, _key, _version, value) do
+        offset = data_db.file_offset
+        size = byte_size(value)
+        locator = <<offset::47, size::17>>
+        :ets.insert(data_db.buffer, {locator, value})
+        {:ok, locator, %{data_db | file_offset: offset + size}}
+      end
+
+      def load_value(data_db, locator) do
+        case locator do
+          <<_offset::47, 0::17>> ->
+            {:ok, <<>>}
+
+          <<_offset::47, _size::17>> = locator ->
+            case :ets.lookup(data_db.buffer, locator) do
+              [{^locator, value}] -> {:ok, value}
+              [] -> {:error, :not_found}
+            end
+        end
       end
     end
 
-    # Mock store_modified_pages - no-op
-    def store_modified_pages(_database, _version, _pages), do: :ok
+    defmodule MockIndexDatabase do
+      @moduledoc false
+      defstruct [
+        :dets_storage,
+        :durable_version
+      ]
+
+      def new do
+        %__MODULE__{
+          dets_storage: :ets.new(:mock_dets, [:set, :public]),
+          durable_version: Version.zero()
+        }
+      end
+
+      def store_page(index_db, page_id, page_tuple) do
+        :ets.insert(index_db.dets_storage, {page_id, page_tuple})
+        :ok
+      end
+
+      def load_page(index_db, page_id) do
+        case :ets.lookup(index_db.dets_storage, page_id) do
+          [{^page_id, page_tuple}] -> {:ok, page_tuple}
+          [] -> {:error, :not_found}
+        end
+      end
+
+      def durable_version(index_db), do: index_db.durable_version
+    end
+
+    def new do
+      data_db = MockDataDatabase.new()
+      index_db = MockIndexDatabase.new()
+      {data_db, index_db}
+    end
+
+    def store_value({data_db, index_db}, key, version, value) do
+      {:ok, locator, updated_data_db} = MockDataDatabase.store_value(data_db, key, version, value)
+      {:ok, locator, {updated_data_db, index_db}}
+    end
+
+    def load_value({data_db, _index_db}, locator) do
+      MockDataDatabase.load_value(data_db, locator)
+    end
+
+    def store_page({_data_db, index_db}, page_id, page_tuple) do
+      MockIndexDatabase.store_page(index_db, page_id, page_tuple)
+    end
+
+    def load_page({_data_db, index_db}, page_id) do
+      MockIndexDatabase.load_page(index_db, page_id)
+    end
+
+    def durable_version({_data_db, index_db}) do
+      MockIndexDatabase.durable_version(index_db)
+    end
   end
 
   def run do
@@ -110,7 +172,7 @@ defmodule OlivineRangeClearBench do
         |> IndexUpdate.apply_mutations(transaction)
         |> IndexUpdate.process_pending_operations()
 
-      {updated_index, _database, updated_id_allocator, _stats} = IndexUpdate.finish(updated_index_update)
+      {updated_index, _database, updated_id_allocator, _modified_pages} = IndexUpdate.finish(updated_index_update)
       {updated_index, updated_id_allocator}
     end)
   end
@@ -144,7 +206,7 @@ defmodule OlivineRangeClearBench do
       |> IndexUpdate.apply_mutations([mutation])
       |> IndexUpdate.process_pending_operations()
 
-    {updated_index, _database, updated_id_allocator, _stats} = IndexUpdate.finish(updated_index_update)
+    {updated_index, _database, updated_id_allocator, _modified_pages} = IndexUpdate.finish(updated_index_update)
     {updated_index, updated_id_allocator}
   end
 end

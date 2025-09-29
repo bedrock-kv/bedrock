@@ -85,22 +85,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
         index: index,
         id_allocator: id_allocator,
         database: database,
-        keys_added: keys_added,
-        keys_removed: keys_removed,
-        keys_changed: keys_changed
+        keys_added: _keys_added,
+        keys_removed: _keys_removed,
+        keys_changed: _keys_changed,
+        modified_page_ids: modified_page_ids
       }) do
-    {index, database, id_allocator, {keys_added, keys_removed, keys_changed}}
-  end
+    # Collect modified pages as a map from page_id to {page, next_id}
+    modified_pages = Map.new(modified_page_ids, &{&1, Index.get_page_with_next_id!(index, &1)})
 
-  @doc """
-  Stores all modified pages from the IndexUpdate in the database.
-  Returns the IndexUpdate for chaining.
-  """
-  @spec store_modified_pages(t()) :: t()
-  def store_modified_pages(%__MODULE__{version: version} = index_update) do
-    pages = Enum.map(index_update.modified_page_ids, &Index.get_page_with_next_id!(index_update.index, &1))
-    :ok = Database.store_modified_pages(index_update.database, version, pages)
-    index_update
+    {index, database, id_allocator, modified_pages}
   end
 
   @doc """

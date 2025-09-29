@@ -48,7 +48,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.ServerTest do
 
       # Test olivine-specific telemetry events
       assert :ok = Telemetry.trace_transactions_queued(5, 10)
-      assert :ok = Telemetry.trace_transaction_processing_start(3, 0)
       assert :ok = Telemetry.trace_transaction_processing_complete(3, 1500)
     end
   end

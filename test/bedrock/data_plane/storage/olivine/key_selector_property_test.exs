@@ -212,7 +212,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.KeySelectorPropertyTest do
 
   # Helper functions
 
-  defp create_index_manager(index), do: %IndexManager{versions: [{1, index}], current_version: 1}
+  defp create_index_manager(index), do: %IndexManager{versions: [{1, {index, %{}}}], current_version: 1}
 
   defp get_all_keys_from_index(%Index{page_map: page_map}) do
     page_map

@@ -31,19 +31,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
       file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
 
-      assert {:ok, %{dets_storage: dets_storage, window_size_in_microseconds: 5_000_000} = db} =
-               Database.open(table_name, file_path)
+      assert {:ok, {data_db, index_db} = db} = Database.open(table_name, file_path)
 
-      assert dets_storage
+      assert data_db.window_size_in_microseconds == 5_000_000
+      assert index_db.dets_storage == table_name
 
       Database.close(db)
     end
 
-    test "open/3 accepts custom window size", %{tmp_dir: tmp_dir} do
+    test "open/3 accepts custom window size via options", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
       file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
 
-      assert {:ok, %{window_size_in_microseconds: 2_000_000} = db} = Database.open(table_name, file_path, 2_000)
+      assert {:ok, {data_db, _index_db} = db} = Database.open(table_name, file_path, window_in_ms: 2_000)
+
+      assert data_db.window_size_in_microseconds == 2_000_000
 
       Database.close(db)
     end

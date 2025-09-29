@@ -15,8 +15,9 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
     next_id = page.next_id
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
     :ok = Database.store_page(database, Page.id(page), {binary, next_id})
-    Database.store_modified_pages(database, version, [{Page.id(page), {binary, next_id}}])
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1)
+    # Note: pages are now managed through the versions list instead of being stored in buffer
+    collected_pages = [%{Page.id(page) => {binary, next_id}}]
+    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
     :ok
   end
 
@@ -29,8 +30,9 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
     page_id = Page.id(page)
     :ok = Database.store_page(database, page_id, {binary, next_id})
-    Database.store_modified_pages(database, version, [{page_id, {binary, next_id}}])
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1)
+    # Use new optimized format: pass collected pages directly
+    collected_pages = [%{page_id => {binary, next_id}}]
+    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
     :ok
   end
 
@@ -50,8 +52,9 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
         {page_id, {binary, next_id}}
       end)
 
-    Database.store_modified_pages(database, version, modified_pages)
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1)
+    # Note: pages are now managed through the versions list instead of being stored in buffer
+    collected_pages = [Map.new(modified_pages)]
+    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
     :ok
   end
 

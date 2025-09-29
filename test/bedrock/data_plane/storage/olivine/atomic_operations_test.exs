@@ -75,7 +75,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.AtomicOperationsTest do
     version = Transaction.commit_version!(transaction)
 
     # Get the current index from the updated manager
-    [{^version, current_index} | _] = updated_manager.versions
+    [{^version, {current_index, _modified_pages}} | _] = updated_manager.versions
 
     for {key, expected_value} <- expected_values do
       # Get locator for the key from the index

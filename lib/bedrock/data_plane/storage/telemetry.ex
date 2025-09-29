@@ -73,15 +73,6 @@ defmodule Bedrock.DataPlane.Storage.Telemetry do
     do:
       emit_storage_operation(:transactions_queued, %{transaction_count: transaction_count, queue_size: queue_size}, %{})
 
-  @spec trace_transaction_processing_start(integer(), integer()) :: :ok
-  def trace_transaction_processing_start(batch_size, batch_size_bytes) do
-    emit_storage_operation(
-      :transaction_processing_start,
-      %{batch_size: batch_size, batch_size_bytes: batch_size_bytes},
-      %{}
-    )
-  end
-
   @spec trace_transaction_processing_complete(integer(), integer()) :: :ok
   def trace_transaction_processing_complete(batch_size, duration_microseconds),
     do: trace_transaction_processing_complete(batch_size, duration_microseconds, 0)

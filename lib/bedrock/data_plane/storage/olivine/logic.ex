@@ -149,99 +149,51 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   """
   @spec advance_window(State.t()) :: {:ok, State.t()} | {:error, term()}
   def advance_window(%State{} = state) do
-    %{start_time: System.monotonic_time(:microsecond)}
-    |> index_manager_advance_window(state)
-    |> database_advance_durable_version()
-    |> emit_telemetry()
-    |> then(&{:ok, &1.state})
-  end
+    start_time = System.monotonic_time(:microsecond)
 
-  defp index_manager_advance_window(pipeline, %State{} = state) do
     case IndexManager.advance_window(state.index_manager, max_eviction_size()) do
       {:no_eviction, updated_index_manager} ->
-        Map.merge(pipeline, %{
-          result: :no_eviction,
-          state: %{state | index_manager: updated_index_manager},
-          current_version: state.index_manager.current_version
-        })
+        updated_state = %{state | index_manager: updated_index_manager}
+        {:ok, updated_state}
 
-      {:evict, batch, updated_index_manager} ->
-        {new_durable_version, data_size_in_bytes, _} = List.last(batch)
-        window_edge = calculate_window_edge_for_telemetry(batch, state.window_lag_time_μs)
+      {:evict, evicted_count, updated_index_manager, collected_pages, eviction_version} ->
+        window_edge = calculate_window_edge_for_telemetry(eviction_version, state.window_lag_time_μs)
+        {data_db, _index_db} = state.database
 
-        Map.merge(pipeline, %{
-          result: :evicted,
-          state: %{state | index_manager: updated_index_manager},
-          current_version: new_durable_version,
-          batch: batch,
-          new_durable_version: new_durable_version,
-          data_size_in_bytes: data_size_in_bytes,
-          window_edge: window_edge,
-          evicted_count: length(batch),
-          lag_time_μs: calculate_lag_time_μs(window_edge, new_durable_version)
-        })
-    end
-  end
+        {:ok, updated_database, db_pipeline} =
+          Database.advance_durable_version(
+            state.database,
+            eviction_version,
+            data_db.file_offset,
+            collected_pages
+          )
 
-  defp database_advance_durable_version(%{result: :no_eviction} = pipeline), do: pipeline
+        updated_state = %{state | index_manager: updated_index_manager, database: updated_database}
 
-  defp database_advance_durable_version(%{result: :evicted} = pipeline) do
-    {:ok, updated_database, db_pipeline} =
-      Database.advance_durable_version(
-        pipeline.state.database,
-        pipeline.new_durable_version,
-        pipeline.data_size_in_bytes
-      )
+        duration = System.monotonic_time(:microsecond) - start_time
+        lag_time_μs = calculate_lag_time_μs(window_edge, eviction_version)
 
-    Map.merge(pipeline, %{
-      state: %{pipeline.state | database: updated_database},
-      tx_size_bytes: db_pipeline.tx_size_bytes,
-      tx_count: db_pipeline.tx_count,
-      # Database-specific telemetry
-      db_build_time_μs: db_pipeline.build_time_μs,
-      db_insert_time_μs: db_pipeline.insert_time_μs,
-      db_write_time_μs: db_pipeline.write_time_μs,
-      db_sync_time_μs: db_pipeline.sync_time_μs,
-      db_cleanup_time_μs: db_pipeline.cleanup_time_μs,
-      durable_version_duration_μs: db_pipeline.total_duration_μs
-    })
-  end
-
-  defp emit_telemetry(pipeline) do
-    duration = System.monotonic_time(:microsecond) - pipeline.start_time
-
-    case pipeline.result do
-      :no_eviction ->
-        pipeline
-
-      :evicted ->
-        OlivineTelemetry.trace_window_advanced(pipeline.result, pipeline.current_version,
+        OlivineTelemetry.trace_window_advanced(:evicted, eviction_version,
           duration_μs: duration,
-          evicted_count: pipeline.evicted_count,
-          lag_time_μs: pipeline.lag_time_μs,
-          #
-          window_target_version: pipeline.window_edge,
-          data_size_in_bytes: pipeline.data_size_in_bytes,
-          durable_version_duration_μs: pipeline.durable_version_duration_μs,
-          tx_size_bytes: pipeline.tx_size_bytes,
-          tx_count: pipeline.tx_count,
-          #
-          db_build_time_μs: pipeline.db_build_time_μs,
-          db_insert_time_μs: pipeline.db_insert_time_μs,
-          db_write_time_μs: pipeline.db_write_time_μs,
-          db_sync_time_μs: pipeline.db_sync_time_μs,
-          db_cleanup_time_μs: pipeline.db_cleanup_time_μs
+          evicted_count: evicted_count,
+          lag_time_μs: lag_time_μs,
+          window_target_version: window_edge,
+          data_size_in_bytes: data_db.file_offset,
+          durable_version_duration_μs: db_pipeline.total_duration_μs,
+          db_insert_time_μs: db_pipeline.insert_time_μs,
+          db_write_time_μs: db_pipeline.write_time_μs,
+          db_sync_time_μs: db_pipeline.sync_time_μs,
+          db_cleanup_time_μs: db_pipeline.cleanup_time_μs
         )
 
-        pipeline
+        {:ok, updated_state}
     end
   end
 
-  # Helper to calculate window edge for telemetry purposes
-  # We need to reconstruct this from the batch since IndexManager now handles the calculation internally
-  defp calculate_window_edge_for_telemetry(batch, window_lag_time_μs) do
-    {newest_version_in_batch, _, _} = List.last(batch)
-    Version.subtract(newest_version_in_batch, window_lag_time_μs)
+  # Helper to calculate window edge for telemetry purposes.
+  # Uses eviction version directly instead of extracting from batch for efficiency.
+  defp calculate_window_edge_for_telemetry(eviction_version, window_lag_time_μs) do
+    Version.subtract(eviction_version, window_lag_time_μs)
   rescue
     ArgumentError ->
       # Underflow - return zero version
@@ -259,15 +211,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   This is used for incremental processing to avoid large DETS writes.
   Buffer tracking is now handled directly by IndexManager.apply_transactions.
   """
-  @spec apply_transaction_batch(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
-  def apply_transaction_batch(%State{} = t, encoded_transactions) do
+  @spec apply_transactions(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
+  def apply_transactions(%State{} = t, encoded_transactions) do
     batch_size = length(encoded_transactions)
     batch_size_bytes = Enum.sum(Enum.map(encoded_transactions, &byte_size/1))
     start_time = System.monotonic_time(:microsecond)
-
-    # Set batch processing context metadata
-    Telemetry.trace_metadata(%{batch_size: batch_size, batch_size_bytes: batch_size_bytes})
-    Telemetry.trace_transaction_processing_start(batch_size, batch_size_bytes)
 
     {updated_index_manager, updated_database} =
       IndexManager.apply_transactions(t.index_manager, encoded_transactions, t.database)

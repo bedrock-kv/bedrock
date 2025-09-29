@@ -101,11 +101,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
 
         # Database operation metrics
         db_duration_μs = Map.get(measurements, :durable_version_duration_μs, 0)
-        tx_size_bytes = Map.get(measurements, :tx_size_bytes, 0)
-        tx_count = Map.get(measurements, :tx_count, 0)
 
         # Database operation breakdown
-        db_build_time_μs = Map.get(measurements, :db_build_time_μs, 0)
         db_insert_time_μs = Map.get(measurements, :db_insert_time_μs, 0)
         db_write_time_μs = Map.get(measurements, :db_write_time_μs, 0)
         db_sync_time_μs = Map.get(measurements, :db_sync_time_μs, 0)
@@ -117,9 +114,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
             "target #{Bedrock.DataPlane.Version.to_string(window_target_version)}, " <>
             "lag #{Time.Interval.humanize({:microsecond, lag_time_μs})}, " <>
             "duration: #{Time.Interval.humanize({:microsecond, duration_μs})} | " <>
-            "DB: #{tx_count} entries, #{format_bytes(tx_size_bytes)}, " <>
+            "DB: " <>
             "#{Time.Interval.humanize({:microsecond, db_duration_μs})} " <>
-            "(build: #{Time.Interval.humanize({:microsecond, db_build_time_μs})}, " <>
+            "(" <>
             "insert: #{Time.Interval.humanize({:microsecond, db_insert_time_μs})}, " <>
             "write: #{Time.Interval.humanize({:microsecond, db_write_time_μs})}, " <>
             "sync: #{Time.Interval.humanize({:microsecond, db_sync_time_μs})}, " <>

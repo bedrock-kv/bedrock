@@ -37,9 +37,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Telemetry do
       durable_version_duration_μs: Keyword.get(opts, :durable_version_duration_μs, 0),
       # Database operation breakdown
       db_insert_time_μs: Keyword.get(opts, :db_insert_time_μs, 0),
-      db_write_time_μs: Keyword.get(opts, :db_write_time_μs, 0),
-      db_sync_time_μs: Keyword.get(opts, :db_sync_time_μs, 0),
-      db_cleanup_time_μs: Keyword.get(opts, :db_cleanup_time_μs, 0)
+      db_write_time_μs: Keyword.get(opts, :db_write_time_μs, 0)
     }
 
     metadata = %{

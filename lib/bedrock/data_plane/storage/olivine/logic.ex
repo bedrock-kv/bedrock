@@ -160,10 +160,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
         window_edge = calculate_window_edge_for_telemetry(eviction_version, state.window_lag_time_μs)
         {data_db, _index_db} = state.database
 
+        current_durable_version = Database.durable_version(state.database)
+
         {:ok, updated_database, db_pipeline} =
           Database.advance_durable_version(
             state.database,
             eviction_version,
+            current_durable_version,
             data_db.file_offset,
             collected_pages
           )
@@ -181,9 +184,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           data_size_in_bytes: data_db.file_offset,
           durable_version_duration_μs: db_pipeline.total_duration_μs,
           db_insert_time_μs: db_pipeline.insert_time_μs,
-          db_write_time_μs: db_pipeline.write_time_μs,
-          db_sync_time_μs: db_pipeline.sync_time_μs,
-          db_cleanup_time_μs: db_pipeline.cleanup_time_μs
+          db_write_time_μs: db_pipeline.write_time_μs
         )
 
         {:ok, updated_state}

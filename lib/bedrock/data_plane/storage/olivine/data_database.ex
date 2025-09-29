@@ -114,7 +114,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
     end
   end
 
-  @spec flush(t(), size_in_bytes :: pos_integer()) :: :ok
+  @spec flush(t(), size_in_bytes :: pos_integer()) :: t()
   def flush(db, size_in_bytes) do
     mark = <<size_in_bytes::47, 0::17>>
 
@@ -132,11 +132,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
 
     tx_size_bytes = :erlang.iolist_size(write_iolist)
     :file.pwrite(db.file, size_in_bytes - tx_size_bytes, write_iolist)
-  end
 
-  @spec cleanup_buffer(t(), size_in_bytes :: pos_integer()) :: t()
-  def cleanup_buffer(db, size_in_bytes) do
-    mark = <<size_in_bytes::47, 0::17>>
+    # Clean up buffer entries that have been flushed
     :ets.select_delete(db.buffer, [{{:"$1", :_}, [{:<, :"$1", mark}], [true]}])
     db
   end

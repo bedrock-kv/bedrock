@@ -14,10 +14,13 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
     binary = from_map(page)
     next_id = page.next_id
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
-    :ok = Database.store_page(database, Page.id(page), {binary, next_id})
+    previous_version = Database.durable_version(database)
     # Note: pages are now managed through the versions list instead of being stored in buffer
     collected_pages = [%{Page.id(page) => {binary, next_id}}]
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
+
+    {:ok, _updated_db, _metadata} =
+      Database.advance_durable_version(database, version, previous_version, 1, collected_pages)
+
     :ok
   end
 
@@ -28,11 +31,14 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
     # Default next_id for most test pages
     next_id = 0
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+    previous_version = Database.durable_version(database)
     page_id = Page.id(page)
-    :ok = Database.store_page(database, page_id, {binary, next_id})
     # Use new optimized format: pass collected pages directly
     collected_pages = [%{page_id => {binary, next_id}}]
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
+
+    {:ok, _updated_db, _metadata} =
+      Database.advance_durable_version(database, version, previous_version, 1, collected_pages)
+
     :ok
   end
 
@@ -42,19 +48,22 @@ defmodule Bedrock.Test.Storage.Olivine.PageTestHelpers do
   @spec persist_pages_batch([Page.t()], Database.t()) :: :ok
   def persist_pages_batch(pages, database) do
     version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+    previous_version = Database.durable_version(database)
 
     modified_pages =
       Enum.map(pages, fn page ->
         binary = from_map(page)
         next_id = if is_map(page), do: page.next_id, else: 0
         page_id = Page.id(page)
-        :ok = Database.store_page(database, page_id, {binary, next_id})
         {page_id, {binary, next_id}}
       end)
 
     # Note: pages are now managed through the versions list instead of being stored in buffer
     collected_pages = [Map.new(modified_pages)]
-    {:ok, _updated_db, _metadata} = Database.advance_durable_version(database, version, 1, collected_pages)
+
+    {:ok, _updated_db, _metadata} =
+      Database.advance_durable_version(database, version, previous_version, 1, collected_pages)
+
     :ok
   end
 

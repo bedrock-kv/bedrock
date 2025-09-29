@@ -70,7 +70,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   end
 
   @spec recover_from_database(database :: Database.t()) ::
-          {:ok, t()} | {:error, :corrupted_page | :broken_chain | :cycle_detected}
+          {:ok, t()} | {:error, :missing_pages}
   def recover_from_database({_data_db, _index_db} = database) do
     # Get the durable version from the database
     durable_version = Database.durable_version(database)
@@ -88,8 +88,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
 
         {:ok, index_manager}
 
-      {:error, reason} when reason in [:corrupted_page, :broken_chain, :cycle_detected, :no_chain] ->
-        {:error, reason}
+      {:error, :missing_pages} ->
+        {:error, :missing_pages}
     end
   end
 

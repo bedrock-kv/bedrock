@@ -59,31 +59,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
     end
   end
 
-  describe "page operations" do
-    setup context, do: with_db(context, "pages.dets", :pages_test)
-
-    @tag :tmp_dir
-    test "store_page/3 and load_page/2 work correctly", %{db: db} do
-      page_binary = <<"this is a test page">>
-
-      :ok = Database.store_page(db, 1, {page_binary, 0})
-      assert {:ok, {^page_binary, _next_id}} = Database.load_page(db, 1)
-    end
-
-    @tag :tmp_dir
-    test "load_page/2 returns error for non-existent page", %{db: db} do
-      assert {:error, :not_found} = Database.load_page(db, 999)
-    end
-
-    @tag :tmp_dir
-    test "store_page/3 overwrites existing pages", %{db: db} do
-      :ok = Database.store_page(db, 1, {<<"original">>, 0})
-      :ok = Database.store_page(db, 1, {<<"updated">>, 0})
-
-      assert {:ok, {<<"updated">>, _next_id}} = Database.load_page(db, 1)
-    end
-  end
-
   describe "value operations" do
     setup context, do: with_db(context, "values.dets", :values_test)
 
@@ -114,11 +89,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       assert Database.info(db, :size_in_bytes) >= 0
       assert Database.info(db, :utilization) >= 0.0
       assert Database.info(db, :key_ranges) == []
-
-      :ok = Database.store_page(db, 1, {<<"page_data">>, 0})
-
-      assert Database.info(db, :n_keys) >= 0
-      assert Database.info(db, :size_in_bytes) > 0
     end
 
     @tag :tmp_dir

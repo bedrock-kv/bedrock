@@ -60,22 +60,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
     :ok
   end
 
-  @spec store_page(t(), page_id :: Page.id(), page_tuple :: {Page.t(), Page.id()}) :: :ok | {:error, term()}
-  def store_page(index_db, page_id, {page, next_id}) do
-    case :dets.insert(index_db.dets_storage, {page_id, {page, next_id}}) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  @spec load_page(t(), page_id :: Page.id()) :: {:ok, {binary(), Page.id()}} | {:error, :not_found}
-  def load_page(index_db, page_id) do
-    case :dets.lookup(index_db.dets_storage, page_id) do
-      [{^page_id, {page_binary, next_id}}] -> {:ok, {page_binary, next_id}}
-      [] -> {:error, :not_found}
-    end
-  end
-
   @spec store_durable_version(t(), version :: Bedrock.version()) :: t()
   def store_durable_version(index_db, version), do: %{index_db | durable_version: version}
 
@@ -91,23 +75,65 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
     end
   end
 
+  @doc """
+  Load all pages from a given version.
+  Returns all pages in the version block for incremental chain reconstruction.
+  """
+  @spec load_pages_from_version(t(), Bedrock.version()) :: %{Page.id() => {Page.t(), Page.id()}}
+  def load_pages_from_version(index_db, version) do
+    case :dets.lookup(index_db.dets_storage, version) do
+      [{^version, {_last_version, pages_map}}] ->
+        # Return all pages in this version block
+        pages_map
+
+      [] ->
+        # Version not found
+        %{}
+    end
+  end
+
+  @doc """
+  Load the page block for a given version, returning the pages and the next version in the chain.
+  Returns {pages_map, next_version} where next_version is the previous version that forms a chain.
+  """
+  @spec load_page_block(t(), Bedrock.version()) ::
+          {:ok, %{Page.id() => {Page.t(), Page.id()}}, Bedrock.version() | nil} | {:error, :not_found}
+  def load_page_block(index_db, version) do
+    case :dets.lookup(index_db.dets_storage, version) do
+      [{^version, {previous_version, pages_map}}] ->
+        next_version = if previous_version == version, do: nil, else: previous_version
+        {:ok, pages_map, next_version}
+
+      [] ->
+        {:error, :not_found}
+    end
+  end
+
   @spec flush(
           t(),
           new_durable_version :: Bedrock.version(),
+          previous_durable_version :: Bedrock.version(),
           collected_pages :: [%{Page.id() => {Page.t(), Page.id()}}]
-        ) :: :ok
-  def flush(index_db, new_durable_version, collected_pages) do
+        ) :: t()
+  def flush(index_db, new_durable_version, previous_durable_version, collected_pages) do
     pages_map =
       Enum.reduce(collected_pages, %{}, fn modified_pages, acc ->
         Map.merge(modified_pages, acc, fn _page_id, new_page, _old_page -> new_page end)
       end)
 
+    version_range_record = {new_durable_version, {previous_durable_version, pages_map}}
+
     dets_tx = [
-      {:durable_version, new_durable_version}
-      | Map.to_list(pages_map)
+      {:durable_version, new_durable_version},
+      version_range_record
     ]
 
     :dets.insert(index_db.dets_storage, dets_tx)
+
+    case :dets.sync(index_db.dets_storage) do
+      :ok -> %{index_db | durable_version: new_durable_version}
+      error -> raise "IndexDatabase sync failed: #{inspect(error)}"
+    end
   end
 
   @spec sync(t()) :: :ok

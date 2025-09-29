@@ -58,6 +58,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
+  alias Bedrock.DataPlane.Storage.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
 
   # Page sizing constant
@@ -117,66 +118,126 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
   """
   @spec load_from(Database.t()) ::
           {:ok, t(), Page.id(), [Page.id()], non_neg_integer()}
-          | {:error, :corrupted_page | :broken_chain | :cycle_detected | :no_chain}
-  def load_from(database) do
-    case load_page_chain(database, 0, %{}, 0) do
-      {:ok, page_map, total_key_count} ->
-        tree = Tree.from_page_map(page_map)
-        page_ids = page_map |> Map.keys() |> MapSet.new()
-        max_id = max(0, Enum.max(page_ids))
-        free_ids = calculate_free_ids(max_id, page_ids)
-
-        initial_page_map =
-          if :gb_trees.is_empty(tree) and max_id == 0 do
-            empty_page = Page.new(0, [])
-            %{0 => {empty_page, 0}}
-          else
-            page_map
-          end
-
-        # Calculate min/max keys from the tree
-        {min_key, max_key} = calculate_key_bounds(tree, initial_page_map)
-
-        index = %__MODULE__{
-          tree: tree,
-          page_map: initial_page_map,
-          min_key: min_key,
-          max_key: max_key
-        }
-
-        {:ok, index, max_id, free_ids, total_key_count}
-
-      {:error, :no_chain} ->
+          | {:error, :missing_pages}
+  def load_from({_data_db, index_db}) do
+    index_db
+    |> IndexDatabase.load_durable_version()
+    |> case do
+      {:error, :not_found} ->
         {:ok, new(), 0, [], 0}
 
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, durable_version} ->
+        # Start with page 0 as the only needed page
+        needed_page_ids = MapSet.new([0])
+
+        # Load pages starting from the durable version
+        case load_needed_pages(index_db, %{}, %{}, needed_page_ids, durable_version) do
+          {:ok, final_page_map} ->
+            build_index_from_page_map(final_page_map)
+
+          {:error, :missing_pages} ->
+            {:error, :missing_pages}
+        end
     end
   end
 
-  defp load_page_chain(_database, page_id, page_map, _key_count) when is_map_key(page_map, page_id),
-    do: {:error, :cycle_detected}
-
-  defp load_page_chain(database, page_id, page_map, key_count) do
-    with {:ok, {page, next_id}} <- Database.load_page(database, page_id),
-         :ok <- Page.validate(page) do
-      updated_page_map = Map.put(page_map, page_id, {page, next_id})
-      updated_key_count = key_count + Page.key_count(page)
-      load_next_page_in_chain(updated_page_map, database, next_id, updated_key_count)
+  # Load needed pages iteratively from older version blocks
+  # page_map: final result map (only needed pages)
+  # all_pages_seen: cumulative view of all pages (newest version wins)
+  @spec load_needed_pages(
+          IndexDatabase.t(),
+          page_map :: %{Page.id() => {Page.t(), Page.id()}},
+          all_pages_seen :: %{Page.id() => {Page.t(), Page.id()}},
+          needed_page_ids :: MapSet.t(Page.id()),
+          Bedrock.version()
+        ) :: {:ok, %{Page.id() => {Page.t(), Page.id()}}} | {:error, :missing_pages}
+  defp load_needed_pages(index_db, page_map, all_pages_seen, needed_page_ids, current_version) do
+    if MapSet.size(needed_page_ids) == 0 do
+      # No more pages needed
+      {:ok, page_map}
     else
-      {:error, :not_found} when page_id == 0 ->
-        {:error, :no_chain}
-
-      _ ->
-        {:error, :broken_chain}
+      load_needed_pages_from_version(index_db, page_map, all_pages_seen, needed_page_ids, current_version)
     end
   end
 
-  defp load_next_page_in_chain(page_map, database, next_id, key_count) do
-    case next_id do
-      0 -> {:ok, page_map, key_count}
-      next_id -> load_page_chain(database, next_id, page_map, key_count)
+  defp load_needed_pages_from_version(index_db, page_map, all_pages_seen, needed_page_ids, current_version) do
+    case IndexDatabase.load_page_block(index_db, current_version) do
+      {:ok, version_pages, next_version} ->
+        # Merge this version block with all pages seen (older pages don't override newer ones)
+        updated_all_pages = Map.merge(version_pages, all_pages_seen)
+
+        # Process each page in this version block
+        {updated_page_map, updated_needed} =
+          process_version_pages(version_pages, page_map, needed_page_ids, updated_all_pages)
+
+        load_needed_pages(index_db, updated_page_map, updated_all_pages, updated_needed, next_version)
+
+      {:error, :not_found} ->
+        {:error, :missing_pages}
     end
+  end
+
+  defp process_version_pages(version_pages, page_map, needed_page_ids, updated_all_pages) do
+    Enum.reduce(version_pages, {page_map, needed_page_ids}, fn
+      {page_id, {_page, _next_id}}, {acc_map, acc_needed} ->
+        if MapSet.member?(acc_needed, page_id) do
+          process_needed_page(page_id, acc_map, acc_needed, updated_all_pages)
+        else
+          # This page is not needed - ignore it
+          {acc_map, acc_needed}
+        end
+    end)
+  end
+
+  defp process_needed_page(page_id, acc_map, acc_needed, updated_all_pages) do
+    # This page is needed - use the newest version from updated_all_pages
+    {resolved_page, resolved_next_id} = Map.get(updated_all_pages, page_id)
+    new_map = Map.put(acc_map, page_id, {resolved_page, resolved_next_id})
+    new_needed = MapSet.delete(acc_needed, page_id)
+
+    # Add the page's next_id to needed if it's not already in the result map
+    final_needed =
+      if resolved_next_id != 0 and not Map.has_key?(new_map, resolved_next_id) do
+        MapSet.put(new_needed, resolved_next_id)
+      else
+        new_needed
+      end
+
+    {new_map, final_needed}
+  end
+
+  # Build final index structure from complete page map
+  @spec build_index_from_page_map(%{Page.id() => {Page.t(), Page.id()}}) ::
+          {:ok, t(), Page.id(), [Page.id()], non_neg_integer()}
+  defp build_index_from_page_map(page_map) do
+    tree = Tree.from_page_map(page_map)
+    page_ids = page_map |> Map.keys() |> MapSet.new()
+    max_id = if MapSet.size(page_ids) > 0, do: Enum.max(page_ids), else: 0
+    free_ids = calculate_free_ids(max_id, page_ids)
+
+    initial_page_map =
+      if :gb_trees.is_empty(tree) and max_id == 0 do
+        empty_page = Page.new(0, [])
+        %{0 => {empty_page, 0}}
+      else
+        page_map
+      end
+
+    # Calculate min/max keys from the tree
+    {min_key, max_key} = calculate_key_bounds(tree, initial_page_map)
+
+    # Count total keys
+    total_key_count =
+      Enum.sum_by(initial_page_map, fn {_, {page, _next_id}} -> Page.key_count(page) end)
+
+    index = %__MODULE__{
+      tree: tree,
+      page_map: initial_page_map,
+      min_key: min_key,
+      max_key: max_key
+    }
+
+    {:ok, index, max_id, free_ids, total_key_count}
   end
 
   defp calculate_free_ids(0, _all_existing_page_ids), do: []

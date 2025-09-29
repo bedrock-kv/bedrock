@@ -105,8 +105,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
         # Database operation breakdown
         db_insert_time_μs = Map.get(measurements, :db_insert_time_μs, 0)
         db_write_time_μs = Map.get(measurements, :db_write_time_μs, 0)
-        db_sync_time_μs = Map.get(measurements, :db_sync_time_μs, 0)
-        db_cleanup_time_μs = Map.get(measurements, :db_cleanup_time_μs, 0)
 
         info(
           "#{worker_id}: Window advanced - #{evicted_count} versions -> #{Bedrock.DataPlane.Version.to_string(new_durable_version)}, " <>
@@ -118,9 +116,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Tracing do
             "#{Time.Interval.humanize({:microsecond, db_duration_μs})} " <>
             "(" <>
             "insert: #{Time.Interval.humanize({:microsecond, db_insert_time_μs})}, " <>
-            "write: #{Time.Interval.humanize({:microsecond, db_write_time_μs})}, " <>
-            "sync: #{Time.Interval.humanize({:microsecond, db_sync_time_μs})}, " <>
-            "cleanup: #{Time.Interval.humanize({:microsecond, db_cleanup_time_μs})})"
+            "write: #{Time.Interval.humanize({:microsecond, db_write_time_μs})})"
         )
     end
   end

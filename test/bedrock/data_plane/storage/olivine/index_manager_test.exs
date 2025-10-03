@@ -284,89 +284,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
     end
   end
 
-  describe "page splitting" do
-    test "split_page/3 works with pages under typical split threshold" do
-      keys = for i <- 1..256, do: <<"key_#{String.pad_leading(to_string(i), 3, "0")}">>
-      versions = Enum.map(1..256, & &1)
-      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
-
-      key_count = Page.key_count(page)
-      mid_point = div(key_count, 2)
-      new_page_id = 999
-
-      assert {{left_page, _left_next_id}, {right_page, _right_next_id}} =
-               Page.split_page(page, mid_point, new_page_id, 0)
-
-      # Verify the split worked
-      assert Page.key_count(left_page) == mid_point
-      assert Page.key_count(right_page) == key_count - mid_point
-      assert Page.id(left_page) == 1
-      assert Page.id(right_page) == new_page_id
-    end
-
-    test "split_page/3 splits pages over threshold" do
-      keys = for i <- 1..300, do: <<"key_#{String.pad_leading(to_string(i), 3, "0")}">>
-      versions = Enum.map(1..300, & &1)
-      page = Page.new(1, Enum.zip(keys, Enum.map(versions, &Version.from_integer/1)))
-
-      key_count = Page.key_count(page)
-      mid_point = div(key_count, 2)
-      new_page_id = 2
-
-      assert {{left_page, left_next_id}, {right_page, right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
-
-      # Verify split results
-      assert Page.id(left_page) == 1
-      assert Page.id(right_page) == new_page_id
-      assert right_next_id == 0
-      assert left_next_id == Page.id(right_page)
-
-      # Keys should be split roughly in half
-      left_keys = Page.keys(left_page)
-      right_keys = Page.keys(right_page)
-      assert length(left_keys) + length(right_keys) == 300
-      assert length(left_keys) == 150
-      assert length(right_keys) == 150
-
-      # All keys combined should equal original keys (no data loss)
-      combined_keys = left_keys ++ right_keys
-      assert Enum.sort(combined_keys) == Enum.sort(keys)
-
-      # Verify ordering within each page
-      assert Enum.sort(left_keys) == left_keys
-      assert Enum.sort(right_keys) == right_keys
-
-      # Left page should have smaller keys than right page
-      assert List.last(left_keys) < List.first(right_keys)
-    end
-
-    test "split_page/3 preserves key-version relationships" do
-      key_versions =
-        for i <- 1..300, do: {<<"key_#{String.pad_leading(to_string(i), 3, "0")}">>, Version.from_integer(i * 10)}
-
-      page = Page.new(1, key_versions)
-      key_count = Page.key_count(page)
-      mid_point = div(key_count, 2)
-      new_page_id = 2
-
-      {{left_page, _left_next_id}, {right_page, _right_next_id}} = Page.split_page(page, mid_point, new_page_id, 0)
-
-      # Verify all key-version pairs are preserved
-      left_key_versions = Page.key_locators(left_page)
-      right_key_versions = Page.key_locators(right_page)
-      combined_key_versions = left_key_versions ++ right_key_versions
-
-      assert length(combined_key_versions) == 300
-      assert Enum.sort(combined_key_versions) == Enum.sort(key_versions)
-
-      # Verify each page maintains sorted order
-      {left_keys, _} = Enum.unzip(left_key_versions)
-      {right_keys, _} = Enum.unzip(right_key_versions)
-      assert Enum.sort(left_keys) == left_keys
-      assert Enum.sort(right_keys) == right_keys
-    end
-  end
-
   describe "page-based key operations" do
     test "page_for_key/3 retrieves pages containing keys" do
       vm = IndexManager.new()
@@ -384,7 +301,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerTest do
 
       # Should be able to fetch page containing key
       assert {:ok, page} = IndexManager.page_for_key(vm_updated, <<"banana">>, Version.from_integer(1000))
-      assert Page.has_key?(page, <<"banana">>)
+      assert {:ok, _locator} = Page.locator_for_key(page, <<"banana">>)
 
       # Should work for any key in the page
       assert {:ok, _page} = IndexManager.page_for_key(vm_updated, <<"apple">>, Version.from_integer(1000))

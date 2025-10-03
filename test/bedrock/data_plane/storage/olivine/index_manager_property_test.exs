@@ -45,7 +45,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
 
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
-  alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.Storage.Olivine.PageTestHelpers
 
@@ -262,13 +261,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
         # Validate page invariants after operation
         assert PageTestHelpers.keys_are_sorted(updated_page) and
                  Page.key_count(updated_page) == length(Page.key_locators(updated_page)) and
-                 Page.has_key?(updated_page, new_key),
+                 Page.locator_for_key(updated_page, new_key) != nil,
                "Page should maintain sorted order, key/version count consistency, and contain new key"
 
-        expected_count = if Page.has_key?(page, new_key), do: Page.key_count(page), else: Page.key_count(page) + 1
+        # Check if the key was already in the original page
+        original_keys = Page.keys(page)
+        key_was_present = new_key in original_keys
+        expected_count = if key_was_present, do: Page.key_count(page), else: Page.key_count(page) + 1
 
         assert Page.key_count(updated_page) == expected_count,
-               "Page size should be #{expected_count} after #{if Page.has_key?(page, new_key), do: "updating", else: "adding"} key"
+               "Page size should be #{expected_count} after #{if key_was_present, do: "updating", else: "adding"} key"
       end
     end
   end
@@ -297,48 +299,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManagerPropertyTest do
           # Also check infinity marker entry
           filtered_entries = Enum.reject(tree_entries, fn {key, _} -> key == <<0xFF, 0xFF>> end)
           assert [{^expected_last_key, ^expected_page_id}] = filtered_entries
-        end
-      end
-    end
-  end
-
-  # Page Splitting Properties
-
-  property "page splitting creates valid pages" do
-    check all(base_keys <- list_of(binary_key_generator(), min_length: 10, max_length: 50)) do
-      additional_keys = for i <- 1..260, do: "split_key_#{String.pad_leading("#{i}", 4, "0")}"
-      all_keys = (base_keys ++ additional_keys) |> Enum.sort() |> Enum.dedup()
-
-      if length(all_keys) > 256 do
-        versions = Enum.map(all_keys, fn _ -> Version.from_integer(1) end)
-        _vm = IndexManager.new()
-        oversized_page = Page.new(1, Enum.zip(all_keys, versions))
-
-        if Page.key_count(oversized_page) > 256 do
-          key_count = Page.key_count(oversized_page)
-          mid_point = div(key_count, 2)
-          new_page_id = 2
-
-          {{left_page, _left_next_id}, {right_page, _right_next_id}} =
-            Page.split_page(oversized_page, mid_point, new_page_id, 0)
-
-          # Validate both pages are non-empty and properly sized
-          refute Page.empty?(left_page), "Left page should have keys"
-          refute Page.empty?(right_page), "Right page should have keys"
-
-          assert Page.key_count(left_page) <= 256 and Page.key_count(right_page) <= 256,
-                 "Split pages should not exceed max size"
-
-          # Validate both pages maintain sorted order
-          assert PageTestHelpers.keys_are_sorted(left_page) and PageTestHelpers.keys_are_sorted(right_page),
-                 "Both split pages should maintain sorted key order"
-
-          all_new_keys = Page.keys(left_page) ++ Page.keys(right_page)
-          assert Enum.sort(all_new_keys) == Enum.sort(all_keys), "All keys should be preserved"
-
-          left_max = Page.right_key(left_page)
-          right_min = Page.left_key(right_page)
-          assert left_max < right_min, "Left page max should be < right page min"
         end
       end
     end

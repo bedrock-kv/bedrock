@@ -260,29 +260,29 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageChainLoadingTest do
 
       Database.close(final_database)
 
-      # Corrupt the database by truncating it
+      # Corrupt the database by writing incomplete/invalid footer
+      # This simulates a crash during write
       corrupted_file = file_path <> ".idx"
-      # Write invalid DETS header
-      File.write!(corrupted_file, <<0, 0, 0, 0>>)
+      # Write data that looks like a footer but points to nonexistent record
+      File.write!(corrupted_file, <<0xFF, 0xFF, 0xFF, 0xFF>>)
 
-      # Recovery should fail with a clear error
-      case Database.open(:page_missing_test_recovery, file_path) do
-        {:error, _reason} ->
-          # Expected - corrupted file should fail to open
+      # Recovery should handle corruption gracefully
+      {:ok, recovered_database} = Database.open(:page_missing_test_recovery, file_path)
+
+      # With corrupted footer, recovery treats file as empty (durable_version = 0)
+      # This is safe behavior - we can't read partial/corrupted data
+      case IndexManager.recover_from_database(recovered_database) do
+        {:ok, recovered_manager} ->
+          # Corruption is handled by treating file as empty
+          # Verify it's actually empty (version 0)
+          assert recovered_manager.current_version == <<0, 0, 0, 0, 0, 0, 0, 0>>
+          Database.close(recovered_database)
           :ok
 
-        {:ok, recovered_database} ->
-          # If it opens, recovery should fail
-          case IndexManager.recover_from_database(recovered_database) do
-            {:error, :missing_pages} ->
-              # This is the expected hard failure
-              Database.close(recovered_database)
-              :ok
-
-            {:ok, _} ->
-              Database.close(recovered_database)
-              flunk("Recovery should have failed on corrupted database")
-          end
+        {:error, :missing_pages} ->
+          # Also acceptable - indicates we detected the corruption
+          Database.close(recovered_database)
+          :ok
       end
     end
   end

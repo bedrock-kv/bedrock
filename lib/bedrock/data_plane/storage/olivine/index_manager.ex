@@ -72,10 +72,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec recover_from_database(database :: Database.t()) ::
           {:ok, t()} | {:error, :missing_pages}
   def recover_from_database({_data_db, _index_db} = database) do
-    # Get the durable version from the database
     durable_version = Database.durable_version(database)
 
-    # Load the index structure from the database
     case Index.load_from(database) do
       {:ok, initial_index, max_id, free_ids, n_keys} ->
         index_manager = %__MODULE__{
@@ -224,8 +222,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
      }, new_database}
   end
 
-  # Helper Functions
-
   @spec info(index_manager :: t(), atom()) :: term()
   def info(index_manager, stat) do
     case stat do
@@ -269,8 +265,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   defp find_target([], _target), do: nil
   defp find_target([{_version, {index, _modified_pages}} | _rest], _target), do: index
 
-  # KeySelector Resolution Helper Functions
-
   @spec resolve_key_selector_in_index(Index.t(), KeySelector.t()) ::
           {:ok, resolved_key :: binary(), Page.t()}
           | {:partial, keys_available :: non_neg_integer()}
@@ -291,7 +285,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   end
 
   defp handle_cross_page_continuation(index, page, key_selector, keys_available) do
-    # If no keys were available and we have a negative offset, we've gone beyond the start of keyspace
     if keys_available == 0 and key_selector.offset < 0 do
       {:error, :not_found}
     else
@@ -325,11 +318,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           | {:partial, keys_available :: non_neg_integer()}
           | {:error, :not_found}
   defp resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
-    # Extract header info once for efficient binary operations
     <<_id::unsigned-big-32, key_count::unsigned-big-16, _offset::unsigned-big-32, _reserved::unsigned-big-48,
       entries::binary>> = page
 
-    # Use optimized binary search that stops early when key > ref_key
     case Page.search_entries_with_position(entries, key_count, ref_key) do
       {:found, pos} ->
         target_pos = calculate_target_position_found(pos, or_equal, offset)
@@ -341,27 +332,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
-  # Helper functions for calculating target positions
   defp calculate_target_position_found(pos, or_equal, offset) do
     if or_equal do
       pos + offset
     else
-      # For greater_than, we need the next position, then apply offset
       pos + 1 + offset
     end
   end
 
   defp calculate_target_position_not_found(insertion_pos, or_equal, offset) do
     if offset >= 0 do
-      # Forward selector: insertion_pos is correct starting point
       insertion_pos + offset
     else
-      # Backward selector: want position before insertion point
       if or_equal do
-        # last_less_or_equal: position before insertion point
         insertion_pos - 1 + offset
       else
-        # last_less_than: same as less_or_equal when key not found
         insertion_pos - 1 + offset
       end
     end
@@ -377,8 +362,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   defp resolve_at_position_optimized(_entries, pos, _key_count, _page) when pos < 0, do: {:partial, 0}
   defp resolve_at_position_optimized(_entries, _pos, key_count, _page), do: {:partial, key_count}
 
-  # Cross-page continuation helper functions
-
   @spec calculate_cross_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
   defp calculate_cross_page_continuation(index, current_page, key_selector, keys_available) do
@@ -392,23 +375,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec calculate_forward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
   defp calculate_forward_page_continuation(index, current_page, key_selector, keys_available) do
-    # Get the cached next_id from the page_map instead of parsing the page binary
     {_page, next_id} = Index.get_page_with_next_id!(index, Page.id(current_page))
 
     case next_id do
       0 ->
-        # No next page - we've hit the end of the index
         {:error, :not_found}
 
       next_page_id ->
         next_page = Index.get_page!(index, next_page_id)
-
-        # Calculate remaining offset after consuming available keys in current page
         remaining_offset = key_selector.offset - keys_available
 
         case Page.left_key(next_page) do
           nil ->
-            # Empty next page, continue with empty key to trigger gap resolution
             continuation_selector = %KeySelector{
               key: "",
               or_equal: true,
@@ -418,7 +396,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
             {:ok, continuation_selector}
 
           first_key_of_next_page ->
-            # Create continuation KeySelector at the start of next page
             continuation_selector = %KeySelector{
               key: first_key_of_next_page,
               or_equal: true,
@@ -433,20 +410,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @spec calculate_backward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
   defp calculate_backward_page_continuation(index, current_page, key_selector, keys_available) do
-    # Find the page whose next_id points to current page (previous page)
     case find_previous_page(index, Page.id(current_page)) do
       {:ok, previous_page} ->
         case Page.right_key(previous_page) do
           nil ->
-            # Empty previous page, this shouldn't happen in a well-formed index
             {:error, :not_found}
 
           last_key_of_prev_page ->
-            # Calculate remaining offset after consuming available keys in current page
-            # For backward traversal, we add the consumed keys to make the offset more negative
             remaining_offset = key_selector.offset + keys_available
 
-            # Create continuation KeySelector at the end of previous page
             continuation_selector = %KeySelector{
               key: last_key_of_prev_page,
               or_equal: true,
@@ -457,14 +429,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
         end
 
       {:error, :not_found} ->
-        # No previous page - we've hit the beginning of the index
         {:error, :not_found}
     end
   end
 
   @spec find_previous_page(Index.t(), Page.id()) :: {:ok, Page.t()} | {:error, :not_found}
   defp find_previous_page(%Index{page_map: page_map}, target_page_id) do
-    # Search through all pages to find the one whose next_id points to our target
     page_map
     |> Enum.find_value(fn {_page_id, {page, next_id}} ->
       if next_id == target_page_id, do: page
@@ -474,8 +444,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
       page -> {:ok, page}
     end
   end
-
-  # Buffer tracking queue functions
 
   @doc """
   Advances the window by determining what to evict and updating both buffer tracking and hot set.
@@ -502,29 +470,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
-  # This version is still in window, keep it and continue
   defp split_versions([{version, _data} = entry | rest], target, kept_versions) when version >= target,
     do: split_versions(rest, target, [entry | kept_versions])
 
   defp split_versions([], _target, kept_versions), do: Enum.reverse(kept_versions)
-
-  # This version is outside window, split here
-  # All remaining versions (including this one) should be evicted
   defp split_versions(_all_versions, _target, kept_versions), do: Enum.reverse(kept_versions)
 
-  # Gets the window edge by using the current_version as the reference point.
-  # This provides a stable reference that advances with transaction processing
-  # rather than causing massive evictions during transaction bursts.
   defp get_window_edge(index_manager) do
     case :queue.peek_r(index_manager.output_queue) do
       {:value, _} ->
-        # Use current_version (the latest committed version) as the reference point
-        # This prevents the bug where using the newest buffered version causes
-        # the entire buffer to be evicted during rapid transaction processing
         try do
           {:ok, Version.subtract(index_manager.current_version, index_manager.window_lag_time_μs)}
         rescue
-          # Underflow - return no window edge (zero version)
           ArgumentError -> :no_eviction
         end
 
@@ -533,8 +490,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
-  # Determines which versions to evict based on size limits and window edge.
-  # Returns count, collected pages, eviction version, and updated queue for efficiency.
   defp determine_eviction_batch(index_manager, max_size_bytes, window_edge_version) do
     index_manager.output_queue
     |> pull_from_output_queue(max_size_bytes, window_edge_version)
@@ -547,8 +502,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
     end
   end
 
-  # Pull versions from oldest end of output queue until size limit or window edge.
-  # Collects modified pages and counts evicted versions for efficient processing.
   defp pull_from_output_queue(
          queue,
          max_size,
@@ -573,7 +526,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           version
         )
 
-      # Stop if this version is newer than the window edge (should not be evicted)
       _ ->
         {count, Enum.reverse(pages_acc), last_version, queue}
     end

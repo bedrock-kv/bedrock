@@ -47,6 +47,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   maps to exactly one page. Uses gb_trees iterator for efficiency.
 
   Tree structure: key = last_key, value = page_id
+
+  When a key is beyond all pages in the tree, returns page 0 (which acts as
+  the catch-all page extending to infinity).
   """
   @spec page_for_key(t(), Bedrock.key()) :: page_id()
   def page_for_key(tree, key) do
@@ -54,7 +57,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
       iter ->
         case :gb_trees.next(iter) do
           {_last_key, page_id, _next_iter} -> page_id
-          # Key is beyond all pages in tree, return rightmost page (always 0)
           _none -> 0
         end
     end
@@ -62,12 +64,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
 
   @doc """
   Updates the interval tree by adding a new page range.
+
+  Empty pages are only added to the tree if they are page 0 (the leftmost page),
+  which is always present and covers the beginning of the keyspace.
   """
   @spec add_page_to_tree(t(), page()) :: t()
   def add_page_to_tree(tree, page) do
     case Page.right_key(page) do
       nil ->
-        # Empty page - only add page 0 to tree (starts at beginning of keyspace)
         if Page.id(page) == 0 do
           :gb_trees.enter(<<>>, 0, tree)
         else
@@ -75,19 +79,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
         end
 
       last_key ->
-        # Add page with its actual last_key - no infinity marker needed
         :gb_trees.enter(last_key, Page.id(page), tree)
     end
   end
 
   @doc """
   Updates the interval tree by removing a page range.
+
+  Empty pages are only removed from the tree if they are page 0.
   """
   @spec remove_page_from_tree(t(), page()) :: t()
   def remove_page_from_tree(tree, page) do
     case Page.right_key(page) do
       nil ->
-        # Empty page - only remove page 0 if it's in tree with <<>>
         if Page.id(page) == 0 do
           :gb_trees.delete_any(<<>>, tree)
         else

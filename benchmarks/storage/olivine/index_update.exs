@@ -12,7 +12,6 @@ defmodule Benchmarks.OlivineIndexUpdateBench do
   alias Bedrock.DataPlane.Storage.Olivine.IdAllocator
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.IndexUpdate
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Benchee.Formatters.Console
 

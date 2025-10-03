@@ -133,7 +133,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
     tx_size_bytes = :erlang.iolist_size(write_iolist)
     :file.pwrite(db.file, size_in_bytes - tx_size_bytes, write_iolist)
 
-    # Clean up buffer entries that have been flushed
     :ets.select_delete(db.buffer, [{{:"$1", :_}, [{:<, :"$1", mark}], [true]}])
     db
   end
@@ -187,7 +186,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
     |> case do
       {:ok, file} ->
         try do
-          :file.pread(file, Enum.map(locators, fn <<offset::47, size::17>> -> {offset, size} end))
+          :file.pread(file, locators |> Enum.sort() |> Enum.map(fn <<offset::47, size::17>> -> {offset, size} end))
         after
           :file.close(file)
         end

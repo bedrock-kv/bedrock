@@ -27,14 +27,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DatabaseTest do
       {:ok, tmp_dir: tmp_dir}
     end
 
-    test "open/2 creates and opens a DETS database", %{tmp_dir: tmp_dir} do
+    test "open/2 creates and opens an append-only index database", %{tmp_dir: tmp_dir} do
       table_name = String.to_atom("test_db_#{System.unique_integer([:positive])}")
-      file_path = Path.join(tmp_dir, "test_#{table_name}.dets")
+      file_path = Path.join(tmp_dir, "test_#{table_name}")
 
       assert {:ok, {data_db, index_db} = db} = Database.open(table_name, file_path)
 
       assert data_db.window_size_in_microseconds == 5_000_000
-      assert index_db.dets_storage == table_name
+      # Verify index_db has file handle and starts at offset 0
+      assert index_db.file
+      assert index_db.file_offset == 0
 
       Database.close(db)
     end

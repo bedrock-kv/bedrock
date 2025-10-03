@@ -138,8 +138,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   defp gather_info(:utilization, t), do: IndexManager.info(t.index_manager, :utilization)
   defp gather_info(_unsupported, _t), do: {:error, :unsupported_info}
 
-  # Window advancement constants
-
   defp max_eviction_size, do: 10 * 1024 * 1024
 
   @doc """

@@ -49,7 +49,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
-    {updated_manager, result} = Reading.handle_get(t.read_request_manager, context, key, version, fetch_opts)
+    {updated_manager, result} =
+      Reading.handle_get(
+        t.read_request_manager,
+        context,
+        key,
+        version,
+        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+      )
+
     updated_state = %{t | read_request_manager: updated_manager}
 
     case result do
@@ -66,7 +74,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
     {updated_manager, result} =
-      Reading.handle_get_range(t.read_request_manager, context, start_key, end_key, version, fetch_opts)
+      Reading.handle_get_range(
+        t.read_request_manager,
+        context,
+        start_key,
+        end_key,
+        version,
+        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+      )
 
     updated_state = %{t | read_request_manager: updated_manager}
 

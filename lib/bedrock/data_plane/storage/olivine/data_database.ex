@@ -188,7 +188,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
     |> case do
       {:ok, file} ->
         try do
-          :file.pread(file, locators |> Enum.sort() |> Enum.map(fn <<offset::47, size::17>> -> {offset, size} end))
+          sorted_locators = Enum.sort(locators)
+
+          case :file.pread(file, Enum.map(sorted_locators, fn <<offset::47, size::17>> -> {offset, size} end)) do
+            {:ok, values} ->
+              locator_to_value = sorted_locators |> Enum.zip(values) |> Map.new()
+              {:ok, Enum.map(locators, fn locator -> Map.fetch!(locator_to_value, locator) end)}
+
+            error ->
+              error
+          end
         after
           :file.close(file)
         end

@@ -228,4 +228,67 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     updated_state = %{t | index_manager: updated_index_manager, database: updated_database}
     {:ok, updated_state, version}
   end
+
+  @doc """
+  Initiates background compaction of database files.
+
+  Returns a Task that will build compacted files. The task sends a message to the
+  calling process when complete with the compacted file handles and page_map.
+
+  This function does not block - compaction happens in the background.
+  """
+  @spec start_compaction(State.t()) :: {:ok, Task.t()}
+  def start_compaction(%State{} = state) do
+    database = state.database
+    # Get complete current page_map from index
+    complete_page_map = IndexManager.get_complete_page_map(state.index_manager)
+    caller = self()
+
+    durable_version = Database.durable_version(database)
+    {data_db, index_db} = database
+
+    # Emit start telemetry
+    OlivineTelemetry.trace_compaction_started(durable_version,
+      data_size_before: data_db.file_offset,
+      index_size_before: index_db.file_offset
+    )
+
+    task =
+      Task.async(fn ->
+        start_time = System.monotonic_time(:microsecond)
+
+        case Database.compact(database, complete_page_map) do
+          {:ok, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, new_data_offset, compacted_pages,
+           durable_version} ->
+            duration = System.monotonic_time(:microsecond) - start_time
+
+            # Get index file offset now (before sending to different process)
+            {:ok, index_offset} = :file.position(compact_idx_fd, {:cur, 0})
+
+            send(caller, {
+              :compaction_ready,
+              compact_data_fd,
+              compact_idx_fd,
+              compact_data_path,
+              compact_idx_path,
+              new_data_offset,
+              index_offset,
+              compacted_pages,
+              durable_version,
+              duration,
+              data_db.file_offset,
+              index_db.file_offset
+            })
+
+            :ok
+
+          {:error, reason} ->
+            OlivineTelemetry.trace_compaction_failed(reason)
+            send(caller, {:compaction_failed, reason})
+            {:error, reason}
+        end
+      end)
+
+    {:ok, task}
+  end
 end

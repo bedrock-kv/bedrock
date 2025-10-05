@@ -5,6 +5,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Olivine.DataDatabase
+  alias Bedrock.DataPlane.Storage.Olivine.Index
+  alias Bedrock.DataPlane.Storage.Olivine.Index.Page
+  alias Bedrock.DataPlane.Storage.Olivine.IndexDatabase
+  alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Storage.Olivine.Logic
   alias Bedrock.DataPlane.Storage.Olivine.Reading
@@ -112,6 +117,19 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   end
 
   @impl true
+  def handle_call(:compact, _from, %State{compaction_task: task} = t) when not is_nil(task) do
+    # Compaction already in progress
+    reply(t, {:error, :compaction_in_progress})
+  end
+
+  @impl true
+  def handle_call(:compact, _from, %State{} = t) do
+    {:ok, task} = Logic.start_compaction(t)
+    updated_state = %{t | compaction_task: task, allow_window_advancement: false}
+    reply(updated_state, :ok)
+  end
+
+  @impl true
   def handle_call(_, _from, t), do: reply(t, {:error, :not_ready})
 
   @impl true
@@ -168,9 +186,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
 
   @impl true
   def handle_continue(:advance_window, %State{} = t) do
-    case Logic.advance_window(t) do
-      {:ok, state_after_window} ->
-        noreply(state_after_window)
+    if t.allow_window_advancement do
+      case Logic.advance_window(t) do
+        {:ok, state_after_window} ->
+          noreply(state_after_window)
+      end
+    else
+      # Compaction in progress - skip window advancement
+      noreply(t)
     end
   end
 
@@ -231,6 +254,135 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   end
 
   @impl true
+  def handle_info(
+        {:compaction_ready, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, new_data_offset,
+         index_offset, compacted_pages, durable_version, duration, data_size_before, index_size_before},
+        %State{} = t
+      ) do
+    # Atomic cutover to compacted files
+    # Get file paths from old database
+    alias Bedrock.DataPlane.Storage.Olivine.Telemetry, as: OlivineTelemetry
+
+    {data_db, index_db} = t.database
+    data_path = data_db.file_name
+    idx_path = index_db.file_name
+
+    # Note: We don't explicitly close the old files - on Unix, we can rename open files,
+    # and they'll be closed automatically when no longer referenced. Attempting to close
+    # them can fail with :not_on_controlling_process due to file descriptor ownership.
+
+    # Rename files atomically
+
+    # Create .old backup names
+    old_data_path = data_path ++ ~c".old"
+    old_idx_path = idx_path ++ ~c".old"
+
+    :ok = :file.rename(data_path, old_data_path)
+    :ok = :file.rename(idx_path, old_idx_path)
+    :ok = :file.rename(compact_data_path, data_path)
+    :ok = :file.rename(compact_idx_path, idx_path)
+
+    # Build new database structures from compacted files
+    # File name is now the original path (we renamed compact to replace it)
+    new_data_db = %DataDatabase{
+      file: compact_data_fd,
+      file_offset: new_data_offset,
+      file_name: data_path,
+      window_size_in_microseconds: 5_000_000,
+      buffer: :ets.new(:buffer, [:ordered_set, :protected, {:read_concurrency, true}])
+    }
+
+    new_index_db = %IndexDatabase{
+      file: compact_idx_fd,
+      file_offset: index_offset,
+      file_name: idx_path,
+      durable_version: durable_version,
+      last_block_empty: false,
+      last_block_offset: 0,
+      last_block_previous_version: nil
+    }
+
+    new_database = {new_data_db, new_index_db}
+
+    # Build index structures from in-memory compacted pages
+    new_tree = Index.Tree.from_page_map(compacted_pages)
+    {min_key, max_key} = calculate_key_bounds_from_pages(compacted_pages)
+
+    # Get max_keys_per_page from the durable version's index
+    {^durable_version, {durable_index, _modified}} =
+      Enum.find(t.index_manager.versions, fn {v, _} -> v == durable_version end)
+
+    new_index = %Index{
+      tree: new_tree,
+      page_map: compacted_pages,
+      min_key: min_key,
+      max_key: max_key,
+      max_keys_per_page: durable_index.max_keys_per_page,
+      target_keys_per_page: durable_index.target_keys_per_page
+    }
+
+    new_index_manager = %IndexManager{
+      versions: [{durable_version, {new_index, %{}}}],
+      current_version: durable_version,
+      window_size_in_microseconds: 5_000_000,
+      id_allocator: t.index_manager.id_allocator,
+      output_queue: :queue.new(),
+      last_version_ended_at_offset: 0,
+      window_lag_time_μs: 5_000_000,
+      n_keys: IndexManager.info(t.index_manager, :n_keys)
+    }
+
+    # Reset state for replay
+    new_state = %{
+      t
+      | database: new_database,
+        index_manager: new_index_manager,
+        intake_queue: IntakeQueue.new(),
+        compaction_task: nil,
+        allow_window_advancement: true
+    }
+
+    # Emit completion telemetry
+    values_compacted = Enum.sum(Enum.map(compacted_pages, fn {_, {page, _}} -> Page.key_count(page) end))
+
+    OlivineTelemetry.trace_compaction_complete(durable_version,
+      duration_μs: duration,
+      data_size_before: data_size_before,
+      data_size_after: new_data_offset,
+      index_size_before: index_size_before,
+      index_size_after: index_offset,
+      values_compacted: values_compacted
+    )
+
+    # Resume normal operation
+    # The puller will automatically fetch transactions from durable_version + 1
+    # and rebuild the buffer through normal transaction processing
+    noreply(new_state)
+  end
+
+  @impl true
+  def handle_info({:compaction_failed, reason}, %State{} = t) do
+    # Log error and resume normal operation
+    require Logger
+
+    Logger.error("Compaction failed: #{inspect(reason)}")
+
+    # Clean up any partial .compact files
+    {data_db, index_db} = t.database
+
+    try do
+      :file.delete(data_db.file_name ++ ~c".compact")
+      :file.delete(index_db.file_name ++ ~c".compact")
+    catch
+      _, _ -> :ok
+    end
+
+    # Resume normal operation
+    updated_state = %{t | compaction_task: nil, allow_window_advancement: true}
+    noreply(updated_state)
+  end
+
+  @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
@@ -246,4 +398,29 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   def terminate(_reason, _state), do: :ok
 
   defp reply_fn_for(from), do: fn result -> GenServer.reply(from, result) end
+
+  # Calculate min/max key bounds from page_map
+  defp calculate_key_bounds_from_pages(page_map) when map_size(page_map) == 0, do: {<<0xFF, 0xFF>>, <<>>}
+
+  defp calculate_key_bounds_from_pages(page_map) do
+    min_key =
+      page_map
+      |> Enum.map(fn {_id, {page, _next}} -> Page.left_key(page) end)
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> <<0xFF, 0xFF>>
+        keys -> Enum.min(keys)
+      end
+
+    max_key =
+      page_map
+      |> Enum.map(fn {_id, {page, _next}} -> Page.right_key(page) end)
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> <<>>
+        keys -> Enum.max(keys)
+      end
+
+    {min_key, max_key}
+  end
 end

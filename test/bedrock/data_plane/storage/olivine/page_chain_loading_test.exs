@@ -262,7 +262,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.PageChainLoadingTest do
 
       # Corrupt the database by writing incomplete/invalid footer
       # This simulates a crash during write
-      corrupted_file = file_path <> ".idx"
+      dir = Path.dirname(file_path)
+      corrupted_file = Path.join(dir, "idx")
       # Write data that looks like a footer but points to nonexistent record
       File.write!(corrupted_file, <<0xFF, 0xFF, 0xFF, 0xFF>>)
 

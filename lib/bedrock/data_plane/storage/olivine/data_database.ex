@@ -24,7 +24,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
   def open(file_path, opts \\ []) do
     window_in_ms = Keyword.get(opts, :window_in_ms, 5_000)
 
-    file_name = String.to_charlist(file_path <> ".data")
+    # Replace basename with "data"
+    dir = Path.dirname(file_path)
+    file_name = String.to_charlist(Path.join(dir, "data"))
 
     with {:ok, file} <- :file.open(file_name, [:raw, :binary, :read, :append]),
          {:ok, offset} <- :file.position(file, {:eof, 0}) do

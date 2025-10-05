@@ -49,4 +49,52 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Telemetry do
 
     Telemetry.emit_storage_operation(:window_advanced, measurements, metadata)
   end
+
+  @spec trace_compaction_started(Bedrock.version(), keyword()) :: :ok
+  def trace_compaction_started(durable_version, opts \\ []) do
+    measurements = %{
+      data_size_before: Keyword.get(opts, :data_size_before, 0),
+      index_size_before: Keyword.get(opts, :index_size_before, 0)
+    }
+
+    metadata = %{
+      durable_version: durable_version
+    }
+
+    Telemetry.emit_storage_operation(:compaction_started, measurements, metadata)
+  end
+
+  @spec trace_compaction_complete(Bedrock.version(), keyword()) :: :ok
+  def trace_compaction_complete(durable_version, opts \\ []) do
+    measurements = %{
+      duration_μs: Keyword.fetch!(opts, :duration_μs),
+      data_size_before: Keyword.get(opts, :data_size_before, 0),
+      data_size_after: Keyword.get(opts, :data_size_after, 0),
+      index_size_before: Keyword.get(opts, :index_size_before, 0),
+      index_size_after: Keyword.get(opts, :index_size_after, 0),
+      values_compacted: Keyword.get(opts, :values_compacted, 0)
+    }
+
+    metadata = %{
+      durable_version: durable_version,
+      space_reclaimed_bytes: measurements.data_size_before - measurements.data_size_after,
+      compaction_ratio:
+        if measurements.data_size_before > 0 do
+          Float.round(measurements.data_size_after / measurements.data_size_before, 2)
+        else
+          1.0
+        end
+    }
+
+    Telemetry.emit_storage_operation(:compaction_complete, measurements, metadata)
+  end
+
+  @spec trace_compaction_failed(term()) :: :ok
+  def trace_compaction_failed(reason) do
+    Telemetry.emit_storage_operation(
+      :compaction_failed,
+      %{},
+      %{reason: reason}
+    )
+  end
 end

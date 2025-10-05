@@ -258,6 +258,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   defp get_key_ranges(%{versions: [{_, {current_index, _}} | _]}), do: [{current_index.min_key, current_index.max_key}]
   defp get_key_ranges(%{versions: []}), do: []
 
+  @doc """
+  Extracts the complete page_map from the current version's index.
+  Used during compaction to get all current pages.
+  """
+  @spec get_complete_page_map(t()) :: %{Page.id() => {Page.t(), Page.id()}}
+  def get_complete_page_map(%{versions: [{_, {current_index, _}} | _]}), do: current_index.page_map
+  def get_complete_page_map(%{versions: []}), do: %{}
+
   @spec index_for_version(version_list(), Bedrock.version()) :: Index.t() | nil
   defp index_for_version(versions, target), do: find_target(versions, target)
 

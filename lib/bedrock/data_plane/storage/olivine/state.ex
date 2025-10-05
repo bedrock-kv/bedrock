@@ -22,7 +22,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
           mode: :locked | :running,
           read_request_manager: Reading.t(),
           intake_queue: IntakeQueue.t(),
-          window_lag_time_μs: non_neg_integer()
+          window_lag_time_μs: non_neg_integer(),
+          compaction_task: Task.t() | nil,
+          allow_window_advancement: boolean()
         }
   defstruct otp_name: nil,
             path: nil,
@@ -36,7 +38,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
             mode: :locked,
             read_request_manager: Reading.new(),
             intake_queue: IntakeQueue.new(),
-            window_lag_time_μs: 5_000_000
+            window_lag_time_μs: 5_000_000,
+            compaction_task: nil,
+            allow_window_advancement: true
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

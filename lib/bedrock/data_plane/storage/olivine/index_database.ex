@@ -39,6 +39,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
   @opaque t :: %__MODULE__{
             file: :file.fd(),
             file_offset: non_neg_integer(),
+            file_name: [char()],
             durable_version: Bedrock.version(),
             last_block_empty: boolean(),
             last_block_offset: non_neg_integer(),
@@ -48,6 +49,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
   defstruct [
     :file,
     :file_offset,
+    :file_name,
     :durable_version,
     :last_block_empty,
     :last_block_offset,
@@ -57,7 +59,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
   @spec open(otp_name :: atom(), file_path :: String.t()) ::
           {:ok, t()} | {:error, :system_limit | :badarg | File.posix()}
   def open(_otp_name, file_path) do
-    path = String.to_charlist(file_path <> ".idx")
+    # Replace basename with "idx"
+    dir = Path.dirname(file_path)
+    path = String.to_charlist(Path.join(dir, "idx"))
 
     with {:ok, file} <- :file.open(path, [:raw, :binary, :read, :append]),
          {:ok, file_size} <- :file.position(file, {:eof, 0}) do
@@ -66,6 +70,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
       {:ok,
        %__MODULE__{
          file: file,
+         file_name: path,
          file_offset: file_size,
          durable_version: durable_version,
          last_block_empty: false,
@@ -168,6 +173,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
     :ok
   catch
     _, _ -> :ok
+  end
+
+  @doc """
+  Writes a snapshot block to a file descriptor.
+  Used during compaction to create a single version block with all current pages.
+  The previous_version equals version (self-loop) to terminate the chain.
+  """
+  @spec write_snapshot_block(:file.fd(), Bedrock.version(), %{Page.id() => {Page.t(), Page.id()}}) :: :ok
+  def write_snapshot_block(file_fd, version, pages_map) do
+    # Self-referential previous_version terminates the chain
+    record = build_record(version, version, pages_map)
+    :file.write(file_fd, record)
   end
 
   @spec info(t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) :: any() | :undefined

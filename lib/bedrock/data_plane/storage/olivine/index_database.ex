@@ -151,6 +151,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
 
     :ok = :file.pwrite(index_db.file, write_offset, record)
 
+    # Truncate file when overwriting to remove any stale data
+    if mode == :overwrite do
+      {:ok, _} = :file.position(index_db.file, new_offset)
+      :ok = :file.truncate(index_db.file)
+    end
+
     %{
       index_db
       | file_offset: new_offset,

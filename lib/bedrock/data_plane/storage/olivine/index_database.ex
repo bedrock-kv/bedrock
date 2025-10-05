@@ -63,7 +63,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
     dir = Path.dirname(file_path)
     path = String.to_charlist(Path.join(dir, "idx"))
 
-    with {:ok, file} <- :file.open(path, [:raw, :binary, :read, :append]),
+    with {:ok, file} <- :file.open(path, [:raw, :binary, :read, :write]),
          {:ok, file_size} <- :file.position(file, {:eof, 0}) do
       durable_version = read_durable_version(file, file_size)
 

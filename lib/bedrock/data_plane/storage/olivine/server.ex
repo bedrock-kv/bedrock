@@ -111,9 +111,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
 
   @impl true
   def handle_call({:unlock_after_recovery, durable_version, transaction_system_layout}, {_director, _}, t) do
-    case Logic.unlock_after_recovery(t, durable_version, transaction_system_layout) do
-      {:ok, updated_state} -> reply(updated_state, :ok)
-    end
+    {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, transaction_system_layout)
+    reply(updated_state, :ok)
   end
 
   @impl true
@@ -187,10 +186,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   @impl true
   def handle_continue(:advance_window, %State{} = t) do
     if t.allow_window_advancement do
-      case Logic.advance_window(t) do
-        {:ok, state_after_window} ->
-          noreply(state_after_window)
-      end
+      {:ok, state_after_window} = Logic.advance_window(t)
+      noreply(state_after_window)
     else
       # Compaction in progress - skip window advancement
       noreply(t)

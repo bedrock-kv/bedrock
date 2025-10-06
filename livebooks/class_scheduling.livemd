@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.3.0-rc4"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.3.0"},
   {:kino, "~> 0.16.0"},
 ])
 

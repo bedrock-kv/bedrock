@@ -53,12 +53,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Tree do
   """
   @spec page_for_key(t(), Bedrock.key()) :: page_id()
   def page_for_key(tree, key) do
-    case :gb_trees.iterator_from(key, tree) do
-      iter ->
-        case :gb_trees.next(iter) do
-          {_last_key, page_id, _next_iter} -> page_id
-          _none -> 0
-        end
+    iter = :gb_trees.iterator_from(key, tree)
+
+    case :gb_trees.next(iter) do
+      {_last_key, page_id, _next_iter} -> page_id
+      _none -> 0
     end
   end
 

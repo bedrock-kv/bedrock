@@ -14,11 +14,7 @@ defmodule Bedrock.Cluster.Gateway.State do
           timers: %{atom() => reference()} | nil,
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()],
-          transaction_system_layout: TransactionSystemLayout.t() | nil,
-          #
-          deadline_by_version: %{Bedrock.version() => Bedrock.timestamp_in_ms()},
-          minimum_read_version: Bedrock.version() | nil,
-          lease_renewal_interval_in_ms: pos_integer()
+          transaction_system_layout: TransactionSystemLayout.t() | nil
         }
   defstruct node: nil,
             cluster: nil,
@@ -28,9 +24,5 @@ defmodule Bedrock.Cluster.Gateway.State do
             timers: nil,
             mode: :active,
             capabilities: [],
-            transaction_system_layout: nil,
-            #
-            deadline_by_version: %{},
-            minimum_read_version: nil,
-            lease_renewal_interval_in_ms: 5_000
+            transaction_system_layout: nil
 end

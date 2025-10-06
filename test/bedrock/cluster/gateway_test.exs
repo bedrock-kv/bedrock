@@ -23,27 +23,6 @@ defmodule Bedrock.Cluster.GatewayTest do
     end
   end
 
-  describe "renew_read_version_lease/3" do
-    test "renews lease with read version and options" do
-      test_pid = self()
-      read_version = 12_345
-      opts = [timeout_in_ms: 3_000]
-
-      make_call(fn -> Gateway.renew_read_version_lease(test_pid, read_version, opts) end)
-      assert_call_received({:renew_read_version_lease, ^read_version})
-    end
-
-    test "handles various version numbers" do
-      test_versions = [0, 123, 999_999_999_999]
-      test_pid = self()
-
-      for version <- test_versions do
-        make_call(fn -> Gateway.renew_read_version_lease(test_pid, version) end)
-        assert_call_received({:renew_read_version_lease, ^version})
-      end
-    end
-  end
-
   describe "advertise_worker/2" do
     test "sends cast message and returns :ok" do
       test_pid = self()
@@ -78,13 +57,11 @@ defmodule Bedrock.Cluster.GatewayTest do
 
       # Check that the expected functions exist with at least the expected arities
       assert Keyword.has_key?(exports, :begin_transaction)
-      assert Keyword.has_key?(exports, :renew_read_version_lease)
       assert Keyword.has_key?(exports, :advertise_worker)
       assert Keyword.has_key?(exports, :get_descriptor)
 
       # Verify the main arities are present
       assert 1 in Keyword.get_values(exports, :begin_transaction)
-      assert 2 in Keyword.get_values(exports, :renew_read_version_lease)
       assert 2 in Keyword.get_values(exports, :advertise_worker)
       assert 1 in Keyword.get_values(exports, :get_descriptor)
     end
@@ -100,13 +77,6 @@ defmodule Bedrock.Cluster.GatewayTest do
   describe "edge cases and validation" do
     test "handles boundary values and edge cases" do
       test_pid = self()
-
-      # Test renew_read_version_lease with boundary values
-      make_call(fn -> Gateway.renew_read_version_lease(test_pid, 0, []) end)
-      assert_call_received({:renew_read_version_lease, 0})
-
-      make_call(fn -> Gateway.renew_read_version_lease(test_pid, -1, []) end)
-      assert_call_received({:renew_read_version_lease, -1})
 
       # Test get_descriptor with extreme timeout values
       make_call(fn -> Gateway.get_descriptor(test_pid, timeout_in_ms: 0) end)

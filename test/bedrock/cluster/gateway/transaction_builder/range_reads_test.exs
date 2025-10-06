@@ -51,13 +51,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
       transaction_system_layout: layout,
       layout_index: layout_index,
       read_version: Keyword.get(opts, :read_version, 12_345),
-      read_version_lease_expiration: nil,
       commit_version: nil,
       tx: tx,
       stack: [],
       fastest_storage_servers: %{},
       fetch_timeout_in_ms: 100,
-      lease_renewal_threshold: 100,
       active_range_queries: %{}
     }
   end

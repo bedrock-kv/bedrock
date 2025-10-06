@@ -107,14 +107,6 @@ defmodule Bedrock.Cluster.Gateway.Server do
     reply(updated_state, result)
   end
 
-  @spec handle_call({:renew_read_version_lease, term()}, GenServer.from(), State.t()) ::
-          {:reply, term(), State.t()}
-  def handle_call({:renew_read_version_lease, read_version}, _, t) do
-    t
-    |> renew_read_version_lease(read_version)
-    |> then(fn {t, result} -> reply(t, result) end)
-  end
-
   @spec handle_call(:get_known_coordinator, GenServer.from(), State.t()) ::
           {:reply, {:ok, term()} | {:error, :unavailable}, State.t()}
   def handle_call(:get_known_coordinator, _, t) do

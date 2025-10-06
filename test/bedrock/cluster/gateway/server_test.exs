@@ -156,18 +156,6 @@ defmodule Bedrock.Cluster.Gateway.ServerTest do
       # Should return a reply tuple - exact result depends on coordinator availability
       assert match?({:reply, _result, _state}, result)
     end
-
-    test "renew_read_version_lease call delegates properly (structure test)", %{
-      base_state: base_state
-    } do
-      read_version = 12_345
-
-      # This will call the actual implementation
-      result = Server.handle_call({:renew_read_version_lease, read_version}, :from, base_state)
-
-      # Should return a reply tuple
-      assert match?({:reply, _result, _state}, result)
-    end
   end
 
   describe "handle_info/3" do

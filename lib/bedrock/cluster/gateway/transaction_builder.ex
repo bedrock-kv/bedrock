@@ -62,7 +62,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   import __MODULE__.Finalization, only: [commit: 1, rollback: 1]
   import __MODULE__.PointReads, only: [get_key: 3, get_key_selector: 3]
   import __MODULE__.RangeReads, only: [get_range: 4, get_range_selectors: 5]
-  import __MODULE__.ReadVersions, only: [renew_read_version_lease: 1]
   import Bedrock.Internal.GenServer.Replies
 
   alias __MODULE__.Tx
@@ -70,7 +69,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.Internal.Time
   alias Bedrock.KeySelector
 
   @doc false
@@ -105,25 +103,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
       gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       layout_index: layout_index,
-      read_version: nil,
-      read_version_lease_expiration: nil
+      read_version: nil
     })
   end
 
   def handle_continue(:stop, t), do: stop(t, :normal)
-
-  def handle_continue(:update_version_lease_if_needed, t) when is_nil(t.read_version), do: noreply(t)
-
-  def handle_continue(:update_version_lease_if_needed, t) do
-    now = Time.monotonic_now_in_ms()
-    ms_remaining = t.read_version_lease_expiration - now
-
-    cond do
-      ms_remaining <= 0 -> noreply(%{t | state: :expired})
-      ms_remaining < t.lease_renewal_threshold -> t |> renew_read_version_lease() |> noreply()
-      true -> noreply(t)
-    end
-  end
 
   @impl true
   def handle_call(:nested_transaction, _from, t), do: reply(%{t | stack: [t.tx | t.stack]}, :ok)
@@ -152,13 +136,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     |> get_key(key, opts)
     |> then(fn
       {t, {:error, _} = error} ->
-        reply(t, error, continue: :update_version_lease_if_needed)
+        reply(t, error)
 
       {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+        reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
       {t, {:ok, {^key, value}}} ->
-        reply(t, {:ok, value}, continue: :update_version_lease_if_needed)
+        reply(t, {:ok, value})
     end)
   end
 
@@ -167,10 +151,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     |> get_key_selector(key_selector, opts)
     |> then(fn
       {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+        reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
       {t, result} ->
-        reply(t, result, continue: :update_version_lease_if_needed)
+        reply(t, result)
     end)
   end
 
@@ -180,10 +164,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     |> get_range({start_key, end_key}, batch_size, opts)
     |> then(fn
       {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+        reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
       {t, result} ->
-        reply(t, result, continue: :update_version_lease_if_needed)
+        reply(t, result)
     end)
   end
 
@@ -198,10 +182,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
     |> get_range_selectors(start_selector, end_selector, batch_size, opts)
     |> then(fn
       {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)}, continue: :update_version_lease_if_needed)
+        reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
       {t, result} ->
-        reply(t, result, continue: :update_version_lease_if_needed)
+        reply(t, result)
     end)
   end
 

@@ -11,7 +11,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions
-- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
+- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination
 - **[Transaction Builder](architecture/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
 - **[Sequencer](architecture/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
@@ -47,10 +47,8 @@ sequenceDiagram
     alt Read version not yet obtained
         TransactionBuilder->>Sequencer: next_read_version()
         Sequencer-->>TransactionBuilder: {:ok, read_version}
-        TransactionBuilder->>Gateway: renew_read_version_lease(read_version)
-        Gateway-->>TransactionBuilder: {:ok, lease_deadline_ms}
     end
-    
+
     TransactionBuilder->>Storage: fetch(key, read_version)
     Storage-->>TransactionBuilder: {:ok, value}
     TransactionBuilder->>TransactionBuilder: track read in transaction state

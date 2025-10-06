@@ -386,13 +386,11 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
                stack: [],
                fastest_storage_servers: %{},
                fetch_timeout_in_ms: fetch_timeout,
-               lease_renewal_threshold: lease_threshold,
                tx: %Tx{}
              } = :sys.get_state(pid)
 
       assert gateway == self()
       assert is_integer(fetch_timeout)
-      assert is_integer(lease_threshold)
     end
 
     test "state fields are preserved across operations" do

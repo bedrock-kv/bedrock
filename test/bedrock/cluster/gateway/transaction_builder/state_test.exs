@@ -12,12 +12,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
                gateway: nil,
                transaction_system_layout: nil,
                read_version: nil,
-               read_version_lease_expiration: nil,
                commit_version: nil,
                stack: [],
                fastest_storage_servers: %{},
-               fetch_timeout_in_ms: 50,
-               lease_renewal_threshold: 100
+               fetch_timeout_in_ms: 50
              } = %State{}
 
       empty_tx = %State{}.tx
@@ -37,25 +35,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
                gateway: ^gateway_pid,
                transaction_system_layout: ^layout,
                read_version: 12_345,
-               read_version_lease_expiration: 67_890,
                commit_version: 11_111,
                tx: ^tx,
                stack: [stacked_tx],
                fastest_storage_servers: ^servers,
-               fetch_timeout_in_ms: 200,
-               lease_renewal_threshold: 300
+               fetch_timeout_in_ms: 200
              } = %State{
                state: :valid,
                gateway: gateway_pid,
                transaction_system_layout: layout,
                read_version: 12_345,
-               read_version_lease_expiration: 67_890,
                commit_version: 11_111,
                tx: tx,
                stack: [Tx.new()],
                fastest_storage_servers: servers,
-               fetch_timeout_in_ms: 200,
-               lease_renewal_threshold: 300
+               fetch_timeout_in_ms: 200
              }
 
       assert {:ok, %{mutations: [], write_conflicts: [], read_conflicts: {nil, []}}} =
@@ -71,7 +65,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
                %{state | state: :committed, commit_version: 12_345}
 
       assert %State{state: :rolled_back} = %{state | state: :rolled_back}
-      assert %State{state: :expired} = %{state | state: :expired}
     end
 
     test "preserves other fields during state transitions" do
@@ -135,34 +128,13 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     end
   end
 
-  describe "read version and lease management" do
-    test "sets read version and lease" do
-      state = %State{read_version: nil, read_version_lease_expiration: nil}
-      current_time = 50_000
-      lease_duration = 5_000
+  describe "read version management" do
+    test "sets read version" do
+      state = %State{read_version: nil}
 
       assert %State{
-               read_version: 12_345,
-               read_version_lease_expiration: 55_000
-             } = %{
-               state
-               | read_version: 12_345,
-                 read_version_lease_expiration: current_time + lease_duration
-             }
-    end
-
-    test "updates lease expiration" do
-      current_time = 60_000
-
-      state = %State{
-        read_version: 12_345,
-        read_version_lease_expiration: current_time - 1000
-      }
-
-      assert %State{
-               read_version: 12_345,
-               read_version_lease_expiration: 63_000
-             } = %{state | read_version_lease_expiration: current_time + 3000}
+               read_version: 12_345
+             } = %{state | read_version: 12_345}
     end
 
     test "handles zero and large version numbers" do
@@ -216,25 +188,21 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
   describe "timeout configuration" do
     test "default timeout values" do
       assert %State{
-               fetch_timeout_in_ms: 50,
-               lease_renewal_threshold: 100
+               fetch_timeout_in_ms: 50
              } = %State{}
     end
 
     test "custom timeout values" do
       assert %State{
-               fetch_timeout_in_ms: 1000,
-               lease_renewal_threshold: 2000
+               fetch_timeout_in_ms: 1000
              } = %State{
-               fetch_timeout_in_ms: 1000,
-               lease_renewal_threshold: 2000
+               fetch_timeout_in_ms: 1000
              }
     end
 
     test "preserves timeout values during other updates" do
       original_state = %State{
-        fetch_timeout_in_ms: 500,
-        lease_renewal_threshold: 800
+        fetch_timeout_in_ms: 500
       }
 
       tx = Tx.set(Tx.new(), "key", "value")
@@ -243,8 +211,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
                state: :valid,
                read_version: 12_345,
                tx: ^tx,
-               fetch_timeout_in_ms: 500,
-               lease_renewal_threshold: 800
+               fetch_timeout_in_ms: 500
              } = %{
                original_state
                | state: :valid,
@@ -256,7 +223,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
   describe "field validation and type checking" do
     test "state field accepts valid states" do
-      valid_states = [:valid, :committed, :rolled_back, :expired]
+      valid_states = [:valid, :committed, :rolled_back]
 
       for valid_state <- valid_states do
         assert %State{state: ^valid_state} = %State{state: valid_state}

@@ -20,20 +20,6 @@ defmodule Bedrock.Cluster.Gateway do
     do: call(gateway, {:begin_transaction, opts}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
-  Renew the lease for a transaction based on the read version.
-  """
-  @spec renew_read_version_lease(
-          gateway_ref :: ref(),
-          read_version :: Bedrock.version(),
-          opts :: [
-            timeout_in_ms: Bedrock.timeout_in_ms()
-          ]
-        ) ::
-          {:ok, lease_deadline_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
-  def renew_read_version_lease(t, read_version, opts \\ []),
-    do: call(t, {:renew_read_version_lease, read_version}, opts[:timeout_in_ms] || :infinity)
-
-  @doc """
   Report the addition of a new worker to the cluster director. It does so by
   sending an asynchronous message to the specified gateway process. The gateway
   process will then gather some information from the worker and pass it to the

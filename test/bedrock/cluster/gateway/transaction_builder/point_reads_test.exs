@@ -32,7 +32,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
       transaction_system_layout: layout,
       layout_index: layout_index,
       read_version: Keyword.get(opts, :read_version),
-      read_version_lease_expiration: Keyword.get(opts, :read_version_lease_expiration),
       stack: Keyword.get(opts, :stack, []),
       fastest_storage_servers: Keyword.get(opts, :fastest_storage_servers, %{}),
       fetch_timeout_in_ms: Keyword.get(opts, :fetch_timeout_in_ms, 100)
@@ -169,10 +168,8 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
     test "acquires read version when nil" do
       state = create_test_state(read_version: nil)
-      current_time = 50_000
 
-      next_read_version_fn = fn ^state -> {:ok, 12_345, 5000} end
-      time_fn = fn -> current_time end
+      next_read_version_fn = fn ^state -> {:ok, 12_345} end
 
       storage_get_key_fn = fn
         :storage1_pid, "key", 12_345, [timeout: 100] ->
@@ -184,16 +181,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [
         next_read_version_fn: next_read_version_fn,
-        time_fn: time_fn,
         storage_get_key_fn: storage_get_key_fn
       ]
-
-      expected_expiration = current_time + 5000
 
       assert {
                %{
                  read_version: 12_345,
-                 read_version_lease_expiration: ^expected_expiration,
                  tx: %{reads: %{"key" => "value"}}
                },
                {:ok, {"key", "value"}}
@@ -624,12 +617,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
     test "acquires read version when nil for key selector" do
       state = create_test_state(read_version: nil)
-      current_time = 50_000
 
       key_selector = %KeySelector{key: "test", or_equal: true, offset: 0}
 
-      next_read_version_fn = fn ^state -> {:ok, 12_345, 5000} end
-      time_fn = fn -> current_time end
+      next_read_version_fn = fn ^state -> {:ok, 12_345} end
 
       storage_get_key_selector_fn = fn
         :storage1_pid, ^key_selector, 12_345, [timeout: 100] ->
@@ -641,74 +632,16 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
       opts = [
         next_read_version_fn: next_read_version_fn,
-        time_fn: time_fn,
         storage_get_key_selector_fn: storage_get_key_selector_fn
       ]
-
-      expected_expiration = current_time + 5000
 
       assert {
                %{
                  read_version: 12_345,
-                 read_version_lease_expiration: ^expected_expiration,
                  tx: %{reads: %{"resolved_key" => "resolved_value"}}
                },
                {:ok, {"resolved_key", "resolved_value"}}
              } = PointReads.get_key_selector(state, key_selector, opts)
-    end
-  end
-
-  describe "lease_expired error handling" do
-    test "raises exception when read version lease expires" do
-      # Mock next_read_version_fn to return lease_expired (simulates old incarnation scenario)
-      next_read_version_fn = fn _state -> {:error, :lease_expired} end
-
-      state = create_test_state(read_version: nil)
-      opts = [next_read_version_fn: next_read_version_fn]
-
-      # Should raise exception since ensure_read_version! is a bang function
-      assert_raise RuntimeError, "Read version lease expired", fn ->
-        PointReads.get_key(state, "test_key", opts)
-      end
-    end
-
-    test "simulates node incarnation scenario leading to lease_expired" do
-      # Create a mock sequencer that returns a "stale" read version
-      sequencer_fn = fn _sequencer_pid ->
-        # Old read version
-        {:ok, <<0, 0, 0, 0, 50, 0, 0, 0>>}
-      end
-
-      # Create a mock gateway that rejects old read versions
-      gateway_fn = fn _gateway_pid, read_version ->
-        # Simulate gateway with advanced minimum_read_version due to node restart
-        minimum_version = <<0, 0, 0, 0, 100, 0, 0, 0>>
-
-        if read_version < minimum_version do
-          {:error, :lease_expired}
-        else
-          # 5 second lease
-          {:ok, 5000}
-        end
-      end
-
-      state = create_test_state(read_version: nil)
-
-      opts = [
-        next_read_version_fn: fn t ->
-          # Simulate the full next_read_version flow
-          with {:ok, read_version} <- sequencer_fn.(t.transaction_system_layout.sequencer),
-               {:ok, lease_deadline_ms} <- gateway_fn.(t.gateway, read_version) do
-            {:ok, read_version, lease_deadline_ms}
-          end
-        end
-      ]
-
-      # This reproduces the exact scenario from the error logs
-      # Should now raise exception since ensure_read_version! is a bang function
-      assert_raise RuntimeError, "Read version lease expired", fn ->
-        PointReads.get_key(state, "test_key", opts)
-      end
     end
   end
 end

@@ -675,7 +675,8 @@ defmodule Bedrock.Repo do
       def transact(fun, opts \\ []), do: Repo.transact(@cluster, __MODULE__, fun, opts)
 
       @impl true
-      defdelegate rollback(reason), to: Repo
+      @spec rollback(reason :: term()) :: no_return()
+      def rollback(reason), do: Repo.rollback(reason)
 
       @impl true
       def add_read_conflict_key(key), do: Repo.add_read_conflict_key(__MODULE__, key)

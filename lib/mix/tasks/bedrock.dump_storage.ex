@@ -164,7 +164,7 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
 
     # Get all keys using range query from empty key to maximum key
     # Note: Using 0xFF repeated to get maximum possible key
-    max_key = <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
+    max_key = <<0xFF, 0xFF>>
 
     case Storage.get_range(storage_pid, <<>>, max_key, version, []) do
       {:ok, {entries, _has_more}} ->

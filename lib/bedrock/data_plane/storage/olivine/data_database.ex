@@ -1,6 +1,8 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
   @moduledoc false
 
+  require Logger
+
   @type locator :: <<_::64>>
 
   @opaque t :: %__MODULE__{
@@ -143,13 +145,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
 
   defp load_from_file(file_name, offset, size) do
     file_name
-    |> :file.open([:raw, :binary, :read])
+    |> :prim_file.open([:raw, :binary, :read])
     |> case do
       {:ok, file} ->
         try do
-          :file.pread(file, offset, size)
+          :prim_file.pread(file, offset, size)
         after
-          :file.close(file)
+          :prim_file.close(file)
         end
 
       error ->
@@ -183,14 +185,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
   end
 
   defp load_many_from_file(file_name, locators) do
+    sorted_locators = Enum.sort(locators)
+
     file_name
-    |> :file.open([:raw, :binary, :read])
+    |> :prim_file.open([:raw, :binary, :read])
     |> case do
       {:ok, file} ->
         try do
-          sorted_locators = Enum.sort(locators)
-
-          case :file.pread(file, Enum.map(sorted_locators, fn <<offset::47, size::17>> -> {offset, size} end)) do
+          case :prim_file.pread(file, Enum.map(sorted_locators, fn <<offset::47, size::17>> -> {offset, size} end)) do
             {:ok, values} ->
               locator_to_value = sorted_locators |> Enum.zip(values) |> Map.new()
               {:ok, Enum.map(locators, fn locator -> Map.fetch!(locator_to_value, locator) end)}
@@ -199,7 +201,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
               error
           end
         after
-          :file.close(file)
+          :prim_file.close(file)
         end
 
       error ->

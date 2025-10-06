@@ -136,6 +136,11 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
         |> Enum.group_by(fn {capability, _node} -> capability end, fn {_capability, node} ->
           node
         end)
+        |> Map.new(fn {capability, nodes} ->
+          # Filter out dead nodes
+          live_nodes = Enum.filter(nodes, &(Node.ping(&1) == :pong))
+          {capability, live_nodes}
+        end)
 
       # For now, set resolution capable nodes to the same as coordination capable nodes
       coordination_nodes = Map.get(capability_map, :coordination, [])

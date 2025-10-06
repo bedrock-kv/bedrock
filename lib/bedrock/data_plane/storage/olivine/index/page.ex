@@ -3,14 +3,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   Page management routines for the Olivine storage driver.
 
   Pages are the fundamental storage unit in the Olivine B-tree index. Each page
-  contains sorted key-version pairs and chain pointers for traversal.
+  contains sorted key-locator pairs and chain pointers for traversal.
 
   ## Key Features
 
   - **Binary encoding**: Pages are stored as optimized binary data for efficiency
   - **Chain linking**: Pages form a linked list via `next_id` pointers
   - **Sorted keys**: Keys within each page are maintained in ascending order
-  - **Version tracking**: Each key has an associated version for MVCC support
+  - **Version tracking**: Each key has an associated locator for MVCC support
   - **Size limits**: Pages are split when they exceed 256 keys to maintain performance
 
   ## Operations
@@ -22,66 +22,179 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   - Validation of page structure and invariants
   """
 
+  alias Bedrock.DataPlane.Storage.Olivine.Database
+
   @type id :: non_neg_integer()
   @type page_map :: %{
           id: id(),
           next_id: id(),
-          key_versions: [{binary(), Bedrock.version()}]
+          key_locators: [{binary(), Database.locator()}]
         }
   @type t :: binary() | page_map()
-  @type operation :: {:set, Bedrock.version()} | :clear
+  @type operation :: {:set, Database.locator()} | :clear
 
   @doc """
-  Creates a page with key-version tuples.
+  Creates a page with key-locator tuples.
   Returns the binary-encoded page with next_id set to 0.
   """
-  @spec new(id :: id(), key_versions :: [{binary(), Bedrock.version()}]) :: binary()
-  def new(id, key_versions) when is_list(key_versions) do
-    versions = Enum.map(key_versions, fn {_key, version} -> version end)
+  @spec new(id :: id(), key_locators :: [{binary(), Database.locator()}]) :: binary()
+  def new(id, key_locators) when is_list(key_locators) do
+    locators = Enum.map(key_locators, fn {_key, locator} -> locator end)
 
-    if !Enum.all?(versions, &(is_binary(&1) and byte_size(&1) == 8)) do
-      raise ArgumentError, "All versions must be 8-byte binary values"
+    if !Enum.all?(locators, &(is_binary(&1) and byte_size(&1) == 8)) do
+      raise ArgumentError, "All locators must be 8-byte binary values"
     end
 
-    encode_page_direct(id, key_versions)
+    encode_page_direct(id, key_locators)
   end
 
-  @spec encode_page_direct(id(), [{binary(), Bedrock.version()}]) :: binary()
-  defp encode_page_direct(id, key_versions) do
-    key_count = length(key_versions)
-
-    {payload_iodata, rightmost_key} = encode_entries_as_iodata(key_versions)
-    rightmost_key_offset = calculate_rightmost_key_offset(payload_iodata, rightmost_key)
+  @spec encode_page_direct(id(), [{binary(), Database.locator()}]) :: binary()
+  defp encode_page_direct(id, key_locators) do
+    key_count = length(key_locators)
+    {payload_iodata, rightmost_key} = encode_entries_as_iodata(key_locators)
+    rightmost_key_offset_from_end = calculate_rightmost_key_offset(rightmost_key)
 
     header = <<
       id::unsigned-big-32,
       key_count::unsigned-big-16,
-      rightmost_key_offset::unsigned-big-32,
+      rightmost_key_offset_from_end::unsigned-big-32,
       0::unsigned-big-48
     >>
 
     IO.iodata_to_binary([header | payload_iodata])
   end
 
-  @spec encode_entries_as_iodata([{binary(), Bedrock.version()}]) :: {iodata(), integer() | nil}
+  @spec encode_entries_as_iodata([{binary(), Database.locator()}]) :: {iodata(), binary() | nil}
   defp encode_entries_as_iodata([]), do: {[], nil}
-  defp encode_entries_as_iodata(key_versions), do: encode_entries_as_iodata(key_versions, [], nil)
+  defp encode_entries_as_iodata(key_locators), do: encode_entries_as_iodata(key_locators, [], nil)
 
-  @spec encode_entries_as_iodata([{binary(), Bedrock.version()}], iodata(), binary() | nil) :: {iodata(), binary()}
+  @spec encode_entries_as_iodata([{binary(), Database.locator()}], iodata(), binary() | nil) :: {iodata(), binary()}
   defp encode_entries_as_iodata([], accumulated_iodata, rightmost_key),
     do: {Enum.reverse(accumulated_iodata), rightmost_key}
 
-  defp encode_entries_as_iodata([{current_key, version} | remaining_entries], accumulated_iodata, _previous_rightmost),
+  defp encode_entries_as_iodata([{current_key, locator} | remaining_entries], accumulated_iodata, _previous_rightmost),
     do:
       encode_entries_as_iodata(
         remaining_entries,
-        [encode_version_key_entry(version, current_key) | accumulated_iodata],
+        [encode_locator_key_entry(locator, current_key) | accumulated_iodata],
         current_key
       )
 
   @doc """
+  Applies operations to a binary page, returning per-key segments for efficient splitting.
+
+  Returns a tuple of:
+  - page_id: The page ID from the header
+  - segments: Reversed list of per-key segments (each segment is one {key, locator} entry)
+    - `{offset, length}` for unchanged keys (reference to old binary)
+    - `<<binary>>` for new/modified keys
+  - key_count: Final number of keys after operations
+  - rightmost_key: The rightmost key in the page (or nil if empty)
+
+  The segments list is in reverse order (rightmost key first), which is natural
+  from the merge algorithm and gives us the rightmost key for free.
+  """
+  @type segment :: {non_neg_integer(), non_neg_integer()} | binary()
+
+  @spec apply_operations_as_segments(binary(), %{Bedrock.key() => operation()}) ::
+          {[segment()], key_count :: non_neg_integer(), rightmost_key :: binary() | nil}
+  def apply_operations_as_segments(page, operations) when map_size(operations) == 0 do
+    <<_id::unsigned-big-32, key_count::unsigned-big-16, _rest::binary>> = page
+
+    if key_count == 0 do
+      {[], 0, nil}
+    else
+      <<_header::binary-size(16), payload::binary>> = page
+      segments = build_segments_from_existing(payload, 16, [])
+      rightmost = right_key(page)
+      {segments, key_count, rightmost}
+    end
+  end
+
+  def apply_operations_as_segments(page, operations) when is_binary(page) do
+    <<
+      _id::unsigned-big-32,
+      key_count::unsigned-big-16,
+      _right_key_offset::unsigned-big-32,
+      _padding::unsigned-big-48,
+      payload::binary
+    >> = page
+
+    {segments, key_count_delta, rightmost_key} =
+      do_apply_operations_per_key(payload, Enum.sort_by(operations, &elem(&1, 0)), 16, [], 0, nil)
+
+    {segments, key_count + key_count_delta, rightmost_key}
+  end
+
+  @doc """
+  Builds a binary page from iodata (already materialized segments).
+
+  Takes a page ID, iodata payload, key count, and rightmost key.
+  This is used when segments have already been materialized by `take_and_materialize`.
+
+  Returns a complete binary page with proper header and payload.
+  """
+  @spec build_from_segments_iodata(id(), iodata(), non_neg_integer(), binary() | nil) :: binary()
+  def build_from_segments_iodata(page_id, iodata, key_count, rightmost_key) do
+    if key_count == 0 do
+      <<
+        page_id::unsigned-big-32,
+        0::unsigned-big-16,
+        0::unsigned-big-32,
+        0::unsigned-big-48
+      >>
+    else
+      rightmost_key_offset_from_end = calculate_rightmost_key_offset(rightmost_key)
+
+      IO.iodata_to_binary([
+        <<
+          page_id::unsigned-big-32,
+          key_count::unsigned-big-16,
+          rightmost_key_offset_from_end::unsigned-big-32,
+          0::unsigned-big-48
+        >>,
+        iodata
+      ])
+    end
+  end
+
+  @doc """
+  Builds a binary page from pre-computed segments.
+
+  Takes a page ID, list of segments (in reverse order), final key count, original page,
+  and the rightmost key. The segments list and rightmost key should come from
+  `apply_operations_as_segments/2`.
+
+  Returns a complete binary page with proper header and payload.
+  """
+  @spec build_from_segments(id(), [segment()], non_neg_integer(), binary(), binary() | nil) :: binary()
+  def build_from_segments(page_id, segments, key_count, original_page, rightmost_key) do
+    if key_count == 0 do
+      <<
+        page_id::unsigned-big-32,
+        0::unsigned-big-16,
+        0::unsigned-big-32,
+        0::unsigned-big-48
+      >>
+    else
+      new_payload = convert_binary_segments_to_iodata(segments, original_page)
+      rightmost_key_offset_from_end = calculate_rightmost_key_offset(rightmost_key)
+
+      IO.iodata_to_binary([
+        <<
+          page_id::unsigned-big-32,
+          key_count::unsigned-big-16,
+          rightmost_key_offset_from_end::unsigned-big-32,
+          0::unsigned-big-48
+        >>,
+        new_payload
+      ])
+    end
+  end
+
+  @doc """
   Applies a map of operations to a binary page, returning the updated binary page.
-  Operations can be {:set, version} or :clear.
+  Operations can be {:set, locator} or :clear.
   """
   @spec apply_operations(binary(), %{Bedrock.key() => operation()}) :: binary()
   def apply_operations(page, operations) when map_size(operations) == 0, do: page
@@ -99,28 +212,23 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
       do_apply_operations(payload, Enum.sort_by(operations, &elem(&1, 0)), 16, [16], 0, nil)
 
     new_payload = convert_binary_segments_to_iodata(binary_segments, page)
-    new_rightmost_key_offset = calculate_rightmost_key_offset(new_payload, rightmost_key)
+    rightmost_key_offset_from_end = calculate_rightmost_key_offset(rightmost_key)
 
     IO.iodata_to_binary([
       <<
         id::unsigned-big-32,
         key_count + key_count_delta::unsigned-big-16,
-        new_rightmost_key_offset::unsigned-big-32,
+        rightmost_key_offset_from_end::unsigned-big-32,
         0::unsigned-big-48
       >>,
       new_payload
     ])
   end
 
-  defp calculate_rightmost_key_offset(_payload, nil), do: 0
-
-  defp calculate_rightmost_key_offset(payload, rightmost_key),
-    do: 16 + IO.iodata_length(payload) - byte_size(rightmost_key) - 2
-
   defp convert_binary_segments_to_iodata(segments, page, accumulated_iodata \\ [])
 
   defp convert_binary_segments_to_iodata([segment | remaining_segments], page, accumulated_iodata) do
-    binary_segment =
+    iodata_segment =
       case segment do
         start_offset when is_integer(start_offset) ->
           binary_part(page, start_offset, byte_size(page) - start_offset)
@@ -132,7 +240,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
           binary
       end
 
-    convert_binary_segments_to_iodata(remaining_segments, page, [binary_segment | accumulated_iodata])
+    convert_binary_segments_to_iodata(remaining_segments, page, [iodata_segment | accumulated_iodata])
   end
 
   defp convert_binary_segments_to_iodata([], _page, accumulated_iodata), do: accumulated_iodata
@@ -146,7 +254,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
           binary() | nil
         ) :: {list(), integer(), binary() | nil}
   defp do_apply_operations(
-         <<_version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>> = entries,
+         <<_locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>> = entries,
          operations,
          current_offset,
          acc,
@@ -162,12 +270,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
           :clear ->
             do_apply_operations(entries, remaining_ops, current_offset, acc, key_count_delta, rightmost_key)
 
-          {:set, version} ->
+          {:set, locator} ->
             do_apply_operations(
               entries,
               remaining_ops,
               current_offset,
-              [current_offset | [encode_version_key_entry(version, op_key) | slice_or_pop(acc, current_offset)]],
+              [current_offset | [encode_locator_key_entry(locator, op_key) | slice_or_pop(acc, current_offset)]],
               key_count_delta + 1,
               rightmost_of(rightmost_key, op_key)
             )
@@ -185,12 +293,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
               rightmost_key
             )
 
-          {:set, version} ->
+          {:set, locator} ->
             do_apply_operations(
               rest,
               remaining_ops,
               next_offset,
-              [next_offset, encode_version_key_entry(version, key) | slice_or_pop(acc, current_offset)],
+              [next_offset, encode_locator_key_entry(locator, key) | slice_or_pop(acc, current_offset)],
               key_count_delta,
               rightmost_of(rightmost_key, key)
             )
@@ -234,7 +342,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
        do: add_remaining_operations_as_binary_segments(remaining_ops, acc, key_count_delta, rightmost_key)
 
   defp add_remaining_operations_as_binary_segments(
-         [{key, {:set, version}} | remaining_ops],
+         [{key, {:set, locator}} | remaining_ops],
          acc,
          key_count_delta,
          rightmost_key
@@ -243,7 +351,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
     add_remaining_operations_as_binary_segments(
       remaining_ops,
-      [encode_version_key_entry(version, key) | acc],
+      [encode_locator_key_entry(locator, key) | acc],
       key_count_delta + 1,
       new_rightmost
     )
@@ -252,9 +360,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   defp add_remaining_operations_as_binary_segments([], acc, key_count_delta, rightmost_key),
     do: {acc, key_count_delta, rightmost_key}
 
-  @spec encode_version_key_entry(Bedrock.version(), binary()) :: binary()
-  defp encode_version_key_entry(version, key) when is_binary(version) and byte_size(version) == 8,
-    do: <<version::binary-size(8), byte_size(key)::unsigned-big-16, key::binary>>
+  @spec encode_locator_key_entry(Database.locator(), binary()) :: binary()
+  defp encode_locator_key_entry(locator, key) when is_binary(locator) and byte_size(locator) == 8,
+    do: <<locator::binary-size(8), byte_size(key)::unsigned-big-16, key::binary>>
 
   defp slice_or_pop(acc, current_offset) do
     case acc do
@@ -263,29 +371,134 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
     end
   end
 
-  @doc """
-  Validates that a binary has the correct page format and valid last_key offset.
-  Returns :ok if valid, {:error, :corrupted_page} if invalid.
-  """
-  @spec validate(binary()) :: :ok | {:error, :corrupted_page}
-  def validate(<<_id::32, 0::16, _right_key_offset::32, _reserved::48, _entries::binary>>), do: :ok
+  @spec do_apply_operations_per_key(
+          binary(),
+          [{binary(), operation()}],
+          non_neg_integer(),
+          list(),
+          integer(),
+          binary() | nil
+        ) :: {[segment()], integer(), binary() | nil}
+  defp do_apply_operations_per_key(
+         <<_locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>> = entries,
+         operations,
+         current_offset,
+         acc,
+         key_count_delta,
+         rightmost_key
+       ) do
+    entry_size = 8 + 2 + key_len
+    next_offset = current_offset + entry_size
 
-  def validate(
-        <<_id::32, _key_count::16, right_key_offset::32, _reserved::48, _data::binary-size(right_key_offset - 16),
-          _key_len::16, _key::binary>>
-      ),
-      do: :ok
+    case operations do
+      [{op_key, op} | remaining_ops] when op_key < key ->
+        case op do
+          :clear ->
+            do_apply_operations_per_key(
+              entries,
+              remaining_ops,
+              current_offset,
+              acc,
+              key_count_delta,
+              rightmost_key
+            )
 
-  def validate(_), do: {:error, :corrupted_page}
+          {:set, locator} ->
+            new_entry = encode_locator_key_entry(locator, op_key)
 
-  @spec decode_entries(binary(), non_neg_integer(), [{binary(), Bedrock.version()}]) ::
-          {:ok, [{binary(), Bedrock.version()}]} | {:error, :invalid_entries}
+            do_apply_operations_per_key(
+              entries,
+              remaining_ops,
+              current_offset,
+              [new_entry | acc],
+              key_count_delta + 1,
+              rightmost_of(rightmost_key, op_key)
+            )
+        end
+
+      [{^key, op} | remaining_ops] ->
+        case op do
+          :clear ->
+            do_apply_operations_per_key(
+              rest,
+              remaining_ops,
+              next_offset,
+              acc,
+              key_count_delta - 1,
+              rightmost_key
+            )
+
+          {:set, locator} ->
+            new_entry = encode_locator_key_entry(locator, key)
+
+            do_apply_operations_per_key(
+              rest,
+              remaining_ops,
+              next_offset,
+              [new_entry | acc],
+              key_count_delta,
+              rightmost_of(rightmost_key, key)
+            )
+        end
+
+      _ ->
+        new_rightmost = rightmost_of(rightmost_key, key)
+
+        do_apply_operations_per_key(
+          rest,
+          operations,
+          next_offset,
+          [{current_offset, entry_size} | acc],
+          key_count_delta,
+          new_rightmost
+        )
+    end
+  end
+
+  defp do_apply_operations_per_key(_entries, [], _current_offset, acc, key_count_delta, rightmost_key),
+    do: {acc, key_count_delta, rightmost_key}
+
+  defp do_apply_operations_per_key(<<>>, operations, _current_offset, acc, key_count_delta, rightmost_key) do
+    add_remaining_operations_per_key(operations, acc, key_count_delta, rightmost_key)
+  end
+
+  defp add_remaining_operations_per_key([], acc, key_count_delta, rightmost_key),
+    do: {acc, key_count_delta, rightmost_key}
+
+  defp add_remaining_operations_per_key([{_key, :clear} | remaining_ops], acc, key_count_delta, rightmost_key),
+    do: add_remaining_operations_per_key(remaining_ops, acc, key_count_delta, rightmost_key)
+
+  defp add_remaining_operations_per_key([{key, {:set, locator}} | remaining_ops], acc, key_count_delta, rightmost_key) do
+    new_entry = encode_locator_key_entry(locator, key)
+
+    add_remaining_operations_per_key(
+      remaining_ops,
+      [new_entry | acc],
+      key_count_delta + 1,
+      rightmost_of(rightmost_key, key)
+    )
+  end
+
+  defp build_segments_from_existing(<<>>, _current_offset, acc), do: acc
+
+  defp build_segments_from_existing(
+         <<_locator::binary-size(8), key_len::unsigned-big-16, _key::binary-size(key_len), rest::binary>>,
+         current_offset,
+         acc
+       ) do
+    entry_size = 8 + 2 + key_len
+    next_offset = current_offset + entry_size
+    build_segments_from_existing(rest, next_offset, [{current_offset, entry_size} | acc])
+  end
+
+  @spec decode_entries(binary(), non_neg_integer(), [{binary(), Database.locator()}]) ::
+          {:ok, [{binary(), Database.locator()}]} | {:error, :invalid_entries}
   defp decode_entries(
-         <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
+         <<locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
          count,
          acc
        ) do
-    decode_entries(rest, count - 1, [{key, version} | acc])
+    decode_entries(rest, count - 1, [{key, locator} | acc])
   end
 
   defp decode_entries(<<>>, 0, acc), do: {:ok, Enum.reverse(acc)}
@@ -295,25 +508,25 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   def id(<<page_id::unsigned-big-32, _rest::binary>>), do: page_id
   def id(%{id: page_id}), do: page_id
 
-  @spec key_versions(t()) :: [{binary(), Bedrock.version()}]
-  def key_versions(
+  @spec key_locators(t()) :: [{binary(), Database.locator()}]
+  def key_locators(
         <<_page_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
           _reserved::unsigned-big-48, entries_data::binary>>
       ) do
-    {:ok, key_versions} = decode_entries(entries_data, key_count, [])
-    key_versions
+    {:ok, key_locators} = decode_entries(entries_data, key_count, [])
+    key_locators
   end
 
-  def key_versions(%{key_versions: kvs}), do: kvs
+  def key_locators(%{key_locators: kvs}), do: kvs
 
   @spec key_count(t()) :: non_neg_integer()
   def key_count(<<_page_id::unsigned-big-32, key_count::unsigned-big-16, _rest::binary>>), do: key_count
 
-  def key_count(%{key_versions: kvs}), do: length(kvs)
+  def key_count(%{key_locators: kvs}), do: length(kvs)
 
   @spec keys(t()) :: [binary()]
   def keys(page) when is_binary(page) do
-    page |> key_versions() |> Enum.map(fn {key, _version} -> key end)
+    page |> key_locators() |> Enum.map(fn {key, _locator} -> key end)
   end
 
   @spec left_key(t()) :: binary() | nil
@@ -321,7 +534,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
   def left_key(
         <<_page_id::unsigned-big-32, _key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
-          _reserved::unsigned-big-48, _version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len),
+          _reserved::unsigned-big-48, _locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len),
           _rest::binary>>
       ) do
     key
@@ -330,16 +543,20 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   @spec right_key(t()) :: binary() | nil
   def right_key(<<_page_id::unsigned-big-32, 0::unsigned-big-16, _rest::binary>>), do: nil
 
-  def right_key(
-        <<_page_id::unsigned-big-32, _key_count::unsigned-big-16, right_key_offset::unsigned-big-32,
-          _reserved::unsigned-big-48, _data::binary-size(right_key_offset - 16), key_len::unsigned-big-16,
-          key::binary-size(key_len)>>
-      ) do
+  def right_key(<<_page_id::unsigned-big-32, _key_count::unsigned-big-16, 0::unsigned-big-32, _rest::binary>>), do: nil
+
+  def right_key(page) when is_binary(page) do
+    <<_page_id::unsigned-big-32, _key_count::unsigned-big-16, right_key_offset_from_end::unsigned-big-32,
+      _reserved::unsigned-big-48, _payload::binary>> = page
+
+    page_size = byte_size(page)
+    key_start = page_size - right_key_offset_from_end
+    <<_prefix::binary-size(key_start), key_len::unsigned-big-16, key::binary-size(key_len), _locator::binary>> = page
     key
   end
 
-  @spec version_for_key(t(), Bedrock.key()) :: {:ok, Bedrock.version()} | {:error, :not_found}
-  def version_for_key(
+  @spec locator_for_key(t(), Bedrock.key()) :: {:ok, Database.locator()} | {:error, :not_found}
+  def locator_for_key(
         <<_page_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
           _reserved::unsigned-big-48, entries_data::binary>>,
         target_key
@@ -347,16 +564,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
       do: search_entries_for_key(entries_data, key_count, target_key)
 
   @spec search_entries_for_key(binary(), non_neg_integer(), Bedrock.key()) ::
-          {:ok, Bedrock.version()} | {:error, :not_found}
+          {:ok, Database.locator()} | {:error, :not_found}
   defp search_entries_for_key(_data, 0, _target_key), do: {:error, :not_found}
 
   defp search_entries_for_key(
-         <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
+         <<locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
          count,
          target_key
        ) do
     if key == target_key do
-      {:ok, version}
+      {:ok, locator}
     else
       search_entries_for_key(rest, count - 1, target_key)
     end
@@ -372,7 +589,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   defp search_entries_with_position(_data, 0, _target_key, pos), do: {:not_found, pos}
 
   defp search_entries_with_position(
-         <<_version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
+         <<_locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), rest::binary>>,
          count,
          target_key,
          pos
@@ -387,16 +604,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   defp search_entries_with_position(_, _, _, pos), do: {:not_found, pos}
 
   @spec decode_entry_at_position(binary(), non_neg_integer(), non_neg_integer()) ::
-          {:ok, {key :: binary(), version :: binary()}} | :out_of_bounds
+          {:ok, {key :: binary(), locator :: binary()}} | :out_of_bounds
   def decode_entry_at_position(_entries_data, position, key_count) when position >= key_count, do: :out_of_bounds
 
   def decode_entry_at_position(entries_data, 0, _key_count) do
-    <<version::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), _rest::binary>> = entries_data
-    {:ok, {key, version}}
+    <<locator::binary-size(8), key_len::unsigned-big-16, key::binary-size(key_len), _rest::binary>> = entries_data
+    {:ok, {key, locator}}
   end
 
   def decode_entry_at_position(
-        <<_version::binary-size(8), key_len::unsigned-big-16, _key::binary-size(key_len), rest::binary>>,
+        <<_locator::binary-size(8), key_len::unsigned-big-16, _key::binary-size(key_len), rest::binary>>,
         position,
         key_count
       ) do
@@ -405,24 +622,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
 
   def decode_entry_at_position(_, _, _), do: :out_of_bounds
 
-  @spec stream_key_versions_in_range(Enumerable.t(t()), Bedrock.key(), Bedrock.key()) ::
-          Enumerable.t({Bedrock.key(), Bedrock.version()})
-  def stream_key_versions_in_range(pages_stream, start_key, end_key) do
+  @spec stream_key_locators_in_range(Enumerable.t(t()), Bedrock.key(), Bedrock.key()) ::
+          Enumerable.t({Bedrock.key(), Database.locator()})
+  def stream_key_locators_in_range(pages_stream, start_key, end_key) do
     pages_stream
-    |> Stream.flat_map(fn page -> key_versions(page) end)
-    |> Stream.drop_while(fn {key, _version} -> key < start_key end)
-    |> Stream.take_while(fn {key, _version} -> key < end_key end)
-  end
-
-  @doc """
-  Checks if a page contains a specific key.
-  """
-  @spec has_key?(t() | binary(), Bedrock.key()) :: boolean()
-  def has_key?(page, key) when is_binary(page) do
-    case version_for_key(page, key) do
-      {:ok, _version} -> true
-      _ -> false
-    end
+    |> Stream.flat_map(fn page -> key_locators(page) end)
+    |> Stream.drop_while(fn {key, _locator} -> key < start_key end)
+    |> Stream.take_while(fn {key, _locator} -> key < end_key end)
   end
 
   @doc """
@@ -431,22 +637,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
   @spec empty?(t() | binary()) :: boolean()
   def empty?(page), do: key_count(page) == 0
 
-  @doc """
-  Splits a page at the given key offset, creating two new pages.
-  Returns {left_page, right_page} where left_page keeps the original ID
-  and right_page gets the new_page_id.
-  """
-  @spec split_page(binary(), non_neg_integer(), id(), id()) :: {{binary(), id()}, {binary(), id()}}
-  def split_page(page, key_offset, new_page_id, original_next_id) do
-    <<page_id::32, _key_count::16, _right_key_offset::32, _reserved::48, _entries::binary>> = page
-
-    key_versions = key_versions(page)
-
-    {left_key_versions, right_key_versions} = Enum.split(key_versions, key_offset)
-
-    left_page = new(page_id, left_key_versions)
-    right_page = new(new_page_id, right_key_versions)
-
-    {{left_page, new_page_id}, {right_page, original_next_id}}
-  end
+  defp calculate_rightmost_key_offset(nil), do: 0
+  defp calculate_rightmost_key_offset(key), do: 2 + byte_size(key)
 end

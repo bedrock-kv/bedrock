@@ -103,7 +103,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         path: t.path,
         min_available: 2,
         max_available: 3,
-        segment_size: 1 * 1024 * 1024
+        segment_size: 64 * 1024 * 1024
       )
 
     {oldest_version, last_version, active_segment, segments} =

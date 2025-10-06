@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.3.0-rc4"},
+  {:bedrock, git: "https://github.com/jallum/bedrock.git", tag: "0.3.0"},
   {:kino, "~> 0.16.0"},
 ])
 
@@ -85,8 +85,8 @@ When this returns, our data is safely stored in Bedrock. Let's read it back to m
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-{:ok, result} = Repo.transact(fn ->
-  {:ok, Repo.get("hello")}
+result = Repo.transact(fn ->
+  Repo.get("hello")
 end)
 
 "hello " <> result
@@ -250,8 +250,7 @@ Now that we have classes in our database, students need a way to see what's avai
 defmodule Scheduling2 do
   def available_classes(course) do
     Repo.transact(fn ->
-      classes = course |> Repo.get_range() |> Enum.to_list()
-      {:ok, classes}
+      course |> Repo.get_range() |> Enum.to_list()
     end)
   end
 end
@@ -264,7 +263,7 @@ Let's see what we've got:
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-{:ok, available} = Scheduling2.available_classes(course)
+available = Scheduling2.available_classes(course)
 IO.puts("Found #{length(available)} available classes")
 IO.puts("First five: #{available |> Enum.take(5) |> inspect}")
 ```
@@ -349,13 +348,11 @@ defmodule Scheduling do
 
   def available_classes(course) do
     Repo.transact(fn ->
-      classes = 
-        course
-        |> Repo.get_range()
-        |> Stream.filter(fn {_class, availability} -> availability > 0 end)
-        |> Stream.map(fn {class, _availability} -> class end)
-        |> Enum.to_list()
-      {:ok, classes}
+      course
+      |> Repo.get_range()
+      |> Stream.filter(fn {_class, availability} -> availability > 0 end)
+      |> Stream.map(fn {class, _availability} -> class end)
+      |> Enum.to_list()
     end)
   end
 
@@ -400,7 +397,6 @@ Scheduling.init(scheduling, course, class_names)
 # Select the first class that's not completely full
 popular_class =
   Scheduling.available_classes(course)
-  |> elem(1) 
   |> hd()
   
 "Popular class: #{popular_class}"
@@ -451,7 +447,6 @@ Let's put this to the test with some serious concurrency:
 ```elixir
 next_popular_class =
   Scheduling.available_classes(course)
-  |> elem(1) 
   |> hd()
 
 "Next popular class: #{next_popular_class}"

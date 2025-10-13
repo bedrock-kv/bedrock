@@ -1,6 +1,6 @@
 # Gateway Component Deep Dive
 
-The [Gateway](../../../glossary.md#gateway) is the client-facing interface component that manages [transaction](../../../glossary.md#transaction) coordination, [read version](../../../glossary.md#read-version) [leasing](../../../glossary.md#lease), and serves as the entry point for all client operations in the Bedrock system.
+The [Gateway](../../../glossary.md#gateway) is the client-facing interface component that manages [transaction](../../../glossary.md#transaction) coordination and serves as the entry point for all client operations in the Bedrock system.
 
 ## Overview
 
@@ -16,7 +16,7 @@ The Gateway represents a fundamental shift in how distributed databases interfac
 
 The Gateway implements Bedrock's core embedded distributed principle: processing within application boundaries rather than across network boundaries. When applications initiate transactions, they're not making network calls to remote database servers—instead, they're invoking local Gateway processes that coordinate distributed operations on their behalf.
 
-This local-first approach transforms transaction semantics. Applications experience sub-microsecond transaction initiation times because Gateway processes are co-located within the same memory space. [Read version](../../../glossary.md#read-version) [leasing](../../../glossary.md#lease) and resource coordination happen locally, eliminating the network latency that dominates traditional distributed database operations.
+This local-first approach transforms transaction semantics. Applications experience sub-microsecond transaction initiation times because Gateway processes are co-located within the same memory space. Resource coordination happens locally, eliminating the network latency that dominates traditional distributed database operations.
 
 The Gateway's transaction management also enables new programming patterns. Because transaction coordination is local, applications can initiate hundreds or thousands of concurrent transactions with minimal overhead, supporting fine-grained transactional workflows that would be prohibitively expensive in client-server architectures.
 
@@ -44,13 +44,7 @@ This design also enables sophisticated performance optimizations. The Gateway ca
 - **Resource Coordination**: Manages the lifecycle of transaction-related resources
 - **Client Interface**: Provides the primary API surface for client operations
 
-### 2. Read Version Leasing
-
-- **Version Leasing**: Manages read version leases with expiration times
-- **[Lease Renewal](../../../glossary.md#lease-renewal)**: Handles automatic lease renewal for long-running transactions
-- **Lease Tracking**: Maintains lease state and expiration monitoring
-
-### 3. Worker Advertisement
+### 2. Worker Advertisement
 
 - **Service Discovery**: Receives advertisements from new workers joining the cluster
 - **Director Communication**: Forwards worker information to the cluster director
@@ -78,28 +72,6 @@ This design also enables sophisticated performance optimizations. The Gateway ca
 ```elixir
 {:ok, transaction_pid} = Gateway.begin_transaction(gateway)
 ```
-
-### Read Version Lease Management
-
-```elixir
-@spec renew_read_version_lease(gateway_ref :: ref(), read_version :: Bedrock.version(), opts :: keyword()) ::
-  {:ok, lease_deadline_ms :: Bedrock.interval_in_ms()} | {:error, :lease_expired}
-```
-
-**Purpose**: Renews or establishes a lease for a specific read version.
-
-**Process**:
-
-1. Validates the read version is still valid
-2. Calculates new lease expiration time
-3. Updates internal lease tracking
-4. Returns lease deadline in milliseconds
-
-**Lease Management Strategy**:
-
-- Default lease duration: configurable per transaction
-- Automatic renewal when lease approaches expiration
-- Lease expiration causes transaction to abort
 
 ### Worker Advertisement
 
@@ -134,7 +106,6 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 %State{
   cluster: Cluster.t(),
   transaction_system_layout: TransactionSystemLayout.t(),
-  active_leases: %{read_version => lease_info},
   worker_advertisements: [worker_info],
   # ... other state
 }
@@ -157,19 +128,16 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 ### Scalability
 
 - **Stateless Operations**: Most operations are stateless for horizontal scaling
-- **Lease Management**: Minimal state required for lease tracking
 - **Worker Advertisement**: Asynchronous processing prevents blocking
 
 ### Latency Sources
 
 1. **Transaction Creation**: Process spawning overhead for new transactions
-2. **Lease Renewal**: Network round-trip to validate and renew leases
-3. **State Lookups**: In-memory state access (minimal impact)
+2. **State Lookups**: In-memory state access (minimal impact)
 
 ### Optimization Strategies
 
 - **Process Pooling**: Could implement transaction builder pooling
-- **Lease [Batching](../../../glossary.md#batching)**: [Batch](../../../glossary.md#batch) lease renewals for multiple transactions
 - **State Caching**: Cache frequently accessed transaction system layout
 
 ## Error Handling
@@ -182,16 +150,10 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 {:error, :timeout} # System overloaded, cannot create transaction builder
 ```
 
-**Lease Expiration**:
-
-```elixir
-{:error, :lease_expired} # Read version lease has expired
-```
-
 **[Recovery](../../../glossary.md#recovery) Behavior**:
 
-- **Process Failures**: Gateway process restart loses active leases
-- **Network Partitions**: Lease renewals fail, causing transaction aborts
+- **Process Failures**: Gateway process restart requires transaction retry
+- **Network Partitions**: Transactions may need to be retried
 - **Overload**: New transaction creation may be throttled
 
 ### Monitoring and Observability
@@ -199,22 +161,18 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 **Key Metrics**:
 
 - Active transaction count
-- Lease renewal frequency and success rate
 - Worker advertisement rate
 - Transaction creation latency
 
 **Telemetry Events**:
 
 - Transaction lifecycle events
-- Lease management events
 - Worker advertisement processing
 
 ## Configuration
 
 **Key Configuration Options**:
 
-- **Default Lease Duration**: How long read version leases last
-- **Lease Renewal Threshold**: When to trigger automatic renewal
 - **Transaction Timeout**: Maximum transaction lifetime
 - **Worker Advertisement Buffer**: Batching for worker advertisements
 
@@ -223,19 +181,16 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 ### Unit Testing
 
 - Mock transaction system layout for isolated testing
-- Test lease expiration and renewal logic
 - Verify worker advertisement forwarding
 
 ### Integration Testing
 
 - Test with real Transaction Builders
-- Verify lease coordination with Sequencer
 - Test worker advertisement flow with Director
 
 ### Load Testing
 
 - High-frequency transaction creation
-- Concurrent lease renewals
 - Worker advertisement bursts
 
 ## Future Enhancements
@@ -243,15 +198,14 @@ The Gateway uses the `Bedrock.Internal.GenServerApi` pattern:
 ### Potential Improvements
 
 1. **Connection Pooling**: Manage persistent connections to [data plane](../../../glossary.md#data-plane) components
-2. **Lease Optimization**: Predictive lease renewal based on transaction patterns
-3. **Load Balancing**: Intelligent routing of transactions to less loaded components
-4. **Caching**: Cache transaction system layout and worker information
+2. **Load Balancing**: Intelligent routing of transactions to less loaded components
+3. **Caching**: Cache transaction system layout and worker information
 
 ### Monitoring Enhancements
 
 1. **Health Checks**: Periodic validation of downstream component availability
 2. **Performance Metrics**: Detailed latency and throughput tracking
-3. **Alert Integration**: Proactive alerting on lease expiration or creation failures
+3. **Alert Integration**: Proactive alerting on creation failures
 
 ## Cross-Component Workflow Integration
 
@@ -264,9 +218,8 @@ The Gateway serves as the **entry point** in Bedrock's core transaction processi
 **Workflow Context**:
 
 1. **Transaction Initiation**: Client requests arrive at Gateway, which creates dedicated Transaction Builder processes
-2. **Version Coordination**: Gateway leases read versions from Sequencer through Transaction Builders
-3. **Resource Management**: Gateway manages transaction lifecycle and ensures clean resource cleanup
-4. **Error Propagation**: Transaction failures propagate back through Gateway to clients
+2. **Resource Management**: Gateway manages transaction lifecycle and ensures clean resource cleanup
+3. **Error Propagation**: Transaction failures propagate back through Gateway to clients
 
 For the complete transaction flow, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 

@@ -36,7 +36,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderIntegrationTest do
 
   def start_transaction_builder(opts \\ []) do
     default_opts = [
-      gateway: self(),
       transaction_system_layout: create_test_transaction_system_layout()
     ]
 

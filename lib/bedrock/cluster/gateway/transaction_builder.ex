@@ -65,7 +65,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   import Bedrock.Internal.GenServer.Replies
 
   alias __MODULE__.Tx
-  alias Bedrock.Cluster.Gateway
   alias Bedrock.Cluster.Gateway.TransactionBuilder.LayoutIndex
   alias Bedrock.Cluster.Gateway.TransactionBuilder.State
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
@@ -74,19 +73,17 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   @doc false
   @spec start_link(
           opts :: [
-            gateway: Gateway.ref(),
             transaction_system_layout: TransactionSystemLayout.t(),
             time_fn: (-> integer())
           ]
         ) ::
           {:ok, pid()} | {:error, {:already_started, pid()}}
   def start_link(opts) do
-    gateway = Keyword.fetch!(opts, :gateway)
     transaction_system_layout = Keyword.fetch!(opts, :transaction_system_layout)
 
     GenServer.start_link(
       __MODULE__,
-      {gateway, transaction_system_layout}
+      transaction_system_layout
     )
   end
 
@@ -94,13 +91,12 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder do
   def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, {gateway, transaction_system_layout}) do
+  def handle_continue(:initialization, transaction_system_layout) do
     # Build the layout index once during initialization for O(log n) lookups
     layout_index = LayoutIndex.build_index(transaction_system_layout)
 
     noreply(%State{
       state: :valid,
-      gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       layout_index: layout_index,
       read_version: nil

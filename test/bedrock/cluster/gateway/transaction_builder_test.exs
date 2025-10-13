@@ -66,20 +66,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
     end
   end
 
-  defp create_mock_gateway do
-    spawn_link(fn ->
-      mock_gateway_loop()
-    end)
-  end
-
-  defp mock_gateway_loop do
-    receive do
-      {:"$gen_call", from, {:renew_read_version_lease, _read_version}} ->
-        GenServer.reply(from, {:ok, 60_000})
-        mock_gateway_loop()
-    end
-  end
-
   # Helper functions for common test patterns
   defp get_transaction_mutations(pid) do
     pid
@@ -137,17 +123,15 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
         &Bedrock.Internal.Time.monotonic_now_in_ms/0
       end
 
-    # Create gateway and transaction system layout with mocks if read_version specified
-    {gateway, transaction_system_layout} =
+    # Create transaction system layout with mocks if read_version specified
+    transaction_system_layout =
       if read_version do
-        mock_gateway = create_mock_gateway()
-        {mock_gateway, create_test_transaction_system_layout_with_mock_sequencer(read_version)}
+        create_test_transaction_system_layout_with_mock_sequencer(read_version)
       else
-        {self(), create_test_transaction_system_layout()}
+        create_test_transaction_system_layout()
       end
 
     default_opts = [
-      gateway: gateway,
       transaction_system_layout: transaction_system_layout,
       time_fn: time_fn
     ]
@@ -164,21 +148,14 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       assert %State{
                state: :valid,
-               gateway: gateway,
                stack: [],
                tx: %Tx{}
              } = :sys.get_state(pid)
-
-      assert gateway == self()
     end
 
     test "fails to start with missing required options" do
       assert_raise KeyError, fn ->
         TransactionBuilder.start_link([])
-      end
-
-      assert_raise KeyError, fn ->
-        TransactionBuilder.start_link(gateway: self())
       end
     end
 
@@ -380,7 +357,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       assert %State{
                state: :valid,
-               gateway: gateway,
                read_version: nil,
                commit_version: nil,
                stack: [],
@@ -389,7 +365,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
                tx: %Tx{}
              } = :sys.get_state(pid)
 
-      assert gateway == self()
       assert is_integer(fetch_timeout)
     end
 
@@ -417,7 +392,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
 
       assert state.state == :valid
       assert state.transaction_system_layout == custom_layout
-      assert state.gateway == self()
     end
 
     test "stack management through GenServer operations" do
@@ -527,7 +501,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilderTest do
   describe "GenServer configuration and customization" do
     test "transaction builder works without codecs" do
       pid = start_transaction_builder()
-      assert_valid_state(pid, gateway: self())
+      assert_valid_state(pid)
 
       GenServer.cast(pid, {:set_key, "test", "value"})
       :timer.sleep(10)

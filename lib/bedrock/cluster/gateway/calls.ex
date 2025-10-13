@@ -13,10 +13,7 @@ defmodule Bedrock.Cluster.Gateway.Calls do
     |> ensure_current_tsl()
     |> case do
       {:ok, tsl, updated_state} ->
-        [
-          gateway: self(),
-          transaction_system_layout: tsl
-        ]
+        [transaction_system_layout: tsl]
         |> TransactionBuilder.start_link()
         |> case do
           {:ok, pid} -> {updated_state, {:ok, pid}}

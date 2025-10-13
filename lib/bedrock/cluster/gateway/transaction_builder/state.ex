@@ -6,7 +6,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
 
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back,
-          gateway: pid(),
           transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
           layout_index: LayoutIndex.t(),
           #
@@ -19,7 +18,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.State do
           fetch_timeout_in_ms: pos_integer()
         }
   defstruct state: nil,
-            gateway: nil,
             transaction_system_layout: nil,
             layout_index: nil,
             #

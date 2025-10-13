@@ -7,7 +7,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersionsTest do
   def create_test_state(opts \\ []) do
     %State{
       state: :valid,
-      gateway: Keyword.get(opts, :gateway, :test_gateway),
       transaction_system_layout: %{
         sequencer: Keyword.get(opts, :sequencer, :test_sequencer)
       },
@@ -43,7 +42,7 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.ReadVersionsTest do
     end
 
     test "works with different sequencer references" do
-      state = create_test_state(sequencer: :custom_sequencer, gateway: :custom_gateway)
+      state = create_test_state(sequencer: :custom_sequencer)
       opts = success_opts(99_999)
 
       assert {:ok, 99_999} = ReadVersions.next_read_version(state, opts)

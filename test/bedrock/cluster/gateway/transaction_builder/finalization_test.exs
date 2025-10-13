@@ -14,7 +14,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.FinalizationTest do
 
     %State{
       state: :valid,
-      gateway: self(),
       transaction_system_layout: %{
         proxies: [:test_proxy1, :test_proxy2],
         storage_teams: [],

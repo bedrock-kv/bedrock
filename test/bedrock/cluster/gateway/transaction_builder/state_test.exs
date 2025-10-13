@@ -9,7 +9,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "creates state with default values" do
       assert %State{
                state: nil,
-               gateway: nil,
                transaction_system_layout: nil,
                read_version: nil,
                commit_version: nil,
@@ -27,12 +26,10 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     test "creates state with custom values" do
       tx = Tx.set(Tx.new(), "key", "value")
       layout = %{sequencer: :test_sequencer}
-      gateway_pid = self()
       servers = %{{:a, :b} => :pid}
 
       assert %State{
                state: :valid,
-               gateway: ^gateway_pid,
                transaction_system_layout: ^layout,
                read_version: 12_345,
                commit_version: 11_111,
@@ -42,7 +39,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
                fetch_timeout_in_ms: 200
              } = %State{
                state: :valid,
-               gateway: gateway_pid,
                transaction_system_layout: layout,
                read_version: 12_345,
                commit_version: 11_111,
@@ -68,7 +64,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
     end
 
     test "preserves other fields during state transitions" do
-      gateway_pid = self()
       layout = %{test: "layout"}
       tx = Tx.set(Tx.new(), "key", "value")
       stack = [Tx.new()]
@@ -76,7 +71,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
 
       original_state = %State{
         state: :valid,
-        gateway: gateway_pid,
         transaction_system_layout: layout,
         read_version: 12_345,
         tx: tx,
@@ -87,7 +81,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.StateTest do
       assert %State{
                state: :committed,
                commit_version: 67_890,
-               gateway: ^gateway_pid,
                transaction_system_layout: ^layout,
                read_version: 12_345,
                tx: ^tx,

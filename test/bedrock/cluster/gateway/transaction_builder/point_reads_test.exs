@@ -28,7 +28,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.PointReadsTest do
 
     %State{
       state: :valid,
-      gateway: Keyword.get(opts, :gateway, :test_gateway),
       transaction_system_layout: layout,
       layout_index: layout_index,
       read_version: Keyword.get(opts, :read_version),

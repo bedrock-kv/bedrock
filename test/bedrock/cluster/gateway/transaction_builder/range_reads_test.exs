@@ -47,7 +47,6 @@ defmodule Bedrock.Cluster.Gateway.TransactionBuilder.RangeReadsTest do
 
     %State{
       state: :valid,
-      gateway: :test_gateway,
       transaction_system_layout: layout,
       layout_index: layout_index,
       read_version: Keyword.get(opts, :read_version, 12_345),

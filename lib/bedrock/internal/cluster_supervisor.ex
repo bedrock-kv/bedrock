@@ -271,7 +271,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   @spec try_coordinator_client_descriptor(Cluster.t()) :: {:ok, Descriptor.t()} | {:error, term()}
   defp try_coordinator_client_descriptor(module) do
     with {:ok, coordinator_client} <- module.fetch_coordinator_client(),
-         {:ok, descriptor} <- CoordinatorClient.get_descriptor(coordinator_client) do
+         {:ok, descriptor} <- CoordinatorClient.fetch_descriptor(coordinator_client) do
       {:ok, descriptor}
     else
       {:error, reason} -> {:error, {:coordinator_client_error, reason}}

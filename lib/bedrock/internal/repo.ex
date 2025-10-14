@@ -203,6 +203,14 @@ defmodule Bedrock.Internal.Repo do
   @spec rollback(reason :: term()) :: no_return()
   def rollback(reason), do: throw({__MODULE__, :rollback, reason})
 
+  @doc """
+  Executes a function within a transaction context with automatic retry logic.
+
+  ## Options
+
+  - `:retry_limit` - Maximum number of retry attempts (default: unlimited)
+  - `:transaction_system_layout` - Use a specific TSL instead of fetching from coordinator
+  """
   @spec transact(cluster :: module(), repo :: module(), (-> result) | (module() -> result), opts :: keyword()) :: result
         when result: any()
   def transact(cluster, repo, fun, opts \\ []) do
@@ -217,17 +225,17 @@ defmodule Bedrock.Internal.Repo do
 
   defp start_new_transaction(cluster, repo, fun, tx_key, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
-
-    # Fetch coordinator client once, outside the retry loop
-    {:ok, coord_client} = cluster.fetch_coordinator_client()
+    provided_tsl = Keyword.get(opts, :transaction_system_layout)
+    coord_client = if provided_tsl, do: nil, else: cluster.coordinator_client!()
 
     start_retryable_transaction(repo, fun, 0, retry_limit, fn ->
-      # Get fresh TSL on each attempt
-      with {:ok, tsl} <- CoordinatorClient.get_transaction_system_layout(coord_client),
-           {:ok, txn} <- TransactionBuilder.start_link(transaction_system_layout: tsl) do
-        Process.put(tx_key, txn)
-        txn
-      else
+      tsl = provided_tsl || CoordinatorClient.fetch_transaction_system_layout!(coord_client)
+
+      case TransactionBuilder.start_link(transaction_system_layout: tsl) do
+        {:ok, txn} ->
+          Process.put(tx_key, txn)
+          txn
+
         {:error, reason} ->
           throw({__MODULE__, nil, :retryable_failure, reason})
       end

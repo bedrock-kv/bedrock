@@ -113,7 +113,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     # Get coordinator from coordinator client
     coord_client = cluster.otp_name(:coordinator_client)
 
-    case CoordinatorClient.get_coordinator(coord_client) do
+    case CoordinatorClient.fetch_coordinator(coord_client) do
       {:ok, coordinator} ->
         # Get worker info and register directly with coordinator
         case Worker.info(pid, [:id, :otp_name, :kind, :pid]) do

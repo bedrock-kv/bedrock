@@ -8,48 +8,48 @@ defmodule Bedrock.Cluster.CoordinatorClientTest do
   # Helper to reduce repetitive spawn patterns
   defp make_call(fun), do: spawn(fun)
 
-  describe "get_coordinator/2" do
-    test "gets coordinator with various options" do
+  describe "fetch_coordinator/2" do
+    test "fetches coordinator with various options" do
       test_pid = self()
 
       # Test with default options
-      make_call(fn -> CoordinatorClient.get_coordinator(test_pid) end)
+      make_call(fn -> CoordinatorClient.fetch_coordinator(test_pid) end)
       assert_call_received(:get_known_coordinator)
 
       # Test with custom timeout
-      make_call(fn -> CoordinatorClient.get_coordinator(test_pid, timeout_in_ms: 5000) end)
+      make_call(fn -> CoordinatorClient.fetch_coordinator(test_pid, timeout_in_ms: 5000) end)
       assert_call_received(:get_known_coordinator)
     end
   end
 
-  describe "get_transaction_system_layout/2" do
-    test "gets TSL with various options" do
+  describe "fetch_transaction_system_layout/2" do
+    test "fetches TSL with various options" do
       test_pid = self()
 
       # Test with default options
-      make_call(fn -> CoordinatorClient.get_transaction_system_layout(test_pid) end)
+      make_call(fn -> CoordinatorClient.fetch_transaction_system_layout(test_pid) end)
       assert_call_received(:get_transaction_system_layout)
 
       # Test with custom timeout
-      make_call(fn -> CoordinatorClient.get_transaction_system_layout(test_pid, timeout_in_ms: 5000) end)
+      make_call(fn -> CoordinatorClient.fetch_transaction_system_layout(test_pid, timeout_in_ms: 5000) end)
       assert_call_received(:get_transaction_system_layout)
     end
   end
 
-  describe "get_descriptor/2" do
-    test "gets descriptor with various options" do
+  describe "fetch_descriptor/2" do
+    test "fetches descriptor with various options" do
       test_pid = self()
 
       # Test with default behavior (no options)
-      make_call(fn -> CoordinatorClient.get_descriptor(test_pid) end)
+      make_call(fn -> CoordinatorClient.fetch_descriptor(test_pid) end)
       assert_call_received(:get_descriptor)
 
       # Test with empty options
-      make_call(fn -> CoordinatorClient.get_descriptor(test_pid, []) end)
+      make_call(fn -> CoordinatorClient.fetch_descriptor(test_pid, []) end)
       assert_call_received(:get_descriptor)
 
       # Test with custom timeout
-      make_call(fn -> CoordinatorClient.get_descriptor(test_pid, timeout_in_ms: 5000) end)
+      make_call(fn -> CoordinatorClient.fetch_descriptor(test_pid, timeout_in_ms: 5000) end)
       assert_call_received(:get_descriptor)
     end
   end
@@ -59,14 +59,14 @@ defmodule Bedrock.Cluster.CoordinatorClientTest do
       exports = CoordinatorClient.__info__(:functions)
 
       # Check that the expected functions exist with at least the expected arities
-      assert Keyword.has_key?(exports, :get_coordinator)
-      assert Keyword.has_key?(exports, :get_transaction_system_layout)
-      assert Keyword.has_key?(exports, :get_descriptor)
+      assert Keyword.has_key?(exports, :fetch_coordinator)
+      assert Keyword.has_key?(exports, :fetch_transaction_system_layout)
+      assert Keyword.has_key?(exports, :fetch_descriptor)
 
       # Verify the main arities are present
-      assert 1 in Keyword.get_values(exports, :get_coordinator)
-      assert 1 in Keyword.get_values(exports, :get_transaction_system_layout)
-      assert 1 in Keyword.get_values(exports, :get_descriptor)
+      assert 1 in Keyword.get_values(exports, :fetch_coordinator)
+      assert 1 in Keyword.get_values(exports, :fetch_transaction_system_layout)
+      assert 1 in Keyword.get_values(exports, :fetch_descriptor)
     end
 
     test "includes GenServer behavior functions" do
@@ -81,11 +81,11 @@ defmodule Bedrock.Cluster.CoordinatorClientTest do
     test "handles boundary values and edge cases" do
       test_pid = self()
 
-      # Test get_descriptor with extreme timeout values
-      make_call(fn -> CoordinatorClient.get_descriptor(test_pid, timeout_in_ms: 0) end)
+      # Test fetch_descriptor with extreme timeout values
+      make_call(fn -> CoordinatorClient.fetch_descriptor(test_pid, timeout_in_ms: 0) end)
       assert_call_received(:get_descriptor)
 
-      make_call(fn -> CoordinatorClient.get_descriptor(test_pid, timeout_in_ms: 999_999) end)
+      make_call(fn -> CoordinatorClient.fetch_descriptor(test_pid, timeout_in_ms: 999_999) end)
       assert_call_received(:get_descriptor)
     end
   end
@@ -94,8 +94,8 @@ defmodule Bedrock.Cluster.CoordinatorClientTest do
     test "handles multiple concurrent calls" do
       test_pid = self()
 
-      # Test concurrent get_coordinator calls
-      tasks = for _i <- 1..3, do: Task.async(fn -> CoordinatorClient.get_coordinator(test_pid) end)
+      # Test concurrent fetch_coordinator calls
+      tasks = for _i <- 1..3, do: Task.async(fn -> CoordinatorClient.fetch_coordinator(test_pid) end)
 
       for _i <- 1..3 do
         assert_call_received(:get_known_coordinator)

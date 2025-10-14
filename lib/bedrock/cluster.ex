@@ -28,6 +28,7 @@ defmodule Bedrock.Cluster do
   @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
   @callback fetch_coordinator_client() :: {:ok, CoordinatorClient.ref()} | {:error, :unavailable}
+  @callback coordinator_client!() :: CoordinatorClient.ref()
   @callback fetch_transaction_system_layout() ::
               {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
   @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
@@ -215,6 +216,13 @@ defmodule Bedrock.Cluster do
       @impl true
       @spec fetch_coordinator_client() :: {:ok, CoordinatorClient.ref()} | {:error, :unavailable}
       def fetch_coordinator_client, do: {:ok, otp_name(:coordinator_client)}
+
+      @doc """
+      Get the coordinator client for this node of the cluster.
+      """
+      @impl true
+      @spec coordinator_client!() :: CoordinatorClient.ref()
+      def coordinator_client!, do: otp_name(:coordinator_client)
 
       @doc """
       Fetch the nodes that are running coordinators for the cluster.

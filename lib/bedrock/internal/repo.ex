@@ -2,7 +2,8 @@ defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls, only: [cast: 2]
   import Bitwise
 
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.CoordinatorClient
+  alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
 
   @type transaction :: pid()
@@ -217,15 +218,16 @@ defmodule Bedrock.Internal.Repo do
   defp start_new_transaction(cluster, repo, fun, tx_key, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
 
+    # Fetch coordinator client once, outside the retry loop
+    {:ok, coord_client} = cluster.fetch_coordinator_client()
+
     start_retryable_transaction(repo, fun, 0, retry_limit, fn ->
-      {:ok, gateway} = cluster.fetch_gateway()
-
-      case Gateway.begin_transaction(gateway) do
-        {:ok, txn} ->
-          Process.put(tx_key, txn)
-
-          txn
-
+      # Get fresh TSL on each attempt
+      with {:ok, tsl} <- CoordinatorClient.get_transaction_system_layout(coord_client),
+           {:ok, txn} <- TransactionBuilder.start_link(transaction_system_layout: tsl) do
+        Process.put(tx_key, txn)
+        txn
+      else
         {:error, reason} ->
           throw({__MODULE__, nil, :retryable_failure, reason})
       end

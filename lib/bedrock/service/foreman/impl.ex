@@ -14,7 +14,8 @@ defmodule Bedrock.Service.Foreman.Impl do
   import Bedrock.Service.Foreman.State
 
   alias Bedrock.Cluster
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.CoordinatorClient
+  alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Worker
@@ -108,13 +109,31 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
-  def advertise_running_worker(%{health: {:ok, pid}} = t, cluster) do
-    Gateway.advertise_worker(cluster.otp_name(:gateway), pid)
-    t
+  def advertise_running_worker(%{health: {:ok, pid}} = worker_info, cluster) do
+    # Get coordinator from coordinator client
+    coord_client = cluster.otp_name(:coordinator_client)
+
+    case CoordinatorClient.get_coordinator(coord_client) do
+      {:ok, coordinator} ->
+        # Get worker info and register directly with coordinator
+        case Worker.info(pid, [:id, :otp_name, :kind, :pid]) do
+          {:ok, info} ->
+            service_info = {info[:id], info[:kind], {info[:otp_name], Node.self()}}
+            Coordinator.register_services(coordinator, [service_info])
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+
+    worker_info
   end
 
   @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
-  def advertise_running_worker(t, _), do: t
+  def advertise_running_worker(worker_info, _), do: worker_info
 
   @spec remove_worker_completely(WorkerInfo.t(), module(), String.t()) ::
           :ok | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}

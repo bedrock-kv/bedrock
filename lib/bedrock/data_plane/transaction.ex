@@ -113,7 +113,7 @@ defmodule Bedrock.DataPlane.Transaction do
   import Bitwise
   import Bitwise, only: [>>>: 2, &&&: 2]
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
+  alias Bedrock.Internal.TransactionBuilder.Tx
 
   @type transaction_map :: Bedrock.transaction()
 

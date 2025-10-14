@@ -216,19 +216,19 @@ defmodule Bedrock.Internal.Repo do
   def transact(cluster, repo, fun, opts \\ []) do
     case txn(repo) do
       nil ->
-        start_new_transaction(cluster, repo, fun, {:transaction, repo}, opts)
+        run_new_transaction(cluster, repo, fun, {:transaction, repo}, opts)
 
       existing_txn ->
-        start_nested_transaction(repo, existing_txn, fun)
+        run_nested_transaction(repo, existing_txn, fun)
     end
   end
 
-  defp start_new_transaction(cluster, repo, fun, tx_key, opts) do
+  defp run_new_transaction(cluster, repo, fun, tx_key, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
     provided_tsl = Keyword.get(opts, :transaction_system_layout)
     coord_client = if provided_tsl, do: nil, else: cluster.coordinator_client!()
 
-    start_retryable_transaction(repo, fun, 0, retry_limit, fn ->
+    run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
       tsl = provided_tsl || CoordinatorClient.fetch_transaction_system_layout!(coord_client)
 
       case TransactionBuilder.start_link(transaction_system_layout: tsl) do
@@ -244,21 +244,21 @@ defmodule Bedrock.Internal.Repo do
     Process.delete(tx_key)
   end
 
-  defp start_nested_transaction(repo, txn, fun) do
-    start_retryable_transaction(repo, fun, 0, nil, fn ->
+  defp run_nested_transaction(repo, txn, fun) do
+    run_retryable_transaction(repo, fun, 0, nil, fn ->
       GenServer.call(txn, :nested_transaction, :infinity)
       txn
     end)
   end
 
-  defp start_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
+  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
     run_transaction(repo, restart_fn.(), fun)
   catch
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
       wait_befor_retry(retry_count)
-      start_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
+      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
 
     {__MODULE__, failed_txn, :rollback, reason} ->
       try_to_rollback(failed_txn)

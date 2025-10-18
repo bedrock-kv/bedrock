@@ -2,7 +2,7 @@ defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls, only: [cast: 2]
   import Bitwise
 
-  alias Bedrock.Cluster.CoordinatorClient
+  alias Bedrock.Cluster.Link
   alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
 
@@ -226,19 +226,11 @@ defmodule Bedrock.Internal.Repo do
   defp run_new_transaction(cluster, repo, fun, tx_key, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
     provided_tsl = Keyword.get(opts, :transaction_system_layout)
-    coord_client = if provided_tsl, do: nil, else: cluster.coordinator_client!()
+    link = if provided_tsl, do: nil, else: cluster.link!()
 
     run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
-      tsl = provided_tsl || CoordinatorClient.fetch_transaction_system_layout!(coord_client)
-
-      case TransactionBuilder.start_link(transaction_system_layout: tsl) do
-        {:ok, txn} ->
-          Process.put(tx_key, txn)
-          txn
-
-        {:error, reason} ->
-          throw({__MODULE__, nil, :retryable_failure, reason})
-      end
+      tsl = fetch_tsl_for_transaction(provided_tsl, link)
+      start_transaction_builder(tsl, tx_key)
     end)
   after
     Process.delete(tx_key)
@@ -249,6 +241,26 @@ defmodule Bedrock.Internal.Repo do
       GenServer.call(txn, :nested_transaction, :infinity)
       txn
     end)
+  end
+
+  defp fetch_tsl_for_transaction(nil, link) do
+    case Link.fetch_transaction_system_layout(link) do
+      {:ok, tsl} -> tsl
+      {:error, reason} -> throw({__MODULE__, nil, :retryable_failure, reason})
+    end
+  end
+
+  defp fetch_tsl_for_transaction(tsl, _link), do: tsl
+
+  defp start_transaction_builder(tsl, tx_key) do
+    case TransactionBuilder.start_link(transaction_system_layout: tsl) do
+      {:ok, txn} ->
+        Process.put(tx_key, txn)
+        txn
+
+      {:error, reason} ->
+        throw({__MODULE__, nil, :retryable_failure, reason})
+    end
   end
 
   defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do

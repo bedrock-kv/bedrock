@@ -1,14 +1,14 @@
-defmodule Bedrock.Cluster.CoordinatorClient do
+defmodule Bedrock.Cluster.Link do
   @moduledoc """
-  Coordinator discovery and Transaction System Layout caching.
+  Bidirectional link between a node and the cluster.
 
-  The CoordinatorClient is responsible for:
+  The Link is responsible for:
   - Discovering and maintaining connection to the cluster Coordinator
   - Caching the Transaction System Layout (TSL)
   - Subscribing to TSL updates via push notifications
   - Providing coordinator reference and TSL to other components
 
-  This is a stripped-down service focused solely on cluster state management.
+  This is a focused service for cluster state management and node-to-cluster connectivity.
   Transaction creation is handled by Internal.Repo, and service registration
   is handled directly by Foreman.
   """
@@ -27,15 +27,14 @@ defmodule Bedrock.Cluster.CoordinatorClient do
   """
   @spec fetch_coordinator(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           {:ok, Coordinator.ref()} | {:error, :unavailable | :timeout | :unknown}
-  def fetch_coordinator(coordinator_client, opts \\ []),
-    do: call(coordinator_client, :get_known_coordinator, opts[:timeout_in_ms] || 1000)
+  def fetch_coordinator(link, opts \\ []), do: call(link, :get_known_coordinator, opts[:timeout_in_ms] || 1000)
 
   @doc """
   Get the current known coordinator reference. Raises if unavailable.
   """
   @spec fetch_coordinator!(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) :: Coordinator.ref()
-  def fetch_coordinator!(coordinator_client, opts \\ []) do
-    case fetch_coordinator(coordinator_client, opts) do
+  def fetch_coordinator!(link, opts \\ []) do
+    case fetch_coordinator(link, opts) do
       {:ok, coordinator} -> coordinator
       {:error, reason} -> raise "Failed to fetch coordinator: #{inspect(reason)}"
     end
@@ -47,16 +46,16 @@ defmodule Bedrock.Cluster.CoordinatorClient do
   """
   @spec fetch_transaction_system_layout(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout | :unknown}
-  def fetch_transaction_system_layout(coordinator_client, opts \\ []),
-    do: call(coordinator_client, :get_transaction_system_layout, opts[:timeout_in_ms] || 1000)
+  def fetch_transaction_system_layout(link, opts \\ []),
+    do: call(link, :get_transaction_system_layout, opts[:timeout_in_ms] || 1000)
 
   @doc """
   Get the cached Transaction System Layout. Raises if unavailable.
   """
   @spec fetch_transaction_system_layout!(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           TransactionSystemLayout.t()
-  def fetch_transaction_system_layout!(coordinator_client, opts \\ []) do
-    case fetch_transaction_system_layout(coordinator_client, opts) do
+  def fetch_transaction_system_layout!(link, opts \\ []) do
+    case fetch_transaction_system_layout(link, opts) do
       {:ok, tsl} -> tsl
       {:error, reason} -> raise "Failed to fetch transaction system layout: #{inspect(reason)}"
     end
@@ -68,16 +67,15 @@ defmodule Bedrock.Cluster.CoordinatorClient do
   """
   @spec fetch_descriptor(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           {:ok, Descriptor.t()} | {:error, :unavailable | :timeout | :unknown}
-  def fetch_descriptor(coordinator_client, opts \\ []),
-    do: call(coordinator_client, :get_descriptor, opts[:timeout_in_ms] || 1000)
+  def fetch_descriptor(link, opts \\ []), do: call(link, :get_descriptor, opts[:timeout_in_ms] || 1000)
 
   @doc """
   Get the cluster descriptor. Raises if unavailable.
   """
   @spec fetch_descriptor!(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
           Descriptor.t()
-  def fetch_descriptor!(coordinator_client, opts \\ []) do
-    case fetch_descriptor(coordinator_client, opts) do
+  def fetch_descriptor!(link, opts \\ []) do
+    case fetch_descriptor(link, opts) do
       {:ok, descriptor} -> descriptor
       {:error, reason} -> raise "Failed to fetch descriptor: #{inspect(reason)}"
     end

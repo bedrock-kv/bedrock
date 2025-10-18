@@ -14,7 +14,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   import Bedrock.Service.Foreman.State
 
   alias Bedrock.Cluster
-  alias Bedrock.Cluster.CoordinatorClient
+  alias Bedrock.Cluster.Link
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
@@ -110,10 +110,10 @@ defmodule Bedrock.Service.Foreman.Impl do
 
   @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
   def advertise_running_worker(%{health: {:ok, pid}} = worker_info, cluster) do
-    # Get coordinator from coordinator client
-    coord_client = cluster.otp_name(:coordinator_client)
+    # Get coordinator from link
+    link = cluster.otp_name(:link)
 
-    case CoordinatorClient.fetch_coordinator(coord_client) do
+    case Link.fetch_coordinator(link) do
       {:ok, coordinator} ->
         # Get worker info and register directly with coordinator
         case Worker.info(pid, [:id, :otp_name, :kind, :pid]) do

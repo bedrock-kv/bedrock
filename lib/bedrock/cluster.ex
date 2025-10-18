@@ -1,7 +1,7 @@
 defmodule Bedrock.Cluster do
   @moduledoc false
 
-  alias Bedrock.Cluster.CoordinatorClient
+  alias Bedrock.Cluster.Link
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
@@ -27,8 +27,8 @@ defmodule Bedrock.Cluster do
   @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
   @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
-  @callback fetch_coordinator_client() :: {:ok, CoordinatorClient.ref()} | {:error, :unavailable}
-  @callback coordinator_client!() :: CoordinatorClient.ref()
+  @callback fetch_link() :: {:ok, Link.ref()} | {:error, :unavailable}
+  @callback link!() :: Link.ref()
   @callback fetch_transaction_system_layout() ::
               {:ok, TransactionSystemLayout.t()} | {:error, :unavailable}
   @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
@@ -55,7 +55,7 @@ defmodule Bedrock.Cluster do
 
       alias Bedrock.Client
       alias Bedrock.Cluster
-      alias Bedrock.Cluster.CoordinatorClient
+      alias Bedrock.Cluster.Link
       alias Bedrock.ControlPlane.Config
       alias Bedrock.Internal.ClusterSupervisor
       alias Bedrock.Service.Worker
@@ -68,7 +68,7 @@ defmodule Bedrock.Cluster do
       @supervisor_otp_name Cluster.otp_name(@name, :sup)
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @foreman_otp_name Cluster.otp_name(@name, :foreman)
-      @coordinator_client_otp_name Cluster.otp_name(@name, :coordinator_client)
+      @link_otp_name Cluster.otp_name(@name, :link)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
       @worker_supervisor_otp_name Cluster.otp_name(@name, :worker_supervisor)
 
@@ -183,13 +183,13 @@ defmodule Bedrock.Cluster do
               :sup
               | :foreman
               | :coordinator
-              | :coordinator_client
+              | :link
               | :storage
               | :log
             ) :: atom()
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:foreman), do: @foreman_otp_name
-      def otp_name(:coordinator_client), do: @coordinator_client_otp_name
+      def otp_name(:link), do: @link_otp_name
       def otp_name(:sup), do: @supervisor_otp_name
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 
@@ -211,18 +211,18 @@ defmodule Bedrock.Cluster do
       def fetch_coordinator, do: ClusterSupervisor.fetch_coordinator(__MODULE__)
 
       @doc """
-      Fetch the coordinator client for this node of the cluster.
+      Fetch the link for this node of the cluster.
       """
       @impl true
-      @spec fetch_coordinator_client() :: {:ok, CoordinatorClient.ref()} | {:error, :unavailable}
-      def fetch_coordinator_client, do: {:ok, otp_name(:coordinator_client)}
+      @spec fetch_link() :: {:ok, Link.ref()} | {:error, :unavailable}
+      def fetch_link, do: {:ok, otp_name(:link)}
 
       @doc """
-      Get the coordinator client for this node of the cluster.
+      Get the link for this node of the cluster.
       """
       @impl true
-      @spec coordinator_client!() :: CoordinatorClient.ref()
-      def coordinator_client!, do: otp_name(:coordinator_client)
+      @spec link!() :: Link.ref()
+      def link!, do: otp_name(:link)
 
       @doc """
       Fetch the nodes that are running coordinators for the cluster.

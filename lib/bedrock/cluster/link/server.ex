@@ -1,20 +1,20 @@
-defmodule Bedrock.Cluster.CoordinatorClient.Server do
+defmodule Bedrock.Cluster.Link.Server do
   @moduledoc false
 
   use GenServer
   use Bedrock.Internal.TimerManagement
 
-  import Bedrock.Cluster.CoordinatorClient.Discovery,
+  import Bedrock.Cluster.Link.Discovery,
     only: [
       change_coordinator: 2,
       find_a_live_coordinator: 1
     ]
 
-  import Bedrock.Cluster.CoordinatorClient.Telemetry
+  import Bedrock.Cluster.Link.Telemetry
   import Bedrock.Internal.GenServer.Replies
 
-  alias Bedrock.Cluster.CoordinatorClient.State
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Link.State
 
   require Logger
 

@@ -1,8 +1,8 @@
-defmodule Bedrock.Cluster.CoordinatorClient.DiscoveryTest do
+defmodule Bedrock.Cluster.Link.DiscoveryTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Cluster.CoordinatorClient.Discovery
-  alias Bedrock.Cluster.CoordinatorClient.State
+  alias Bedrock.Cluster.Link.Discovery
+  alias Bedrock.Cluster.Link.State
 
   describe "leader discovery and selection" do
     test "select_leader_from_responses/1 chooses coordinator with highest epoch" do

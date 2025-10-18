@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
+defmodule Bedrock.Cluster.Link.Telemetry do
   @moduledoc false
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Coordinator
@@ -6,7 +6,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
 
   @spec trace_started(cluster :: module()) :: :ok
   def trace_started(cluster) do
-    Telemetry.execute([:bedrock, :cluster, :gateway, :started], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :link, :started], %{}, %{
       cluster: cluster
     })
   end
@@ -18,7 +18,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
         ) ::
           :ok
   def trace_advertising_capabilities(cluster, capabilities, running_services) do
-    Telemetry.execute([:bedrock, :cluster, :gateway, :advertise_capabilities], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :link, :advertise_capabilities], %{}, %{
       cluster: cluster,
       capabilities: capabilities,
       running_services: running_services
@@ -27,7 +27,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
 
   @spec trace_searching_for_coordinator(cluster :: module()) :: :ok
   def trace_searching_for_coordinator(cluster) do
-    Telemetry.execute([:bedrock, :cluster, :gateway, :searching_for_coordinator], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :link, :searching_for_coordinator], %{}, %{
       cluster: cluster
     })
   end
@@ -37,7 +37,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
           coordinator :: Coordinator.ref()
         ) :: :ok
   def trace_found_coordinator(cluster, coordinator) do
-    Telemetry.execute([:bedrock, :cluster, :gateway, :found_coordinator], %{}, %{
+    Telemetry.execute([:bedrock, :cluster, :link, :found_coordinator], %{}, %{
       cluster: cluster,
       coordinator: coordinator
     })
@@ -45,7 +45,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Telemetry do
 
   @spec trace_missed_pong(cluster :: module(), n_missed :: non_neg_integer()) :: :ok
   def trace_missed_pong(cluster, n_missed) do
-    Telemetry.execute([:bedrock, :cluster, :gateway, :missed_pong], %{missed_pongs: n_missed}, %{
+    Telemetry.execute([:bedrock, :cluster, :link, :missed_pong], %{missed_pongs: n_missed}, %{
       cluster: cluster
     })
   end

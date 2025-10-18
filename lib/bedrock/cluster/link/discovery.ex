@@ -1,11 +1,11 @@
-defmodule Bedrock.Cluster.CoordinatorClient.Discovery do
+defmodule Bedrock.Cluster.Link.Discovery do
   @moduledoc false
 
   use Bedrock.Internal.TimerManagement
 
-  import Bedrock.Cluster.CoordinatorClient.Telemetry
+  import Bedrock.Cluster.Link.Telemetry
 
-  alias Bedrock.Cluster.CoordinatorClient.State
+  alias Bedrock.Cluster.Link.State
   alias Bedrock.ControlPlane.Coordinator
 
   @doc """
@@ -179,7 +179,7 @@ defmodule Bedrock.Cluster.CoordinatorClient.Discovery do
       # CRITICAL: Also pull any already-running services from Foreman and register them atomically
       # with capabilities. This prevents a race condition on successive boots where:
       # 1. Services (e.g., storage workers) start and Foreman begins registering them
-      # 2. CoordinatorClient connects and registers empty capabilities
+      # 2. Link connects and registers empty capabilities
       # 3. This triggers consensus, which completes immediately
       # 4. Director starts with 0 services (before Foreman finishes registration)
       # 5. Director fails with :unable_to_meet_log_quorum

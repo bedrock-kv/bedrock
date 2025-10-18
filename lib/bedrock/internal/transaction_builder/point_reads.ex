@@ -7,7 +7,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   with repeatable reads and conflict tracking.
   """
 
-  import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version!: 2]
+  import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version: 2]
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Internal.TransactionBuilder.State
@@ -46,19 +46,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   def get_key(t, key, opts \\ []) do
     case Tx.repeatable_read(t.tx, key) do
       nil ->
-        storage_get_key_fn = Keyword.get(opts, :storage_get_key_fn, &Storage.get/4)
-
-        t
-        |> ensure_read_version!(opts)
-        |> execute_get_query(
-          key,
-          &case storage_get_key_fn.(&1, key, &2, timeout: &3) do
-            {:ok, raw_value} -> {:ok, {key, raw_value}}
-            {:error, reason} -> {:error, reason}
-            {:failure, reason, storage_id} -> {:failure, reason, storage_id}
-          end,
-          opts
-        )
+        get_key_from_storage(t, key, opts)
 
       :clear ->
         {t, {:error, :not_found}}
@@ -67,6 +55,27 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
         {t, {:ok, {key, value}}}
     end
   end
+
+  defp get_key_from_storage(t, key, opts) do
+    storage_get_key_fn = Keyword.get(opts, :storage_get_key_fn, &Storage.get/4)
+
+    case ensure_read_version(t, opts) do
+      {:ok, t} ->
+        execute_get_query(
+          t,
+          key,
+          &(&1 |> storage_get_key_fn.(key, &2, timeout: &3) |> wrap_storage_get_result(key)),
+          opts
+        )
+
+      {:failure, failures_by_reason} ->
+        {t, {:failure, failures_by_reason}}
+    end
+  end
+
+  defp wrap_storage_get_result({:ok, raw_value}, key), do: {:ok, {key, raw_value}}
+  defp wrap_storage_get_result({:error, reason}, _key), do: {:error, reason}
+  defp wrap_storage_get_result({:failure, reason, storage_id}, _key), do: {:failure, reason, storage_id}
 
   @doc """
   Get a KeySelector within the transaction context.
@@ -91,18 +100,23 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   def get_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
     storage_get_key_selector_fn = Keyword.get(opts, :storage_get_key_selector_fn, &Storage.get/4)
 
-    t
-    |> ensure_read_version!(opts)
-    |> execute_get_query(
-      key_selector.key,
-      &case storage_get_key_selector_fn.(&1, key_selector, &2, timeout: &3) do
-        {:ok, nil} -> {:ok, nil}
-        {:ok, {resolved_key, value}} -> {:ok, {resolved_key, value}}
-        {:error, reason} -> {:error, reason}
-        {:failure, reason, storage_id} -> {:failure, reason, storage_id}
-      end,
-      opts
-    )
+    case ensure_read_version(t, opts) do
+      {:ok, t} ->
+        execute_get_query(
+          t,
+          key_selector.key,
+          &case storage_get_key_selector_fn.(&1, key_selector, &2, timeout: &3) do
+            {:ok, nil} -> {:ok, nil}
+            {:ok, {resolved_key, value}} -> {:ok, {resolved_key, value}}
+            {:error, reason} -> {:error, reason}
+            {:failure, reason, storage_id} -> {:failure, reason, storage_id}
+          end,
+          opts
+        )
+
+      {:failure, failures_by_reason} ->
+        {t, {:failure, failures_by_reason}}
+    end
   end
 
   # Private helper functions

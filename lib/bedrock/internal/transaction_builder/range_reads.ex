@@ -7,7 +7,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
   both regular key ranges and key selector ranges.
   """
 
-  import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version!: 2]
+  import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version: 2]
 
   alias Bedrock.DataPlane.Storage
   alias Bedrock.Internal.TransactionBuilder.State
@@ -44,13 +44,18 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
   def get_range(state, {min_key, max_key_ex} = range, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
-    state
-    |> ensure_read_version!(opts)
-    |> execute_range_query(
-      min_key,
-      &storage_get_range_fn.(&1, min_key, max_key_ex, &2, limit: batch_size, timeout: &3),
-      fn _results -> range end
-    )
+    case ensure_read_version(state, opts) do
+      {:ok, state} ->
+        execute_range_query(
+          state,
+          min_key,
+          &storage_get_range_fn.(&1, min_key, max_key_ex, &2, limit: batch_size, timeout: &3),
+          fn _results -> range end
+        )
+
+      {:failure, failures_by_reason} ->
+        {state, {:failure, failures_by_reason}}
+    end
   end
 
   @doc """
@@ -73,13 +78,18 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
   def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ []) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
 
-    state
-    |> ensure_read_version!(opts)
-    |> execute_range_query(
-      start_selector.key,
-      &storage_get_range_fn.(&1, start_selector, end_selector, &2, limit: batch_size, timeout: &3),
-      &range_from_batch/1
-    )
+    case ensure_read_version(state, opts) do
+      {:ok, state} ->
+        execute_range_query(
+          state,
+          start_selector.key,
+          &storage_get_range_fn.(&1, start_selector, end_selector, &2, limit: batch_size, timeout: &3),
+          &range_from_batch/1
+        )
+
+      {:failure, failures_by_reason} ->
+        {state, {:failure, failures_by_reason}}
+    end
   end
 
   # Private helper functions

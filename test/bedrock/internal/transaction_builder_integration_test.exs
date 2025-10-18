@@ -211,21 +211,15 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
     end
 
     @tag :capture_log
-    test "fetch operations with missing keys cause runtime error" do
-      # This test validates fail-fast behavior - missing read version should crash TransactionBuilder
+    test "fetch operations with unavailable sequencer return failure" do
+      # This test validates error handling - unavailable sequencer should return failure, not crash
       pid = start_transaction_builder()
-      ref = Process.monitor(pid)
 
-      # Fetch should cause exit due to RuntimeError in GenServer
-      catch_exit(GenServer.call(pid, {:get, "non_existent_key"}))
+      # Fetch should return failure when sequencer is unavailable (it's just a stub atom)
+      assert {:failure, :unavailable} = GenServer.call(pid, {:get, "non_existent_key"})
 
-      # Process should crash with RuntimeError about no read version
-      assert_receive {:DOWN, ^ref, :process, ^pid, reason}
-
-      assert match?(
-               {%RuntimeError{message: "No read version available"}, _},
-               reason
-             )
+      # Process should still be alive and functional
+      assert Process.alive?(pid)
     end
 
     test "commit with no writes succeeds with version 0" do

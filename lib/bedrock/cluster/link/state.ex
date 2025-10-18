@@ -1,4 +1,4 @@
-defmodule Bedrock.Cluster.CoordinatorClient.State do
+defmodule Bedrock.Cluster.Link.State do
   @moduledoc false
 
   alias Bedrock.Cluster.Descriptor

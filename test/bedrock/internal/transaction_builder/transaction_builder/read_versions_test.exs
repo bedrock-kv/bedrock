@@ -10,19 +10,20 @@ defmodule Bedrock.Internal.TransactionBuilder.ReadVersionsTest do
       transaction_system_layout: %{
         sequencer: Keyword.get(opts, :sequencer, :test_sequencer)
       },
-      read_version: Keyword.get(opts, :read_version)
+      read_version: Keyword.get(opts, :read_version),
+      fetch_timeout_in_ms: Keyword.get(opts, :fetch_timeout_in_ms, 50)
     }
   end
 
   defp success_opts(sequencer_result) do
     [
-      sequencer_fn: fn _ -> {:ok, sequencer_result} end
+      sequencer_fn: fn _sequencer, _opts -> {:ok, sequencer_result} end
     ]
   end
 
   defp error_opts(sequencer_result) do
     [
-      sequencer_fn: fn _ -> sequencer_result end
+      sequencer_fn: fn _sequencer, _opts -> sequencer_result end
     ]
   end
 

@@ -1,8 +1,8 @@
-defmodule Bedrock.Cluster.CoordinatorClient.FetchCoordinatorTest do
+defmodule Bedrock.Cluster.Link.FetchCoordinatorTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.Cluster.CoordinatorClient.Server
-  alias Bedrock.Cluster.CoordinatorClient.State
+  alias Bedrock.Cluster.Link.Server
+  alias Bedrock.Cluster.Link.State
 
   describe "get_known_coordinator/0" do
     test "returns error when coordinator unavailable" do

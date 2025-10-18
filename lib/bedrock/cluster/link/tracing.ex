@@ -1,20 +1,20 @@
-defmodule Bedrock.Cluster.CoordinatorClient.Tracing do
+defmodule Bedrock.Cluster.Link.Tracing do
   @moduledoc false
 
   require Logger
 
   @spec handler_id() :: String.t()
-  defp handler_id, do: "bedrock_trace_gateway"
+  defp handler_id, do: "bedrock_trace_link"
 
   @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
       [
-        [:bedrock, :cluster, :gateway, :started],
-        [:bedrock, :cluster, :gateway, :advertise_capabilities],
-        [:bedrock, :cluster, :gateway, :searching_for_coordinator],
-        [:bedrock, :cluster, :gateway, :found_coordinator]
+        [:bedrock, :cluster, :link, :started],
+        [:bedrock, :cluster, :link, :advertise_capabilities],
+        [:bedrock, :cluster, :link, :searching_for_coordinator],
+        [:bedrock, :cluster, :link, :found_coordinator]
       ],
       &__MODULE__.handler/4,
       nil
@@ -30,14 +30,13 @@ defmodule Bedrock.Cluster.CoordinatorClient.Tracing do
           :telemetry.event_metadata(),
           any()
         ) :: any()
-  def handler([:bedrock, :cluster, :gateway, event], measurements, metadata, _),
-    do: trace(event, measurements, metadata)
+  def handler([:bedrock, :cluster, :link, event], measurements, metadata, _), do: trace(event, measurements, metadata)
 
   @spec trace(atom(), map(), map()) :: :ok
   def trace(:started, _, %{cluster: cluster}) do
     Logger.metadata(cluster: cluster)
 
-    info("Gateway started")
+    info("Link started")
   end
 
   def trace(:advertise_capabilities, _, %{capabilities: capabilities, running_services: running_services}) do

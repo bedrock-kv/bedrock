@@ -199,9 +199,8 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
 
       opts = [next_read_version_fn: next_read_version_fn]
 
-      assert_raise RuntimeError, "No read version available", fn ->
-        PointReads.get_key(state, "key", opts)
-      end
+      # Should return failure instead of raising, allowing retry logic to handle it
+      assert {^state, {:failure, %{unavailable: []}}} = PointReads.get_key(state, "key", opts)
     end
 
     test "works with binary keys directly" do

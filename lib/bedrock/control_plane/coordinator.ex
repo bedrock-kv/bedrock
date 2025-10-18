@@ -9,8 +9,8 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   ## Service Registration Flow
 
-  Gateways advertise their node's services to the elected leader Coordinator by
-  calling `register_services/2` or `register_gateway/4`. The leader then persists
+  Nodes advertise their services and capabilities to the elected leader Coordinator by
+  calling `register_services/2` or `register_node_resources/4`. The leader then persists
   this service information through Raft consensus, propagating updates to all
   Coordinators. The service directory is maintained consistently across the
   cluster, ensuring the Director receives current service topology during recovery.
@@ -117,9 +117,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def deregister_services(coordinator, service_ids, timeout \\ 5_000),
     do: call(coordinator, {:deregister_services, service_ids}, timeout)
 
-  @spec register_gateway(
+  @spec register_node_resources(
           coordinator_ref :: ref(),
-          gateway_pid :: pid(),
+          client_pid :: pid(),
           compact_services :: [compact_service_info()],
           capabilities :: [Bedrock.Cluster.capability()],
           timeout_ms :: timeout_in_ms()
@@ -128,6 +128,6 @@ defmodule Bedrock.ControlPlane.Coordinator do
           | {:error, :unavailable}
           | {:error, :failed}
           | {:error, :not_leader}
-  def register_gateway(coordinator, gateway_pid, compact_services, capabilities, timeout \\ 5_000),
-    do: call(coordinator, {:register_gateway, gateway_pid, compact_services, capabilities}, timeout)
+  def register_node_resources(coordinator, client_pid, compact_services, capabilities, timeout \\ 5_000),
+    do: call(coordinator, {:register_node_resources, client_pid, compact_services, capabilities}, timeout)
 end

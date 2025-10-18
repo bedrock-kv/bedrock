@@ -4,7 +4,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Descriptor
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Link
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
@@ -19,7 +19,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
   alias Bedrock.Internal.Tracing.RaftTelemetry
   alias Bedrock.Service.Foreman
-  alias Cluster.Gateway.Tracing, as: GatewayTracing
+  alias Cluster.Link.Tracing, as: LinkTracing
 
   require Logger
 
@@ -111,7 +111,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Enum.each(fn
       :commit_proxy -> start_tracing(CommitProxyTracing)
       :coordinator -> start_tracing(CoordinatorTracing)
-      :gateway -> start_tracing(GatewayTracing)
+      :link -> start_tracing(LinkTracing)
       :log -> start_tracing(LogTracing)
       :raft -> start_tracing(RaftTelemetry)
       :recovery -> start_tracing(RecoveryTracing)
@@ -125,12 +125,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     children =
       [
         {DynamicSupervisor, name: cluster.otp_name(:sup)},
-        {Gateway,
+        {Link,
          [
            cluster: cluster,
            descriptor: descriptor,
            path_to_descriptor: path_to_descriptor,
-           otp_name: cluster.otp_name(:gateway),
+           otp_name: cluster.otp_name(:link),
            capabilities: capabilities,
            mode: mode_for_capabilities(capabilities)
          ]}
@@ -233,10 +233,10 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec fetch_coordinator(Cluster.t()) :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   def fetch_coordinator(module) do
-    case module.fetch_gateway() do
-      {:ok, gateway} ->
-        # Get the coordinator from the gateway's current state
-        case GenServer.call(gateway, :get_known_coordinator, 1000) do
+    case module.fetch_link() do
+      {:ok, link} ->
+        # Get the coordinator from the link's current state
+        case GenServer.call(link, :get_known_coordinator, 1000) do
           {:ok, coordinator} -> {:ok, coordinator}
           _ -> {:error, :unavailable}
         end
@@ -260,21 +260,21 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec fetch_coordinator_nodes(Cluster.t()) :: {:ok, [node()]} | {:error, :unavailable}
   def fetch_coordinator_nodes(module) do
-    # Try to get descriptor from the running gateway first, since it has the
+    # Try to get descriptor from the running link first, since it has the
     # canonical descriptor (which may be an in-memory default if no file exists)
-    case try_gateway_descriptor(module) do
+    case try_link_descriptor(module) do
       {:ok, descriptor} -> {:ok, descriptor.coordinator_nodes}
       {:error, _reason} -> try_disk_descriptor(module)
     end
   end
 
-  @spec try_gateway_descriptor(Cluster.t()) :: {:ok, Descriptor.t()} | {:error, term()}
-  defp try_gateway_descriptor(module) do
-    with {:ok, gateway} <- module.fetch_gateway(),
-         {:ok, descriptor} <- Gateway.get_descriptor(gateway) do
+  @spec try_link_descriptor(Cluster.t()) :: {:ok, Descriptor.t()} | {:error, term()}
+  defp try_link_descriptor(module) do
+    with {:ok, link} <- module.fetch_link(),
+         {:ok, descriptor} <- Link.fetch_descriptor(link) do
       {:ok, descriptor}
     else
-      {:error, reason} -> {:error, {:gateway_error, reason}}
+      {:error, reason} -> {:error, {:link_error, reason}}
     end
   end
 

@@ -183,7 +183,6 @@ This approach improves efficiency and reduces data transfer overhead between com
 2. Transaction builder checks local writes first (read-your-writes consistency)
 3. If not found locally and no read version exists:
    - Request read version from Sequencer via `next_read_version/1`
-   - Gateway leases the read version with expiration time
 4. Fetch data from Storage servers at the read version
 5. Storage performs "horse race" across replicas for performance
 6. Transaction builder tracks the read key and value
@@ -402,7 +401,6 @@ This is the most complex phase involving multiple distributed components working
 ### Timeout Handling
 
 - **Waiting List Timeout**: Transactions waiting for version ordering timeout after 30 seconds (default)
-- **Read Version Lease Expiration**: Read version leases expire to prevent indefinite holds
 - **WaitingList Management**: Automatic cleanup of expired transactions with appropriate error responses
 
 ### System Failures
@@ -416,7 +414,6 @@ This is the most complex phase involving multiple distributed components working
 
 - **Version Too Old**: Storage no longer has the requested version
 - **Version Too New**: Read version exceeds current committed version
-- **Lease Expiration**: Read version lease expired, transaction must abort
 
 ## Performance Characteristics
 

@@ -25,13 +25,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexUpdate do
   it remains in the index to preserve the leftmost chain entry point.
   """
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IdAllocator
   alias Bedrock.DataPlane.Storage.Olivine.Index
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.Index.Tree
   alias Bedrock.Internal.Atomics
+  alias Bedrock.Internal.TransactionBuilder.Tx
 
   # Constants for range operations
   @max_key <<0xFF, 0xFF>>

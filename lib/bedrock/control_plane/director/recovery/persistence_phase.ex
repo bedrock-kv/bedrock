@@ -20,12 +20,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  alias Bedrock.Cluster.Gateway.TransactionBuilder.Tx
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.SystemKeys
 
   @impl true

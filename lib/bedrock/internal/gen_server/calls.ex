@@ -19,11 +19,19 @@ defmodule Bedrock.Internal.GenServer.Calls do
   def call(server, message, timeout) do
     GenServer.call(server, message, normalize_timeout(timeout))
   rescue
-    _ -> {:error, :unknown}
+    error ->
+      # Log unexpected exceptions for debugging
+      require Logger
+
+      Logger.warning("GenServer.call rescued unexpected error: #{inspect(error)}")
+      {:error, :unknown}
   catch
     :exit, {:noproc, _} -> {:error, :unavailable}
     :exit, {{:nodedown, _}, _} -> {:error, :unavailable}
     :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:normal, _} -> {:error, :unavailable}
+    :exit, {:shutdown, _} -> {:error, :unavailable}
+    :exit, {{:shutdown, _}, _} -> {:error, :unavailable}
   end
 
   @spec call!(GenServer.server(), message :: term(), timeout()) :: term()

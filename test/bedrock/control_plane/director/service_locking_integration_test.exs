@@ -71,7 +71,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
       old_transaction_system_layout = %{
         logs: %{"bwecaxvz" => [0, 5]},
-        storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["gb6cddk5"]}]
+        storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["gb6cddk5"]}]
       }
 
       context =
@@ -207,7 +207,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       old_transaction_system_layout = %{
         logs: %{"bwecaxvz" => [0, 1]},
-        storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"], key_range: {"", :end}}]
+        storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"], key_range: {"", <<0xFF, 0xFF>>}}]
       }
 
       context = create_tracking_context(available_services, old_transaction_system_layout)

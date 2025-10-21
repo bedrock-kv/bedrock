@@ -113,9 +113,10 @@ defmodule Bedrock.DataPlane.Transaction do
   import Bitwise
   import Bitwise, only: [>>>: 2, &&&: 2]
 
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.TransactionBuilder.Tx
 
-  @type transaction_map :: Bedrock.transaction()
+  @type transaction_map :: Bedrock.transaction_map()
 
   @type encoded :: binary()
 
@@ -696,7 +697,7 @@ defmodule Bedrock.DataPlane.Transaction do
       case read_version do
         nil -> -1
         version when is_integer(version) -> version
-        version -> Bedrock.DataPlane.Version.to_integer(version)
+        version -> Version.to_integer(version)
       end
 
     IO.iodata_to_binary([
@@ -716,17 +717,11 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   @doc false
-  def encode_conflict_range({start_key, end_key}) do
+  def encode_conflict_range({start_key, end_key}) when is_binary(start_key) and is_binary(end_key) do
     start_len = byte_size(start_key)
+    end_len = byte_size(end_key)
 
-    # Handle :end case for ConflictSharding
-    {end_key_binary, end_len} =
-      case end_key do
-        :end -> {"\xFF\xFF\xFF", 3}
-        key -> {key, byte_size(key)}
-      end
-
-    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key_binary::binary>>
+    <<start_len::unsigned-big-16, start_key::binary, end_len::unsigned-big-16, end_key::binary>>
   end
 
   # ============================================================================

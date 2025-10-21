@@ -24,7 +24,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: ["storage1", "storage2"]
         }
       ],
@@ -47,7 +47,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: ["storage1", "storage2"]
         }
       ],
@@ -174,7 +174,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
         proxies: [],
         storage_teams: [
           %{
-            key_range: {"", :end},
+            key_range: {"", <<0xFF, 0xFF>>},
             storage_ids: ["storage1"]
           }
         ],
@@ -372,7 +372,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       custom_layout = %{
         storage_teams: [
           %{
-            key_range: {"", :end},
+            key_range: {"", <<0xFF, 0xFF>>},
             storage_ids: ["storage1"]
           }
         ],
@@ -520,7 +520,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
             storage_ids: ["storage1"]
           },
           %{
-            key_range: {"m", :end},
+            key_range: {"m", <<0xFF, 0xFF>>},
             storage_ids: ["storage2"]
           }
         ],

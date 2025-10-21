@@ -40,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
     storage_team_vacancies = Enum.map(1..context.cluster_config.parameters.desired_replication_factor, &{:vacancy, &1})
 
     key_ranges = [
-      {0, key_range(<<0xFF>>, :end)},
+      {0, key_range(<<0xFF>>, Bedrock.end_of_keyspace())},
       {1, key_range(<<>>, <<0xFF>>)}
     ]
 

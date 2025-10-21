@@ -158,7 +158,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
       sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
       sharded = ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
 
-      # Only resolver_1 should have the conflict (covers middle_key to :end)
+      # Only resolver_1 should have the conflict (covers middle_key to <<0xFF, 0xFF>>)
       assert {:ok, {_read, []}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
       assert {:ok, {_read, [_ | _]}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
     end

@@ -154,7 +154,7 @@ defmodule Bedrock.Internal.TransactionBuilder.StateTest do
 
     test "updates fastest storage servers" do
       range1 = {"a", "m"}
-      range2 = {"m", :end}
+      range2 = {"m", <<0xFF, 0xFF>>}
       state = %State{fastest_storage_servers: %{range1 => :old_pid}}
       expected_servers = %{range1 => :new_pid, range2 => :another_pid}
 
@@ -165,7 +165,7 @@ defmodule Bedrock.Internal.TransactionBuilder.StateTest do
     end
 
     test "handles complex range keys" do
-      ranges = [{"", :end}, {"a", "z"}, {"key_prefix", "key_prefiy"}, {"\x00", "\xFF"}]
+      ranges = [{"", <<0xFF, 0xFF>>}, {"a", "z"}, {"key_prefix", "key_prefiy"}, {"\x00", "\xFF"}]
       servers = Enum.with_index(ranges, fn range, i -> {range, :"pid_#{i}"} end)
       expected_servers = Map.new(servers)
 
@@ -173,7 +173,7 @@ defmodule Bedrock.Internal.TransactionBuilder.StateTest do
                %State{fastest_storage_servers: expected_servers}
 
       # Verify specific key lookups work
-      assert expected_servers[{"", :end}] == :pid_0
+      assert expected_servers[{"", <<0xFF, 0xFF>>}] == :pid_0
       assert expected_servers[{"\x00", "\xFF"}] == :pid_3
     end
   end
@@ -242,7 +242,7 @@ defmodule Bedrock.Internal.TransactionBuilder.StateTest do
     test "fastest_storage_servers maintains map type" do
       assert %State{fastest_storage_servers: %{}} = %State{}
 
-      servers = %{{"a", "z"} => :pid1, {"z", :end} => :pid2}
+      servers = %{{"a", "z"} => :pid1, {"z", <<0xFF, 0xFF>>} => :pid2}
       assert %State{fastest_storage_servers: ^servers} = %State{fastest_storage_servers: servers}
     end
   end

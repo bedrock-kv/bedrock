@@ -42,7 +42,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
       sequencer: :test_sequencer,
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: ["storage1", "storage2"]
         }
       ],
@@ -72,7 +72,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
           storage_ids: ["storage1"]
         },
         %{
-          key_range: {"k", :end},
+          key_range: {"k", <<0xFF, 0xFF>>},
           storage_ids: ["storage2"]
         }
       ],
@@ -229,7 +229,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
             storage_ids: ["storage1", "storage2"]
           },
           %{
-            key_range: {"m", :end},
+            key_range: {"m", <<0xFF, 0xFF>>},
             storage_ids: ["storage3"]
           }
         ],
@@ -257,7 +257,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
       layout = %{
         storage_teams: [
           %{
-            key_range: {"", :end},
+            key_range: {"", <<0xFF, 0xFF>>},
             storage_ids: ["storage1", "storage2", "storage3"]
           }
         ],
@@ -469,7 +469,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
         layout = %{
           storage_teams: [
             %{
-              key_range: {"", :end},
+              key_range: {"", <<0xFF, 0xFF>>},
               storage_ids: ["up_server", "down_server"]
             }
           ],
@@ -481,7 +481,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
 
         index = LayoutIndex.build_index(layout)
         # Should only include the up server
-        assert {{"", :end}, [:up_pid]} = LayoutIndex.lookup_key!(index, key)
+        assert {{"", <<0xFF, 0xFF>>}, [:up_pid]} = LayoutIndex.lookup_key!(index, key)
       end
     end
   end
@@ -497,7 +497,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
             storage_ids: ["storage1"]
           },
           %{
-            key_range: {"m", :end},
+            key_range: {"m", <<0xFF, 0xFF>>},
             storage_ids: ["storage2"]
           }
         ],

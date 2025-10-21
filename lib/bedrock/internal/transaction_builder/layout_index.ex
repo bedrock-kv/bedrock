@@ -48,13 +48,14 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   Looks up storage servers for a single key using recursive tree traversal.
 
   Returns a {key_range, [pid]} tuple for the segment containing the key.
+  The end key will be the binary sentinel `<<0xFF, 0xFF>>` for unbounded ranges.
   Raises if no segment is found. This is an O(log n) operation.
   """
-  @spec lookup_key!(t(), binary()) :: {Bedrock.key_range(), [pid()]}
+  @spec lookup_key!(t(), binary()) :: {{binary(), binary()}, [pid()]}
   def lookup_key!(%__MODULE__{tree: tree}, key) do
     case segment_for_key(tree, key) do
       {:ok, {start, end_key}, pids} ->
-        {{start, denormalize_end_key(end_key)}, pids}
+        {{start, end_key}, pids}
 
       :not_found ->
         raise "No segment found containing key: #{inspect(key)}"
@@ -66,9 +67,10 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   Returns a list of {key_range, [pid]} tuples for all segments that overlap
   with the specified range. Each segment shows exactly which PIDs cover
-  that portion of the keyspace.
+  that portion of the keyspace. End keys will be the binary sentinel `<<0xFF, 0xFF>>`
+  for unbounded ranges.
   """
-  @spec lookup_range(t(), binary(), binary()) :: [{Bedrock.key_range(), [pid()]}]
+  @spec lookup_range(t(), binary(), binary()) :: [{{binary(), binary()}, [pid()]}]
   def lookup_range(%__MODULE__{tree: tree}, start_key, end_key) do
     tree
     |> :gb_trees.iterator()
@@ -78,11 +80,11 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   @doc """
   Finds the next segment after the one containing the given key.
 
-  This is useful for cross-shard KeySelector resolution when we need to 
+  This is useful for cross-shard KeySelector resolution when we need to
   continue processing in the next shard.
   """
   @spec get_next_segment(t(), binary()) ::
-          {:ok, {{binary(), binary() | :end}, [pid()]}} | :end_of_keyspace
+          {:ok, {{binary(), binary()}, [pid()]}} | :end_of_keyspace
   def get_next_segment(%__MODULE__{tree: tree}, key) do
     case segment_for_key(tree, key) do
       {:ok, {_current_start, current_end}, _current_pids} ->
@@ -100,7 +102,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   continue processing in the previous shard.
   """
   @spec get_previous_segment(t(), binary()) ::
-          {:ok, {{binary(), binary() | :end}, [pid()]}} | :start_of_keyspace
+          {:ok, {{binary(), binary()}, [pid()]}} | :start_of_keyspace
   def get_previous_segment(%__MODULE__{tree: tree}, key) do
     case segment_for_key(tree, key) do
       {:ok, {current_start, _current_end}, _current_pids} ->
@@ -113,14 +115,8 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
-  defp end_sentinel, do: <<0xFF, 0xFF>>
-  defp end_sentinel?(key), do: key == end_sentinel()
-  defp denormalize_end_key(key), do: if(end_sentinel?(key), do: :end, else: key)
-  defp normalize_end_key(:end), do: end_sentinel()
-  defp normalize_end_key(key), do: key
-
   @spec collect_active_ranges(TransactionSystemLayout.t()) ::
-          [{binary(), binary() | :end, [pid()]}]
+          [{binary(), binary(), [pid()]}]
   defp collect_active_ranges(transaction_system_layout) do
     Enum.flat_map(transaction_system_layout.storage_teams, fn
       %{key_range: {start_key, end_key}, storage_ids: storage_ids} ->
@@ -129,7 +125,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
         |> Enum.filter(&(&1 != nil))
         |> case do
           [] -> []
-          pids -> [{start_key, normalize_end_key(end_key), pids}]
+          pids -> [{start_key, end_key, pids}]
         end
     end)
   end
@@ -163,7 +159,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   defp build_tree_from_segments(orddict), do: :gb_trees.from_orddict(orddict)
 
   @spec segment_for_key(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
-          {:ok, {binary(), binary() | :end}, [pid()]} | :not_found
+          {:ok, {binary(), binary()}, [pid()]} | :not_found
   defp segment_for_key({0, _}, _key), do: :not_found
   defp segment_for_key({_, tree_node}, key), do: node_for_key(tree_node, key)
   defp segment_for_key(_, _key), do: :not_found
@@ -180,8 +176,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
     case :gb_trees.next(iterator) do
       {tree_end_key, {segment_start, pids}, next_iter} ->
         if segment_start < end_key and tree_end_key > start_key do
-          segment_end = denormalize_end_key(tree_end_key)
-          segment_tuple = {{segment_start, segment_end}, pids}
+          segment_tuple = {{segment_start, tree_end_key}, pids}
           collect_overlapping_segments(next_iter, start_key, end_key, [segment_tuple | acc])
         else
           collect_overlapping_segments(next_iter, start_key, end_key, acc)
@@ -200,14 +195,14 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   end
 
   @spec find_segment_starting_at(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
-          {:ok, {{binary(), binary() | :end}, [pid()]}} | :end_of_keyspace
+          {:ok, {{binary(), binary()}, [pid()]}} | :end_of_keyspace
   defp find_segment_starting_at(tree, boundary_key) do
     iterator = :gb_trees.iterator_from(boundary_key, tree)
     find_first_segment_at_boundary(iterator, boundary_key)
   end
 
   @spec find_segment_ending_before(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
-          {:ok, {{binary(), binary() | :end}, [pid()]}} | :start_of_keyspace
+          {:ok, {{binary(), binary()}, [pid()]}} | :start_of_keyspace
   defp find_segment_ending_before(tree, boundary_key) do
     iterator = :gb_trees.iterator(tree)
     find_last_segment_before_boundary(iterator, boundary_key, :start_of_keyspace)
@@ -218,8 +213,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
     case :gb_trees.next(iterator) do
       {tree_end_key, {segment_start, pids}, next_iter} ->
         if segment_start == boundary_key do
-          segment_end = denormalize_end_key(tree_end_key)
-          {:ok, {{segment_start, segment_end}, pids}}
+          {:ok, {{segment_start, tree_end_key}, pids}}
         else
           find_first_segment_at_boundary(next_iter, boundary_key)
         end
@@ -234,8 +228,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
     case :gb_trees.next(iterator) do
       {tree_end_key, {segment_start, pids}, next_iter} ->
         if tree_end_key <= boundary_key do
-          segment_end = denormalize_end_key(tree_end_key)
-          new_result = {:ok, {{segment_start, segment_end}, pids}}
+          new_result = {:ok, {{segment_start, tree_end_key}, pids}}
           find_last_segment_before_boundary(next_iter, boundary_key, new_result)
         else
           find_last_segment_before_boundary(next_iter, boundary_key, current_best)

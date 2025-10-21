@@ -23,7 +23,7 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: ["storage1", "storage2"]
         }
       ],

@@ -3,21 +3,20 @@ defprotocol Bedrock.ToKeyRange do
   Protocol for converting various types to key ranges.
 
   A key range is represented as a tuple `{start_key, end_key}` where:
-  - `start_key` is inclusive
-  - `end_key` is exclusive, or the atom `:end` for unbounded ranges
+  - `start_key` is inclusive (binary)
+  - `end_key` is exclusive (binary)
 
   This protocol provides a unified interface for range operations in Bedrock,
   allowing directories, keyspaces, and other types to be used wherever a
   key range is expected.
   """
 
-  @type key_range :: {binary(), binary() | :end}
+  @type key_range :: {binary(), binary()}
 
   @doc """
   Converts the given data to a key range tuple.
 
-  Returns a tuple `{start_key, end_key}` where `end_key` may be a binary
-  or the atom `:end` for unbounded ranges.
+  Returns a tuple `{start_key, end_key}` where both are binaries.
   """
   @spec to_key_range(term()) :: key_range()
   def to_key_range(data)

@@ -36,7 +36,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReadsKeySelectorTest do
       sequencer: :test_sequencer,
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: ["storage1"]
         }
       ],

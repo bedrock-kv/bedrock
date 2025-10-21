@@ -32,7 +32,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReadsTest do
       sequencer: :test_sequencer,
       storage_teams: [
         %{
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           storage_ids: storage_ids
         }
       ],

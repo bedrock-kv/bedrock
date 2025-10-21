@@ -22,7 +22,7 @@ defmodule Bedrock.Internal.TransactionBuilder.ConsolidationTest do
       # Query range
       query_range,
       # Shard range (unbounded)
-      {elem(query_range, 0), :end}
+      {elem(query_range, 0), <<0xFF, 0xFF>>}
     )
   end
 

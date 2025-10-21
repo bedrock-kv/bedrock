@@ -117,7 +117,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
         |> Enum.sort_by(fn {{start, _}, _} -> start end)
         |> Enum.chunk_every(2, 1, :discard)
         |> Enum.all?(fn [{{_start1, end1}, _}, {{start2, _end2}, _}] ->
-          end1 <= start2 or end1 == :end
+          end1 <= start2 or end1 == <<0xFF, 0xFF>>
         end)
 
       assert segments_valid, "Segments should be non-overlapping"

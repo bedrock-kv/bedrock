@@ -180,13 +180,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
 
     # Calculate the effective range to scan for pending writes
     effective_start = max(query_start, shard_start)
-
-    effective_end =
-      case shard_end do
-        # Unbounded shard, use query end
-        :end -> query_end
-        shard_end_key -> min(query_end, shard_end_key)
-      end
+    effective_end = min(query_end, shard_end)
 
     case {storage_results, has_more} do
       {[], false} ->

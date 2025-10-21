@@ -400,12 +400,9 @@ defmodule Bedrock.Test.Common.ConflictShardingGenerators do
   end
 
   defp ranges_overlap?({start1, end1}, {start2, end2}) do
-    # Handle :end cases
-    actual_end1 = if end1 == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: end1
-    actual_end2 = if end2 == <<0xFF, 0xFF>>, do: <<0xFF, 0xFF>>, else: end2
-
     # Ranges overlap if: start1 < end2 AND start2 < end1
-    start1 < actual_end2 and start2 < actual_end1
+    # Works naturally with <<0xFF, 0xFF>> sentinel (no special handling needed)
+    start1 < end2 and start2 < end1
   end
 
   defp get_resolver_key_range_by_ref(resolver_ref, resolver_ends) do

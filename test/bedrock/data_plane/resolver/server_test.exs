@@ -62,7 +62,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       Keyword.merge(
         [
           lock_token: lock_token,
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           epoch: 1,
           last_version: Version.zero(),
           director: self(),

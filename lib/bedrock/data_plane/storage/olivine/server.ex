@@ -279,6 +279,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     :ok = :file.rename(compact_data_path, data_path)
     :ok = :file.rename(compact_idx_path, idx_path)
 
+    # Clean up .old backup files after successful rename
+    :ok = :file.delete(old_data_path)
+    :ok = :file.delete(old_idx_path)
+
     # Build new database structures from compacted files
     # File name is now the original path (we renamed compact to replace it)
     new_data_db = %DataDatabase{

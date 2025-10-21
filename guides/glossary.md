@@ -116,7 +116,7 @@ The distributed database architecture that Bedrock follows, separating control p
 
 ### **Gateway**
 
-The client-facing interface that manages transaction coordination, read version leasing, and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
+The client-facing interface that manages transaction coordination and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
 
 ---
 
@@ -157,14 +157,6 @@ A logical clock mechanism used by the Sequencer to assign globally ordered versi
 ### **Last Commit Version**
 
 The most recent version number handed to a commit proxy by the Sequencer. Forms the Lamport clock chain with the next commit version for conflict detection.
-
-### **Lease**
-
-A time-limited grant for using a read version, managed by the Gateway to ensure transactions don't use stale versions.
-
-### **Lease Renewal**
-
-The process of extending a read version lease before it expires, enabling long-running transactions.
 
 ### **Lock Token**
 

@@ -100,12 +100,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
     end
   end
 
-  @spec generate_resolver_ranges([ResolverDescriptor.t()]) :: [[Bedrock.key() | :end]]
+  @spec generate_resolver_ranges([ResolverDescriptor.t()]) :: [[Bedrock.key()]]
   defp generate_resolver_ranges(resolvers) do
     resolvers
     |> Enum.map(& &1.start_key)
     |> Enum.sort()
-    |> Enum.concat([:end])
+    |> Enum.concat([Bedrock.end_of_keyspace()])
     |> Enum.chunk_every(2, 1, :discard)
   end
 

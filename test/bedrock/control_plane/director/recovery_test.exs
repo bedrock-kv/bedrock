@@ -242,7 +242,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         create_test_context(
           old_transaction_system_layout: %{
             logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["existing_storage_1"]}]
+            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
           }
         )
 
@@ -339,7 +339,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
         logs: %{"existing_log_1" => [0, 100]},
-        storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["storage_1"]}]
+        storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}]
       }
 
       recovery_attempt =
@@ -376,7 +376,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         [
           old_transaction_system_layout: %{
             logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", :end}, storage_ids: ["existing_storage_1"]}]
+            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
           }
         ]
         |> create_test_context()

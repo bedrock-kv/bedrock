@@ -133,6 +133,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   defp validate_key_range({start_key, end_key}) when is_binary(start_key) do
     case end_key do
       :end -> :ok
+      <<0xFF, 0xFF>> -> :ok
       end_key when is_binary(end_key) -> :ok
       _ -> {:error, {:invalid_key_range, "invalid end key: #{inspect(end_key)}"}}
     end

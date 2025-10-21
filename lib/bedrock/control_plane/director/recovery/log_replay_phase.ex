@@ -86,7 +86,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
         |> then(&{new_log_id, &1})
       end,
       ordered: false,
-      zip_input_on_exit: true
+      zip_input_on_exit: true,
+      timeout: 30_000
     )
     |> Enum.reduce_while(%{}, fn
       {:ok, {_, {:error, :newer_epoch_exists} = error}}, _ ->

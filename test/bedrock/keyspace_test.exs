@@ -574,6 +574,21 @@ defmodule Bedrock.KeyspaceTest do
       end
     end
 
+    test "raises when partitioning with non-binary name and no key encoding" do
+      keyspace = Keyspace.new(<<"test">>)
+
+      assert_raise ArgumentError, ~r/Keyspace does not support key encoding/, fn ->
+        Keyspace.partition(keyspace, {1, 2, 3})
+      end
+    end
+
+    test "partition can be called on non-keyspace that implements ToKeyspace" do
+      # Binary implements ToKeyspace protocol
+      result = Keyspace.partition(<<"prefix">>, <<"suffix">>)
+
+      assert result.prefix == <<"prefix", "suffix">>
+    end
+
     test "raises when unpacking key from wrong keyspace" do
       ks1 = Keyspace.new(<<"keyspace1">>)
       ks2 = Keyspace.new(<<"keyspace2">>)

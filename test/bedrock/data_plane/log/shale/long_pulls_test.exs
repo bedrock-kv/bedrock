@@ -9,6 +9,13 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
       assert LongPulls.normalize_timeout_to_ms(15_000) == 10_000
       assert LongPulls.normalize_timeout_to_ms(500) == 500
     end
+
+    test "uses default timeout for non-integer values" do
+      # Test the catchall clause for invalid timeout types
+      assert LongPulls.normalize_timeout_to_ms(nil) == 5000
+      assert LongPulls.normalize_timeout_to_ms(:infinity) == 5000
+      assert LongPulls.normalize_timeout_to_ms("5000") == 5000
+    end
   end
 
   describe "notify_waiting_pullers/3" do

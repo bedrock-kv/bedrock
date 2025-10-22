@@ -362,6 +362,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       assert {:error, :unable_to_meet_log_quorum} =
                LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
     end
+
+    test "returns error when all shards result in invalid version ranges" do
+      # Logs with invalid version ranges (newest < oldest)
+      old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_a"]}
+
+      # Both logs have inverted ranges (newest < oldest)
+      recovery_info = %{
+        {:log, 1} => log_info(50, 10),
+        {:log, 2} => log_info(45, 15)
+      }
+
+      # Should fail because all combinations produce invalid ranges (hits line 236)
+      assert {:error, :unable_to_meet_log_quorum} =
+               LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+    end
   end
 
   describe "shard grouping functions" do

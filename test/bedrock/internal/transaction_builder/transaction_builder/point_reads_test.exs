@@ -131,6 +131,17 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
       assert Tx.commit(new_state.tx, read_version) == Tx.commit(state.tx, read_version)
     end
 
+    test "returns error when key was cleared in transaction" do
+      alias Bedrock.Internal.TransactionBuilder.Tx
+
+      # Create a transaction with a cleared key
+      tx = Tx.clear(Tx.new(), "cleared_key")
+      state = %{create_test_state() | tx: tx}
+
+      # Should return error :not_found because key is marked as :clear
+      assert {_new_state, {:error, :not_found}} = PointReads.get_key(state, "cleared_key")
+    end
+
     test "fetches from storage when not in cache" do
       state = create_test_state(read_version: 12_345)
 
@@ -201,6 +212,63 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
 
       # Should return failure instead of raising, allowing retry logic to handle it
       assert {^state, {:failure, %{unavailable: []}}} = PointReads.get_key(state, "key", opts)
+    end
+
+    test "returns failure when all storage servers fail" do
+      state = create_test_state(read_version: 12_345)
+
+      # Both storage servers return failures
+      storage_get_key_fn = fn
+        :storage1_pid, "failing_key", 12_345, [timeout: 100] ->
+          {:failure, :timeout, :storage1_pid}
+
+        :storage2_pid, "failing_key", 12_345, [timeout: 100] ->
+          {:failure, :unavailable, :storage2_pid}
+      end
+
+      opts = [storage_get_key_fn: storage_get_key_fn]
+
+      # Should return failure with all failures by reason
+      assert {^state, {:failure, failures}} = PointReads.get_key(state, "failing_key", opts)
+      assert is_map(failures)
+    end
+
+    test "preserves state in snapshot mode when key not found" do
+      state = create_test_state(read_version: 12_345)
+
+      storage_get_key_fn = fn
+        :storage1_pid, "missing_key", 12_345, [timeout: 100] ->
+          {:ok, nil}
+
+        :storage2_pid, "missing_key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
+      end
+
+      opts = [storage_get_key_fn: storage_get_key_fn, snapshot: true]
+
+      # In snapshot mode, transaction should not be modified
+      assert {new_state, {:error, :not_found}} = PointReads.get_key(state, "missing_key", opts)
+      # Transaction state unchanged in snapshot mode
+      assert new_state.tx == state.tx
+    end
+
+    test "preserves state in snapshot mode when key found" do
+      state = create_test_state(read_version: 12_345)
+
+      storage_get_key_fn = fn
+        :storage1_pid, "snapshot_key", 12_345, [timeout: 100] ->
+          {:ok, "snapshot_value"}
+
+        :storage2_pid, "snapshot_key", 12_345, [timeout: 100] ->
+          {:error, :timeout}
+      end
+
+      opts = [storage_get_key_fn: storage_get_key_fn, snapshot: true]
+
+      # In snapshot mode, transaction should not be modified
+      assert {new_state, {:ok, {"snapshot_key", "snapshot_value"}}} = PointReads.get_key(state, "snapshot_key", opts)
+      # Transaction state unchanged in snapshot mode
+      assert new_state.tx == state.tx
     end
 
     test "works with binary keys directly" do
@@ -640,6 +708,20 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
                },
                {:ok, {"resolved_key", "resolved_value"}}
              } = PointReads.get_key_selector(state, key_selector, opts)
+    end
+
+    test "returns failure when read version acquisition fails for key selector" do
+      state = create_test_state(read_version: nil)
+
+      key_selector = %KeySelector{key: "test", or_equal: true, offset: 0}
+
+      next_read_version_fn = fn ^state -> {:error, :sequencer_unavailable} end
+
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      # Should return failure when ensure_read_version fails
+      assert {^state, {:failure, %{sequencer_unavailable: []}}} =
+               PointReads.get_key_selector(state, key_selector, opts)
     end
   end
 end

@@ -86,6 +86,7 @@ defmodule Bedrock.Service.Manifest do
       {:ok, _file_contents} = result -> result
       {:error, :enoent} -> {:error, :manifest_does_not_exist}
       {:error, :enotdir} -> {:error, :manifest_does_not_exist}
+      {:error, :eisdir} -> {:error, :manifest_does_not_exist}
     end
   end
 

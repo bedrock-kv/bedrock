@@ -60,6 +60,28 @@ defmodule Bedrock.Service.ManifestTest do
     test "fails when file doesn't exist" do
       assert {:error, :manifest_does_not_exist} = Manifest.load_from_file("does_not_exist.json")
     end
+
+    @tag :tmp_dir
+    test "fails when path is a directory not a file", %{tmp_dir: tmp_dir} do
+      # Create a directory with the manifest name
+      dir_path = Path.join(tmp_dir, "manifest_dir.json")
+      File.mkdir!(dir_path)
+
+      assert {:error, :manifest_does_not_exist} = Manifest.load_from_file(dir_path)
+    end
+
+    @tag :tmp_dir
+    test "fails when path contains a file instead of directory component", %{tmp_dir: tmp_dir} do
+      # Create a file that blocks the directory path
+      # For example: /tmp/file.txt/manifest.json where file.txt is a file, not a directory
+      file_in_path = Path.join(tmp_dir, "blocking_file.txt")
+      File.write!(file_in_path, "content")
+
+      # Try to read a path that goes through this file
+      invalid_path = Path.join(file_in_path, "manifest.json")
+
+      assert {:error, :manifest_does_not_exist} = Manifest.load_from_file(invalid_path)
+    end
   end
 
   describe "load_from_file/1 JSON parsing errors" do
@@ -101,6 +123,29 @@ defmodule Bedrock.Service.ManifestTest do
       path = write_json_to_temp_file(json, tmp_dir, "invalid_id.json")
 
       assert {:error, :invalid_cluster_id} = Manifest.load_from_file(path)
+    end
+
+    @tag :tmp_dir
+    test "handles nil params correctly", %{tmp_dir: tmp_dir} do
+      # Params field is optional, nil should be valid
+      json =
+        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Storage.Basalt", "params": null})
+
+      path = write_json_to_temp_file(json, tmp_dir, "nil_params.json")
+
+      assert {:ok, manifest} = Manifest.load_from_file(path)
+      assert manifest.params == %{}
+    end
+
+    @tag :tmp_dir
+    test "fails when params field is invalid type", %{tmp_dir: tmp_dir} do
+      # Params should be a map, not a string
+      json =
+        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Storage.Basalt", "params": "invalid"})
+
+      path = write_json_to_temp_file(json, tmp_dir, "invalid_params.json")
+
+      assert {:error, :invalid_params} = Manifest.load_from_file(path)
     end
   end
 end

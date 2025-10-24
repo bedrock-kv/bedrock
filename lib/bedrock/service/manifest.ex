@@ -93,9 +93,7 @@ defmodule Bedrock.Service.Manifest do
   @spec worker_from_json(binary()) ::
           {:ok, module()}
           | {:error,
-             :worker_module_is_invalid
-             | :worker_module_does_not_exist
-             | :worker_module_failed_to_load
+             :worker_module_does_not_exist
              | :invalid_cluster_id
              | :invalid_cluster_name
              | :invalid_worker_name
@@ -106,9 +104,7 @@ defmodule Bedrock.Service.Manifest do
          :ok <- check_module_is_storage_worker(worker) do
       {:ok, worker}
     else
-      {:error, :badfile} -> {:error, :worker_module_is_invalid}
       {:error, :nofile} -> {:error, :worker_module_does_not_exist}
-      {:error, :on_load_failure} -> {:error, :worker_module_failed_to_load}
       {:error, _reason} = error -> error
     end
   end

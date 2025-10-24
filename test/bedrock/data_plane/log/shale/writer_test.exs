@@ -47,5 +47,16 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
       assert {:ok, %Writer{write_offset: 24, bytes_remaining: 984}} =
                Writer.append(writer, transaction, commit_version)
     end
+
+    test "returns error when writing to closed file descriptor", %{writer: writer} do
+      # Close the file descriptor to cause pwrite to fail
+      :ok = Writer.close(writer)
+
+      transaction = <<1, 2, 3, 4>>
+      commit_version = <<1::unsigned-big-64>>
+
+      # Writing to a closed file should return an error
+      assert {:error, _reason} = Writer.append(writer, transaction, commit_version)
+    end
   end
 end

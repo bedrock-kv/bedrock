@@ -325,6 +325,66 @@ defmodule Bedrock.KeyTest do
       # Test multiple trailing 0xFF
       assert Key.strinc(<<"a", 0xFF, 0xFF, 0xFF>>) == "b"
     end
+
+    test "strinc raises error for all-0xFF keys" do
+      # Single 0xFF byte
+      assert_raise ArgumentError, fn -> Key.strinc(<<0xFF>>) end
+
+      # Multiple 0xFF bytes
+      assert_raise ArgumentError, fn -> Key.strinc(<<0xFF, 0xFF>>) end
+      assert_raise ArgumentError, fn -> Key.strinc(<<0xFF, 0xFF, 0xFF>>) end
+    end
+
+    test "strinc handles empty key edge case" do
+      # Empty binary should raise ArgumentError
+      assert_raise ArgumentError, fn -> Key.strinc(<<>>) end
+    end
+
+    test "strinc ordering with specific edge cases" do
+      # Test ordering preservation with keys that have trailing 0xFF
+      key1 = <<"a", 0xFF>>
+      key2 = <<"b", 0xFF>>
+
+      # "b"
+      strinc1 = Key.strinc(key1)
+      # "c"
+      strinc2 = Key.strinc(key2)
+
+      assert strinc1 < strinc2
+
+      # Test with mixed keys
+      key3 = "user"
+      key4 = "uses"
+
+      # "uses"
+      strinc3 = Key.strinc(key3)
+      # "uset"
+      strinc4 = Key.strinc(key4)
+
+      assert strinc3 < strinc4
+    end
+
+    test "key_after ordering with specific edge cases" do
+      # Test ordering with empty keys
+      key1 = <<>>
+      key2 = <<1>>
+
+      # <<0>>
+      after1 = Key.key_after(key1)
+      # <<1, 0>>
+      after2 = Key.key_after(key2)
+
+      assert after1 < after2
+
+      # Test with equal keys
+      key3 = "test"
+      key4 = "test"
+
+      after3 = Key.key_after(key3)
+      after4 = Key.key_after(key4)
+
+      assert after3 == after4
+    end
   end
 
   # Helper function for property tests

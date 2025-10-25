@@ -76,6 +76,45 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
     end
   end
 
+  describe "resolve/3 edge cases" do
+    test "handles transaction with malformed binary gracefully" do
+      conflicts = Conflicts.new()
+
+      # Use an invalid binary that can't be parsed as a transaction
+      malformed_transaction = <<255, 255, 255>>
+
+      # Should not crash, treating it as a transaction with no conflicts
+      write_version = Bedrock.DataPlane.Version.from_integer(100)
+      {_new_conflicts, failed_indexes} = resolve(conflicts, [malformed_transaction], write_version)
+
+      # No failures since malformed transaction has no conflicts to check
+      # The error path in extract_conflicts returns {nil, []}, which means no reads and no writes
+      assert failed_indexes == []
+    end
+
+    test "resolves transaction with read_version and read_conflicts" do
+      conflicts = Conflicts.new()
+
+      # Create a transaction with read version and read conflicts
+      transaction_map = %{
+        mutations: [{:set, "key1", "value"}],
+        read_conflicts: [{"key1", "key2"}],
+        write_conflicts: [{"key1", "key2"}],
+        read_version: Bedrock.DataPlane.Version.from_integer(50)
+      }
+
+      transaction = Transaction.encode(transaction_map)
+
+      # Should successfully resolve (no prior conflicts)
+      write_version = Bedrock.DataPlane.Version.from_integer(100)
+      {new_conflicts, failed_indexes} = resolve(conflicts, [transaction], write_version)
+
+      assert failed_indexes == []
+      # New conflict should be added for the write
+      assert new_conflicts != conflicts
+    end
+  end
+
   property "commit/2 commits transactions without conflicts and aborts those with conflicts" do
     check all(
             reads_and_writes <-

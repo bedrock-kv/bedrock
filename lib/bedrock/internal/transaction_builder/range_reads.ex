@@ -119,5 +119,4 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
   end
 
   defp range_from_batch([{min_key, _value} | rest]), do: {min_key, rest |> List.last() |> elem(0) |> Key.key_after()}
-  defp range_from_batch(_), do: raise("Batch results cannot be empty")
 end

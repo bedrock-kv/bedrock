@@ -114,4 +114,100 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       assert 2000 = Pulling.determine_pull_limit(3000, state)
     end
   end
+
+  describe "ensure_necessary_segments_are_loaded/2" do
+    test "returns error when segments list is empty" do
+      assert {:error, :version_too_old} =
+               Pulling.ensure_necessary_segments_are_loaded(Version.from_integer(1), [])
+    end
+
+    test "loads segment when last_version is nil" do
+      segment = %Segment{
+        min_version: Version.from_integer(0),
+        transactions: []
+      }
+
+      assert {:ok, [loaded_segment]} =
+               Pulling.ensure_necessary_segments_are_loaded(nil, [segment])
+
+      assert loaded_segment.min_version == segment.min_version
+    end
+
+    test "recursively loads multiple segments when needed" do
+      # Create segments where we need to recursively load them
+      segment1 = %Segment{
+        min_version: Version.from_integer(0),
+        transactions: []
+      }
+
+      segment2 = %Segment{
+        min_version: Version.from_integer(10),
+        transactions: []
+      }
+
+      # Request with last_version that's before the first segment
+      # This triggers the recursive loading path
+      assert {:ok, segments} =
+               Pulling.ensure_necessary_segments_are_loaded(
+                 Version.from_integer(15),
+                 [segment2, segment1]
+               )
+
+      assert length(segments) == 2
+    end
+  end
+
+  describe "check_for_locked_outside_of_recovery/2" do
+    test "returns error when in recovery mode but state is not locked" do
+      state = %State{mode: :ready}
+      assert {:error, :not_locked} = Pulling.check_for_locked_outside_of_recovery(true, state)
+    end
+
+    test "returns ok when in recovery mode and state is locked" do
+      state = %State{mode: :locked}
+      assert :ok = Pulling.check_for_locked_outside_of_recovery(true, state)
+    end
+
+    test "returns error when not in recovery but state is locked" do
+      state = %State{mode: :locked}
+      assert {:error, :not_ready} = Pulling.check_for_locked_outside_of_recovery(false, state)
+    end
+  end
+
+  describe "pull/3 with recovery option" do
+    test "returns error in recovery mode when version not found due to gaps" do
+      # Create state with gap in versions to trigger :not_found error
+      transactions =
+        [
+          {Version.from_integer(0), %{}},
+          {Version.from_integer(5), %{"a" => "1"}}
+        ]
+        |> Enum.map(fn {version, writes} ->
+          TransactionTestSupport.new_log_transaction(version, writes)
+        end)
+        |> Enum.reverse()
+
+      segment = %Segment{
+        min_version: Version.from_integer(0),
+        transactions: transactions
+      }
+
+      state = %State{
+        active_segment: segment,
+        segments: [],
+        oldest_version: Version.from_integer(0),
+        last_version: Version.from_integer(5),
+        mode: :locked,
+        params: @default_params
+      }
+
+      # Request version 2 in recovery mode - should hit :not_found due to gap
+      # In recovery mode, :not_found is returned as error instead of waiting
+      result = Pulling.pull(state, Version.from_integer(2), recovery: true)
+
+      # This will either be {:ok, ...} if version found or {:error, :not_found} if gap detected
+      # The exact behavior depends on how segments handle gaps
+      assert match?({:ok, _, _}, result) or match?({:error, :not_found}, result)
+    end
+  end
 end

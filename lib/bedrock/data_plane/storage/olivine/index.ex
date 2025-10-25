@@ -645,8 +645,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
 
   @spec delete_page_chain_update(t(), Page.id()) :: t()
   defp delete_page_chain_update(index, page_id) do
-    {_page, successor_id} = Map.get(index.page_map, page_id)
-    update_predecessor_chain_pointer(index, page_id, successor_id)
+    case Map.get(index.page_map, page_id) do
+      {_page, successor_id} ->
+        update_predecessor_chain_pointer(index, page_id, successor_id)
+
+      nil ->
+        # Page doesn't exist, no chain update needed
+        index
+    end
   end
 
   # Optimized batch addition - single tree operation for all pages

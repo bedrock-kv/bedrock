@@ -39,6 +39,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
       assert {:ok, [%Segment{min_version: ^version_1}]} = ColdStarting.reload_segments_at_path(@segment_dir)
     end
+
+    test "returns error when unable to list directory" do
+      # Use a path that doesn't exist or can't be read
+      non_existent_path = "/non/existent/path/that/should/not/exist"
+      assert {:error, :unable_to_list_segments} = ColdStarting.reload_segments_at_path(non_existent_path)
+    end
+
+    test "handles empty directory" do
+      # Directory exists but has no segment files
+      assert {:ok, []} = ColdStarting.reload_segments_at_path(@segment_dir)
+    end
   end
 
   defp create_segment_file(version) do

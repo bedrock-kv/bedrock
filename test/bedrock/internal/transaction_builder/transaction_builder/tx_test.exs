@@ -934,4 +934,47 @@ defmodule Bedrock.Internal.TransactionBuilder.TxTest do
       assert <<15>> = Tx.repeatable_read(tx, "max_val")
     end
   end
+
+  describe "additional edge cases" do
+    test "add_write_conflict_range/3 with empty range does not add conflict" do
+      tx = Tx.add_write_conflict_range(Tx.new(), "key", "key")
+
+      # start == end
+
+      # Empty range should not be added
+      assert tx.range_writes == []
+
+      tx2 = Tx.add_write_conflict_range(Tx.new(), "keyb", "keya")
+
+      # start > end
+
+      # Inverted range should not be added
+      assert tx2.range_writes == []
+    end
+
+    test "add_write_conflict_range_unless/4 with true condition skips adding conflict" do
+      tx = Tx.add_write_conflict_range_unless(Tx.new(), "start", "end", true)
+
+      # Should skip adding conflict when condition is true
+      assert tx.range_writes == []
+    end
+
+    test "commit/2 raises error when committing reads with nil read_version" do
+      tx = Tx.merge_storage_read(Tx.new(), "key", "value")
+
+      # Should raise ArgumentError when trying to commit with reads but nil version
+      assert_raise ArgumentError, ~r/cannot commit transaction with read conflicts but nil read_version/, fn ->
+        Tx.commit(tx, nil)
+      end
+    end
+
+    test "commit/2 raises error when committing range reads with nil read_version" do
+      tx = Tx.add_read_conflict_range(Tx.new(), "start", "end")
+
+      # Should raise ArgumentError when trying to commit with range reads but nil version
+      assert_raise ArgumentError, ~r/cannot commit transaction with read conflicts but nil read_version/, fn ->
+        Tx.commit(tx, nil)
+      end
+    end
+  end
 end

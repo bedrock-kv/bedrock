@@ -179,6 +179,23 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictShardingTest do
       assert {:ok, {_read_0, [_ | _]}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_0))
       assert {:ok, {_read_1, []}} = Transaction.read_write_conflicts(Map.get(sharded, :resolver_1))
     end
+
+    test "raises error when conflict extends beyond all resolvers" do
+      # Missing @end_marker - will cause error on line 85
+      # Missing end marker!
+      resolver_ends = [{"key_a", :resolver_0}]
+      resolver_refs = [:resolver_0]
+
+      # Conflict that goes beyond the last resolver
+      read_conflicts = {nil, []}
+      write_conflicts = [{"key_z", <<0xFF, 0xFF>>}]
+
+      sections = Gen.gen_transaction_sections(read_conflicts, write_conflicts)
+
+      assert_raise RuntimeError, ~r/extends beyond all resolvers/, fn ->
+        ConflictSharding.shard_conflicts_across_resolvers(sections, resolver_ends, resolver_refs)
+      end
+    end
   end
 
   # Helper functions

@@ -13,6 +13,26 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
     end
   end
 
+  describe "Keyspace.close/1" do
+    test "closes and deletes the ETS table" do
+      keyspace = new_random_keyspace()
+
+      # Verify keyspace exists
+      assert :ets.info(keyspace) != :undefined
+
+      # Close it
+      assert :ok = Keyspace.close(keyspace)
+
+      # Verify it's gone
+      assert :ets.info(keyspace) == :undefined
+    end
+
+    test "returns :ok even after closing" do
+      keyspace = new_random_keyspace()
+      assert :ok = Keyspace.close(keyspace)
+    end
+  end
+
   describe "Keyspace.apply_transaction/2" do
     test "adds keys to the space" do
       keyspace = new_random_keyspace()
@@ -205,6 +225,36 @@ defmodule Bedrock.DataPlane.Storage.Basalt.KeyspaceTest do
         )
 
       refute false = Keyspace.key_exists?(keyspace, "q")
+    end
+  end
+
+  describe "Keyspace.insert_many/2" do
+    test "inserts multiple keys into keyspace" do
+      keyspace = new_random_keyspace()
+
+      keys = ["key1", "key2", "key3", "key4"]
+      assert :ok = Keyspace.insert_many(keyspace, keys)
+
+      # Verify all keys exist
+      assert Keyspace.key_exists?(keyspace, "key1")
+      assert Keyspace.key_exists?(keyspace, "key2")
+      assert Keyspace.key_exists?(keyspace, "key3")
+      assert Keyspace.key_exists?(keyspace, "key4")
+    end
+
+    test "inserts empty list successfully" do
+      keyspace = new_random_keyspace()
+      assert :ok = Keyspace.insert_many(keyspace, [])
+    end
+
+    test "inserted keys are marked as present" do
+      keyspace = new_random_keyspace()
+
+      keys = ["a", "b", "c"]
+      Keyspace.insert_many(keyspace, keys)
+
+      # Check the ETS table directly to verify presence markers
+      assert [{"a", true}, {"b", true}, {"c", true}] = keyspace |> :ets.tab2list() |> Enum.sort()
     end
   end
 end

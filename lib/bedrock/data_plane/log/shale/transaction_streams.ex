@@ -15,29 +15,26 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   def from_segments([], _target_version), do: {:error, :not_found}
 
   def from_segments(segments, target_version) do
-    case find_segments_from_target(segments, target_version) do
-      [] ->
-        {:error, :not_found}
+    # find_segments_from_target always returns all segments, so no need to check for []
+    segments = find_segments_from_target(segments, target_version)
 
-      segments ->
-        stream =
-          segments
-          |> Stream.flat_map(fn segment ->
-            segment
-            |> Segment.transactions()
-            # Convert from newest-first to oldest-first
-            |> Enum.reverse()
-          end)
-          |> Stream.filter(fn transaction ->
-            version = Transaction.commit_version!(transaction)
-            version > target_version
-          end)
+    stream =
+      segments
+      |> Stream.flat_map(fn segment ->
+        segment
+        |> Segment.transactions()
+        # Convert from newest-first to oldest-first
+        |> Enum.reverse()
+      end)
+      |> Stream.filter(fn transaction ->
+        version = Transaction.commit_version!(transaction)
+        version > target_version
+      end)
 
-        # Check if stream has any elements
-        case Enum.take(stream, 1) do
-          [] -> {:error, :not_found}
-          _ -> {:ok, stream}
-        end
+    # Check if stream has any elements
+    case Enum.take(stream, 1) do
+      [] -> {:error, :not_found}
+      _ -> {:ok, stream}
     end
   end
 

@@ -44,7 +44,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ConflictSharding do
   end
 
   defp shard_read_conflicts({nil, []}, _resolver_ends), do: %{}
-  defp shard_read_conflicts({_read_version, []}, _resolver_ends), do: %{}
 
   defp shard_read_conflicts({read_version, read_ranges}, resolver_ends) do
     read_ranges

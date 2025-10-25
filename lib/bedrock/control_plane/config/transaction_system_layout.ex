@@ -54,21 +54,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   @type id :: non_neg_integer()
 
-  @spec default() :: t()
-  def default,
-    do: %{
-      id: 0,
-      epoch: 0,
-      director: nil,
-      sequencer: nil,
-      rate_keeper: nil,
-      proxies: [],
-      resolvers: [],
-      logs: %{},
-      storage_teams: [],
-      services: %{}
-    }
-
   @spec random_id() :: id()
   def random_id, do: :rand.uniform(1_000_000)
 end

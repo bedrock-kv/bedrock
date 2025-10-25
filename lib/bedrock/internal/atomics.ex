@@ -39,11 +39,6 @@ defmodule Bedrock.Internal.Atomics do
     add(ex, op, s >>> 8, [s &&& 0xFF | acc])
   end
 
-  defp add(<<>>, <<o::8, op::binary>>, c, acc) do
-    s = o + c
-    add(<<>>, op, s >>> 8, [s &&& 0xFF | acc])
-  end
-
   defp add(<<>>, <<>>, c, acc) when c > 0 do
     # If there's still a carry, add it as a new byte
     [c | acc]

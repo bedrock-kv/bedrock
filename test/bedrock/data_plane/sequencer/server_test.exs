@@ -156,4 +156,23 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       assert last_commit < next_commit
     end
   end
+
+  describe "handle_info/2" do
+    test "catch-all ignores unknown messages" do
+      state = %State{
+        director: self(),
+        epoch: 1,
+        next_commit_version_int: 100,
+        last_commit_version_int: 99,
+        known_committed_version_int: 98,
+        epoch_baseline_version_int: 0,
+        epoch_start_monotonic_us: 0
+      }
+
+      # Send an unknown message - should be handled gracefully
+      assert {:noreply, ^state} = Server.handle_info(:unknown_message, state)
+      assert {:noreply, ^state} = Server.handle_info({:some, :tuple}, state)
+      assert {:noreply, ^state} = Server.handle_info("string message", state)
+    end
+  end
 end

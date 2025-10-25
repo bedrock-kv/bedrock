@@ -45,6 +45,18 @@ defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptorTest do
       assert [^new_descriptor_1, ^descriptor_2] =
                StorageTeamDescriptor.upsert([descriptor_1, descriptor_2], new_descriptor_1)
     end
+
+    test "recursively searches nested storage teams for matching tag" do
+      # Test the recursive case where tag doesn't match at head
+      descriptor_1 = sample_descriptor(1, {1, 50}, ["1"])
+      descriptor_2 = sample_descriptor(2, {51, 100}, ["2"])
+      descriptor_3 = sample_descriptor(3, {101, 150}, ["3"])
+      new_descriptor_2 = sample_descriptor(2, {51, 125}, ["2", "4"])
+
+      # Should skip descriptor_1, find and replace descriptor_2
+      assert [^descriptor_1, ^new_descriptor_2, ^descriptor_3] =
+               StorageTeamDescriptor.upsert([descriptor_1, descriptor_2, descriptor_3], new_descriptor_2)
+    end
   end
 
   describe "find_by_tag/2" do

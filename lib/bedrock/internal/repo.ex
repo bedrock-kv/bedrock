@@ -278,7 +278,7 @@ defmodule Bedrock.Internal.Repo do
 
     {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->
       try_to_rollback(failed_txn)
-      raise Bedrock.TransactionError, reason: reason, operation: operation, key: key
+      raise RuntimeError, "Transaction operation #{operation} failed for key #{inspect(key)}: #{inspect(reason)}"
   end
 
   defp run_transaction(repo, txn, fun) do
@@ -306,9 +306,8 @@ defmodule Bedrock.Internal.Repo do
   defp enforce_retry_limit(retry_count, retry_limit, _reason) when retry_count < retry_limit, do: :ok
 
   defp enforce_retry_limit(_retry_count, retry_limit, reason) do
-    raise Bedrock.TransactionError,
-      reason: "Retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}",
-      retry_limit: retry_limit
+    raise RuntimeError,
+          "Transaction retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}"
   end
 
   defp try_to_commit(txn, result) do

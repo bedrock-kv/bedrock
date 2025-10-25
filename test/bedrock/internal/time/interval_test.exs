@@ -41,6 +41,18 @@ defmodule Bedrock.Internal.Time.IntervalTest do
     test "humanizes interval with float value" do
       assert Interval.humanize({:second, 10.5}) == "10.50s"
     end
+
+    test "humanizes all time units with correct abbreviations" do
+      # Use values that won't normalize to different units
+      assert Interval.humanize({:nanosecond, 500}) == "500ns"
+      assert Interval.humanize({:microsecond, 500}) == "500μs"
+      assert Interval.humanize({:millisecond, 500}) == "500ms"
+      assert Interval.humanize({:second, 30}) == "30s"
+      assert Interval.humanize({:minute, 30}) == "30m"
+      assert Interval.humanize({:hour, 12}) == "12h"
+      assert Interval.humanize({:day, 3}) == "3d"
+      assert Interval.humanize({:week, 2}) == "2w"
+    end
   end
 
   describe "normalize/1" do

@@ -206,4 +206,20 @@ defmodule Bedrock.DataPlane.StorageSystem.Engine.Basalt.PersistentKeyValuesTest 
                |> Enum.sort()
     end
   end
+
+  describe "Basalt.PersistentKeyValues.info/2" do
+    setup :with_empty_pkv
+
+    test "returns file size in bytes for :size_in_bytes query", %{pkv: pkv} do
+      # Should return a non-negative integer
+      assert is_integer(PersistentKeyValues.info(pkv, :size_in_bytes))
+      assert PersistentKeyValues.info(pkv, :size_in_bytes) >= 0
+    end
+
+    test "returns :undefined for any other query", %{pkv: pkv} do
+      assert :undefined == PersistentKeyValues.info(pkv, :unknown_query)
+      assert :undefined == PersistentKeyValues.info(pkv, :other)
+      assert :undefined == PersistentKeyValues.info(pkv, :memory)
+    end
+  end
 end

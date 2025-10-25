@@ -229,4 +229,447 @@ defmodule Bedrock.HighContentionAllocatorTest do
       HighContentionAllocator.stats(hca)
     end
   end
+
+  describe "window advancement" do
+    test "advances to next window when current window is over 50% full" do
+      # Window size is 64 for start=0, so 50% is 32
+      # When count=32, it should advance to next window
+      hca = HighContentionAllocator.new(MockRepo, "test_advance", random_fn: deterministic_random_fn(11))
+
+      counter_key_64 = hca.counters_keyspace <> <<64::64-big>>
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      # First: check current start (returns 0)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      # Increment counter for window 0
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 0)
+        :mock_txn
+      end)
+      # Get count for window 0 (returns 32, which triggers advancement)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 0)
+        <<32::64-little>>
+      end)
+      # Clear previous window (window 64)
+      |> expect(:clear_range, 2, fn {_start, _end}, [no_write_conflict: true] ->
+        :mock_txn
+      end)
+      # Increment counter for next window (64)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 64)
+        :mock_txn
+      end)
+      # Get count for window 64 (returns 1, has capacity)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 64)
+        <<1::64-little>>
+      end)
+      # Check current start again (now returns 64)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key_64, <<1::64-little>>}
+      end)
+      # Check if candidate is available
+      |> expect(:get, fn candidate_key, [snapshot: true] ->
+        # Candidate = 64 + (11 - 1) = 74
+        assert_recent_key(candidate_key, hca, 74)
+        nil
+      end)
+      # Claim candidate
+      |> expect(:put, fn candidate_key, "", [no_write_conflict: true] ->
+        assert_recent_key(candidate_key, hca, 74)
+        :mock_txn
+      end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} ->
+        :mock_txn
+      end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "stats calculation" do
+    test "returns correct stats with multiple allocations" do
+      hca = HighContentionAllocator.new(MockRepo, "test_stats")
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} ->
+        # Return a key in the counter range
+        {"test_stats" <> <<0, 0, 0, 0, 0, 0, 0, 0, 100>>, <<5::64-little>>}
+      end)
+      |> expect(:get_range, fn _start_key, _end_key ->
+        [
+          {"test_stats" <> <<0, 0, 0, 0, 0, 0, 0, 0, 0>>, <<10::64-little>>},
+          {"test_stats" <> <<0, 0, 0, 0, 0, 0, 0, 0, 64>>, <<20::64-little>>},
+          {"test_stats" <> <<0, 0, 0, 0, 0, 0, 0, 0, 100>>, <<5::64-little>>}
+        ]
+      end)
+
+      assert {:ok,
+              %{
+                latest_window_start: 100,
+                total_counters: 3,
+                estimated_allocated: 35
+              }} = HighContentionAllocator.stats(hca)
+    end
+
+    test "handles stats with no valid counter values" do
+      hca = HighContentionAllocator.new(MockRepo, "test_invalid")
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:get_range, fn _start_key, _end_key ->
+        [
+          {"test_invalid" <> <<0, 0, 0, 0, 0, 0, 0, 0, 0>>, "invalid_value"}
+        ]
+      end)
+
+      assert {:ok,
+              %{
+                latest_window_start: 0,
+                total_counters: 1,
+                estimated_allocated: 0
+              }} = HighContentionAllocator.stats(hca)
+    end
+
+    test "handles nil counter value during allocation" do
+      hca = HighContentionAllocator.new(MockRepo, "test_nil_counter", random_fn: deterministic_random_fn(5))
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 0)
+        :mock_txn
+      end)
+      # Return nil instead of a counter value
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 0)
+        nil
+      end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:get, fn _candidate_key, [snapshot: true] -> nil end)
+      |> expect(:put, fn _candidate_key, "", [no_write_conflict: true] -> :mock_txn end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} -> :mock_txn end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+
+    test "handles invalid counter value format during allocation" do
+      hca = HighContentionAllocator.new(MockRepo, "test_invalid_counter", random_fn: deterministic_random_fn(7))
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 0)
+        :mock_txn
+      end)
+      # Return invalid format instead of expected binary
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 0)
+        "invalid_binary_format"
+      end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:get, fn _candidate_key, [snapshot: true] -> nil end)
+      |> expect(:put, fn _candidate_key, "", [no_write_conflict: true] -> :mock_txn end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} -> :mock_txn end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "dynamic window sizing edge cases" do
+    test "uses 8192 window size for very large start values" do
+      # Start value >= 65535 should use window size 8192
+      hca = HighContentionAllocator.new(MockRepo, "test_large_window", random_fn: deterministic_random_fn(100))
+
+      counter_key = hca.counters_keyspace <> <<100_000::64-big>>
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      # Return counter at position 100,000 (>= 65535)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key, <<1::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 100_000)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 100_000)
+        <<1::64-little>>
+      end)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key, <<1::64-little>>}
+      end)
+      |> expect(:get, fn candidate_key, [snapshot: true] ->
+        # With window_size=8192 and random=100:
+        # Candidate = 100,000 + (100 - 1) = 100,099
+        assert_recent_key(candidate_key, hca, 100_099)
+        nil
+      end)
+      |> expect(:put, fn candidate_key, "", [no_write_conflict: true] ->
+        assert_recent_key(candidate_key, hca, 100_099)
+        :mock_txn
+      end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} ->
+        :mock_txn
+      end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "key encoding edge cases" do
+    test "handles counter key decoding with existing counter" do
+      hca = HighContentionAllocator.new(MockRepo, "test_decode")
+
+      # Simulate an existing counter at position 12345
+      counter_key = hca.counters_keyspace <> <<12_345::64-big>>
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key, <<50::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 12_345)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 12_345)
+        <<1::64-little>>
+      end)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key, <<50::64-little>>}
+      end)
+      |> expect(:get, fn _candidate_key, [snapshot: true] -> nil end)
+      |> expect(:put, fn _candidate_key, "", [no_write_conflict: true] -> :mock_txn end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} -> :mock_txn end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+
+    test "handles selector returning key outside counter range" do
+      hca = HighContentionAllocator.new(MockRepo, "test_outside")
+
+      # Selector returns a key that doesn't start with our counter prefix
+      outside_key = "other_prefix" <> <<0, 1, 2, 3>>
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} ->
+        {outside_key, <<100::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 0)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 0)
+        <<1::64-little>>
+      end)
+      |> expect(:select, fn %KeySelector{} ->
+        {outside_key, <<100::64-little>>}
+      end)
+      |> expect(:get, fn _candidate_key, [snapshot: true] -> nil end)
+      |> expect(:put, fn _candidate_key, "", [no_write_conflict: true] -> :mock_txn end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} -> :mock_txn end)
+
+      # Should default to start=0 when key is outside range
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "compact encoding" do
+    test "encodes small IDs with minimal bytes" do
+      # ID 0 should encode as <<1, 0>> (1 byte length + 1 byte value)
+      hca = HighContentionAllocator.new(MockRepo, "test_compact", random_fn: deterministic_random_fn(1))
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect_allocation_sequence(hca, 0, 1, 0)
+
+      assert {:ok, <<1, 0>>} = HighContentionAllocator.allocate(hca)
+    end
+
+    test "encodes larger IDs with multiple bytes" do
+      # ID 300 requires 2 bytes (256 + 44) -> <<2, 1, 44>>
+      hca = HighContentionAllocator.new(MockRepo, "test_large", random_fn: deterministic_random_fn(1))
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      # First: check current start (simulate window at 300)
+      |> expect(:select, fn %KeySelector{} ->
+        counter_key = hca.counters_keyspace <> <<300::64-big>>
+        {counter_key, <<1::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 300)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 300)
+        <<1::64-little>>
+      end)
+      |> expect(:select, fn %KeySelector{} ->
+        counter_key = hca.counters_keyspace <> <<300::64-big>>
+        {counter_key, <<1::64-little>>}
+      end)
+      |> expect(:get, fn candidate_key, [snapshot: true] ->
+        # Candidate = 300 + (1 - 1) = 300
+        assert_recent_key(candidate_key, hca, 300)
+        nil
+      end)
+      |> expect(:put, fn candidate_key, "", [no_write_conflict: true] ->
+        assert_recent_key(candidate_key, hca, 300)
+        :mock_txn
+      end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} ->
+        :mock_txn
+      end)
+
+      assert {:ok, <<2, 1, 44>>} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "concurrent window detection" do
+    test "retries when window advances concurrently" do
+      # Simulate concurrent window advancement during allocation
+      # First check: window at 0, second check: window at 64
+      hca = HighContentionAllocator.new(MockRepo, "test_concurrent", random_fn: deterministic_random_fn([10, 20]))
+
+      counter_key_0 = hca.counters_keyspace <> <<0::64-big>>
+      counter_key_64 = hca.counters_keyspace <> <<64::64-big>>
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      # First attempt: window at 0
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key_0, <<1::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 0)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 0)
+        <<1::64-little>>
+      end)
+      # Second check detects window advanced to 64
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key_64, <<1::64-little>>}
+      end)
+      # Retry: window at 64
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key_64, <<1::64-little>>}
+      end)
+      |> expect(:atomic, fn :add, key, <<1::64-little>> ->
+        assert_counter_key(key, hca, 64)
+        :mock_txn
+      end)
+      |> expect(:get, fn key, [snapshot: true] ->
+        assert_counter_key(key, hca, 64)
+        <<1::64-little>>
+      end)
+      |> expect(:select, fn %KeySelector{} ->
+        {counter_key_64, <<1::64-little>>}
+      end)
+      |> expect(:get, fn candidate_key, [snapshot: true] ->
+        # Candidate = 64 + (20 - 1) = 83
+        assert_recent_key(candidate_key, hca, 83)
+        nil
+      end)
+      |> expect(:put, fn candidate_key, "", [no_write_conflict: true] ->
+        assert_recent_key(candidate_key, hca, 83)
+        :mock_txn
+      end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} ->
+        :mock_txn
+      end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "allocate_many error handling" do
+    test "propagates error from failed allocation" do
+      hca = HighContentionAllocator.new(MockRepo, "test_error")
+
+      expect(MockRepo, :transact, fn _fun ->
+        {:error, :transaction_failed}
+      end)
+
+      assert {:error, :transaction_failed} = HighContentionAllocator.allocate_many(hca, 3)
+    end
+
+    test "handles rescue error during allocation" do
+      hca = HighContentionAllocator.new(MockRepo, "test_rescue")
+
+      expect(MockRepo, :transact, fn _fun ->
+        raise RuntimeError, "simulated transaction error"
+      end)
+
+      assert {:error, %RuntimeError{message: "simulated transaction error"}} =
+               HighContentionAllocator.allocate(hca)
+    end
+  end
+
+  describe "allocate/2 with existing transaction" do
+    test "allocates within existing transaction" do
+      hca = HighContentionAllocator.new(MockRepo, "test_txn", random_fn: deterministic_random_fn(10))
+
+      # Simulate being called within an existing transaction
+      expect_allocation_sequence(MockRepo, hca, 0, 1, 9)
+
+      # Call 2-arity version with a mock transaction context
+      assert encoded_result = HighContentionAllocator.allocate(hca, :mock_txn_context)
+
+      # Verify it's the expected candidate encoded as compact binary
+      # Candidate = 0 + (10 - 1) = 9
+      assert encoded_result == <<0x01, 0x09>>
+    end
+  end
+
+  describe "custom random functions" do
+    test "uses custom random function for all allocations" do
+      # Test that random function is called with correct window size
+      call_count = :counters.new(1, [])
+      :counters.put(call_count, 1, 0)
+
+      custom_random = fn size ->
+        count = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        # Verify window size is correct for initial allocations
+        if count == 0 do
+          assert size == 64
+        end
+
+        # Return middle of window
+        div(size, 2)
+      end
+
+      hca = HighContentionAllocator.new(MockRepo, "test_custom", random_fn: custom_random)
+
+      MockRepo
+      |> expect(:transact, fn fun -> fun.() end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:atomic, fn :add, _key, <<1::64-little>> -> :mock_txn end)
+      |> expect(:get, fn _key, [snapshot: true] -> <<1::64-little>> end)
+      |> expect(:select, fn %KeySelector{} -> nil end)
+      |> expect(:get, fn _candidate_key, [snapshot: true] -> nil end)
+      |> expect(:put, fn _candidate_key, "", [no_write_conflict: true] -> :mock_txn end)
+      |> expect(:add_write_conflict_range, fn {_start_key, _end_key} -> :mock_txn end)
+
+      assert {:ok, _encoded_result} = HighContentionAllocator.allocate(hca)
+
+      # Verify custom random was called
+      assert :counters.get(call_count, 1) == 1
+    end
+  end
 end

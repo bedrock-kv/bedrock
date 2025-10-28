@@ -62,6 +62,21 @@ defmodule Bedrock.DataPlane.LogTest do
     end
   end
 
+  describe "lock_for_recovery/2" do
+    test "delegates to Worker with proper arguments" do
+      test_pid = self()
+      epoch = 42
+
+      # Spawn a process that will make the call and we'll capture the message
+      spawn(fn ->
+        Log.lock_for_recovery(test_pid, epoch)
+      end)
+
+      # Use our helper macro to assert on the exact call message format
+      assert_call_received({:lock_for_recovery, 42})
+    end
+  end
+
   describe "module structure" do
     test "initial_transaction returns properly encoded Transaction with zero version and empty writes" do
       initial_tx = Log.initial_transaction()

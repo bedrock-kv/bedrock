@@ -140,5 +140,29 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReadsTest do
 
       assert {:ok, {^expected_merged_data, false}} = result
     end
+
+    test "returns failure when read version acquisition fails" do
+      state = create_test_state(read_version: nil)
+
+      next_read_version_fn = fn ^state -> {:error, :sequencer_down} end
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      {^state, {:failure, %{sequencer_down: []}}} = RangeReads.get_range(state, {"a", "z"}, 10, opts)
+    end
+  end
+
+  describe "get_range_selectors/4" do
+    test "returns failure when read version acquisition fails" do
+      state = create_test_state(read_version: nil)
+
+      next_read_version_fn = fn ^state -> {:error, :sequencer_unavailable} end
+      opts = [next_read_version_fn: next_read_version_fn]
+
+      start_selector = %Bedrock.KeySelector{key: "a", or_equal: true, offset: 0}
+      end_selector = %Bedrock.KeySelector{key: "z", or_equal: false, offset: 0}
+
+      {^state, {:failure, %{sequencer_unavailable: []}}} =
+        RangeReads.get_range_selectors(state, start_selector, end_selector, 10, opts)
+    end
   end
 end

@@ -64,6 +64,7 @@ jobs:
       run: mix compile --warnings-as-errors
 
     - name: Check Formatting
+      if: matrix.elixir == '1.19.4'
       run: mix format --check-formatted
 
     - name: Credo

@@ -11,8 +11,6 @@ defmodule Bedrock.DataPlane.Resolver do
   They handle out-of-order transactions through a version-indexed waiting queue that
   ensures consistent conflict detection regardless of network timing variations.
 
-  For detailed conflict detection concepts and architectural integration, see the
-  [Resolver documentation](../../../../docs/components/resolver.md).
   """
 
   alias Bedrock.DataPlane.Transaction

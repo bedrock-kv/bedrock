@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       storage_teams: [
         %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
         %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-        %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
+        %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
       ]
     }
   end
@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         storage_teams: [
           %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
           %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-          %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
+          %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
         ]
       }
 

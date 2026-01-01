@@ -16,7 +16,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Reading do
 
   # Context struct containing only what Reading needs from state
   defmodule ReadingContext do
-    @moduledoc false
+    @moduledoc """
+    Context struct containing state needed for read operations.
+    """
     defstruct [:index_manager, :database]
 
     @type t :: %__MODULE__{

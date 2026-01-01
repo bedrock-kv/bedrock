@@ -19,8 +19,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase do
   epoch (this director has been superseded). Transitions to log replay with complete
   storage service assignments.
 
-  See the Storage Recruitment section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the conservative assignment strategy and data preservation approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

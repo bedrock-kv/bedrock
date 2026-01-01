@@ -1,5 +1,6 @@
 defmodule Bedrock.KeyspaceTest do
   use ExUnit.Case, async: true
+  use ExUnitProperties
 
   alias Bedrock.Keyspace
 
@@ -420,6 +421,232 @@ defmodule Bedrock.KeyspaceTest do
       assert_raise ArgumentError, fn ->
         Keyspace.unpack(posts_keyspace, user_key)
       end
+    end
+  end
+
+  describe "property-based tests" do
+    property "pack and unpack are inverses for any binary suffix" do
+      check all(
+              prefix <- binary(min_length: 0, max_length: 20),
+              suffix <- binary(min_length: 0, max_length: 50)
+            ) do
+        keyspace = Keyspace.new(prefix)
+        packed = Keyspace.pack(keyspace, suffix)
+        unpacked = Keyspace.unpack(keyspace, packed)
+        assert unpacked == suffix
+      end
+    end
+
+    property "contains? returns true for all packed keys" do
+      check all(
+              prefix <- binary(min_length: 1, max_length: 20),
+              suffix <- binary(min_length: 0, max_length: 50)
+            ) do
+        keyspace = Keyspace.new(prefix)
+        packed = Keyspace.pack(keyspace, suffix)
+        assert Keyspace.contains?(keyspace, packed)
+      end
+    end
+
+    property "packed keys maintain prefix ordering" do
+      check all(
+              prefix <- binary(min_length: 1, max_length: 10),
+              suffix1 <- binary(max_length: 20),
+              suffix2 <- binary(max_length: 20)
+            ) do
+        keyspace = Keyspace.new(prefix)
+        packed1 = Keyspace.pack(keyspace, suffix1)
+        packed2 = Keyspace.pack(keyspace, suffix2)
+
+        # Both should start with prefix
+        assert Keyspace.contains?(keyspace, packed1)
+        assert Keyspace.contains?(keyspace, packed2)
+
+        # Ordering should be preserved
+        cond do
+          suffix1 < suffix2 -> assert packed1 < packed2
+          suffix1 > suffix2 -> assert packed1 > packed2
+          true -> assert packed1 == packed2
+        end
+      end
+    end
+
+    property "partition creates valid nested keyspaces" do
+      check all(
+              base_prefix <- binary(min_length: 0, max_length: 10),
+              partition_name <- binary(min_length: 1, max_length: 10)
+            ) do
+        base = Keyspace.new(base_prefix)
+        nested = Keyspace.partition(base, partition_name)
+
+        # Nested prefix should start with base prefix
+        assert String.starts_with?(Keyspace.prefix(nested), Keyspace.prefix(base))
+
+        # Any key in nested should also be in base
+        test_suffix = "test_data"
+        nested_key = Keyspace.pack(nested, test_suffix)
+
+        if base_prefix != <<>> do
+          assert Keyspace.contains?(base, nested_key)
+        end
+      end
+    end
+
+    property "add creates deterministic keyspaces" do
+      check all(
+              prefix <- binary(min_length: 0, max_length: 10),
+              item <- one_of([binary(), integer(), constant(nil)])
+            ) do
+        base = Keyspace.new(prefix)
+        ks1 = Keyspace.add(base, item)
+        ks2 = Keyspace.add(base, item)
+
+        # Adding the same item twice should produce identical keyspaces
+        assert Keyspace.prefix(ks1) == Keyspace.prefix(ks2)
+      end
+    end
+
+    property "prefix returns the exact prefix provided" do
+      check all(prefix <- binary(min_length: 0, max_length: 50)) do
+        keyspace = Keyspace.new(prefix)
+        assert Keyspace.prefix(keyspace) == prefix
+      end
+    end
+  end
+
+  describe "edge cases with encoding" do
+    test "handles keyspace with tuple encoding for complex keys" do
+      keyspace = Keyspace.new(<<"users">>, key_encoding: Bedrock.Encoding.Tuple)
+
+      # Pack a complex tuple key
+      user_id = {123, "active", [1, 2, 3]}
+      packed = Keyspace.pack(keyspace, user_id)
+
+      # Should contain the packed key
+      assert Keyspace.contains?(keyspace, packed)
+
+      # Unpack should return the original tuple
+      unpacked = Keyspace.unpack(keyspace, packed)
+      assert unpacked == user_id
+    end
+
+    test "handles keyspace with value encoding" do
+      keyspace =
+        Keyspace.new(<<"data">>,
+          key_encoding: Bedrock.Encoding.Tuple,
+          value_encoding: Bedrock.Encoding.Tuple
+        )
+
+      # Verify encodings are set
+      assert keyspace.key_encoding == Bedrock.Encoding.Tuple
+      assert keyspace.value_encoding == Bedrock.Encoding.Tuple
+    end
+
+    test "partition preserves encoding options" do
+      base =
+        Keyspace.new(<<"base">>,
+          key_encoding: Bedrock.Encoding.Tuple,
+          value_encoding: Bedrock.Encoding.Tuple
+        )
+
+      # Partition without options should preserve base encoding
+      nested = Keyspace.partition(base, {"section"})
+
+      # The nested keyspace inherits the encoding
+      assert nested.key_encoding == Bedrock.Encoding.Tuple
+      assert nested.value_encoding == Bedrock.Encoding.Tuple
+    end
+
+    test "partition can override encoding options" do
+      base = Keyspace.new(<<"base">>, key_encoding: Bedrock.Encoding.Tuple)
+
+      nested = Keyspace.partition(base, {"section"}, value_encoding: Bedrock.Encoding.Tuple)
+
+      assert nested.key_encoding == Bedrock.Encoding.Tuple
+      assert nested.value_encoding == Bedrock.Encoding.Tuple
+    end
+
+    test "raises when packing non-binary key without encoding" do
+      keyspace = Keyspace.new(<<"test">>)
+
+      assert_raise UndefinedFunctionError, fn ->
+        Keyspace.pack(keyspace, {1, 2, 3})
+      end
+    end
+
+    test "raises when partitioning with non-binary name and no key encoding" do
+      keyspace = Keyspace.new(<<"test">>)
+
+      assert_raise ArgumentError, ~r/Keyspace does not support key encoding/, fn ->
+        Keyspace.partition(keyspace, {1, 2, 3})
+      end
+    end
+
+    test "partition can be called on non-keyspace that implements ToKeyspace" do
+      # Binary implements ToKeyspace protocol
+      result = Keyspace.partition(<<"prefix">>, <<"suffix">>)
+
+      assert result.prefix == <<"prefix", "suffix">>
+    end
+
+    test "raises when unpacking key from wrong keyspace" do
+      ks1 = Keyspace.new(<<"keyspace1">>)
+      ks2 = Keyspace.new(<<"keyspace2">>)
+
+      key_in_ks1 = Keyspace.pack(ks1, <<"data">>)
+
+      assert_raise ArgumentError, "Key does not belong to this keyspace", fn ->
+        Keyspace.unpack(ks2, key_in_ks1)
+      end
+    end
+  end
+
+  describe "ToKeyRange protocol" do
+    test "converts keyspace to key range correctly" do
+      keyspace = Keyspace.new(<<"test">>)
+      {start_key, end_key} = Bedrock.ToKeyRange.to_key_range(keyspace)
+
+      assert start_key == <<"test">>
+      assert end_key == <<"tesu">>
+    end
+
+    test "handles binary prefixes with 0xFF correctly" do
+      # A prefix ending in 0xFF should increment to next valid byte
+      keyspace = Keyspace.new(<<1, 2, 0xFF>>)
+      {start_key, end_key} = Bedrock.ToKeyRange.to_key_range(keyspace)
+
+      assert start_key == <<1, 2, 0xFF>>
+      assert end_key == <<1, 3>>
+    end
+  end
+
+  describe "Inspect and String protocols" do
+    test "inspect shows hex representation of prefix" do
+      keyspace = Keyspace.new(<<0x12, 0x34, 0x56>>)
+      inspected = inspect(keyspace)
+
+      assert inspected =~ "#Keyspace<"
+      assert inspected =~ "0x123456"
+    end
+
+    test "inspect shows encoding information when present" do
+      keyspace =
+        Keyspace.new(<<"test">>,
+          key_encoding: Bedrock.Encoding.Tuple,
+          value_encoding: Bedrock.Encoding.Tuple
+        )
+
+      inspected = inspect(keyspace)
+      assert inspected =~ "keys:Tuple"
+      assert inspected =~ "values:Tuple"
+    end
+
+    test "to_string creates readable representation" do
+      keyspace = Keyspace.new(<<"my_prefix">>)
+      str = to_string(keyspace)
+
+      assert str =~ "Keyspace<"
+      assert str =~ inspect(<<"my_prefix">>)
     end
   end
 end

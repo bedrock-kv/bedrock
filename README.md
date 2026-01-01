@@ -1,7 +1,7 @@
 # Bedrock
 
-[![Elixir CI](https://github.com/jallum/bedrock/actions/workflows/elixir_ci.yaml/badge.svg)](https://github.com/jallum/bedrock/actions/workflows/elixir_ci.yaml)
-[![Coverage Status](https://coveralls.io/repos/github/jallum/bedrock/badge.png?branch=develop)](https://coveralls.io/github/jallum/bedrock?branch=develop)
+[![Elixir CI](https://github.com/bedrock-kv/bedrock/actions/workflows/elixir_ci.yaml/badge.svg)](https://github.com/bedrock-kv/bedrock/actions/workflows/elixir_ci.yaml)
+[![Coverage Status](https://coveralls.io/repos/github/bedrock-kv/bedrock/badge.png?branch=develop)](https://coveralls.io/github/bedrock-kv/bedrock?branch=develop)
 
 Bedrock is an embedded, distributed key-value store with guarantees beyond ACID.
 It features consistent reads, strict serialization, transactions across the
@@ -15,7 +15,7 @@ by adding `bedrock` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.3"}
+    {:bedrock, "~> 0.4"}
   ]
 end
 ```

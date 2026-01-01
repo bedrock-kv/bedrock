@@ -62,7 +62,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       Keyword.merge(
         [
           lock_token: lock_token,
-          key_range: {"", :end},
+          key_range: {"", <<0xFF, 0xFF>>},
           epoch: 1,
           last_version: Version.zero(),
           director: self(),
@@ -603,6 +603,25 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
         assert map_size(final_state.waiting) == 0
         assert final_state.last_version == List.last(expected_versions)
       end
+    end
+  end
+
+  describe "timeout handling" do
+    test "returns timeout failure when call exceeds timeout" do
+      %{server: server} = start_test_server()
+
+      # Call with an impossibly short timeout to force a timeout
+      result =
+        Resolver.resolve_transactions(
+          server,
+          1,
+          Version.zero(),
+          Version.from_integer(1),
+          [],
+          timeout: 0
+        )
+
+      assert {:failure, :timeout, ^server} = result
     end
   end
 end

@@ -18,8 +18,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VersionDeterminationPhase do
   Transitions to log recruitment with the established recovery baseline and list of teams
   requiring rebalancing or repair during data distribution.
 
-  See the Version Determination section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the fault-tolerant algorithm and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

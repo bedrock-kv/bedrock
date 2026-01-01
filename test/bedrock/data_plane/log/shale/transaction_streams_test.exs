@@ -53,5 +53,52 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       assert [transaction] = Enum.to_list(stream)
       assert TransactionTestSupport.extract_log_version(transaction) == Version.from_integer(2)
     end
+
+    test "returns error when given empty segment list" do
+      assert {:error, :not_found} = TransactionStreams.from_segments([], Version.from_integer(1))
+    end
+
+    test "returns error when no segments contain transactions after target version" do
+      # We need segments that exist but have no transactions after the target
+      transaction_1 = create_test_transaction(1, %{"key1" => "value1"})
+      segment = create_test_segment("test_path", 1, [transaction_1])
+
+      # Target version is higher than all transactions, so we get :not_found
+      assert {:error, :not_found} = TransactionStreams.from_segments([segment], Version.from_integer(100))
+    end
+
+    test "returns error when all segments have only transactions at or before target version" do
+      # Create segments where all transactions match the target version (not after)
+      transaction_1 = create_test_transaction(1, %{"key1" => "value1"})
+      transaction_2 = create_test_transaction(2, %{"key2" => "value2"})
+
+      segment1 = create_test_segment("test_path1", 1, [transaction_1])
+      segment2 = create_test_segment("test_path2", 2, [transaction_2])
+
+      # Target version 2 means we want transactions > 2, but highest is 2
+      assert {:error, :not_found} = TransactionStreams.from_segments([segment1, segment2], Version.from_integer(2))
+    end
+  end
+
+  describe "TransactionStreams.from_list_of_transactions/1" do
+    test "creates stream from transaction list function" do
+      transactions = [
+        create_test_transaction(1, %{"key1" => "value1"}),
+        create_test_transaction(2, %{"key2" => "value2"})
+      ]
+
+      transactions_fn = fn -> transactions end
+      stream = TransactionStreams.from_list_of_transactions(transactions_fn)
+
+      assert Enum.count(stream) == 2
+    end
+
+    test "handles nil from transaction function" do
+      transactions_fn = fn -> nil end
+      stream = TransactionStreams.from_list_of_transactions(transactions_fn)
+
+      # Stream should be empty when function returns nil
+      assert Enum.to_list(stream) == []
+    end
   end
 end

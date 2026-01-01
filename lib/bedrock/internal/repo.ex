@@ -2,7 +2,8 @@ defmodule Bedrock.Internal.Repo do
   import Bedrock.Internal.GenServer.Calls, only: [cast: 2]
   import Bitwise
 
-  alias Bedrock.Cluster.Gateway
+  alias Bedrock.Cluster.Link
+  alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
 
   @type transaction :: pid()
@@ -202,53 +203,74 @@ defmodule Bedrock.Internal.Repo do
   @spec rollback(reason :: term()) :: no_return()
   def rollback(reason), do: throw({__MODULE__, :rollback, reason})
 
+  @doc """
+  Executes a function within a transaction context with automatic retry logic.
+
+  ## Options
+
+  - `:retry_limit` - Maximum number of retry attempts (default: unlimited)
+  - `:transaction_system_layout` - Use a specific TSL instead of fetching from coordinator
+  """
   @spec transact(cluster :: module(), repo :: module(), (-> result) | (module() -> result), opts :: keyword()) :: result
         when result: any()
   def transact(cluster, repo, fun, opts \\ []) do
     case txn(repo) do
       nil ->
-        start_new_transaction(cluster, repo, fun, {:transaction, repo}, opts)
+        run_new_transaction(cluster, repo, fun, {:transaction, repo}, opts)
 
       existing_txn ->
-        start_nested_transaction(repo, existing_txn, fun)
+        run_nested_transaction(repo, existing_txn, fun)
     end
   end
 
-  defp start_new_transaction(cluster, repo, fun, tx_key, opts) do
+  defp run_new_transaction(cluster, repo, fun, tx_key, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
+    provided_tsl = Keyword.get(opts, :transaction_system_layout)
+    link = if provided_tsl, do: nil, else: cluster.link!()
 
-    start_retryable_transaction(repo, fun, 0, retry_limit, fn ->
-      {:ok, gateway} = cluster.fetch_gateway()
-
-      case Gateway.begin_transaction(gateway) do
-        {:ok, txn} ->
-          Process.put(tx_key, txn)
-
-          txn
-
-        {:error, reason} ->
-          throw({__MODULE__, nil, :retryable_failure, reason})
-      end
+    run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
+      tsl = fetch_tsl_for_transaction(provided_tsl, link)
+      start_transaction_builder(tsl, tx_key)
     end)
   after
     Process.delete(tx_key)
   end
 
-  defp start_nested_transaction(repo, txn, fun) do
-    start_retryable_transaction(repo, fun, 0, nil, fn ->
+  defp run_nested_transaction(repo, txn, fun) do
+    run_retryable_transaction(repo, fun, 0, nil, fn ->
       GenServer.call(txn, :nested_transaction, :infinity)
       txn
     end)
   end
 
-  defp start_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
+  defp fetch_tsl_for_transaction(nil, link) do
+    case Link.fetch_transaction_system_layout(link) do
+      {:ok, tsl} -> tsl
+      {:error, reason} -> throw({__MODULE__, nil, :retryable_failure, reason})
+    end
+  end
+
+  defp fetch_tsl_for_transaction(tsl, _link), do: tsl
+
+  defp start_transaction_builder(tsl, tx_key) do
+    case TransactionBuilder.start_link(transaction_system_layout: tsl) do
+      {:ok, txn} ->
+        Process.put(tx_key, txn)
+        txn
+
+      {:error, reason} ->
+        throw({__MODULE__, nil, :retryable_failure, reason})
+    end
+  end
+
+  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
     run_transaction(repo, restart_fn.(), fun)
   catch
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
       wait_befor_retry(retry_count)
-      start_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
+      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
 
     {__MODULE__, failed_txn, :rollback, reason} ->
       try_to_rollback(failed_txn)
@@ -256,7 +278,7 @@ defmodule Bedrock.Internal.Repo do
 
     {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->
       try_to_rollback(failed_txn)
-      raise Bedrock.TransactionError, reason: reason, operation: operation, key: key
+      raise RuntimeError, "Transaction operation #{operation} failed for key #{inspect(key)}: #{inspect(reason)}"
   end
 
   defp run_transaction(repo, txn, fun) do
@@ -284,9 +306,8 @@ defmodule Bedrock.Internal.Repo do
   defp enforce_retry_limit(retry_count, retry_limit, _reason) when retry_count < retry_limit, do: :ok
 
   defp enforce_retry_limit(_retry_count, retry_limit, reason) do
-    raise Bedrock.TransactionError,
-      reason: "Retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}",
-      retry_limit: retry_limit
+    raise RuntimeError,
+          "Transaction retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}"
   end
 
   defp try_to_commit(txn, result) do

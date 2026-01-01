@@ -167,13 +167,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     end
   end
 
-  def handle_call({:register_gateway, gateway_pid, compact_services, capabilities}, from, t) do
-    # Always subscribe gateway for TSL updates (monitor to clean up on death)
-    Process.monitor(gateway_pid)
-    updated_state = add_tsl_subscriber(t, gateway_pid)
+  def handle_call({:register_node_resources, client_pid, compact_services, capabilities}, from, t) do
+    # Always subscribe client for TSL updates (monitor to clean up on death)
+    Process.monitor(client_pid)
+    updated_state = add_tsl_subscriber(t, client_pid)
 
     # Expand compact services to full format
-    caller_node = node(gateway_pid)
+    caller_node = node(client_pid)
     expanded_services = expand_compact_services(compact_services, caller_node)
 
     case updated_state.leader_node do
@@ -226,10 +226,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     if_result =
       if new_leader == t.my_node do
-        # We became leader - wait for first consensus to ensure state is fully processed
-        trace_leader_waiting_for_consensus()
+        # We became leader - normally wait for first consensus to ensure state is fully processed
+        updated_with_state = put_leader_startup_state(updated_t, :leader_waiting_consensus)
 
-        put_leader_startup_state(updated_t, :leader_waiting_consensus)
+        # Check if we have any transactions waiting for consensus
+        # In a cold boot scenario, waiting_list will be empty and we should proceed immediately
+        if map_size(updated_with_state.waiting_list) == 0 do
+          # No transactions to wait for - proceed directly to director startup
+          try_to_start_director_after_first_consensus(updated_with_state)
+        else
+          # Transactions exist - wait for consensus_reached as normal
+          trace_leader_waiting_for_consensus()
+          updated_with_state
+        end
       else
         # Someone else is leader - clean up director if we have one
         updated_t
@@ -452,11 +461,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     # Check if Raft log contains any TSL update transactions
     # This indicates we have persisted TSL that should be restored
     log = Raft.log(t.raft)
-    newest_safe_txn_id = Log.newest_safe_transaction_id(log)
 
     # Look for any TSL update commands in committed transactions
     log
-    |> Log.transactions_to(newest_safe_txn_id)
+    |> Log.transactions_to(:newest_safe)
     |> Enum.any?(fn {_txn_id, command} ->
       match?({:update_transaction_system_layout, _}, command)
     end)

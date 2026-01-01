@@ -46,5 +46,59 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.TreeTest do
       # "key4" beyond all pages goes to rightmost (0)
       assert Tree.page_for_key(tree, "key4") == 0
     end
+
+    test "adds page 0 with no keys to tree" do
+      tree = :gb_trees.empty()
+      # Empty page (id 0, no keys) - has nil right_key
+      page = Page.new(0, [])
+
+      result_tree = Tree.add_page_to_tree(tree, page)
+
+      # Page 0 with no right key should be added at empty binary key
+      assert :gb_trees.lookup(<<>>, result_tree) == {:value, 0}
+    end
+
+    test "does not add non-zero page with no keys" do
+      tree = :gb_trees.empty()
+      # Non-zero page ID with no keys (nil right_key) - should not be added
+      page = Page.new(5, [])
+
+      result_tree = Tree.add_page_to_tree(tree, page)
+
+      # Tree should remain unchanged (no entry for this page)
+      assert result_tree == tree
+    end
+  end
+
+  describe "remove_page_from_tree/2" do
+    test "removes page 0 with no keys from tree" do
+      tree = :gb_trees.empty()
+      page = Page.new(0, [])
+
+      # First add it
+      tree = Tree.add_page_to_tree(tree, page)
+      assert :gb_trees.lookup(<<>>, tree) == {:value, 0}
+
+      # Then remove it
+      result_tree = Tree.remove_page_from_tree(tree, page)
+
+      # Should be removed
+      assert :gb_trees.lookup(<<>>, result_tree) == :none
+    end
+
+    test "does not remove non-zero page with no keys" do
+      tree = :gb_trees.empty()
+      # Add a regular entry first
+      tree = :gb_trees.enter("some_key", 10, tree)
+
+      # Try to remove a non-zero page with no keys (nil right_key)
+      page = Page.new(5, [])
+
+      result_tree = Tree.remove_page_from_tree(tree, page)
+
+      # Tree should remain unchanged
+      assert result_tree == tree
+      assert :gb_trees.lookup("some_key", result_tree) == {:value, 10}
+    end
   end
 end

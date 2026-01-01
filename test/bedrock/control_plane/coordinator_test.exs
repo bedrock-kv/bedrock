@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
             {:"$gen_call", from, {:deregister_services, _service_ids}} ->
               GenServer.reply(from, {:ok, :txn_abc})
 
-            {:"$gen_call", from, {:register_gateway, _pid, _services, _capabilities}} ->
+            {:"$gen_call", from, {:register_node_resources, _pid, _services, _capabilities}} ->
               GenServer.reply(from, {:ok, :txn_def})
           after
             1000 -> :timeout
@@ -126,24 +126,24 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       assert {:ok, :txn_abc} = Coordinator.deregister_services(coordinator, service_ids, 1800)
     end
 
-    test "register_gateway/4 with default timeout", %{coordinator: coordinator} do
-      gateway_pid = self()
+    test "register_node_resources/4 with default timeout", %{coordinator: coordinator} do
+      client_pid = self()
       compact_services = [{:log, :log_server}, {:storage, :storage_server}]
       capabilities = [:can_host_logs, :can_host_storage]
 
       assert {:ok, :txn_def} =
-               Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
+               Coordinator.register_node_resources(coordinator, client_pid, compact_services, capabilities)
     end
 
-    test "register_gateway/5 with custom timeout", %{coordinator: coordinator} do
-      gateway_pid = self()
+    test "register_node_resources/5 with custom timeout", %{coordinator: coordinator} do
+      client_pid = self()
       compact_services = [{:log, :log_server}]
       capabilities = [:can_host_logs]
 
       assert {:ok, :txn_def} =
-               Coordinator.register_gateway(
+               Coordinator.register_node_resources(
                  coordinator,
-                 gateway_pid,
+                 client_pid,
                  compact_services,
                  capabilities,
                  4000
@@ -228,10 +228,10 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
             {:"$gen_call", from, {:deregister_services, service_ids}} ->
               GenServer.reply(from, {:ok, {:deregistered, length(service_ids)}})
 
-            {:"$gen_call", from, {:register_gateway, _pid, services, capabilities}} ->
+            {:"$gen_call", from, {:register_node_resources, _pid, services, capabilities}} ->
               GenServer.reply(
                 from,
-                {:ok, {:gateway_registered, length(services), length(capabilities)}}
+                {:ok, {:node_resources_registered, length(services), length(capabilities)}}
               )
           after
             1000 -> :timeout
@@ -256,8 +256,8 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       compact_services = [{:log, :log_1}, {:log, :log_2}, {:storage, :storage_1}]
       capabilities = [:can_host_logs, :can_host_storage, :high_memory]
 
-      assert {:ok, {:gateway_registered, 3, 3}} =
-               Coordinator.register_gateway(coordinator, gateway_pid, compact_services, capabilities)
+      assert {:ok, {:node_resources_registered, 3, 3}} =
+               Coordinator.register_node_resources(coordinator, gateway_pid, compact_services, capabilities)
     end
   end
 

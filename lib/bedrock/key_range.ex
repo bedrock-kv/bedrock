@@ -4,12 +4,16 @@ defmodule Bedrock.KeyRange do
 
   A key range is represented as a tuple `{start_key, end_key}` where:
   - `start_key` is inclusive
-  - `end_key` is exclusive, or the atom `:end` for unbounded ranges
+  - `end_key` is exclusive
+
+  Note: The atom `:end` is accepted in the public API for ergonomics and is
+  automatically converted to the end-of-keyspace sentinel `<<0xFF, 0xFF>>` by
+  `Bedrock.key_range/2`. Internally, all ranges use the binary sentinel.
   """
 
   alias Bedrock.Key
 
-  @type t :: {Key.t(), Key.t() | :end}
+  @type t :: {Key.t(), Key.t()}
 
   @doc """
   Returns a range tuple {start, end} for all keys that start with the given prefix.
@@ -49,11 +53,10 @@ defmodule Bedrock.KeyRange do
       iex> KeyRange.overlaps?({"a", "b"}, {"c", "d"})
       false
 
-      iex> KeyRange.overlaps?({"a", "c"}, {"b", :end})
+      iex> KeyRange.overlaps?({"a", "c"}, {"b", Bedrock.end_of_keyspace()})
       true
   """
   @spec overlap?(t(), t()) :: boolean()
-  def overlap?({_start1, end1}, {start2, :end}), do: start2 <= end1
   def overlap?({start1, end1}, {start2, end2}), do: start1 < end2 and start2 < end1
 
   @doc """
@@ -69,10 +72,9 @@ defmodule Bedrock.KeyRange do
       iex> KeyRange.contains?({"a", "c"}, "c")
       false
 
-      iex> KeyRange.contains?({"a", :end}, "z")
+      iex> KeyRange.contains?({"a", Bedrock.end_of_keyspace()}, "z")
       true
   """
-  @spec contains?(t(), Key.t() | :end) :: boolean()
-  def contains?({min_key, :end}, key), do: key >= min_key
+  @spec contains?(t(), Key.t()) :: boolean()
   def contains?({min_key, max_key_ex}, key), do: key >= min_key and key < max_key_ex
 end

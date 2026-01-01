@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.Segment do
-  @moduledoc false
+  @moduledoc """
+  Represents a segment of the Shale transaction log.
+  """
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Transaction

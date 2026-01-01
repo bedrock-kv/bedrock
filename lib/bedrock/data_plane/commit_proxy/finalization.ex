@@ -604,10 +604,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> Enum.map(fn {log_id, _log_tags} -> log_id end)
   end
 
-  @spec ranges_intersect?(Bedrock.key(), Bedrock.key() | :end, Bedrock.key(), Bedrock.key() | :end) :: boolean()
-  defp ranges_intersect?(_start1, :end, _start2, :end), do: true
-  defp ranges_intersect?(start1, :end, _start2, end2), do: start1 < end2
-  defp ranges_intersect?(_start1, end1, start2, :end), do: end1 > start2
+  @spec ranges_intersect?(Bedrock.key(), Bedrock.key(), Bedrock.key(), Bedrock.key()) :: boolean()
   defp ranges_intersect?(start1, end1, start2, end2), do: start1 < end2 and end1 > start2
 
   # ============================================================================

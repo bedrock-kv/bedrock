@@ -19,8 +19,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
 
   Transitions to proxy startup once the sequencer is operational and ready.
 
-  See the Sequencer Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the ordering problem and startup process.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

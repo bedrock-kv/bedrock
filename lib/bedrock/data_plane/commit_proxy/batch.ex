@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batch do
-  @moduledoc false
+  @moduledoc """
+  Represents a batch of transactions being processed by the commit proxy.
+  """
 
   alias Bedrock.DataPlane.Transaction
 

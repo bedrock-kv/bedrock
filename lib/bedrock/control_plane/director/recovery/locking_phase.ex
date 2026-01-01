@@ -16,8 +16,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   The recovery path is determined by whether the old layout contained logs: no logs means
   first-time initialization, logs present means recovery from existing data.
 
-  See the Service Locking section in `docs/knowlege_base/02-deep/recovery-narrative.md` for
-  detailed explanation of the recovery flow and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

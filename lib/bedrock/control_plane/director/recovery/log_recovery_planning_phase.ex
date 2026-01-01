@@ -17,8 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
 
   Transitions to vacancy creation with the selected logs and established version vector.
 
-  See the Log Recovery Planning section in `docs/knowlege_base/02-deep/recovery-narrative.md` 
-  for detailed explanation of the shard-aware planning algorithm and architectural rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

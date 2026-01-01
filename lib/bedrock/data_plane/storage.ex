@@ -1,5 +1,9 @@
 defmodule Bedrock.DataPlane.Storage do
-  @moduledoc false
+  @moduledoc """
+  Storage service for the data plane.
+
+  Storage nodes persist key-value data and handle range-based queries.
+  """
 
   # Removed: import Bedrock.Internal.GenServer.Calls
 

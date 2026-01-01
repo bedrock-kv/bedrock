@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.Database do
-  @moduledoc false
+  @moduledoc """
+  Database handle for Olivine storage, combining data and index databases.
+  """
 
   alias Bedrock.DataPlane.Storage.Olivine.DataDatabase
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page

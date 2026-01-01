@@ -15,8 +15,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
   startup fails since conflict detection is fundamental to transaction isolation
   guarantees.
 
-  See the Resolver Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the concurrency control problem and mapping algorithms.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

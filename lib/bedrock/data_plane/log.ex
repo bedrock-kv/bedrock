@@ -1,5 +1,9 @@
 defmodule Bedrock.DataPlane.Log do
-  @moduledoc false
+  @moduledoc """
+  Transaction log service for the data plane.
+
+  Logs store committed transactions in order and support replication across nodes.
+  """
   use Bedrock.Internal.GenServerApi
 
   # EncodedTransaction removed - using Transaction binary format

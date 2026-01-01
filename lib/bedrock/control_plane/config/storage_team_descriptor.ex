@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Config.StorageTeamDescriptor do
-  @moduledoc false
+  @moduledoc """
+  Describes a storage team's configuration, including the key range and replicas.
+  """
 
   alias Bedrock.DataPlane.Storage
 

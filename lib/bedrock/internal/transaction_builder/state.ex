@@ -1,5 +1,7 @@
 defmodule Bedrock.Internal.TransactionBuilder.State do
-  @moduledoc false
+  @moduledoc """
+  Internal state structure for transaction building operations.
+  """
 
   alias Bedrock.Internal.TransactionBuilder.LayoutIndex
   alias Bedrock.Internal.TransactionBuilder.Tx

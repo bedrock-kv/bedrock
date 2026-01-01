@@ -18,8 +18,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   Always succeeds since it only creates in-memory structures. Transitions to
   log recruitment to begin service assignment.
 
-  See the New Cluster Initialization section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the initialization flow and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

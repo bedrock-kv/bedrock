@@ -19,8 +19,6 @@ defmodule Bedrock.DataPlane.CommitProxy do
   and require explicit unlocking through `recover_from/3` before accepting transaction
   commits, ensuring proper coordination during cluster recovery scenarios.
 
-  For detailed architectural concepts and design reasoning, see the
-  [Commit Proxy documentation](../../../../docs/components/commit-proxy.md).
   """
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server

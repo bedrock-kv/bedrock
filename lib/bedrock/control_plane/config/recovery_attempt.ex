@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
-  @moduledoc false
+  @moduledoc """
+  Represents an ongoing recovery attempt with its current state and progress.
+  """
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor

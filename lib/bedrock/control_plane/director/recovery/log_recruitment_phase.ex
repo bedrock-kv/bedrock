@@ -20,8 +20,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   epoch (this director has been superseded). Transitions to storage recruitment with
   complete log service assignments.
 
-  See the Log Recruitment section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the assignment strategy and fault tolerance approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

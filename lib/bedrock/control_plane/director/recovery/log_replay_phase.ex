@@ -24,8 +24,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   However, immediately halts with error if any log reports `:newer_epoch_exists` (this
   director has been superseded). Transitions to sequencer startup with complete migration.
 
-  See the Log Replay section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the migration strategy and robustness approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

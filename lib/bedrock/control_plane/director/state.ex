@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Director.State do
-  @moduledoc false
+  @moduledoc """
+  Internal state structure for the Director process.
+  """
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config

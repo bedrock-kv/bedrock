@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Config.ResolverDescriptor do
-  @moduledoc false
+  @moduledoc """
+  Describes a resolver's configuration in the transaction system layout.
+  """
 
   @type t :: %{
           start_key: Bedrock.key(),

@@ -1,5 +1,10 @@
 defmodule Bedrock.Cluster do
-  @moduledoc false
+  @moduledoc """
+  Defines a cluster behaviour and provides macros for creating cluster modules.
+
+  A cluster is a distributed group of nodes that coordinate to provide a
+  consistent, distributed key-value store.
+  """
 
   alias Bedrock.Cluster.Link
   alias Bedrock.ControlPlane.Config

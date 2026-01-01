@@ -27,8 +27,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase do
   Always succeeds since it only modifies in-memory planning structures. Transitions to
   VersionDeterminationPhase to establish the recovery baseline.
 
-  See the Vacancy Creation section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the planning strategy and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

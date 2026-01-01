@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
-  @moduledoc false
+  @moduledoc """
+  Internal state structure for the Coordinator process.
+  """
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config

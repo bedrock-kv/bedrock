@@ -10,8 +10,6 @@ defmodule Bedrock.DataPlane.Sequencer do
   pair returned maintains proper causality relationships needed for distributed
   MVCC conflict resolution.
 
-  For detailed version assignment concepts and architectural integration, see the
-  [Sequencer documentation](../../../../docs/components/sequencer.md).
   """
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server

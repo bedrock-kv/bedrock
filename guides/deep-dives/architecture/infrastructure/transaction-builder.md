@@ -36,9 +36,9 @@ This design also enables new programming paradigms. Applications can create hund
 
 Most databases handle multiple transactions within shared processes, but Bedrock takes a different approach. Each transaction gets its own dedicated process that exists for the entire transaction lifetime. This design choice enables several important capabilities that would be difficult to achieve with shared processes.
 
-First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../../glossary.md#version) [leases](../../../glossary.md#lease), and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which storage servers are fastest for its particular access patterns.
+First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../../glossary.md#version) information, and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which storage servers are fastest for its particular access patterns.
 
-The per-process model also simplifies error handling and [recovery](../../../glossary.md#recovery). If something goes wrong with one transaction, it can fail independently without affecting other transactions. The process can maintain leases, handle timeouts, and coordinate complex multi-step operations without worrying about other transactions.
+The per-process model also simplifies error handling and [recovery](../../../glossary.md#recovery). If something goes wrong with one transaction, it can fail independently without affecting other transactions. The process can handle timeouts and coordinate complex multi-step operations without worrying about other transactions.
 
 ## Read-Your-Writes: The Local Cache
 
@@ -60,15 +60,11 @@ The system also learns from these races. Transaction Builder caches information 
 
 This creates a feedback loop where read performance improves over the lifetime of a transaction as the Transaction Builder builds up knowledge about the current performance characteristics of different storage servers. The component also handles automatic fallback and retry logic that keeps transactions running smoothly even when individual storage servers have problems.
 
-## Version Management and Leasing
+## Version Management
 
 Transaction Builder uses lazy read version acquisition to minimize the [conflict](../../../glossary.md#conflict) detection window and ensure transactions see the latest committed data. Rather than acquiring a read version when the transaction begins, it waits until the first read operation to obtain a version. This optimization is crucial because the span from read version to [commit version](../../../glossary.md#commit-version) defines the window where this transaction could conflict with others—delaying the read version acquisition shortens that conflict window significantly. It also ensures that the transaction sees the most recent committed state available at the time of its first read, rather than potentially stale data from when the transaction was created.
 
-When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../../glossary.md#sequencer) and coordinates with the [Gateway](../../../glossary.md#gateway) to obtain a lease for that version. This lease serves a crucial system-wide coordination function: it holds the window of readable versions open by preventing the system from garbage collecting data that active transactions might need.
-
-The lease mechanism works by tracking all outstanding read version leases across the system. The oldest read version that's currently leased becomes the system's [minimum read version](../../../glossary.md#minimum-read-version)—storage servers cannot garbage collect any data at or after this version because some transaction might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
-
-Transaction Builder actively monitors lease expiration and renews leases when necessary, ensuring that its read version remains valid throughout the transaction's lifetime. If a lease cannot be renewed due to system policy limits, the transaction expires rather than risk reading inconsistent data. This lease management happens automatically in the background, balancing transaction needs with system resource management.
+When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../../glossary.md#sequencer). The system tracks active transactions to determine the [minimum read version](../../../glossary.md#minimum-read-version) needed—storage servers cannot garbage collect any data at or after this version because active transactions might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
 
 ## Nested Transactions and State Stacking
 
@@ -99,9 +95,9 @@ Transaction Builder's embedded architecture enables sophisticated per-transactio
 Transaction Builder serves as the **per-transaction coordinator** with these specific responsibilities:
 
 - **Process-Per-Transaction**: Dedicated process lifecycle management for individual transactions
-- **Read-Your-Writes Cache**: Local write cache providing immediate consistency within transactions  
+- **Read-Your-Writes Cache**: Local write cache providing immediate consistency within transactions
 - **Storage Server Selection**: Intelligent routing and "horse racing" across storage replicas for optimal read performance
-- **Version Management**: Lazy read version acquisition and lease coordination through Gateway
+- **Version Management**: Lazy read version acquisition from Sequencer
 - **Nested Transaction Support**: Local state stacking for nested transaction semantics without distributed overhead
 - **Commit Coordination**: Transaction preparation and handoff to Commit Proxy for distributed processing
 

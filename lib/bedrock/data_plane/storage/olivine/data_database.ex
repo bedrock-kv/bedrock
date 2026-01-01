@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
-  @moduledoc false
+  @moduledoc """
+  Low-level data storage for Olivine, handling file I/O and buffering.
+  """
 
   require Logger
 

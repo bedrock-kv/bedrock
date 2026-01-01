@@ -20,9 +20,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
 
   ## TSL Construction
 
-  Builds the complete TSL data structure containing component process IDs, 
-  service mappings, and operational status. See [Transaction System Layout](../../../../../../docs/transaction-system-layout.md)
-  for detailed data structure specification.
+  Builds the complete TSL data structure containing component process IDs,
+  service mappings, and operational status.
 
   ## Service Mapping Algorithm
 
@@ -50,9 +49,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   - Validation failures: `{:stalled, {:recovery_system_failed, {:invalid_recovery_state, reason}}}`
   - Construction failures: `{:stalled, {:recovery_system_failed, reason}}`
   - Unlock failures: `{:stalled, {:recovery_system_failed, {:unlock_failed, reason}}}`
-
-  See [Recovery Narrative](../../../../../../docs/knowlege_base/02-deep/recovery-narrative.md#transaction-system-layout)
-  for conceptual understanding of TSL purpose and design rationale.
 
   Transitions to `PersistencePhase` to commit layout through system transaction.
   """

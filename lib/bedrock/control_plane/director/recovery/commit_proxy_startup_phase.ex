@@ -17,8 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
   must be operational for transaction processing. Proxies remain locked until
   Transaction System Layout phase transitions them to operational mode.
 
-  See the Proxy Startup section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the scalability problem and coordination approach.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase

@@ -1,5 +1,7 @@
 defmodule Bedrock.ControlPlane.Coordinator.State do
-  @moduledoc false
+  @moduledoc """
+  Internal state structure for the Coordinator process.
+  """
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
@@ -111,7 +113,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec remove_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
     def remove_tsl_subscriber(t, subscriber), do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
 
-    @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t()) :: State.t()
+    @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t() | nil) :: State.t()
     def broadcast_tsl_update(t, tsl) do
       for subscriber <- t.tsl_subscribers do
         send(subscriber, {:tsl_updated, tsl})

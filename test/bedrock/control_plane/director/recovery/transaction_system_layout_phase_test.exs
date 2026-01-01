@@ -77,7 +77,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         base_recovery_attempt()
         |> with_logs(%{"log_1" => [1, 2]})
         |> with_storage_teams([
-          %{tag: 0, key_range: {"", :end}, storage_ids: ["storage_1"]}
+          %{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}
         ])
         |> with_transaction_services(%{
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
@@ -102,7 +102,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         base_recovery_attempt()
         |> with_logs(%{"log_1" => [1, 2], "log_2" => [3, 4]})
         |> with_storage_teams([
-          %{tag: 0, key_range: {"", :end}, storage_ids: ["storage_1", "storage_2"]}
+          %{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1", "storage_2"]}
         ])
         |> with_transaction_services(%{
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},

@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
-  @moduledoc false
+  @moduledoc """
+  Manages segment file allocation and recycling for the Shale log.
+  """
 
   @type server :: GenServer.server()
 

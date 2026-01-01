@@ -18,8 +18,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   Always succeeds since it only creates in-memory structures. Transitions to
   log recruitment to begin service assignment.
 
-  See the New Cluster Initialization section in `docs/knowlege_base/02-deep/recovery-narrative.md`
-  for detailed explanation of the initialization flow and rationale.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -40,7 +38,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
     storage_team_vacancies = Enum.map(1..context.cluster_config.parameters.desired_replication_factor, &{:vacancy, &1})
 
     key_ranges = [
-      {0, key_range(<<0xFF>>, :end)},
+      {0, key_range(<<0xFF>>, Bedrock.end_of_keyspace())},
       {1, key_range(<<>>, <<0xFF>>)}
     ]
 

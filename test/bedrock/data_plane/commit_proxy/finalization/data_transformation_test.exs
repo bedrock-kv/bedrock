@@ -10,7 +10,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     [
       %{tag: 0, key_range: {<<>>, <<"m">>}, storage_ids: ["storage_1"]},
       %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-      %{tag: 2, key_range: {<<"z">>, :end}, storage_ids: ["storage_3"]}
+      %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
     ]
   end
 
@@ -24,7 +24,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   defp create_binary_storage_teams do
     [
       %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
-      %{tag: 1, key_range: {<<0x80>>, :end}, storage_ids: ["storage_3", "storage_4"]},
+      %{tag: 1, key_range: {<<0x80>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3", "storage_4"]},
       %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
     ]
   end
@@ -107,7 +107,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     end
 
     test "maps range that spans all storage teams", %{storage_teams: storage_teams} do
-      range = {<<>>, :end}
+      range = {<<>>, <<0xFF, 0xFF>>}
       assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
       assert [0, 1, 2] = Enum.sort(tags)
     end

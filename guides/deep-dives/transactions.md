@@ -11,7 +11,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions
-- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination and read version leasing
+- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination
 - **[Transaction Builder](architecture/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
 - **[Sequencer](architecture/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
@@ -47,10 +47,8 @@ sequenceDiagram
     alt Read version not yet obtained
         TransactionBuilder->>Sequencer: next_read_version()
         Sequencer-->>TransactionBuilder: {:ok, read_version}
-        TransactionBuilder->>Gateway: renew_read_version_lease(read_version)
-        Gateway-->>TransactionBuilder: {:ok, lease_deadline_ms}
     end
-    
+
     TransactionBuilder->>Storage: fetch(key, read_version)
     Storage-->>TransactionBuilder: {:ok, value}
     TransactionBuilder->>TransactionBuilder: track read in transaction state
@@ -185,7 +183,6 @@ This approach improves efficiency and reduces data transfer overhead between com
 2. Transaction builder checks local writes first (read-your-writes consistency)
 3. If not found locally and no read version exists:
    - Request read version from Sequencer via `next_read_version/1`
-   - Gateway leases the read version with expiration time
 4. Fetch data from Storage servers at the read version
 5. Storage performs "horse race" across replicas for performance
 6. Transaction builder tracks the read key and value
@@ -404,7 +401,6 @@ This is the most complex phase involving multiple distributed components working
 ### Timeout Handling
 
 - **Waiting List Timeout**: Transactions waiting for version ordering timeout after 30 seconds (default)
-- **Read Version Lease Expiration**: Read version leases expire to prevent indefinite holds
 - **WaitingList Management**: Automatic cleanup of expired transactions with appropriate error responses
 
 ### System Failures
@@ -418,7 +414,6 @@ This is the most complex phase involving multiple distributed components working
 
 - **Version Too Old**: Storage no longer has the requested version
 - **Version Too New**: Read version exceeds current committed version
-- **Lease Expiration**: Read version lease expired, transaction must abort
 
 ## Performance Characteristics
 

@@ -121,7 +121,6 @@ defmodule Bedrock.Encoding.Tuple do
   defp unpack_value(<<@nested_list_tag, rest::binary>>), do: unpack_list_elements(rest, [])
   defp unpack_value(<<@stop_marker, rest::binary>>), do: {:stop, rest}
   defp unpack_value(x) when is_binary(x), do: raise(ArgumentError, "Unsupported or malformed data: #{Base.encode16(x)}")
-  defp unpack_value(x), do: raise(ArgumentError, "Unsupported or malformed data: #{inspect(x)}")
 
   defp unpack_binary(binary), do: unpack_binary(binary, 0, binary, [])
 

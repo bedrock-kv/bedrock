@@ -34,6 +34,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     case start_director_with_monitoring(t) do
       {:ok, new_director} ->
         trace_director_changed(new_director)
+        # Clear cached TSL in all Links so user transactions get :unavailable during recovery
+        # instead of using the stale OLD TSL with dead PIDs
+        State.Changes.broadcast_tsl_update(t, nil)
         put_director(t, new_director)
 
       {:error, reason} ->

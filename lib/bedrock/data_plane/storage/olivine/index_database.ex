@@ -36,15 +36,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
   @footer_size 4
   @min_record_size @header_size + @footer_size
 
-  @opaque t :: %__MODULE__{
-            file: :file.fd(),
-            file_offset: non_neg_integer(),
-            file_name: [char()],
-            durable_version: Bedrock.version(),
-            last_block_empty: boolean(),
-            last_block_offset: non_neg_integer(),
-            last_block_previous_version: Bedrock.version() | nil
-          }
+  @type t :: %__MODULE__{
+          file: :file.fd(),
+          file_offset: non_neg_integer(),
+          file_name: [char()],
+          durable_version: Bedrock.version(),
+          last_block_empty: boolean(),
+          last_block_offset: non_neg_integer(),
+          last_block_previous_version: Bedrock.version() | nil
+        }
 
   defstruct [
     :file,

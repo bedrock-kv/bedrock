@@ -338,8 +338,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
          acc,
          key_count_delta,
          rightmost_key
-       ),
-       do: add_remaining_operations_as_binary_segments(remaining_ops, acc, key_count_delta, rightmost_key)
+       ), do: add_remaining_operations_as_binary_segments(remaining_ops, acc, key_count_delta, rightmost_key)
 
   defp add_remaining_operations_as_binary_segments(
          [{key, {:set, locator}} | remaining_ops],
@@ -560,8 +559,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index.Page do
         <<_page_id::unsigned-big-32, key_count::unsigned-big-16, _right_key_offset::unsigned-big-32,
           _reserved::unsigned-big-48, entries_data::binary>>,
         target_key
-      ),
-      do: search_entries_for_key(entries_data, key_count, target_key)
+      ), do: search_entries_for_key(entries_data, key_count, target_key)
 
   @spec search_entries_for_key(binary(), non_neg_integer(), Bedrock.key()) ::
           {:ok, Database.locator()} | {:error, :not_found}

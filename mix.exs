@@ -12,15 +12,20 @@ defmodule Bedrock.MixProject do
       package: package(),
       docs: &docs/0,
       test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.json": :test,
-        dialyzer: :dev
-      ],
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
       aliases: aliases(),
       source_url: "https://github.com/bedrock-kv/bedrock"
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.json": :test,
+        dialyzer: :dev
+      ]
     ]
   end
 
@@ -47,7 +52,10 @@ defmodule Bedrock.MixProject do
     [
       plt_core_path: "priv/plts",
       plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-      plt_add_apps: [:ex_unit, :mix]
+      plt_add_apps: [:ex_unit, :mix],
+      # Disable opaque type checks due to OTP 28 issues with structs containing
+      # MapSet/queue. See: https://github.com/elixir-lang/elixir/issues/14576
+      flags: [:no_opaque]
     ]
   end
 
@@ -72,7 +80,7 @@ defmodule Bedrock.MixProject do
       [
         {:stream_data, "~> 1.1", only: :test},
         {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-        {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+        {:dialyxir, "~> 1.4.7", only: [:dev, :test], runtime: false},
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
         {:mox, "~> 1.1", only: :test},

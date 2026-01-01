@@ -48,8 +48,8 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
          %{tmp_dir: tmp_dir} do
       path_to_descriptor = Path.join([tmp_dir, "cluster_descriptor"])
 
-      expected_name = Faker.Lorem.word()
-      non_matching_name = Faker.Lorem.word()
+      expected_name = "config_#{Faker.Lorem.word()}"
+      non_matching_name = "descriptor_#{Faker.Lorem.word()}"
 
       Descriptor.write_to_file!(path_to_descriptor, %Descriptor{
         cluster_name: non_matching_name,

@@ -43,8 +43,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   @spec append(t(), Transaction.encoded(), Bedrock.version()) ::
           {:ok, t()} | {:error, :segment_full} | {:error, File.posix()}
   def append(%__MODULE__{} = writer, transaction, _commit_version)
-      when writer.bytes_remaining < 16 + byte_size(transaction),
-      do: {:error, :segment_full}
+      when writer.bytes_remaining < 16 + byte_size(transaction), do: {:error, :segment_full}
 
   def append(%__MODULE__{} = writer, transaction, commit_version) do
     # Wrap transaction in log format: [version, size, payload, crc32]

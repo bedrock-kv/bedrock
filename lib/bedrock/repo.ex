@@ -859,8 +859,7 @@ defmodule Bedrock.Repo do
                  :byte_max,
                  :append_if_fits,
                  :compare_and_clear
-               ],
-          do: raise(ArgumentError, "Invalid operation; #{op}")
+               ], do: raise(ArgumentError, "Invalid operation; #{op}")
 
       def atomic(op, key, value) when not is_binary(key) or not is_binary(value) or byte_size(key) > 16_384,
         do: raise(ArgumentError, "key must be binary and no larger than 16KiB, value must be binary")

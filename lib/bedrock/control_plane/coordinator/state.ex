@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           epoch: Bedrock.epoch(),
           director: Director.ref() | :unavailable,
           otp_name: atom(),
-          raft: Raft.t(),
+          raft: Raft.t() | nil,
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,

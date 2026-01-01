@@ -18,10 +18,13 @@ jobs:
     runs-on: ubuntu-24.04
     name: Test on OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - elixir: "1.18.4"
+          - elixir: "1.17.3"
             otp: "27.2"
+          - elixir: "1.19.4"
+            otp: "28.3"
     steps:
 
     - name: Checkout code
@@ -59,6 +62,7 @@ jobs:
       run: mix compile --warnings-as-errors
 
     - name: Check Formatting
+      if: matrix.elixir == '1.19.4'
       run: mix format --check-formatted
 
     - name: Credo
@@ -69,17 +73,14 @@ jobs:
     - name: Cache PLTs
       id: cache-plts
       uses: actions/cache@v3
-      env:
-        cache-name: cache-plts
       with:
         path: priv/plts
-        key: ${{ runner.os }}-mix-${{ env.cache-name }}-${{ hashFiles('**/mix.lock') }}
+        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
-          ${{ runner.os }}-mix-${{ env.cache-name }}-
-          ${{ runner.os }}-mix-
+          ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-
 
     - name: Dialyzer
-      run: mix dialyzer --halt-exit-status
+      run: mix dialyzer
 
     - name: Run tests
       run: mix coveralls.github

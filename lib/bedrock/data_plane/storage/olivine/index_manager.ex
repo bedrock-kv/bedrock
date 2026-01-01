@@ -37,16 +37,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
   @type version_data :: {Index.t(), modified_pages()}
   @type version_update_data :: IndexUpdate.t()
   @type version_list :: [{Bedrock.version(), version_data()}]
-  @opaque t :: %__MODULE__{
-            versions: version_list(),
-            current_version: Bedrock.version(),
-            window_size_in_microseconds: pos_integer(),
-            id_allocator: IdAllocator.t(),
-            output_queue: :queue.queue(),
-            last_version_ended_at_offset: non_neg_integer(),
-            window_lag_time_μs: pos_integer(),
-            n_keys: non_neg_integer()
-          }
+  @type t :: %__MODULE__{
+          versions: version_list(),
+          current_version: Bedrock.version(),
+          window_size_in_microseconds: pos_integer(),
+          id_allocator: IdAllocator.t(),
+          output_queue: :queue.queue(),
+          last_version_ended_at_offset: non_neg_integer(),
+          window_lag_time_μs: pos_integer(),
+          n_keys: non_neg_integer()
+        }
   defstruct [
     :versions,
     :current_version,
@@ -148,8 +148,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexManager do
           {:ok, {resolved_start :: binary(), resolved_end :: binary()}, [Page.t()]}
           | {:error, :version_too_new | :version_too_old | :invalid_range}
   def pages_for_range(index_manager, %KeySelector{} = _start_selector, %KeySelector{} = _end_selector, version)
-      when index_manager.current_version < version,
-      do: {:error, :version_too_new}
+      when index_manager.current_version < version, do: {:error, :version_too_new}
 
   def pages_for_range(index_manager, %KeySelector{} = start_selector, %KeySelector{} = end_selector, version) do
     case index_for_version(index_manager.versions, version) do

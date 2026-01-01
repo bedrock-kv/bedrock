@@ -5,7 +5,7 @@
 /_build/
 
 # If you run "mix test --cover", coverage assets end up here.
-/cover/
+/apps/*/cover/
 
 # The directory Mix downloads your dependencies sources to.
 /deps/
@@ -26,7 +26,7 @@ erl_crash.dump
 bedrock-*.tar
 
 # Temporary files, for example, from tests.
-/tmp/
+**/tmp/
 
 # Dialyzer PLT files.
 /priv/plts

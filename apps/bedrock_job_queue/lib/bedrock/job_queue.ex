@@ -51,6 +51,7 @@ defmodule Bedrock.JobQueue do
 
   alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Item
+  alias Bedrock.JobQueue.Registry.Default
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
 
@@ -140,7 +141,7 @@ defmodule Bedrock.JobQueue do
   """
   @spec register(String.t(), module(), keyword()) :: :ok | {:error, term()}
   def register(topic_pattern, job_module, opts \\ []) do
-    registry = Keyword.get(opts, :registry, Bedrock.JobQueue.Registry.Default)
+    registry = Keyword.get(opts, :registry, Default)
     Registry.register(registry, topic_pattern, job_module)
   end
 
@@ -165,7 +166,7 @@ defmodule Bedrock.JobQueue do
     child_spec =
       {Bedrock.JobQueue.Consumer,
        repo: config.repo,
-       registry: Keyword.get(opts, :registry, Registry.Default),
+       registry: Keyword.get(opts, :registry, Default),
        concurrency: config.concurrency,
        batch_size: config.batch_size}
 

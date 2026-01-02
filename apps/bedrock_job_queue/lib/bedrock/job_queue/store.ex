@@ -185,8 +185,10 @@ defmodule Bedrock.JobQueue.Store do
     # Scan items in priority order, collect visible ones
     # Uses Stream to avoid loading all items into memory
     # Stops early once we have enough visible items OR hit max_scan
+    # Note: Filter out :clear values which can appear from uncommitted clears
     keyspaces.items
     |> repo.get_range(limit: max_scan)
+    |> Stream.reject(fn {_key, value} -> value == :clear end)
     |> Stream.map(fn {_key, value} -> decode(value) end)
     |> Stream.filter(&Item.visible?(&1, now))
     |> Enum.take(limit)
@@ -502,8 +504,10 @@ defmodule Bedrock.JobQueue.Store do
 
     # Scan all items and find minimum vesting_time
     # Items are sorted by {priority, vesting_time, id}, so we need to check all
+    # Note: Filter out :clear values which can appear from uncommitted clears
     keyspaces.items
     |> repo.get_range(limit: limit)
+    |> Stream.reject(fn {_key, value} -> value == :clear end)
     |> Enum.reduce(nil, fn {_key, value}, acc ->
       item = decode(value)
 
@@ -610,7 +614,12 @@ defmodule Bedrock.JobQueue.Store do
 
   defp queue_empty?(repo, root, queue_id) do
     keyspaces = queue_keyspaces(root, queue_id)
-    repo.get_range(keyspaces.items, limit: 1) == []
+
+    # Filter out :clear values which can appear from uncommitted clears
+    keyspaces.items
+    |> repo.get_range(limit: 1)
+    |> Enum.reject(fn {_key, value} -> value == :clear end)
+    |> Enum.empty?()
   end
 
   # Private helpers

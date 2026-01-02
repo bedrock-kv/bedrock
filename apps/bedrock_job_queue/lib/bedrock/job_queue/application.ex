@@ -6,9 +6,6 @@ defmodule Bedrock.JobQueue.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Job module registry
-      {Registry, keys: :duplicate, name: Bedrock.JobQueue.Registry.Default},
-
       # Dynamic supervisor for consumer instances
       {DynamicSupervisor, name: Bedrock.JobQueue.ConsumerSupervisor, strategy: :one_for_one}
     ]

@@ -19,7 +19,6 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   defstruct [
     :repo,
     :root,
-    :registry,
     :worker_pool,
     :concurrency,
     :batch_size,
@@ -47,7 +46,6 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     state = %__MODULE__{
       repo: Keyword.fetch!(opts, :repo),
       root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
-      registry: Keyword.fetch!(opts, :registry),
       worker_pool: Keyword.fetch!(opts, :worker_pool),
       concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
@@ -205,7 +203,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
             acc_state.worker_pool,
             Worker,
             :execute,
-            [item, acc_state.registry]
+            [item]
           )
 
         # Track the task ref -> {lease, extender_pid} mapping

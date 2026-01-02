@@ -10,7 +10,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:success"
 
     @impl true
-    def perform(_args), do: :ok
+    def perform(_args, _meta), do: :ok
   end
 
   defmodule SuccessWithResultJob do
@@ -18,7 +18,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:success_with_result"
 
     @impl true
-    def perform(args), do: {:ok, args}
+    def perform(args, _meta), do: {:ok, args}
   end
 
   defmodule FailingJob do
@@ -26,7 +26,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:fail"
 
     @impl true
-    def perform(_args), do: {:error, :intentional_failure}
+    def perform(_args, _meta), do: {:error, :intentional_failure}
   end
 
   defmodule DiscardJob do
@@ -34,7 +34,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:discard"
 
     @impl true
-    def perform(_args), do: {:discard, :invalid_data}
+    def perform(_args, _meta), do: {:discard, :invalid_data}
   end
 
   defmodule SnoozeJob do
@@ -42,8 +42,8 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:snooze"
 
     @impl true
-    def perform(%{delay: delay}), do: {:snooze, delay}
-    def perform(_args), do: {:snooze, 5000}
+    def perform(%{delay: delay}, _meta), do: {:snooze, delay}
+    def perform(_args, _meta), do: {:snooze, 5000}
   end
 
   defmodule SlowJob do
@@ -51,7 +51,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:slow", timeout: 100
 
     @impl true
-    def perform(_args) do
+    def perform(_args, _meta) do
       Process.sleep(500)
       :ok
     end
@@ -62,7 +62,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:crash"
 
     @impl true
-    def perform(_args) do
+    def perform(_args, _meta) do
       raise "intentional crash"
     end
   end
@@ -72,7 +72,7 @@ defmodule Bedrock.JobQueue.Test.Jobs do
     use Job, topic: "test:notify"
 
     @impl true
-    def perform(%{test_pid: pid, result: result}) do
+    def perform(%{test_pid: pid, result: result}, _meta) do
       send(pid, {:job_executed, self()})
       result
     end

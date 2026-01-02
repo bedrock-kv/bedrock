@@ -3,28 +3,30 @@ defmodule Bedrock.JobQueue do
   A durable job queue system for Elixir, built on Bedrock.
 
   Modeled after Apple's QuiCK paper, this system provides:
-  - Phoenix PubSub-style named topics with heterogeneous job types
+  - Topic-based routing to worker modules via static config
   - Two-level sharding (per-queue zones + pointer index)
   - Priority ordering and scheduled/delayed jobs
   - Fault-tolerant leasing via vesting time
   - Scanner/Manager/Worker consumer architecture
-  - Oban-style individual job processing
 
   ## Quick Start
 
+      # Configure workers (in config.exs)
+      config :bedrock_job_queue, :workers, %{
+        "user:created" => MyApp.Jobs.UserCreated,
+        "email:send" => MyApp.Jobs.SendEmail
+      }
+
       # Define a job module
-      defmodule MyApp.UserCreatedJob do
+      defmodule MyApp.Jobs.UserCreated do
         use Bedrock.JobQueue.Job, topic: "user:created"
 
         @impl true
-        def perform(%{user_id: user_id}) do
-          # Process the job
+        def perform(%{user_id: user_id}, meta) do
+          # meta.topic, meta.queue_id, meta.item_id, meta.attempt available
           :ok
         end
       end
-
-      # Register job modules
-      Bedrock.JobQueue.register("user:*", MyApp.UserJob)
 
       # Start consumer
       Bedrock.JobQueue.start_consumer(repo: MyRepo, concurrency: 10)
@@ -51,7 +53,6 @@ defmodule Bedrock.JobQueue do
 
   alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Item
-  alias Bedrock.JobQueue.Registry.Default
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
 
@@ -130,22 +131,6 @@ defmodule Bedrock.JobQueue do
   end
 
   @doc """
-  Registers a job module for a topic pattern.
-
-  Supports wildcards: `"user:*"` matches `"user:created"`, `"user:deleted"`, etc.
-
-  ## Examples
-
-      Bedrock.JobQueue.register("user:*", MyApp.UserJob)
-      Bedrock.JobQueue.register("email:send", MyApp.EmailJob)
-  """
-  @spec register(String.t(), module(), keyword()) :: :ok | {:error, term()}
-  def register(topic_pattern, job_module, opts \\ []) do
-    registry = Keyword.get(opts, :registry, Default)
-    Registry.register(registry, topic_pattern, job_module)
-  end
-
-  @doc """
   Starts a consumer for processing jobs.
 
   ## Options
@@ -153,7 +138,6 @@ defmodule Bedrock.JobQueue do
   - `:repo` - The Bedrock repo module (required)
   - `:concurrency` - Number of concurrent workers (default: System.schedulers_online())
   - `:batch_size` - Items to dequeue per batch (default: 10)
-  - `:registry` - Job registry name (default: Registry.Default)
 
   ## Examples
 
@@ -164,11 +148,7 @@ defmodule Bedrock.JobQueue do
     config = Config.new(opts)
 
     child_spec =
-      {Bedrock.JobQueue.Consumer,
-       repo: config.repo,
-       registry: Keyword.get(opts, :registry, Default),
-       concurrency: config.concurrency,
-       batch_size: config.batch_size}
+      {Bedrock.JobQueue.Consumer, repo: config.repo, concurrency: config.concurrency, batch_size: config.batch_size}
 
     DynamicSupervisor.start_child(Bedrock.JobQueue.ConsumerSupervisor, child_spec)
   end

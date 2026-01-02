@@ -25,10 +25,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   @concurrency 5
 
   setup do
-    # Start a test registry for job handlers
-    registry_name = :"TestRegistry_#{System.unique_integer()}"
-    {:ok, _} = Registry.start_link(keys: :duplicate, name: registry_name)
-
     # Start worker pool (Task.Supervisor)
     pool_name = :"TestPool_#{System.unique_integer()}"
     {:ok, pool} = Task.Supervisor.start_link(name: pool_name, max_children: @concurrency)
@@ -42,8 +38,25 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
     # Set up the stateful mock store
     setup_integration_stubs(MockRepo, store_agent)
 
+    # Configure workers via Application config
+    workers = %{
+      "test:success" => Jobs.SuccessJob,
+      "test:success_with_result" => Jobs.SuccessWithResultJob,
+      "test:fail" => Jobs.FailingJob,
+      "test:discard" => Jobs.DiscardJob,
+      "test:snooze" => Jobs.SnoozeJob,
+      "test:slow" => Jobs.SlowJob,
+      "test:crash" => Jobs.CrashingJob,
+      "test:notify" => Jobs.NotifyingJob
+    }
+
+    Application.put_env(:bedrock_job_queue, :workers, workers)
+
+    on_exit(fn ->
+      Application.delete_env(:bedrock_job_queue, :workers)
+    end)
+
     %{
-      registry: registry_name,
       pool: pool,
       pool_name: pool_name,
       concurrency: @concurrency,
@@ -62,7 +75,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
             name: name,
             repo: MockRepo,
             root: ctx.root,
-            registry: ctx.registry,
             worker_pool: ctx.pool_name,
             concurrency: ctx.concurrency
           ],
@@ -71,10 +83,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       )
 
     manager
-  end
-
-  defp register_job(ctx, pattern, job_module) do
-    Registry.register(ctx.registry, pattern, job_module)
   end
 
   defp enqueue_item(ctx, topic, payload \\ %{}) do
@@ -86,7 +94,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
   describe "happy path - job succeeds" do
     test "completes job when handler returns :ok", ctx do
-      register_job(ctx, "test:*", Jobs.SuccessJob)
       item = enqueue_item(ctx, "test:success")
       manager = start_manager(ctx)
 
@@ -103,7 +110,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
     end
 
     test "completes job when handler returns {:ok, result}", ctx do
-      register_job(ctx, "test:*", Jobs.SuccessWithResultJob)
       item = enqueue_item(ctx, "test:success_with_result", %{key: "value"})
       manager = start_manager(ctx)
 
@@ -122,7 +128,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
   describe "error handling - job fails" do
     test "requeues job when handler returns {:error, reason}", ctx do
-      register_job(ctx, "test:*", Jobs.FailingJob)
       item = enqueue_item(ctx, "test:fail")
       manager = start_manager(ctx)
 
@@ -150,7 +155,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
   describe "discard handling" do
     test "completes job when handler returns {:discard, reason}", ctx do
-      register_job(ctx, "test:*", Jobs.DiscardJob)
       item = enqueue_item(ctx, "test:discard")
       manager = start_manager(ctx)
 
@@ -175,7 +179,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
   describe "snooze handling" do
     test "requeues job with delay when handler returns {:snooze, delay}", ctx do
-      register_job(ctx, "test:*", Jobs.SnoozeJob)
       item = enqueue_item(ctx, "test:snooze", %{delay: 5000})
       manager = start_manager(ctx)
 

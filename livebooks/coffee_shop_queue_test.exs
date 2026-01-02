@@ -74,7 +74,7 @@ defmodule CoffeeShop.Jobs.OrderConfirmation do
     priority: 100
 
   @impl true
-  def perform(%{order_id: order_id, customer: customer}) do
+  def perform(%{order_id: order_id, customer: customer}, _meta) do
     IO.puts("  📱 [#{order_id}] Sending confirmation to #{customer}")
     Process.sleep(50)
     :ok
@@ -87,7 +87,7 @@ defmodule CoffeeShop.Jobs.BrewingStarted do
     priority: 50
 
   @impl true
-  def perform(%{order_id: order_id, drink: drink}) do
+  def perform(%{order_id: order_id, drink: drink}, _meta) do
     IO.puts("  ☕ [#{order_id}] Barista started: #{drink}")
     Process.sleep(50)
     {:ok, %{started_at: DateTime.utc_now()}}
@@ -100,7 +100,7 @@ defmodule CoffeeShop.Jobs.ReadyForPickup do
     priority: 10
 
   @impl true
-  def perform(%{order_id: order_id, customer: customer}) do
+  def perform(%{order_id: order_id, customer: customer}, _meta) do
     IO.puts("  🔔 [#{order_id}] READY! Paging #{customer}!")
     Process.sleep(50)
     :ok
@@ -114,7 +114,7 @@ defmodule CoffeeShop.Jobs.EspressoShot do
     priority: 40
 
   @impl true
-  def perform(%{order_id: order_id, shots: shots}) do
+  def perform(%{order_id: order_id, shots: shots}, _meta) do
     IO.puts("  ☕ [#{order_id}] Pulling #{shots} shot(s)...")
     Process.sleep(50)
     # Always succeed for testing
@@ -128,7 +128,7 @@ defmodule CoffeeShop.Jobs.DeliverySync do
     max_retries: 5
 
   @impl true
-  def perform(%{order_id: order_id, platform: platform}) do
+  def perform(%{order_id: order_id, platform: platform}, _meta) do
     IO.puts("  🚗 [#{order_id}] Syncing with #{platform}...")
     Process.sleep(50)
     :ok
@@ -141,7 +141,7 @@ defmodule CoffeeShop.Jobs.AdminCleanup do
     priority: 200
 
   @impl true
-  def perform(%{task: task}) do
+  def perform(%{task: task}, _meta) do
     IO.puts("  🧹 Running cleanup: #{task}")
     Process.sleep(50)
     :ok
@@ -173,19 +173,21 @@ Application.put_env(:bedrock_job_queue, :root, root)
 IO.puts("  ✓ Root keyspace: job_queue/")
 
 # -----------------------------------------------------------------------------
-# Step 4: Register Job Handlers
+# Step 4: Configure Workers
 # -----------------------------------------------------------------------------
 
-IO.puts("\nStep 4: Registering job handlers...")
+IO.puts("\nStep 4: Configuring workers...")
 
-JobQueue.register("order:confirm", CoffeeShop.Jobs.OrderConfirmation)
-JobQueue.register("order:brewing", CoffeeShop.Jobs.BrewingStarted)
-JobQueue.register("order:ready", CoffeeShop.Jobs.ReadyForPickup)
-JobQueue.register("brew:*", CoffeeShop.Jobs.EspressoShot)
-JobQueue.register("delivery:*", CoffeeShop.Jobs.DeliverySync)
-JobQueue.register("admin:*", CoffeeShop.Jobs.AdminCleanup)
+Application.put_env(:bedrock_job_queue, :workers, %{
+  "order:confirm" => CoffeeShop.Jobs.OrderConfirmation,
+  "order:brewing" => CoffeeShop.Jobs.BrewingStarted,
+  "order:ready" => CoffeeShop.Jobs.ReadyForPickup,
+  "brew:espresso" => CoffeeShop.Jobs.EspressoShot,
+  "delivery:sync" => CoffeeShop.Jobs.DeliverySync,
+  "admin:cleanup" => CoffeeShop.Jobs.AdminCleanup
+})
 
-IO.puts("  ✓ 6 handlers registered (including wildcards)")
+IO.puts("  ✓ 6 workers configured")
 
 # -----------------------------------------------------------------------------
 # Step 5: Start Consumer

@@ -33,6 +33,7 @@ defmodule Bedrock.JobQueue.Consumer do
 
   use Supervisor
 
+  alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Consumer.Manager
   alias Bedrock.JobQueue.Consumer.PointerGC
   alias Bedrock.JobQueue.Consumer.Scanner
@@ -52,6 +53,7 @@ defmodule Bedrock.JobQueue.Consumer do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     batch_size = Keyword.get(opts, :batch_size, 10)
     scan_interval = Keyword.get(opts, :scan_interval, 100)
+    backoff_fn = Keyword.get(opts, :backoff_fn, &Config.default_backoff/1)
 
     # Generate unique names for child processes
     id = 4 |> :crypto.strong_rand_bytes() |> Base.encode16()
@@ -67,7 +69,13 @@ defmodule Bedrock.JobQueue.Consumer do
     children = [
       {WorkerPool, name: pool_name, concurrency: concurrency},
       {Manager,
-       name: manager_name, repo: repo, root: root, registry: registry, worker_pool: pool_name, batch_size: batch_size},
+       name: manager_name,
+       repo: repo,
+       root: root,
+       registry: registry,
+       worker_pool: pool_name,
+       batch_size: batch_size,
+       backoff_fn: backoff_fn},
       {Scanner,
        name: scanner_name,
        repo: repo,

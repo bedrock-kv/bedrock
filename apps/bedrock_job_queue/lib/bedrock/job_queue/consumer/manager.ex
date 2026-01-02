@@ -8,6 +8,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
 
   use GenServer
 
+  alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Consumer.WorkerPool
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
@@ -22,6 +23,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     :batch_size,
     :lease_duration,
     :holder_id,
+    :backoff_fn,
     pending_queues: MapSet.new()
   ]
 
@@ -41,7 +43,8 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
       worker_pool: Keyword.fetch!(opts, :worker_pool),
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
       lease_duration: Keyword.get(opts, :lease_duration, @default_lease_duration),
-      holder_id: :crypto.strong_rand_bytes(16)
+      holder_id: :crypto.strong_rand_bytes(16),
+      backoff_fn: Keyword.get(opts, :backoff_fn, &Config.default_backoff/1)
     }
 
     {:ok, state}
@@ -129,12 +132,23 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
       item = Map.get(items_by_id, lease.item_id)
 
       if item do
-        WorkerPool.dispatch(state.worker_pool, %{
-          item: item,
-          lease: lease,
-          registry: state.registry,
-          reply_to: self()
-        })
+        case WorkerPool.dispatch(state.worker_pool, %{
+               item: item,
+               lease: lease,
+               registry: state.registry,
+               reply_to: self()
+             }) do
+          {:ok, _pid} ->
+            :ok
+
+          {:error, reason} ->
+            # Dispatch failed (e.g., max_children exceeded).
+            # Log warning - lease will expire and item will become visible again.
+            Logger.warning(
+              "Failed to dispatch job #{inspect(item.id)}: #{inspect(reason)}. " <>
+                "Job will be retried after lease expires."
+            )
+        end
       end
     end
   end
@@ -159,9 +173,15 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   defp run_job_action(state, lease, action) do
     state.repo.transact(fn ->
       case action do
-        :complete -> Store.complete(state.repo, state.root, lease)
-        :requeue -> Store.requeue(state.repo, state.root, lease, [])
-        {:snooze, delay_ms} -> Store.requeue(state.repo, state.root, lease, base_delay: delay_ms, max_delay: delay_ms)
+        :complete ->
+          Store.complete(state.repo, state.root, lease)
+
+        :requeue ->
+          Store.requeue(state.repo, state.root, lease, backoff_fn: state.backoff_fn)
+
+        {:snooze, delay_ms} ->
+          # Snooze uses explicit delay, bypassing backoff_fn
+          Store.requeue(state.repo, state.root, lease, base_delay: delay_ms, max_delay: delay_ms)
       end
     end)
   end

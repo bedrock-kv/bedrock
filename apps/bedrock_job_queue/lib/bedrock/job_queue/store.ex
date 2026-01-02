@@ -454,10 +454,8 @@ defmodule Bedrock.JobQueue.Store do
       repo.clear(keyspaces.leases, lease.item_id)
       {:ok, :dead_lettered}
     else
-      # Calculate backoff
-      base_delay = Keyword.get(opts, :base_delay, 1000)
-      max_delay = Keyword.get(opts, :max_delay, 60_000)
-      delay = (base_delay * :math.pow(2, new_error_count)) |> trunc() |> min(max_delay)
+      # Calculate backoff delay
+      delay = calculate_backoff_delay(opts, new_error_count)
       new_vesting_time = now + delay
 
       # Update item
@@ -486,6 +484,28 @@ defmodule Bedrock.JobQueue.Store do
       repo.add(processing_key, <<-1::64-signed-little>>)
 
       {:ok, :requeued}
+    end
+  end
+
+  # Calculate backoff delay based on options.
+  # If :backoff_fn is provided, use it (standard retry behavior).
+  # If :base_delay is provided, use fixed delay with exponential multiplier (snooze behavior).
+  defp calculate_backoff_delay(opts, error_count) do
+    cond do
+      # Explicit base_delay overrides backoff_fn (used by snooze)
+      base_delay = Keyword.get(opts, :base_delay) ->
+        max_delay = Keyword.get(opts, :max_delay, 60_000)
+        (base_delay * :math.pow(2, error_count)) |> trunc() |> min(max_delay)
+
+      # Use backoff function if provided
+      backoff_fn = Keyword.get(opts, :backoff_fn) ->
+        backoff_fn.(error_count)
+
+      # Default fallback: simple exponential backoff
+      true ->
+        base = 1000
+        max_delay = 60_000
+        (base * :math.pow(2, error_count)) |> trunc() |> min(max_delay)
     end
   end
 

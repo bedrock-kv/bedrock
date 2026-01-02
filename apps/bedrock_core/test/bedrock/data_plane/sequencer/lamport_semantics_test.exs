@@ -27,7 +27,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       assert {:ok, ^commit2, commit3} = Sequencer.next_commit_version(sequencer)
 
       # Verify Lamport clock property: each assignment advances the logical clock
-      assert commit0 < commit1 < commit2 < commit3
+      assert commit0 < commit1 and commit1 < commit2 and commit2 < commit3
     end
 
     test "version gaps don't break causality chains" do

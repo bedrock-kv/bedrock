@@ -21,7 +21,8 @@ defmodule BedrockStorageOlivine.MixProject do
       package: package(),
       docs: docs(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      source_url: @source_url
+      source_url: @source_url,
+      test_coverage: [tool: ExCoveralls]
     ]
   end
 

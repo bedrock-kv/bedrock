@@ -20,7 +20,8 @@ defmodule Bedrock.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
-      source_url: @source_url
+      source_url: @source_url,
+      test_coverage: [tool: ExCoveralls]
     ]
   end
 

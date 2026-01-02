@@ -29,9 +29,13 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
     :repo,
     :root,
     :manager,
+    :worker_pool,
+    :concurrency,
     :interval,
     :batch_size,
     :jitter_percent,
+    :selection_frac,
+    :selection_max,
     :gc_interval,
     :gc_grace_period,
     :gc_batch_size,
@@ -42,6 +46,10 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   @default_interval 100
   @default_batch_size 100
   @default_jitter_percent 20
+  # Per QuiCK Algorithm 1: select a random fraction of visible pointers
+  # to reduce contention between multiple scanners
+  @default_selection_frac 0.5
+  @default_selection_max 10
   @default_gc_interval 60_000
   @default_gc_grace_period 60_000
   @default_gc_batch_size 100
@@ -56,9 +64,13 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
       repo: Keyword.fetch!(opts, :repo),
       root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
       manager: Keyword.fetch!(opts, :manager),
+      worker_pool: Keyword.get(opts, :worker_pool),
+      concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
       interval: Keyword.get(opts, :interval, @default_interval),
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
       jitter_percent: Keyword.get(opts, :jitter_percent, @default_jitter_percent),
+      selection_frac: Keyword.get(opts, :selection_frac, @default_selection_frac),
+      selection_max: Keyword.get(opts, :selection_max, @default_selection_max),
       gc_interval: Keyword.get(opts, :gc_interval, @default_gc_interval),
       gc_grace_period: Keyword.get(opts, :gc_grace_period, @default_gc_grace_period),
       gc_batch_size: Keyword.get(opts, :gc_batch_size, @default_gc_batch_size)
@@ -70,7 +82,14 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
 
   @impl true
   def handle_info(:scan, state) do
-    state = scan_and_notify(state)
+    # Per QuiCK Algorithm 1 line 5: wait until at least one worker has no task
+    state =
+      if workers_available?(state) do
+        scan_and_notify(state)
+      else
+        state
+      end
+
     state = maybe_run_gc(state)
     schedule_scan(state)
     {:noreply, state}
@@ -88,12 +107,16 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
         # Shuffle for fairness, prioritizing queues not recently notified
         ordered = prioritize_queues(queue_ids, state.last_notified)
 
-        for queue_id <- ordered do
+        # Per QuiCK Algorithm 1: select a random fraction of pointers
+        # to reduce contention between multiple scanners
+        selected = select_random_fraction(ordered, state.selection_frac, state.selection_max)
+
+        for queue_id <- selected do
           send(state.manager, {:queue_ready, queue_id})
         end
 
         # Track recently notified for round-robin fairness
-        %{state | last_notified: ordered}
+        %{state | last_notified: selected}
 
       {:error, _} ->
         state
@@ -108,9 +131,26 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
     Enum.shuffle(fresh) ++ Enum.shuffle(stale)
   end
 
+  # Per QuiCK Algorithm 1: select min(selection_max, ceil(size * selection_frac)) randomly
+  # The list is already shuffled by prioritize_queues, so we just take the first N
+  defp select_random_fraction(queue_ids, selection_frac, selection_max) do
+    size = length(queue_ids)
+    count = selection_max |> min(ceil(size * selection_frac)) |> trunc()
+    Enum.take(queue_ids, max(1, count))
+  end
+
   defp schedule_scan(state) do
     jittered_interval = add_jitter(state.interval, state.jitter_percent)
     Process.send_after(self(), :scan, jittered_interval)
+  end
+
+  # Per QuiCK Algorithm 1 line 5: wait until at least one worker has no task
+  # Returns true if worker_pool is not configured (backward compat) or has available workers
+  defp workers_available?(%{worker_pool: nil}), do: true
+
+  defp workers_available?(%{worker_pool: pool, concurrency: concurrency}) do
+    active = length(Task.Supervisor.children(pool))
+    active < concurrency
   end
 
   # Add random jitter to prevent synchronized scans across consumers

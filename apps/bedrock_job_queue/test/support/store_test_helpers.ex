@@ -60,7 +60,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   def expect_enqueue(repo) do
     repo
     |> expect(:put, fn %Keyspace{}, _item_key, _encoded_item -> :ok end)
-    |> expect(:min, fn _pointer_key, _value -> :ok end)
+    |> expect(:max, fn _pointer_key, _value -> :ok end)
     |> expect(:add, fn _stats_key, <<1::64-little>> -> :ok end)
   end
 
@@ -100,7 +100,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   - clear old item key
   - put new item (with updated vesting_time/lease_id)
   - put lease record
-  - min pointer
+  - max pointer (last_active_time)
   - add stats (pending -1, processing +1)
   """
   def expect_obtain_lease_writes(repo) do
@@ -108,7 +108,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
     |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
     |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
     |> expect(:put, fn %Keyspace{}, _lease_key, _encoded_lease -> :ok end)
-    |> expect(:min, fn _pointer_key, _value -> :ok end)
+    |> expect(:max, fn _pointer_key, _value -> :ok end)
     |> expect(:add, fn _key, <<-1::64-signed-little>> -> :ok end)
     |> expect(:add, fn _key, <<1::64-little>> -> :ok end)
   end
@@ -169,7 +169,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
       :ok
     end)
 
-    stub(repo, :min, fn _key, _value -> :ok end)
+    stub(repo, :max, fn _key, _value -> :ok end)
     stub(repo, :add, fn _key, _value -> :ok end)
 
     stub(repo, :get_range, fn %Keyspace{} = ks, _opts ->
@@ -220,7 +220,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   Expects the writes for requeuing a job:
   - clear old item
   - put new item (with updated vesting_time, error_count)
-  - min pointer
+  - max pointer (last_active_time)
   - clear lease
   - add stats (pending +1, processing -1)
   """
@@ -228,7 +228,7 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
     repo
     |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
     |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
-    |> expect(:min, fn _pointer_key, _value -> :ok end)
+    |> expect(:max, fn _pointer_key, _value -> :ok end)
     |> expect(:clear, fn %Keyspace{}, _lease_key -> :ok end)
     |> expect(:add, fn _key, <<1::64-little>> -> :ok end)
     |> expect(:add, fn _key, <<-1::64-signed-little>> -> :ok end)
@@ -243,14 +243,14 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   - clear old item
   - put new item (with updated vesting_time)
   - put updated lease
-  - min pointer
+  - max pointer (last_active_time)
   """
   def expect_extend_lease_writes(repo) do
     repo
     |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
     |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
     |> expect(:put, fn %Keyspace{}, _lease_key, _encoded_lease -> :ok end)
-    |> expect(:min, fn _pointer_key, _value -> :ok end)
+    |> expect(:max, fn _pointer_key, _value -> :ok end)
   end
 
   # ============================================================================

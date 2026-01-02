@@ -487,6 +487,48 @@ defmodule Bedrock.JobQueue.Store do
   end
 
   @doc """
+  Gets the minimum vesting_time from items in a queue.
+
+  Per QuiCK Algorithm 2: After dequeuing, read the minimum vesting_time to
+  determine when to next scan this queue. Returns nil if queue is empty.
+
+  Options:
+  - :limit - Maximum items to scan (default: 1000)
+  """
+  @spec min_vesting_time(repo(), root_keyspace(), String.t(), keyword()) :: non_neg_integer() | nil
+  def min_vesting_time(repo, root, queue_id, opts \\ []) do
+    keyspaces = queue_keyspaces(root, queue_id)
+    limit = Keyword.get(opts, :limit, 1000)
+
+    # Scan all items and find minimum vesting_time
+    # Items are sorted by {priority, vesting_time, id}, so we need to check all
+    keyspaces.items
+    |> repo.get_range(limit: limit)
+    |> Enum.reduce(nil, fn {_key, value}, acc ->
+      item = decode(value)
+
+      case acc do
+        nil -> item.vesting_time
+        min -> min(min, item.vesting_time)
+      end
+    end)
+  end
+
+  @doc """
+  Updates a queue's pointer with a new vesting_time.
+
+  Per QuiCK Algorithm 2: After processing, update the pointer to the minimum
+  vesting_time of remaining items. This prevents rescanning queues that only
+  have future-scheduled items.
+  """
+  @spec update_queue_pointer(repo(), root_keyspace(), String.t(), non_neg_integer()) :: :ok
+  def update_queue_pointer(repo, root, queue_id, vesting_time) do
+    pointers = pointer_keyspace(root)
+    update_pointer(repo, pointers, vesting_time, queue_id)
+    :ok
+  end
+
+  @doc """
   Scans the pointer index for queues with visible items.
 
   Returns queue_ids that have items with vesting_time <= now.
@@ -540,31 +582,35 @@ defmodule Bedrock.JobQueue.Store do
     stale_pointers =
       {prefix <> start_key, prefix <> end_key}
       |> repo.get_range(limit: limit)
-      |> Enum.map(fn {key, _value} ->
+      |> Enum.map(fn {key, value} ->
         suffix = binary_part(key, byte_size(prefix), byte_size(key) - byte_size(prefix))
         {vesting_time, queue_id} = unpack_pointer_key(suffix)
-        {key, vesting_time, queue_id}
+        last_active_time = decode_timestamp(value)
+        {key, vesting_time, queue_id, last_active_time}
       end)
 
-    # For each stale pointer, verify queue is actually empty before deleting
-    deleted =
-      Enum.reduce(stale_pointers, 0, fn {key, _vesting_time, queue_id}, count ->
-        keyspaces = queue_keyspaces(root, queue_id)
+    # Per QuiCK paper: Delete pointer only if last_active_time + grace_period < now
+    # AND queue is actually empty
+    Enum.reduce(stale_pointers, 0, fn pointer_info, count ->
+      count + maybe_delete_pointer(repo, root, pointer_info, now, grace_period)
+    end)
+  end
 
-        # Check if queue has any visible items
-        case repo.get_range(keyspaces.items, limit: 1) do
-          [] ->
-            # Queue empty, safe to delete pointer
-            repo.clear(key)
-            count + 1
+  defp maybe_delete_pointer(repo, root, {key, _vesting_time, queue_id, last_active_time}, now, grace_period) do
+    inactive? = now - last_active_time >= grace_period
+    empty? = inactive? && queue_empty?(repo, root, queue_id)
 
-          _ ->
-            # Queue has items, keep pointer
-            count
-        end
-      end)
+    if inactive? && empty? do
+      repo.clear(key)
+      1
+    else
+      0
+    end
+  end
 
-    deleted
+  defp queue_empty?(repo, root, queue_id) do
+    keyspaces = queue_keyspaces(root, queue_id)
+    repo.get_range(keyspaces.items, limit: 1) == []
   end
 
   # Private helpers
@@ -584,11 +630,21 @@ defmodule Bedrock.JobQueue.Store do
     end
   end
 
-  # Updates the pointer index with a new vesting time
+  # Updates the pointer index with a new vesting time.
+  # Per QuiCK paper: stores last_active_time (when items were last seen) for smarter GC.
+  # Uses repo.max to track the most recent activity time.
   defp update_pointer(repo, pointers, vesting_time, queue_id) do
     pointer_key = Keyspace.pack(pointers, {vesting_time, queue_id})
-    repo.min(pointer_key, encode_vesting_time(vesting_time))
+    last_active_time = System.system_time(:millisecond)
+    repo.max(pointer_key, encode_timestamp(last_active_time))
   end
+
+  defp encode_timestamp(time), do: <<time::64-little>>
+
+  # Decode timestamp, handling nil or missing values (backward compat)
+  defp decode_timestamp(nil), do: 0
+  defp decode_timestamp(<<time::64-little>>), do: time
+  defp decode_timestamp(_), do: 0
 
   # Atomically updates pending and processing stats
   defp update_stats(repo, keyspaces, pending_delta, processing_delta) do
@@ -601,10 +657,6 @@ defmodule Bedrock.JobQueue.Store do
       processing_key = Keyspace.pack(keyspaces.stats, "processing")
       repo.add(processing_key, <<processing_delta::64-signed-little>>)
     end
-  end
-
-  defp encode_vesting_time(time) when is_integer(time) do
-    <<time::64-little>>
   end
 
   defp decode_counter(nil), do: 0

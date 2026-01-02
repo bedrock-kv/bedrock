@@ -10,6 +10,7 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   use ExUnit.Case, async: false
 
   import Bedrock.JobQueue.Test.StoreHelpers
+  import ExUnit.CaptureLog
   import Mox
 
   alias Bedrock.JobQueue.Consumer.Manager
@@ -153,16 +154,22 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       item = enqueue_item(ctx, "test:discard")
       manager = start_manager(ctx)
 
-      send(manager, {:queue_ready, "tenant_1"})
+      log =
+        capture_log(fn ->
+          send(manager, {:queue_ready, "tenant_1"})
 
-      # Wait for item to be removed (discarded = completed)
-      keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
-      item_key = {item.priority, item.vesting_time, item.id}
-      storage_key = {Keyspace.prefix(keyspaces.items), item_key}
+          # Wait for item to be removed (discarded = completed)
+          keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
+          item_key = {item.priority, item.vesting_time, item.id}
+          storage_key = {Keyspace.prefix(keyspaces.items), item_key}
 
-      assert_eventually(fn ->
-        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
-      end)
+          assert_eventually(fn ->
+            Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+          end)
+        end)
+
+      assert log =~ "Discarding job"
+      assert log =~ ":invalid_data"
     end
   end
 
@@ -200,16 +207,22 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       item = enqueue_item(ctx, "unknown:topic")
       manager = start_manager(ctx)
 
-      send(manager, {:queue_ready, "tenant_1"})
+      log =
+        capture_log(fn ->
+          send(manager, {:queue_ready, "tenant_1"})
 
-      # Wait for item to be removed (discarded)
-      keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
-      item_key = {item.priority, item.vesting_time, item.id}
-      storage_key = {Keyspace.prefix(keyspaces.items), item_key}
+          # Wait for item to be removed (discarded)
+          keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
+          item_key = {item.priority, item.vesting_time, item.id}
+          storage_key = {Keyspace.prefix(keyspaces.items), item_key}
 
-      assert_eventually(fn ->
-        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
-      end)
+          assert_eventually(fn ->
+            Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+          end)
+        end)
+
+      assert log =~ "Discarding job"
+      assert log =~ ":no_handler"
     end
   end
 

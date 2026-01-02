@@ -7,18 +7,32 @@ defmodule Bedrock.JobQueue.Expirable do
 
   @doc """
   Returns true if the struct has expired.
+
+  ## Options
+
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
   """
-  @spec expired?(%{expires_at: non_neg_integer()}) :: boolean()
-  def expired?(%{expires_at: exp}) do
-    System.system_time(:millisecond) >= exp
+  @spec expired?(%{expires_at: non_neg_integer()}, keyword()) :: boolean()
+  def expired?(struct, opts \\ [])
+
+  def expired?(%{expires_at: exp}, opts) do
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
+    now >= exp
   end
 
   @doc """
   Returns the remaining time in milliseconds.
   Returns 0 if expired.
+
+  ## Options
+
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
   """
-  @spec remaining_ms(%{expires_at: non_neg_integer()}) :: non_neg_integer()
-  def remaining_ms(%{expires_at: exp}) do
-    max(0, exp - System.system_time(:millisecond))
+  @spec remaining_ms(%{expires_at: non_neg_integer()}, keyword()) :: non_neg_integer()
+  def remaining_ms(struct, opts \\ [])
+
+  def remaining_ms(%{expires_at: exp}, opts) do
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
+    max(0, exp - now)
   end
 end

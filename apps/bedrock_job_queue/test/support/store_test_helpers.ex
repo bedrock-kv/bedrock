@@ -252,4 +252,44 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
     |> expect(:put, fn %Keyspace{}, _lease_key, _encoded_lease -> :ok end)
     |> expect(:min, fn _pointer_key, _value -> :ok end)
   end
+
+  # ============================================================================
+  # Async Test Helpers
+  # ============================================================================
+
+  @doc """
+  Waits until the given function returns a truthy value.
+
+  Polls every `interval` ms for up to `timeout` ms total.
+  Returns `:ok` when the condition is met, raises on timeout.
+
+  ## Example
+
+      assert_eventually(fn ->
+        Agent.get(store, &Map.get(&1, key)) == nil
+      end)
+  """
+  def assert_eventually(condition, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 200)
+    interval = Keyword.get(opts, :interval, 10)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_assert_eventually(condition, deadline, interval)
+  end
+
+  defp do_assert_eventually(condition, deadline, interval) do
+    if condition.() do
+      :ok
+    else
+      now = System.monotonic_time(:millisecond)
+
+      if now >= deadline do
+        raise ExUnit.AssertionError,
+          message: "assert_eventually timed out after condition never became truthy"
+      else
+        Process.sleep(interval)
+        do_assert_eventually(condition, deadline, interval)
+      end
+    end
+  end
 end

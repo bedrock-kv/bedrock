@@ -82,31 +82,31 @@ defmodule Bedrock.JobQueue.StoreTest do
 
   describe "Item visibility" do
     test "items with past vesting_time and no lease are visible" do
-      past = System.system_time(:millisecond) - 1000
-      item = Item.new("queue", "topic", %{}, vesting_time: past)
+      now = 10_000
+      item = Item.new("queue", "topic", %{}, vesting_time: 9_000)
 
-      assert Item.visible?(item)
+      assert Item.visible?(item, now)
     end
 
     test "items with future vesting_time are not visible" do
-      future = System.system_time(:millisecond) + 10_000
-      item = Item.new("queue", "topic", %{}, vesting_time: future)
+      now = 10_000
+      item = Item.new("queue", "topic", %{}, vesting_time: 20_000)
 
-      refute Item.visible?(item)
+      refute Item.visible?(item, now)
     end
 
     test "items with lease are not visible" do
-      past = System.system_time(:millisecond) - 1000
-      item = %{Item.new("queue", "topic", %{}, vesting_time: past) | lease_id: <<1, 2, 3>>}
+      now = 10_000
+      item = %{Item.new("queue", "topic", %{}, vesting_time: 9_000) | lease_id: <<1, 2, 3>>}
 
-      refute Item.visible?(item)
+      refute Item.visible?(item, now)
     end
   end
 
   describe "Lease creation" do
     test "creates lease with duration" do
       item = Item.new("queue", "topic", %{})
-      lease = Lease.new(item, "holder", 5000)
+      lease = Lease.new(item, "holder", duration_ms: 5000)
 
       assert lease.item_id == item.id
       assert lease.queue_id == item.queue_id
@@ -125,7 +125,7 @@ defmodule Bedrock.JobQueue.StoreTest do
 
     test "stores item_key for O(1) lookup" do
       item = Item.new("queue", "topic", %{}, priority: 50)
-      lease = Lease.new(item, "holder", 5000)
+      lease = Lease.new(item, "holder", duration_ms: 5000)
 
       # item_key should be {priority, new_vesting_time, id}
       {priority, vesting_time, id} = lease.item_key
@@ -137,26 +137,28 @@ defmodule Bedrock.JobQueue.StoreTest do
 
   describe "Lease expiration" do
     test "fresh lease is not expired" do
+      now = 10_000
       item = Item.new("queue", "topic", %{})
-      lease = Lease.new(item, "holder", 5000)
+      lease = Lease.new(item, "holder", duration_ms: 5000, now: now)
 
-      refute Lease.expired?(lease)
-      assert Lease.remaining_ms(lease) > 0
+      refute Lease.expired?(lease, now: now)
+      assert Lease.remaining_ms(lease, now: now) == 5000
     end
 
     test "expired lease reports expired" do
       item = Item.new("queue", "topic", %{})
-      # Create a lease that's already expired
-      lease = %{Lease.new(item, "holder", 5000) | expires_at: System.system_time(:millisecond) - 1000}
+      # Created at 4000, expires at 9000
+      lease = Lease.new(item, "holder", duration_ms: 5000, now: 4_000)
+      now = 10_000
 
-      assert Lease.expired?(lease)
-      assert Lease.remaining_ms(lease) == 0
+      assert Lease.expired?(lease, now: now)
+      assert Lease.remaining_ms(lease, now: now) == 0
     end
   end
 
   describe "QueueLease creation" do
     test "creates queue lease with duration" do
-      lease = QueueLease.new("tenant_1", "holder_123", 5000)
+      lease = QueueLease.new("tenant_1", "holder_123", duration_ms: 5000)
 
       assert lease.queue_id == "tenant_1"
       assert lease.holder == "holder_123"
@@ -175,17 +177,20 @@ defmodule Bedrock.JobQueue.StoreTest do
 
   describe "QueueLease expiration" do
     test "fresh queue lease is not expired" do
-      lease = QueueLease.new("tenant_1", "holder", 5000)
+      now = 10_000
+      lease = QueueLease.new("tenant_1", "holder", duration_ms: 5000, now: now)
 
-      refute QueueLease.expired?(lease)
-      assert QueueLease.remaining_ms(lease) > 0
+      refute QueueLease.expired?(lease, now: now)
+      assert QueueLease.remaining_ms(lease, now: now) == 5000
     end
 
     test "expired queue lease reports expired" do
-      lease = %{QueueLease.new("tenant_1", "holder", 5000) | expires_at: System.system_time(:millisecond) - 1000}
+      # Created at 4000, expires at 9000
+      lease = QueueLease.new("tenant_1", "holder", duration_ms: 5000, now: 4_000)
+      now = 10_000
 
-      assert QueueLease.expired?(lease)
-      assert QueueLease.remaining_ms(lease) == 0
+      assert QueueLease.expired?(lease, now: now)
+      assert QueueLease.remaining_ms(lease, now: now) == 0
     end
   end
 
@@ -213,26 +218,28 @@ defmodule Bedrock.JobQueue.StoreTest do
     end
 
     test "fails when queue already leased" do
-      # Create a non-expired lease
-      existing = QueueLease.new("tenant_1", "holder1", 5000)
+      now = 10_000
+      # Create a non-expired lease (created at same time, expires at 15_000)
+      existing = QueueLease.new("tenant_1", "holder1", duration_ms: 5000, now: now)
       encoded = :erlang.term_to_binary(existing)
 
       expect_queue_lease_get(MockRepo, encoded)
-      result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000)
+      result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000, now: now)
 
       assert {:error, :queue_leased} = result
     end
 
     test "succeeds after previous lease expires" do
-      # Create an expired lease
-      expired = %{QueueLease.new("tenant_1", "holder1", 5000) | expires_at: System.system_time(:millisecond) - 1000}
+      # Create a lease that expires at 9_000
+      expired = QueueLease.new("tenant_1", "holder1", duration_ms: 5000, now: 4_000)
       encoded = :erlang.term_to_binary(expired)
+      now = 10_000
 
       MockRepo
       |> expect_queue_lease_get(encoded)
       |> expect_queue_lease_put()
 
-      result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000)
+      result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000, now: now)
 
       assert {:ok, %QueueLease{holder: "holder2"}} = result
     end
@@ -240,7 +247,7 @@ defmodule Bedrock.JobQueue.StoreTest do
 
   describe "release_queue_lease/3" do
     test "removes the lease" do
-      lease = QueueLease.new("tenant_1", "holder", 5000)
+      lease = QueueLease.new("tenant_1", "holder", duration_ms: 5000)
       encoded = :erlang.term_to_binary(lease)
 
       MockRepo
@@ -253,11 +260,11 @@ defmodule Bedrock.JobQueue.StoreTest do
     end
 
     test "fails with mismatched lease" do
-      stored = QueueLease.new("tenant_1", "holder1", 5000)
+      stored = QueueLease.new("tenant_1", "holder1", duration_ms: 5000)
       encoded = :erlang.term_to_binary(stored)
 
       # Try to release with different lease ID
-      fake = QueueLease.new("tenant_1", "attacker", 5000)
+      fake = QueueLease.new("tenant_1", "attacker", duration_ms: 5000)
 
       expect_queue_lease_get(MockRepo, encoded)
       result = Store.release_queue_lease(MockRepo, root(), fake)
@@ -266,7 +273,7 @@ defmodule Bedrock.JobQueue.StoreTest do
     end
 
     test "fails when lease not found" do
-      lease = QueueLease.new("tenant_1", "holder", 5000)
+      lease = QueueLease.new("tenant_1", "holder", duration_ms: 5000)
 
       expect_queue_lease_get(MockRepo, nil)
       result = Store.release_queue_lease(MockRepo, root(), lease)

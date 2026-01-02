@@ -9,18 +9,17 @@ defmodule Bedrock.JobQueue.Consumer do
 
   ```
   Consumer (Supervisor)
-  ├── WorkerPool (DynamicSupervisor)
-  │   └── Worker* (temporary GenServers)
+  ├── Task.Supervisor (worker pool)
+  │   └── Task* (job execution tasks)
   ├── Manager (GenServer)
-  ├── Scanner (GenServer)
-  └── PointerGC (GenServer)
+  └── Scanner (GenServer)
   ```
 
-  - **Scanner**: Continuously scans the pointer index for queues with visible items
+  - **Scanner**: Continuously scans the pointer index for queues with visible items,
+    also periodically garbage collects stale pointers
   - **Manager**: Receives queue notifications, dequeues items, obtains leases, dispatches to workers
-  - **WorkerPool**: Dynamic pool of workers up to concurrency limit
-  - **Worker**: Executes individual jobs with timeout protection
-  - **PointerGC**: Garbage collects stale pointers from empty queues
+  - **Task.Supervisor**: Dynamic pool of task workers up to concurrency limit
+  - **Worker**: Module providing job execution logic with timeout protection
 
   ## Usage
 
@@ -35,9 +34,7 @@ defmodule Bedrock.JobQueue.Consumer do
 
   alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Consumer.Manager
-  alias Bedrock.JobQueue.Consumer.PointerGC
   alias Bedrock.JobQueue.Consumer.Scanner
-  alias Bedrock.JobQueue.Consumer.WorkerPool
   alias Bedrock.Keyspace
 
   def start_link(opts) do
@@ -60,20 +57,20 @@ defmodule Bedrock.JobQueue.Consumer do
     pool_name = :"#{__MODULE__}.WorkerPool.#{id}"
     manager_name = :"#{__MODULE__}.Manager.#{id}"
     scanner_name = :"#{__MODULE__}.Scanner.#{id}"
-    gc_name = :"#{__MODULE__}.PointerGC.#{id}"
 
-    # GC options
+    # GC options (passed to Scanner)
     gc_interval = Keyword.get(opts, :gc_interval, 60_000)
     gc_grace_period = Keyword.get(opts, :gc_grace_period, 60_000)
 
     children = [
-      {WorkerPool, name: pool_name, concurrency: concurrency},
+      {Task.Supervisor, name: pool_name, max_children: concurrency},
       {Manager,
        name: manager_name,
        repo: repo,
        root: root,
        registry: registry,
        worker_pool: pool_name,
+       concurrency: concurrency,
        batch_size: batch_size,
        backoff_fn: backoff_fn},
       {Scanner,
@@ -82,10 +79,11 @@ defmodule Bedrock.JobQueue.Consumer do
        root: root,
        manager: manager_name,
        interval: scan_interval,
-       batch_size: batch_size},
-      {PointerGC, name: gc_name, repo: repo, root: root, interval: gc_interval, grace_period: gc_grace_period}
+       batch_size: batch_size,
+       gc_interval: gc_interval,
+       gc_grace_period: gc_grace_period}
     ]
 
-    Supervisor.init(children, strategy: :rest_for_one)
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end

@@ -16,6 +16,8 @@ defmodule Bedrock.JobQueue.Item do
   - `queue_id` - The queue/tenant this job belongs to
   """
 
+  alias Bedrock.JobQueue.Payload
+
   @type t :: %__MODULE__{
           id: binary(),
           topic: String.t(),
@@ -50,7 +52,7 @@ defmodule Bedrock.JobQueue.Item do
   """
   @spec new(String.t(), String.t(), term(), keyword()) :: t()
   def new(queue_id, topic, payload, opts \\ []) do
-    now = System.system_time(:millisecond)
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
 
     %__MODULE__{
       id: Keyword.get(opts, :id, generate_id()),
@@ -61,7 +63,7 @@ defmodule Bedrock.JobQueue.Item do
       lease_expires_at: nil,
       error_count: 0,
       max_retries: Keyword.get(opts, :max_retries, @default_max_retries),
-      payload: encode_payload(payload),
+      payload: Payload.encode(payload),
       queue_id: queue_id
     }
   end
@@ -81,15 +83,22 @@ defmodule Bedrock.JobQueue.Item do
 
   @doc """
   Returns true if the job is currently leased.
-  """
-  @spec leased?(t()) :: boolean()
-  def leased?(%__MODULE__{lease_id: nil}), do: false
 
-  def leased?(%__MODULE__{lease_expires_at: exp}) when not is_nil(exp) do
-    System.system_time(:millisecond) < exp
+  ## Options
+
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
+  """
+  @spec leased?(t(), keyword()) :: boolean()
+  def leased?(item, opts \\ [])
+
+  def leased?(%__MODULE__{lease_id: nil}, _opts), do: false
+
+  def leased?(%__MODULE__{lease_expires_at: exp}, opts) when not is_nil(exp) do
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
+    now < exp
   end
 
-  def leased?(_), do: false
+  def leased?(_, _opts), do: false
 
   @doc """
   Returns true if retries are exhausted.
@@ -97,8 +106,14 @@ defmodule Bedrock.JobQueue.Item do
   @spec exhausted?(t()) :: boolean()
   def exhausted?(%__MODULE__{error_count: ec, max_retries: mr}), do: ec >= mr
 
-  defp generate_id, do: :crypto.strong_rand_bytes(16)
+  @doc """
+  Builds the storage key tuple for this item.
 
-  defp encode_payload(payload) when is_binary(payload), do: payload
-  defp encode_payload(payload), do: Jason.encode!(payload)
+  Keys are `{priority, vesting_time, id}` which sorts items by priority first,
+  then by vesting time, then by unique id.
+  """
+  @spec key(t()) :: {non_neg_integer(), non_neg_integer(), binary()}
+  def key(%__MODULE__{priority: p, vesting_time: vt, id: id}), do: {p, vt, id}
+
+  defp generate_id, do: :crypto.strong_rand_bytes(16)
 end

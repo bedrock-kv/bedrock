@@ -9,7 +9,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   use GenServer
 
   alias Bedrock.JobQueue.Config
-  alias Bedrock.JobQueue.Consumer.WorkerPool
+  alias Bedrock.JobQueue.Consumer.Worker
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
 
@@ -20,11 +20,14 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     :root,
     :registry,
     :worker_pool,
+    :concurrency,
     :batch_size,
     :lease_duration,
     :holder_id,
     :backoff_fn,
-    pending_queues: MapSet.new()
+    pending_queues: MapSet.new(),
+    # Maps task ref -> lease for tracking in-flight jobs
+    task_leases: %{}
   ]
 
   @default_batch_size 10
@@ -41,6 +44,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
       root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
       registry: Keyword.fetch!(opts, :registry),
       worker_pool: Keyword.fetch!(opts, :worker_pool),
+      concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
       lease_duration: Keyword.get(opts, :lease_duration, @default_lease_duration),
       holder_id: :crypto.strong_rand_bytes(16),
@@ -56,9 +60,35 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     {:noreply, process_pending(state)}
   end
 
-  def handle_info({:worker_done, lease, result}, state) do
-    handle_worker_result(state, lease, result)
-    {:noreply, process_pending(state)}
+  # Task completed successfully
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+
+    case Map.pop(state.task_leases, ref) do
+      {nil, _} ->
+        # Unknown task, ignore
+        {:noreply, state}
+
+      {lease, task_leases} ->
+        handle_worker_result(state, lease, result)
+        state = %{state | task_leases: task_leases}
+        {:noreply, process_pending(state)}
+    end
+  end
+
+  # Task crashed
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.task_leases, ref) do
+      {nil, _} ->
+        # Unknown task, ignore
+        {:noreply, state}
+
+      {lease, task_leases} ->
+        Logger.error("Job task crashed: #{inspect(reason)}")
+        handle_worker_result(state, lease, {:error, {:crash, reason}})
+        state = %{state | task_leases: task_leases}
+        {:noreply, process_pending(state)}
+    end
   end
 
   defp process_pending(%{pending_queues: queues} = state) when map_size(queues) == 0 do
@@ -66,7 +96,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   end
 
   defp process_pending(state) do
-    case WorkerPool.available_workers(state.worker_pool) do
+    case available_workers(state) do
       0 ->
         state
 
@@ -80,6 +110,12 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
           state
         end
     end
+  end
+
+  defp available_workers(state) do
+    # Task.Supervisor uses :workers instead of :active
+    children = Task.Supervisor.children(state.worker_pool)
+    max(0, state.concurrency - length(children))
   end
 
   defp pop_queue(queues) do
@@ -117,7 +153,6 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     case result do
       {:ok, {items, leases}} ->
         dispatch_jobs(state, items, leases)
-        state
 
       {:error, reason} ->
         Logger.warning("Failed to process queue #{queue_id}: #{inspect(reason)}")
@@ -128,29 +163,24 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   defp dispatch_jobs(state, items, leases) do
     items_by_id = Map.new(items, &{&1.id, &1})
 
-    for lease <- leases do
+    Enum.reduce(leases, state, fn lease, acc_state ->
       item = Map.get(items_by_id, lease.item_id)
 
       if item do
-        case WorkerPool.dispatch(state.worker_pool, %{
-               item: item,
-               lease: lease,
-               registry: state.registry,
-               reply_to: self()
-             }) do
-          {:ok, _pid} ->
-            :ok
+        task =
+          Task.Supervisor.async_nolink(
+            acc_state.worker_pool,
+            Worker,
+            :execute,
+            [item, acc_state.registry]
+          )
 
-          {:error, reason} ->
-            # Dispatch failed (e.g., max_children exceeded).
-            # Log warning - lease will expire and item will become visible again.
-            Logger.warning(
-              "Failed to dispatch job #{inspect(item.id)}: #{inspect(reason)}. " <>
-                "Job will be retried after lease expires."
-            )
-        end
+        # Track the task ref -> lease mapping
+        %{acc_state | task_leases: Map.put(acc_state.task_leases, task.ref, lease)}
+      else
+        acc_state
       end
-    end
+    end)
   end
 
   defp handle_worker_result(state, lease, result) do

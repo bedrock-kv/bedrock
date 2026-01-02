@@ -84,26 +84,26 @@ defmodule Bedrock.JobQueue.Store do
   - `{:ok, QueueLease.t()}` - Lease obtained successfully
   - `{:error, :queue_leased}` - Queue already leased by another consumer
   """
-  @spec obtain_queue_lease(repo(), root_keyspace(), String.t(), binary(), pos_integer()) ::
+  @spec obtain_queue_lease(repo(), root_keyspace(), String.t(), binary(), pos_integer(), keyword()) ::
           {:ok, QueueLease.t()} | {:error, :queue_leased}
-  def obtain_queue_lease(repo, root, queue_id, holder, duration_ms) do
+  def obtain_queue_lease(repo, root, queue_id, holder, duration_ms, opts \\ []) do
     ks = queue_lease_keyspace(root)
-    now = System.system_time(:millisecond)
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
 
     case repo.get(ks, queue_id) do
       nil ->
         # No existing lease - create new one
-        lease = QueueLease.new(queue_id, holder, duration_ms)
-        repo.put(ks, queue_id, encode_queue_lease(lease))
+        lease = QueueLease.new(queue_id, holder, duration_ms: duration_ms, now: now)
+        repo.put(ks, queue_id, encode(lease))
         {:ok, lease}
 
       value ->
-        existing = decode_queue_lease(value)
+        existing = decode(value)
 
         if existing.expires_at <= now do
           # Existing lease expired - replace it
-          lease = QueueLease.new(queue_id, holder, duration_ms)
-          repo.put(ks, queue_id, encode_queue_lease(lease))
+          lease = QueueLease.new(queue_id, holder, duration_ms: duration_ms, now: now)
+          repo.put(ks, queue_id, encode(lease))
           {:ok, lease}
         else
           # Lease still active
@@ -128,7 +128,7 @@ defmodule Bedrock.JobQueue.Store do
         {:error, :lease_not_found}
 
       value ->
-        stored = decode_queue_lease(value)
+        stored = decode(value)
 
         if stored.id == lease.id do
           repo.clear(ks, lease.queue_id)
@@ -153,16 +153,12 @@ defmodule Bedrock.JobQueue.Store do
     pointers = pointer_keyspace(root)
 
     # Write item with tuple key
-    item_key = {item.priority, item.vesting_time, item.id}
-    repo.put(keyspaces.items, item_key, encode_item(item))
+    item_key = Item.key(item)
+    repo.put(keyspaces.items, item_key, encode(item))
 
-    # Update pointer index - atomic min ensures we track earliest vesting time
-    pointer_key = Keyspace.pack(pointers, {item.vesting_time, item.queue_id})
-    repo.min(pointer_key, encode_vesting_time(item.vesting_time))
-
-    # Increment pending count
-    stats_key = Keyspace.pack(keyspaces.stats, "pending")
-    repo.add(stats_key, <<1::64-little>>)
+    # Update pointer index and stats
+    update_pointer(repo, pointers, item.vesting_time, item.queue_id)
+    update_stats(repo, keyspaces, 1, 0)
 
     :ok
   end
@@ -191,7 +187,7 @@ defmodule Bedrock.JobQueue.Store do
     # Stops early once we have enough visible items OR hit max_scan
     keyspaces.items
     |> repo.get_range(limit: max_scan)
-    |> Stream.map(fn {_key, value} -> decode_item(value) end)
+    |> Stream.map(fn {_key, value} -> decode(value) end)
     |> Stream.filter(&Item.visible?(&1, now))
     |> Enum.take(limit)
   end
@@ -249,18 +245,18 @@ defmodule Bedrock.JobQueue.Store do
     now = System.system_time(:millisecond)
 
     # Read current item state
-    item_key = {item.priority, item.vesting_time, item.id}
+    item_key = Item.key(item)
 
     case repo.get(keyspaces.items, item_key) do
       nil ->
         {:error, :not_found}
 
       value ->
-        current_item = decode_item(value)
+        current_item = decode(value)
 
         if current_item.lease_id == nil do
           # Create lease
-          lease = Lease.new(current_item, holder, duration_ms)
+          lease = Lease.new(current_item, holder, duration_ms: duration_ms, now: now)
           lease_expires_at = now + duration_ms
 
           # Update item with lease info and new vesting_time
@@ -275,21 +271,15 @@ defmodule Bedrock.JobQueue.Store do
           repo.clear(keyspaces.items, item_key)
 
           # Write with new key (new vesting_time)
-          new_item_key = {updated_item.priority, updated_item.vesting_time, updated_item.id}
-          repo.put(keyspaces.items, new_item_key, encode_item(updated_item))
+          new_item_key = Item.key(updated_item)
+          repo.put(keyspaces.items, new_item_key, encode(updated_item))
 
           # Write lease record
-          repo.put(keyspaces.leases, lease.item_id, encode_lease(lease))
+          repo.put(keyspaces.leases, lease.item_id, encode(lease))
 
-          # Update pointer - item now vests later
-          pointer_key = Keyspace.pack(pointers, {lease_expires_at, item.queue_id})
-          repo.min(pointer_key, encode_vesting_time(lease_expires_at))
-
-          # Update stats
-          pending_key = Keyspace.pack(keyspaces.stats, "pending")
-          processing_key = Keyspace.pack(keyspaces.stats, "processing")
-          repo.add(pending_key, <<-1::64-signed-little>>)
-          repo.add(processing_key, <<1::64-little>>)
+          # Update pointer and stats
+          update_pointer(repo, pointers, lease_expires_at, item.queue_id)
+          update_stats(repo, keyspaces, -1, 1)
 
           {:ok, lease}
         else
@@ -319,19 +309,14 @@ defmodule Bedrock.JobQueue.Store do
     else
       keyspaces = queue_keyspaces(root, lease.queue_id)
 
-      case repo.get(keyspaces.leases, lease.item_id) do
-        nil -> {:error, :lease_not_found}
-        value -> do_extend_lease(repo, root, keyspaces, lease, decode_lease(value), now + extension_ms)
+      case verify_lease(repo, keyspaces, lease) do
+        {:ok, stored_lease} -> do_extend_lease(repo, root, keyspaces, stored_lease, now + extension_ms)
+        error -> error
       end
     end
   end
 
-  defp do_extend_lease(_repo, _root, _keyspaces, lease, stored_lease, _new_expires_at)
-       when stored_lease.id != lease.id do
-    {:error, :lease_mismatch}
-  end
-
-  defp do_extend_lease(repo, root, keyspaces, lease, stored_lease, new_expires_at) do
+  defp do_extend_lease(repo, root, keyspaces, stored_lease, new_expires_at) do
     old_item_key = stored_lease.item_key
 
     case repo.get(keyspaces.items, old_item_key) do
@@ -339,22 +324,20 @@ defmodule Bedrock.JobQueue.Store do
         {:error, :item_not_found}
 
       item_value ->
-        item = decode_item(item_value)
+        item = decode(item_value)
         updated_item = %{item | vesting_time: new_expires_at, lease_expires_at: new_expires_at}
 
         # Delete old item key, write with new vesting_time
         repo.clear(keyspaces.items, old_item_key)
-        new_item_key = {item.priority, new_expires_at, item.id}
-        repo.put(keyspaces.items, new_item_key, encode_item(updated_item))
+        new_item_key = Item.key(updated_item)
+        repo.put(keyspaces.items, new_item_key, encode(updated_item))
 
         # Update lease record
         updated_lease = %{stored_lease | expires_at: new_expires_at, item_key: new_item_key}
-        repo.put(keyspaces.leases, lease.item_id, encode_lease(updated_lease))
+        repo.put(keyspaces.leases, stored_lease.item_id, encode(updated_lease))
 
         # Update pointer index
-        pointers = pointer_keyspace(root)
-        pointer_key = Keyspace.pack(pointers, {new_expires_at, lease.queue_id})
-        repo.min(pointer_key, encode_vesting_time(new_expires_at))
+        update_pointer(repo, pointer_keyspace(root), new_expires_at, stored_lease.queue_id)
 
         {:ok, updated_lease}
     end
@@ -373,26 +356,19 @@ defmodule Bedrock.JobQueue.Store do
   def complete(repo, root, %Lease{} = lease) do
     keyspaces = queue_keyspaces(root, lease.queue_id)
 
-    case repo.get(keyspaces.leases, lease.item_id) do
-      nil ->
-        {:error, :lease_not_found}
+    case verify_lease(repo, keyspaces, lease) do
+      {:ok, stored_lease} ->
+        # Use provided item_key or fall back to stored lease's item_key
+        item_key = lease.item_key || stored_lease.item_key
+        repo.clear(keyspaces.items, item_key)
+        repo.clear(keyspaces.leases, lease.item_id)
 
-      value ->
-        stored_lease = decode_lease(value)
+        update_stats(repo, keyspaces, 0, -1)
 
-        if stored_lease.id == lease.id do
-          # Use provided item_key or fall back to stored lease's item_key
-          item_key = lease.item_key || stored_lease.item_key
-          repo.clear(keyspaces.items, item_key)
-          repo.clear(keyspaces.leases, lease.item_id)
+        :ok
 
-          processing_key = Keyspace.pack(keyspaces.stats, "processing")
-          repo.add(processing_key, <<-1::64-signed-little>>)
-
-          :ok
-        else
-          {:error, :lease_mismatch}
-        end
+      error ->
+        error
     end
   end
 
@@ -423,25 +399,16 @@ defmodule Bedrock.JobQueue.Store do
   end
 
   defp resolve_item_key(repo, keyspaces, %Lease{} = lease) do
-    case repo.get(keyspaces.leases, lease.item_id) do
-      nil ->
-        {:error, :lease_not_found}
-
-      value ->
-        stored_lease = decode_lease(value)
-
-        if stored_lease.id == lease.id do
-          {:ok, stored_lease.item_key}
-        else
-          {:error, :lease_mismatch}
-        end
+    case verify_lease(repo, keyspaces, lease) do
+      {:ok, stored_lease} -> {:ok, stored_lease.item_key}
+      error -> error
     end
   end
 
   defp fetch_item(repo, keyspaces, item_key) do
     case repo.get(keyspaces.items, item_key) do
       nil -> {:error, :item_not_found}
-      value -> {:ok, decode_item(value)}
+      value -> {:ok, decode(value)}
     end
   end
 
@@ -469,19 +436,13 @@ defmodule Bedrock.JobQueue.Store do
 
       # Delete old key, write new
       repo.clear(keyspaces.items, item_key)
-      new_item_key = {updated_item.priority, new_vesting_time, updated_item.id}
-      repo.put(keyspaces.items, new_item_key, encode_item(updated_item))
+      new_item_key = Item.key(updated_item)
+      repo.put(keyspaces.items, new_item_key, encode(updated_item))
 
-      # Update pointer
-      pointer_key = Keyspace.pack(pointers, {new_vesting_time, lease.queue_id})
-      repo.min(pointer_key, encode_vesting_time(new_vesting_time))
-
-      # Clear lease, update stats
+      # Update pointer, clear lease, update stats
+      update_pointer(repo, pointers, new_vesting_time, lease.queue_id)
       repo.clear(keyspaces.leases, lease.item_id)
-      pending_key = Keyspace.pack(keyspaces.stats, "pending")
-      processing_key = Keyspace.pack(keyspaces.stats, "processing")
-      repo.add(pending_key, <<1::64-little>>)
-      repo.add(processing_key, <<-1::64-signed-little>>)
+      update_stats(repo, keyspaces, 1, -1)
 
       {:ok, :requeued}
     end
@@ -608,28 +569,38 @@ defmodule Bedrock.JobQueue.Store do
 
   # Private helpers
 
-  defp encode_item(%Item{} = item) do
-    :erlang.term_to_binary(item)
+  defp encode(term), do: :erlang.term_to_binary(term)
+  defp decode(binary), do: :erlang.binary_to_term(binary)
+
+  # Verifies a lease exists and matches the provided lease ID
+  defp verify_lease(repo, keyspaces, %Lease{} = lease) do
+    case repo.get(keyspaces.leases, lease.item_id) do
+      nil ->
+        {:error, :lease_not_found}
+
+      value ->
+        stored = decode(value)
+        if stored.id == lease.id, do: {:ok, stored}, else: {:error, :lease_mismatch}
+    end
   end
 
-  defp decode_item(binary) when is_binary(binary) do
-    :erlang.binary_to_term(binary)
+  # Updates the pointer index with a new vesting time
+  defp update_pointer(repo, pointers, vesting_time, queue_id) do
+    pointer_key = Keyspace.pack(pointers, {vesting_time, queue_id})
+    repo.min(pointer_key, encode_vesting_time(vesting_time))
   end
 
-  defp encode_lease(%Lease{} = lease) do
-    :erlang.term_to_binary(lease)
-  end
+  # Atomically updates pending and processing stats
+  defp update_stats(repo, keyspaces, pending_delta, processing_delta) do
+    if pending_delta != 0 do
+      pending_key = Keyspace.pack(keyspaces.stats, "pending")
+      repo.add(pending_key, <<pending_delta::64-signed-little>>)
+    end
 
-  defp decode_lease(binary) when is_binary(binary) do
-    :erlang.binary_to_term(binary)
-  end
-
-  defp encode_queue_lease(%QueueLease{} = lease) do
-    :erlang.term_to_binary(lease)
-  end
-
-  defp decode_queue_lease(binary) when is_binary(binary) do
-    :erlang.binary_to_term(binary)
+    if processing_delta != 0 do
+      processing_key = Keyspace.pack(keyspaces.stats, "processing")
+      repo.add(processing_key, <<processing_delta::64-signed-little>>)
+    end
   end
 
   defp encode_vesting_time(time) when is_integer(time) do
@@ -653,14 +624,11 @@ defmodule Bedrock.JobQueue.Store do
 
     # Write to dead letter with failed_at timestamp
     dl_key = "#{now}/#{item.id}"
-    repo.put(dead_letter_ks, dl_key, encode_item(item))
+    repo.put(dead_letter_ks, dl_key, encode(item))
 
-    # Delete from main queue
+    # Delete from main queue and update stats
     repo.clear(keyspaces.items, item_key)
-
-    # Update stats
-    processing_key = Keyspace.pack(keyspaces.stats, "processing")
-    repo.add(processing_key, <<-1::64-signed-little>>)
+    update_stats(repo, keyspaces, 0, -1)
   end
 
   # Pointer key helpers (replacing PointerKey module)

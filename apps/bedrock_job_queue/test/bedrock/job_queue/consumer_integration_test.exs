@@ -13,7 +13,6 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   import Mox
 
   alias Bedrock.JobQueue.Consumer.Manager
-  alias Bedrock.JobQueue.Consumer.WorkerPool
   alias Bedrock.JobQueue.Item
   alias Bedrock.JobQueue.Store
   alias Bedrock.JobQueue.Test.Jobs
@@ -22,14 +21,16 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   # Use global mode so spawned processes can access the mock
   setup :set_mox_global
 
+  @concurrency 5
+
   setup do
     # Start a test registry for job handlers
     registry_name = :"TestRegistry_#{System.unique_integer()}"
     {:ok, _} = Registry.start_link(keys: :duplicate, name: registry_name)
 
-    # Start worker pool
+    # Start worker pool (Task.Supervisor)
     pool_name = :"TestPool_#{System.unique_integer()}"
-    {:ok, pool} = WorkerPool.start_link(name: pool_name, max_workers: 5)
+    {:ok, pool} = Task.Supervisor.start_link(name: pool_name, max_children: @concurrency)
 
     # Start mock store for stateful storage simulation
     {:ok, store_agent} = start_mock_store()
@@ -44,6 +45,7 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       registry: registry_name,
       pool: pool,
       pool_name: pool_name,
+      concurrency: @concurrency,
       store: store_agent,
       root: Keyspace.new("job_queue/")
     }
@@ -60,7 +62,8 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
             repo: MockRepo,
             root: ctx.root,
             registry: ctx.registry,
-            worker_pool: ctx.pool_name
+            worker_pool: ctx.pool_name,
+            concurrency: ctx.concurrency
           ],
           opts
         )
@@ -70,7 +73,7 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   end
 
   defp register_job(ctx, pattern, job_module) do
-    Bedrock.JobQueue.Registry.register(ctx.registry, pattern, job_module)
+    Registry.register(ctx.registry, pattern, job_module)
   end
 
   defp enqueue_item(ctx, topic, payload \\ %{}) do
@@ -88,14 +91,14 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
       send(manager, {:queue_ready, "tenant_1"})
 
-      # Wait for processing
-      Process.sleep(100)
-
-      # Verify item was removed (completed)
+      # Wait for item to be removed (completed)
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       item_key = {item.priority, item.vesting_time, item.id}
       storage_key = {Keyspace.prefix(keyspaces.items), item_key}
-      assert Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+
+      assert_eventually(fn ->
+        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+      end)
     end
 
     test "completes job when handler returns {:ok, result}", ctx do
@@ -104,13 +107,15 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       manager = start_manager(ctx)
 
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(100)
 
-      # Verify item was removed
+      # Wait for item to be removed
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       item_key = {item.priority, item.vesting_time, item.id}
       storage_key = {Keyspace.prefix(keyspaces.items), item_key}
-      assert Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+
+      assert_eventually(fn ->
+        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+      end)
     end
   end
 
@@ -121,25 +126,24 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       manager = start_manager(ctx)
 
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(100)
 
-      # Verify item still exists (requeued with new vesting_time)
-      # The original key should be gone, but a new key should exist
+      # Wait for requeue - item should have error_count = 1
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       items_prefix = Keyspace.prefix(keyspaces.items)
 
-      stored_items =
-        Agent.get(ctx.store, fn state ->
-          state
-          |> Enum.filter(fn {{p, _k}, _v} -> p == items_prefix end)
-          |> Enum.map(fn {_k, v} -> :erlang.binary_to_term(v) end)
-        end)
+      assert_eventually(fn ->
+        stored_items =
+          Agent.get(ctx.store, fn state ->
+            state
+            |> Enum.filter(fn {{p, _k}, _v} -> p == items_prefix end)
+            |> Enum.map(fn {_k, v} -> :erlang.binary_to_term(v) end)
+          end)
 
-      # Should have one item with error_count = 1
-      assert length(stored_items) == 1
-      [requeued_item] = stored_items
-      assert requeued_item.id == item.id
-      assert requeued_item.error_count == 1
+        case stored_items do
+          [requeued] -> requeued.id == item.id and requeued.error_count == 1
+          _ -> false
+        end
+      end)
     end
   end
 
@@ -150,13 +154,15 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       manager = start_manager(ctx)
 
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(100)
 
-      # Verify item was removed (discarded = completed)
+      # Wait for item to be removed (discarded = completed)
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       item_key = {item.priority, item.vesting_time, item.id}
       storage_key = {Keyspace.prefix(keyspaces.items), item_key}
-      assert Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+
+      assert_eventually(fn ->
+        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+      end)
     end
   end
 
@@ -167,24 +173,24 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       manager = start_manager(ctx)
 
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(100)
 
-      # Verify item was requeued with new vesting_time
+      # Wait for requeue - snooze increments error_count
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       items_prefix = Keyspace.prefix(keyspaces.items)
 
-      stored_items =
-        Agent.get(ctx.store, fn state ->
-          state
-          |> Enum.filter(fn {{p, _k}, _v} -> p == items_prefix end)
-          |> Enum.map(fn {_k, v} -> :erlang.binary_to_term(v) end)
-        end)
+      assert_eventually(fn ->
+        stored_items =
+          Agent.get(ctx.store, fn state ->
+            state
+            |> Enum.filter(fn {{p, _k}, _v} -> p == items_prefix end)
+            |> Enum.map(fn {_k, v} -> :erlang.binary_to_term(v) end)
+          end)
 
-      assert length(stored_items) == 1
-      [requeued_item] = stored_items
-      assert requeued_item.id == item.id
-      # Snooze uses the same requeue logic, so error_count increments
-      assert requeued_item.error_count == 1
+        case stored_items do
+          [requeued] -> requeued.id == item.id and requeued.error_count == 1
+          _ -> false
+        end
+      end)
     end
   end
 
@@ -195,13 +201,15 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       manager = start_manager(ctx)
 
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(100)
 
-      # Verify item was removed (discarded)
+      # Wait for item to be removed (discarded)
       keyspaces = Store.queue_keyspaces(ctx.root, "tenant_1")
       item_key = {item.priority, item.vesting_time, item.id}
       storage_key = {Keyspace.prefix(keyspaces.items), item_key}
-      assert Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+
+      assert_eventually(fn ->
+        Agent.get(ctx.store, &Map.get(&1, storage_key)) == nil
+      end)
     end
   end
 
@@ -209,12 +217,11 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
     test "does nothing when queue has no visible items", ctx do
       manager = start_manager(ctx)
 
-      # No items enqueued
+      # No items enqueued - just verify manager handles message without crashing
       send(manager, {:queue_ready, "tenant_1"})
-      Process.sleep(50)
 
-      # No errors should occur
-      assert Process.alive?(manager)
+      # Give it a moment to process, then check it's still alive
+      assert_eventually(fn -> Process.alive?(manager) end, timeout: 50)
     end
   end
 end

@@ -3,7 +3,6 @@ defmodule Bedrock.JobQueueTest do
 
   alias Bedrock.JobQueue.Item
   alias Bedrock.JobQueue.Lease
-  alias Bedrock.JobQueue.Registry
 
   describe "Item" do
     test "creates a new item with defaults" do
@@ -27,17 +26,17 @@ defmodule Bedrock.JobQueueTest do
     end
 
     test "visible? returns true when vesting_time has passed" do
-      past = System.system_time(:millisecond) - 1000
-      item = Item.new("tenant_1", "test", %{}, vesting_time: past)
+      now = 10_000
+      item = Item.new("tenant_1", "test", %{}, vesting_time: 9_000)
 
-      assert Item.visible?(item)
+      assert Item.visible?(item, now)
     end
 
     test "visible? returns false when vesting_time is in future" do
-      future = System.system_time(:millisecond) + 10_000
-      item = Item.new("tenant_1", "test", %{}, vesting_time: future)
+      now = 10_000
+      item = Item.new("tenant_1", "test", %{}, vesting_time: 20_000)
 
-      refute Item.visible?(item)
+      refute Item.visible?(item, now)
     end
 
     test "leased? returns false when no lease" do
@@ -64,35 +63,20 @@ defmodule Bedrock.JobQueueTest do
     end
 
     test "expired? returns false for fresh lease" do
+      now = 10_000
       item = Item.new("tenant_1", "test", %{})
-      lease = Lease.new(item, "holder")
+      lease = Lease.new(item, "holder", now: now)
 
-      refute Lease.expired?(lease)
+      refute Lease.expired?(lease, now: now)
     end
 
     test "expired? returns true for old lease" do
       item = Item.new("tenant_1", "test", %{})
-      lease = %{Lease.new(item, "holder") | expires_at: System.system_time(:millisecond) - 1000}
+      # Created at 4000, expires at 34000 (default 30s), but we'll set duration
+      lease = Lease.new(item, "holder", duration_ms: 5000, now: 4_000)
+      now = 10_000
 
-      assert Lease.expired?(lease)
-    end
-  end
-
-  describe "Registry" do
-    test "matches_pattern? with exact match" do
-      assert Registry.matches_pattern?("user:created", "user:created")
-      refute Registry.matches_pattern?("user:created", "user:deleted")
-    end
-
-    test "matches_pattern? with wildcard" do
-      assert Registry.matches_pattern?("user:*", "user:created")
-      assert Registry.matches_pattern?("user:*", "user:deleted")
-      refute Registry.matches_pattern?("user:*", "email:send")
-    end
-
-    test "matches_pattern? with global wildcard" do
-      assert Registry.matches_pattern?("*", "anything")
-      assert Registry.matches_pattern?("*", "user:created")
+      assert Lease.expired?(lease, now: now)
     end
   end
 

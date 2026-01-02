@@ -51,7 +51,6 @@ defmodule Bedrock.JobQueue do
 
   alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Item
-  alias Bedrock.JobQueue.Registry
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
 
@@ -141,7 +140,7 @@ defmodule Bedrock.JobQueue do
   """
   @spec register(String.t(), module(), keyword()) :: :ok | {:error, term()}
   def register(topic_pattern, job_module, opts \\ []) do
-    registry = Keyword.get(opts, :registry, Registry.Default)
+    registry = Keyword.get(opts, :registry, Bedrock.JobQueue.Registry.Default)
     Registry.register(registry, topic_pattern, job_module)
   end
 

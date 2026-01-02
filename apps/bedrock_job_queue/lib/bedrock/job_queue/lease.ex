@@ -26,14 +26,19 @@ defmodule Bedrock.JobQueue.Lease do
 
   @doc """
   Creates a new lease for an item.
-  """
-  @spec new(Item.t(), binary()) :: t()
-  @spec new(Item.t(), binary(), pos_integer() | keyword()) :: t()
-  def new(item, holder, duration_or_opts \\ [])
 
-  def new(%Item{} = item, holder, duration_ms) when is_integer(duration_ms) do
-    now = System.system_time(:millisecond)
-    expires_at = now + duration_ms
+  ## Options
+
+  - `:duration_ms` - Lease duration in milliseconds (default: 30_000)
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
+  """
+  @spec new(Item.t(), binary(), keyword()) :: t()
+  def new(item, holder, opts \\ [])
+
+  def new(%Item{} = item, holder, opts) do
+    now = Keyword.get(opts, :now, System.system_time(:millisecond))
+    duration = Keyword.get(opts, :duration_ms, @default_lease_duration_ms)
+    expires_at = now + duration
 
     # Store the NEW item key (with updated vesting_time) for O(1) lookup on complete/requeue
     # After leasing, item's vesting_time becomes expires_at
@@ -50,19 +55,26 @@ defmodule Bedrock.JobQueue.Lease do
     }
   end
 
-  def new(%Item{} = item, holder, opts) when is_list(opts) do
-    duration = Keyword.get(opts, :duration_ms, @default_lease_duration_ms)
-    new(item, holder, duration)
-  end
-
   @doc """
   Returns true if the lease has expired.
+
+  ## Options
+
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
   """
-  defdelegate expired?(lease), to: Expirable
+  @dialyzer {:nowarn_function, expired?: 2}
+  @spec expired?(t(), keyword()) :: boolean()
+  def expired?(lease, opts \\ []), do: Expirable.expired?(lease, opts)
 
   @doc """
   Returns the remaining time on the lease in milliseconds.
   Returns 0 if expired.
+
+  ## Options
+
+  - `:now` - Current time in milliseconds (default: System.system_time(:millisecond))
   """
-  defdelegate remaining_ms(lease), to: Expirable
+  @dialyzer {:nowarn_function, remaining_ms: 2}
+  @spec remaining_ms(t(), keyword()) :: non_neg_integer()
+  def remaining_ms(lease, opts \\ []), do: Expirable.remaining_ms(lease, opts)
 end

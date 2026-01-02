@@ -1,61 +1,25 @@
 defmodule Bedrock.JobQueue.Consumer.Worker do
   @moduledoc """
-  Processes individual jobs.
+  Job execution logic.
 
-  Workers execute job modules' perform/1 callbacks with timeout protection.
-  Results are reported back to the Manager for completion/requeue handling.
+  Provides the execute/3 function that runs job modules' perform/1 callbacks
+  with timeout protection. Used directly by Manager via Task.Supervisor.
   """
 
-  use GenServer, restart: :temporary
-
   alias Bedrock.JobQueue.Item
-  alias Bedrock.JobQueue.Registry
+  alias Bedrock.JobQueue.Payload
 
   require Logger
 
-  defstruct [:item, :lease, :registry, :reply_to, :task_ref]
+  @doc """
+  Executes a job and returns the result.
 
-  def start_link(job) do
-    GenServer.start_link(__MODULE__, job)
-  end
-
-  @impl true
-  def init(job) do
-    state = %__MODULE__{
-      item: job.item,
-      lease: job.lease,
-      registry: job.registry,
-      reply_to: job.reply_to
-    }
-
-    {:ok, state, {:continue, :execute}}
-  end
-
-  @impl true
-  def handle_continue(:execute, state) do
-    task =
-      Task.async(fn ->
-        execute_job(state.item, state.registry)
-      end)
-
-    {:noreply, %{state | task_ref: task.ref}}
-  end
-
-  @impl true
-  def handle_info({ref, result}, %{task_ref: ref} = state) do
-    Process.demonitor(ref, [:flush])
-    send(state.reply_to, {:worker_done, state.lease, result})
-    {:stop, :normal, state}
-  end
-
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{task_ref: ref} = state) do
-    Logger.error("Job #{state.item.id} crashed: #{inspect(reason)}")
-    send(state.reply_to, {:worker_done, state.lease, {:error, {:crash, reason}}})
-    {:stop, :normal, state}
-  end
-
-  defp execute_job(%Item{} = item, registry) do
-    case Registry.lookup(registry, item.topic) do
+  Called from a Task spawned by Manager. Looks up the handler for the item's
+  topic and executes it with timeout protection.
+  """
+  @spec execute(Item.t(), module() | atom()) :: term()
+  def execute(%Item{} = item, registry) do
+    case lookup_handler(registry, item.topic) do
       {:ok, job_module} ->
         execute_with_timeout(job_module, item)
 
@@ -65,9 +29,31 @@ defmodule Bedrock.JobQueue.Consumer.Worker do
     end
   end
 
+  # Finds the job module registered for a topic pattern
+  defp lookup_handler(registry, topic) do
+    registry
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.find_value(:error, fn {pattern, module} ->
+      if matches_pattern?(pattern, topic), do: {:ok, module}
+    end)
+  end
+
+  # Checks if a topic matches a pattern (supports wildcards)
+  defp matches_pattern?(pattern, topic) do
+    pattern_parts = String.split(pattern, ":")
+    topic_parts = String.split(topic, ":")
+    match_parts(pattern_parts, topic_parts)
+  end
+
+  defp match_parts([], []), do: true
+  defp match_parts(["*"], _rest), do: true
+  defp match_parts(["*" | _], _), do: true
+  defp match_parts([p | pattern_rest], [t | topic_rest]) when p == t, do: match_parts(pattern_rest, topic_rest)
+  defp match_parts(_, _), do: false
+
   defp execute_with_timeout(job_module, item) do
     timeout = get_timeout(job_module)
-    args = decode_payload(item.payload)
+    args = Payload.decode(item.payload)
 
     task =
       Task.async(fn ->
@@ -97,13 +83,4 @@ defmodule Bedrock.JobQueue.Consumer.Worker do
       30_000
     end
   end
-
-  defp decode_payload(payload) when is_binary(payload) do
-    case Jason.decode(payload, keys: :atoms) do
-      {:ok, decoded} -> decoded
-      {:error, _} -> %{raw: payload}
-    end
-  end
-
-  defp decode_payload(payload), do: payload
 end

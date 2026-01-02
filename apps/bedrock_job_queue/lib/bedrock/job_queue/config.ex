@@ -6,27 +6,13 @@ defmodule Bedrock.JobQueue.Config do
   @type t :: %__MODULE__{
           repo: module(),
           concurrency: pos_integer(),
-          batch_size: pos_integer(),
-          scan_interval_ms: pos_integer(),
-          max_time_per_queue_ms: pos_integer(),
-          item_lease_duration_ms: pos_integer(),
-          queue_lease_duration_ms: pos_integer(),
-          max_retries: pos_integer(),
-          backoff_fn: (non_neg_integer() -> non_neg_integer()),
-          telemetry_prefix: [atom()]
+          batch_size: pos_integer()
         }
 
   defstruct [
     :repo,
     concurrency: System.schedulers_online(),
-    batch_size: 10,
-    scan_interval_ms: 100,
-    max_time_per_queue_ms: 50,
-    item_lease_duration_ms: 30_000,
-    queue_lease_duration_ms: 60_000,
-    max_retries: 3,
-    backoff_fn: &__MODULE__.default_backoff/1,
-    telemetry_prefix: [:bedrock, :job_queue]
+    batch_size: 10
   ]
 
   @doc """

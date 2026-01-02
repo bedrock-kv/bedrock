@@ -23,7 +23,11 @@ defmodule DefaultTestCluster do
 end
 
 Mox.defmock(Bedrock.Raft.MockInterface, for: Bedrock.Raft.Interface)
-Mox.defmock(MockRepo, for: Bedrock.Repo)
+
+if !Code.ensure_loaded?(MockRepo) do
+  Mox.defmock(MockRepo, for: Bedrock.Repo)
+end
+
 Mox.stub(MockRepo, :transact, fn callback -> callback.() end)
 
 # Define behavior for Resolver testing

@@ -192,7 +192,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
         run_job_action(state, lease, :requeue)
 
       {:discard, reason} ->
-        Logger.info("Discarding job #{lease.item_id}: #{inspect(reason)}")
+        Logger.info("Discarding job #{Base.encode16(lease.item_id, case: :lower)}: #{inspect(reason)}")
         run_job_action(state, lease, :complete)
 
       {:snooze, delay_ms} ->

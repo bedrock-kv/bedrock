@@ -110,4 +110,50 @@ defmodule Bedrock.JobQueueTest do
       assert TestJob.timeout() == 30_000
     end
   end
+
+  # ============================================================================
+  # Bug regression tests
+  # ============================================================================
+
+  describe "start_consumer/1 default registry - regression" do
+    # Regression test: The consumer must use Bedrock.JobQueue.Registry.Default
+    # not the bare Registry.Default, which doesn't exist.
+    # See commit e490e4a2 for the fix.
+
+    test "register uses fully qualified registry name by default" do
+      # Ensure the application is started (which starts the registry)
+      {:ok, _} = Application.ensure_all_started(:bedrock_job_queue)
+
+      # Verify we can register with the default registry
+      # This will fail with "unknown registry: Registry.Default" if the bug exists
+      # Registry.register returns {:ok, pid} on success
+      result = Bedrock.JobQueue.register("test:regression:registry:*", __MODULE__)
+
+      assert match?({:ok, _pid}, result)
+    end
+
+    test "registered handler exists in Bedrock.JobQueue.Registry.Default" do
+      {:ok, _} = Application.ensure_all_started(:bedrock_job_queue)
+
+      # Register a handler with a unique pattern
+      pattern = "test:regression:lookup:#{System.unique_integer()}"
+      {:ok, _} = Bedrock.JobQueue.register(pattern, __MODULE__)
+
+      # Query the registry directly to verify correct registry was used
+      matches =
+        Registry.select(
+          Bedrock.JobQueue.Registry.Default,
+          [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}]
+        )
+
+      # Find our registration
+      found =
+        Enum.any?(matches, fn {registered_pattern, _pid, module} ->
+          registered_pattern == pattern and module == __MODULE__
+        end)
+
+      assert found,
+             "Handler should be registered in Bedrock.JobQueue.Registry.Default, not Registry.Default"
+    end
+  end
 end

@@ -19,6 +19,10 @@ defmodule Bedrock.JobQueue.Consumer.WorkerPool do
   def init(opts) do
     max_children = Keyword.get(opts, :concurrency, System.schedulers_online())
 
+    # Store max_children so available_workers can retrieve it
+    # (DynamicSupervisor.count_children doesn't expose max_children)
+    :persistent_term.put({__MODULE__, self()}, max_children)
+
     DynamicSupervisor.init(
       strategy: :one_for_one,
       max_children: max_children
@@ -39,8 +43,10 @@ defmodule Bedrock.JobQueue.Consumer.WorkerPool do
   """
   @spec available_workers(GenServer.server()) :: non_neg_integer()
   def available_workers(pool) do
-    %{specs: max, active: active} = DynamicSupervisor.count_children(pool)
-    max(0, max - active)
+    pid = GenServer.whereis(pool)
+    max_children = :persistent_term.get({__MODULE__, pid}, System.schedulers_online())
+    %{active: active} = DynamicSupervisor.count_children(pool)
+    max(0, max_children - active)
   end
 
   @doc """

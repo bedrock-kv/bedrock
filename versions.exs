@@ -12,6 +12,7 @@
   bedrock_core: "0.4.0",
   bedrock_directory: "0.1.0",
   bedrock_hca: "0.1.0",
+  bedrock_job_queue: "0.1.0",
   bedrock_log_shale: "0.1.0",
   bedrock_storage_olivine: "0.1.0"
 }

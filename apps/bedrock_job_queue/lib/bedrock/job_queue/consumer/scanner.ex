@@ -39,6 +39,7 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
     :gc_interval,
     :gc_grace_period,
     :gc_batch_size,
+    :now_fn,
     last_notified: [],
     gc_last_run: 0
   ]
@@ -73,7 +74,8 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
       selection_max: Keyword.get(opts, :selection_max, @default_selection_max),
       gc_interval: Keyword.get(opts, :gc_interval, @default_gc_interval),
       gc_grace_period: Keyword.get(opts, :gc_grace_period, @default_gc_grace_period),
-      gc_batch_size: Keyword.get(opts, :gc_batch_size, @default_gc_batch_size)
+      gc_batch_size: Keyword.get(opts, :gc_batch_size, @default_gc_batch_size),
+      now_fn: Keyword.get(opts, :now_fn, fn -> System.system_time(:millisecond) end)
     }
 
     schedule_scan(state)
@@ -166,23 +168,24 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
 
   # Run GC if gc_interval has passed since last run
   defp maybe_run_gc(state) do
-    now = System.system_time(:millisecond)
+    now = state.now_fn.()
 
     if now - state.gc_last_run >= state.gc_interval do
-      run_gc(state)
+      run_gc(state, now)
       %{state | gc_last_run: now}
     else
       state
     end
   end
 
-  defp run_gc(state) do
+  defp run_gc(state, now) do
     result =
       state.repo.transact(fn ->
         deleted =
           Store.gc_stale_pointers(state.repo, state.root,
             grace_period: state.gc_grace_period,
-            limit: state.gc_batch_size
+            limit: state.gc_batch_size,
+            now: now
           )
 
         {:ok, deleted}

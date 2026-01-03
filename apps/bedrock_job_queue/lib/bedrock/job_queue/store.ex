@@ -147,17 +147,18 @@ defmodule Bedrock.JobQueue.Store do
   2. Updates pointer index with atomic min for vesting_time
   3. Increments pending_count via atomic add
   """
-  @spec enqueue(repo(), root_keyspace(), Item.t()) :: :ok
-  def enqueue(repo, root, %Item{} = item) do
+  @spec enqueue(repo(), root_keyspace(), Item.t(), keyword()) :: :ok
+  def enqueue(repo, root, %Item{} = item, opts \\ []) do
     keyspaces = queue_keyspaces(root, item.queue_id)
     pointers = pointer_keyspace(root)
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
     # Write item with tuple key
     item_key = Item.key(item)
     repo.put(keyspaces.items, item_key, encode(item))
 
     # Update pointer index and stats
-    update_pointer(repo, pointers, item.vesting_time, item.queue_id)
+    update_pointer(repo, pointers, item.vesting_time, item.queue_id, now)
     update_stats(repo, keyspaces, 1, 0)
 
     :ok
@@ -239,12 +240,12 @@ defmodule Bedrock.JobQueue.Store do
   3. Updates item's vesting_time to lease expiry (makes it invisible)
   4. Updates pointer index with new min vesting_time
   """
-  @spec obtain_lease(repo(), root_keyspace(), Item.t(), binary(), pos_integer()) ::
+  @spec obtain_lease(repo(), root_keyspace(), Item.t(), binary(), pos_integer(), keyword()) ::
           {:ok, Lease.t()} | {:error, :already_leased | :not_found}
-  def obtain_lease(repo, root, %Item{} = item, holder, duration_ms) do
+  def obtain_lease(repo, root, %Item{} = item, holder, duration_ms, opts \\ []) do
     keyspaces = queue_keyspaces(root, item.queue_id)
     pointers = pointer_keyspace(root)
-    now = System.system_time(:millisecond)
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
     # Read current item state
     item_key = Item.key(item)
@@ -280,7 +281,7 @@ defmodule Bedrock.JobQueue.Store do
           repo.put(keyspaces.leases, lease.item_id, encode(lease))
 
           # Update pointer and stats
-          update_pointer(repo, pointers, lease_expires_at, item.queue_id)
+          update_pointer(repo, pointers, lease_expires_at, item.queue_id, now)
           update_stats(repo, keyspaces, -1, 1)
 
           {:ok, lease}
@@ -301,10 +302,10 @@ defmodule Bedrock.JobQueue.Store do
   3. Updates lease record with new expiry
   4. Updates pointer index
   """
-  @spec extend_lease(repo(), root_keyspace(), Lease.t(), pos_integer()) ::
+  @spec extend_lease(repo(), root_keyspace(), Lease.t(), pos_integer(), keyword()) ::
           {:ok, Lease.t()} | {:error, :lease_not_found | :lease_mismatch | :lease_expired}
-  def extend_lease(repo, root, %Lease{} = lease, extension_ms) do
-    now = System.system_time(:millisecond)
+  def extend_lease(repo, root, %Lease{} = lease, extension_ms, opts \\ []) do
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
     if lease.expires_at <= now do
       {:error, :lease_expired}
@@ -312,13 +313,13 @@ defmodule Bedrock.JobQueue.Store do
       keyspaces = queue_keyspaces(root, lease.queue_id)
 
       case verify_lease(repo, keyspaces, lease) do
-        {:ok, stored_lease} -> do_extend_lease(repo, root, keyspaces, stored_lease, now + extension_ms)
+        {:ok, stored_lease} -> do_extend_lease(repo, root, keyspaces, stored_lease, now + extension_ms, now)
         error -> error
       end
     end
   end
 
-  defp do_extend_lease(repo, root, keyspaces, stored_lease, new_expires_at) do
+  defp do_extend_lease(repo, root, keyspaces, stored_lease, new_expires_at, now) do
     old_item_key = stored_lease.item_key
 
     case repo.get(keyspaces.items, old_item_key) do
@@ -339,7 +340,7 @@ defmodule Bedrock.JobQueue.Store do
         repo.put(keyspaces.leases, stored_lease.item_id, encode(updated_lease))
 
         # Update pointer index
-        update_pointer(repo, pointer_keyspace(root), new_expires_at, stored_lease.queue_id)
+        update_pointer(repo, pointer_keyspace(root), new_expires_at, stored_lease.queue_id, now)
 
         {:ok, updated_lease}
     end
@@ -387,7 +388,7 @@ defmodule Bedrock.JobQueue.Store do
   def requeue(repo, root, %Lease{} = lease, opts) do
     keyspaces = queue_keyspaces(root, lease.queue_id)
     pointers = pointer_keyspace(root)
-    now = System.system_time(:millisecond)
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
     # Get item_key from lease or fetch from stored lease
     with {:ok, item_key} <- resolve_item_key(repo, keyspaces, lease),
@@ -419,7 +420,7 @@ defmodule Bedrock.JobQueue.Store do
 
     if new_error_count >= item.max_retries do
       # Move to dead letter
-      move_to_dead_letter(repo, keyspaces, item_key, item)
+      move_to_dead_letter(repo, keyspaces, item_key, item, now)
       repo.clear(keyspaces.leases, lease.item_id)
       {:ok, :dead_lettered}
     else
@@ -442,7 +443,7 @@ defmodule Bedrock.JobQueue.Store do
       repo.put(keyspaces.items, new_item_key, encode(updated_item))
 
       # Update pointer, clear lease, update stats
-      update_pointer(repo, pointers, new_vesting_time, lease.queue_id)
+      update_pointer(repo, pointers, new_vesting_time, lease.queue_id, now)
       repo.clear(keyspaces.leases, lease.item_id)
       update_stats(repo, keyspaces, 1, -1)
 
@@ -528,10 +529,11 @@ defmodule Bedrock.JobQueue.Store do
   When the new vesting_time is in the future, this also cleans up any stale
   pointers in the past to prevent the scanner from repeatedly finding them.
   """
-  @spec update_queue_pointer(repo(), root_keyspace(), String.t(), non_neg_integer()) :: :ok
-  def update_queue_pointer(repo, root, queue_id, vesting_time) do
+  @spec update_queue_pointer(repo(), root_keyspace(), String.t(), non_neg_integer(), keyword()) ::
+          :ok
+  def update_queue_pointer(repo, root, queue_id, vesting_time, opts \\ []) do
     pointers = pointer_keyspace(root)
-    now = System.system_time(:millisecond)
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
     # If new vesting_time is in the future, clean up any stale pointers in the past
     # This prevents the scanner from repeatedly finding stale pointers that point
@@ -540,7 +542,7 @@ defmodule Bedrock.JobQueue.Store do
       cleanup_past_pointers(repo, pointers, queue_id, now)
     end
 
-    update_pointer(repo, pointers, vesting_time, queue_id)
+    update_pointer(repo, pointers, vesting_time, queue_id, now)
     :ok
   end
 
@@ -673,10 +675,9 @@ defmodule Bedrock.JobQueue.Store do
   # Updates the pointer index with a new vesting time.
   # Per QuiCK paper: stores last_active_time (when items were last seen) for smarter GC.
   # Uses repo.max to track the most recent activity time.
-  defp update_pointer(repo, pointers, vesting_time, queue_id) do
+  defp update_pointer(repo, pointers, vesting_time, queue_id, now) do
     pointer_key = Keyspace.pack(pointers, {vesting_time, queue_id})
-    last_active_time = System.system_time(:millisecond)
-    repo.max(pointer_key, encode_timestamp(last_active_time))
+    repo.max(pointer_key, encode_timestamp(now))
   end
 
   defp encode_timestamp(time), do: <<time::64-little>>
@@ -714,8 +715,7 @@ defmodule Bedrock.JobQueue.Store do
   # If binary is larger than 8 bytes, something is wrong - return 0
   defp decode_counter(_), do: 0
 
-  defp move_to_dead_letter(repo, keyspaces, item_key, item) do
-    now = System.system_time(:millisecond)
+  defp move_to_dead_letter(repo, keyspaces, item_key, item, now) do
     dead_letter_ks = Keyspace.partition(keyspaces.items, "../dead_letter/")
 
     # Write to dead letter with failed_at timestamp

@@ -37,23 +37,24 @@ defmodule Bedrock.JobQueue.Internal do
   def enqueue(job_queue_module, queue_id, topic, payload, opts) do
     config = job_queue_module.__config__()
     root = root_keyspace(job_queue_module)
-    opts = process_scheduling_opts(opts)
+    now = Keyword.get(opts, :now) || System.system_time(:millisecond)
+    opts = process_scheduling_opts(opts, now)
     item = Item.new(queue_id, topic, payload, opts)
 
     config.repo.transact(fn ->
-      Store.enqueue(config.repo, root, item)
+      Store.enqueue(config.repo, root, item, now: now)
       {:ok, item}
     end)
   end
 
-  defp process_scheduling_opts(opts) do
+  defp process_scheduling_opts(opts, now) do
     cond do
       scheduled_at = Keyword.get(opts, :at) ->
         vesting_time = DateTime.to_unix(scheduled_at, :millisecond)
         opts |> Keyword.delete(:at) |> Keyword.put(:vesting_time, vesting_time)
 
       delay_ms = Keyword.get(opts, :in) ->
-        vesting_time = System.system_time(:millisecond) + delay_ms
+        vesting_time = now + delay_ms
         opts |> Keyword.delete(:in) |> Keyword.put(:vesting_time, vesting_time)
 
       true ->

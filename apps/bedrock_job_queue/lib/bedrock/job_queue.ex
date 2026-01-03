@@ -45,23 +45,17 @@ defmodule Bedrock.JobQueue do
 
   Enqueue jobs:
 
+      # Immediate processing
       MyApp.JobQueue.enqueue("tenant_1", "user:created", %{user_id: 123})
 
-  ## Scheduling Jobs
-
       # Schedule for a specific time
-      MyApp.JobQueue.enqueue_at("tenant_1", "email:send", payload, ~U[2024-01-15 10:00:00Z])
+      MyApp.JobQueue.enqueue("tenant_1", "email:send", payload, at: ~U[2024-01-15 10:00:00Z])
 
       # Schedule with a delay
-      MyApp.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
+      MyApp.JobQueue.enqueue("tenant_1", "cleanup", payload, in: :timer.hours(1))
 
-  ## Priority
-
-  Lower priority values are processed first:
-
-      MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)   # Processed first
-      MyApp.JobQueue.enqueue("tenant_1", "normal", payload, priority: 100) # Default
-      MyApp.JobQueue.enqueue("tenant_1", "batch", payload, priority: 200)  # Processed last
+      # With priority (lower = higher priority)
+      MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)
   """
 
   @type queue_id :: term()
@@ -69,10 +63,11 @@ defmodule Bedrock.JobQueue do
   @type payload :: map() | binary()
 
   @type enqueue_opts :: [
+          at: DateTime.t(),
+          in: non_neg_integer(),
           priority: integer(),
           max_retries: non_neg_integer(),
-          id: binary(),
-          vesting_time: non_neg_integer()
+          id: binary()
         ]
 
   @type config :: %{
@@ -135,43 +130,28 @@ defmodule Bedrock.JobQueue do
 
       ## Options
 
+      - `:at` - Schedule for a specific DateTime
+      - `:in` - Delay in milliseconds before processing
       - `:priority` - Integer priority (lower = higher priority, default: 100)
       - `:max_retries` - Maximum retry attempts (default: 3)
       - `:id` - Custom job ID (default: auto-generated UUID)
 
       ## Examples
 
+          # Immediate processing
           MyApp.JobQueue.enqueue("tenant_1", "email:send", %{to: "user@example.com"})
+
+          # Schedule for specific time
+          MyApp.JobQueue.enqueue("tenant_1", "reminder", payload, at: ~U[2024-01-15 10:00:00Z])
+
+          # Delay by duration
+          MyApp.JobQueue.enqueue("tenant_1", "cleanup", payload, in: :timer.hours(1))
+
+          # With priority
           MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)
       """
       def enqueue(queue_id, topic, payload, opts \\ []) do
         Bedrock.JobQueue.Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
-      end
-
-      @doc """
-      Enqueues a job scheduled for a specific time.
-
-      ## Examples
-
-          MyApp.JobQueue.enqueue_at("tenant_1", "reminder", payload, ~U[2024-01-15 10:00:00Z])
-      """
-      def enqueue_at(queue_id, topic, payload, %DateTime{} = scheduled_at, opts \\ []) do
-        Bedrock.JobQueue.Internal.enqueue_at(__MODULE__, queue_id, topic, payload, scheduled_at, opts)
-      end
-
-      @doc """
-      Enqueues a job with a delay.
-
-      ## Examples
-
-          # Run in 1 hour
-          MyApp.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
-
-          # Run in 30 seconds
-          MyApp.JobQueue.enqueue_in("tenant_1", "retry", payload, 30_000)
-      """
-      def enqueue_in(queue_id, topic, payload, delay_ms, opts \\ []) when is_integer(delay_ms) do
-        Bedrock.JobQueue.Internal.enqueue_in(__MODULE__, queue_id, topic, payload, delay_ms, opts)
       end
 
       @doc """

@@ -266,16 +266,15 @@ Enqueue jobs using your JobQueue module:
     }, priority: 5)
 
     # Scheduled for a specific time
-    scheduled_time = DateTime.utc_now() |> DateTime.add(3600, :second)
-    MyApp.JobQueue.enqueue_at("tenant_1", "cleanup:data", %{
+    MyApp.JobQueue.enqueue("tenant_1", "cleanup:data", %{
       table: "logs",
       older_than: "30 days"
-    }, scheduled_time)
+    }, at: DateTime.utc_now() |> DateTime.add(3600, :second))
 
     # Delayed by duration
-    MyApp.JobQueue.enqueue_in("tenant_1", "inventory:sync", %{
+    MyApp.JobQueue.enqueue("tenant_1", "inventory:sync", %{
       product_id: 12345
-    }, :timer.minutes(5))
+    }, in: :timer.minutes(5))
 """)
 
 # =============================================================================

@@ -231,9 +231,9 @@ IO.puts("\nStep 7: Testing scheduled jobs...")
 
 # Schedule job for 2 seconds from now
 scheduled_time = DateTime.utc_now() |> DateTime.add(2, :second)
-{:ok, _} = CoffeeShop.JobQueue.enqueue_at("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-SCHEDULED", customer: "Charlie"},
-  scheduled_time)
+  at: scheduled_time)
 
 IO.puts("  -> Scheduled job for #{DateTime.to_iso8601(scheduled_time)}")
 IO.puts("  -> Waiting 3 seconds to see it execute...")
@@ -245,9 +245,9 @@ Process.sleep(3000)
 
 IO.puts("\nStep 8: Testing delayed jobs (enqueue_in)...")
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue_in("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-DELAYED", customer: "Diana"},
-  1000)  # 1 second delay
+  in: 1000)  # 1 second delay
 
 IO.puts("  -> Enqueued with 1 second delay")
 IO.puts("  -> Waiting 2 seconds...")

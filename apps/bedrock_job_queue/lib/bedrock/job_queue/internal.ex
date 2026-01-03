@@ -11,10 +11,33 @@ defmodule Bedrock.JobQueue.Internal do
 
   @doc """
   Enqueues a job for processing.
+
+  ## Options
+
+  - `:at` - Schedule for a specific DateTime
+  - `:in` - Delay in milliseconds before processing
+  - `:priority` - Integer priority (lower = higher priority, default: 100)
+  - `:max_retries` - Maximum retry attempts (default: 3)
+  - `:id` - Custom job ID (default: auto-generated UUID)
+
+  ## Examples
+
+      # Immediate processing
+      enqueue(MyQueue, "tenant", "topic", payload)
+
+      # Schedule for specific time
+      enqueue(MyQueue, "tenant", "topic", payload, at: ~U[2024-01-15 10:00:00Z])
+
+      # Delay by duration
+      enqueue(MyQueue, "tenant", "topic", payload, in: :timer.hours(1))
+
+      # With priority
+      enqueue(MyQueue, "tenant", "topic", payload, priority: 0)
   """
   def enqueue(job_queue_module, queue_id, topic, payload, opts) do
     config = job_queue_module.__config__()
     root = root_keyspace(job_queue_module)
+    opts = process_scheduling_opts(opts)
     item = Item.new(queue_id, topic, payload, opts)
 
     config.repo.transact(fn ->
@@ -23,20 +46,19 @@ defmodule Bedrock.JobQueue.Internal do
     end)
   end
 
-  @doc """
-  Enqueues a job scheduled for a specific time.
-  """
-  def enqueue_at(job_queue_module, queue_id, topic, payload, %DateTime{} = scheduled_at, opts) do
-    vesting_time = DateTime.to_unix(scheduled_at, :millisecond)
-    enqueue(job_queue_module, queue_id, topic, payload, Keyword.put(opts, :vesting_time, vesting_time))
-  end
+  defp process_scheduling_opts(opts) do
+    cond do
+      scheduled_at = Keyword.get(opts, :at) ->
+        vesting_time = DateTime.to_unix(scheduled_at, :millisecond)
+        opts |> Keyword.delete(:at) |> Keyword.put(:vesting_time, vesting_time)
 
-  @doc """
-  Enqueues a job with a delay.
-  """
-  def enqueue_in(job_queue_module, queue_id, topic, payload, delay_ms, opts) when is_integer(delay_ms) do
-    vesting_time = System.system_time(:millisecond) + delay_ms
-    enqueue(job_queue_module, queue_id, topic, payload, Keyword.put(opts, :vesting_time, vesting_time))
+      delay_ms = Keyword.get(opts, :in) ->
+        vesting_time = System.system_time(:millisecond) + delay_ms
+        opts |> Keyword.delete(:in) |> Keyword.put(:vesting_time, vesting_time)
+
+      true ->
+        opts
+    end
   end
 
   @doc """
@@ -56,9 +78,13 @@ defmodule Bedrock.JobQueue.Internal do
     end
   end
 
-  # For now, use a simple string-based keyspace.
+  @doc """
+  Returns the root keyspace for the given JobQueue module.
+
+  Used by both Internal (for enqueue/stats) and Supervisor (for Consumer).
+  """
   # TODO: Migrate to Directory layer for tighter key sizes.
-  defp root_keyspace(job_queue_module) do
+  def root_keyspace(job_queue_module) do
     # Use the module name as part of the keyspace to isolate different JobQueue modules
     module_name = job_queue_module |> Module.split() |> Enum.join("_") |> String.downcase()
     Keyspace.new("job_queue/#{module_name}/")

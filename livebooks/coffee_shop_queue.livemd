@@ -258,9 +258,9 @@ Sometimes you want a job to run at a specific time:
 # Schedule a job for 2 seconds from now
 scheduled_time = DateTime.utc_now() |> DateTime.add(2, :second)
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue_at("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-SCHEDULED", customer: "Charlie"},
-  scheduled_time)
+  at: scheduled_time)
 
 IO.puts("Scheduled job for #{DateTime.to_iso8601(scheduled_time)}")
 IO.puts("Waiting for it to execute...")
@@ -272,9 +272,9 @@ Or use a delay in milliseconds:
 
 ```elixir
 # Enqueue with a 1 second delay
-{:ok, _} = CoffeeShop.JobQueue.enqueue_in("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-DELAYED", customer: "Diana"},
-  1000)
+  in: 1000)
 
 IO.puts("Enqueued with 1 second delay...")
 Process.sleep(2000)
@@ -319,7 +319,7 @@ Congratulations! You've built a complete job queue system. Here's what we covere
 | ----------------- | --------------------------------------------------------------------------------- |
 | **Job Modules**   | Use `use Bedrock.JobQueue.Job` with topic and priority                            |
 | **Return Values** | `:ok`, `{:ok, result}`, `{:error, reason}`, `{:snooze, ms}`, `{:discard, reason}` |
-| **Enqueueing**    | `enqueue/3`, `enqueue_at/4`, `enqueue_in/4`                                       |
+| **Enqueueing**    | `enqueue/4` with `:at`, `:in`, `:priority` opts                                   |
 | **Priorities**    | Lower number = higher priority (10 > 50 > 200)                                    |
 | **Topics**        | String keys routing to job modules via workers map                                |
 | **Tenants**       | Use `queue_id` to isolate jobs per tenant                                         |

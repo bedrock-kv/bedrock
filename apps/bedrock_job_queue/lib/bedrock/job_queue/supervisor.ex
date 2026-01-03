@@ -23,11 +23,13 @@ defmodule Bedrock.JobQueue.Supervisor do
   @impl true
   def init({job_queue_module, opts}) do
     config = job_queue_module.__config__()
+    root = Bedrock.JobQueue.Internal.root_keyspace(job_queue_module)
 
     children = [
       {Bedrock.JobQueue.Consumer,
        job_queue: job_queue_module,
        repo: config.repo,
+       root: root,
        workers: config.workers,
        concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
        batch_size: Keyword.get(opts, :batch_size, 10)}

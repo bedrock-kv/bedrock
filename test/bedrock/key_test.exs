@@ -223,10 +223,12 @@ defmodule Bedrock.KeyTest do
       end
     end
 
-    property "strinc preserves ordering (when both valid)" do
+    # strinc only preserves ordering for equal-length keys; prefix relationships break it.
+    property "strinc preserves ordering for equal-length keys" do
       check all(
-              key1 <- binary(min_length: 1, max_length: 50),
-              key2 <- binary(min_length: 1, max_length: 50)
+              len <- integer(1..50),
+              key1 <- binary(length: len),
+              key2 <- binary(length: len)
             ) do
         try do
           strinc1 = Key.strinc(key1)

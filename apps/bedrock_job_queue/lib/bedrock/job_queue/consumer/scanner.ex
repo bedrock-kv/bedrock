@@ -114,48 +114,41 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   end
 
   defp scan_and_notify(state) do
-    result =
-      state.repo.transact(fn ->
-        queue_ids = Store.scan_visible_queues(state.repo, state.root, limit: state.batch_size)
-        {:ok, queue_ids}
-      end)
-
-    case result do
+    case fetch_visible_queues(state) do
       {:ok, queue_ids} ->
-        # Shuffle for fairness, prioritizing queues not recently notified
-        ordered = prioritize_queues(queue_ids, state.last_notified)
-
-        # Per QuiCK Algorithm 1: select a random fraction of pointers
-        # to reduce contention between multiple scanners
-        selected = select_random_fraction(ordered, state.selection_frac, state.selection_max)
-
-        for queue_id <- selected do
-          send(state.manager, {:queue_ready, queue_id})
-        end
-
-        # Track recently notified for round-robin fairness
-        %{state | last_notified: selected}
+        queue_ids
+        |> prioritize_fresh_queues(state.last_notified)
+        |> select_subset(state.selection_frac, state.selection_max)
+        |> notify_manager(state.manager)
+        |> record_notified(state)
 
       {:error, _} ->
         state
     end
   end
 
-  # Prioritize queues that weren't notified in the last scan
-  defp prioritize_queues(queue_ids, last_notified) do
-    {fresh, stale} = Enum.split_with(queue_ids, &(&1 not in last_notified))
+  defp fetch_visible_queues(state) do
+    state.repo.transact(fn ->
+      {:ok, Store.scan_visible_queues(state.repo, state.root, limit: state.batch_size)}
+    end)
+  end
 
-    # Shuffle each group, then concatenate (fresh first)
+  defp prioritize_fresh_queues(queue_ids, last_notified) do
+    {fresh, stale} = Enum.split_with(queue_ids, &(&1 not in last_notified))
     Enum.shuffle(fresh) ++ Enum.shuffle(stale)
   end
 
-  # Per QuiCK Algorithm 1: select min(selection_max, ceil(size * selection_frac)) randomly
-  # The list is already shuffled by prioritize_queues, so we just take the first N
-  defp select_random_fraction(queue_ids, selection_frac, selection_max) do
-    size = length(queue_ids)
-    count = selection_max |> min(ceil(size * selection_frac)) |> trunc()
-    Enum.take(queue_ids, max(1, count))
+  defp select_subset(queue_ids, fraction, max_count) do
+    count = max_count |> min(ceil(length(queue_ids) * fraction)) |> trunc() |> max(1)
+    Enum.take(queue_ids, count)
   end
+
+  defp notify_manager(queue_ids, manager) do
+    Enum.each(queue_ids, &send(manager, {:queue_ready, &1}))
+    queue_ids
+  end
+
+  defp record_notified(selected, state), do: %{state | last_notified: selected}
 
   defp schedule_scan(state) do
     jittered_interval = add_jitter(state.interval, state.jitter_percent)

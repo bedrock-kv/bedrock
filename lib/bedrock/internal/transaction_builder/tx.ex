@@ -516,7 +516,11 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
     # Scan transaction writes in the specified range using the same merge logic
     tx_iterator = :gb_trees.iterator_from(start_key, tx.writes)
     {writes_in_range_reversed, _} = merge_ordered_results_bounded([], tx_iterator, [], [], end_key)
-    writes_in_range = Enum.reverse(writes_in_range_reversed)
+
+    writes_in_range =
+      writes_in_range_reversed
+      |> filter_cleared_keys([])
+      |> Enum.reverse()
 
     # Add read conflict tracking
     updated_tx =
@@ -669,8 +673,8 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   def add_or_merge([{hs, he} | rest], s, e), do: add_or_merge(rest, min(hs, s), max(he, e))
 
   defp filter_cleared_keys(key_value_pairs, clear_ranges) do
-    Enum.reject(key_value_pairs, fn {key, _value} ->
-      key_cleared_by_ranges?(key, clear_ranges)
+    Enum.reject(key_value_pairs, fn {key, value} ->
+      value == :clear or key_cleared_by_ranges?(key, clear_ranges)
     end)
   end
 

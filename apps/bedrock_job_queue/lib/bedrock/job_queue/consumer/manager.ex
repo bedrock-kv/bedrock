@@ -146,8 +146,14 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
 
   defp dequeue_with_lease(state, queue_id, limit) do
     case Store.obtain_queue_lease(state.repo, state.root, queue_id, state.holder_id, state.queue_lease_duration) do
-      {:ok, _queue_lease} -> do_dequeue(state, queue_id, limit)
-      {:error, :queue_leased} -> {:skip, :queue_leased}
+      {:ok, queue_lease} ->
+        result = do_dequeue(state, queue_id, limit)
+        # Release the queue lease after dequeuing to allow subsequent dequeue attempts
+        Store.release_queue_lease(state.repo, state.root, queue_lease)
+        result
+
+      {:error, :queue_leased} ->
+        {:skip, :queue_leased}
     end
   end
 

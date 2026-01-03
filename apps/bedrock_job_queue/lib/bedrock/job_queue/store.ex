@@ -524,12 +524,43 @@ defmodule Bedrock.JobQueue.Store do
   Per QuiCK Algorithm 2: After processing, update the pointer to the minimum
   vesting_time of remaining items. This prevents rescanning queues that only
   have future-scheduled items.
+
+  When the new vesting_time is in the future, this also cleans up any stale
+  pointers in the past to prevent the scanner from repeatedly finding them.
   """
   @spec update_queue_pointer(repo(), root_keyspace(), String.t(), non_neg_integer()) :: :ok
   def update_queue_pointer(repo, root, queue_id, vesting_time) do
     pointers = pointer_keyspace(root)
+    now = System.system_time(:millisecond)
+
+    # If new vesting_time is in the future, clean up any stale pointers in the past
+    # This prevents the scanner from repeatedly finding stale pointers that point
+    # to queues where all visible items have been processed
+    if vesting_time > now do
+      cleanup_past_pointers(repo, pointers, queue_id, now)
+    end
+
     update_pointer(repo, pointers, vesting_time, queue_id)
     :ok
+  end
+
+  # Cleans up pointers for a queue_id that are in the past (vesting_time <= now).
+  # This is called when updating to a future vesting_time to remove stale pointers.
+  defp cleanup_past_pointers(repo, pointers, queue_id, now) do
+    {start_key, end_key} = pointer_visible_range(now)
+    prefix = Keyspace.prefix(pointers)
+
+    {prefix <> start_key, prefix <> end_key}
+    |> repo.get_range(limit: 100)
+    |> Enum.each(fn {key, _value} ->
+      suffix = binary_part(key, byte_size(prefix), byte_size(key) - byte_size(prefix))
+      {vesting_time, pointer_queue_id} = unpack_pointer_key(suffix)
+
+      # Only delete pointers for our queue_id
+      if pointer_queue_id == queue_id do
+        repo.clear(pointers, {vesting_time, pointer_queue_id})
+      end
+    end)
   end
 
   @doc """

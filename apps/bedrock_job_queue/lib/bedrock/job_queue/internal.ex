@@ -10,9 +10,11 @@ defmodule Bedrock.JobQueue.Internal do
   the generated JobQueue module rather than directly.
   """
 
+  alias Bedrock.Directory
   alias Bedrock.JobQueue.Item
   alias Bedrock.JobQueue.Store
   alias Bedrock.Keyspace
+  alias Bedrock.ToKeyspace
 
   @doc """
   Enqueues a job for processing.
@@ -85,13 +87,43 @@ defmodule Bedrock.JobQueue.Internal do
   end
 
   @doc """
+  Initializes the root directory for the JobQueue module.
+
+  Creates or opens the directory and caches the resulting keyspace in persistent_term.
+  Must be called within a transaction (or will create one).
+
+  Returns `{:ok, keyspace}` on success.
+  """
+  def init_root(repo, job_queue_module) do
+    module_name = job_queue_module |> Module.split() |> Enum.join("_") |> String.downcase()
+
+    repo.transact(fn ->
+      root = Directory.root(repo)
+
+      with {:ok, job_queue_dir} <- Directory.create_or_open(root, ["job_queue"]),
+           {:ok, node} <- Directory.create_or_open(job_queue_dir, [module_name]) do
+        keyspace = ToKeyspace.to_keyspace(node)
+        :persistent_term.put({__MODULE__, job_queue_module}, keyspace)
+        {:ok, keyspace}
+      end
+    end)
+  end
+
+  @doc """
   Returns the root keyspace for the given JobQueue module.
 
-  Used by both Internal (for enqueue/stats) and Supervisor (for Consumer).
+  Reads from cache (populated by init_root/2 during startup).
+  Falls back to creating a Keyspace from directory path if not cached.
   """
   def root_keyspace(job_queue_module) do
-    # Use the module name as part of the keyspace to isolate different JobQueue modules
-    module_name = job_queue_module |> Module.split() |> Enum.join("_") |> String.downcase()
-    Keyspace.new("job_queue/#{module_name}/")
+    case :persistent_term.get({__MODULE__, job_queue_module}, nil) do
+      nil ->
+        # Fallback for cases where init_root wasn't called (e.g., direct tests)
+        module_name = job_queue_module |> Module.split() |> Enum.join("_") |> String.downcase()
+        Keyspace.new("job_queue/#{module_name}/")
+
+      keyspace ->
+        keyspace
+    end
   end
 end

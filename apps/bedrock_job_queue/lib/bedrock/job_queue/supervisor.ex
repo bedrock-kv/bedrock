@@ -19,13 +19,17 @@ defmodule Bedrock.JobQueue.Supervisor do
   - `:batch_size` - Items to dequeue per batch (default: 10)
   """
   def start_link(job_queue_module, opts \\ []) do
-    Supervisor.start_link(__MODULE__, {job_queue_module, opts}, name: job_queue_module)
+    config = job_queue_module.__config__()
+
+    # Initialize the directory and cache the keyspace before starting supervisor
+    {:ok, root} = Internal.init_root(config.repo, job_queue_module)
+
+    Supervisor.start_link(__MODULE__, {job_queue_module, root, opts}, name: job_queue_module)
   end
 
   @impl true
-  def init({job_queue_module, opts}) do
+  def init({job_queue_module, root, opts}) do
     config = job_queue_module.__config__()
-    root = Internal.root_keyspace(job_queue_module)
 
     children = [
       {Bedrock.JobQueue.Consumer,

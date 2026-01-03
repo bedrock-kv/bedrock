@@ -39,7 +39,6 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   use GenServer
 
   alias Bedrock.JobQueue.Store
-  alias Bedrock.Keyspace
 
   require Logger
 
@@ -63,12 +62,12 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   ]
 
   @default_interval 100
-  @default_batch_size 100
+  @default_batch_size 20_000
   @default_jitter_percent 20
   # Per QuiCK Algorithm 1: select a random fraction of visible pointers
   # to reduce contention between multiple scanners
-  @default_selection_frac 0.5
-  @default_selection_max 10
+  @default_selection_frac 0.02
+  @default_selection_max 2_000
   @default_gc_interval 60_000
   @default_gc_grace_period 60_000
   @default_gc_batch_size 100
@@ -79,7 +78,7 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   def init(opts) do
     state = %__MODULE__{
       repo: Keyword.fetch!(opts, :repo),
-      root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
+      root: Keyword.fetch!(opts, :root),
       manager: Keyword.fetch!(opts, :manager),
       worker_pool: Keyword.fetch!(opts, :worker_pool),
       concurrency: Keyword.fetch!(opts, :concurrency),

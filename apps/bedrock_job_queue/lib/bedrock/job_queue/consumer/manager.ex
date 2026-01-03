@@ -32,7 +32,6 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   alias Bedrock.JobQueue.Consumer.LeaseExtender
   alias Bedrock.JobQueue.Consumer.Worker
   alias Bedrock.JobQueue.Store
-  alias Bedrock.Keyspace
 
   require Logger
 
@@ -64,7 +63,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   def init(opts) do
     state = %__MODULE__{
       repo: Keyword.fetch!(opts, :repo),
-      root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
+      root: Keyword.fetch!(opts, :root),
       workers: Keyword.fetch!(opts, :workers),
       worker_pool: Keyword.fetch!(opts, :worker_pool),
       concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),

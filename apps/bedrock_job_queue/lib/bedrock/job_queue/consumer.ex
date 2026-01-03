@@ -26,7 +26,7 @@ defmodule Bedrock.JobQueue.Consumer do
   - `:repo` - Required. The Bedrock Repo module
   - `:workers` - Required. Map of topic strings to job modules
   - `:name` - Process name (default: `Bedrock.JobQueue.Consumer`)
-  - `:root` - Root keyspace (default: `Keyspace.new("job_queue/")`)
+  - `:root` - Required. Root keyspace (from Directory)
   - `:concurrency` - Number of concurrent workers (default: `System.schedulers_online()`)
   - `:batch_size` - Items to dequeue per batch (default: 10)
   - `:scan_interval` - How often to scan for ready queues in ms (default: 100)
@@ -48,7 +48,6 @@ defmodule Bedrock.JobQueue.Consumer do
   alias Bedrock.JobQueue.Config
   alias Bedrock.JobQueue.Consumer.Manager
   alias Bedrock.JobQueue.Consumer.Scanner
-  alias Bedrock.Keyspace
 
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -59,7 +58,7 @@ defmodule Bedrock.JobQueue.Consumer do
   def init(opts) do
     repo = Keyword.fetch!(opts, :repo)
     workers = Keyword.fetch!(opts, :workers)
-    root = Keyword.get(opts, :root, Keyspace.new("job_queue/"))
+    root = Keyword.fetch!(opts, :root)
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     batch_size = Keyword.get(opts, :batch_size, 10)
     scan_interval = Keyword.get(opts, :scan_interval, 100)

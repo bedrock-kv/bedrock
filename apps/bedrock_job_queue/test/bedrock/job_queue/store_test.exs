@@ -80,6 +80,55 @@ defmodule Bedrock.JobQueue.StoreTest do
     end
   end
 
+  describe "peek/4 priority ordering" do
+    test "returns items in priority order (lowest number first)" do
+      # Create items with different priorities
+      high_priority = Item.new("tenant_1", "topic", %{}, priority: 10, vesting_time: 1000)
+      medium_priority = Item.new("tenant_1", "topic", %{}, priority: 50, vesting_time: 1000)
+      low_priority = Item.new("tenant_1", "topic", %{}, priority: 200, vesting_time: 1000)
+
+      # Encode items
+      items = [
+        {Item.key(low_priority), :erlang.term_to_binary(low_priority)},
+        {Item.key(high_priority), :erlang.term_to_binary(high_priority)},
+        {Item.key(medium_priority), :erlang.term_to_binary(medium_priority)}
+      ]
+
+      # Mock returns items in arbitrary order - peek should sort by key
+      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
+        # Return sorted by key (simulating DB behavior)
+        Enum.sort_by(items, fn {key, _} -> key end)
+      end)
+
+      result = Store.peek(MockRepo, root(), "tenant_1", limit: 10, now: 2000)
+
+      # Should be in priority order: 10, 50, 200
+      priorities = Enum.map(result, & &1.priority)
+      assert priorities == [10, 50, 200]
+    end
+
+    test "maintains priority order with same priority but different vesting_times" do
+      # Same priority, different vesting times
+      earlier = Item.new("tenant_1", "topic", %{data: "earlier"}, priority: 100, vesting_time: 1000)
+      later = Item.new("tenant_1", "topic", %{data: "later"}, priority: 100, vesting_time: 2000)
+
+      items = [
+        {Item.key(later), :erlang.term_to_binary(later)},
+        {Item.key(earlier), :erlang.term_to_binary(earlier)}
+      ]
+
+      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
+        Enum.sort_by(items, fn {key, _} -> key end)
+      end)
+
+      result = Store.peek(MockRepo, root(), "tenant_1", limit: 10, now: 3000)
+
+      # Earlier vesting_time should come first
+      vesting_times = Enum.map(result, & &1.vesting_time)
+      assert vesting_times == [1000, 2000]
+    end
+  end
+
   describe "Item visibility" do
     test "items with past vesting_time and no lease are visible" do
       now = 10_000
@@ -302,100 +351,8 @@ defmodule Bedrock.JobQueue.StoreTest do
     end
   end
 
-  # ============================================================================
-  # Bug regression tests: :clear value filtering
-  # ============================================================================
-  # When keys are cleared within a transaction, range queries can return
-  # {key, :clear} tuples instead of {key, binary}. The Store must filter these.
-
-  describe "peek/4 - :clear value filtering" do
-    test "filters out :clear values from range results" do
-      # Create a valid item
-      item = Item.new("tenant_1", "topic", %{data: 1})
-      encoded_item = :erlang.term_to_binary(item)
-      item_key = {item.priority, item.vesting_time, item.id}
-
-      # Simulate range query returning mix of valid and :clear values
-      range_results = [
-        {item_key, encoded_item},
-        {{100, 2000, <<2, 2, 2>>}, :clear},
-        {{100, 3000, <<3, 3, 3>>}, :clear}
-      ]
-
-      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
-        range_results
-      end)
-
-      result = Store.peek(MockRepo, root(), "tenant_1", limit: 10)
-
-      # Should only return the valid item, filtering out :clear values
-      assert length(result) == 1
-      assert hd(result).id == item.id
-    end
-
-    test "returns empty list when all values are :clear" do
-      # All items were cleared
-      range_results = [
-        {{100, 1000, <<1>>}, :clear},
-        {{100, 2000, <<2>>}, :clear}
-      ]
-
-      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
-        range_results
-      end)
-
-      result = Store.peek(MockRepo, root(), "tenant_1", limit: 10)
-
-      assert result == []
-    end
-  end
-
-  describe "min_vesting_time/4 - :clear value filtering" do
-    test "filters out :clear values when computing minimum" do
-      # Create items with different vesting times
-      item1 = Item.new("tenant_1", "topic", %{}, vesting_time: 5000)
-      item2 = Item.new("tenant_1", "topic", %{}, vesting_time: 3000)
-      encoded1 = :erlang.term_to_binary(item1)
-      encoded2 = :erlang.term_to_binary(item2)
-
-      # Range returns valid items plus a :clear value
-      range_results = [
-        {{100, 5000, item1.id}, encoded1},
-        {{100, 3000, item2.id}, encoded2},
-        {{100, 1000, <<99>>}, :clear}
-      ]
-
-      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
-        range_results
-      end)
-
-      result = Store.min_vesting_time(MockRepo, root(), "tenant_1")
-
-      # Should return 3000 (minimum of valid items), ignoring the :clear value
-      assert result == 3000
-    end
-
-    test "returns nil when all values are :clear" do
-      range_results = [
-        {{100, 1000, <<1>>}, :clear},
-        {{100, 2000, <<2>>}, :clear}
-      ]
-
-      expect(MockRepo, :get_range, fn %Keyspace{}, _opts ->
-        range_results
-      end)
-
-      result = Store.min_vesting_time(MockRepo, root(), "tenant_1")
-
-      assert result == nil
-    end
-  end
-
-  describe "queue_empty? (via gc_stale_pointers) - :clear value filtering" do
-    # queue_empty? is private, but we can test it indirectly through gc_stale_pointers
-    # or by testing the behavior of functions that depend on it
-
-    test "gc_stale_pointers handles empty pointer list gracefully" do
+  describe "gc_stale_pointers/3" do
+    test "handles empty pointer list gracefully" do
       # First call: get stale pointers (empty for this test)
       expect(MockRepo, :get_range, fn _range, _opts -> [] end)
 

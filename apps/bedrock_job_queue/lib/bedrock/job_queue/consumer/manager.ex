@@ -180,12 +180,14 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   end
 
   defp obtain_item_leases(state, items) do
-    Enum.reduce(items, [], fn item, acc ->
+    items
+    |> Enum.reduce([], fn item, acc ->
       case Store.obtain_lease(state.repo, state.root, item, state.holder_id, state.lease_duration) do
         {:ok, lease} -> [lease | acc]
         {:error, _} -> acc
       end
     end)
+    |> Enum.reverse()
   end
 
   # Per QuiCK Algorithm 2 lines 6-9: After dequeuing, update pointer to min vesting_time

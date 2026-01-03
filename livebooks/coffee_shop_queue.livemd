@@ -55,11 +55,10 @@ Quick test to make sure everything works:
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-alias CoffeeShop.Repo
+alias Bedrock.JobQueue.Job
+alias CoffeeShop.{Repo, JobQueue}
 
-Repo.transact(fn ->
-  Repo.put("test", "coffee ready")
-end)
+Repo.transact(fn -> Repo.put("test", "coffee ready") end)
 
 result = Repo.transact(fn -> Repo.get("test") end)
 "Coffee status: #{result}"
@@ -85,7 +84,7 @@ Each job type is a module with a `perform/2` callback. The second argument is me
 
 ```elixir
 defmodule CoffeeShop.Jobs.OrderConfirmation do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "order:confirm",
     priority: 100
 
@@ -98,7 +97,7 @@ defmodule CoffeeShop.Jobs.OrderConfirmation do
 end
 
 defmodule CoffeeShop.Jobs.BrewingStarted do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "order:brewing",
     priority: 50
 
@@ -111,7 +110,7 @@ defmodule CoffeeShop.Jobs.BrewingStarted do
 end
 
 defmodule CoffeeShop.Jobs.ReadyForPickup do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "order:ready",
     priority: 10
 
@@ -124,7 +123,7 @@ defmodule CoffeeShop.Jobs.ReadyForPickup do
 end
 
 defmodule CoffeeShop.Jobs.EspressoShot do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "brew:espresso",
     max_retries: 3,
     priority: 40
@@ -138,7 +137,7 @@ defmodule CoffeeShop.Jobs.EspressoShot do
 end
 
 defmodule CoffeeShop.Jobs.DeliverySync do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "delivery:sync",
     max_retries: 5
 
@@ -151,7 +150,7 @@ defmodule CoffeeShop.Jobs.DeliverySync do
 end
 
 defmodule CoffeeShop.Jobs.AdminCleanup do
-  use Bedrock.JobQueue.Job,
+  use Job,
     topic: "admin:cleanup",
     priority: 200
 
@@ -195,7 +194,7 @@ Start the consumer:
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-Kino.start_child!({CoffeeShop.JobQueue, concurrency: 2, batch_size: 5})
+Kino.start_child!({JobQueue, concurrency: 2, batch_size: 5})
 
 # Give it a moment to initialize
 Process.sleep(500)
@@ -207,7 +206,7 @@ Process.sleep(500)
 Let's enqueue our first job - an order confirmation:
 
 ```elixir
-{:ok, job} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
+{:ok, job} = JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-001", customer: "Alice"})
 
 IO.puts("Enqueued job: #{Base.encode16(job.id, case: :lower) |> binary_part(0, 8)}...")
@@ -230,24 +229,23 @@ Priority is a number where **lower = higher priority**:
 Let's see priorities in action:
 
 ```elixir
-# Enqueue in REVERSE priority order (low first, high last)
-# to demonstrate that they process by priority, not by enqueue order
+# Enqueue all jobs in a single transaction so they're visible atomically.
+# This ensures priority ordering is demonstrated correctly - otherwise
+# jobs get processed as they arrive (race between enqueue and consumer).
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "admin:cleanup",
-  %{task: "clear_old_orders"}, priority: 200)
-IO.puts("Enqueued cleanup (priority 200)")
+Repo.transact(fn ->
+  JobQueue.enqueue("main_shop", "admin:cleanup",
+    %{task: "clear_old_orders"}, priority: 200)
+  JobQueue.enqueue("main_shop", "order:brewing",
+    %{order_id: "ORD-002", drink: "Latte"}, priority: 50)
+  JobQueue.enqueue("main_shop", "order:ready",
+    %{order_id: "ORD-003", customer: "Bob"}, priority: 10)
+end)
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:brewing",
-  %{order_id: "ORD-002", drink: "Latte"}, priority: 50)
-IO.puts("Enqueued brewing (priority 50)")
-
-{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:ready",
-  %{order_id: "ORD-003", customer: "Bob"}, priority: 10)
-IO.puts("Enqueued ready (priority 10)")
-
-IO.puts("\nWatching execution order:")
+IO.puts("Enqueued atomically: cleanup (200), brewing (50), ready (10)")
+IO.puts("\nWatching execution order (should be: ready → brewing → cleanup):")
 Process.sleep(2000)
-"Jobs processed! Notice the priority order above."
+"Jobs processed! Check the priority order above."
 ```
 
 ## Happy Hour: Scheduled Jobs
@@ -258,7 +256,7 @@ Sometimes you want a job to run at a specific time:
 # Schedule a job for 2 seconds from now
 scheduled_time = DateTime.utc_now() |> DateTime.add(2, :second)
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
+{:ok, _} = JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-SCHEDULED", customer: "Charlie"},
   at: scheduled_time)
 
@@ -272,7 +270,7 @@ Or use a delay in milliseconds:
 
 ```elixir
 # Enqueue with a 1 second delay
-{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
+{:ok, _} = JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-DELAYED", customer: "Diana"},
   in: 1000)
 
@@ -287,10 +285,10 @@ Each coffee shop location can have its own queue, completely isolated:
 
 ```elixir
 # Different shops, different queues
-{:ok, _} = CoffeeShop.JobQueue.enqueue("downtown_shop", "order:confirm",
+{:ok, _} = JobQueue.enqueue("downtown_shop", "order:confirm",
   %{order_id: "DT-001", customer: "Eve"})
 
-{:ok, _} = CoffeeShop.JobQueue.enqueue("airport_kiosk", "order:confirm",
+{:ok, _} = JobQueue.enqueue("airport_kiosk", "order:confirm",
   %{order_id: "AP-001", customer: "Frank"})
 
 IO.puts("Enqueued to downtown_shop and airport_kiosk")
@@ -304,7 +302,7 @@ You can inspect queue status at any time:
 
 ```elixir
 for queue_id <- ["main_shop", "downtown_shop", "airport_kiosk"] do
-  stats = CoffeeShop.JobQueue.stats(queue_id)
+  stats = JobQueue.stats(queue_id)
   IO.puts("#{queue_id}: pending=#{stats.pending_count}, processing=#{stats.processing_count}")
 end
 

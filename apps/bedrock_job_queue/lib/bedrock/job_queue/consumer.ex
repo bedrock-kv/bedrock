@@ -21,10 +21,24 @@ defmodule Bedrock.JobQueue.Consumer do
   - **Task.Supervisor**: Dynamic pool of task workers up to concurrency limit
   - **Worker**: Module providing job execution logic with timeout protection
 
+  ## Configuration
+
+  - `:repo` - Required. The Bedrock Repo module
+  - `:workers` - Required. Map of topic strings to job modules
+  - `:name` - Process name (default: `Bedrock.JobQueue.Consumer`)
+  - `:root` - Root keyspace (default: `Keyspace.new("job_queue/")`)
+  - `:concurrency` - Number of concurrent workers (default: `System.schedulers_online()`)
+  - `:batch_size` - Items to dequeue per batch (default: 10)
+  - `:scan_interval` - How often to scan for ready queues in ms (default: 100)
+  - `:backoff_fn` - Retry backoff function (default: `Config.default_backoff/1`)
+  - `:gc_interval` - How often to garbage collect stale pointers in ms (default: 60_000)
+  - `:gc_grace_period` - Grace period before GC considers pointer stale in ms (default: 60_000)
+
   ## Usage
 
       {:ok, _pid} = Bedrock.JobQueue.Consumer.start_link(
         repo: MyApp.Repo,
+        workers: %{"email:send" => MyApp.Jobs.SendEmail},
         concurrency: 10
       )
   """

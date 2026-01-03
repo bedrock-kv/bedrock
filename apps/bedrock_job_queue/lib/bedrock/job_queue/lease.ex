@@ -2,9 +2,21 @@ defmodule Bedrock.JobQueue.Lease do
   @moduledoc """
   A lease on a job item.
 
-  Per QuiCK paper: Leasing works by updating vesting_time to make items "invisible"
-  rather than removing them from the queue. If a worker fails, the lease expires
-  and the item becomes visible again automatically.
+  Per [QuiCK paper](https://www.foundationdb.org/files/QuiCK.pdf): Leasing works
+  by updating vesting_time to make items "invisible" rather than removing them
+  from the queue. If a worker fails, the lease expires and the item becomes
+  visible again automatically.
+
+  ## Fields
+
+  - `id` - Unique lease identifier (derived from item_id, holder, and time)
+  - `item_id` - The ID of the leased job item
+  - `queue_id` - The queue this item belongs to
+  - `holder` - Identifier of the consumer holding the lease
+  - `obtained_at` - When the lease was obtained (ms since epoch)
+  - `expires_at` - When the lease expires (ms since epoch)
+  - `item_key` - The item's storage key tuple `{priority, vesting_time, id}` for O(1)
+    lookup on complete/requeue. Stored because vesting_time changes when leased.
   """
 
   alias Bedrock.JobQueue.Expirable

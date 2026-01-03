@@ -2,7 +2,8 @@ defmodule Bedrock.JobQueue do
   @moduledoc """
   A durable job queue system for Elixir, built on Bedrock.
 
-  Modeled after Apple's QuiCK paper, this system provides:
+  Modeled after Apple's [QuiCK paper](https://www.foundationdb.org/files/QuiCK.pdf),
+  this system provides:
   - Topic-based routing to worker modules
   - Two-level sharding (per-queue zones + pointer index)
   - Priority ordering and scheduled/delayed jobs

@@ -2,8 +2,28 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   @moduledoc """
   Manages job processing by dequeuing items and dispatching to workers.
 
-  Per QuiCK paper: The Manager receives queue notifications from the Scanner,
-  batch dequeues items, obtains leases, and dispatches to the Worker pool.
+  Per [QuiCK paper](https://www.foundationdb.org/files/QuiCK.pdf): The Manager
+  receives queue notifications from the Scanner, batch dequeues items, obtains
+  leases, and dispatches to the Worker pool.
+
+  ## Configuration
+
+  - `:repo` - Required. The Bedrock Repo module
+  - `:workers` - Required. Map of topic strings to job modules
+  - `:worker_pool` - Required. The Task.Supervisor for spawning job tasks
+  - `:name` - Process name (default: `Bedrock.JobQueue.Consumer.Manager`)
+  - `:root` - Root keyspace (default: `Keyspace.new("job_queue/")`)
+  - `:concurrency` - Max concurrent workers (default: `System.schedulers_online()`)
+  - `:batch_size` - Items to dequeue per batch (default: 10)
+  - `:lease_duration` - Item lease duration in ms (default: 30_000)
+  - `:queue_lease_duration` - Queue lease duration in ms (default: 5_000)
+  - `:holder_id` - Unique identifier for this consumer (default: random bytes)
+  - `:backoff_fn` - Retry backoff function (default: `Config.default_backoff/1`)
+
+  ## Message Protocol
+
+  The Manager expects `{:queue_ready, queue_id}` messages from the Scanner
+  to trigger processing of a queue.
   """
 
   use GenServer

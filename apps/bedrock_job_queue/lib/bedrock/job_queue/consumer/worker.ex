@@ -28,6 +28,24 @@ defmodule Bedrock.JobQueue.Consumer.Worker do
 
   Called from a Task spawned by Manager. Looks up the handler for the item's
   topic from the workers map and executes it with timeout protection.
+
+  ## Return Values
+
+  Returns the result from the job module's `perform/2` callback, or an error:
+
+  - `:ok` - Job completed successfully, will be removed from queue
+  - `{:ok, result}` - Job completed with result (logged but otherwise same as `:ok`)
+  - `{:error, reason}` - Job failed, will be requeued with backoff
+  - `{:discard, reason}` - Job failed permanently, removed without retry
+  - `{:snooze, delay_ms}` - Reschedule for later without counting as failure
+  - `{:error, :timeout}` - Job exceeded timeout, will be requeued
+  - `{:discard, :no_handler}` - No worker configured for this topic
+
+  ## Timeout
+
+  Jobs are executed with a timeout (default 30 seconds). If the job module
+  implements `timeout/0`, that value is used instead. On timeout, the job
+  is killed and `{:error, :timeout}` is returned.
   """
   @spec execute(Item.t(), map()) :: term()
   def execute(%Item{} = item, workers) when is_map(workers) do

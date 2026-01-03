@@ -49,6 +49,20 @@ defmodule Bedrock.JobQueue.Item do
 
   @doc """
   Creates a new job item with defaults.
+
+  ## Options
+
+  - `:id` - Custom job ID (default: random 16-byte binary)
+  - `:priority` - Integer priority, lower = higher priority (default: 100)
+  - `:vesting_time` - When the job becomes visible in ms since epoch (default: now)
+  - `:max_retries` - Maximum retry attempts before dead-lettering (default: 3)
+  - `:now` - Current time in ms, used for vesting_time default (default: System.system_time(:millisecond))
+
+  ## Priority Ordering
+
+  Jobs are processed in priority order where **lower values = higher priority**.
+  For example, priority 0 is processed before priority 100. Use non-negative
+  integers only; negative priorities are not supported.
   """
   @spec new(String.t(), String.t(), term(), keyword()) :: t()
   def new(queue_id, topic, payload, opts \\ []) do

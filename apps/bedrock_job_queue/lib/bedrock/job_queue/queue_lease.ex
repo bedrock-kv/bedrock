@@ -2,9 +2,22 @@ defmodule Bedrock.JobQueue.QueueLease do
   @moduledoc """
   A lease on a queue for exclusive dequeuing.
 
-  Per QuiCK paper: Two-tier leasing prevents thundering herd by first
-  acquiring a queue lease, then item leases within that queue. Only one
-  consumer can hold a queue lease at a time.
+  Per [QuiCK paper](https://www.foundationdb.org/files/QuiCK.pdf): Two-tier
+  leasing prevents thundering herd by first acquiring a queue lease, then
+  item leases within that queue. Only one consumer can hold a queue lease
+  at a time.
+
+  ## Default Duration
+
+  Queue leases default to 5 seconds (vs 30 seconds for item leases). This is
+  intentionally short because queue leases only protect the dequeue operation,
+  not job execution. A consumer holds the queue lease just long enough to:
+
+  1. Peek for visible items
+  2. Obtain item leases on those items
+  3. Release the queue lease
+
+  Item leases are held much longer to cover actual job execution time.
   """
 
   alias Bedrock.JobQueue.Expirable

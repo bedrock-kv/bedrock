@@ -17,14 +17,20 @@ defmodule Bedrock.JobQueue.Job do
         end
       end
 
-  Then configure the worker mapping:
+  Then configure the worker mapping in your JobQueue module:
 
-      config :bedrock_job_queue, :workers, %{
-        "email:send" => MyApp.EmailJob
-      }
+      defmodule MyApp.JobQueue do
+        use Bedrock.JobQueue,
+          otp_app: :my_app,
+          repo: MyApp.Repo,
+          workers: %{
+            "email:send" => MyApp.EmailJob
+          }
+      end
 
   ## Options
 
+  - `:topic` - Topic string for routing (optional, can also be passed at enqueue time)
   - `:max_retries` - Maximum retry attempts (default: 3)
   - `:priority` - Default priority for jobs created by this module (default: 100)
   - `:timeout` - Job execution timeout in milliseconds (default: 30_000)
@@ -100,12 +106,23 @@ defmodule Bedrock.JobQueue.Job do
       defoverridable timeout: 0
 
       @doc """
-      Creates a new job to be enqueued.
+      Creates a new job item struct for direct use with `Store.enqueue/4`.
+
+      This is a low-level function. For typical usage, prefer `MyQueue.enqueue/4`:
+
+          MyApp.JobQueue.enqueue("tenant_1", "email:send", %{to: "user@example.com"})
+
+      ## Options
+
+      - `:queue_id` - Required. The queue/tenant identifier
+      - `:topic` - Topic override (default: module's configured topic)
+      - `:priority` - Priority override (default: module's configured priority)
+      - `:max_retries` - Max retries override (default: module's configured max_retries)
 
       ## Examples
 
-          MyApp.EmailJob.new(%{to: "user@example.com", subject: "Hello"})
-          |> Bedrock.JobQueue.enqueue("tenant_1")
+          # Create an item for direct store operations
+          item = MyApp.EmailJob.new(%{to: "user@example.com"}, queue_id: "tenant_1")
       """
       @spec new(map(), keyword()) :: Bedrock.JobQueue.Item.t()
       def new(args, opts \\ []) when is_map(args) do

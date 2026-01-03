@@ -1,9 +1,14 @@
 defmodule Bedrock.JobQueue.Internal do
-  @moduledoc false
+  @moduledoc """
+  Internal implementation for JobQueue operations.
 
-  # Internal implementation for JobQueue operations.
-  # All functions accept a job_queue_module as the first argument
-  # and use its __config__ to get repo, workers, etc.
+  This module provides the backing implementation for functions defined by
+  `use Bedrock.JobQueue`. All functions accept a job_queue_module as the first
+  argument and use its `__config__/0` to get repo, workers, etc.
+
+  While technically public, these functions are meant to be called through
+  the generated JobQueue module rather than directly.
+  """
 
   alias Bedrock.JobQueue.Item
   alias Bedrock.JobQueue.Store

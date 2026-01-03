@@ -11,6 +11,7 @@ defmodule Bedrock.JobQueue.Store do
         queues/{queue_id}/
           items/                         # {priority, vesting_time, id} -> Item
           leases/{item_id}               # -> Lease
+          dead_letter/{timestamp}/{id}   # -> Item (failed jobs after max retries)
           stats/pending                  # atomic counter
           stats/processing               # atomic counter
 
@@ -201,12 +202,23 @@ defmodule Bedrock.JobQueue.Store do
   Per QuiCK paper: Combines peek + obtain_lease into a single atomic operation.
   This is more efficient than separate calls and avoids race conditions.
 
-  Options:
-  - :limit - Maximum items to dequeue (default: 10)
-  - :lease_duration - Lease duration in ms (default: 30_000)
-  - :now - Current time in ms (default: System.system_time(:millisecond))
+  ## Options
+
+  - `:limit` - Maximum items to dequeue (default: 10)
+  - `:lease_duration` - Lease duration in ms (default: 30_000)
+  - `:now` - Current time in ms (default: `System.system_time(:millisecond)`)
+
+  ## Return Value
 
   Returns `{:ok, [Lease.t()]}` with leases for successfully dequeued items.
+
+  **Note:** The returned list may be smaller than `:limit` if:
+  - Fewer items are visible in the queue
+  - Some items were leased by other consumers between peek and obtain_lease
+  - The function silently skips items that fail to lease rather than erroring
+
+  An empty list `{:ok, []}` indicates no items were available or all visible
+  items were already leased.
   """
   @spec dequeue(repo(), root_keyspace(), String.t(), binary(), keyword()) :: {:ok, [Lease.t()]}
   def dequeue(repo, root, queue_id, holder, opts \\ []) do
@@ -301,9 +313,16 @@ defmodule Bedrock.JobQueue.Store do
   2. Updates item's vesting_time to new expiry
   3. Updates lease record with new expiry
   4. Updates pointer index
+
+  ## Error Cases
+
+  - `{:error, :lease_expired}` - Lease already expired (checked before DB access)
+  - `{:error, :lease_not_found}` - No lease record exists for this item
+  - `{:error, :lease_mismatch}` - Lease ID doesn't match stored lease
+  - `{:error, :item_not_found}` - Item no longer exists in queue
   """
   @spec extend_lease(repo(), root_keyspace(), Lease.t(), pos_integer(), keyword()) ::
-          {:ok, Lease.t()} | {:error, :lease_not_found | :lease_mismatch | :lease_expired}
+          {:ok, Lease.t()} | {:error, :lease_not_found | :lease_mismatch | :lease_expired | :item_not_found}
   def extend_lease(repo, root, %Lease{} = lease, extension_ms, opts \\ []) do
     now = Keyword.get(opts, :now) || System.system_time(:millisecond)
 
@@ -382,9 +401,22 @@ defmodule Bedrock.JobQueue.Store do
   2. If exhausted, moves to dead letter queue
   3. Otherwise, sets new vesting_time with backoff
   4. Clears lease
+
+  ## Options
+
+  - `:backoff_fn` - Function `(attempt) -> delay_ms` for retry delay
+  - `:base_delay` - Fixed base delay in ms (used by snooze, overrides backoff_fn)
+  - `:max_delay` - Maximum delay in ms (default: 60_000)
+  - `:now` - Current time in ms (default: `System.system_time(:millisecond)`)
+
+  ## Error Cases
+
+  - `{:error, :lease_not_found}` - No lease record exists for this item
+  - `{:error, :lease_mismatch}` - Lease ID doesn't match stored lease
+  - `{:error, :item_not_found}` - Item no longer exists in queue
   """
   @spec requeue(repo(), root_keyspace(), Lease.t(), keyword()) ::
-          {:ok, :requeued | :dead_lettered} | {:error, term()}
+          {:ok, :requeued | :dead_lettered} | {:error, :lease_not_found | :lease_mismatch | :item_not_found}
   def requeue(repo, root, %Lease{} = lease, opts) do
     keyspaces = queue_keyspaces(root, lease.queue_id)
     pointers = pointer_keyspace(root)

@@ -21,10 +21,16 @@ defmodule Bedrock.JobQueue.Payload do
 
   Attempts JSON decode with atom keys. If decode fails (e.g., binary wasn't JSON),
   wraps the raw binary in a map for the job to handle.
+
+  ## Safety Note
+
+  Uses `keys: :atoms!` which only converts keys to atoms if they already exist in
+  the atom table. This prevents atom exhaustion from untrusted JSON payloads.
+  Unknown keys will cause a decode error, falling back to `%{raw: payload}`.
   """
   @spec decode(binary()) :: term()
   def decode(payload) when is_binary(payload) do
-    case Jason.decode(payload, keys: :atoms) do
+    case Jason.decode(payload, keys: :atoms!) do
       {:ok, decoded} -> decoded
       {:error, _} -> %{raw: payload}
     end

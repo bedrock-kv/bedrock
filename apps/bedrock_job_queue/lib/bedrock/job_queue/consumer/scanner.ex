@@ -16,6 +16,24 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
 
   The Scanner also periodically garbage collects stale pointers from empty queues.
   This is done as part of the scan cycle to avoid an extra process.
+
+  ## Configuration
+
+  - `:repo` - Required. The Bedrock Repo module
+  - `:manager` - Required. The Manager process name/pid to notify
+  - `:name` - Process name (default: `Bedrock.JobQueue.Consumer.Scanner`)
+  - `:root` - Root keyspace (default: `Keyspace.new("job_queue/")`)
+  - `:interval` - Base scan interval in ms (default: 100)
+  - `:batch_size` - Max pointers to scan per cycle (default: 100)
+  - `:jitter_percent` - Random jitter as percentage of interval (default: 20)
+  - `:selection_frac` - Fraction of visible queues to notify (default: 0.5)
+  - `:selection_max` - Maximum queues to notify per scan (default: 10)
+  - `:gc_interval` - How often to run pointer GC in ms (default: 60_000)
+  - `:gc_grace_period` - Grace period before considering pointer stale in ms (default: 60_000)
+  - `:gc_batch_size` - Max stale pointers to GC per cycle (default: 100)
+  - `:now_fn` - Function returning current time in ms (default: `fn -> System.system_time(:millisecond) end`)
+  - `:worker_pool` - Task.Supervisor for checking worker availability (optional)
+  - `:concurrency` - Max workers for availability check (default: `System.schedulers_online()`)
   """
 
   use GenServer

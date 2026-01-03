@@ -238,8 +238,8 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       # No items enqueued - just verify manager handles message without crashing
       send(manager, {:queue_ready, "tenant_1"})
 
-      # Give it a moment to process
-      Process.sleep(50)
+      # Sync call ensures the prior message has been processed
+      _ = :sys.get_state(manager)
 
       # Check manager is still alive
       assert Process.alive?(manager)

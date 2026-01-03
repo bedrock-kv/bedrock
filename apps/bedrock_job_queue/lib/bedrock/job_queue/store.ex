@@ -62,17 +62,13 @@ defmodule Bedrock.JobQueue.Store do
   Creates the pointer index keyspace.
   """
   @spec pointer_keyspace(root_keyspace()) :: Keyspace.t()
-  def pointer_keyspace(root) do
-    Keyspace.partition(root, "pointers/", key_encoding: TupleEncoding)
-  end
+  def pointer_keyspace(root), do: Keyspace.partition(root, "pointers/", key_encoding: TupleEncoding)
 
   @doc """
   Creates the queue leases keyspace for two-tier leasing.
   """
   @spec queue_lease_keyspace(root_keyspace()) :: Keyspace.t()
-  def queue_lease_keyspace(root) do
-    Keyspace.partition(root, "queue_leases/")
-  end
+  def queue_lease_keyspace(root), do: Keyspace.partition(root, "queue_leases/")
 
   @doc """
   Obtains an exclusive lease on a queue for dequeuing.
@@ -429,9 +425,7 @@ defmodule Bedrock.JobQueue.Store do
     end
   end
 
-  defp resolve_item_key(_repo, _keyspaces, %Lease{item_key: item_key}) when item_key != nil do
-    {:ok, item_key}
-  end
+  defp resolve_item_key(_repo, _keyspaces, %Lease{item_key: item_key}) when item_key != nil, do: {:ok, item_key}
 
   defp resolve_item_key(repo, keyspaces, %Lease{} = lease) do
     case verify_lease(repo, keyspaces, lease) do

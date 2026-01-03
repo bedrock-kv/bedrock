@@ -58,9 +58,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
   # Per QuiCK paper: prevents thundering herd on hot queues
   @default_queue_lease_duration 5_000
 
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
   @impl true
   def init(opts) do
@@ -121,9 +119,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
     end
   end
 
-  defp process_pending(%{pending_queues: queues} = state) when map_size(queues) == 0 do
-    state
-  end
+  defp process_pending(%{pending_queues: queues} = state) when map_size(queues) == 0, do: state
 
   defp process_pending(state) do
     case available_workers(state) do

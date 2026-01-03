@@ -15,10 +15,7 @@ defmodule Bedrock.JobQueue.Expirable do
   @spec expired?(%{expires_at: non_neg_integer()}, keyword()) :: boolean()
   def expired?(struct, opts \\ [])
 
-  def expired?(%{expires_at: exp}, opts) do
-    now = Keyword.get(opts, :now, System.system_time(:millisecond))
-    now >= exp
-  end
+  def expired?(%{expires_at: exp}, opts), do: Keyword.get(opts, :now, System.system_time(:millisecond)) >= exp
 
   @doc """
   Returns the remaining time in milliseconds.
@@ -31,8 +28,6 @@ defmodule Bedrock.JobQueue.Expirable do
   @spec remaining_ms(%{expires_at: non_neg_integer()}, keyword()) :: non_neg_integer()
   def remaining_ms(struct, opts \\ [])
 
-  def remaining_ms(%{expires_at: exp}, opts) do
-    now = Keyword.get(opts, :now, System.system_time(:millisecond))
-    max(0, exp - now)
-  end
+  def remaining_ms(%{expires_at: exp}, opts),
+    do: max(0, exp - Keyword.get(opts, :now, System.system_time(:millisecond)))
 end

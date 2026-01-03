@@ -89,9 +89,7 @@ defmodule Bedrock.JobQueue.Item do
   @spec visible?(t(), non_neg_integer()) :: boolean()
   def visible?(item, now \\ System.system_time(:millisecond))
 
-  def visible?(%__MODULE__{vesting_time: vt, lease_id: nil}, now) do
-    now >= vt
-  end
+  def visible?(%__MODULE__{vesting_time: vt, lease_id: nil}, now), do: now >= vt
 
   def visible?(%__MODULE__{}, _now), do: false
 

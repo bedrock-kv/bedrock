@@ -41,9 +41,7 @@ defmodule Bedrock.JobQueue.Config do
   - `:batch_size` - Items per dequeue batch (default: 10)
   """
   @spec new(keyword()) :: t()
-  def new(opts) do
-    struct!(__MODULE__, opts)
-  end
+  def new(opts), do: struct!(__MODULE__, opts)
 
   @doc """
   Default exponential backoff function.

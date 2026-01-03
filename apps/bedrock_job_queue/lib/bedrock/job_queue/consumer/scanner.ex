@@ -73,9 +73,7 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   @default_gc_grace_period 60_000
   @default_gc_batch_size 100
 
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
   @impl true
   def init(opts) do

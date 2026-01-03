@@ -98,6 +98,9 @@ defmodule Bedrock.JobQueue do
   """
   defmacro __using__(opts) do
     quote location: :keep do
+      alias Bedrock.JobQueue.Internal
+      alias Bedrock.JobQueue.Supervisor, as: JobQueueSupervisor
+
       @otp_app Keyword.fetch!(unquote(opts), :otp_app)
       @repo Keyword.fetch!(unquote(opts), :repo)
       @workers Keyword.get(unquote(opts), :workers, %{})
@@ -122,7 +125,7 @@ defmodule Bedrock.JobQueue do
       Starts the JobQueue consumer supervisor.
       """
       def start_link(opts \\ []) do
-        Bedrock.JobQueue.Supervisor.start_link(__MODULE__, opts)
+        JobQueueSupervisor.start_link(__MODULE__, opts)
       end
 
       @doc """
@@ -151,7 +154,7 @@ defmodule Bedrock.JobQueue do
           MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)
       """
       def enqueue(queue_id, topic, payload, opts \\ []) do
-        Bedrock.JobQueue.Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
+        Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
       end
 
       @doc """
@@ -160,7 +163,7 @@ defmodule Bedrock.JobQueue do
       Returns a map with `:pending_count` and `:processing_count`.
       """
       def stats(queue_id, opts \\ []) do
-        Bedrock.JobQueue.Internal.stats(__MODULE__, queue_id, opts)
+        Internal.stats(__MODULE__, queue_id, opts)
       end
 
       @doc false

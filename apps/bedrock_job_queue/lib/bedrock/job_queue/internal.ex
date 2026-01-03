@@ -83,7 +83,6 @@ defmodule Bedrock.JobQueue.Internal do
 
   Used by both Internal (for enqueue/stats) and Supervisor (for Consumer).
   """
-  # TODO: Migrate to Directory layer for tighter key sizes.
   def root_keyspace(job_queue_module) do
     # Use the module name as part of the keyspace to isolate different JobQueue modules
     module_name = job_queue_module |> Module.split() |> Enum.join("_") |> String.downcase()

@@ -4,6 +4,9 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
 
   Uses a stateful mock store to simulate real storage behavior.
   This allows Store.obtain_lease to create a lease that Store.complete can find.
+
+  With deterministic lease IDs (derived from inputs), the exact IDs are predictable
+  if needed for verification.
   """
 
   # Not async because we need global Mox mode for cross-process mocking
@@ -22,6 +25,8 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
   # Use global mode so spawned processes can access the mock
   setup :set_mox_global
 
+  # Deterministic holder_id for predictable lease IDs
+  @holder_id <<1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16>>
   @concurrency 5
 
   setup do
@@ -72,7 +77,8 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
             root: ctx.root,
             workers: ctx.workers,
             worker_pool: ctx.pool_name,
-            concurrency: ctx.concurrency
+            concurrency: ctx.concurrency,
+            holder_id: @holder_id
           ],
           opts
         )
@@ -232,8 +238,11 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       # No items enqueued - just verify manager handles message without crashing
       send(manager, {:queue_ready, "tenant_1"})
 
-      # Give it a moment to process, then check it's still alive
-      assert_eventually(fn -> Process.alive?(manager) end, timeout: 50)
+      # Give it a moment to process
+      Process.sleep(50)
+
+      # Check manager is still alive
+      assert Process.alive?(manager)
     end
   end
 end

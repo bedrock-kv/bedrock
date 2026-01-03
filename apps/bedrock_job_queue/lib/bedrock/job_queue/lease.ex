@@ -45,7 +45,7 @@ defmodule Bedrock.JobQueue.Lease do
     item_key = {item.priority, expires_at, item.id}
 
     %__MODULE__{
-      id: :crypto.strong_rand_bytes(16),
+      id: derive_id(item.id, holder, now),
       item_id: item.id,
       queue_id: item.queue_id,
       holder: holder,
@@ -53,6 +53,19 @@ defmodule Bedrock.JobQueue.Lease do
       expires_at: expires_at,
       item_key: item_key
     }
+  end
+
+  @doc """
+  Derives a deterministic lease ID from inputs.
+
+  This makes lease IDs predictable for testing while still being unique
+  per item/holder/time combination.
+  """
+  @spec derive_id(binary(), binary(), non_neg_integer()) :: binary()
+  def derive_id(item_id, holder, now) do
+    :sha256
+    |> :crypto.hash([item_id, to_string(holder), <<now::64>>])
+    |> binary_part(0, 16)
   end
 
   @doc """

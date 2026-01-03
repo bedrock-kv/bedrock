@@ -8,6 +8,8 @@ defmodule Bedrock.JobQueue.Supervisor do
 
   use Supervisor
 
+  alias Bedrock.JobQueue.Internal
+
   @doc """
   Starts the supervisor for the given JobQueue module.
 
@@ -23,7 +25,7 @@ defmodule Bedrock.JobQueue.Supervisor do
   @impl true
   def init({job_queue_module, opts}) do
     config = job_queue_module.__config__()
-    root = Bedrock.JobQueue.Internal.root_keyspace(job_queue_module)
+    root = Internal.root_keyspace(job_queue_module)
 
     children = [
       {Bedrock.JobQueue.Consumer,

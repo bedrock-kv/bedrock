@@ -1,7 +1,7 @@
 defmodule Bedrock.JobQueue.Test.StoreHelpers do
   @moduledoc """
   Shared helper functions for job queue Store tests.
-  Provides pipeable Mox expectations for common operations.
+  Provides pipeable Mox expectations for common operations with parameter verification.
 
   ## Usage
 
@@ -14,15 +14,20 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
 
       test "obtain queue lease succeeds on empty queue" do
         MockRepo
-        |> expect_queue_lease_get(nil)
-        |> expect_queue_lease_put()
+        |> expect_queue_lease_get("tenant_1", nil)
+        |> expect_queue_lease_put("tenant_1")
 
-        assert {:ok, %QueueLease{}} = Store.obtain_queue_lease(MockRepo, root, "q", "holder", 5000)
+        assert {:ok, %QueueLease{}} = Store.obtain_queue_lease(MockRepo, root, "tenant_1", "holder", 5000)
       end
+
   """
 
+  import ExUnit.Assertions
   import Mox
 
+  alias Bedrock.JobQueue.Item
+  alias Bedrock.JobQueue.Lease
+  alias Bedrock.JobQueue.QueueLease
   alias Bedrock.Keyspace
 
   # ============================================================================
@@ -30,24 +35,48 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   # ============================================================================
 
   @doc """
-  Expects a get on the queue_leases keyspace, returning the given value.
+  Expects a get on the queue_leases keyspace for a specific queue_id.
+  Verifies the keyspace contains "queue_leases/" and the queue_id matches.
   """
-  def expect_queue_lease_get(repo, value) do
-    expect(repo, :get, fn %Keyspace{}, _queue_id -> value end)
+  def expect_queue_lease_get(repo, queue_id, value) do
+    expect(repo, :get, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "queue_leases/"),
+             "Expected queue_leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == queue_id, "Expected queue_id #{inspect(queue_id)}, got: #{inspect(key)}"
+      value
+    end)
   end
 
   @doc """
-  Expects a put on the queue_leases keyspace.
+  Expects a put on the queue_leases keyspace with verification.
+  Verifies the keyspace, queue_id, and that value is a valid encoded QueueLease.
   """
-  def expect_queue_lease_put(repo) do
-    expect(repo, :put, fn %Keyspace{}, _queue_id, _value -> :ok end)
+  def expect_queue_lease_put(repo, queue_id) do
+    expect(repo, :put, fn %Keyspace{} = ks, key, value ->
+      assert String.contains?(Keyspace.prefix(ks), "queue_leases/"),
+             "Expected queue_leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == queue_id, "Expected queue_id #{inspect(queue_id)}, got: #{inspect(key)}"
+
+      # Verify value is a valid encoded QueueLease
+      lease = :erlang.binary_to_term(value)
+      assert %QueueLease{queue_id: ^queue_id} = lease
+      :ok
+    end)
   end
 
   @doc """
   Expects a clear on the queue_leases keyspace.
   """
-  def expect_queue_lease_clear(repo) do
-    expect(repo, :clear, fn %Keyspace{}, _queue_id -> :ok end)
+  def expect_queue_lease_clear(repo, queue_id) do
+    expect(repo, :clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "queue_leases/"),
+             "Expected queue_leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == queue_id, "Expected queue_id #{inspect(queue_id)}, got: #{inspect(key)}"
+      :ok
+    end)
   end
 
   # ============================================================================
@@ -55,13 +84,38 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   # ============================================================================
 
   @doc """
-  Expects the full sequence of calls for Store.enqueue/3.
+  Expects the full sequence of calls for Store.enqueue/3 with verification.
+  Verifies item key structure, keyspace prefixes, and stats increments.
   """
-  def expect_enqueue(repo) do
+  def expect_enqueue(repo, %Item{} = item) do
+    expected_key = Item.key(item)
+
     repo
-    |> expect(:put, fn %Keyspace{}, _item_key, _encoded_item -> :ok end)
-    |> expect(:max, fn _pointer_key, _value -> :ok end)
-    |> expect(:add, fn _stats_key, <<1::64-little>> -> :ok end)
+    |> expect(:put, fn %Keyspace{} = ks, key, value ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == expected_key,
+             "Expected item key #{inspect(expected_key)}, got: #{inspect(key)}"
+
+      # Verify value decodes to matching item
+      decoded = :erlang.binary_to_term(value)
+      assert decoded.id == item.id
+      assert decoded.topic == item.topic
+      assert decoded.queue_id == item.queue_id
+      :ok
+    end)
+    |> expect(:max, fn pointer_key, <<_timestamp::64-little>> ->
+      assert is_binary(pointer_key), "Expected binary pointer key"
+      assert String.contains?(pointer_key, "pointers/"), "Expected pointers keyspace in key"
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<1::64-little>> ->
+      assert is_binary(stats_key), "Expected binary stats key"
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace in key"
+      assert String.contains?(stats_key, "pending"), "Expected pending stats key"
+      :ok
+    end)
   end
 
   # ============================================================================
@@ -69,12 +123,21 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   # ============================================================================
 
   @doc """
-  Expects a get_range on the items keyspace, returning the given items.
+  Expects a get_range on the items keyspace for a specific queue_id.
+  Verifies the keyspace contains items path and returns the given items.
 
   Items should be a list of `{key, encoded_value}` tuples.
   """
-  def expect_peek(repo, items) do
-    expect(repo, :get_range, fn %Keyspace{}, _opts -> items end)
+  def expect_peek(repo, queue_id, items) do
+    expect(repo, :get_range, fn %Keyspace{} = ks, opts ->
+      prefix = Keyspace.prefix(ks)
+
+      assert String.contains?(prefix, "queues/#{queue_id}/items/"),
+             "Expected items keyspace for queue #{queue_id}, got: #{prefix}"
+
+      assert is_list(opts), "Expected opts to be a list"
+      items
+    end)
   end
 
   # ============================================================================
@@ -84,33 +147,94 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   @doc """
   Expects the full sequence for dequeue with no items visible.
   """
-  def expect_dequeue_empty(repo) do
-    expect_peek(repo, [])
+  def expect_dequeue_empty(repo, queue_id) do
+    expect_peek(repo, queue_id, [])
   end
 
   @doc """
-  Expects get on items keyspace for lease verification.
+  Expects get on items keyspace for a specific item.
+  Verifies keyspace contains items path and key structure.
   """
-  def expect_item_get(repo, value) do
-    expect(repo, :get, fn %Keyspace{}, _item_key -> value end)
+  def expect_item_get(repo, queue_id, %Item{} = item, return_value) do
+    expected_key = Item.key(item)
+
+    expect(repo, :get, fn %Keyspace{} = ks, key ->
+      prefix = Keyspace.prefix(ks)
+
+      assert String.contains?(prefix, "queues/#{queue_id}/items/"),
+             "Expected items keyspace for queue #{queue_id}, got: #{prefix}"
+
+      assert key == expected_key,
+             "Expected item key #{inspect(expected_key)}, got: #{inspect(key)}"
+
+      return_value
+    end)
   end
 
   @doc """
-  Expects the writes for obtaining a lease on an item:
+  Expects the writes for obtaining a lease on an item.
+  Verifies:
   - clear old item key
   - put new item (with updated vesting_time/lease_id)
   - put lease record
   - max pointer (last_active_time)
   - add stats (pending -1, processing +1)
   """
-  def expect_obtain_lease_writes(repo) do
+  def expect_obtain_lease_writes(repo, %Item{} = item) do
+    old_item_key = Item.key(item)
+
     repo
-    |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
-    |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
-    |> expect(:put, fn %Keyspace{}, _lease_key, _encoded_lease -> :ok end)
-    |> expect(:max, fn _pointer_key, _value -> :ok end)
-    |> expect(:add, fn _key, <<-1::64-signed-little>> -> :ok end)
-    |> expect(:add, fn _key, <<1::64-little>> -> :ok end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == old_item_key,
+             "Expected old item key #{inspect(old_item_key)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:put, fn %Keyspace{} = ks, {priority, vesting_time, id}, value ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      # Verify key structure: same id/priority, different vesting_time
+      assert priority == item.priority, "Priority should match original item"
+      assert id == item.id, "ID should match original item"
+      assert vesting_time > item.vesting_time, "New vesting_time should be in future"
+
+      # Verify item has lease_id set
+      decoded = :erlang.binary_to_term(value)
+      assert decoded.id == item.id
+      assert decoded.lease_id != nil, "Item should have lease_id set"
+      :ok
+    end)
+    |> expect(:put, fn %Keyspace{} = ks, lease_key, value ->
+      assert String.contains?(Keyspace.prefix(ks), "leases/"),
+             "Expected leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert lease_key == item.id, "Lease key should be item.id"
+
+      # Verify lease structure
+      lease = :erlang.binary_to_term(value)
+      assert %Lease{item_id: item_id} = lease
+      assert item_id == item.id
+      :ok
+    end)
+    |> expect(:max, fn pointer_key, <<_timestamp::64-little>> ->
+      assert is_binary(pointer_key), "Expected binary pointer key"
+      assert String.contains?(pointer_key, "pointers/"), "Expected pointers keyspace"
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<-1::64-signed-little>> ->
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace"
+      assert String.contains?(stats_key, "pending"), "Expected pending stats key"
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<1::64-little>> ->
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace"
+      assert String.contains?(stats_key, "processing"), "Expected processing stats key"
+      :ok
+    end)
   end
 
   # ============================================================================
@@ -119,18 +243,26 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
 
   @doc """
   Expects a get on the leases keyspace for lease verification.
+  Verifies keyspace contains leases path and item_id matches.
   """
-  def expect_lease_get(repo, value) do
-    expect(repo, :get, fn %Keyspace{}, _item_id -> value end)
+  def expect_lease_get(repo, item_id, value) do
+    expect(repo, :get, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "leases/"),
+             "Expected leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == item_id, "Expected item_id #{inspect(item_id)}, got: #{inspect(key)}"
+      value
+    end)
   end
+
+  # ============================================================================
+  # Stateful Mock Store (for integration tests)
+  # ============================================================================
 
   @doc """
   Creates a stateful mock store for integration tests.
 
-  This is needed because Store.obtain_lease creates a lease with a fresh UUID,
-  and Store.complete/requeue needs to find that same lease. Simple Mox expects
-  can't capture the dynamically created lease.
-
+  This enables cross-process mocking where Store operations read/write shared state.
   Returns an Agent that tracks the stored data. Call `setup_integration_stubs/2`
   to wire up the mock.
   """
@@ -229,16 +361,38 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   end
 
   @doc """
-  Expects the writes for completing a job:
-  - clear item
-  - clear lease
+  Expects the writes for completing a job.
+  Verifies:
+  - clear item with correct key
+  - clear lease with correct item_id
   - add stats (processing -1)
   """
-  def expect_complete_writes(repo) do
+  def expect_complete_writes(repo, %Lease{} = lease) do
     repo
-    |> expect(:clear, fn %Keyspace{}, _item_key -> :ok end)
-    |> expect(:clear, fn %Keyspace{}, _lease_key -> :ok end)
-    |> expect(:add, fn _key, <<-1::64-signed-little>> -> :ok end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      # Verify key matches lease's item_key
+      assert key == lease.item_key,
+             "Expected item_key #{inspect(lease.item_key)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "leases/"),
+             "Expected leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == lease.item_id,
+             "Expected item_id #{inspect(lease.item_id)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<-1::64-signed-little>> ->
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace"
+      assert String.contains?(stats_key, "processing"), "Expected processing stats key"
+      :ok
+    end)
   end
 
   # ============================================================================
@@ -246,21 +400,65 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   # ============================================================================
 
   @doc """
-  Expects the writes for requeuing a job:
-  - clear old item
+  Expects the writes for requeuing a job.
+  Verifies:
+  - clear old item with correct key
   - put new item (with updated vesting_time, error_count)
   - max pointer (last_active_time)
-  - clear lease
+  - clear lease with correct item_id
   - add stats (pending +1, processing -1)
   """
-  def expect_requeue_writes(repo) do
+  def expect_requeue_writes(repo, %Lease{} = lease, %Item{} = original_item) do
     repo
-    |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
-    |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
-    |> expect(:max, fn _pointer_key, _value -> :ok end)
-    |> expect(:clear, fn %Keyspace{}, _lease_key -> :ok end)
-    |> expect(:add, fn _key, <<1::64-little>> -> :ok end)
-    |> expect(:add, fn _key, <<-1::64-signed-little>> -> :ok end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == lease.item_key,
+             "Expected item_key #{inspect(lease.item_key)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:put, fn %Keyspace{} = ks, {priority, vesting_time, id}, value ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      # Verify key structure: same id/priority, new vesting_time (in future due to backoff)
+      assert priority == original_item.priority, "Priority should match original item"
+      assert id == original_item.id, "ID should match original item"
+      assert vesting_time > original_item.vesting_time, "New vesting_time should be in future"
+
+      # Verify error_count incremented and lease cleared
+      decoded = :erlang.binary_to_term(value)
+      assert decoded.id == original_item.id
+      assert decoded.error_count == original_item.error_count + 1
+      assert decoded.lease_id == nil, "lease_id should be cleared"
+      :ok
+    end)
+    |> expect(:max, fn pointer_key, <<_timestamp::64-little>> ->
+      assert is_binary(pointer_key), "Expected binary pointer key"
+      assert String.contains?(pointer_key, "pointers/"), "Expected pointers keyspace"
+      :ok
+    end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "leases/"),
+             "Expected leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == lease.item_id,
+             "Expected item_id #{inspect(lease.item_id)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<1::64-little>> ->
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace"
+      assert String.contains?(stats_key, "pending"), "Expected pending stats key"
+      :ok
+    end)
+    |> expect(:add, fn stats_key, <<-1::64-signed-little>> ->
+      assert String.contains?(stats_key, "stats/"), "Expected stats keyspace"
+      assert String.contains?(stats_key, "processing"), "Expected processing stats key"
+      :ok
+    end)
   end
 
   # ============================================================================
@@ -268,18 +466,55 @@ defmodule Bedrock.JobQueue.Test.StoreHelpers do
   # ============================================================================
 
   @doc """
-  Expects the writes for extending a lease:
-  - clear old item
+  Expects the writes for extending a lease.
+  Verifies:
+  - clear old item with correct key
   - put new item (with updated vesting_time)
   - put updated lease
   - max pointer (last_active_time)
   """
-  def expect_extend_lease_writes(repo) do
+  def expect_extend_lease_writes(repo, %Lease{} = lease, %Item{} = original_item) do
     repo
-    |> expect(:clear, fn %Keyspace{}, _old_item_key -> :ok end)
-    |> expect(:put, fn %Keyspace{}, _new_item_key, _encoded_item -> :ok end)
-    |> expect(:put, fn %Keyspace{}, _lease_key, _encoded_lease -> :ok end)
-    |> expect(:max, fn _pointer_key, _value -> :ok end)
+    |> expect(:clear, fn %Keyspace{} = ks, key ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == lease.item_key,
+             "Expected item_key #{inspect(lease.item_key)}, got: #{inspect(key)}"
+
+      :ok
+    end)
+    |> expect(:put, fn %Keyspace{} = ks, {priority, vesting_time, id}, value ->
+      assert String.contains?(Keyspace.prefix(ks), "items/"),
+             "Expected items keyspace, got: #{Keyspace.prefix(ks)}"
+
+      # Verify key structure: same id/priority, extended vesting_time
+      assert priority == original_item.priority, "Priority should match original item"
+      assert id == original_item.id, "ID should match original item"
+      assert vesting_time > lease.expires_at, "New vesting_time should be after old expiry"
+
+      decoded = :erlang.binary_to_term(value)
+      assert decoded.id == original_item.id
+      :ok
+    end)
+    |> expect(:put, fn %Keyspace{} = ks, key, value ->
+      assert String.contains?(Keyspace.prefix(ks), "leases/"),
+             "Expected leases keyspace, got: #{Keyspace.prefix(ks)}"
+
+      assert key == lease.item_id,
+             "Expected item_id #{inspect(lease.item_id)}, got: #{inspect(key)}"
+
+      # Verify lease has extended expiry
+      updated_lease = :erlang.binary_to_term(value)
+      assert updated_lease.id == lease.id
+      assert updated_lease.expires_at > lease.expires_at, "Lease expiry should be extended"
+      :ok
+    end)
+    |> expect(:max, fn pointer_key, <<_timestamp::64-little>> ->
+      assert is_binary(pointer_key), "Expected binary pointer key"
+      assert String.contains?(pointer_key, "pointers/"), "Expected pointers keyspace"
+      :ok
+    end)
   end
 
   # ============================================================================

@@ -53,7 +53,7 @@ defmodule Bedrock.JobQueue.Consumer.Manager do
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
       lease_duration: Keyword.get(opts, :lease_duration, @default_lease_duration),
       queue_lease_duration: Keyword.get(opts, :queue_lease_duration, @default_queue_lease_duration),
-      holder_id: :crypto.strong_rand_bytes(16),
+      holder_id: Keyword.get(opts, :holder_id, :crypto.strong_rand_bytes(16)),
       backoff_fn: Keyword.get(opts, :backoff_fn, &Config.default_backoff/1)
     }
 

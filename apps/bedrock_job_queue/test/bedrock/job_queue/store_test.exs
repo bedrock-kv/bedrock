@@ -209,8 +209,8 @@ defmodule Bedrock.JobQueue.StoreTest do
   describe "obtain_queue_lease/5" do
     test "succeeds on empty queue" do
       MockRepo
-      |> expect_queue_lease_get(nil)
-      |> expect_queue_lease_put()
+      |> expect_queue_lease_get("tenant_1", nil)
+      |> expect_queue_lease_put("tenant_1")
 
       result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder", 5000)
 
@@ -223,7 +223,7 @@ defmodule Bedrock.JobQueue.StoreTest do
       existing = QueueLease.new("tenant_1", "holder1", duration_ms: 5000, now: now)
       encoded = :erlang.term_to_binary(existing)
 
-      expect_queue_lease_get(MockRepo, encoded)
+      expect_queue_lease_get(MockRepo, "tenant_1", encoded)
       result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000, now: now)
 
       assert {:error, :queue_leased} = result
@@ -236,8 +236,8 @@ defmodule Bedrock.JobQueue.StoreTest do
       now = 10_000
 
       MockRepo
-      |> expect_queue_lease_get(encoded)
-      |> expect_queue_lease_put()
+      |> expect_queue_lease_get("tenant_1", encoded)
+      |> expect_queue_lease_put("tenant_1")
 
       result = Store.obtain_queue_lease(MockRepo, root(), "tenant_1", "holder2", 5000, now: now)
 
@@ -251,8 +251,8 @@ defmodule Bedrock.JobQueue.StoreTest do
       encoded = :erlang.term_to_binary(lease)
 
       MockRepo
-      |> expect_queue_lease_get(encoded)
-      |> expect_queue_lease_clear()
+      |> expect_queue_lease_get("tenant_1", encoded)
+      |> expect_queue_lease_clear("tenant_1")
 
       result = Store.release_queue_lease(MockRepo, root(), lease)
 
@@ -266,7 +266,7 @@ defmodule Bedrock.JobQueue.StoreTest do
       # Try to release with different lease ID
       fake = QueueLease.new("tenant_1", "attacker", duration_ms: 5000)
 
-      expect_queue_lease_get(MockRepo, encoded)
+      expect_queue_lease_get(MockRepo, "tenant_1", encoded)
       result = Store.release_queue_lease(MockRepo, root(), fake)
 
       assert {:error, :lease_mismatch} = result
@@ -275,7 +275,7 @@ defmodule Bedrock.JobQueue.StoreTest do
     test "fails when lease not found" do
       lease = QueueLease.new("tenant_1", "holder", duration_ms: 5000)
 
-      expect_queue_lease_get(MockRepo, nil)
+      expect_queue_lease_get(MockRepo, "tenant_1", nil)
       result = Store.release_queue_lease(MockRepo, root(), lease)
 
       assert {:error, :lease_not_found} = result
@@ -286,7 +286,7 @@ defmodule Bedrock.JobQueue.StoreTest do
     test "writes item, updates pointer, increments stats" do
       item = Item.new("tenant_1", "topic", %{n: 1})
 
-      expect_enqueue(MockRepo)
+      expect_enqueue(MockRepo, item)
       result = Store.enqueue(MockRepo, root(), item)
 
       assert :ok = result
@@ -295,7 +295,7 @@ defmodule Bedrock.JobQueue.StoreTest do
 
   describe "dequeue/5" do
     test "returns empty list when no visible items" do
-      expect_dequeue_empty(MockRepo)
+      expect_dequeue_empty(MockRepo, "tenant_1")
       result = Store.dequeue(MockRepo, root(), "tenant_1", "holder", limit: 5, lease_duration: 5000)
 
       assert {:ok, []} = result

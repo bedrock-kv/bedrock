@@ -700,15 +700,19 @@ defmodule Bedrock.JobQueue.Store do
   end
 
   defp decode_counter(nil), do: 0
+  defp decode_counter(<<>>), do: 0
 
   defp decode_counter(<<value::64-signed-little>>), do: max(0, value)
 
-  defp decode_counter(binary) when is_binary(binary) do
-    # Handle variable-length little-endian
+  defp decode_counter(binary) when is_binary(binary) and byte_size(binary) <= 8 do
+    # Handle variable-length little-endian (up to 64 bits)
     size = byte_size(binary) * 8
     <<value::size(size)-signed-little>> = binary
     max(0, value)
   end
+
+  # If binary is larger than 8 bytes, something is wrong - return 0
+  defp decode_counter(_), do: 0
 
   defp move_to_dead_letter(repo, keyspaces, item_key, item) do
     now = System.system_time(:millisecond)

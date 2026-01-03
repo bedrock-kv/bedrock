@@ -168,35 +168,26 @@ end
 
 ## Setting Up the Job Queue
 
-Now let's wire up the job queue. We need to:
-
-1. Create a keyspace for job data
-2. Configure workers for each topic
-3. Start a consumer to process jobs
+Now let's define our JobQueue module. This is where we configure the repo and wire up all our workers:
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-alias Bedrock.JobQueue
+defmodule CoffeeShop.JobQueue do
+  use Bedrock.JobQueue,
+    otp_app: :coffee_shop,
+    repo: CoffeeShop.Repo,
+    workers: %{
+      "order:confirm" => CoffeeShop.Jobs.OrderConfirmation,
+      "order:brewing" => CoffeeShop.Jobs.BrewingStarted,
+      "order:ready" => CoffeeShop.Jobs.ReadyForPickup,
+      "brew:espresso" => CoffeeShop.Jobs.EspressoShot,
+      "delivery:sync" => CoffeeShop.Jobs.DeliverySync,
+      "admin:cleanup" => CoffeeShop.Jobs.AdminCleanup
+    }
+end
 
-# Use the default keyspace
-root = Bedrock.Keyspace.new("job_queue/")
-
-# Configure defaults
-Application.put_env(:bedrock_job_queue, :repo, Repo)
-Application.put_env(:bedrock_job_queue, :root, root)
-
-# Configure workers - map topics to job modules
-Application.put_env(:bedrock_job_queue, :workers, %{
-  "order:confirm" => CoffeeShop.Jobs.OrderConfirmation,
-  "order:brewing" => CoffeeShop.Jobs.BrewingStarted,
-  "order:ready" => CoffeeShop.Jobs.ReadyForPickup,
-  "brew:espresso" => CoffeeShop.Jobs.EspressoShot,
-  "delivery:sync" => CoffeeShop.Jobs.DeliverySync,
-  "admin:cleanup" => CoffeeShop.Jobs.AdminCleanup
-})
-
-"Workers configured!"
+"JobQueue module defined!"
 ```
 
 Start the consumer:
@@ -204,11 +195,7 @@ Start the consumer:
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-{:ok, _consumer} = JobQueue.start_consumer(
-  repo: Repo,
-  concurrency: 2,
-  batch_size: 5
-)
+Kino.start_child!({CoffeeShop.JobQueue, concurrency: 2, batch_size: 5})
 
 # Give it a moment to initialize
 Process.sleep(500)
@@ -220,7 +207,7 @@ Process.sleep(500)
 Let's enqueue our first job - an order confirmation:
 
 ```elixir
-{:ok, job} = JobQueue.enqueue("main_shop", "order:confirm",
+{:ok, job} = CoffeeShop.JobQueue.enqueue("main_shop", "order:confirm",
   %{order_id: "ORD-001", customer: "Alice"})
 
 IO.puts("Enqueued job: #{Base.encode16(job.id, case: :lower) |> binary_part(0, 8)}...")
@@ -246,15 +233,15 @@ Let's see priorities in action:
 # Enqueue in REVERSE priority order (low first, high last)
 # to demonstrate that they process by priority, not by enqueue order
 
-{:ok, _} = JobQueue.enqueue("main_shop", "admin:cleanup",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "admin:cleanup",
   %{task: "clear_old_orders"}, priority: 200)
 IO.puts("Enqueued cleanup (priority 200)")
 
-{:ok, _} = JobQueue.enqueue("main_shop", "order:brewing",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:brewing",
   %{order_id: "ORD-002", drink: "Latte"}, priority: 50)
 IO.puts("Enqueued brewing (priority 50)")
 
-{:ok, _} = JobQueue.enqueue("main_shop", "order:ready",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("main_shop", "order:ready",
   %{order_id: "ORD-003", customer: "Bob"}, priority: 10)
 IO.puts("Enqueued ready (priority 10)")
 
@@ -271,7 +258,7 @@ Sometimes you want a job to run at a specific time:
 # Schedule a job for 2 seconds from now
 scheduled_time = DateTime.utc_now() |> DateTime.add(2, :second)
 
-{:ok, _} = JobQueue.enqueue_at("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue_at("main_shop", "order:confirm",
   %{order_id: "ORD-SCHEDULED", customer: "Charlie"},
   scheduled_time)
 
@@ -285,7 +272,7 @@ Or use a delay in milliseconds:
 
 ```elixir
 # Enqueue with a 1 second delay
-{:ok, _} = JobQueue.enqueue_in("main_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue_in("main_shop", "order:confirm",
   %{order_id: "ORD-DELAYED", customer: "Diana"},
   1000)
 
@@ -300,10 +287,10 @@ Each coffee shop location can have its own queue, completely isolated:
 
 ```elixir
 # Different shops, different queues
-{:ok, _} = JobQueue.enqueue("downtown_shop", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("downtown_shop", "order:confirm",
   %{order_id: "DT-001", customer: "Eve"})
 
-{:ok, _} = JobQueue.enqueue("airport_kiosk", "order:confirm",
+{:ok, _} = CoffeeShop.JobQueue.enqueue("airport_kiosk", "order:confirm",
   %{order_id: "AP-001", customer: "Frank"})
 
 IO.puts("Enqueued to downtown_shop and airport_kiosk")
@@ -317,7 +304,7 @@ You can inspect queue status at any time:
 
 ```elixir
 for queue_id <- ["main_shop", "downtown_shop", "airport_kiosk"] do
-  stats = JobQueue.stats(queue_id)
+  stats = CoffeeShop.JobQueue.stats(queue_id)
   IO.puts("#{queue_id}: pending=#{stats.pending_count}, processing=#{stats.processing_count}")
 end
 
@@ -334,7 +321,7 @@ Congratulations! You've built a complete job queue system. Here's what we covere
 | **Return Values** | `:ok`, `{:ok, result}`, `{:error, reason}`, `{:snooze, ms}`, `{:discard, reason}` |
 | **Enqueueing**    | `enqueue/3`, `enqueue_at/4`, `enqueue_in/4`                                       |
 | **Priorities**    | Lower number = higher priority (10 > 50 > 200)                                    |
-| **Topics**        | String keys routing to job modules via static config                              |
+| **Topics**        | String keys routing to job modules via workers map                                |
 | **Tenants**       | Use `queue_id` to isolate jobs per tenant                                         |
 
 ## Keep Exploring

@@ -3,7 +3,7 @@ defmodule Bedrock.JobQueue do
   A durable job queue system for Elixir, built on Bedrock.
 
   Modeled after Apple's QuiCK paper, this system provides:
-  - Topic-based routing to worker modules via static config
+  - Topic-based routing to worker modules
   - Two-level sharding (per-queue zones + pointer index)
   - Priority ordering and scheduled/delayed jobs
   - Fault-tolerant leasing via vesting time
@@ -11,13 +11,20 @@ defmodule Bedrock.JobQueue do
 
   ## Quick Start
 
-      # Configure workers (in config.exs)
-      config :bedrock_job_queue, :workers, %{
-        "user:created" => MyApp.Jobs.UserCreated,
-        "email:send" => MyApp.Jobs.SendEmail
-      }
+  Define a JobQueue module for your application:
 
-      # Define a job module
+      defmodule MyApp.JobQueue do
+        use Bedrock.JobQueue,
+          otp_app: :my_app,
+          repo: MyApp.Repo,
+          workers: %{
+            "user:created" => MyApp.Jobs.UserCreated,
+            "email:send" => MyApp.Jobs.SendEmail
+          }
+      end
+
+  Define job modules:
+
       defmodule MyApp.Jobs.UserCreated do
         use Bedrock.JobQueue.Job, topic: "user:created"
 
@@ -28,157 +35,162 @@ defmodule Bedrock.JobQueue do
         end
       end
 
-      # Start consumer
-      Bedrock.JobQueue.start_consumer(repo: MyRepo, concurrency: 10)
+  Add to your supervision tree:
 
-      # Enqueue jobs
-      Bedrock.JobQueue.enqueue("tenant_1", "user:created", %{user_id: 123})
+      children = [
+        MyApp.Cluster,
+        MyApp.Repo,
+        {MyApp.JobQueue, concurrency: 10, batch_size: 5}
+      ]
+
+  Enqueue jobs:
+
+      MyApp.JobQueue.enqueue("tenant_1", "user:created", %{user_id: 123})
 
   ## Scheduling Jobs
 
       # Schedule for a specific time
-      Bedrock.JobQueue.enqueue_at("tenant_1", "email:send", payload, ~U[2024-01-15 10:00:00Z])
+      MyApp.JobQueue.enqueue_at("tenant_1", "email:send", payload, ~U[2024-01-15 10:00:00Z])
 
       # Schedule with a delay
-      Bedrock.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
+      MyApp.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
 
   ## Priority
 
   Lower priority values are processed first:
 
-      Bedrock.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)   # Processed first
-      Bedrock.JobQueue.enqueue("tenant_1", "normal", payload, priority: 100) # Default
-      Bedrock.JobQueue.enqueue("tenant_1", "batch", payload, priority: 200)  # Processed last
+      MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)   # Processed first
+      MyApp.JobQueue.enqueue("tenant_1", "normal", payload, priority: 100) # Default
+      MyApp.JobQueue.enqueue("tenant_1", "batch", payload, priority: 200)  # Processed last
   """
 
-  alias Bedrock.JobQueue.Config
-  alias Bedrock.JobQueue.Item
-  alias Bedrock.JobQueue.Store
-  alias Bedrock.Keyspace
-
-  @type queue_id :: String.t()
+  @type queue_id :: term()
   @type topic :: String.t()
   @type payload :: map() | binary()
 
   @type enqueue_opts :: [
           priority: integer(),
-          scheduled_at: DateTime.t(),
           max_retries: non_neg_integer(),
           id: binary(),
-          repo: module(),
-          root: Keyspace.t()
+          vesting_time: non_neg_integer()
         ]
 
+  @type config :: %{
+          otp_app: atom(),
+          repo: module(),
+          workers: %{String.t() => module()}
+        }
+
   @doc """
-  Enqueues a job for processing.
+  Defines a JobQueue module.
 
   ## Options
 
-  - `:priority` - Integer priority (lower = higher priority, default: 100)
-  - `:max_retries` - Maximum retry attempts (default: 3)
-  - `:id` - Custom job ID (default: auto-generated UUID)
-  - `:repo` - The Bedrock repo module
-  - `:root` - Root keyspace for the job queue
+  - `:otp_app` - The OTP application name (required)
+  - `:repo` - The Bedrock Repo module (required)
+  - `:workers` - Map of topic strings to job modules (default: %{})
 
-  ## Examples
+  ## Example
 
-      Bedrock.JobQueue.enqueue("tenant_1", "user:created", %{user_id: 123})
-      Bedrock.JobQueue.enqueue("tenant_1", "email:send", %{to: "user@example.com"}, priority: 10)
+      defmodule MyApp.JobQueue do
+        use Bedrock.JobQueue,
+          otp_app: :my_app,
+          repo: MyApp.Repo,
+          workers: %{
+            "email:send" => MyApp.Jobs.SendEmail
+          }
+      end
   """
-  @spec enqueue(queue_id(), topic(), payload(), enqueue_opts()) ::
-          {:ok, Item.t()} | {:error, term()}
-  def enqueue(queue_id, topic, payload, opts \\ []) do
-    repo = Keyword.get(opts, :repo) || default_repo()
-    root = Keyword.get(opts, :root) || default_root()
-    item = Item.new(queue_id, topic, payload, opts)
+  defmacro __using__(opts) do
+    quote location: :keep do
+      @otp_app Keyword.fetch!(unquote(opts), :otp_app)
+      @repo Keyword.fetch!(unquote(opts), :repo)
+      @workers Keyword.get(unquote(opts), :workers, %{})
 
-    repo.transact(fn ->
-      Store.enqueue(repo, root, item)
-      {:ok, item}
-    end)
-  end
+      @doc """
+      Returns a child specification for this JobQueue.
 
-  @doc """
-  Enqueues a job scheduled for a specific time.
+      ## Options
 
-  ## Examples
+      - `:concurrency` - Number of concurrent workers (default: System.schedulers_online())
+      - `:batch_size` - Items to dequeue per batch (default: 10)
+      """
+      def child_spec(opts) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [opts]},
+          type: :supervisor
+        }
+      end
 
-      Bedrock.JobQueue.enqueue_at("tenant_1", "reminder", payload, ~U[2024-01-15 10:00:00Z])
-  """
-  @spec enqueue_at(queue_id(), topic(), payload(), DateTime.t(), enqueue_opts()) ::
-          {:ok, Item.t()} | {:error, term()}
-  def enqueue_at(queue_id, topic, payload, %DateTime{} = scheduled_at, opts \\ []) do
-    vesting_time = DateTime.to_unix(scheduled_at, :millisecond)
-    enqueue(queue_id, topic, payload, Keyword.put(opts, :vesting_time, vesting_time))
-  end
+      @doc """
+      Starts the JobQueue consumer supervisor.
+      """
+      def start_link(opts \\ []) do
+        Bedrock.JobQueue.Supervisor.start_link(__MODULE__, opts)
+      end
 
-  @doc """
-  Enqueues a job with a delay.
+      @doc """
+      Enqueues a job for processing.
 
-  ## Examples
+      ## Options
 
-      # Run in 1 hour
-      Bedrock.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
+      - `:priority` - Integer priority (lower = higher priority, default: 100)
+      - `:max_retries` - Maximum retry attempts (default: 3)
+      - `:id` - Custom job ID (default: auto-generated UUID)
 
-      # Run in 30 seconds
-      Bedrock.JobQueue.enqueue_in("tenant_1", "retry", payload, 30_000)
-  """
-  @spec enqueue_in(queue_id(), topic(), payload(), non_neg_integer(), enqueue_opts()) ::
-          {:ok, Item.t()} | {:error, term()}
-  def enqueue_in(queue_id, topic, payload, delay_ms, opts \\ []) when is_integer(delay_ms) do
-    vesting_time = System.system_time(:millisecond) + delay_ms
-    enqueue(queue_id, topic, payload, Keyword.put(opts, :vesting_time, vesting_time))
-  end
+      ## Examples
 
-  @doc """
-  Starts a consumer for processing jobs.
+          MyApp.JobQueue.enqueue("tenant_1", "email:send", %{to: "user@example.com"})
+          MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)
+      """
+      def enqueue(queue_id, topic, payload, opts \\ []) do
+        Bedrock.JobQueue.Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
+      end
 
-  ## Options
+      @doc """
+      Enqueues a job scheduled for a specific time.
 
-  - `:repo` - The Bedrock repo module (required)
-  - `:concurrency` - Number of concurrent workers (default: System.schedulers_online())
-  - `:batch_size` - Items to dequeue per batch (default: 10)
+      ## Examples
 
-  ## Examples
+          MyApp.JobQueue.enqueue_at("tenant_1", "reminder", payload, ~U[2024-01-15 10:00:00Z])
+      """
+      def enqueue_at(queue_id, topic, payload, %DateTime{} = scheduled_at, opts \\ []) do
+        Bedrock.JobQueue.Internal.enqueue_at(__MODULE__, queue_id, topic, payload, scheduled_at, opts)
+      end
 
-      Bedrock.JobQueue.start_consumer(repo: MyApp.Repo, concurrency: 10)
-  """
-  @spec start_consumer(keyword()) :: {:ok, pid()} | {:error, term()}
-  def start_consumer(opts) do
-    config = Config.new(opts)
+      @doc """
+      Enqueues a job with a delay.
 
-    child_spec =
-      {Bedrock.JobQueue.Consumer, repo: config.repo, concurrency: config.concurrency, batch_size: config.batch_size}
+      ## Examples
 
-    DynamicSupervisor.start_child(Bedrock.JobQueue.ConsumerSupervisor, child_spec)
-  end
+          # Run in 1 hour
+          MyApp.JobQueue.enqueue_in("tenant_1", "cleanup", payload, :timer.hours(1))
 
-  @doc """
-  Gets queue statistics.
+          # Run in 30 seconds
+          MyApp.JobQueue.enqueue_in("tenant_1", "retry", payload, 30_000)
+      """
+      def enqueue_in(queue_id, topic, payload, delay_ms, opts \\ []) when is_integer(delay_ms) do
+        Bedrock.JobQueue.Internal.enqueue_in(__MODULE__, queue_id, topic, payload, delay_ms, opts)
+      end
 
-  Returns a map with `:pending_count` and `:processing_count`.
-  """
-  @spec stats(queue_id(), keyword()) :: map()
-  def stats(queue_id, opts \\ []) do
-    repo = Keyword.get(opts, :repo) || default_repo()
-    root = Keyword.get(opts, :root) || default_root()
+      @doc """
+      Gets queue statistics.
 
-    fn ->
-      {:ok, Store.stats(repo, root, queue_id)}
+      Returns a map with `:pending_count` and `:processing_count`.
+      """
+      def stats(queue_id, opts \\ []) do
+        Bedrock.JobQueue.Internal.stats(__MODULE__, queue_id, opts)
+      end
+
+      @doc false
+      def __config__ do
+        %{
+          otp_app: @otp_app,
+          repo: @repo,
+          workers: @workers
+        }
+      end
     end
-    |> repo.transact()
-    |> case do
-      {:ok, stats} -> stats
-      error -> error
-    end
-  end
-
-  defp default_repo do
-    Application.get_env(:bedrock_job_queue, :repo) ||
-      raise "No repo configured. Set :repo in options or configure :bedrock_job_queue, :repo"
-  end
-
-  defp default_root do
-    Application.get_env(:bedrock_job_queue, :root, Keyspace.new("job_queue/"))
   end
 end

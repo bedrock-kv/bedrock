@@ -10,14 +10,12 @@
 # To run this example:
 #   mix run apps/bedrock_job_queue/examples/basic_usage.exs
 
-alias Bedrock.JobQueue
-
 # =============================================================================
 # Step 1: Define Job Modules
 # =============================================================================
 #
 # Jobs are defined as modules that implement the Bedrock.JobQueue.Job behaviour.
-# Each job module specifies its topic pattern and default options.
+# Each job module specifies its topic and default options.
 
 defmodule ExampleJobs.SendEmail do
   @moduledoc """
@@ -31,7 +29,7 @@ defmodule ExampleJobs.SendEmail do
     priority: 50
 
   @impl true
-  def perform(%{to: to, subject: subject, body: body} = _args) do
+  def perform(%{to: to, subject: subject, body: _body}, _meta) do
     IO.puts("[SendEmail] Sending email to #{to}: #{subject}")
 
     # Simulate sending email
@@ -49,11 +47,11 @@ defmodule ExampleJobs.ProcessWebhook do
   This job demonstrates returning {:ok, result} with a value.
   """
   use Bedrock.JobQueue.Job,
-    topic: "webhook:*",
+    topic: "webhook:process",
     priority: 10  # Higher priority (lower number = processed first)
 
   @impl true
-  def perform(%{event: event, payload: payload}) do
+  def perform(%{event: event, payload: _payload}, _meta) do
     IO.puts("[ProcessWebhook] Processing #{event} event")
 
     # Process the webhook
@@ -76,7 +74,7 @@ defmodule ExampleJobs.SyncInventory do
     timeout: 60_000
 
   @impl true
-  def perform(%{product_id: product_id}) do
+  def perform(%{product_id: product_id}, _meta) do
     IO.puts("[SyncInventory] Syncing product #{product_id}")
 
     # Simulate occasional failures
@@ -97,11 +95,11 @@ defmodule ExampleJobs.CleanupOldData do
   This job demonstrates discarding jobs that shouldn't be retried.
   """
   use Bedrock.JobQueue.Job,
-    topic: "cleanup:*",
+    topic: "cleanup:data",
     priority: 200  # Low priority (processed after higher priority jobs)
 
   @impl true
-  def perform(%{table: table, older_than: older_than}) do
+  def perform(%{table: table, older_than: older_than}, _meta) do
     IO.puts("[CleanupOldData] Cleaning #{table} older than #{older_than}")
 
     case validate_table(table) do
@@ -135,7 +133,7 @@ defmodule ExampleJobs.RateLimitedJob do
     max_retries: 3
 
   @impl true
-  def perform(%{endpoint: endpoint}) do
+  def perform(%{endpoint: endpoint}, _meta) do
     IO.puts("[RateLimitedJob] Calling #{endpoint}")
 
     case check_rate_limit() do
@@ -161,86 +159,31 @@ defmodule ExampleJobs.RateLimitedJob do
 end
 
 # =============================================================================
-# Step 2: Register Job Handlers
+# Step 2: Define Your JobQueue Module
 # =============================================================================
 #
-# Job handlers are registered with topic patterns. The pattern supports wildcards:
-# - "email:send" matches only "email:send"
-# - "webhook:*" matches "webhook:github", "webhook:stripe", etc.
+# Define a JobQueue module with `use Bedrock.JobQueue`. This configures the
+# repo, workers, and provides enqueue functions.
 
-IO.puts("\n=== Registering Job Handlers ===\n")
+IO.puts("\n=== Defining JobQueue Module ===\n")
 
-JobQueue.register("email:send", ExampleJobs.SendEmail)
-JobQueue.register("webhook:*", ExampleJobs.ProcessWebhook)
-JobQueue.register("inventory:sync", ExampleJobs.SyncInventory)
-JobQueue.register("cleanup:*", ExampleJobs.CleanupOldData)
-JobQueue.register("api:call", ExampleJobs.RateLimitedJob)
+defmodule ExampleApp.JobQueue do
+  use Bedrock.JobQueue,
+    otp_app: :example_app,
+    repo: MockRepo,
+    workers: %{
+      "email:send" => ExampleJobs.SendEmail,
+      "webhook:process" => ExampleJobs.ProcessWebhook,
+      "inventory:sync" => ExampleJobs.SyncInventory,
+      "cleanup:data" => ExampleJobs.CleanupOldData,
+      "api:call" => ExampleJobs.RateLimitedJob
+    }
+end
 
-IO.puts("Registered 5 job handlers")
-
-# =============================================================================
-# Step 3: Enqueue Jobs
-# =============================================================================
-#
-# Jobs are enqueued with a queue_id (tenant), topic, and payload.
-# The queue_id provides isolation between tenants.
-
-IO.puts("\n=== Enqueuing Jobs ===\n")
-
-# Basic enqueue
-{:ok, job1} = JobQueue.enqueue("tenant_1", "email:send", %{
-  to: "user@example.com",
-  subject: "Welcome!",
-  body: "Thanks for signing up."
-}, repo: MockRepo)
-
-IO.puts("Enqueued email job: #{inspect(job1.id)}")
-
-# Enqueue with priority
-{:ok, job2} = JobQueue.enqueue("tenant_1", "webhook:github", %{
-  event: "push",
-  payload: %{ref: "refs/heads/main"}
-}, priority: 5, repo: MockRepo)
-
-IO.puts("Enqueued webhook job with priority 5: #{inspect(job2.id)}")
-
-# Scheduled enqueue (run at a specific time)
-scheduled_time = DateTime.utc_now() |> DateTime.add(3600, :second)
-{:ok, job3} = JobQueue.enqueue_at("tenant_1", "cleanup:logs", %{
-  table: "logs",
-  older_than: "30 days"
-}, scheduled_time, repo: MockRepo)
-
-IO.puts("Scheduled cleanup job for #{scheduled_time}: #{inspect(job3.id)}")
-
-# Delayed enqueue (run after a delay)
-{:ok, job4} = JobQueue.enqueue_in("tenant_1", "inventory:sync", %{
-  product_id: 12345
-}, :timer.minutes(5), repo: MockRepo)
-
-IO.puts("Enqueued inventory sync with 5 minute delay: #{inspect(job4.id)}")
+IO.puts("Defined ExampleApp.JobQueue with 5 workers")
 
 # =============================================================================
-# Step 4: Creating Jobs from Job Modules
-# =============================================================================
-#
-# Job modules provide a new/2 function for creating jobs with defaults.
-
-IO.puts("\n=== Creating Jobs from Modules ===\n")
-
-# Using the job module's new/2 function
-email_job = ExampleJobs.SendEmail.new(
-  %{to: "admin@example.com", subject: "Alert", body: "Check this out"},
-  queue_id: "tenant_1"
-)
-
-IO.puts("Created email job with defaults:")
-IO.puts("  Priority: #{email_job.priority}")
-IO.puts("  Max retries: #{email_job.max_retries}")
-IO.puts("  Topic: #{email_job.topic}")
-
-# =============================================================================
-# Step 5: Job Lifecycle
+# Step 3: Job Lifecycle
 # =============================================================================
 #
 # Jobs go through the following lifecycle:
@@ -267,37 +210,72 @@ Return Value          | Result
 """)
 
 # =============================================================================
-# Step 6: Starting the Consumer
+# Step 4: Supervision Tree Setup
 # =============================================================================
 #
-# The consumer processes jobs from the queue. It includes:
-# - Scanner: Monitors pointers for ready queues
-# - Manager: Dequeues items and dispatches to workers
-# - WorkerPool: Pool of workers for parallel processing
+# Add your JobQueue module to your application's supervision tree.
 
-IO.puts("\n=== Consumer Configuration ===\n")
+IO.puts("\n=== Supervision Tree Configuration ===\n")
 
 IO.puts("""
-To start a consumer in your application:
+To start the consumer in your application:
 
-    # In your application.ex or supervisor
-    children = [
-      # ... other children ...
-      {Bedrock.JobQueue.ConsumerSupervisor, []},
-    ]
+    # In your application.ex
+    def start(_type, _args) do
+      children = [
+        # ... your cluster and repo ...
+        MyApp.Cluster,
+        MyApp.Repo,
 
-    # Start the consumer
-    Bedrock.JobQueue.start_consumer(
-      repo: MyApp.Repo,
-      concurrency: 10,        # Number of parallel workers
-      batch_size: 20          # Jobs to dequeue per batch
-    )
+        # Add your JobQueue module
+        {MyApp.JobQueue, concurrency: 10, batch_size: 5}
+      ]
+
+      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+      Supervisor.start_link(children, opts)
+    end
 
 Configuration options:
-  - :repo        - Bedrock repo module (required)
   - :concurrency - Number of concurrent workers (default: schedulers)
   - :batch_size  - Items per dequeue batch (default: 10)
-  - :registry    - Job handler registry (default: Registry.Default)
+""")
+
+# =============================================================================
+# Step 5: Enqueue Jobs
+# =============================================================================
+#
+# Jobs are enqueued with a queue_id (tenant), topic, and payload.
+# The queue_id provides isolation between tenants.
+
+IO.puts("\n=== Enqueue API ===\n")
+
+IO.puts("""
+Enqueue jobs using your JobQueue module:
+
+    # Basic enqueue
+    MyApp.JobQueue.enqueue("tenant_1", "email:send", %{
+      to: "user@example.com",
+      subject: "Welcome!",
+      body: "Thanks for signing up."
+    })
+
+    # With priority override
+    MyApp.JobQueue.enqueue("tenant_1", "webhook:process", %{
+      event: "push",
+      payload: %{ref: "refs/heads/main"}
+    }, priority: 5)
+
+    # Scheduled for a specific time
+    scheduled_time = DateTime.utc_now() |> DateTime.add(3600, :second)
+    MyApp.JobQueue.enqueue_at("tenant_1", "cleanup:data", %{
+      table: "logs",
+      older_than: "30 days"
+    }, scheduled_time)
+
+    # Delayed by duration
+    MyApp.JobQueue.enqueue_in("tenant_1", "inventory:sync", %{
+      product_id: 12345
+    }, :timer.minutes(5))
 """)
 
 # =============================================================================
@@ -314,13 +292,13 @@ Features:
   - Scheduled and delayed jobs
   - Automatic retries with exponential backoff
   - Per-tenant queue isolation
-  - Wildcard topic patterns for job routing
+  - Module-based worker configuration
 
 Key Components:
-  - Job        - Behaviour for defining job handlers
-  - Store      - Persistent storage operations
-  - Consumer   - Scanner/Manager/Worker architecture
-  - Registry   - Topic pattern matching for job dispatch
+  - use Bedrock.JobQueue      - Define your JobQueue module
+  - use Bedrock.JobQueue.Job  - Define job handlers
+  - Store                     - Persistent storage operations
+  - Consumer                  - Scanner/Manager/Worker architecture
 
 For more details, see the module documentation:
   - Bedrock.JobQueue

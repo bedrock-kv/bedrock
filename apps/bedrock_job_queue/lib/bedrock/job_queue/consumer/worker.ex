@@ -5,12 +5,17 @@ defmodule Bedrock.JobQueue.Consumer.Worker do
   Provides the execute/2 function that runs job modules' perform/2 callbacks
   with timeout protection. Used directly by Manager via Task.Supervisor.
 
-  Workers are configured via static mapping in config:
+  Workers are configured via the JobQueue module's workers map:
 
-      config :bedrock_job_queue, :workers, %{
-        "email:send" => MyApp.Jobs.SendEmail,
-        "order:process" => MyApp.Jobs.ProcessOrder
-      }
+      defmodule MyApp.JobQueue do
+        use Bedrock.JobQueue,
+          otp_app: :my_app,
+          repo: MyApp.Repo,
+          workers: %{
+            "email:send" => MyApp.Jobs.SendEmail,
+            "order:process" => MyApp.Jobs.ProcessOrder
+          }
+      end
   """
 
   alias Bedrock.JobQueue.Item
@@ -22,27 +27,17 @@ defmodule Bedrock.JobQueue.Consumer.Worker do
   Executes a job and returns the result.
 
   Called from a Task spawned by Manager. Looks up the handler for the item's
-  topic from static config and executes it with timeout protection.
+  topic from the workers map and executes it with timeout protection.
   """
-  @spec execute(Item.t()) :: term()
-  def execute(%Item{} = item) do
-    case lookup_handler(item.topic) do
-      {:ok, job_module} ->
-        execute_with_timeout(job_module, item)
-
-      :error ->
+  @spec execute(Item.t(), map()) :: term()
+  def execute(%Item{} = item, workers) when is_map(workers) do
+    case Map.get(workers, item.topic) do
+      nil ->
         Logger.warning("No worker configured for topic: #{item.topic}")
         {:discard, :no_handler}
-    end
-  end
 
-  # Looks up worker module from static config
-  defp lookup_handler(topic) do
-    workers = Application.get_env(:bedrock_job_queue, :workers, %{})
-
-    case Map.get(workers, topic) do
-      nil -> :error
-      module -> {:ok, module}
+      job_module ->
+        execute_with_timeout(job_module, item)
     end
   end
 

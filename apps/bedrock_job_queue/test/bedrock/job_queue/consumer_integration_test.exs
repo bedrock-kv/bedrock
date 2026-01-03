@@ -38,7 +38,7 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
     # Set up the stateful mock store
     setup_integration_stubs(MockRepo, store_agent)
 
-    # Configure workers via Application config
+    # Configure workers - passed via opts to Manager
     workers = %{
       "test:success" => Jobs.SuccessJob,
       "test:success_with_result" => Jobs.SuccessWithResultJob,
@@ -50,18 +50,13 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
       "test:notify" => Jobs.NotifyingJob
     }
 
-    Application.put_env(:bedrock_job_queue, :workers, workers)
-
-    on_exit(fn ->
-      Application.delete_env(:bedrock_job_queue, :workers)
-    end)
-
     %{
       pool: pool,
       pool_name: pool_name,
       concurrency: @concurrency,
       store: store_agent,
-      root: Keyspace.new("job_queue/")
+      root: Keyspace.new("job_queue/"),
+      workers: workers
     }
   end
 
@@ -75,6 +70,7 @@ defmodule Bedrock.JobQueue.ConsumerIntegrationTest do
             name: name,
             repo: MockRepo,
             root: ctx.root,
+            workers: ctx.workers,
             worker_pool: ctx.pool_name,
             concurrency: ctx.concurrency
           ],

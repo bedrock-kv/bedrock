@@ -44,6 +44,7 @@ defmodule Bedrock.JobQueue.Consumer do
   @impl true
   def init(opts) do
     repo = Keyword.fetch!(opts, :repo)
+    workers = Keyword.fetch!(opts, :workers)
     root = Keyword.get(opts, :root, Keyspace.new("job_queue/"))
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     batch_size = Keyword.get(opts, :batch_size, 10)
@@ -66,6 +67,7 @@ defmodule Bedrock.JobQueue.Consumer do
        name: manager_name,
        repo: repo,
        root: root,
+       workers: workers,
        worker_pool: pool_name,
        concurrency: concurrency,
        batch_size: batch_size,

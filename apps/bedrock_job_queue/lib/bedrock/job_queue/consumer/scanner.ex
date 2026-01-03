@@ -32,8 +32,8 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   - `:gc_grace_period` - Grace period before considering pointer stale in ms (default: 60_000)
   - `:gc_batch_size` - Max stale pointers to GC per cycle (default: 100)
   - `:now_fn` - Function returning current time in ms (default: `fn -> System.system_time(:millisecond) end`)
-  - `:worker_pool` - Task.Supervisor for checking worker availability (optional)
-  - `:concurrency` - Max workers for availability check (default: `System.schedulers_online()`)
+  - `:worker_pool` - Required. Task.Supervisor for checking worker availability
+  - `:concurrency` - Required. Max concurrent workers
   """
 
   use GenServer
@@ -81,8 +81,8 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
       repo: Keyword.fetch!(opts, :repo),
       root: Keyword.get(opts, :root, Keyspace.new("job_queue/")),
       manager: Keyword.fetch!(opts, :manager),
-      worker_pool: Keyword.get(opts, :worker_pool),
-      concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
+      worker_pool: Keyword.fetch!(opts, :worker_pool),
+      concurrency: Keyword.fetch!(opts, :concurrency),
       interval: Keyword.get(opts, :interval, @default_interval),
       batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
       jitter_percent: Keyword.get(opts, :jitter_percent, @default_jitter_percent),
@@ -155,13 +155,8 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
     Process.send_after(self(), :scan, jittered_interval)
   end
 
-  # Per QuiCK Algorithm 1 line 5: wait until at least one worker has no task
-  # Returns true if worker_pool is not configured (backward compat) or has available workers
-  defp workers_available?(%{worker_pool: nil}), do: true
-
   defp workers_available?(%{worker_pool: pool, concurrency: concurrency}) do
-    active = length(Task.Supervisor.children(pool))
-    active < concurrency
+    length(Task.Supervisor.children(pool)) < concurrency
   end
 
   # Add random jitter to prevent synchronized scans across consumers

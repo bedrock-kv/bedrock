@@ -91,6 +91,8 @@ defmodule Bedrock.JobQueue.Consumer do
        repo: repo,
        root: root,
        manager: manager_name,
+       worker_pool: pool_name,
+       concurrency: concurrency,
        interval: scan_interval,
        batch_size: batch_size,
        gc_interval: gc_interval,

@@ -157,13 +157,7 @@ defmodule Bedrock.JobQueue do
       def stats(queue_id, opts \\ []), do: Internal.stats(__MODULE__, queue_id, opts)
 
       @doc false
-      def __config__ do
-        %{
-          otp_app: @otp_app,
-          repo: @repo,
-          workers: @workers
-        }
-      end
+      def __config__, do: %{otp_app: @otp_app, repo: @repo, workers: @workers}
     end
   end
 end

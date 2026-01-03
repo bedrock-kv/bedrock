@@ -487,15 +487,11 @@ defmodule Bedrock.JobQueue.Store do
         max_delay = Keyword.get(opts, :max_delay, 60_000)
         (base_delay * :math.pow(2, error_count)) |> trunc() |> min(max_delay)
 
-      # Use backoff function if provided
       backoff_fn = Keyword.get(opts, :backoff_fn) ->
         backoff_fn.(error_count)
 
-      # Default fallback: simple exponential backoff
       true ->
-        base = 1000
-        max_delay = 60_000
-        (base * :math.pow(2, error_count)) |> trunc() |> min(max_delay)
+        (1000 * :math.pow(2, error_count)) |> trunc() |> min(60_000)
     end
   end
 
@@ -708,10 +704,8 @@ defmodule Bedrock.JobQueue.Store do
 
   defp encode_timestamp(time), do: <<time::64-little>>
 
-  # Decode timestamp, handling nil or missing values (backward compat)
   defp decode_timestamp(nil), do: 0
   defp decode_timestamp(<<time::64-little>>), do: time
-  defp decode_timestamp(_), do: 0
 
   # Atomically updates pending and processing stats
   defp update_stats(repo, keyspaces, pending_delta, processing_delta) do

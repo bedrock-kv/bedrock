@@ -295,7 +295,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Index do
     {min_key, max_key} = calculate_key_bounds(tree, initial_page_map)
 
     total_key_count =
-      Enum.sum_by(initial_page_map, fn {_, {page, _next_id}} -> Page.key_count(page) end)
+      initial_page_map
+      |> Enum.map(fn {_, {page, _next_id}} -> Page.key_count(page) end)
+      |> Enum.sum()
 
     index = %__MODULE__{
       tree: tree,

@@ -189,6 +189,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     use GenServer
 
+    import Bedrock.Internal.GenServer.Replies
+
     @impl GenServer
     def init({path, segment_size, min_available, max_available}) do
       path
@@ -205,10 +207,10 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       |> Logic.check_out(new_path)
       |> case do
         {:ok, state} ->
-          {:reply, :ok, state, {:continue, :ensure_min_available}}
+          reply(state, :ok, continue: :ensure_min_available)
 
         {:error, _reason} = error ->
-          {:reply, error, state}
+          reply(state, error)
       end
     end
 
@@ -217,8 +219,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       state
       |> Logic.check_in(segment)
       |> case do
-        {:ok, state} -> {:reply, :ok, state}
-        {:error, reason} -> {:reply, {:error, reason}, state}
+        {:ok, state} -> reply(state, :ok)
+        {:error, reason} -> reply(state, {:error, reason})
       end
     end
 
@@ -227,8 +229,8 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       state
       |> Logic.ensure_min_available(state.min_available)
       |> case do
-        {:ok, state} -> {:noreply, state}
-        {:error, reason} -> {:stop, :shutdown, reason}
+        {:ok, state} -> noreply(state)
+        {:error, reason} -> stop(reason, :shutdown)
       end
     end
   end

@@ -18,7 +18,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec all(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
-  def all(foreman, opts \\ []), do: call(foreman, :workers, to_timeout(opts[:timeout] || :infinity))
+  def all(foreman, opts \\ []), do: call(foreman, :workers, opts[:timeout] || :infinity)
 
   @doc """
   Create a new worker.
@@ -30,15 +30,14 @@ defmodule Bedrock.Service.Foreman do
           opts :: [timeout: timeout()]
         ) ::
           {:ok, Worker.ref()} | {:error, :timeout}
-  def new_worker(foreman, id, kind, opts \\ []),
-    do: call(foreman, {:new_worker, id, kind}, to_timeout(opts[:timeout] || :infinity))
+  def new_worker(foreman, id, kind, opts \\ []), do: call(foreman, {:new_worker, id, kind}, opts[:timeout] || :infinity)
 
   @doc """
   Return a list of running storage workers only.
   """
   @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
-  def storage_workers(foreman, opts \\ []), do: call(foreman, :storage_workers, to_timeout(opts[:timeout] || :infinity))
+  def storage_workers(foreman, opts \\ []), do: call(foreman, :storage_workers, opts[:timeout] || :infinity)
 
   @doc """
   Wait until the foreman signals that it (and all of it's workers) are
@@ -47,8 +46,7 @@ defmodule Bedrock.Service.Foreman do
   """
   @spec wait_for_healthy(foreman :: ref(), opts :: [timeout: timeout()]) ::
           :ok | {:error, :unavailable | :timeout | :unknown}
-  def wait_for_healthy(foreman, opts \\ []),
-    do: call(foreman, :wait_for_healthy, to_timeout(opts[:timeout] || :infinity))
+  def wait_for_healthy(foreman, opts \\ []), do: call(foreman, :wait_for_healthy, opts[:timeout] || :infinity)
 
   @doc """
   Remove a worker and clean up its resources.
@@ -69,7 +67,7 @@ defmodule Bedrock.Service.Foreman do
           | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
           | {:error, :unavailable | :timeout | :unknown}
   def remove_worker(foreman, worker_id, opts \\ []),
-    do: call(foreman, {:remove_worker, worker_id}, to_timeout(opts[:timeout] || 5_000))
+    do: call(foreman, {:remove_worker, worker_id}, opts[:timeout] || 5_000)
 
   @doc """
   Remove multiple workers in a single batch operation.
@@ -88,7 +86,7 @@ defmodule Bedrock.Service.Foreman do
           %{Worker.id() => :ok | {:error, term()}}
           | {:error, :unavailable | :timeout | :unknown}
   def remove_workers(foreman, worker_ids, opts \\ []),
-    do: call(foreman, {:remove_workers, worker_ids}, to_timeout(opts[:timeout] || 30_000))
+    do: call(foreman, {:remove_workers, worker_ids}, opts[:timeout] || 30_000)
 
   @doc """
   Called by a worker to report it's health to the foreman.
@@ -114,5 +112,5 @@ defmodule Bedrock.Service.Foreman do
           {:ok, [{service_id :: String.t(), kind :: :log | :storage, name :: atom()}]}
           | {:error, :unavailable | :timeout | :unknown}
   def get_all_running_services(foreman, opts \\ []),
-    do: call(foreman, :get_all_running_services, to_timeout(opts[:timeout] || :infinity))
+    do: call(foreman, :get_all_running_services, opts[:timeout] || :infinity)
 end

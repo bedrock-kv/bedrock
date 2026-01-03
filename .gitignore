@@ -38,5 +38,8 @@ bedrock-*.tar
 .vscode/
 
 # AI tools
-# .claude/
-# CLAUDE.md
+.claude/
+CLAUDE.md
+AGENTS.md
+.beads
+.gitattributes

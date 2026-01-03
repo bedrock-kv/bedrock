@@ -91,19 +91,19 @@ defmodule Bedrock.Keyspace do
 
   @doc """
   """
-  @spec unpack(t(), key :: binary()) :: term()
-  def unpack(%__MODULE__{prefix: prefix, key_encoding: encoding}, key) when not is_nil(encoding) do
-    case key do
-      <<^prefix::binary, suffix::binary>> when not is_nil(encoding) -> encoding.unpack(suffix)
-      _ -> raise(ArgumentError, "Key does not belong to this keyspace")
+  @spec unpack(t(), key :: binary()) :: binary()
+  def unpack(%__MODULE__{prefix: prefix, key_encoding: nil}, key) when is_binary(key) do
+    case strip_prefix(key, prefix) do
+      {:ok, suffix} -> suffix
+      :error -> raise(ArgumentError, "Key does not belong to this keyspace")
     end
   end
 
-  @spec unpack(t(), key :: binary()) :: binary()
-  def unpack(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
-    case key do
-      <<^prefix::binary, suffix::binary>> -> suffix
-      _ -> raise(ArgumentError, "Key does not belong to this keyspace")
+  @spec unpack(t(), key :: binary()) :: term()
+  def unpack(%__MODULE__{prefix: prefix, key_encoding: encoding}, key) do
+    case strip_prefix(key, prefix) do
+      {:ok, suffix} -> encoding.unpack(suffix)
+      :error -> raise(ArgumentError, "Key does not belong to this keyspace")
     end
   end
 
@@ -111,13 +111,18 @@ defmodule Bedrock.Keyspace do
   Check if a key belongs to this keyspace (starts with the prefix).
   """
   @spec contains?(t(), binary()) :: boolean()
-  def contains?(%__MODULE__{prefix: prefix}, key) when is_binary(key), do: _contains?(key, prefix)
+  def contains?(%__MODULE__{prefix: prefix}, key) when is_binary(key) do
+    String.starts_with?(key, prefix)
+  end
 
-  # Private helper function
-  defp _contains?(key, prefix) when is_binary(key) and is_binary(prefix) do
+  # Strips prefix from key, returning {:ok, suffix} or :error
+  @compile {:inline, strip_prefix: 2}
+  defp strip_prefix(key, prefix) do
+    prefix_size = byte_size(prefix)
+
     case key do
-      <<^prefix::binary, _rest::binary>> -> true
-      _ -> false
+      <<^prefix::binary-size(prefix_size), suffix::binary>> -> {:ok, suffix}
+      _ -> :error
     end
   end
 

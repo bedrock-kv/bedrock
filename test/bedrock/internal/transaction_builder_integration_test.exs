@@ -206,7 +206,7 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, :invalid_key, "value"})
 
       # Process should crash with function_clause due to guard validation
-      assert_receive {:DOWN, ^ref, :process, ^pid, reason}
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 1000
       assert match?({:function_clause, _}, reason)
     end
 

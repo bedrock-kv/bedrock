@@ -4,6 +4,8 @@ defmodule Bedrock.DataPlane.Proxy do
   """
   use GenServer
 
+  import Bedrock.Internal.GenServer.Replies
+
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Sequencer
@@ -44,7 +46,7 @@ defmodule Bedrock.DataPlane.Proxy do
   @impl GenServer
   def handle_call(:get_read_version, from, state) do
     forward_call(state.layout.sequencer, from, :next_read_version)
-    {:noreply, state}
+    noreply(state)
   end
 
   @spec forward_call(Sequencer.ref(), GenServer.from(), :next_read_version) ::

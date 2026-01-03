@@ -7,13 +7,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.DataDatabase do
 
   @type locator :: <<_::64>>
 
-  @opaque t :: %__MODULE__{
-            file: :file.fd(),
-            file_offset: non_neg_integer(),
-            file_name: [char()],
-            window_size_in_microseconds: pos_integer(),
-            buffer: :ets.tab()
-          }
+  @type t :: %__MODULE__{
+          file: :file.fd(),
+          file_offset: non_neg_integer(),
+          file_name: [char()],
+          window_size_in_microseconds: pos_integer(),
+          buffer: :ets.tab()
+        }
 
   defstruct [
     :file,

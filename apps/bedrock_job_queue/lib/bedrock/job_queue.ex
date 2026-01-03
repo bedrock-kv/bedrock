@@ -114,20 +114,12 @@ defmodule Bedrock.JobQueue do
       - `:concurrency` - Number of concurrent workers (default: System.schedulers_online())
       - `:batch_size` - Items to dequeue per batch (default: 10)
       """
-      def child_spec(opts) do
-        %{
-          id: __MODULE__,
-          start: {__MODULE__, :start_link, [opts]},
-          type: :supervisor
-        }
-      end
+      def child_spec(opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}, type: :supervisor}
 
       @doc """
       Starts the JobQueue consumer supervisor.
       """
-      def start_link(opts \\ []) do
-        JobQueueSupervisor.start_link(__MODULE__, opts)
-      end
+      def start_link(opts \\ []), do: JobQueueSupervisor.start_link(__MODULE__, opts)
 
       @doc """
       Enqueues a job for processing.
@@ -154,18 +146,15 @@ defmodule Bedrock.JobQueue do
           # With priority
           MyApp.JobQueue.enqueue("tenant_1", "urgent", payload, priority: 0)
       """
-      def enqueue(queue_id, topic, payload, opts \\ []) do
-        Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
-      end
+      def enqueue(queue_id, topic, payload, opts \\ []),
+        do: Internal.enqueue(__MODULE__, queue_id, topic, payload, opts)
 
       @doc """
       Gets queue statistics.
 
       Returns a map with `:pending_count` and `:processing_count`.
       """
-      def stats(queue_id, opts \\ []) do
-        Internal.stats(__MODULE__, queue_id, opts)
-      end
+      def stats(queue_id, opts \\ []), do: Internal.stats(__MODULE__, queue_id, opts)
 
       @doc false
       def __config__ do

@@ -108,9 +108,10 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
         state
       end
 
-    state = maybe_run_gc(state)
-    schedule_scan(state)
-    {:noreply, state}
+    state
+    |> maybe_run_gc()
+    |> schedule_scan()
+    |> then(&{:noreply, &1})
   end
 
   defp scan_and_notify(state) do
@@ -151,13 +152,12 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   defp record_notified(selected, state), do: %{state | last_notified: selected}
 
   defp schedule_scan(state) do
-    jittered_interval = add_jitter(state.interval, state.jitter_percent)
-    Process.send_after(self(), :scan, jittered_interval)
+    Process.send_after(self(), :scan, add_jitter(state.interval, state.jitter_percent))
+    state
   end
 
-  defp workers_available?(%{worker_pool: pool, concurrency: concurrency}) do
-    length(Task.Supervisor.children(pool)) < concurrency
-  end
+  defp workers_available?(%{worker_pool: pool, concurrency: concurrency}),
+    do: length(Task.Supervisor.children(pool)) < concurrency
 
   # Add random jitter to prevent synchronized scans across consumers
   defp add_jitter(interval, jitter_percent) do
@@ -183,19 +183,18 @@ defmodule Bedrock.JobQueue.Consumer.Scanner do
   end
 
   defp run_gc(state, now) do
-    result =
-      state.repo.transact(fn ->
-        deleted =
-          Store.gc_stale_pointers(state.repo, state.root,
-            grace_period: state.gc_grace_period,
-            limit: state.gc_batch_size,
-            now: now
-          )
+    fn ->
+      deleted =
+        Store.gc_stale_pointers(state.repo, state.root,
+          grace_period: state.gc_grace_period,
+          limit: state.gc_batch_size,
+          now: now
+        )
 
-        {:ok, deleted}
-      end)
-
-    case result do
+      {:ok, deleted}
+    end
+    |> state.repo.transact()
+    |> case do
       {:ok, deleted} when deleted > 0 ->
         Logger.debug("Pointer GC: deleted #{deleted} stale pointers")
 

@@ -14,17 +14,12 @@ defmodule Bedrock.DataPlane.Storage.Olivine.LogicTest do
     File.rm_rf!(test_dir)
 
     on_exit(fn ->
-      # Give WAL files time to be released after shutdown
-      Process.sleep(50)
       # Try cleanup multiple times to handle WAL file locks
-      Enum.reduce_while(1..3, :error, fn _attempt, _acc ->
+      Enum.reduce_while(1..5, :error, fn attempt, _acc ->
         case File.rm_rf(test_dir) do
-          {:ok, _} ->
-            {:halt, :ok}
-
-          _error ->
-            Process.sleep(50)
-            {:cont, :error}
+          {:ok, _} -> {:halt, :ok}
+          _error when attempt < 5 -> {:cont, :error}
+          _error -> {:halt, :error}
         end
       end)
     end)

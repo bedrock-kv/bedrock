@@ -324,9 +324,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       # Should proceed to the next phase in the recovery sequence
       assert is_atom(next_phase)
 
-      # Give extra time for any potential background tasks to complete
-      Process.sleep(200)
-
       # The critical test: verify NO Task reply messages leaked to this process
       leaked_messages = collect_all_messages([])
 

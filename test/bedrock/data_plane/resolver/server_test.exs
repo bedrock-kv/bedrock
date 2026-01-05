@@ -54,6 +54,24 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     )
   end
 
+  # Poll until condition is met (for async state changes)
+  defp wait_until(condition_fn, timeout \\ 1000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(condition_fn, deadline)
+  end
+
+  defp do_wait_until(condition_fn, deadline) do
+    if condition_fn.() do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) < deadline do
+        do_wait_until(condition_fn, deadline)
+      else
+        raise "Condition not met before timeout"
+      end
+    end
+  end
+
   # Common setup helper for server startup
   defp start_test_server(additional_opts \\ []) do
     lock_token = :crypto.strong_rand_bytes(32)
@@ -292,9 +310,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           Resolver.resolve_transactions(server, 1, next_version, future_version, [test_transaction])
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 1
 
       assert [{deadline, _reply_fn, {^future_version, [^test_transaction]}}] =
                Map.get(state.waiting, next_version)
@@ -324,9 +341,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           )
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 1
 
       assert [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
       expired_deadline = Bedrock.Internal.Time.monotonic_now_in_ms() - 1_000
@@ -335,8 +351,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       :sys.replace_state(server, fn _ -> expired_state end)
 
       send(server, :timeout)
-      Process.sleep(50)
-
+      # :sys.get_state synchronizes after send
       assert %{waiting: waiting} = :sys.get_state(server)
       assert map_size(waiting) == 0
 
@@ -348,8 +363,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert map_size(waiting) == 0
 
       send(server, :timeout)
-      Process.sleep(50)
-
+      # :sys.get_state synchronizes after send
       assert %{waiting: ^waiting} = :sys.get_state(server)
       assert map_size(waiting) == 0
     end
@@ -367,7 +381,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction1], timeout: 60_000)
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       later_version = Version.increment(future_version)
 
       task2 =
@@ -375,10 +389,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           Resolver.resolve_transactions(server, 1, future_version, later_version, [transaction2], timeout: 60_000)
         end)
 
-      Process.sleep(50)
-
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 2 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 2
       assert Map.has_key?(state.waiting, next_version)
       assert Map.has_key?(state.waiting, future_version)
 
@@ -497,10 +509,10 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert {:ok, _} =
                Resolver.resolve_transactions(resolver, 1, old_version, recent_version, [recent_tx], timeout: 1000)
 
-      # Wait for sweep to occur (sweep interval is 100ms, retention is 200ms)
+      # Wait for time to pass so versions become old relative to retention period
       Process.sleep(150)
       send(resolver, :timeout)
-      Process.sleep(50)
+      # Next sync call will process after timeout message
 
       # Verify resolver is still functioning after sweep
       newer_version = Version.from_integer(400_000)

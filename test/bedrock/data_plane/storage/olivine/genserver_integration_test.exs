@@ -129,14 +129,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
       wait_for_health_report(worker_id, worker_pid)
 
+      ref = Process.monitor(worker_pid)
       Process.exit(worker_pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^worker_pid, :killed}
 
-      Process.sleep(100)
+      # Supervisor restarts worker - wait for new health report
+      assert_receive {:"$gen_cast", {:worker_health, ^worker_id, {:ok, new_worker_pid}}}, 1000
 
-      assert [{_child_id2, new_worker_pid, :worker, [GenServer]}] = Supervisor.which_children(supervisor_pid)
+      assert [{_child_id2, ^new_worker_pid, :worker, [GenServer]}] = Supervisor.which_children(supervisor_pid)
       assert new_worker_pid != worker_pid and Process.alive?(new_worker_pid)
-
-      wait_for_health_report(worker_id, new_worker_pid)
 
       assert {:ok, :storage} = GenServer.call(new_worker_pid, {:info, :kind}, @timeout)
 
@@ -220,10 +221,15 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
 
     @tag :tmp_dir
     test "worker handles foreman failure gracefully", %{tmp_dir: tmp_dir} do
+      test_pid = self()
+
       failing_foreman =
         spawn(fn ->
-          Process.sleep(10)
-          exit(:foreman_failed)
+          send(test_pid, :foreman_started)
+
+          receive do
+            :exit_now -> exit(:foreman_failed)
+          end
         end)
 
       worker_id = random_id()
@@ -238,9 +244,14 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
         )
 
       {:ok, pid} = start_supervised(child_spec)
+      assert_receive :foreman_started
 
-      Process.sleep(50)
+      # Trigger foreman failure and wait for it
+      ref = Process.monitor(failing_foreman)
+      send(failing_foreman, :exit_now)
+      assert_receive {:DOWN, ^ref, :process, ^failing_foreman, :foreman_failed}
 
+      # Worker should survive foreman failure
       assert Process.alive?(pid)
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
     end
@@ -418,11 +429,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       # Send a transactions_applied message (this is part of the protocol)
       send(pid, {:transactions_applied, Version.from_integer(1)})
 
-      # Process should handle it without crashing
-      Process.sleep(10)
-      assert Process.alive?(pid)
-
-      # Should still be functional
+      # Process should handle it without crashing - GenServer.call synchronizes
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
     end
 
@@ -674,10 +681,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
       ]
 
       for msg <- malformed_messages, do: send(pid, msg)
-      Process.sleep(3)
 
-      # Process should survive and remain functional
-      assert Process.alive?(pid)
+      # Process should survive and remain functional - GenServer.call synchronizes
       assert {:ok, :storage} = GenServer.call(pid, {:info, :kind}, @timeout)
     end
   end

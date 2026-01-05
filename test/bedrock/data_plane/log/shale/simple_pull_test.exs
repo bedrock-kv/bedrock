@@ -24,9 +24,6 @@ defmodule Bedrock.DataPlane.Log.Shale.SimplePullTest do
         name: otp_name
       )
 
-    # Wait for initialization to complete
-    Process.sleep(10)
-
     on_exit(fn ->
       if Process.alive?(pid) do
         GenServer.stop(pid)

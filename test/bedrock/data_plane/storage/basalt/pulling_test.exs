@@ -87,11 +87,11 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         )
 
       assert Process.alive?(task.pid)
+      ref = Process.monitor(task.pid)
 
       assert :ok = Pulling.stop(task)
 
-      # Give it time to shut down
-      Process.sleep(10)
+      assert_receive {:DOWN, ^ref, :process, _, _}
       refute Process.alive?(task.pid)
     end
 
@@ -115,8 +115,9 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         )
 
       # Stop it first
+      ref = Process.monitor(task.pid)
       Pulling.stop(task)
-      Process.sleep(10)
+      assert_receive {:DOWN, ^ref, :process, _, _}
 
       # Should still return :ok
       assert :ok = Pulling.stop(task)
@@ -381,14 +382,15 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
     end
 
     test "handles log pull failure and circuit breaker" do
-      _test_pid = self()
+      test_pid = self()
       apply_fn = fn _txns -> 1 end
 
-      # Mock log server that always fails
+      # Mock log server that always fails and notifies test when called
       log_server =
         spawn(fn ->
           receive do
             {:"$gen_call", from, {:pull, _start_after, _opts}} ->
+              send(test_pid, :pull_attempted)
               GenServer.reply(from, {:error, :connection_failed})
           end
         end)
@@ -403,7 +405,7 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         flush_window_fn: fn -> :ok end
       }
 
-      # Start the loop with a timeout to prevent infinite loop
+      # Start the loop
       loop_pid =
         spawn(fn ->
           try do
@@ -413,15 +415,12 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
           end
         end)
 
-      # Give it time to attempt the pull and fail
-      Process.sleep(100)
+      # Wait for the pull to be attempted
+      assert_receive :pull_attempted, 1000
 
       # Clean up
       Process.exit(loop_pid, :kill)
       Process.exit(log_server, :kill)
-
-      # Test passed if we didn't hang indefinitely
-      assert true
     end
 
     test "handles no available logs scenario" do
@@ -438,8 +437,8 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
         flush_window_fn: fn -> :ok end
       }
 
-      # This should handle the no available logs case
-      # We'll run it briefly and then stop it
+      # This should handle the no available logs case gracefully
+      # (goes into retry delay sleep rather than crashing)
       loop_pid =
         spawn(fn ->
           try do
@@ -449,14 +448,14 @@ defmodule Bedrock.DataPlane.Storage.Basalt.PullingTest do
           end
         end)
 
-      # Give it a moment to process
-      Process.sleep(100)
+      ref = Process.monitor(loop_pid)
+
+      # Verify it didn't crash immediately - it should be in retry_delay sleep
+      refute_receive {:DOWN, ^ref, :process, _, _}, 50
 
       # Clean up
       Process.exit(loop_pid, :kill)
-
-      # Test passed if we didn't hang indefinitely
-      assert true
+      assert_receive {:DOWN, ^ref, :process, _, :killed}
     end
   end
 end

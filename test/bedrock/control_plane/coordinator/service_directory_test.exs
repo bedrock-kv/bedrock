@@ -86,18 +86,8 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
 
   describe "director notifications" do
     test "does not automatically notify director when services change" do
-      director_pid =
-        spawn(fn ->
-          receive do
-            {:"$gen_cast", {:service_registered, _directory}} ->
-              flunk("Director should not receive automatic notifications")
-          after
-            50 ->
-              :ok
-          end
-        end)
-
-      test_state = %State{service_directory: %{}, director: director_pid}
+      # Use test process as director to receive any notifications
+      test_state = %State{service_directory: %{}, director: self()}
       services = [{"service_1", :storage, {:worker, :node@host}}]
       command = {:register_services, %{services: services}}
 
@@ -109,8 +99,8 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
                service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
              } = result_state
 
-      # Give director process time to fail if notification was sent
-      Process.sleep(60)
+      # Assert no notification is received
+      refute_receive {:"$gen_cast", {:service_registered, _}}, 50
     end
 
     test "does not crash when director is unavailable" do

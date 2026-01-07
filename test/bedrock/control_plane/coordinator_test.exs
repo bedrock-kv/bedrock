@@ -173,8 +173,9 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "handles process termination" do
       terminated_coordinator = spawn(fn -> :ok end)
-      # Ensure it's dead
-      Process.sleep(10)
+      ref = Process.monitor(terminated_coordinator)
+      assert_receive {:DOWN, ^ref, :process, _, _}
+
       assert {:error, _} = Coordinator.fetch_config(terminated_coordinator, 100)
     end
   end

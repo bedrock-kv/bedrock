@@ -118,7 +118,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
 
     test "handles log server process exit" do
       dead_server = spawn(fn -> exit(:normal) end)
-      Process.sleep(100)
+      ref = Process.monitor(dead_server)
+      assert_receive {:DOWN, ^ref, :process, ^dead_server, :normal}
 
       service_descriptor = %{kind: :log, status: {:up, dead_server}}
 

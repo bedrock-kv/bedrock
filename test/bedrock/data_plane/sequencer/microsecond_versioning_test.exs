@@ -45,10 +45,7 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
       commit1_int = next_commit_version_int(pid)
       assert commit1_int >= 1001
 
-      # Wait a bit to ensure time advances
-      Process.sleep(1)
-
-      # Get second version - should be larger (time advanced)
+      # Get second version - sequencer guarantees monotonically increasing versions
       commit2_int = next_commit_version_int(pid)
       assert commit2_int > commit1_int
     end

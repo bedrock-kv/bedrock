@@ -128,7 +128,8 @@ defmodule Bedrock.ControlPlane.DirectorTest do
 
     test "handles process termination" do
       terminated_director = spawn(fn -> :ok end)
-      Process.sleep(10)
+      ref = Process.monitor(terminated_director)
+      assert_receive {:DOWN, ^ref, :process, _, _}
 
       assert {:error, _} = Director.fetch_transaction_system_layout(terminated_director, 100)
     end

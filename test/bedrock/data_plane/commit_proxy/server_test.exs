@@ -4,8 +4,10 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
   import Bedrock.Test.TelemetryTestHelper
 
+  alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Server
   alias Bedrock.DataPlane.CommitProxy.State
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   # Mock cluster module for testing
@@ -129,7 +131,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
     test "with :timeout when batch exists processes existing batch normally" do
       # Create a proper batch struct for testing
-      batch = %Bedrock.DataPlane.CommitProxy.Batch{
+      batch = %Batch{
         started_at: 1000,
         last_commit_version: "v1",
         commit_version: "v2",
@@ -647,6 +649,284 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
        sequencer: sequencer,
        resolver: resolver,
        log: log}
+    end
+  end
+
+  describe "state transitions" do
+    test "starts in locked mode and transitions to running after recovery" do
+      director = self()
+      lock_token = "state_test_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: lock_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      # Before recovery, commit should return :locked
+      transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, transaction})
+
+      # After recovery with correct token, should transition to running
+      transaction_system_layout = %{
+        sequencer: nil,
+        resolvers: [],
+        logs: %{},
+        services: %{},
+        storage_teams: []
+      }
+
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
+
+      # Now commit returns different error (no_transaction_system_layout because sequencer is nil)
+      # but NOT :locked anymore
+      result = GenServer.call(commit_proxy, {:commit, transaction})
+      refute result == {:error, :locked}
+    end
+
+    test "rejects recovery with wrong lock token" do
+      director = self()
+      correct_token = "correct_token"
+      wrong_token = "wrong_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: correct_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      transaction_system_layout = %{
+        sequencer: nil,
+        resolvers: [],
+        logs: %{},
+        services: %{},
+        storage_teams: []
+      }
+
+      # Recovery with wrong token should fail
+      assert {:error, :unauthorized} =
+               GenServer.call(commit_proxy, {:recover_from, wrong_token, transaction_system_layout})
+
+      # Should still be locked
+      transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, transaction})
+    end
+
+    test "recovery with correct token after failed attempt succeeds" do
+      director = self()
+      correct_token = "correct_token"
+      wrong_token = "wrong_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: correct_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      transaction_system_layout = %{
+        sequencer: nil,
+        resolvers: [],
+        logs: %{},
+        services: %{},
+        storage_teams: []
+      }
+
+      # First attempt with wrong token
+      assert {:error, :unauthorized} =
+               GenServer.call(commit_proxy, {:recover_from, wrong_token, transaction_system_layout})
+
+      # Second attempt with correct token should succeed
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, correct_token, transaction_system_layout})
+
+      # Verify no longer locked
+      transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
+      result = GenServer.call(commit_proxy, {:commit, transaction})
+      refute result == {:error, :locked}
+    end
+  end
+
+  describe "director lifecycle" do
+    test "commit proxy terminates when director dies" do
+      # Start a fake director that we can kill
+      director = spawn(fn -> Process.sleep(:infinity) end)
+
+      lock_token = "director_test_token"
+
+      {:ok, commit_proxy} = GenServer.start_link(Server, {TestCluster, director, 1, 50, 5, 1000, lock_token})
+
+      # Monitor the commit proxy
+      ref = Process.monitor(commit_proxy)
+      assert Process.alive?(commit_proxy)
+
+      # Kill the director
+      Process.exit(director, :kill)
+
+      # Commit proxy should terminate
+      assert_receive {:DOWN, ^ref, :process, ^commit_proxy, :normal}, 1000
+    end
+
+    test "commit proxy survives unrelated process deaths" do
+      director = self()
+      lock_token = "unrelated_test_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: lock_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      # Start and kill an unrelated process
+      unrelated = spawn(fn -> Process.sleep(:infinity) end)
+      Process.exit(unrelated, :kill)
+
+      # Small delay to ensure messages are processed
+      Process.sleep(50)
+
+      # Commit proxy should still be alive
+      assert Process.alive?(commit_proxy)
+    end
+  end
+
+  describe "metadata update handling" do
+    test "metadata update message updates state without blocking" do
+      director = self()
+      lock_token = "metadata_test_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: lock_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      # Recover first
+      transaction_system_layout = %{
+        sequencer: nil,
+        resolvers: [],
+        logs: %{},
+        services: %{},
+        storage_teams: []
+      }
+
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
+
+      # Send metadata update
+      new_metadata = [{Bedrock.DataPlane.Version.from_integer(100), [{:set, <<0xFF, "key">>, "value"}]}]
+      send(commit_proxy, {:metadata_update, new_metadata})
+
+      # Process should still be alive and responsive
+      Process.sleep(10)
+      assert Process.alive?(commit_proxy)
+    end
+
+    test "metadata update works in locked mode" do
+      director = self()
+      lock_token = "metadata_locked_test_token"
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: lock_token
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      # Don't recover - stay in locked mode
+      # Send metadata update while locked
+      new_metadata = [{Bedrock.DataPlane.Version.from_integer(50), [{:set, <<0xFF, "key">>, "value"}]}]
+      send(commit_proxy, {:metadata_update, new_metadata})
+
+      # Process should still be alive
+      Process.sleep(10)
+      assert Process.alive?(commit_proxy)
+    end
+  end
+
+  describe "graceful termination" do
+    test "abort_current_batch is called on termination" do
+      # This test verifies that the terminate callback properly aborts pending transactions
+      # We test this by verifying the abort_current_batch logic works correctly
+      # The actual abort happens in terminate/2 which calls Batch.all_callers and sends abort
+
+      # Create a batch with pending reply functions
+      batch = %Batch{
+        started_at: 1000,
+        last_commit_version: Bedrock.DataPlane.Version.from_integer(10),
+        commit_version: Bedrock.DataPlane.Version.from_integer(11),
+        n_transactions: 2,
+        buffer: [
+          {0, fn result -> send(self(), {:reply0, result}) end,
+           Transaction.encode(%{mutations: [{:set, "k1", "v1"}], read_conflicts: [], write_conflicts: []}), nil},
+          {1, fn result -> send(self(), {:reply1, result}) end,
+           Transaction.encode(%{mutations: [{:set, "k2", "v2"}], read_conflicts: [], write_conflicts: []}), nil}
+        ]
+      }
+
+      # Directly call terminate with a state containing the batch
+      state =
+        build_base_state(%{
+          batch: batch,
+          mode: :running,
+          lock_token: "test"
+        })
+
+      # Terminate should abort all callers
+      assert :ok = Server.terminate(:normal, state)
+
+      # Both reply functions should have been called with abort
+      assert_receive {:reply0, {:error, :abort}}
+      assert_receive {:reply1, {:error, :abort}}
+    end
+
+    test "terminate does nothing with nil batch" do
+      state =
+        build_base_state(%{
+          batch: nil,
+          mode: :running,
+          lock_token: "test"
+        })
+
+      # Should not crash
+      assert :ok = Server.terminate(:normal, state)
     end
   end
 end

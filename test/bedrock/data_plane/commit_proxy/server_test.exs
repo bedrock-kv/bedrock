@@ -25,10 +25,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
     def init(state), do: {:ok, state}
 
-    def handle_call({:resolve_transactions, _epoch, {_last_version, _next_version}, _transactions}, _from, state) do
+    def handle_call(
+          {:resolve_transactions, _epoch, {_last_version, _next_version}, _transactions, _metadata_per_tx},
+          _from,
+          state
+        ) do
       # Accept all transactions (no conflicts since we use unique keys in tests)
-      # Return empty list = no aborted transaction indices
-      {:reply, {:ok, []}, state}
+      # Return empty list = no aborted transaction indices, empty metadata updates
+      {:reply, {:ok, [], []}, state}
     end
   end
 

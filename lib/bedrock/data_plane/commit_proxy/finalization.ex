@@ -33,18 +33,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
+  alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
   alias Bedrock.KeyRange
+
+  @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
   @type resolver_fn() :: (Resolver.ref(),
                           Bedrock.epoch(),
                           Bedrock.version(),
                           Bedrock.version(),
                           [Transaction.encoded()],
+                          [metadata_mutations()],
                           keyword() ->
-                            {:ok, [non_neg_integer()]}
+                            {:ok, [non_neg_integer()], [MetadataAccumulator.entry()]}
                             | {:error, term()}
                             | {:failure, :timeout, Resolver.ref()}
                             | {:failure, :unavailable, Resolver.ref()})
@@ -122,7 +126,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       replied_indices: MapSet.new(),
       aborted_count: 0,
       stage: :initialized,
-      error: nil
+      error: nil,
+      metadata_updates: []
     ]
 
     @type t :: %__MODULE__{
@@ -138,7 +143,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             replied_indices: MapSet.t(non_neg_integer()),
             aborted_count: non_neg_integer(),
             stage: atom(),
-            error: term() | nil
+            error: term() | nil,
+            metadata_updates: [MetadataAccumulator.entry()]
           }
   end
 
@@ -163,15 +169,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   5. **Sequencer Notification**: Reports successful commit version to the sequencer
   6. **Success Notification**: Notifies clients of successful transactions with commit version
 
+  ## Metadata Distribution
+
+  During conflict resolution, metadata mutations (keys with \\xFF prefix) are extracted
+  from each transaction and sent to the resolver. The resolver returns differential
+  metadata updates that should be merged into the caller's metadata state.
+
   ## Parameters
 
     - `batch`: Transaction batch with commit version details from the sequencer
     - `transaction_system_layout`: System configuration including resolvers and log servers
+    - `metadata`: Current metadata state (list of accumulated metadata entries)
     - `opts`: Optional functions for testing and configuration overrides
 
   ## Returns
 
-    - `{:ok, n_aborts, n_successes}` - Pipeline completed successfully with counts
+    - `{:ok, n_aborts, n_successes, updated_metadata}` - Pipeline completed with updated metadata
     - `{:error, finalization_error()}` - Pipeline failed; all pending clients notified of failure
 
   ## Error Handling
@@ -182,6 +195,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec finalize_batch(
           Batch.t(),
           TransactionSystemLayout.t(),
+          metadata :: [MetadataAccumulator.entry()],
           opts :: [
             epoch: Bedrock.epoch(),
             resolver_layout: ResolverLayout.t(),
@@ -195,9 +209,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) ::
-          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()}
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer(),
+           updated_metadata :: [MetadataAccumulator.entry()]}
           | {:error, finalization_error()}
-  def finalize_batch(batch, transaction_system_layout, opts \\ []) do
+  def finalize_batch(batch, transaction_system_layout, metadata, opts \\ []) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
@@ -211,13 +226,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       |> push_to_logs(transaction_system_layout, opts)
       |> notify_sequencer(transaction_system_layout.sequencer, opts)
       |> notify_successes(opts)
-      |> extract_result_or_handle_error(opts)
+      |> extract_result_or_handle_error(metadata, opts)
     end
     |> :timer.tc()
     |> case do
-      {n_usec, {:ok, n_aborts, n_oks}} ->
+      {n_usec, {:ok, n_aborts, n_oks, updated_metadata}} ->
         trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
-        {:ok, n_aborts, n_oks}
+        {:ok, n_aborts, n_oks, updated_metadata}
 
       {n_usec, {:error, reason}} ->
         trace_commit_proxy_batch_failed(batch, reason, n_usec)
@@ -262,17 +277,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %ResolverLayout.Single{resolver_ref: resolver_ref},
         opts
       ) do
-    # Empty batch: call resolver with empty list
+    # Empty batch: call resolver with empty lists
     case call_resolver_with_retry(
            resolver_ref,
            epoch,
            plan.last_commit_version,
            plan.commit_version,
            [],
+           [],
            opts
          ) do
-      {:ok, _aborted} ->
-        split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, MapSet.new(), opts)
+      {:ok, _aborted, metadata_updates} ->
+        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        split_and_notify_aborts_with_set(plan, MapSet.new(), opts)
 
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
@@ -286,12 +303,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %ResolverLayout.Single{resolver_ref: resolver_ref},
         opts
       ) do
-    # Extract conflict sections synchronously (no Task.async needed)
-    filtered_transactions =
-      for idx <- 0..(plan.transaction_count - 1) do
+    # Extract conflict sections and metadata mutations synchronously
+    {filtered_transactions, metadata_per_tx} =
+      0..(plan.transaction_count - 1)
+      |> Enum.map(fn idx ->
         {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
-        Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      end
+        conflicts = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+        metadata = extract_metadata_mutations(transaction)
+        {conflicts, metadata}
+      end)
+      |> Enum.unzip()
 
     # Call resolver directly without async_stream
     case call_resolver_with_retry(
@@ -300,11 +321,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            plan.last_commit_version,
            plan.commit_version,
            filtered_transactions,
+           metadata_per_tx,
            opts
          ) do
-      {:ok, aborted} ->
+      {:ok, aborted, metadata_updates} ->
         aborted_set = MapSet.new(aborted)
-        split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, aborted_set, opts)
+        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
@@ -312,6 +335,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # Sharded multi-resolver path
+  # Note: In sharded mode, metadata is extracted but each resolver only sees
+  # the metadata relevant to its key range. For simplicity, we pass empty
+  # metadata lists to sharded resolvers and don't aggregate metadata updates.
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
         layout,
@@ -319,34 +345,44 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %ResolverLayout.Sharded{} = resolver_layout,
         opts
       ) do
-    resolver_transaction_map =
+    {resolver_transaction_map, metadata_per_tx} =
       if plan.transaction_count == 0 do
-        Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end)
+        {Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end), []}
       else
         # Create and await resolver tasks within the finalization process
-        maps =
-          for idx <- 0..(plan.transaction_count - 1) do
+        # Also extract metadata from each transaction
+        {maps, metadata_list} =
+          0..(plan.transaction_count - 1)
+          |> Enum.map(fn idx ->
             {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
             task = create_resolver_task_in_finalization(transaction, resolver_layout)
-            Task.await(task, 5000)
-          end
+            map = Task.await(task, 5000)
+            metadata = extract_metadata_mutations(transaction)
+            {map, metadata}
+          end)
+          |> Enum.unzip()
 
-        Map.new(layout.resolvers, fn {_key, ref} ->
-          transactions = Enum.map(maps, &Map.fetch!(&1, ref))
-          {ref, transactions}
-        end)
+        txn_map =
+          Map.new(layout.resolvers, fn {_key, ref} ->
+            transactions = Enum.map(maps, &Map.fetch!(&1, ref))
+            {ref, transactions}
+          end)
+
+        {txn_map, metadata_list}
       end
 
     case call_all_resolvers_with_map(
            resolver_transaction_map,
+           metadata_per_tx,
            epoch,
            plan.last_commit_version,
            plan.commit_version,
            layout.resolvers,
            opts
          ) do
-      {:ok, aborted_set} ->
-        split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, aborted_set, opts)
+      {:ok, aborted_set, metadata_updates} ->
+        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
@@ -355,13 +391,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec call_all_resolvers_with_map(
           %{Resolver.ref() => [Transaction.encoded()]},
+          [metadata_mutations()],
           Bedrock.epoch(),
           Bedrock.version(),
           Bedrock.version(),
           [{start_key :: Bedrock.key(), Resolver.ref()}],
           keyword()
-        ) :: {:ok, MapSet.t(non_neg_integer())} | {:error, term()}
-  defp call_all_resolvers_with_map(resolver_transaction_map, epoch, last_version, commit_version, resolvers, opts) do
+        ) :: {:ok, MapSet.t(non_neg_integer()), [MetadataAccumulator.entry()]} | {:error, term()}
+  defp call_all_resolvers_with_map(
+         resolver_transaction_map,
+         metadata_per_tx,
+         epoch,
+         last_version,
+         commit_version,
+         resolvers,
+         opts
+       ) do
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
     timeout = Keyword.get(opts, :timeout, 5_000)
 
@@ -370,13 +415,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       fn {_start_key, ref} ->
         # Every resolver must have transactions after task processing
         filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
-        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, opts)
+        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts)
       end,
       timeout: timeout
     )
-    |> Enum.reduce_while({:ok, MapSet.new()}, fn
-      {:ok, {:ok, aborted}}, {:ok, acc} ->
-        {:cont, {:ok, Enum.into(aborted, acc)}}
+    |> Enum.reduce_while({:ok, MapSet.new(), []}, fn
+      {:ok, {:ok, aborted, metadata_updates}}, {:ok, acc_aborted, acc_metadata} ->
+        {:cont, {:ok, Enum.into(aborted, acc_aborted), acc_metadata ++ metadata_updates}}
 
       {:ok, {:error, reason}}, _ ->
         {:halt, {:error, reason}}
@@ -392,26 +437,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           Bedrock.version(),
           Bedrock.version(),
           [Transaction.encoded()],
+          [metadata_mutations()],
           keyword(),
           non_neg_integer()
-        ) :: {:ok, [non_neg_integer()]} | {:error, term()}
+        ) :: {:ok, [non_neg_integer()], [MetadataAccumulator.entry()]} | {:error, term()}
   defp call_resolver_with_retry(
          ref,
          epoch,
          last_version,
          commit_version,
          filtered_transactions,
+         metadata_per_tx,
          opts,
          attempts_used \\ 0
        ) do
     timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
-    resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/6)
+    resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/7)
     max_attempts = Keyword.get(opts, :max_attempts, 3)
 
     timeout_in_ms = timeout_fn.(attempts_used)
 
-    case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, timeout: timeout_in_ms) do
-      {:ok, _} = success ->
+    case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx,
+           timeout: timeout_in_ms
+         ) do
+      {:ok, _, _} = success ->
         success
 
       {:error, reason} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
@@ -423,6 +472,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           last_version,
           commit_version,
           filtered_transactions,
+          metadata_per_tx,
           opts,
           attempts_used + 1
         )
@@ -436,6 +486,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           last_version,
           commit_version,
           filtered_transactions,
+          metadata_per_tx,
           opts,
           attempts_used + 1
         )
@@ -455,6 +506,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
   def default_timeout_fn(attempts_used), do: 500 * (1 <<< attempts_used)
+
+  @spec extract_metadata_mutations(Transaction.encoded()) :: metadata_mutations()
+  defp extract_metadata_mutations(binary_transaction) do
+    binary_transaction
+    |> Transaction.mutations()
+    |> case do
+      {:ok, mutations} -> Enum.filter(mutations, &Transaction.metadata_mutation?/1)
+      {:error, _} -> []
+    end
+  end
 
   @spec create_resolver_task_in_finalization(Transaction.encoded(), ResolverLayout.Sharded.t()) :: Task.t()
   defp create_resolver_task_in_finalization(transaction, %ResolverLayout.Sharded{
@@ -863,16 +924,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Result Extraction and Error Handling
   # ============================================================================
 
-  @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
-          {:ok, non_neg_integer(), non_neg_integer()} | {:error, finalization_error()}
-  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _opts) do
+  @spec extract_result_or_handle_error(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
+          {:ok, non_neg_integer(), non_neg_integer(), [MetadataAccumulator.entry()]}
+          | {:error, finalization_error()}
+  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, current_metadata, _opts) do
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
-    {:ok, n_aborts, n_successes}
+    # Merge current metadata with updates from resolver
+    updated_metadata = current_metadata ++ plan.metadata_updates
+
+    {:ok, n_aborts, n_successes, updated_metadata}
   end
 
-  def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, opts), do: handle_error(plan, opts)
+  def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, _metadata, opts),
+    do: handle_error(plan, opts)
 
   @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, finalization_error()}
   defp handle_error(%FinalizationPlan{error: error} = plan, opts) when not is_nil(error) do

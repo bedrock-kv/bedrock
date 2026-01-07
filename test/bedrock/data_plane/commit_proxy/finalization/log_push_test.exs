@@ -38,7 +38,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   defp expect_standard_calls(_test_pid) do
     {
       fn :test_sequencer, _commit_version -> :ok end,
-      fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _opts -> {:ok, []} end
+      fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+        {:ok, [], []}
+      end
     }
   end
 
@@ -65,10 +67,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           ]
         )
 
-      assert {:ok, 0, 3} =
+      assert {:ok, 0, 3, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  transaction_system_layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
@@ -109,10 +112,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:range_reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1} =
+      assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -149,10 +153,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1} =
+      assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -170,11 +175,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       last_version = Version.from_integer(99)
 
       # Mock resolver that aborts the second transaction (index 1) with comprehensive validation
-      resolver_fn = fn :test_resolver, 1, ^last_version, ^expected_version, summaries, opts ->
+      resolver_fn = fn :test_resolver, 1, ^last_version, ^expected_version, summaries, _metadata_per_tx, opts ->
         assert length(summaries) == 3
         assert Keyword.has_key?(opts, :timeout)
         # Abort middle transaction
-        {:ok, [1]}
+        {:ok, [1], []}
       end
 
       sequencer_notify_fn = fn :test_sequencer, ^expected_version -> :ok end
@@ -209,10 +214,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         )
 
       # Should have 1 abort (transaction 1) and 2 successes (transactions 0, 2)
-      assert {:ok, 1, 2} =
+      assert {:ok, 1, 2, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,

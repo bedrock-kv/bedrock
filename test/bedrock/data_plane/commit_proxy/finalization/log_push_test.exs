@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.Finalization
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
@@ -70,7 +70,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
@@ -114,7 +114,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(layout),
+                 resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
@@ -154,7 +154,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(layout),
+                 resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )
@@ -214,7 +214,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  batch,
                  layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(layout),
+                 resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn
                )

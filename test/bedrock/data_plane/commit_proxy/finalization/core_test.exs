@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
@@ -79,7 +79,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       result =
         Finalization.finalize_batch(batch, transaction_system_layout,
           epoch: 1,
-          precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout)
+          resolver_layout: ResolverLayout.from_layout(transaction_system_layout)
         )
 
       assert result == {:error, {:resolver_unavailable, :unavailable}}
@@ -124,7 +124,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
                  sequencer_notify_fn: mock_sequencer_notify()
@@ -148,7 +148,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
                  sequencer_notify_fn: fn sequencer, _commit_version ->
@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
                  sequencer_notify_fn: fn sequencer, _commit_version ->
@@ -223,7 +223,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn
                )
@@ -251,7 +251,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn
                )
@@ -290,7 +290,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
                  sequencer_notify_fn: fn sequencer, _commit_version ->
@@ -346,7 +346,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  batch,
                  transaction_system_layout,
                  epoch: 1,
-                 precomputed: LayoutOptimization.precompute_from_layout(transaction_system_layout),
+                 resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  abort_reply_fn: custom_abort_fn
                )

@@ -7,8 +7,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 1]
 
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.CommitProxy.ConflictSharding
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
 
@@ -39,21 +37,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
       {:error, :unavailable} ->
         {:error, :sequencer_unavailable}
     end
-  end
-
-  @spec create_resolver_task(Transaction.encoded(), LayoutOptimization.precomputed_layout()) :: Task.t()
-  def create_resolver_task(transaction, %{resolver_refs: [single_ref], resolver_ends: _ends}) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      %{single_ref => sections}
-    end)
-  end
-
-  def create_resolver_task(transaction, %{resolver_refs: refs, resolver_ends: ends}) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
-    end)
   end
 
   @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}

@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
@@ -184,7 +184,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           TransactionSystemLayout.t(),
           opts :: [
             epoch: Bedrock.epoch(),
-            precomputed: LayoutOptimization.precomputed_layout() | nil,
+            resolver_layout: ResolverLayout.t(),
             resolver_fn: resolver_fn(),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
@@ -200,10 +200,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def finalize_batch(batch, transaction_system_layout, opts \\ []) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
+    epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
+    resolver_layout = Keyword.get(opts, :resolver_layout) || raise "Missing resolver_layout in finalization opts"
+
     fn ->
       batch
       |> create_finalization_plan(transaction_system_layout)
-      |> resolve_conflicts(transaction_system_layout, opts)
+      |> resolve_conflicts(transaction_system_layout, epoch, resolver_layout, opts)
       |> prepare_for_logging()
       |> push_to_logs(transaction_system_layout, opts)
       |> notify_sequencer(transaction_system_layout.sequencer, opts)
@@ -243,12 +246,79 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Conflict Resolution
   # ============================================================================
 
-  @spec resolve_conflicts(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) ::
+  @spec resolve_conflicts(
+          FinalizationPlan.t(),
+          TransactionSystemLayout.t(),
+          Bedrock.epoch(),
+          ResolverLayout.t(),
+          keyword()
+        ) ::
           FinalizationPlan.t()
-  def resolve_conflicts(%FinalizationPlan{stage: :ready_for_resolution} = plan, layout, opts) do
-    epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
-    precomputed_layout = Keyword.get(opts, :precomputed) || raise "Missing precomputed layout in finalization opts"
+  # Single-resolver fast path: bypass async_stream overhead
+  def resolve_conflicts(
+        %FinalizationPlan{stage: :ready_for_resolution, transaction_count: 0} = plan,
+        _layout,
+        epoch,
+        %ResolverLayout.Single{resolver_ref: resolver_ref},
+        opts
+      ) do
+    # Empty batch: call resolver with empty list
+    case call_resolver_with_retry(
+           resolver_ref,
+           epoch,
+           plan.last_commit_version,
+           plan.commit_version,
+           [],
+           opts
+         ) do
+      {:ok, _aborted} ->
+        split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, MapSet.new(), opts)
 
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
+  end
+
+  def resolve_conflicts(
+        %FinalizationPlan{stage: :ready_for_resolution} = plan,
+        _layout,
+        epoch,
+        %ResolverLayout.Single{resolver_ref: resolver_ref},
+        opts
+      ) do
+    # Extract conflict sections synchronously (no Task.async needed)
+    filtered_transactions =
+      for idx <- 0..(plan.transaction_count - 1) do
+        {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
+        Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+      end
+
+    # Call resolver directly without async_stream
+    case call_resolver_with_retry(
+           resolver_ref,
+           epoch,
+           plan.last_commit_version,
+           plan.commit_version,
+           filtered_transactions,
+           opts
+         ) do
+      {:ok, aborted} ->
+        aborted_set = MapSet.new(aborted)
+        split_and_notify_aborts_with_set(%{plan | stage: :conflicts_resolved}, aborted_set, opts)
+
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
+  end
+
+  # Sharded multi-resolver path
+  def resolve_conflicts(
+        %FinalizationPlan{stage: :ready_for_resolution} = plan,
+        layout,
+        epoch,
+        %ResolverLayout.Sharded{} = resolver_layout,
+        opts
+      ) do
     resolver_transaction_map =
       if plan.transaction_count == 0 do
         Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end)
@@ -257,7 +327,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         maps =
           for idx <- 0..(plan.transaction_count - 1) do
             {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
-            task = create_resolver_task_in_finalization(transaction, precomputed_layout)
+            task = create_resolver_task_in_finalization(transaction, resolver_layout)
             Task.await(task, 5000)
           end
 
@@ -386,15 +456,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
   def default_timeout_fn(attempts_used), do: 500 * (1 <<< attempts_used)
 
-  @spec create_resolver_task_in_finalization(Transaction.encoded(), LayoutOptimization.precomputed_layout()) :: Task.t()
-  defp create_resolver_task_in_finalization(transaction, %{resolver_refs: [single_ref], resolver_ends: _ends}) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      %{single_ref => sections}
-    end)
-  end
-
-  defp create_resolver_task_in_finalization(transaction, %{resolver_refs: refs, resolver_ends: ends}) do
+  @spec create_resolver_task_in_finalization(Transaction.encoded(), ResolverLayout.Sharded.t()) :: Task.t()
+  defp create_resolver_task_in_finalization(transaction, %ResolverLayout.Sharded{
+         resolver_refs: refs,
+         resolver_ends: ends
+       }) do
     Task.async(fn ->
       sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
       ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)

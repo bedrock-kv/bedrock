@@ -3,7 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
 
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
 
   # Common test setup
   defp create_batch do
@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   defp create_transaction_system_layout(sequencer) do
     %{
       sequencer: sequencer,
-      resolvers: [],
+      resolvers: [{"", :test_resolver}],
       logs: %{},
       storage_teams: [],
       services: %{}
@@ -28,7 +28,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   defp create_finalization_opts do
     [
       epoch: 1,
-      precomputed: LayoutOptimization.precompute_from_layout(%{resolvers: []}),
+      resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
       resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
       batch_log_push_fn: fn _, _, _, _, _ -> :ok end
     ]

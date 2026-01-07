@@ -412,19 +412,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     if Process.alive?(pid), do: GenServer.stop(pid)
   end
 
-  defp eventually(assertion_fn, timeout \\ 1000, interval \\ 50) do
-    end_time = System.monotonic_time(:millisecond) + timeout
-
-    eventually_loop(assertion_fn, end_time, interval)
+  defp eventually(assertion_fn, timeout \\ 1000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    eventually_loop(assertion_fn, deadline)
   end
 
-  defp eventually_loop(assertion_fn, end_time, interval) do
+  defp eventually_loop(assertion_fn, deadline) do
     assertion_fn.()
   rescue
     _ ->
-      if System.monotonic_time(:millisecond) < end_time do
-        Process.sleep(interval)
-        eventually_loop(assertion_fn, end_time, interval)
+      if System.monotonic_time(:millisecond) < deadline do
+        eventually_loop(assertion_fn, deadline)
       else
         assertion_fn.()
       end

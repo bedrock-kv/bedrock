@@ -38,7 +38,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   defp expect_standard_calls(_test_pid) do
     {
       fn :test_sequencer, _commit_version -> :ok end,
-      fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _opts -> {:ok, []} end
+      fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+        {:ok, [], []}
+      end
     }
   end
 
@@ -65,10 +67,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           ]
         )
 
-      assert {:ok, 0, 3} =
+      assert {:ok, 0, 3, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  transaction_system_layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
@@ -109,10 +112,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:range_reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1} =
+      assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -149,10 +153,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1} =
+      assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -170,11 +175,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       last_version = Version.from_integer(99)
 
       # Mock resolver that aborts the second transaction (index 1) with comprehensive validation
-      resolver_fn = fn :test_resolver, 1, ^last_version, ^expected_version, summaries, opts ->
+      resolver_fn = fn :test_resolver, 1, ^last_version, ^expected_version, summaries, _metadata_per_tx, opts ->
         assert length(summaries) == 3
         assert Keyword.has_key?(opts, :timeout)
         # Abort middle transaction
-        {:ok, [1]}
+        {:ok, [1], []}
       end
 
       sequencer_notify_fn = fn :test_sequencer, ^expected_version -> :ok end
@@ -209,10 +214,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         )
 
       # Should have 1 abort (transaction 1) and 2 successes (transactions 0, 2)
-      assert {:ok, 1, 2} =
+      assert {:ok, 1, 2, _metadata} =
                Finalization.finalize_batch(
                  batch,
                  layout,
+                 [],
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -333,6 +339,292 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       )
 
       assert_receive {:timeout_used, 3000}
+    end
+  end
+
+  describe "partial log failures" do
+    test "fails when first log of two fails" do
+      failing_log =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :disk_full})
+          end
+        end)
+
+      success_log = Support.create_mock_log_server()
+
+      Support.ensure_process_killed(failing_log)
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, failing_log}},
+          "log_2" => %{kind: :log, status: {:up, success_log}}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
+
+      assert {:error, {:log_failures, errors}} =
+               Finalization.push_transaction_to_logs_direct(
+                 layout,
+                 Version.from_integer(99),
+                 transactions_by_log,
+                 commit_version,
+                 []
+               )
+
+      assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_1" end)
+    end
+
+    test "fails when second log of two fails" do
+      success_log = Support.create_mock_log_server()
+
+      failing_log =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :timeout})
+          end
+        end)
+
+      Support.ensure_process_killed(failing_log)
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, success_log}},
+          "log_2" => %{kind: :log, status: {:up, failing_log}}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
+
+      assert {:error, {:log_failures, errors}} =
+               Finalization.push_transaction_to_logs_direct(
+                 layout,
+                 Version.from_integer(99),
+                 transactions_by_log,
+                 commit_version,
+                 []
+               )
+
+      assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
+    end
+
+    test "fails when middle log of three fails" do
+      success_log1 = Support.create_mock_log_server()
+      success_log3 = Support.create_mock_log_server()
+
+      failing_log =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :network_error})
+          end
+        end)
+
+      Support.ensure_process_killed(failing_log)
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1], "log_3" => [2]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, success_log1}},
+          "log_2" => %{kind: :log, status: {:up, failing_log}},
+          "log_3" => %{kind: :log, status: {:up, success_log3}}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary, "log_3" => tx_binary}
+
+      assert {:error, {:log_failures, errors}} =
+               Finalization.push_transaction_to_logs_direct(
+                 layout,
+                 Version.from_integer(99),
+                 transactions_by_log,
+                 commit_version,
+                 []
+               )
+
+      assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
+    end
+
+    test "returns insufficient_acknowledgments when stream exhausted before all acks" do
+      # Simulate a scenario where async stream returns fewer results than expected
+      mock_async_stream_fn = fn _logs, _fun, _opts ->
+        # Only return one result when two are expected
+        [{:ok, {"log_1", :ok}}]
+      end
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, self()}},
+          "log_2" => %{kind: :log, status: {:up, self()}}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
+
+      assert {:error, {:insufficient_acknowledgments, 1, 2, []}} =
+               Finalization.push_transaction_to_logs_direct(
+                 layout,
+                 Version.from_integer(99),
+                 transactions_by_log,
+                 commit_version,
+                 async_stream_fn: mock_async_stream_fn
+               )
+    end
+
+    test "handles log service marked as down" do
+      success_log = Support.create_mock_log_server()
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, success_log}},
+          "log_2" => %{kind: :log, status: :down}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
+
+      # When a service is down, it's filtered out of resolve_log_descriptors
+      # So we only get one acknowledgment when we need two
+      result =
+        Finalization.push_transaction_to_logs_direct(
+          layout,
+          Version.from_integer(99),
+          transactions_by_log,
+          commit_version,
+          []
+        )
+
+      # Should either fail due to insufficient acks or because the down log couldn't be reached
+      assert match?({:error, _}, result)
+    end
+
+    test "reports all failures when multiple logs fail" do
+      failing_log1 =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :disk_full})
+          end
+        end)
+
+      failing_log2 =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :timeout})
+          end
+        end)
+
+      Support.ensure_process_killed(failing_log1)
+      Support.ensure_process_killed(failing_log2)
+
+      layout = %{
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, failing_log1}},
+          "log_2" => %{kind: :log, status: {:up, failing_log2}}
+        }
+      }
+
+      commit_version = Version.from_integer(100)
+      tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
+
+      transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
+
+      # Since reduce_while halts on first failure, we'll get one error
+      assert {:error, {:log_failures, [_error]}} =
+               Finalization.push_transaction_to_logs_direct(
+                 layout,
+                 Version.from_integer(99),
+                 transactions_by_log,
+                 commit_version,
+                 []
+               )
+    end
+  end
+
+  describe "partial log failures in full finalization pipeline" do
+    test "aborts all pending transactions when log push fails" do
+      success_log = Support.create_mock_log_server()
+
+      failing_log =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+              GenServer.reply(from, {:error, :disk_full})
+          end
+        end)
+
+      Support.ensure_process_killed(failing_log)
+
+      layout = %{
+        sequencer: :test_sequencer,
+        resolvers: [{<<>>, :test_resolver}],
+        logs: %{"log_1" => [0], "log_2" => [1]},
+        services: %{
+          "log_1" => %{kind: :log, status: {:up, success_log}},
+          "log_2" => %{kind: :log, status: {:up, failing_log}}
+        },
+        storage_teams: [
+          %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
+          %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]}
+        ]
+      }
+
+      transactions = [
+        create_simple_transaction(<<"apple">>, <<"fruit">>),
+        create_simple_transaction(<<"orange">>, <<"citrus">>)
+      ]
+
+      batch =
+        Support.create_test_batch(
+          Version.from_integer(100),
+          Version.from_integer(99),
+          [
+            {fn result -> send(self(), {:reply1, result}) end, Enum.at(transactions, 0)},
+            {fn result -> send(self(), {:reply2, result}) end, Enum.at(transactions, 1)}
+          ]
+        )
+
+      resolver_fn = fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+        {:ok, [], []}
+      end
+
+      assert {:error, {:log_failures, _}} =
+               Finalization.finalize_batch(
+                 batch,
+                 layout,
+                 [],
+                 epoch: 1,
+                 resolver_layout: ResolverLayout.from_layout(layout),
+                 resolver_fn: resolver_fn
+               )
+
+      # Both transactions should be aborted due to log failure
+      assert_receive {:reply1, {:error, :aborted}}
+      assert_receive {:reply2, {:error, :aborted}}
     end
   end
 end

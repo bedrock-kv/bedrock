@@ -332,6 +332,55 @@ defmodule Bedrock.DataPlane.TransactionTest do
     end
   end
 
+  describe "metadata_mutation?/1" do
+    test "returns true for :set mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:set, <<0xFF, "key">>, "value"})
+      assert Transaction.metadata_mutation?({:set, <<0xFF>>, "value"})
+      assert Transaction.metadata_mutation?({:set, <<0xFF, 0x02, "metadata">>, "data"})
+    end
+
+    test "returns false for :set mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:set, "user_key", "value"})
+      refute Transaction.metadata_mutation?({:set, <<0x00, 0xFF>>, "value"})
+      refute Transaction.metadata_mutation?({:set, "", "value"})
+    end
+
+    test "returns true for :clear mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:clear, <<0xFF, "key">>})
+      assert Transaction.metadata_mutation?({:clear, <<0xFF>>})
+    end
+
+    test "returns false for :clear mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:clear, "user_key"})
+      refute Transaction.metadata_mutation?({:clear, <<>>})
+    end
+
+    test "returns true for :clear_range if either key has \\xFF prefix" do
+      # Start key has prefix
+      assert Transaction.metadata_mutation?({:clear_range, <<0xFF, "start">>, "end"})
+      # End key has prefix
+      assert Transaction.metadata_mutation?({:clear_range, "start", <<0xFF, "end">>})
+      # Both have prefix
+      assert Transaction.metadata_mutation?({:clear_range, <<0xFF, "a">>, <<0xFF, "z">>})
+    end
+
+    test "returns false for :clear_range without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:clear_range, "start", "end"})
+      refute Transaction.metadata_mutation?({:clear_range, <<0x00>>, <<0xFE>>})
+    end
+
+    test "returns true for :atomic mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:atomic, :add, <<0xFF, "counter">>, <<1>>})
+      assert Transaction.metadata_mutation?({:atomic, :min, <<0xFF, "val">>, <<5>>})
+      assert Transaction.metadata_mutation?({:atomic, :max, <<0xFF, "val">>, <<10>>})
+    end
+
+    test "returns false for :atomic mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:atomic, :add, "counter", <<1>>})
+      refute Transaction.metadata_mutation?({:atomic, :min, "val", <<5>>})
+    end
+  end
+
   describe "binary format structure" do
     test "has correct magic number and version" do
       encoded = Transaction.encode(legacy_transaction())

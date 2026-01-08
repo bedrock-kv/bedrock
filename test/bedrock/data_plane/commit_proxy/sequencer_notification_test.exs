@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
     [
       epoch: 1,
       resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
-      resolver_fn: fn _, _, _, _, _, _ -> {:ok, []} end,
+      resolver_fn: fn _, _, _, _, _, _, _ -> {:ok, [], []} end,
       batch_log_push_fn: fn _, _, _, _, _ -> :ok end
     ]
   end
@@ -48,14 +48,14 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
     end)
   end
 
-  describe "finalize_batch/3" do
+  describe "finalize_batch/4" do
     test "notifies sequencer after log persistence" do
       mock_sequencer = create_mock_sequencer()
       batch = create_batch()
       layout = create_transaction_system_layout(mock_sequencer)
       opts = create_finalization_opts()
 
-      assert {:ok, 0, 0} = Finalization.finalize_batch(batch, layout, opts)
+      assert {:ok, 0, 0, _metadata} = Finalization.finalize_batch(batch, layout, [], opts)
       assert_receive {:sequencer_notified, 100}, 100
 
       Process.exit(mock_sequencer, :kill)
@@ -68,7 +68,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       layout = create_transaction_system_layout(:invalid_sequencer_ref)
       opts = create_finalization_opts()
 
-      assert {:error, :unavailable} = Finalization.finalize_batch(batch, layout, opts)
+      assert {:error, :unavailable} = Finalization.finalize_batch(batch, layout, [], opts)
     end
   end
 end

@@ -53,4 +53,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
       Map.put(trace_metadata(), :reason, reason)
     )
   end
+
+  @spec trace_metadata_updates_received(
+          commit_version :: Bedrock.version(),
+          metadata_updates :: [term()]
+        ) :: :ok
+  def trace_metadata_updates_received(commit_version, metadata_updates) do
+    Telemetry.execute(
+      [:bedrock, :data_plane, :commit_proxy, :metadata_updates_received],
+      %{n_updates: length(metadata_updates)},
+      Map.merge(trace_metadata(), %{commit_version: commit_version, metadata_updates: metadata_updates})
+    )
+  end
 end

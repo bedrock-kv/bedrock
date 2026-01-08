@@ -494,6 +494,33 @@ defmodule Bedrock.DataPlane.Transaction do
   # ============================================================================
 
   @doc """
+  Checks if a mutation affects metadata keys (keys with \\xFF prefix).
+
+  Returns true if any key in the mutation starts with \\xFF.
+  For `:clear_range`, returns true if either the start or end key has the prefix.
+
+  ## Examples
+
+      iex> Transaction.metadata_mutation?({:set, <<0xFF, "foo">>, "value"})
+      true
+
+      iex> Transaction.metadata_mutation?({:set, "user_key", "value"})
+      false
+
+      iex> Transaction.metadata_mutation?({:clear_range, "start", <<0xFF, "end">>})
+      true
+  """
+  @spec metadata_mutation?(Tx.mutation()) :: boolean()
+  def metadata_mutation?({:set, key, _value}), do: metadata_key?(key)
+  def metadata_mutation?({:clear, key}), do: metadata_key?(key)
+  def metadata_mutation?({:clear_range, start_key, end_key}), do: metadata_key?(start_key) or metadata_key?(end_key)
+  def metadata_mutation?({:atomic, _op, key, _value}), do: metadata_key?(key)
+
+  @doc false
+  defp metadata_key?(<<0xFF, _rest::binary>>), do: true
+  defp metadata_key?(_), do: false
+
+  @doc """
   Extracts read conflicts and read version from READ_CONFLICTS section.
 
   Returns {nil, []} if no READ_CONFLICTS section exists.

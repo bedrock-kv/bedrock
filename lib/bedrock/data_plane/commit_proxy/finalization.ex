@@ -127,7 +127,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       aborted_count: 0,
       stage: :initialized,
       error: nil,
-      metadata_updates: []
+      metadata_updates: [],
+      metadata: %{}
     ]
 
     @type t :: %__MODULE__{
@@ -144,7 +145,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             aborted_count: non_neg_integer(),
             stage: atom(),
             error: term() | nil,
-            metadata_updates: [MetadataAccumulator.entry()]
+            metadata_updates: [MetadataAccumulator.entry()],
+            metadata: map()
           }
   end
 
@@ -253,7 +255,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       last_commit_version: batch.last_commit_version,
       storage_teams: transaction_system_layout.storage_teams,
       logs_by_id: transaction_system_layout.logs,
-      stage: :ready_for_resolution
+      stage: :ready_for_resolution,
+      metadata: %{}
     }
   end
 

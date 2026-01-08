@@ -246,8 +246,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t()) :: FinalizationPlan.t()
-  def create_finalization_plan(batch, transaction_system_layout) do
+  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t(), map()) ::
+          FinalizationPlan.t()
+  def create_finalization_plan(batch, transaction_system_layout, initial_metadata \\ %{}) do
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
       transaction_count: Batch.transaction_count(batch),
@@ -256,7 +257,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       storage_teams: transaction_system_layout.storage_teams,
       logs_by_id: transaction_system_layout.logs,
       stage: :ready_for_resolution,
-      metadata: %{}
+      metadata: initial_metadata
     }
   end
 
@@ -928,16 +929,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # ============================================================================
 
   @spec extract_result_or_handle_error(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
-          {:ok, non_neg_integer(), non_neg_integer(), [MetadataAccumulator.entry()]}
+          {:ok, non_neg_integer(), non_neg_integer(), map()}
           | {:error, finalization_error()}
-  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, current_metadata, _opts) do
+  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _current_metadata, _opts) do
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
-    # Merge current metadata with updates from resolver
-    updated_metadata = current_metadata ++ plan.metadata_updates
-
-    {:ok, n_aborts, n_successes, updated_metadata}
+    {:ok, n_aborts, n_successes, plan.metadata}
   end
 
   def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, _metadata, opts),

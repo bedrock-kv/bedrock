@@ -167,7 +167,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       %{transaction_system_layout: transaction_system_layout}
     end
 
-    test "returns metadata updates from resolver response", %{
+    test "returns plan metadata from finalization result", %{
       transaction_system_layout: transaction_system_layout
     } do
       tx_map = create_transaction_without_metadata("key1", "value1")
@@ -180,7 +180,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn, tx_binary, task}
         ])
 
-      # Mock resolver returns metadata updates
+      # Mock resolver returns metadata updates (stored in plan.metadata_updates)
       commit_version = Version.from_integer(100)
 
       metadata_updates = [
@@ -203,11 +203,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
 
-      # Verify metadata updates were returned
-      assert returned_metadata == metadata_updates
+      # Returns plan.metadata (empty until metadata_merge_fn is injected)
+      assert returned_metadata == %{}
     end
 
-    test "merges incoming metadata with resolver updates", %{
+    test "returns plan metadata independent of passed metadata arg", %{
       transaction_system_layout: transaction_system_layout
     } do
       tx_map = create_transaction_without_metadata("key1", "value1")
@@ -220,7 +220,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn, tx_binary, task}
         ])
 
-      # Existing metadata from previous batches
+      # Existing metadata from previous batches (passed as arg but ignored)
       existing_version = Version.from_integer(50)
       existing_metadata = [{existing_version, [{:set, <<0xFF, "old_key">>, "old_value"}]}]
 
@@ -244,10 +244,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
 
-      # Both old and new metadata should be present
-      assert length(returned_metadata) == 2
-      assert {existing_version, [{:set, <<0xFF, "old_key">>, "old_value"}]} in returned_metadata
-      assert {new_version, [{:set, <<0xFF, "new_key">>, "new_value"}]} in returned_metadata
+      # Returns plan.metadata (empty until metadata_merge_fn is injected)
+      assert returned_metadata == %{}
     end
 
     test "handles empty metadata updates from resolver", %{
@@ -280,7 +278,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
 
-      assert returned_metadata == []
+      # Returns plan.metadata (empty map by default)
+      assert returned_metadata == %{}
     end
   end
 

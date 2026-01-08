@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
         [:bedrock, :data_plane, :commit_proxy, :start],
         [:bedrock, :data_plane, :commit_proxy, :stop],
         [:bedrock, :data_plane, :commit_proxy, :failed],
+        [:bedrock, :data_plane, :commit_proxy, :metadata_updates_received],
         [:bedrock, :commit_proxy, :resolver, :retry],
         [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded]
       ],
@@ -54,6 +55,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Tracing do
       "Transaction Batch #{Version.to_string(commit_version)} failed (#{inspect(reason)}) in #{humanize({:microsecond, duration_μs})}"
     )
   end
+
+  def trace(:metadata_updates_received, %{n_updates: n_updates}, %{commit_version: commit_version})
+      when n_updates > 0 do
+    info("Transaction Batch #{Version.to_string(commit_version)} received #{n_updates} metadata update(s)")
+  end
+
+  def trace(:metadata_updates_received, %{n_updates: 0}, _metadata), do: :ok
 
   @spec trace_resolver(atom(), map(), map()) :: :ok
   def trace_resolver(:retry, %{attempts_remaining: attempts_remaining, attempts_used: attempts_used}, %{reason: reason}) do

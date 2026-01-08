@@ -19,7 +19,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     only: [
       trace_commit_proxy_batch_started: 3,
       trace_commit_proxy_batch_finished: 4,
-      trace_commit_proxy_batch_failed: 3
+      trace_commit_proxy_batch_failed: 3,
+      trace_metadata_updates_received: 2
     ]
 
   import Bitwise, only: [<<<: 2]
@@ -292,7 +293,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, _aborted, metadata_updates} ->
-        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        plan = apply_metadata_updates(plan, metadata_updates, opts)
         split_and_notify_aborts_with_set(plan, MapSet.new(), opts)
 
       {:error, reason} ->
@@ -330,7 +331,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          ) do
       {:ok, aborted, metadata_updates} ->
         aborted_set = MapSet.new(aborted)
-        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        plan = apply_metadata_updates(plan, metadata_updates, opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
@@ -385,12 +386,23 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, aborted_set, metadata_updates} ->
-        plan = %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates}
+        plan = apply_metadata_updates(plan, metadata_updates, opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
     end
+  end
+
+  @spec apply_metadata_updates(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
+          FinalizationPlan.t()
+  defp apply_metadata_updates(plan, metadata_updates, opts) do
+    trace_metadata_updates_received(plan.commit_version, metadata_updates)
+
+    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, fn meta, _updates -> meta end)
+    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates)
+
+    %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates, metadata: merged_metadata}
   end
 
   @spec call_all_resolvers_with_map(

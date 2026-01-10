@@ -242,4 +242,55 @@ defmodule Bedrock.SystemKeys do
   """
   @spec system_prefix() :: Bedrock.key()
   def system_prefix, do: @system_prefix
+
+  # Key Parsing Functions
+  # These are inverses of the key generation functions above
+
+  @doc """
+  Parses a system key and extracts its type and parameter.
+
+  Returns:
+  - `{:layout_log, log_id}` for log keys
+  - `{:layout_resolver, end_key}` for resolver keys
+  - `{:shard_key, end_key}` for shard key mappings
+  - `{:shard, tag}` for shard metadata keys
+  - `{:materializer_key, end_key}` for materializer keys
+  - `:unknown` for unrecognized system keys
+  - `:error` for non-system keys
+  """
+  @spec parse_key(Bedrock.key()) ::
+          {:layout_log, String.t()}
+          | {:layout_resolver, String.t()}
+          | {:shard_key, String.t()}
+          | {:shard, String.t()}
+          | {:materializer_key, String.t()}
+          | :unknown
+          | :error
+  def parse_key(key) when is_binary(key) do
+    # Order matters: more specific prefixes first (shard_keys before shards)
+    cond do
+      String.starts_with?(key, layout_logs_prefix()) ->
+        {:layout_log, String.replace_prefix(key, layout_logs_prefix(), "")}
+
+      String.starts_with?(key, layout_resolvers_prefix()) ->
+        {:layout_resolver, String.replace_prefix(key, layout_resolvers_prefix(), "")}
+
+      String.starts_with?(key, shard_keys_prefix()) ->
+        {:shard_key, String.replace_prefix(key, shard_keys_prefix(), "")}
+
+      String.starts_with?(key, shards_prefix()) ->
+        {:shard, String.replace_prefix(key, shards_prefix(), "")}
+
+      String.starts_with?(key, materializer_keys_prefix()) ->
+        {:materializer_key, String.replace_prefix(key, materializer_keys_prefix(), "")}
+
+      system_key?(key) ->
+        :unknown
+
+      true ->
+        :error
+    end
+  end
+
+  def parse_key(_), do: :error
 end

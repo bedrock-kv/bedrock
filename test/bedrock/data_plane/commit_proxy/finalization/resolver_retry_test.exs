@@ -53,11 +53,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      routing_data = Support.build_routing_data(transaction_system_layout)
+      %{transaction_system_layout: transaction_system_layout, routing_data: routing_data}
     end
 
     test "retries on timeout and succeeds on subsequent attempt", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
 
@@ -90,7 +92,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       # Verify retry happened
@@ -100,7 +103,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     end
 
     test "retries on unavailable and succeeds on subsequent attempt", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -130,7 +134,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -138,7 +143,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     end
 
     test "handles failure tuple format with retry", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -169,7 +175,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -181,11 +188,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      routing_data = Support.build_routing_data(transaction_system_layout)
+      %{transaction_system_layout: transaction_system_layout, routing_data: routing_data}
     end
 
     test "fails after max_attempts exhausted with timeout", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -210,7 +219,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       # Should have attempted exactly 3 times
@@ -224,7 +234,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     end
 
     test "fails after max_attempts exhausted with unavailable", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -248,7 +259,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 max_attempts: 2
+                 max_attempts: 2,
+                 routing_data: routing_data
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -257,7 +269,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     end
 
     test "fails after max_attempts with failure tuple format", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -281,7 +294,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -294,11 +308,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      routing_data = Support.build_routing_data(transaction_system_layout)
+      %{transaction_system_layout: transaction_system_layout, routing_data: routing_data}
     end
 
     test "epoch_mismatch fails immediately without retry", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -322,7 +338,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       # Should fail immediately - only 1 attempt
@@ -331,7 +348,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     end
 
     test "other errors fail immediately without retry", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -355,7 +373,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       # Should fail immediately
@@ -379,6 +398,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     test "custom timeout_fn is used for retry timeouts" do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(transaction_system_layout)
 
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -418,7 +438,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end,
                  timeout_fn: custom_timeout_fn,
-                 max_attempts: 5
+                 max_attempts: 5,
+                 routing_data: routing_data
                )
 
       # Verify timeouts were passed correctly
@@ -432,11 +453,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      routing_data = Support.build_routing_data(transaction_system_layout)
+      %{transaction_system_layout: transaction_system_layout, routing_data: routing_data}
     end
 
     test "retry preserves all transactions in batch", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -481,7 +504,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end,
-                 max_attempts: 3
+                 max_attempts: 3,
+                 routing_data: routing_data
                )
 
       # Both attempts should see 2 transactions
@@ -499,11 +523,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      routing_data = Support.build_routing_data(transaction_system_layout)
+      %{transaction_system_layout: transaction_system_layout, routing_data: routing_data}
     end
 
     test "emits telemetry events during retry cycle", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
       call_count = :counters.new(1, [])
@@ -543,7 +569,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                    epoch: 1,
                    resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                    resolver_fn: mock_resolver_fn,
-                   max_attempts: 3
+                   max_attempts: 3,
+                   routing_data: routing_data
                  )
       end)
 

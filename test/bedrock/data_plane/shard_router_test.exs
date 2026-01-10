@@ -288,4 +288,85 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       assert length(logs_shard_1) == 2
     end
   end
+
+  describe "lazy log_indices caching" do
+    setup do
+      table = :ets.new(:caching_test, [:ordered_set, :public])
+      :ets.insert(table, {"m", 0})
+      :ets.insert(table, {"\xff", 1})
+
+      log_map = %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
+
+      on_exit(fn ->
+        try do
+          :ets.delete(table)
+        rescue
+          ArgumentError -> :ok
+        end
+      end)
+
+      {:ok, table: table, log_map: log_map}
+    end
+
+    test "get_logs_for_key caches log_indices in ETS", %{table: table, log_map: log_map} do
+      # Initial entry is just {end_key, tag}
+      assert :ets.lookup(table, "m") == [{"m", 0}]
+
+      # First call computes and caches
+      _logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+
+      # Entry should now be {end_key, {tag, log_indices}}
+      [{_end_key, cached_value}] = :ets.lookup(table, "m")
+      assert is_tuple(cached_value)
+      {tag, log_indices} = cached_value
+      assert tag == 0
+      assert is_list(log_indices)
+      assert length(log_indices) == 2
+    end
+
+    test "subsequent calls use cached log_indices", %{table: table, log_map: log_map} do
+      # First call - computes
+      logs1 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+
+      # Verify it's cached
+      [{_, {0, cached_indices}}] = :ets.lookup(table, "m")
+
+      # Second call - uses cache
+      logs2 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+
+      # Results should be identical
+      assert logs1 == logs2
+
+      # Cache should be unchanged
+      [{_, {0, ^cached_indices}}] = :ets.lookup(table, "m")
+    end
+
+    test "lookup_shard handles cached format", %{table: table, log_map: log_map} do
+      # Trigger caching
+      _logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+
+      # lookup_shard should still return just the tag
+      tag = ShardRouter.lookup_shard(table, "apple")
+      assert tag == 0
+    end
+
+    test "lookup_shards_for_range handles cached format", %{table: table, log_map: log_map} do
+      # Trigger caching for both shards
+      _logs1 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+      _logs2 = ShardRouter.get_logs_for_key(table, "zebra", log_map, 2)
+
+      # Range lookup should still work
+      tags = ShardRouter.lookup_shards_for_range(table, "a", "z")
+      assert Enum.sort(tags) == [0, 1]
+    end
+
+    test "works with pre-cached entries", %{table: table, log_map: log_map} do
+      # Manually insert cached format
+      :ets.insert(table, {"m", {0, [1, 2]}})
+
+      # Should use cached indices
+      logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
+      assert logs == ["log-b", "log-c"]
+    end
+  end
 end

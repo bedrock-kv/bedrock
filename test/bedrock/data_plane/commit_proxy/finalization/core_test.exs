@@ -66,12 +66,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     setup do
       log_server = Support.create_mock_log_server()
       transaction_system_layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(transaction_system_layout)
 
-      %{transaction_system_layout: transaction_system_layout, log_server: log_server}
+      %{transaction_system_layout: transaction_system_layout, log_server: log_server, routing_data: routing_data}
     end
 
     test "exits when resolver is unavailable", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       batch = Support.create_test_batch(100, 99)
 
@@ -79,14 +81,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       result =
         Finalization.finalize_batch(batch, transaction_system_layout, [],
           epoch: 1,
-          resolver_layout: ResolverLayout.from_layout(transaction_system_layout)
+          resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
+          routing_data: routing_data
         )
 
       assert result == {:error, {:resolver_unavailable, :unavailable}}
     end
 
     test "handles batch with aborted transactions", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       # Create test transactions
       tx1_map = create_test_transaction(<<"key1">>, <<"value1">>)
@@ -128,7 +132,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
-                 sequencer_notify_fn: mock_sequencer_notify()
+                 sequencer_notify_fn: mock_sequencer_notify(),
+                 routing_data: routing_data
                )
 
       expected_version = Version.from_integer(100)
@@ -136,7 +141,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert_receive {:reply2, {:ok, ^expected_version, _}}
     end
 
-    test "handles empty batch", %{transaction_system_layout: transaction_system_layout} do
+    test "handles empty batch", %{transaction_system_layout: transaction_system_layout, routing_data: routing_data} do
       batch = create_batch_with_transactions(100, 99, [])
 
       mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
@@ -156,12 +161,14 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  sequencer_notify_fn: fn sequencer, _commit_version ->
                    assert sequencer == :test_sequencer
                    :ok
-                 end
+                 end,
+                 routing_data: routing_data
                )
     end
 
     test "handles all transactions aborted", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       # Create test transactions
       tx1_map = create_test_transaction(<<"key1">>, <<"value1">>)
@@ -199,7 +206,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  sequencer_notify_fn: fn sequencer, _commit_version ->
                    assert sequencer == :test_sequencer
                    :ok
-                 end
+                 end,
+                 routing_data: routing_data
                )
 
       # Both should be aborted
@@ -208,7 +216,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     end
 
     test "handles log failure and returns error", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       batch = Support.create_test_batch(100, 99)
 
@@ -229,7 +238,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: mock_log_push_fn
+                 batch_log_push_fn: mock_log_push_fn,
+                 routing_data: routing_data
                )
 
       # Transaction should be aborted due to log failure
@@ -237,7 +247,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     end
 
     test "returns insufficient_acknowledgments error when not all logs respond", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       batch = Support.create_test_batch(100, 99)
 
@@ -258,7 +269,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: mock_log_push_fn
+                 batch_log_push_fn: mock_log_push_fn,
+                 routing_data: routing_data
                )
 
       # Transaction should be aborted due to insufficient acknowledgments
@@ -266,7 +278,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     end
 
     test "passes correct last_commit_version from batch to resolvers and logs", %{
-      transaction_system_layout: transaction_system_layout
+      transaction_system_layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       # Create batch with NON-SEQUENTIAL version numbers to test version chain integrity
       commit_version = 150
@@ -308,7 +321,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  sequencer_notify_fn: fn sequencer, _commit_version ->
                    assert sequencer == :test_sequencer
                    :ok
-                 end
+                 end,
+                 routing_data: routing_data
                )
 
       # Verify both resolver and log push received correct versions
@@ -327,6 +341,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
         storage_teams: [%{tag: 0, key_range: {<<>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}]
       }
+
+      routing_data = Support.build_routing_data(transaction_system_layout)
 
       # Create test transaction
       transaction_map = create_test_transaction(<<"key">>, <<"value">>)
@@ -361,7 +377,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 abort_reply_fn: custom_abort_fn
+                 abort_reply_fn: custom_abort_fn,
+                 routing_data: routing_data
                )
 
       assert_receive {:custom_abort_called, 1}

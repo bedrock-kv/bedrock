@@ -61,6 +61,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
   end
 
   describe "metadata extraction" do
+    setup do
+      log_server = Support.create_mock_log_server()
+      layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(layout)
+      %{layout: layout, routing_data: routing_data}
+    end
+
     test "metadata_mutation?/1 identifies metadata mutations by key prefix" do
       # Mutations with \xFF prefix are metadata
       assert Transaction.metadata_mutation?({:set, <<0xFF, "key">>, "value"})
@@ -75,10 +82,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       refute Transaction.metadata_mutation?({:atomic, :add, "counter", <<1>>})
     end
 
-    test "extracts metadata mutations from transactions during finalization" do
-      log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-
+    test "extracts metadata mutations from transactions during finalization", %{
+      layout: transaction_system_layout,
+      routing_data: routing_data
+    } do
       test_pid = self()
 
       # Create transaction with metadata
@@ -106,6 +113,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -121,10 +129,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert metadata_key == <<0xFF, "meta_key">>
     end
 
-    test "extracts empty metadata list for transactions without metadata" do
-      log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-
+    test "extracts empty metadata list for transactions without metadata", %{
+      layout: transaction_system_layout,
+      routing_data: routing_data
+    } do
       test_pid = self()
 
       # Create transaction without metadata
@@ -151,6 +159,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -163,12 +172,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
   describe "metadata aggregation from resolver" do
     setup do
       log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(layout)
+      %{layout: layout, routing_data: routing_data}
     end
 
     test "returns plan metadata from finalization result", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
@@ -199,6 +210,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -208,7 +220,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
     end
 
     test "returns plan metadata independent of passed metadata arg", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
@@ -240,6 +253,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -249,7 +263,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
     end
 
     test "handles empty metadata updates from resolver", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
@@ -274,6 +289,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -286,12 +302,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
   describe "metadata with multiple transactions" do
     setup do
       log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(layout)
+      %{layout: layout, routing_data: routing_data}
     end
 
     test "extracts metadata from each transaction independently", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
 
@@ -333,6 +351,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -357,12 +376,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
   describe "metadata with empty batch" do
     setup do
       log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(layout)
+      %{layout: layout, routing_data: routing_data}
     end
 
     test "handles empty batch metadata correctly", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
 
@@ -383,6 +404,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )
@@ -395,12 +417,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
   describe "metadata with various mutation types" do
     setup do
       log_server = Support.create_mock_log_server()
-      transaction_system_layout = Support.basic_transaction_system_layout(log_server)
-      %{transaction_system_layout: transaction_system_layout}
+      layout = Support.basic_transaction_system_layout(log_server)
+      routing_data = Support.build_routing_data(layout)
+      %{layout: layout, routing_data: routing_data}
     end
 
     test "extracts all metadata mutation types", %{
-      transaction_system_layout: transaction_system_layout
+      layout: transaction_system_layout,
+      routing_data: routing_data
     } do
       test_pid = self()
 
@@ -439,6 +463,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
+                 routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
                )

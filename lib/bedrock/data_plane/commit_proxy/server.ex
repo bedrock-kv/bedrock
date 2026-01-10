@@ -118,7 +118,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec terminate(term(), State.t()) :: :ok
   def terminate(_reason, %State{} = t) do
     abort_current_batch(t)
+    cleanup_shard_table(t.shard_table)
     :ok
+  end
+
+  @spec cleanup_shard_table(:ets.table() | nil) :: true
+  defp cleanup_shard_table(nil), do: true
+
+  defp cleanup_shard_table(table) do
+    :ets.delete(table)
+  rescue
+    ArgumentError -> true
   end
 
   @impl true
@@ -132,11 +142,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     if lock_token == t.lock_token do
       resolver_layout = ResolverLayout.from_layout(transaction_system_layout)
 
+      # Build routing data structures once on recovery
+      {shard_table, log_map, replication_factor} =
+        build_routing_data(transaction_system_layout)
+
       reply(
         %{
           t
           | transaction_system_layout: transaction_system_layout,
             resolver_layout: resolver_layout,
+            shard_table: shard_table,
+            log_map: log_map,
+            replication_factor: replication_factor,
             mode: :running
         },
         :ok
@@ -168,7 +185,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
           {t, batch} ->
             # Finalize asynchronously and reset for next batch
-            finalize_batch_async(batch, t.transaction_system_layout, t.metadata, t.epoch, t.resolver_layout)
+            finalize_batch_async(
+              batch,
+              t.transaction_system_layout,
+              t.metadata,
+              t.epoch,
+              t.resolver_layout,
+              {t.shard_table, t.log_map, t.replication_factor}
+            )
+
             maybe_set_empty_transaction_timeout(t)
         end
     end
@@ -184,7 +209,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     case single_transaction_batch(t, empty_transaction) do
       {:ok, batch} ->
         # Send empty batch asynchronously
-        finalize_batch_async(batch, t.transaction_system_layout, t.metadata, t.epoch, t.resolver_layout)
+        finalize_batch_async(
+          batch,
+          t.transaction_system_layout,
+          t.metadata,
+          t.epoch,
+          t.resolver_layout,
+          {t.shard_table, t.log_map, t.replication_factor}
+        )
+
         maybe_set_empty_transaction_timeout(t)
 
       {:error, :sequencer_unavailable} ->
@@ -198,7 +231,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_info(:timeout, %{batch: batch} = t) do
     # Timeout reached - finalize current batch asynchronously
-    finalize_batch_async(batch, t.transaction_system_layout, t.metadata, t.epoch, t.resolver_layout)
+    finalize_batch_async(
+      batch,
+      t.transaction_system_layout,
+      t.metadata,
+      t.epoch,
+      t.resolver_layout,
+      {t.shard_table, t.log_map, t.replication_factor}
+    )
+
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
   end
 
@@ -219,7 +260,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:noreply, t}
   end
 
-  defp finalize_batch_async(batch, transaction_system_layout, current_metadata, epoch, resolver_layout) do
+  defp finalize_batch_async(batch, transaction_system_layout, current_metadata, epoch, resolver_layout, routing_data) do
     trace_meta = trace_metadata()
     server_pid = self()
 
@@ -228,7 +269,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
       case finalize_batch(batch, transaction_system_layout, current_metadata,
              epoch: epoch,
-             resolver_layout: resolver_layout
+             resolver_layout: resolver_layout,
+             routing_data: routing_data
            ) do
         {:ok, _n_aborts, _n_oks, updated_metadata} ->
           send(server_pid, {:metadata_update, updated_metadata})
@@ -257,5 +299,54 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     batch
     |> Batch.all_callers()
     |> Enum.each(fn reply_fn -> reply_fn.({:error, :abort}) end)
+  end
+
+  # Build routing data structures from transaction system layout
+  @spec build_routing_data(map()) :: {:ets.table(), map(), pos_integer()}
+  defp build_routing_data(transaction_system_layout) do
+    storage_teams = transaction_system_layout.storage_teams
+    logs = transaction_system_layout.logs
+
+    shard_table = build_shard_table(storage_teams)
+    log_map = build_log_map(logs)
+    replication_factor = infer_replication_factor(storage_teams, logs)
+
+    {shard_table, log_map, replication_factor}
+  end
+
+  # Build an ETS ordered_set table for ceiling search from storage_teams
+  @spec build_shard_table([map()]) :: :ets.table()
+  defp build_shard_table(storage_teams) do
+    table = :ets.new(:shard_keys, [:ordered_set, :public])
+
+    Enum.each(storage_teams, fn team ->
+      %{tag: tag, key_range: {_start_key, end_key}} = team
+      :ets.insert(table, {end_key, tag})
+    end)
+
+    table
+  end
+
+  # Build a map from log index to log_id for golden ratio lookup
+  @spec build_log_map(map()) :: map()
+  defp build_log_map(logs) do
+    logs
+    |> Map.keys()
+    |> Enum.sort()
+    |> Enum.with_index()
+    |> Map.new(fn {log_id, index} -> {index, log_id} end)
+  end
+
+  # Infer replication factor from the data
+  @spec infer_replication_factor([map()], map()) :: pos_integer()
+  defp infer_replication_factor([], logs) do
+    max(1, map_size(logs))
+  end
+
+  defp infer_replication_factor([first_team | _], logs) do
+    case Map.get(first_team, :storage_ids) do
+      nil -> max(1, map_size(logs))
+      storage_ids -> max(1, length(storage_ids))
+    end
   end
 end

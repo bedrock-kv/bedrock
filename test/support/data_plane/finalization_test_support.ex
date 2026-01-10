@@ -135,6 +135,37 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     ]
   end
 
+  @doc """
+  Builds routing data (ETS table, log_map, replication_factor) from a transaction system layout.
+  Used by finalize_batch opts.
+  """
+  def build_routing_data(transaction_system_layout) do
+    storage_teams = Map.get(transaction_system_layout, :storage_teams, [])
+    logs = Map.get(transaction_system_layout, :logs, %{})
+
+    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
+
+    Enum.each(storage_teams, fn team ->
+      {_start_key, end_key} = team.key_range
+      :ets.insert(table, {end_key, team.tag})
+    end)
+
+    log_map =
+      logs
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    replication_factor =
+      case storage_teams do
+        [] -> max(1, map_size(logs))
+        [first | _] -> max(1, length(Map.get(first, :storage_ids, [])))
+      end
+
+    {table, log_map, replication_factor}
+  end
+
   # Helper function to create test resolver task
   defp create_test_resolver_task(binary) do
     Task.async(fn -> %{:test_resolver => binary} end)

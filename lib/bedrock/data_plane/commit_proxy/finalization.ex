@@ -30,6 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
+  alias Bedrock.DataPlane.CommitProxy.MetadataMerge
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
@@ -212,6 +213,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           opts :: [
             epoch: Bedrock.epoch(),
             resolver_layout: ResolverLayout.t(),
+            routing_data: MetadataMerge.routing_data(),
             resolver_fn: resolver_fn(),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
@@ -230,10 +232,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
     resolver_layout = Keyword.get(opts, :resolver_layout) || raise "Missing resolver_layout in finalization opts"
+    routing_data = Keyword.get(opts, :routing_data) || raise "Missing routing_data in finalization opts"
 
     fn ->
       batch
-      |> create_finalization_plan(transaction_system_layout)
+      |> create_finalization_plan(transaction_system_layout, routing_data)
       |> resolve_conflicts(transaction_system_layout, epoch, resolver_layout, opts)
       |> prepare_for_logging()
       |> push_to_logs(transaction_system_layout, opts)
@@ -257,20 +260,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t(), map()) ::
+  @spec create_finalization_plan(
+          Batch.t(),
+          TransactionSystemLayout.t(),
+          {shard_table :: :ets.table(), log_map :: map(), replication_factor :: pos_integer()},
+          map()
+        ) ::
           FinalizationPlan.t()
-  def create_finalization_plan(batch, transaction_system_layout, initial_metadata \\ %{}) do
+  def create_finalization_plan(batch, transaction_system_layout, routing_data, initial_metadata \\ %{}) do
     storage_teams = transaction_system_layout.storage_teams
     logs = transaction_system_layout.logs
 
-    # Build ETS table for ceiling search from storage_teams
-    shard_table = build_shard_table(storage_teams)
-
-    # Build log_map (index -> log_id) from logs
-    log_map = build_log_map(logs)
-
-    # Infer replication factor from first storage team (all should have same count)
-    replication_factor = infer_replication_factor(storage_teams, logs)
+    # Routing data is now passed in from the commit proxy server
+    # Table is created once on recovery and kept up-to-date as metadata changes
+    {shard_table, log_map, replication_factor} = routing_data
 
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
@@ -285,44 +288,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       stage: :ready_for_resolution,
       metadata: initial_metadata
     }
-  end
-
-  # Build an ETS ordered_set table for ceiling search from storage_teams
-  @spec build_shard_table([StorageTeamDescriptor.t()]) :: :ets.table()
-  defp build_shard_table(storage_teams) do
-    table = :ets.new(:shard_keys, [:ordered_set, :public])
-
-    Enum.each(storage_teams, fn %{tag: tag, key_range: {_start_key, end_key}} ->
-      :ets.insert(table, {end_key, tag})
-    end)
-
-    table
-  end
-
-  # Build a map from log index to log_id for golden ratio lookup
-  @spec build_log_map(%{Log.id() => term()}) :: %{non_neg_integer() => Log.id()}
-  defp build_log_map(logs) do
-    logs
-    |> Map.keys()
-    |> Enum.sort()
-    |> Enum.with_index()
-    |> Map.new(fn {log_id, index} -> {index, log_id} end)
-  end
-
-  # Infer replication factor from the data
-  @spec infer_replication_factor([StorageTeamDescriptor.t()] | [map()], %{Log.id() => term()}) :: pos_integer()
-  defp infer_replication_factor([], logs) do
-    # No storage teams - default to all logs
-    max(1, map_size(logs))
-  end
-
-  defp infer_replication_factor([first_team | _], logs) do
-    # Use the storage_ids count from the first team if available
-    # Fall back to log count for simplified test data
-    case Map.get(first_team, :storage_ids) do
-      nil -> max(1, map_size(logs))
-      storage_ids -> max(1, length(storage_ids))
-    end
   end
 
   # ============================================================================
@@ -462,8 +427,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp apply_metadata_updates(plan, metadata_updates, opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
 
-    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, fn meta, _updates -> meta end)
-    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates)
+    routing_data = {plan.shard_table, plan.log_map, plan.replication_factor}
+    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/3)
+    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates, routing_data)
 
     %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates, metadata: merged_metadata}
   end
@@ -1030,9 +996,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:ok, non_neg_integer(), non_neg_integer(), map()}
           | {:error, finalization_error()}
   def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _current_metadata, _opts) do
-    # Clean up ETS table to prevent memory leaks
-    cleanup_shard_table(plan.shard_table)
-
+    # Table is managed by commit proxy server - no cleanup needed here
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
@@ -1044,8 +1008,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, finalization_error()}
   defp handle_error(%FinalizationPlan{error: error} = plan, opts) when not is_nil(error) do
-    # Clean up ETS table to prevent memory leaks
-    cleanup_shard_table(plan.shard_table)
+    # Table is managed by commit proxy server - no cleanup needed here
 
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
@@ -1059,14 +1022,5 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     abort_reply_fn.(pending_reply_fns)
 
     {:error, plan.error}
-  end
-
-  # Clean up the ETS shard table created during finalization
-  @spec cleanup_shard_table(:ets.table()) :: true
-  defp cleanup_shard_table(table) do
-    :ets.delete(table)
-  rescue
-    # Table may have already been deleted
-    ArgumentError -> true
   end
 end

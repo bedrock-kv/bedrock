@@ -205,6 +205,83 @@ defmodule Bedrock.SystemKeysTest do
     end
   end
 
+  describe "parse_key/1" do
+    test "parses layout_log keys" do
+      assert SystemKeys.parse_key("\xff/system/layout/logs/log-abc123") == {:layout_log, "log-abc123"}
+      assert SystemKeys.parse_key("\xff/system/layout/logs/") == {:layout_log, ""}
+    end
+
+    test "parses layout_resolver keys" do
+      assert SystemKeys.parse_key("\xff/system/layout/resolvers/m") == {:layout_resolver, "m"}
+      assert SystemKeys.parse_key("\xff/system/layout/resolvers/\xff") == {:layout_resolver, "\xff"}
+    end
+
+    test "parses shard_key keys" do
+      assert SystemKeys.parse_key("\xff/system/shard_keys/m") == {:shard_key, "m"}
+    end
+
+    test "parses shard keys" do
+      assert SystemKeys.parse_key("\xff/system/shards/0") == {:shard, "0"}
+      assert SystemKeys.parse_key("\xff/system/shards/42") == {:shard, "42"}
+    end
+
+    test "parses materializer_key keys" do
+      assert SystemKeys.parse_key("\xff/system/materializer_keys/end") == {:materializer_key, "end"}
+    end
+
+    test "returns :unknown for unrecognized system keys" do
+      assert SystemKeys.parse_key("\xff/system/unknown/path") == :unknown
+    end
+
+    test "returns :error for non-system keys" do
+      assert SystemKeys.parse_key("user/data") == :error
+      assert SystemKeys.parse_key("") == :error
+    end
+
+    test "returns :error for non-binary input" do
+      assert SystemKeys.parse_key(nil) == :error
+      assert SystemKeys.parse_key(123) == :error
+      assert SystemKeys.parse_key(:atom) == :error
+    end
+  end
+
+  describe "round-trip: generate → parse" do
+    test "layout_log round-trips correctly" do
+      for id <- ["test-log-123", "log_abc", "", "with/slash"] do
+        key = SystemKeys.layout_log(id)
+        assert SystemKeys.parse_key(key) == {:layout_log, id}
+      end
+    end
+
+    test "layout_resolver round-trips correctly" do
+      for end_key <- ["m", "\xff", "", "some-end-key"] do
+        key = SystemKeys.layout_resolver(end_key)
+        assert SystemKeys.parse_key(key) == {:layout_resolver, end_key}
+      end
+    end
+
+    test "shard_key round-trips correctly" do
+      for end_key <- ["m", "\xff", "", "key-range-end"] do
+        key = SystemKeys.shard_key(end_key)
+        assert SystemKeys.parse_key(key) == {:shard_key, end_key}
+      end
+    end
+
+    test "shard round-trips correctly" do
+      for tag <- [0, 42, 999] do
+        key = SystemKeys.shard(tag)
+        assert SystemKeys.parse_key(key) == {:shard, "#{tag}"}
+      end
+    end
+
+    test "materializer_key round-trips correctly" do
+      for end_key <- ["m", "\xff", "", "mat-end-key"] do
+        key = SystemKeys.materializer_key(end_key)
+        assert SystemKeys.parse_key(key) == {:materializer_key, end_key}
+      end
+    end
+  end
+
   describe "key consistency" do
     test "all keys start with system prefix" do
       prefix = SystemKeys.system_prefix()

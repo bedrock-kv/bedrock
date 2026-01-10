@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
+  alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
 
   # Common test setup
   defp create_batch do
@@ -53,9 +54,12 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       mock_sequencer = create_mock_sequencer()
       batch = create_batch()
       layout = create_transaction_system_layout(mock_sequencer)
+      routing_data = Support.build_routing_data(layout)
       opts = create_finalization_opts()
 
-      assert {:ok, 0, 0, _metadata} = Finalization.finalize_batch(batch, layout, [], opts)
+      assert {:ok, 0, 0, _metadata} =
+               Finalization.finalize_batch(batch, layout, [], opts ++ [routing_data: routing_data])
+
       assert_receive {:sequencer_notified, 100}, 100
 
       Process.exit(mock_sequencer, :kill)
@@ -66,9 +70,11 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       # for invalid refs, so sequencer notification returns an error but doesn't crash the commit proxy.
       batch = create_batch()
       layout = create_transaction_system_layout(:invalid_sequencer_ref)
+      routing_data = Support.build_routing_data(layout)
       opts = create_finalization_opts()
 
-      assert {:error, :unavailable} = Finalization.finalize_batch(batch, layout, [], opts)
+      assert {:error, :unavailable} =
+               Finalization.finalize_batch(batch, layout, [], opts ++ [routing_data: routing_data])
     end
   end
 end

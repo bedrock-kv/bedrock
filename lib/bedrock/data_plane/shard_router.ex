@@ -74,7 +74,10 @@ defmodule Bedrock.DataPlane.ShardRouter do
   @doc """
   Looks up the shard tag for a key using ETS ceiling search.
 
-  The ETS table must be an ordered_set with entries `{end_key, tag}`.
+  The ETS table must be an ordered_set with entries in one of two formats:
+  - `{end_key, tag}` - uncached format
+  - `{end_key, {tag, log_indices}}` - cached format (after `get_logs_for_key/4` call)
+
   Shard ranges are `[min, max)` - start inclusive, end exclusive.
 
   ## Parameters
@@ -109,16 +112,21 @@ defmodule Bedrock.DataPlane.ShardRouter do
 
       next_key ->
         # Found the shard whose end_key > key, meaning key is in this shard's range
-        :ets.lookup_element(table, next_key, 2)
+        extract_tag(:ets.lookup_element(table, next_key, 2))
     end
   end
 
   defp lookup_last(table) do
     case :ets.last(table) do
       :"$end_of_table" -> raise "Empty shard_keys table"
-      last_key -> :ets.lookup_element(table, last_key, 2)
+      last_key -> extract_tag(:ets.lookup_element(table, last_key, 2))
     end
   end
+
+  # Extract tag from either cached or uncached format
+  # Tags can be integers or strings depending on test setup
+  defp extract_tag({tag, _log_indices}), do: tag
+  defp extract_tag(tag), do: tag
 
   @doc """
   Looks up all shard tags that overlap with a key range.
@@ -167,18 +175,19 @@ defmodule Bedrock.DataPlane.ShardRouter do
     entries = :ets.tab2list(table)
 
     # Sort by end_key
-    sorted = Enum.sort_by(entries, fn {ek, _tag} -> ek end)
+    sorted = Enum.sort_by(entries, fn {ek, _tag_or_cached} -> ek end)
 
     # Find shards that overlap with [start_key, end_key)
     # With [min, max) semantics:
     # - A shard with end_key E covers [prev_end, E)
     # - Shard overlaps [start_key, end_key) if: shard_end_key > start_key
     sorted
-    |> Enum.filter(fn {shard_end_key, _tag} ->
+    |> Enum.filter(fn {shard_end_key, _tag_or_cached} ->
       # Shard must extend past start_key (strictly greater because end is exclusive)
       shard_end_key > start_key
     end)
-    |> Enum.reduce_while([], fn {shard_end_key, tag}, acc ->
+    |> Enum.reduce_while([], fn {shard_end_key, tag_or_cached}, acc ->
+      tag = extract_tag(tag_or_cached)
       acc = [tag | acc]
 
       # If this shard's end_key >= end_key, we've covered the whole range
@@ -194,9 +203,13 @@ defmodule Bedrock.DataPlane.ShardRouter do
   @doc """
   Routes a key to its logs using shard lookup and golden ratio log selection.
 
+  Uses lazy caching: first call computes log_indices and caches in ETS,
+  subsequent calls use the cached value. The ETS entry format changes from
+  `{end_key, tag}` to `{end_key, {tag, log_indices}}` after first access.
+
   ## Parameters
 
-    - `shard_table` - ETS table with `{end_key, tag}` entries
+    - `shard_table` - ETS table with `{end_key, tag}` or `{end_key, {tag, log_indices}}` entries
     - `key` - The key to route
     - `log_map` - Map from log index to log_id (`%{0 => "log-a", 1 => "log-b", ...}`)
     - `replication_factor` - How many logs to return
@@ -209,11 +222,36 @@ defmodule Bedrock.DataPlane.ShardRouter do
   @spec get_logs_for_key(:ets.table(), binary(), %{non_neg_integer() => binary()}, non_neg_integer()) ::
           [binary()]
   def get_logs_for_key(shard_table, key, log_map, replication_factor) do
-    tag = lookup_shard(shard_table, key)
     n = map_size(log_map)
+    end_key = find_end_key(shard_table, key)
 
-    tag
-    |> get_log_indices(n, replication_factor)
-    |> Enum.map(&Map.fetch!(log_map, &1))
+    log_indices =
+      case :ets.lookup(shard_table, end_key) do
+        [{_, {_tag, cached_indices}}] ->
+          # Already cached - use it
+          cached_indices
+
+        [{_, tag}] when is_integer(tag) ->
+          # Not cached - compute, cache, return
+          indices = get_log_indices(tag, n, replication_factor)
+          :ets.insert(shard_table, {end_key, {tag, indices}})
+          indices
+      end
+
+    Enum.map(log_indices, &Map.fetch!(log_map, &1))
+  end
+
+  # Find the end_key for the shard containing key
+  defp find_end_key(table, key) do
+    case :ets.next(table, key) do
+      :"$end_of_table" ->
+        case :ets.last(table) do
+          :"$end_of_table" -> raise "Empty shard_keys table"
+          last_key -> last_key
+        end
+
+      next_key ->
+        next_key
+    end
   end
 end

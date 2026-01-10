@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
 
   @type mode :: :locked | :running
@@ -20,7 +21,10 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           empty_transaction_timeout_ms: non_neg_integer(),
           mode: mode(),
           lock_token: binary(),
-          metadata: [MetadataAccumulator.entry()]
+          metadata: [MetadataAccumulator.entry()],
+          shard_table: :ets.table() | nil,
+          log_map: %{non_neg_integer() => Log.id()} | nil,
+          replication_factor: pos_integer() | nil
         }
   defstruct cluster: nil,
             director: nil,
@@ -33,5 +37,8 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             empty_transaction_timeout_ms: nil,
             mode: :locked,
             lock_token: nil,
-            metadata: []
+            metadata: [],
+            shard_table: nil,
+            log_map: nil,
+            replication_factor: nil
 end

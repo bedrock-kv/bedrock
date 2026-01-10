@@ -29,6 +29,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   """
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.OtpRef
 
   @type t :: %__MODULE__{
           shard_table: :ets.table(),
@@ -157,6 +159,70 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   def set_replication_factor(%__MODULE__{} = routing_data, factor) do
     %{routing_data | replication_factor: factor}
   end
+
+  @doc """
+  Applies metadata mutations to update routing data.
+
+  Handles shard_key and layout_log mutations:
+  - shard_key: Updates ETS shard_table
+  - layout_log: Updates both log_map and log_services
+
+  ## Parameters
+
+  - `routing_data` - Current routing data
+  - `updates` - List of `{version, [mutations]}` tuples from resolver
+
+  ## Returns
+
+  Updated routing data with applied mutations.
+  """
+  @spec apply_mutations(t(), [{term(), [term()]}]) :: t()
+  def apply_mutations(%__MODULE__{} = routing_data, updates) do
+    Enum.reduce(updates, routing_data, fn {_version, mutations}, acc ->
+      Enum.reduce(mutations, acc, &apply_mutation/2)
+    end)
+  end
+
+  # Handle {:set, key, value} mutations
+  defp apply_mutation({:set, key, value}, routing_data) do
+    case SystemKeys.parse_key(key) do
+      {:shard_key, end_key} ->
+        tag = :erlang.binary_to_term(value)
+        insert_shard(routing_data, end_key, tag)
+        routing_data
+
+      {:layout_log, log_id} ->
+        service_ref = OtpRef.to_tuple(value)
+
+        routing_data
+        |> insert_log(log_id)
+        |> put_log_service(log_id, service_ref)
+
+      _ ->
+        # Unknown or non-routable key type - ignore
+        routing_data
+    end
+  end
+
+  # Handle {:clear, key} mutations
+  defp apply_mutation({:clear, key}, routing_data) do
+    case SystemKeys.parse_key(key) do
+      {:shard_key, end_key} ->
+        delete_shard(routing_data, end_key)
+        routing_data
+
+      {:layout_log, log_id} ->
+        routing_data
+        |> remove_log(log_id)
+        |> delete_log_service(log_id)
+
+      _ ->
+        routing_data
+    end
+  end
+
+  # Ignore other mutation types (clear_range, atomic, etc.)
+  defp apply_mutation(_mutation, routing_data), do: routing_data
 
   # Build an ETS ordered_set table for ceiling search from storage_teams
   @spec build_shard_table([map()]) :: :ets.table()

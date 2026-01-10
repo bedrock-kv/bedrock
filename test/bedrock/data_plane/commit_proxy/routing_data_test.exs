@@ -2,6 +2,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.OtpRef
 
   describe "new_empty/0" do
     test "creates empty routing data with all fields initialized" do
@@ -284,6 +286,197 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
                {"z", 1},
                {<<0xFF, 0xFF>>, 2}
              ]
+
+      RoutingData.cleanup(routing_data)
+    end
+  end
+
+  describe "apply_mutations/2" do
+    test "handles shard_key set mutation" do
+      routing_data = RoutingData.new_empty()
+      key = SystemKeys.shard_key("m")
+      value = :erlang.term_to_binary(42)
+      updates = [{100, [{:set, key, value}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 42}]
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles multiple shard_key mutations" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [
+        {100,
+         [
+           {:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)},
+           {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(2)},
+           {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(3)}
+         ]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.lookup(updated.shard_table, "a") == [{"a", 1}]
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 2}]
+      assert :ets.lookup(updated.shard_table, "z") == [{"z", 3}]
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles layout_log set mutation - updates log_map and log_services" do
+      routing_data = RoutingData.new_empty()
+      key = SystemKeys.layout_log("log-123")
+      value = OtpRef.from_tuple({:my_log, :node@host})
+      updates = [{100, [{:set, key, value}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      # Should add to log_map at next index
+      assert updated.log_map == %{0 => "log-123"}
+      # Should add to log_services
+      assert updated.log_services == %{"log-123" => {:my_log, :node@host}}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles multiple layout_log mutations" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [
+        {100,
+         [
+           {:set, SystemKeys.layout_log("log-1"), OtpRef.from_tuple({:log1, :n1@host})},
+           {:set, SystemKeys.layout_log("log-2"), OtpRef.from_tuple({:log2, :n2@host})}
+         ]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+      assert updated.log_services["log-1"] == {:log1, :n1@host}
+      assert updated.log_services["log-2"] == {:log2, :n2@host}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles shard_key clear mutation" do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, "m", 42)
+
+      key = SystemKeys.shard_key("m")
+      updates = [{100, [{:clear, key}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.lookup(updated.shard_table, "m") == []
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles layout_log clear mutation" do
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_log("log-123")
+        |> RoutingData.put_log_service("log-123", {:my_log, :node@host})
+
+      key = SystemKeys.layout_log("log-123")
+      updates = [{100, [{:clear, key}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      # Should remove from log_services
+      assert updated.log_services == %{}
+      # log_map removal and reindex
+      assert updated.log_map == %{}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "applies updates from multiple versions in order" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [
+        {100, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)}]},
+        {101, [{:set, SystemKeys.shard_key("b"), :erlang.term_to_binary(2)}]},
+        {102, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(99)}]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      # Later version (102) overwrites earlier (100)
+      assert :ets.lookup(updated.shard_table, "a") == [{"a", 99}]
+      assert :ets.lookup(updated.shard_table, "b") == [{"b", 2}]
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "ignores unknown key types" do
+      routing_data = RoutingData.new_empty()
+
+      # Unknown system key
+      updates = [{100, [{:set, "\xff/system/unknown/foo", "bar"}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      # Should not crash, routing_data unchanged
+      assert updated.log_map == %{}
+      assert updated.log_services == %{}
+      assert :ets.tab2list(updated.shard_table) == []
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "ignores non-system keys" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [{100, [{:set, "user/data", "value"}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert updated.log_map == %{}
+      assert :ets.tab2list(updated.shard_table) == []
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "ignores unsupported mutation types" do
+      routing_data = RoutingData.new_empty()
+
+      # clear_range not supported
+      updates = [{100, [{:clear_range, "start", "end"}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert updated == routing_data
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles mixed shard_key and layout_log mutations" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [
+        {100,
+         [
+           {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
+           {:set, SystemKeys.layout_log("log-1"), OtpRef.from_tuple({:log1, :n1@host})},
+           {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(2)},
+           {:set, SystemKeys.layout_log("log-2"), OtpRef.from_tuple({:log2, :n2@host})}
+         ]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      # Shard entries
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 1}]
+      assert :ets.lookup(updated.shard_table, "z") == [{"z", 2}]
+      # Log entries
+      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+      assert updated.log_services["log-1"] == {:log1, :n1@host}
+      assert updated.log_services["log-2"] == {:log2, :n2@host}
 
       RoutingData.cleanup(routing_data)
     end

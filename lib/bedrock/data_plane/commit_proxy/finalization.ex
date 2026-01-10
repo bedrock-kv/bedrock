@@ -120,6 +120,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :logs_by_id,
       :shard_table,
       :log_map,
+      :log_services,
       :replication_factor
     ]
     defstruct [
@@ -132,6 +133,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :shard_table,
       :log_map,
       :replication_factor,
+      log_services: %{},
       transactions_by_log: %{},
       replied_indices: MapSet.new(),
       aborted_count: 0,
@@ -152,6 +154,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             logs_by_id: %{Log.id() => [Bedrock.range_tag()]},
             shard_table: :ets.table(),
             log_map: %{non_neg_integer() => Log.id()},
+            log_services: %{Log.id() => {atom(), node()}},
             replication_factor: pos_integer(),
             transactions_by_log: %{Log.id() => Transaction.encoded()},
             replied_indices: MapSet.t(non_neg_integer()),
@@ -269,8 +272,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     # Routing data is passed in from the commit proxy server
     # Table is created once on recovery and kept up-to-date as metadata changes
-    %RoutingData{shard_table: shard_table, log_map: log_map, replication_factor: replication_factor} =
-      routing_data
+    %RoutingData{
+      shard_table: shard_table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    } = routing_data
 
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
@@ -281,6 +288,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       logs_by_id: logs,
       shard_table: shard_table,
       log_map: log_map,
+      log_services: log_services,
       replication_factor: replication_factor,
       stage: :ready_for_resolution,
       metadata: initial_metadata
@@ -424,16 +432,29 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp apply_metadata_updates(plan, metadata_updates, opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
 
+    # Build routing_data from plan fields
     routing_data = %RoutingData{
       shard_table: plan.shard_table,
       log_map: plan.log_map,
+      log_services: plan.log_services,
       replication_factor: plan.replication_factor
     }
 
-    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/3)
-    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates, routing_data)
+    # Apply routing mutations (shard_key, layout_log) to routing_data
+    updated_routing_data = RoutingData.apply_mutations(routing_data, metadata_updates)
 
-    %{plan | stage: :conflicts_resolved, metadata_updates: metadata_updates, metadata: merged_metadata}
+    # Apply non-routing mutations (shard, layout_resolver) to metadata
+    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/2)
+    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates)
+
+    %{
+      plan
+      | stage: :conflicts_resolved,
+        metadata_updates: metadata_updates,
+        metadata: merged_metadata,
+        log_map: updated_routing_data.log_map,
+        log_services: updated_routing_data.log_services
+    }
   end
 
   @spec call_all_resolvers_with_map(

@@ -2,206 +2,153 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.MetadataMerge
-  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.OtpRef
+  alias Bedrock.SystemKeys.ShardMetadata
 
-  defp make_routing_data(table) do
-    %RoutingData{shard_table: table, log_map: %{}, replication_factor: 3}
+  # Helper to create shard metadata binary using ShardMetadata FlatBuffer
+  defp make_shard_binary(start_key, end_key, born_at) do
+    ShardMetadata.new(start_key, end_key, born_at)
   end
 
-  describe "merge/3 with shard_key mutations" do
-    test "inserts shard_key into ETS shard_table" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      key = SystemKeys.shard_key("m")
-      value = :erlang.term_to_binary(42)
+  describe "merge/2 with layout_resolver mutations" do
+    test "accumulates resolvers in metadata" do
+      key = SystemKeys.layout_resolver("m")
+      value = OtpRef.from_tuple({:resolver_1, :node@host})
       updates = [{100, [{:set, key, value}]}]
 
-      MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
-      assert :ets.lookup(table, "m") == [{"m", 42}]
+      assert result.resolvers["m"] == {:resolver_1, :node@host}
     end
 
-    test "inserts multiple shard_keys" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
+    test "accumulates multiple resolvers" do
       updates = [
         {100,
          [
-           {:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)},
-           {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(2)},
-           {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(3)}
+           {:set, SystemKeys.layout_resolver("a"), OtpRef.from_tuple({:r1, :n1@host})},
+           {:set, SystemKeys.layout_resolver("m"), OtpRef.from_tuple({:r2, :n2@host})}
          ]}
       ]
 
-      MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
-      assert :ets.lookup(table, "a") == [{"a", 1}]
-      assert :ets.lookup(table, "m") == [{"m", 2}]
-      assert :ets.lookup(table, "z") == [{"z", 3}]
+      assert result.resolvers["a"] == {:r1, :n1@host}
+      assert result.resolvers["m"] == {:r2, :n2@host}
     end
 
-    test "overwrites existing shard_key entry" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      :ets.insert(table, {"m", 99})
-      routing_data = make_routing_data(table)
+    test "removes resolver on clear" do
+      existing = %{resolvers: %{"m" => {:resolver_1, :node@host}}}
+      key = SystemKeys.layout_resolver("m")
+      updates = [{100, [{:clear, key}]}]
 
-      key = SystemKeys.shard_key("m")
-      value = :erlang.term_to_binary(42)
-      updates = [{100, [{:set, key, value}]}]
+      result = MetadataMerge.merge(existing, updates)
 
-      MetadataMerge.merge(%{}, updates, routing_data)
-
-      assert :ets.lookup(table, "m") == [{"m", 42}]
+      assert result.resolvers == %{}
     end
   end
 
-  describe "merge/3 with layout_log mutations" do
-    test "accumulates log_services in metadata" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      key = SystemKeys.layout_log("log-123")
-      value = OtpRef.from_tuple({:my_log, :node@host})
+  describe "merge/2 with shard mutations" do
+    test "accumulates shard metadata" do
+      # ShardMetadata uses FlatBuffer encoding
+      value = make_shard_binary("", "m", 100)
+      key = SystemKeys.shard("1")
       updates = [{100, [{:set, key, value}]}]
 
-      result = MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
-      assert result.log_services["log-123"] == {:my_log, :node@host}
+      # ShardMetadata.read returns a map with start_key, end_key, born_at, ended_at
+      assert result.shards["1"].born_at == 100
     end
 
-    test "accumulates multiple logs" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
+    test "removes shard on clear" do
+      existing = %{shards: %{"1" => %{born_at: 100}}}
+      key = SystemKeys.shard("1")
+      updates = [{100, [{:clear, key}]}]
 
-      updates = [
-        {100,
-         [
-           {:set, SystemKeys.layout_log("log-1"), OtpRef.from_tuple({:log1, :n1@host})},
-           {:set, SystemKeys.layout_log("log-2"), OtpRef.from_tuple({:log2, :n2@host})}
-         ]}
-      ]
+      result = MetadataMerge.merge(existing, updates)
 
-      result = MetadataMerge.merge(%{}, updates, routing_data)
-
-      assert result.log_services["log-1"] == {:log1, :n1@host}
-      assert result.log_services["log-2"] == {:log2, :n2@host}
+      assert result.shards == %{}
     end
+  end
 
-    test "preserves existing metadata fields" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
+  describe "merge/2 preserves existing metadata" do
+    test "preserves other fields when adding resolvers" do
       existing = %{other_field: "preserved"}
-      key = SystemKeys.layout_log("log-123")
-      value = OtpRef.from_tuple({:my_log, :node@host})
+      key = SystemKeys.layout_resolver("m")
+      value = OtpRef.from_tuple({:resolver_1, :node@host})
       updates = [{100, [{:set, key, value}]}]
 
-      result = MetadataMerge.merge(existing, updates, routing_data)
+      result = MetadataMerge.merge(existing, updates)
 
       assert result.other_field == "preserved"
-      assert result.log_services["log-123"] == {:my_log, :node@host}
+      assert result.resolvers["m"] == {:resolver_1, :node@host}
     end
   end
 
-  describe "merge/3 with clear mutations" do
-    test "removes shard_key from ETS" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      :ets.insert(table, {"m", 42})
-      routing_data = make_routing_data(table)
-
+  describe "merge/2 ignores routing keys" do
+    test "ignores shard_key mutations (handled by RoutingData)" do
       key = SystemKeys.shard_key("m")
-      updates = [{100, [{:clear, key}]}]
+      value = :erlang.term_to_binary(42)
+      updates = [{100, [{:set, key, value}]}]
 
-      MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
-      assert :ets.lookup(table, "m") == []
+      # shard_key is handled by RoutingData, not MetadataMerge
+      assert result == %{}
     end
 
-    test "removes layout_log from metadata" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      existing = %{log_services: %{"log-123" => {:my_log, :node@host}}}
+    test "ignores layout_log mutations (handled by RoutingData)" do
       key = SystemKeys.layout_log("log-123")
-      updates = [{100, [{:clear, key}]}]
+      value = OtpRef.from_tuple({:my_log, :node@host})
+      updates = [{100, [{:set, key, value}]}]
 
-      result = MetadataMerge.merge(existing, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
-      assert result.log_services == %{}
-    end
-
-    test "clear on non-existent key is safe" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      key = SystemKeys.shard_key("nonexistent")
-      updates = [{100, [{:clear, key}]}]
-
-      # Should not raise
-      result = MetadataMerge.merge(%{}, updates, routing_data)
+      # layout_log is handled by RoutingData, not MetadataMerge
       assert result == %{}
     end
   end
 
-  describe "merge/3 with multiple versions" do
-    test "applies updates from multiple versions in order" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      updates = [
-        {100, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)}]},
-        {101, [{:set, SystemKeys.shard_key("b"), :erlang.term_to_binary(2)}]},
-        {102, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(99)}]}
-      ]
-
-      MetadataMerge.merge(%{}, updates, routing_data)
-
-      # Later version (102) overwrites earlier (100)
-      assert :ets.lookup(table, "a") == [{"a", 99}]
-      assert :ets.lookup(table, "b") == [{"b", 2}]
-    end
-  end
-
-  describe "merge/3 with unknown key types" do
+  describe "merge/2 with unknown key types" do
     test "ignores unrecognized system keys" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      # Unknown system key
       updates = [{100, [{:set, "\xff/system/unknown/foo", "bar"}]}]
 
-      result = MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
       assert result == %{}
-      assert :ets.tab2list(table) == []
     end
 
     test "ignores non-system keys" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      # Non-system key (shouldn't happen in practice, but handle gracefully)
       updates = [{100, [{:set, "user/data", "value"}]}]
 
-      result = MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
       assert result == %{}
     end
 
     test "ignores unsupported mutation types" do
-      table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = make_routing_data(table)
-
-      # clear_range not supported yet
       updates = [{100, [{:clear_range, "start", "end"}]}]
 
-      result = MetadataMerge.merge(%{}, updates, routing_data)
+      result = MetadataMerge.merge(%{}, updates)
 
       assert result == %{}
+    end
+  end
+
+  describe "merge/2 with multiple versions" do
+    test "applies updates from multiple versions in order" do
+      updates = [
+        {100, [{:set, SystemKeys.layout_resolver("a"), OtpRef.from_tuple({:r1, :n1@host})}]},
+        {101, [{:set, SystemKeys.layout_resolver("b"), OtpRef.from_tuple({:r2, :n2@host})}]},
+        {102, [{:set, SystemKeys.layout_resolver("a"), OtpRef.from_tuple({:r3, :n3@host})}]}
+      ]
+
+      result = MetadataMerge.merge(%{}, updates)
+
+      # Later version (102) overwrites earlier (100)
+      assert result.resolvers["a"] == {:r3, :n3@host}
+      assert result.resolvers["b"] == {:r2, :n2@host}
     end
   end
 end

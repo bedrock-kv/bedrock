@@ -138,7 +138,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       reply(
         %{
           t
-          | transaction_system_layout: transaction_system_layout,
+          | sequencer: transaction_system_layout.sequencer,
+            transaction_system_layout: transaction_system_layout,
             resolver_layout: resolver_layout,
             routing_data: routing_data,
             mode: :running

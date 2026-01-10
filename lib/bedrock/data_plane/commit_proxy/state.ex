@@ -12,6 +12,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   @type t :: %__MODULE__{
           cluster: module(),
           director: pid(),
+          sequencer: pid() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           resolver_layout: ResolverLayout.t() | nil,
           epoch: Bedrock.epoch(),
@@ -26,6 +27,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
         }
   defstruct cluster: nil,
             director: nil,
+            sequencer: nil,
             transaction_system_layout: nil,
             resolver_layout: nil,
             epoch: nil,

@@ -175,6 +175,65 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
     end
   end
 
+  describe "lookup_shards_for_range/3 - range to tags" do
+    setup do
+      table = :ets.new(:range_test, [:ordered_set, :public])
+      # 4 shards: tag 0 covers "" to "d", tag 1 covers "d" to "h",
+      # tag 2 covers "h" to "m", tag 3 covers "m" to \xff
+      :ets.insert(table, {"d", 0})
+      :ets.insert(table, {"h", 1})
+      :ets.insert(table, {"m", 2})
+      :ets.insert(table, {"\xff", 3})
+
+      on_exit(fn ->
+        try do
+          :ets.delete(table)
+        rescue
+          ArgumentError -> :ok
+        end
+      end)
+
+      {:ok, table: table}
+    end
+
+    test "range within single shard returns one tag", %{table: table} do
+      # "a" to "c" is entirely within tag 0 (ends at "d")
+      assert ShardRouter.lookup_shards_for_range(table, "a", "c") == [0]
+    end
+
+    test "range spanning two shards returns both tags", %{table: table} do
+      # "c" to "f" spans tag 0 and tag 1
+      tags = ShardRouter.lookup_shards_for_range(table, "c", "f")
+      assert Enum.sort(tags) == [0, 1]
+    end
+
+    test "range spanning all shards returns all tags", %{table: table} do
+      # "" to \xff spans all shards
+      tags = ShardRouter.lookup_shards_for_range(table, "", "\xff")
+      assert Enum.sort(tags) == [0, 1, 2, 3]
+    end
+
+    test "range at exact boundary", %{table: table} do
+      # "d" to "h" - starts at boundary of tag 0/1, ends at boundary of tag 1/2
+      # "d" belongs to tag 0 (end_key inclusive), "h" belongs to tag 1
+      tags = ShardRouter.lookup_shards_for_range(table, "d", "h")
+      assert Enum.sort(tags) == [0, 1]
+    end
+
+    test "empty range returns single shard", %{table: table} do
+      # "e" to "e" (exclusive end) - effectively empty but we look up start
+      tags = ShardRouter.lookup_shards_for_range(table, "e", "e")
+      # Empty range still needs the shard for the start key
+      assert tags == [1]
+    end
+
+    test "range in last shard", %{table: table} do
+      # "z" to \xff is entirely in the last shard
+      tags = ShardRouter.lookup_shards_for_range(table, "z", "\xff")
+      assert tags == [3]
+    end
+  end
+
   describe "get_logs_for_key/4 - full routing" do
     setup do
       table = :ets.new(:routing_test, [:ordered_set, :public])

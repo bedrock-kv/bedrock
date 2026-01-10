@@ -129,6 +129,76 @@ defmodule Bedrock.DataPlane.ShardRouter do
   end
 
   @doc """
+  Looks up all shard tags that overlap with a key range.
+
+  Used for range mutations (clear_range) that may span multiple shards.
+  Returns a list of tags for all shards that intersect the range [start_key, end_key).
+
+  ## Parameters
+
+    - `table` - ETS table reference with `{end_key, tag}` entries
+    - `start_key` - Start of the range (inclusive)
+    - `end_key` - End of the range (exclusive)
+
+  ## Returns
+
+  List of shard tags that the range intersects with.
+
+  ## Examples
+
+      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\\xff", 3}
+      iex> lookup_shards_for_range(table, "a", "c")
+      [0]
+      iex> lookup_shards_for_range(table, "c", "f")
+      [0, 1]
+
+  """
+  @spec lookup_shards_for_range(:ets.table(), binary(), binary()) :: [non_neg_integer()]
+  def lookup_shards_for_range(table, start_key, end_key) when is_binary(start_key) and is_binary(end_key) do
+    # Find the first shard that contains start_key
+    first_tag = lookup_shard(table, start_key)
+
+    # If start_key == end_key (empty range), just return the start shard
+    if start_key >= end_key do
+      [first_tag]
+    else
+      # Collect all shards from first_tag until we find one that contains end_key
+      collect_shards_in_range(table, start_key, end_key, first_tag)
+    end
+  end
+
+  # Collect all shard tags that overlap with the range
+  @spec collect_shards_in_range(:ets.table(), binary(), binary(), non_neg_integer()) ::
+          [non_neg_integer()]
+  defp collect_shards_in_range(table, start_key, end_key, _first_tag) do
+    # Get all entries from the table
+    entries = :ets.tab2list(table)
+
+    # Sort by end_key
+    sorted = Enum.sort_by(entries, fn {ek, _tag} -> ek end)
+
+    # Find the range of shards that overlap with [start_key, end_key)
+    # A shard with end_key E covers keys from the previous shard's end (or "") up to E (inclusive)
+    # So shard overlaps [start_key, end_key) if:
+    #   shard_end_key >= start_key (shard includes or extends past start)
+    sorted
+    |> Enum.filter(fn {shard_end_key, _tag} ->
+      shard_end_key >= start_key
+    end)
+    |> Enum.reduce_while([], fn {shard_end_key, tag}, acc ->
+      acc = [tag | acc]
+
+      # If this shard's end_key >= end_key, we've covered the whole range
+      if shard_end_key >= end_key do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  @doc """
   Routes a key to its logs using shard lookup and golden ratio log selection.
 
   ## Parameters

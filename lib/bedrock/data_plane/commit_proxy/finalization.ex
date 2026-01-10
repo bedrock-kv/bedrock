@@ -36,6 +36,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Sequencer
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
   alias Bedrock.KeyRange
@@ -114,7 +115,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :commit_version,
       :last_commit_version,
       :storage_teams,
-      :logs_by_id
+      :logs_by_id,
+      :shard_table,
+      :log_map,
+      :replication_factor
     ]
     defstruct [
       :transactions,
@@ -123,6 +127,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :last_commit_version,
       :storage_teams,
       :logs_by_id,
+      :shard_table,
+      :log_map,
+      :replication_factor,
       transactions_by_log: %{},
       replied_indices: MapSet.new(),
       aborted_count: 0,
@@ -141,6 +148,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             last_commit_version: Bedrock.version(),
             storage_teams: [StorageTeamDescriptor.t()],
             logs_by_id: %{Log.id() => [Bedrock.range_tag()]},
+            shard_table: :ets.table(),
+            log_map: %{non_neg_integer() => Log.id()},
+            replication_factor: pos_integer(),
             transactions_by_log: %{Log.id() => Transaction.encoded()},
             replied_indices: MapSet.t(non_neg_integer()),
             aborted_count: non_neg_integer(),
@@ -250,16 +260,69 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t(), map()) ::
           FinalizationPlan.t()
   def create_finalization_plan(batch, transaction_system_layout, initial_metadata \\ %{}) do
+    storage_teams = transaction_system_layout.storage_teams
+    logs = transaction_system_layout.logs
+
+    # Build ETS table for ceiling search from storage_teams
+    shard_table = build_shard_table(storage_teams)
+
+    # Build log_map (index -> log_id) from logs
+    log_map = build_log_map(logs)
+
+    # Infer replication factor from first storage team (all should have same count)
+    replication_factor = infer_replication_factor(storage_teams, logs)
+
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
       transaction_count: Batch.transaction_count(batch),
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
-      storage_teams: transaction_system_layout.storage_teams,
-      logs_by_id: transaction_system_layout.logs,
+      storage_teams: storage_teams,
+      logs_by_id: logs,
+      shard_table: shard_table,
+      log_map: log_map,
+      replication_factor: replication_factor,
       stage: :ready_for_resolution,
       metadata: initial_metadata
     }
+  end
+
+  # Build an ETS ordered_set table for ceiling search from storage_teams
+  @spec build_shard_table([StorageTeamDescriptor.t()]) :: :ets.table()
+  defp build_shard_table(storage_teams) do
+    table = :ets.new(:shard_keys, [:ordered_set, :public])
+
+    Enum.each(storage_teams, fn %{tag: tag, key_range: {_start_key, end_key}} ->
+      :ets.insert(table, {end_key, tag})
+    end)
+
+    table
+  end
+
+  # Build a map from log index to log_id for golden ratio lookup
+  @spec build_log_map(%{Log.id() => term()}) :: %{non_neg_integer() => Log.id()}
+  defp build_log_map(logs) do
+    logs
+    |> Map.keys()
+    |> Enum.sort()
+    |> Enum.with_index()
+    |> Map.new(fn {log_id, index} -> {index, log_id} end)
+  end
+
+  # Infer replication factor from the data
+  @spec infer_replication_factor([StorageTeamDescriptor.t()] | [map()], %{Log.id() => term()}) :: pos_integer()
+  defp infer_replication_factor([], logs) do
+    # No storage teams - default to all logs
+    max(1, map_size(logs))
+  end
+
+  defp infer_replication_factor([first_team | _], logs) do
+    # Use the storage_ids count from the first team if available
+    # Fall back to log count for simplified test data
+    case Map.get(first_team, :storage_ids) do
+      nil -> max(1, map_size(logs))
+      storage_ids -> max(1, length(storage_ids))
+    end
   end
 
   # ============================================================================
@@ -627,26 +690,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         ) ::
           {:cont, {:ok, %{Log.id() => [term()]}}}
           | {:halt, {:error, term()}}
-  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, logs_by_id, acc) do
+  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, _logs_by_id, acc) do
     if MapSet.member?(plan.replied_indices, idx) do
       # Skip transactions that were already replied to (aborted)
       {:cont, {:ok, acc}}
     else
-      process_transaction_mutations(binary, plan.storage_teams, logs_by_id, acc)
+      process_transaction_mutations(binary, plan, acc)
     end
   end
 
-  @spec process_transaction_mutations(
-          binary(),
-          [StorageTeamDescriptor.t()],
-          %{Log.id() => [Bedrock.range_tag()]},
-          %{Log.id() => [term()]}
-        ) ::
+  @spec process_transaction_mutations(binary(), FinalizationPlan.t(), %{Log.id() => [term()]}) ::
           {:cont, {:ok, %{Log.id() => [term()]}}} | {:halt, {:error, term()}}
-  defp process_transaction_mutations(binary_transaction, storage_teams, logs_by_id, acc) do
+  defp process_transaction_mutations(binary_transaction, plan, acc) do
     case Transaction.mutations(binary_transaction) do
       {:ok, mutations_stream} ->
-        case process_mutations_for_transaction(mutations_stream, storage_teams, logs_by_id, acc) do
+        case process_mutations_for_transaction(mutations_stream, plan, acc) do
           {:ok, updated_acc} ->
             {:cont, {:ok, updated_acc}}
 
@@ -662,44 +720,72 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec process_mutations_for_transaction(
-          Enumerable.t(),
-          [StorageTeamDescriptor.t()],
-          %{Log.id() => [Bedrock.range_tag()]},
-          %{Log.id() => [term()]}
-        ) ::
+  @spec process_mutations_for_transaction(Enumerable.t(), FinalizationPlan.t(), %{Log.id() => [term()]}) ::
           {:ok, %{Log.id() => [term()]}} | {:error, term()}
-  defp process_mutations_for_transaction(mutations_stream, storage_teams, logs_by_id, acc) do
+  defp process_mutations_for_transaction(mutations_stream, plan, acc) do
     Enum.reduce_while(mutations_stream, {:ok, acc}, fn mutation, {:ok, mutations_acc} ->
-      distribute_mutation_to_logs(mutation, storage_teams, logs_by_id, mutations_acc)
+      distribute_mutation_to_logs_via_shard_router(mutation, plan, mutations_acc)
     end)
   end
 
-  @spec distribute_mutation_to_logs(
-          term(),
-          [StorageTeamDescriptor.t()],
-          %{Log.id() => [Bedrock.range_tag()]},
-          %{Log.id() => [term()]}
-        ) ::
-          {:cont, {:ok, %{Log.id() => [term()]}}}
-          | {:halt, {:error, term()}}
-  defp distribute_mutation_to_logs(mutation, storage_teams, logs_by_id, mutations_acc) do
+  # New routing using ShardRouter with ceiling search and golden ratio
+  @spec distribute_mutation_to_logs_via_shard_router(term(), FinalizationPlan.t(), %{Log.id() => [term()]}) ::
+          {:cont, {:ok, %{Log.id() => [term()]}}} | {:halt, {:error, term()}}
+  defp distribute_mutation_to_logs_via_shard_router(mutation, plan, mutations_acc) do
     key_or_range = mutation_to_key_or_range(mutation)
+    %{shard_table: shard_table, log_map: log_map, replication_factor: m} = plan
 
-    case key_or_range_to_tags(key_or_range, storage_teams) do
-      {:ok, []} ->
-        {:halt, {:error, {:storage_team_coverage_error, key_or_range}}}
+    # Get tags for this mutation using ceiling search
+    tags = get_tags_for_mutation(key_or_range, shard_table)
 
-      {:ok, affected_tags} ->
-        affected_logs = find_logs_for_tags(affected_tags, logs_by_id)
+    if tags == [] do
+      {:halt, {:error, {:storage_team_coverage_error, key_or_range}}}
+    else
+      # For each tag, compute log indices using golden ratio and collect unique log_ids
+      n = map_size(log_map)
 
-        updated_acc =
-          Enum.reduce(affected_logs, mutations_acc, fn log_id, acc_inner ->
-            Map.update!(acc_inner, log_id, &[mutation | &1])
-          end)
+      affected_log_ids =
+        tags
+        |> Enum.flat_map(fn tag ->
+          # Convert non-integer tags to integers for golden ratio algorithm
+          numeric_tag = tag_to_integer(tag)
 
-        {:cont, {:ok, updated_acc}}
+          numeric_tag
+          |> ShardRouter.get_log_indices(n, m)
+          |> Enum.map(&Map.fetch!(log_map, &1))
+        end)
+        |> Enum.uniq()
+
+      updated_acc =
+        Enum.reduce(affected_log_ids, mutations_acc, fn log_id, acc_inner ->
+          Map.update!(acc_inner, log_id, &[mutation | &1])
+        end)
+
+      {:cont, {:ok, updated_acc}}
     end
+  end
+
+  # Convert tag to integer for golden ratio algorithm
+  # Production code uses integer tags, but tests may use strings
+  @spec tag_to_integer(term()) :: non_neg_integer()
+  defp tag_to_integer(tag) when is_integer(tag), do: tag
+
+  defp tag_to_integer(tag) when is_binary(tag) do
+    # Hash string tags to integers
+    :erlang.phash2(tag)
+  end
+
+  defp tag_to_integer(tag), do: :erlang.phash2(tag)
+
+  # Get shard tags for a key or range using ShardRouter
+  # Returns whatever tag type is stored in the ETS table (can be integer or string in tests)
+  @spec get_tags_for_mutation(Bedrock.key() | Bedrock.key_range(), :ets.table()) :: [term()]
+  defp get_tags_for_mutation({start_key, end_key}, shard_table) do
+    ShardRouter.lookup_shards_for_range(shard_table, start_key, end_key)
+  end
+
+  defp get_tags_for_mutation(key, shard_table) do
+    [ShardRouter.lookup_shard(shard_table, key)]
   end
 
   @spec mutation_to_key_or_range(
@@ -944,6 +1030,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:ok, non_neg_integer(), non_neg_integer(), map()}
           | {:error, finalization_error()}
   def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _current_metadata, _opts) do
+    # Clean up ETS table to prevent memory leaks
+    cleanup_shard_table(plan.shard_table)
+
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
@@ -955,6 +1044,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, finalization_error()}
   defp handle_error(%FinalizationPlan{error: error} = plan, opts) when not is_nil(error) do
+    # Clean up ETS table to prevent memory leaks
+    cleanup_shard_table(plan.shard_table)
+
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
@@ -967,5 +1059,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     abort_reply_fn.(pending_reply_fns)
 
     {:error, plan.error}
+  end
+
+  # Clean up the ETS shard table created during finalization
+  @spec cleanup_shard_table(:ets.table()) :: true
+  defp cleanup_shard_table(table) do
+    :ets.delete(table)
+  rescue
+    # Table may have already been deleted
+    ArgumentError -> true
   end
 end

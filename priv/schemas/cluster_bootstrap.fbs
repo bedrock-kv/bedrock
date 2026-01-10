@@ -1,0 +1,21 @@
+// Bootstrap info stored in object storage
+namespace Bedrock.SystemKeys;
+
+table OtpRef {
+  otp_name: string;
+  node: string;
+}
+
+table LogInfo {
+  id: string;
+  otp_ref: OtpRef;
+}
+
+table ClusterBootstrap {
+  cluster_id: string;
+  epoch: ulong;
+  logs: [LogInfo];
+  metadata_snapshot_path: string;
+}
+
+root_type ClusterBootstrap;

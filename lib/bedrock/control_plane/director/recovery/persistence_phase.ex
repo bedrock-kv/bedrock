@@ -27,6 +27,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.ShardMetadata
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -156,7 +157,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       tx
       |> Tx.set(SystemKeys.layout_sequencer(), :erlang.term_to_binary(encoded_sequencer))
       |> Tx.set(SystemKeys.layout_proxies(), :erlang.term_to_binary(encoded_proxies))
-      |> Tx.set(SystemKeys.layout_resolvers(), :erlang.term_to_binary(encoded_resolvers))
       |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
       |> Tx.set(
         SystemKeys.layout_director(),
@@ -164,6 +164,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       )
       |> Tx.set(SystemKeys.layout_rate_keeper(), :erlang.term_to_binary(nil))
       |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
+
+    # Set resolver keys using ceiling-search pattern (keyed by end_key)
+    tx = build_resolver_keys(tx, encoded_resolvers)
 
     # Set log keys directly
     tx =
@@ -176,20 +179,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
       end)
 
-    # Set storage keys directly
-    tx =
-      transaction_system_layout.storage_teams
-      |> Enum.with_index()
-      |> Enum.reduce(tx, fn {storage_team, index}, tx ->
-        team_id = "team_#{index}"
-
-        encoded_team =
-          storage_team
-          |> encode_storage_team_for_storage(cluster)
-          |> :erlang.term_to_binary()
-
-        Tx.set(tx, SystemKeys.layout_storage_team(team_id), encoded_team)
-      end)
+    # Set shard keys using ceiling-search pattern
+    tx = build_shard_keys(tx, transaction_system_layout.storage_teams)
 
     # Set recovery keys directly and return tx
     tx
@@ -218,10 +209,50 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     log_descriptor
   end
 
-  @spec encode_storage_team_for_storage(map(), module()) :: map()
-  defp encode_storage_team_for_storage(storage_team, _cluster) do
-    # Storage team descriptors typically don't contain PIDs directly
-    storage_team
+  # Build resolver keys using ceiling-search pattern
+  # Resolvers are stored as {start_key, pid} tuples
+  # We convert to {end_key -> resolver} format where end_key is the next resolver's start_key or \xff
+  @spec build_resolver_keys(Tx.t(), [{Bedrock.key(), pid()}]) :: Tx.t()
+  defp build_resolver_keys(tx, []), do: tx
+
+  defp build_resolver_keys(tx, resolvers) when is_list(resolvers) do
+    # Sort by start_key
+    sorted = Enum.sort_by(resolvers, fn {start_key, _pid} -> start_key end)
+
+    # Build ceiling-search keys: each resolver is keyed by the END of its range
+    # The last resolver covers up to \xff
+    sorted
+    |> Enum.with_index()
+    |> Enum.reduce(tx, fn {{_start_key, pid}, index}, tx ->
+      # End key is either the next resolver's start_key, or \xff for the last one
+      end_key =
+        case Enum.at(sorted, index + 1) do
+          {next_start, _} -> next_start
+          nil -> "\xff"
+        end
+
+      # Still use term_to_binary for pid values until services use named processes
+      Tx.set(tx, SystemKeys.layout_resolver(end_key), :erlang.term_to_binary(pid))
+    end)
+  end
+
+  # Build shard keys from storage_teams
+  # Creates both shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
+  @spec build_shard_keys(Tx.t(), [map()]) :: Tx.t()
+  defp build_shard_keys(tx, []), do: tx
+
+  defp build_shard_keys(tx, storage_teams) when is_list(storage_teams) do
+    Enum.reduce(storage_teams, tx, fn storage_team, tx ->
+      %{tag: tag, key_range: {start_key, end_key}} = storage_team
+
+      # Write shard_key(end_key) -> tag (for ceiling search)
+      tx = Tx.set(tx, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag))
+
+      # Write shard(tag) -> ShardMetadata (FlatBuffer encoded)
+      # born_at is 0 for now - will be set properly once we track shard versions
+      metadata = ShardMetadata.new(start_key, end_key, 0)
+      Tx.set(tx, SystemKeys.shard(tag), metadata)
+    end)
   end
 
   @spec submit_system_transaction(

@@ -53,7 +53,6 @@ defmodule Bedrock.SystemKeysTest do
       layout_keys = [
         {SystemKeys.layout_sequencer(), "\xff/system/layout/sequencer"},
         {SystemKeys.layout_proxies(), "\xff/system/layout/proxies"},
-        {SystemKeys.layout_resolvers(), "\xff/system/layout/resolvers"},
         {SystemKeys.layout_services(), "\xff/system/layout/services"},
         {SystemKeys.layout_director(), "\xff/system/layout/director"},
         {SystemKeys.layout_rate_keeper(), "\xff/system/layout/rate_keeper"},
@@ -68,14 +67,25 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.layout_log("log_123") == "\xff/system/layout/logs/log_123"
       assert SystemKeys.layout_log("another_log") == "\xff/system/layout/logs/another_log"
 
-      # Test layout_storage_team/1 with different IDs
-      assert SystemKeys.layout_storage_team("team_456") == "\xff/system/layout/storage/team_456"
-      assert SystemKeys.layout_storage_team("another_team") == "\xff/system/layout/storage/another_team"
+      # Test layout_resolver/1 with end_key (ceiling search pattern)
+      assert SystemKeys.layout_resolver("m") == "\xff/system/layout/resolvers/m"
+      assert SystemKeys.layout_resolver("\xff") == "\xff/system/layout/resolvers/\xff"
+
+      # Test shard_key/1 with end_key (ceiling search pattern)
+      assert SystemKeys.shard_key("m") == "\xff/system/shard_keys/m"
+      assert SystemKeys.shard_key("\xff") == "\xff/system/shard_keys/\xff"
+
+      # Test shard/1 with tag
+      assert SystemKeys.shard(0) == "\xff/system/shards/0"
+      assert SystemKeys.shard(42) == "\xff/system/shards/42"
     end
 
     test "prefix keys for range queries" do
       assert SystemKeys.layout_logs_prefix() == "\xff/system/layout/logs/"
-      assert SystemKeys.layout_storage_teams_prefix() == "\xff/system/layout/storage/"
+      assert SystemKeys.layout_resolvers_prefix() == "\xff/system/layout/resolvers/"
+      assert SystemKeys.shard_keys_prefix() == "\xff/system/shard_keys/"
+      assert SystemKeys.shards_prefix() == "\xff/system/shards/"
+      assert SystemKeys.materializer_keys_prefix() == "\xff/system/materializer_keys/"
     end
   end
 
@@ -134,7 +144,6 @@ defmodule Bedrock.SystemKeysTest do
       expected_keys = [
         SystemKeys.layout_sequencer(),
         SystemKeys.layout_proxies(),
-        SystemKeys.layout_resolvers(),
         SystemKeys.layout_services(),
         SystemKeys.layout_director(),
         SystemKeys.layout_rate_keeper(),
@@ -142,7 +151,8 @@ defmodule Bedrock.SystemKeysTest do
       ]
 
       # Verify all expected keys are present and count is correct
-      assert length(keys) == 7
+      # Note: layout_resolvers is now dynamic (ceiling search pattern), not in this list
+      assert length(keys) == 6
       assert_keys_present(keys, expected_keys)
     end
 
@@ -214,7 +224,10 @@ defmodule Bedrock.SystemKeysTest do
       # Test dynamic keys have correct prefix
       dynamic_keys = [
         SystemKeys.layout_log("test"),
-        SystemKeys.layout_storage_team("test")
+        SystemKeys.layout_resolver("test"),
+        SystemKeys.shard_key("test"),
+        SystemKeys.shard(0),
+        SystemKeys.materializer_key("test")
       ]
 
       for key <- dynamic_keys do
@@ -237,21 +250,26 @@ defmodule Bedrock.SystemKeysTest do
     end
 
     test "dynamic keys work with various ID formats" do
-      test_ids = ["123", "log_abc", "team-456", "storage_team_789", ""]
+      test_ids = ["123", "log_abc", "key-456", "end_key_789", ""]
 
       log_prefix = SystemKeys.layout_logs_prefix()
-      storage_prefix = SystemKeys.layout_storage_teams_prefix()
+      shard_keys_prefix = SystemKeys.shard_keys_prefix()
+      resolver_prefix = SystemKeys.layout_resolvers_prefix()
 
       for id <- test_ids do
         log_key = SystemKeys.layout_log(id)
-        storage_key = SystemKeys.layout_storage_team(id)
+        shard_key = SystemKeys.shard_key(id)
+        resolver_key = SystemKeys.layout_resolver(id)
 
         # Verify both prefix and suffix in a single assertion pattern
         assert String.starts_with?(log_key, log_prefix) and String.ends_with?(log_key, id),
                "Log key #{log_key} should start with #{log_prefix} and end with #{id}"
 
-        assert String.starts_with?(storage_key, storage_prefix) and String.ends_with?(storage_key, id),
-               "Storage key #{storage_key} should start with #{storage_prefix} and end with #{id}"
+        assert String.starts_with?(shard_key, shard_keys_prefix) and String.ends_with?(shard_key, id),
+               "Shard key #{shard_key} should start with #{shard_keys_prefix} and end with #{id}"
+
+        assert String.starts_with?(resolver_key, resolver_prefix) and String.ends_with?(resolver_key, id),
+               "Resolver key #{resolver_key} should start with #{resolver_prefix} and end with #{id}"
       end
     end
   end

@@ -79,9 +79,13 @@ defmodule Bedrock.SystemKeys do
   @spec layout_proxies() :: Bedrock.key()
   def layout_proxies, do: "#{@system_prefix}/layout/proxies"
 
-  @doc "List of resolver assignments with key ranges"
-  @spec layout_resolvers() :: Bedrock.key()
-  def layout_resolvers, do: "#{@system_prefix}/layout/resolvers"
+  @doc "Resolver for a key range (ceiling search by end_key)"
+  @spec layout_resolver(end_key :: Bedrock.key()) :: Bedrock.key()
+  def layout_resolver(end_key), do: "#{@system_prefix}/layout/resolvers/#{end_key}"
+
+  @doc "Prefix for resolver keys (for range queries)"
+  @spec layout_resolvers_prefix() :: Bedrock.key()
+  def layout_resolvers_prefix, do: "#{@system_prefix}/layout/resolvers/"
 
   @doc "Configuration for a specific log by ID"
   @spec layout_log(Bedrock.service_id()) :: Bedrock.key()
@@ -91,13 +95,32 @@ defmodule Bedrock.SystemKeys do
   @spec layout_logs_prefix() :: Bedrock.key()
   def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
 
-  @doc "Configuration for a specific storage team by ID"
-  @spec layout_storage_team(Bedrock.service_id()) :: Bedrock.key()
-  def layout_storage_team(team_id), do: "#{@system_prefix}/layout/storage/#{team_id}"
+  # Shard Management Keys
+  # These map key ranges to shard tags and store shard metadata
 
-  @doc "All storage team configurations (for range queries)"
-  @spec layout_storage_teams_prefix() :: Bedrock.key()
-  def layout_storage_teams_prefix, do: "#{@system_prefix}/layout/storage/"
+  @doc "Shard key mapping (ceiling search by end_key) -> tag"
+  @spec shard_key(end_key :: Bedrock.key()) :: Bedrock.key()
+  def shard_key(end_key), do: "#{@system_prefix}/shard_keys/#{end_key}"
+
+  @doc "Prefix for shard_keys (for range queries)"
+  @spec shard_keys_prefix() :: Bedrock.key()
+  def shard_keys_prefix, do: "#{@system_prefix}/shard_keys/"
+
+  @doc "Shard metadata by tag"
+  @spec shard(tag :: non_neg_integer()) :: Bedrock.key()
+  def shard(tag), do: "#{@system_prefix}/shards/#{tag}"
+
+  @doc "Prefix for shards (for range queries)"
+  @spec shards_prefix() :: Bedrock.key()
+  def shards_prefix, do: "#{@system_prefix}/shards/"
+
+  @doc "Materializers for a key range (ceiling search by end_key)"
+  @spec materializer_key(end_key :: Bedrock.key()) :: Bedrock.key()
+  def materializer_key(end_key), do: "#{@system_prefix}/materializer_keys/#{end_key}"
+
+  @doc "Prefix for materializer_keys (for range queries)"
+  @spec materializer_keys_prefix() :: Bedrock.key()
+  def materializer_keys_prefix, do: "#{@system_prefix}/materializer_keys/"
 
   @doc "Map of all services in the transaction system"
   @spec layout_services() :: Bedrock.key()
@@ -174,7 +197,7 @@ defmodule Bedrock.SystemKeys do
   end
 
   @doc """
-  Returns all transaction layout keys as a list (excluding dynamic keys with IDs).
+  Returns all transaction layout keys as a list (excluding dynamic keys with IDs/end_keys).
   Useful for batch operations or validation.
   """
   @spec all_layout_keys() :: [Bedrock.key()]
@@ -182,7 +205,6 @@ defmodule Bedrock.SystemKeys do
     [
       layout_sequencer(),
       layout_proxies(),
-      layout_resolvers(),
       layout_services(),
       layout_director(),
       layout_rate_keeper(),

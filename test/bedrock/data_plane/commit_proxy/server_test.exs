@@ -229,7 +229,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       transaction = TransactionTestSupport.new_log_transaction(0, %{"test" => "index_verification"})
 
       # The call should return either {:ok, version, index} or {:error, reason}
-      result = GenServer.call(commit_proxy, {:commit, transaction}, 5000)
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction}, 5000)
 
       # Verify the response format matches our new API
       case result do
@@ -345,7 +345,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       tasks =
         for {transaction, i} <- Enum.with_index(transactions) do
           Task.async(fn ->
-            result = GenServer.call(commit_proxy, {:commit, transaction}, 10_000)
+            result = GenServer.call(commit_proxy, {:commit, 1, transaction}, 10_000)
             {i, result}
           end)
         end
@@ -504,7 +504,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
           for transaction <- transactions do
             Task.async(fn ->
               # Simulate individual clients committing transactions
-              GenServer.call(commit_proxy, {:commit, transaction}, :infinity)
+              GenServer.call(commit_proxy, {:commit, 1, transaction}, :infinity)
             end)
           end
 
@@ -673,7 +673,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Before recovery, commit should return :locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, transaction})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
 
       # After recovery with correct token, should transition to running
       transaction_system_layout = %{
@@ -688,7 +688,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Now commit returns different error (no_transaction_system_layout because sequencer is nil)
       # but NOT :locked anymore
-      result = GenServer.call(commit_proxy, {:commit, transaction})
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction})
       refute result == {:error, :locked}
     end
 
@@ -724,7 +724,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Should still be locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, transaction})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
     end
 
     test "recovery with correct token after failed attempt succeeds" do
@@ -762,7 +762,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Verify no longer locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      result = GenServer.call(commit_proxy, {:commit, transaction})
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction})
       refute result == {:error, :locked}
     end
   end
@@ -928,6 +928,31 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Should not crash
       assert :ok = Server.terminate(:normal, state)
+    end
+  end
+
+  describe "epoch validation" do
+    test "rejects commit with wrong epoch" do
+      director = self()
+
+      opts = [
+        cluster: TestCluster,
+        director: director,
+        epoch: 42,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 1000,
+        lock_token: "token"
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+      layout = %{sequencer: nil, resolvers: [], logs: %{}, services: %{}, storage_teams: []}
+      :ok = GenServer.call(commit_proxy, {:recover_from, "token", layout})
+
+      transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
+      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 41, transaction})
+      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 43, transaction})
     end
   end
 end

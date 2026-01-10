@@ -163,12 +163,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def handle_call({:commit, transaction}, _from, %{mode: :running, transaction_system_layout: nil} = t)
+  def handle_call({:commit, epoch, transaction}, from, %{mode: :running, epoch: epoch} = t)
       when is_binary(transaction) do
-    reply(t, {:error, :no_transaction_system_layout})
-  end
-
-  def handle_call({:commit, transaction}, from, %{mode: :running} = t) when is_binary(transaction) do
     case start_batch_if_needed(t) do
       {:error, reason} ->
         GenServer.reply(from, {:error, :abort})
@@ -199,7 +195,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def handle_call({:commit, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :running} = t), do: reply(t, {:error, :wrong_epoch})
+
+  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
   @spec handle_info(:timeout | {:metadata_update, [term()]}, State.t()) :: {:noreply, State.t(), timeout()}

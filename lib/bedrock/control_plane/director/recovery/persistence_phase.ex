@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         recovery_attempt.cluster
       )
 
-    case submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
+    case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
         trace_recovery_system_state_persisted()
 
@@ -255,20 +255,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec submit_system_transaction(
-          Transaction.encoded(),
-          [pid()],
-          map()
-        ) ::
+  @spec submit_system_transaction(Transaction.encoded(), [pid()], Bedrock.epoch(), map()) ::
           {:ok, Bedrock.version(), sequence :: non_neg_integer()}
           | {:error, :no_commit_proxies | :timeout | :unavailable}
-  defp submit_system_transaction(_system_transaction, [], _context), do: {:error, :no_commit_proxies}
+  defp submit_system_transaction(_system_transaction, [], _epoch, _context), do: {:error, :no_commit_proxies}
 
-  defp submit_system_transaction(encoded_transaction, proxies, context) when is_list(proxies) do
-    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/2)
+  defp submit_system_transaction(encoded_transaction, proxies, epoch, context) when is_list(proxies) do
+    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/3)
 
     proxies
     |> Enum.random()
-    |> commit_fn.(encoded_transaction)
+    |> commit_fn.(epoch, encoded_transaction)
   end
 end

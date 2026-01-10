@@ -84,6 +84,17 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   end
 
   @impl true
+  def handle_call({:next_commit_version, epoch}, from, %{epoch: epoch} = t) do
+    # Epoch matches - delegate to the actual implementation
+    handle_call(:next_commit_version, from, t)
+  end
+
+  def handle_call({:next_commit_version, _wrong_epoch}, _from, t) do
+    # Epoch mismatch - reject the request
+    reply(t, {:error, :wrong_epoch})
+  end
+
+  @impl true
   def handle_call(:next_commit_version, _from, t) do
     current_monotonic_us = System.monotonic_time(:microsecond)
 
@@ -114,6 +125,16 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
   @impl true
   @spec handle_call({:report_successful_commit, Bedrock.version()}, GenServer.from(), State.t()) ::
           {:reply, :ok, State.t()}
+  def handle_call({:report_successful_commit, epoch, commit_version}, from, %{epoch: epoch} = t) do
+    # Epoch matches - delegate to the actual implementation
+    handle_call({:report_successful_commit, commit_version}, from, t)
+  end
+
+  def handle_call({:report_successful_commit, _wrong_epoch, _commit_version}, _from, t) do
+    # Epoch mismatch - reject the request
+    reply(t, {:error, :wrong_epoch})
+  end
+
   def handle_call({:report_successful_commit, commit_version}, _from, t) do
     # Convert incoming Version.t() to integer for comparison
     commit_version_int = Version.to_integer(commit_version)

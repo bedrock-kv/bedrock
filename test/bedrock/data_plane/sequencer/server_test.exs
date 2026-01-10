@@ -157,6 +157,52 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
     end
   end
 
+  describe "epoch validation for next_commit_version" do
+    test "accepts matching epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:ok, _last_commit, _commit_version}, _new_state} =
+        Server.handle_call({:next_commit_version, 42}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too old)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:next_commit_version, 41}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too new)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:next_commit_version, 43}, self(), state)
+    end
+  end
+
+  describe "epoch validation for report_successful_commit" do
+    test "accepts matching epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, :ok, _new_state} =
+        Server.handle_call({:report_successful_commit, 42, Version.from_integer(100)}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too old)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:report_successful_commit, 41, Version.from_integer(100)}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too new)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:report_successful_commit, 43, Version.from_integer(100)}, self(), state)
+    end
+  end
+
   describe "handle_info/2" do
     test "catch-all ignores unknown messages" do
       state = %State{

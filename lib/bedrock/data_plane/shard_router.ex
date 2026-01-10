@@ -75,6 +75,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
   Looks up the shard tag for a key using ETS ceiling search.
 
   The ETS table must be an ordered_set with entries `{end_key, tag}`.
+  Shard ranges are `[min, max)` - start inclusive, end exclusive.
 
   ## Parameters
 
@@ -88,35 +89,26 @@ defmodule Bedrock.DataPlane.ShardRouter do
   ## Examples
 
       # Table has: {"m", 0}, {"\xff", 1}
+      # Shard 0 covers ["", "m"), Shard 1 covers ["m", "\xff")
       iex> lookup_shard(table, "apple")
       0
+      iex> lookup_shard(table, "m")
+      1  # "m" is the START of shard 1, not end of shard 0
       iex> lookup_shard(table, "zebra")
       1
 
   """
   @spec lookup_shard(:ets.table(), binary()) :: non_neg_integer()
   def lookup_shard(table, key) when is_binary(key) do
-    # Ceiling search: find first end_key >= target
-    # ets:next returns strictly greater, so check for exact match first
-    case :ets.lookup(table, key) do
-      [{^key, tag}] ->
-        # Exact match - key equals an end_key, belongs to this shard
-        tag
-
-      [] ->
-        # No exact match, find ceiling key
-        lookup_ceiling(table, key)
-    end
-  end
-
-  defp lookup_ceiling(table, key) do
+    # Find first end_key > key (strictly greater)
+    # With [min, max) ranges, end_key is exclusive, so we want end_key > key
     case :ets.next(table, key) do
       :"$end_of_table" ->
         # Key is beyond all boundaries - fall back to last entry
         lookup_last(table)
 
       next_key ->
-        # Found ceiling - this shard owns the key
+        # Found the shard whose end_key > key, meaning key is in this shard's range
         :ets.lookup_element(table, next_key, 2)
     end
   end
@@ -167,7 +159,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
     end
   end
 
-  # Collect all shard tags that overlap with the range
+  # Collect all shard tags that overlap with the range [start_key, end_key)
   @spec collect_shards_in_range(:ets.table(), binary(), binary(), non_neg_integer()) ::
           [non_neg_integer()]
   defp collect_shards_in_range(table, start_key, end_key, _first_tag) do
@@ -177,13 +169,14 @@ defmodule Bedrock.DataPlane.ShardRouter do
     # Sort by end_key
     sorted = Enum.sort_by(entries, fn {ek, _tag} -> ek end)
 
-    # Find the range of shards that overlap with [start_key, end_key)
-    # A shard with end_key E covers keys from the previous shard's end (or "") up to E (inclusive)
-    # So shard overlaps [start_key, end_key) if:
-    #   shard_end_key >= start_key (shard includes or extends past start)
+    # Find shards that overlap with [start_key, end_key)
+    # With [min, max) semantics:
+    # - A shard with end_key E covers [prev_end, E)
+    # - Shard overlaps [start_key, end_key) if: shard_end_key > start_key
     sorted
     |> Enum.filter(fn {shard_end_key, _tag} ->
-      shard_end_key >= start_key
+      # Shard must extend past start_key (strictly greater because end is exclusive)
+      shard_end_key > start_key
     end)
     |> Enum.reduce_while([], fn {shard_end_key, tag}, acc ->
       acc = [tag | acc]

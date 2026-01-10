@@ -48,7 +48,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
     end
   end
 
-  defp build_state(overrides \\ %{}) do
+  defp build_state(overrides) do
     base = %State{
       cluster: nil,
       director: self(),

@@ -97,7 +97,8 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       # Create ETS table with shard_keys
       table = :ets.new(:test_shard_keys, [:ordered_set, :public])
 
-      # Insert shard boundaries: tag 0 covers "" to "m", tag 1 covers "m" to \xff
+      # Shard ranges are [min, max) - start inclusive, end exclusive
+      # Tag 0 covers ["", "m"), tag 1 covers ["m", \xff)
       :ets.insert(table, {"m", 0})
       :ets.insert(table, {"\xff", 1})
 
@@ -120,8 +121,9 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
     end
 
     test "finds correct shard for key at boundary", %{table: table} do
-      # "m" is the end_key for tag 0, so "m" belongs to tag 0
-      assert ShardRouter.lookup_shard(table, "m") == 0
+      # With [min, max) semantics: "m" is the START of tag 1's range, not end of tag 0
+      # Tag 0 covers ["", "m"), tag 1 covers ["m", \xff)
+      assert ShardRouter.lookup_shard(table, "m") == 1
     end
 
     test "finds correct shard for key after first boundary", %{table: table} do
@@ -142,6 +144,7 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       table = :ets.new(:single_shard, [:ordered_set, :public])
 
       try do
+        # Single shard covers ["", \xff)
         :ets.insert(table, {"\xff", 0})
 
         assert ShardRouter.lookup_shard(table, "") == 0
@@ -156,7 +159,9 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       table = :ets.new(:many_shards, [:ordered_set, :public])
 
       try do
-        # 5 shards with boundaries at "b", "d", "f", "h", "\xff"
+        # 5 shards with [min, max) ranges:
+        # Tag 0: ["", "b"), Tag 1: ["b", "d"), Tag 2: ["d", "f"),
+        # Tag 3: ["f", "h"), Tag 4: ["h", \xff)
         :ets.insert(table, {"b", 0})
         :ets.insert(table, {"d", 1})
         :ets.insert(table, {"f", 2})
@@ -164,8 +169,11 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
         :ets.insert(table, {"\xff", 4})
 
         assert ShardRouter.lookup_shard(table, "a") == 0
-        assert ShardRouter.lookup_shard(table, "b") == 0
+        # "b" is START of tag 1's range
+        assert ShardRouter.lookup_shard(table, "b") == 1
         assert ShardRouter.lookup_shard(table, "c") == 1
+        # "d" is START of tag 2's range
+        assert ShardRouter.lookup_shard(table, "d") == 2
         assert ShardRouter.lookup_shard(table, "e") == 2
         assert ShardRouter.lookup_shard(table, "g") == 3
         assert ShardRouter.lookup_shard(table, "z") == 4
@@ -178,8 +186,8 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
   describe "lookup_shards_for_range/3 - range to tags" do
     setup do
       table = :ets.new(:range_test, [:ordered_set, :public])
-      # 4 shards: tag 0 covers "" to "d", tag 1 covers "d" to "h",
-      # tag 2 covers "h" to "m", tag 3 covers "m" to \xff
+      # 4 shards with [min, max) ranges:
+      # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m"), Tag 3: ["m", \xff)
       :ets.insert(table, {"d", 0})
       :ets.insert(table, {"h", 1})
       :ets.insert(table, {"m", 2})
@@ -197,40 +205,47 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
     end
 
     test "range within single shard returns one tag", %{table: table} do
-      # "a" to "c" is entirely within tag 0 (ends at "d")
+      # ["a", "c") is entirely within tag 0's range ["", "d")
       assert ShardRouter.lookup_shards_for_range(table, "a", "c") == [0]
     end
 
     test "range spanning two shards returns both tags", %{table: table} do
-      # "c" to "f" spans tag 0 and tag 1
+      # ["c", "f") spans tag 0 ["", "d") and tag 1 ["d", "h")
       tags = ShardRouter.lookup_shards_for_range(table, "c", "f")
       assert Enum.sort(tags) == [0, 1]
     end
 
     test "range spanning all shards returns all tags", %{table: table} do
-      # "" to \xff spans all shards
+      # ["", \xff) spans all shards
       tags = ShardRouter.lookup_shards_for_range(table, "", "\xff")
       assert Enum.sort(tags) == [0, 1, 2, 3]
     end
 
     test "range at exact boundary", %{table: table} do
-      # "d" to "h" - starts at boundary of tag 0/1, ends at boundary of tag 1/2
-      # "d" belongs to tag 0 (end_key inclusive), "h" belongs to tag 1
+      # ["d", "h") exactly matches tag 1's range
+      # With [min, max): "d" is the START of tag 1, "h" is the END (exclusive)
       tags = ShardRouter.lookup_shards_for_range(table, "d", "h")
-      assert Enum.sort(tags) == [0, 1]
+      assert tags == [1]
     end
 
     test "empty range returns single shard", %{table: table} do
-      # "e" to "e" (exclusive end) - effectively empty but we look up start
+      # ["e", "e") is empty but we still return the shard containing "e"
       tags = ShardRouter.lookup_shards_for_range(table, "e", "e")
-      # Empty range still needs the shard for the start key
+      # "e" is in tag 1's range ["d", "h")
       assert tags == [1]
     end
 
     test "range in last shard", %{table: table} do
-      # "z" to \xff is entirely in the last shard
+      # ["z", \xff) is entirely in tag 3's range ["m", \xff)
       tags = ShardRouter.lookup_shards_for_range(table, "z", "\xff")
       assert tags == [3]
+    end
+
+    test "range crossing multiple boundaries", %{table: table} do
+      # ["c", "i") spans tags 0, 1, and 2
+      # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m")
+      tags = ShardRouter.lookup_shards_for_range(table, "c", "i")
+      assert Enum.sort(tags) == [0, 1, 2]
     end
   end
 

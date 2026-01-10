@@ -57,13 +57,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                             | {:failure, :timeout, Resolver.ref()}
                             | {:failure, :unavailable, Resolver.ref()})
 
-  @type log_push_batch_fn() :: (TransactionSystemLayout.t(),
-                                last_commit_version :: Bedrock.version(),
-                                transactions_by_tag :: %{
-                                  Bedrock.range_tag() => Transaction.encoded()
+  @type log_push_batch_fn() :: (last_commit_version :: Bedrock.version(),
+                                transactions_by_log :: %{
+                                  Log.id() => Transaction.encoded()
                                 },
                                 commit_version :: Bedrock.version(),
                                 opts :: [
+                                  log_services: %{Log.id() => pid() | {atom(), node()}},
                                   timeout: Bedrock.timeout_in_ms(),
                                   async_stream_fn: async_stream_fn()
                                 ] ->
@@ -117,7 +117,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :commit_version,
       :last_commit_version,
       :storage_teams,
-      :logs_by_id,
       :shard_table,
       :log_map,
       :log_services,
@@ -129,7 +128,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :commit_version,
       :last_commit_version,
       :storage_teams,
-      :logs_by_id,
       :shard_table,
       :log_map,
       :replication_factor,
@@ -151,10 +149,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
             storage_teams: [StorageTeamDescriptor.t()],
-            logs_by_id: %{Log.id() => [Bedrock.range_tag()]},
             shard_table: :ets.table(),
             log_map: %{non_neg_integer() => Log.id()},
-            log_services: %{Log.id() => {atom(), node()}},
+            log_services: %{Log.id() => {atom(), node()} | pid()},
             replication_factor: pos_integer(),
             transactions_by_log: %{Log.id() => Transaction.encoded()},
             replied_indices: MapSet.t(non_neg_integer()),
@@ -239,12 +236,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     routing_data = Keyword.get(opts, :routing_data) || raise "Missing routing_data in finalization opts"
 
     fn ->
+      sequencer = Keyword.get(opts, :sequencer) || transaction_system_layout.sequencer
+
       batch
       |> create_finalization_plan(transaction_system_layout, routing_data)
       |> resolve_conflicts(transaction_system_layout, epoch, resolver_layout, opts)
       |> prepare_for_logging()
-      |> push_to_logs(transaction_system_layout, opts)
-      |> notify_sequencer(transaction_system_layout.sequencer, opts)
+      |> push_to_logs(opts)
+      |> notify_sequencer(sequencer, opts)
       |> notify_successes(opts)
       |> extract_result_or_handle_error(metadata, opts)
     end
@@ -268,7 +267,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           FinalizationPlan.t()
   def create_finalization_plan(batch, transaction_system_layout, routing_data, initial_metadata \\ %{}) do
     storage_teams = transaction_system_layout.storage_teams
-    logs = transaction_system_layout.logs
 
     # Routing data is passed in from the commit proxy server
     # Table is created once on recovery and kept up-to-date as metadata changes
@@ -285,7 +283,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
       storage_teams: storage_teams,
-      logs_by_id: logs,
       shard_table: shard_table,
       log_map: log_map,
       log_services: log_services,
@@ -626,7 +623,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
 
   def prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
-    case build_transactions_for_logs(plan, plan.logs_by_id) do
+    # Get unique log_ids from log_map
+    log_ids = plan.log_map |> Map.values() |> Enum.uniq()
+
+    case build_transactions_for_logs(plan, log_ids) do
       {:ok, transactions_by_log} ->
         %{plan | transactions_by_log: transactions_by_log, stage: :ready_for_logging}
 
@@ -635,19 +635,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec build_transactions_for_logs(FinalizationPlan.t(), %{Log.id() => [Bedrock.range_tag()]}) ::
+  @spec build_transactions_for_logs(FinalizationPlan.t(), [Log.id()]) ::
           {:ok, %{Log.id() => Transaction.encoded()}} | {:error, term()}
-  defp build_transactions_for_logs(plan, logs_by_id) do
-    initial_mutations_by_log =
-      logs_by_id
-      |> Map.keys()
-      |> Map.new(&{&1, []})
+  defp build_transactions_for_logs(plan, log_ids) do
+    initial_mutations_by_log = Map.new(log_ids, &{&1, []})
 
     plan.transactions
     |> Enum.reduce_while(
       {:ok, initial_mutations_by_log},
       fn {idx, entry}, {:ok, acc} ->
-        process_transaction_for_logs({idx, entry}, plan, logs_by_id, acc)
+        process_transaction_for_logs({idx, entry}, plan, acc)
       end
     )
     |> case do
@@ -674,12 +671,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec process_transaction_for_logs(
           {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t() | nil}},
           FinalizationPlan.t(),
-          %{Log.id() => [Bedrock.range_tag()]},
           %{Log.id() => [term()]}
         ) ::
           {:cont, {:ok, %{Log.id() => [term()]}}}
           | {:halt, {:error, term()}}
-  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, _logs_by_id, acc) do
+  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, acc) do
     if MapSet.member?(plan.replied_indices, idx) do
       # Skip transactions that were already replied to (aborted)
       {:cont, {:ok, acc}}
@@ -829,13 +825,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Log Distribution
   # ============================================================================
 
-  @spec push_to_logs(FinalizationPlan.t(), TransactionSystemLayout.t(), keyword()) :: FinalizationPlan.t()
-  def push_to_logs(%FinalizationPlan{stage: :failed} = plan, _layout, _opts), do: plan
+  @spec push_to_logs(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
+  def push_to_logs(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
 
-  def push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, layout, opts) do
-    batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_direct/5)
+  def push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, opts) do
+    batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_direct/4)
 
-    case batch_log_push_fn.(layout, plan.last_commit_version, plan.transactions_by_log, plan.commit_version, opts) do
+    # Pass log_services from the plan
+    opts_with_log_services = Keyword.put(opts, :log_services, plan.log_services)
+
+    case batch_log_push_fn.(
+           plan.last_commit_version,
+           plan.transactions_by_log,
+           plan.commit_version,
+           opts_with_log_services
+         ) do
       :ok ->
         %{plan | stage: :logged}
 
@@ -872,8 +876,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Parameters
 
-    - `transaction_system_layout`: Contains configuration information about the
-      transaction system, including available log servers.
     - `last_commit_version`: The last known committed version; used to
       ensure consistency in log ordering.
     - `transactions_by_log`: Map of log_id to transaction for that log.
@@ -882,8 +884,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     - `opts`: Optional configuration for testing and customization.
 
   ## Options
+    - `:log_services` - Map of log_id to service ref (pid or {name, node}) - REQUIRED
     - `:async_stream_fn` - Function for parallel processing (default: Task.async_stream/3)
-    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log/3)
+    - `:log_push_fn` - Function for pushing to individual logs (default: try_to_push_transaction_to_log_direct/3)
     - `:timeout` - Timeout for log push operations (default: 5_000ms)
 
   ## Returns
@@ -892,36 +895,29 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
        push within the timeout period or other errors occur.
   """
   @spec push_transaction_to_logs_direct(
-          TransactionSystemLayout.t(),
           last_commit_version :: Bedrock.version(),
           %{Log.id() => Transaction.encoded()},
           commit_version :: Bedrock.version(),
           opts :: [
+            log_services: %{Log.id() => pid() | {atom(), node()}},
             async_stream_fn: async_stream_fn(),
-            log_push_fn: log_push_single_fn(),
+            log_push_fn: (pid() | {atom(), node()}, binary(), Bedrock.version() -> :ok | {:error, term()}),
             timeout: non_neg_integer()
           ]
         ) :: :ok | {:error, log_push_error()}
-  def push_transaction_to_logs_direct(
-        transaction_system_layout,
-        last_commit_version,
-        transactions_by_log,
-        _commit_version,
-        opts \\ []
-      ) do
+  def push_transaction_to_logs_direct(last_commit_version, transactions_by_log, _commit_version, opts) do
+    log_services = Keyword.fetch!(opts, :log_services)
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
-    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log/3)
+    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log_direct/3)
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    logs_by_id = transaction_system_layout.logs
-    required_acknowledgments = map_size(logs_by_id)
+    required_acknowledgments = map_size(log_services)
 
-    logs_by_id
-    |> resolve_log_descriptors(transaction_system_layout.services)
+    log_services
     |> async_stream_fn.(
-      fn {log_id, service_descriptor} ->
+      fn {log_id, service_ref} ->
         encoded_transaction = Map.get(transactions_by_log, log_id)
-        result = log_push_fn.(service_descriptor, encoded_transaction, last_commit_version)
+        result = log_push_fn.(service_ref, encoded_transaction, last_commit_version)
         {log_id, result}
       end,
       timeout: timeout
@@ -955,6 +951,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       _other ->
         {:error, :log_push_failed}
     end
+  end
+
+  @spec try_to_push_transaction_to_log_direct(pid() | {atom(), node()}, binary(), Bedrock.version()) ::
+          :ok | {:error, term()}
+  def try_to_push_transaction_to_log_direct(service_ref, transaction, last_commit_version) when is_pid(service_ref) do
+    Log.push(service_ref, transaction, last_commit_version)
+  end
+
+  def try_to_push_transaction_to_log_direct({name, node}, transaction, last_commit_version) do
+    Log.push({name, node}, transaction, last_commit_version)
   end
 
   # ============================================================================

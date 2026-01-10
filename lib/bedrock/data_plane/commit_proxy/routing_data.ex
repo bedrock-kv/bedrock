@@ -44,18 +44,19 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @doc """
   Creates routing data from a transaction system layout.
 
-  Builds an ETS ordered_set table for shard ceiling search and a log map
-  for golden ratio log selection.
+  Builds an ETS ordered_set table for shard ceiling search, a log map
+  for golden ratio log selection, and log_services for contacting logs.
   """
   @spec new(map()) :: t()
   def new(transaction_system_layout) do
     storage_teams = transaction_system_layout.storage_teams
     logs = transaction_system_layout.logs
+    services = Map.get(transaction_system_layout, :services, %{})
 
     %__MODULE__{
       shard_table: build_shard_table(storage_teams),
       log_map: build_log_map(logs),
-      log_services: %{},
+      log_services: build_log_services(logs, services),
       replication_factor: infer_replication_factor(storage_teams, logs)
     }
   end
@@ -245,6 +246,25 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     |> Enum.sort()
     |> Enum.with_index()
     |> Map.new(fn {log_id, index} -> {index, log_id} end)
+  end
+
+  # Build log_services map from logs and services
+  @spec build_log_services(map(), map()) :: map()
+  defp build_log_services(logs, services) do
+    logs
+    |> Map.keys()
+    |> Enum.reduce(%{}, fn log_id, acc ->
+      case Map.get(services, log_id) do
+        %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
+          Map.put(acc, log_id, pid)
+
+        %{kind: :log, status: {:up, {name, node}}} when is_atom(name) and is_atom(node) ->
+          Map.put(acc, log_id, {name, node})
+
+        _ ->
+          acc
+      end
+    end)
   end
 
   # Infer replication factor from the data

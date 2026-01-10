@@ -51,7 +51,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
   end
 
   defp mock_successful_log_push do
-    fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end
+    fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end
   end
 
   defp mock_sequencer_notify do
@@ -226,7 +226,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [], []}
       end
 
-      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
+      mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
         {:error, {:log_failures, [{"log_1", :timeout}]}}
       end
 
@@ -257,7 +257,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [], []}
       end
 
-      mock_log_push_fn = fn _layout, _last_version, _tx_by_tag, _commit_version, _opts ->
+      mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
         {:error, {:insufficient_acknowledgments, 2, 3, [{"log_3", :timeout}]}}
       end
 
@@ -304,7 +304,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock log push function that captures version parameters
-      mock_log_push_fn = fn _layout, last_version, _tx_by_tag, received_commit_version, _opts ->
+      mock_log_push_fn = fn last_version, _tx_by_log, received_commit_version, _opts ->
         send(test_pid, {:log_push_called, last_version, received_commit_version})
         :ok
       end

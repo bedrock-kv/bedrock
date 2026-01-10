@@ -95,7 +95,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
+                 batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
                  routing_data: routing_data
@@ -137,7 +137,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
+                 batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
                  routing_data: routing_data
@@ -178,7 +178,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
+                 batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
                  routing_data: routing_data
@@ -440,7 +440,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
+                 batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end,
                  timeout_fn: custom_timeout_fn,
                  max_attempts: 5,
@@ -507,7 +507,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  epoch: 1,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
+                 batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
                  routing_data: routing_data

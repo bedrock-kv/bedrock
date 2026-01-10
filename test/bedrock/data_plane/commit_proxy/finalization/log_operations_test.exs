@@ -46,16 +46,26 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
   end
 
   defp call_push_direct(layout, transactions_by_log, commit_version \\ 100, last_version \\ 99) do
+    # Build log_services from layout
+    log_services =
+      layout.logs
+      |> Map.keys()
+      |> Enum.reduce(%{}, fn log_id, acc ->
+        case Map.get(layout.services, log_id) do
+          %{kind: :log, status: {:up, pid}} -> Map.put(acc, log_id, pid)
+          _ -> acc
+        end
+      end)
+
     Finalization.push_transaction_to_logs_direct(
-      layout,
       Version.from_integer(last_version),
       transactions_by_log,
       Version.from_integer(commit_version),
-      []
+      log_services: log_services
     )
   end
 
-  describe "push_transaction_to_logs_direct/5" do
+  describe "push_transaction_to_logs_direct/4" do
     test "pushes pre-built transactions directly to logs" do
       layout = create_multi_log_layout()
 

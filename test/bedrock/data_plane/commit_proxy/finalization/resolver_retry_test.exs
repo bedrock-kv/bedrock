@@ -20,6 +20,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
 
+  # Telemetry handler - must be a module function to avoid performance warning
+  def handle_telemetry_event(event, measurements, metadata, test_pid) do
+    send(test_pid, {:telemetry, event, measurements, metadata})
+  end
+
   defp create_test_transaction(key, value) do
     %{
       mutations: [{:set, key, value}],
@@ -534,17 +539,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       test_pid = self()
       call_count = :counters.new(1, [])
 
-      # Attach telemetry handler - note the telemetry path does NOT include :data_plane
+      # Attach telemetry handler - use module function to avoid performance warning
       :telemetry.attach_many(
         "retry-test-handler",
         [
           [:bedrock, :commit_proxy, :resolver, :retry],
           [:bedrock, :commit_proxy, :resolver, :max_retries_exceeded]
         ],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_telemetry_event/4,
+        test_pid
       )
 
       on_exit(fn ->

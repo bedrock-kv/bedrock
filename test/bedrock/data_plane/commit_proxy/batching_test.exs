@@ -69,7 +69,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       max_latency_in_ms: 100,
       max_per_batch: 5,
       empty_transaction_timeout_ms: 1000,
-      transaction_system_layout: nil,
+      sequencer: nil,
       batch: nil
     }
 
@@ -90,7 +90,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       state =
         build_state(%{
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       transaction = sample_transaction()
@@ -106,7 +106,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
     test "returns error when sequencer is nil" do
       state =
         build_state(%{
-          transaction_system_layout: %{sequencer: nil}
+          sequencer: nil
         })
 
       transaction = sample_transaction()
@@ -119,7 +119,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       state =
         build_state(%{
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       transaction = sample_transaction()
@@ -132,7 +132,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       state =
         build_state(%{
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       transaction = sample_transaction()
@@ -149,7 +149,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       state =
         build_state(%{
           batch: nil,
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       result = Batching.start_batch_if_needed(state)
@@ -183,7 +183,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       state =
         build_state(%{
           batch: nil,
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       assert {:error, {:sequencer_unavailable, :unavailable}} = Batching.start_batch_if_needed(state)
@@ -369,7 +369,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
           batch: nil,
           max_per_batch: 3,
           max_latency_in_ms: 10_000,
-          transaction_system_layout: %{sequencer: sequencer}
+          sequencer: sequencer
         })
 
       # Start a new batch

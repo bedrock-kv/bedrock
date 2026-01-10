@@ -22,11 +22,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
           | {:error, :sequencer_unavailable}
   def single_transaction_batch(t, transaction, reply_fn \\ fn _result -> :ok end)
 
-  def single_transaction_batch(%{transaction_system_layout: %{sequencer: nil}}, _transaction, _reply_fn),
-    do: {:error, :sequencer_unavailable}
+  def single_transaction_batch(%{sequencer: nil}, _transaction, _reply_fn), do: {:error, :sequencer_unavailable}
 
   def single_transaction_batch(state, transaction, reply_fn) when is_binary(transaction) do
-    case next_commit_version(state.transaction_system_layout.sequencer, epoch: state.epoch) do
+    case next_commit_version(state.sequencer, epoch: state.epoch) do
       {:ok, last_commit_version, commit_version} ->
         {:ok,
          timestamp()
@@ -41,7 +40,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}
   def start_batch_if_needed(%{batch: nil} = t) do
-    case next_commit_version(t.transaction_system_layout.sequencer, epoch: t.epoch) do
+    case next_commit_version(t.sequencer, epoch: t.epoch) do
       {:ok, last_commit_version, commit_version} ->
         %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
 

@@ -416,13 +416,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         def start_link(_opts), do: GenServer.start_link(__MODULE__, 0)
         def init(counter), do: {:ok, counter}
 
-        def handle_call(:next_commit_version, _from, counter) do
+        # Handle calls with epoch (new format)
+        def handle_call({:next_commit_version, _epoch}, _from, counter) do
           last_version = Bedrock.DataPlane.Version.from_integer(counter)
           next_version = Bedrock.DataPlane.Version.from_integer(counter + 1)
           {:reply, {:ok, last_version, next_version}, counter + 1}
         end
 
-        def handle_call({:report_successful_commit, _commit_version}, _from, counter) do
+        def handle_call({:report_successful_commit, _epoch, _commit_version}, _from, counter) do
           {:reply, :ok, counter}
         end
       end

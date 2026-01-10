@@ -37,12 +37,19 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
 
   defp create_mock_sequencer do
     test_pid = self()
+    expected_epoch = 1
 
     spawn(fn ->
       receive do
-        {:"$gen_call", from, {:report_successful_commit, version}} ->
+        # Require epoch to be passed (validates epoch validation is wired up)
+        {:"$gen_call", from, {:report_successful_commit, ^expected_epoch, version}} ->
           GenServer.reply(from, :ok)
           send(test_pid, {:sequencer_notified, version})
+
+        # Reject calls without epoch
+        {:"$gen_call", from, {:report_successful_commit, version}} when is_binary(version) ->
+          GenServer.reply(from, {:error, :epoch_required})
+          send(test_pid, {:sequencer_rejected, :no_epoch})
       after
         1000 -> :timeout
       end

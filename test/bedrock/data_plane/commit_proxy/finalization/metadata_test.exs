@@ -115,7 +115,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       # Verify metadata was extracted and passed to resolver
@@ -161,7 +161,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       assert_receive {:metadata_received, metadata_per_tx}
@@ -212,7 +212,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       # Returns plan.metadata (empty until metadata_merge_fn is injected)
@@ -255,7 +255,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       # Returns plan.metadata (empty until metadata_merge_fn is injected)
@@ -291,7 +291,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       # Returns plan.metadata (empty map by default)
@@ -353,7 +353,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       assert_receive {:metadata_received, metadata_per_tx}
@@ -406,7 +406,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       assert_receive {:metadata_received, metadata_per_tx}
@@ -465,7 +465,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
                  batch_log_push_fn: fn _layout, _last_version, _tx_by_tag, _commit_version, _opts -> :ok end,
-                 sequencer_notify_fn: fn _sequencer, _commit_version -> :ok end
+                 sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
       assert_receive {:metadata_received, metadata_per_tx}

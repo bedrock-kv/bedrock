@@ -37,7 +37,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
   defp expect_standard_calls(_test_pid) do
     {
-      fn :test_sequencer, _commit_version -> :ok end,
+      fn :test_sequencer, _commit_version, _opts -> :ok end,
       fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         {:ok, [], []}
       end
@@ -191,7 +191,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         {:ok, [1], []}
       end
 
-      sequencer_notify_fn = fn :test_sequencer, ^expected_version -> :ok end
+      sequencer_notify_fn = fn :test_sequencer, ^expected_version, _opts -> :ok end
 
       transactions = [
         Transaction.encode(%{

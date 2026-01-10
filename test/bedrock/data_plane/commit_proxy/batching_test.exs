@@ -17,21 +17,34 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
   alias Bedrock.DataPlane.Version
 
   # Mock sequencer that returns predictable versions
+  # Requires epoch to be passed (validates epoch validation is wired up)
   defmodule MockSequencer do
     @moduledoc false
     use GenServer
 
     def start_link(opts \\ []) do
       initial_version = Keyword.get(opts, :initial_version, 0)
-      GenServer.start_link(__MODULE__, initial_version)
+      expected_epoch = Keyword.get(opts, :expected_epoch, 1)
+      GenServer.start_link(__MODULE__, {initial_version, expected_epoch})
     end
 
-    def init(counter), do: {:ok, counter}
+    def init(state), do: {:ok, state}
 
-    def handle_call(:next_commit_version, _from, counter) do
+    # Accept calls with matching epoch
+    def handle_call({:next_commit_version, epoch}, _from, {counter, epoch}) do
       last_version = Version.from_integer(counter)
       next_version = Version.from_integer(counter + 1)
-      {:reply, {:ok, last_version, next_version}, counter + 1}
+      {:reply, {:ok, last_version, next_version}, {counter + 1, epoch}}
+    end
+
+    # Reject calls with wrong epoch
+    def handle_call({:next_commit_version, _wrong_epoch}, _from, state) do
+      {:reply, {:error, :wrong_epoch}, state}
+    end
+
+    # Reject calls without epoch (legacy format)
+    def handle_call(:next_commit_version, _from, state) do
+      {:reply, {:error, :epoch_required}, state}
     end
   end
 
@@ -43,7 +56,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
     def start_link(_opts \\ []), do: GenServer.start_link(__MODULE__, :ok)
     def init(:ok), do: {:ok, :ok}
 
-    def handle_call(:next_commit_version, _from, state) do
+    def handle_call({:next_commit_version, _epoch}, _from, state) do
       {:reply, {:error, :unavailable}, state}
     end
   end

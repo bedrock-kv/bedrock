@@ -3,6 +3,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   Shared test utilities and fixtures for finalization tests.
   """
 
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -136,7 +137,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   @doc """
-  Builds routing data (ETS table, log_map, replication_factor) from a transaction system layout.
+  Builds routing data from a transaction system layout.
   Used by finalize_batch opts.
   """
   def build_routing_data(transaction_system_layout) do
@@ -163,7 +164,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
         [first | _] -> max(1, length(Map.get(first, :storage_ids, [])))
       end
 
-    {table, log_map, replication_factor}
+    %RoutingData{shard_table: table, log_map: log_map, replication_factor: replication_factor}
   end
 
   # Helper function to create test resolver task

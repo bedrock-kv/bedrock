@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
 
   # Helper functions for creating test data
@@ -57,7 +58,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     }
   end
 
-  # Build routing data for tests (ETS table, log_map, replication_factor)
+  # Build routing data for tests
   defp build_routing_data(storage_teams, logs) do
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
 
@@ -79,7 +80,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         [first | _] -> max(1, length(first.storage_ids))
       end
 
-    {table, log_map, replication_factor}
+    %RoutingData{shard_table: table, log_map: log_map, replication_factor: replication_factor}
   end
 
   defp default_routing_data do

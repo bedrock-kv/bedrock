@@ -32,6 +32,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.CommitProxy.MetadataMerge
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
@@ -213,7 +214,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           opts :: [
             epoch: Bedrock.epoch(),
             resolver_layout: ResolverLayout.t(),
-            routing_data: MetadataMerge.routing_data(),
+            routing_data: RoutingData.t(),
             resolver_fn: resolver_fn(),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
@@ -260,20 +261,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(
-          Batch.t(),
-          TransactionSystemLayout.t(),
-          {shard_table :: :ets.table(), log_map :: map(), replication_factor :: pos_integer()},
-          map()
-        ) ::
+  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t(), RoutingData.t(), map()) ::
           FinalizationPlan.t()
   def create_finalization_plan(batch, transaction_system_layout, routing_data, initial_metadata \\ %{}) do
     storage_teams = transaction_system_layout.storage_teams
     logs = transaction_system_layout.logs
 
-    # Routing data is now passed in from the commit proxy server
+    # Routing data is passed in from the commit proxy server
     # Table is created once on recovery and kept up-to-date as metadata changes
-    {shard_table, log_map, replication_factor} = routing_data
+    %RoutingData{shard_table: shard_table, log_map: log_map, replication_factor: replication_factor} =
+      routing_data
 
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
@@ -427,7 +424,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp apply_metadata_updates(plan, metadata_updates, opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
 
-    routing_data = {plan.shard_table, plan.log_map, plan.replication_factor}
+    routing_data = %RoutingData{
+      shard_table: plan.shard_table,
+      log_map: plan.log_map,
+      replication_factor: plan.replication_factor
+    }
+
     metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/3)
     merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates, routing_data)
 

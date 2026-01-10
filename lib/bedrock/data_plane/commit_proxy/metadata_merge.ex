@@ -6,11 +6,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMerge do
   log/resolver metadata before log push happens.
   """
 
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.OtpRef
   alias Bedrock.SystemKeys.ShardMetadata
-
-  @type routing_data :: {:ets.table(), map(), pos_integer()}
 
   @doc """
   Merges metadata updates into existing metadata, updating routing tables.
@@ -23,27 +22,25 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMerge do
 
   - `metadata` - Existing metadata map (may be empty)
   - `updates` - List of `{version, [mutations]}` tuples from resolver
-  - `routing_data` - Tuple of `{shard_table, log_map, replication_factor}`
+  - `routing_data` - RoutingData struct containing shard_table, log_map, replication_factor
 
   ## Returns
 
   Updated metadata map with accumulated log_services, shards, etc.
   """
-  @spec merge(map(), [term()], routing_data()) :: map()
-  def merge(metadata, updates, routing_data) do
-    {shard_table, _log_map, _replication_factor} = routing_data
-
+  @spec merge(map(), [term()], RoutingData.t()) :: map()
+  def merge(metadata, updates, %RoutingData{} = routing_data) do
     Enum.reduce(updates, metadata, fn {_version, mutations}, acc ->
-      Enum.reduce(mutations, acc, &apply_mutation(&1, &2, shard_table))
+      Enum.reduce(mutations, acc, &apply_mutation(&1, &2, routing_data))
     end)
   end
 
   # Handle {:set, key, value} mutations
-  defp apply_mutation({:set, key, value}, metadata, shard_table) do
+  defp apply_mutation({:set, key, value}, metadata, routing_data) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
         tag = :erlang.binary_to_term(value)
-        :ets.insert(shard_table, {end_key, tag})
+        RoutingData.insert_shard(routing_data, end_key, tag)
         metadata
 
       {:layout_log, log_id} ->
@@ -65,10 +62,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMerge do
   end
 
   # Handle {:clear, key} mutations
-  defp apply_mutation({:clear, key}, metadata, shard_table) do
+  defp apply_mutation({:clear, key}, metadata, routing_data) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
-        :ets.delete(shard_table, end_key)
+        RoutingData.delete_shard(routing_data, end_key)
         metadata
 
       {:layout_log, log_id} ->
@@ -86,5 +83,5 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMerge do
   end
 
   # Ignore other mutation types (clear_range, atomic, etc.)
-  defp apply_mutation(_mutation, metadata, _shard_table), do: metadata
+  defp apply_mutation(_mutation, metadata, _routing_data), do: metadata
 end

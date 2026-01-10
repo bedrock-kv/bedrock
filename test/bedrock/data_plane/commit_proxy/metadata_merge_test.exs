@@ -2,13 +2,18 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.MetadataMerge
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.OtpRef
+
+  defp make_routing_data(table) do
+    %RoutingData{shard_table: table, log_map: %{}, replication_factor: 3}
+  end
 
   describe "merge/3 with shard_key mutations" do
     test "inserts shard_key into ETS shard_table" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       key = SystemKeys.shard_key("m")
       value = :erlang.term_to_binary(42)
@@ -21,7 +26,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "inserts multiple shard_keys" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       updates = [
         {100,
@@ -42,7 +47,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
     test "overwrites existing shard_key entry" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
       :ets.insert(table, {"m", 99})
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       key = SystemKeys.shard_key("m")
       value = :erlang.term_to_binary(42)
@@ -57,7 +62,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
   describe "merge/3 with layout_log mutations" do
     test "accumulates log_services in metadata" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       key = SystemKeys.layout_log("log-123")
       value = OtpRef.from_tuple({:my_log, :node@host})
@@ -70,7 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "accumulates multiple logs" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       updates = [
         {100,
@@ -88,7 +93,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "preserves existing metadata fields" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       existing = %{other_field: "preserved"}
       key = SystemKeys.layout_log("log-123")
@@ -106,7 +111,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
     test "removes shard_key from ETS" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
       :ets.insert(table, {"m", 42})
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       key = SystemKeys.shard_key("m")
       updates = [{100, [{:clear, key}]}]
@@ -118,7 +123,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "removes layout_log from metadata" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       existing = %{log_services: %{"log-123" => {:my_log, :node@host}}}
       key = SystemKeys.layout_log("log-123")
@@ -131,7 +136,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "clear on non-existent key is safe" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       key = SystemKeys.shard_key("nonexistent")
       updates = [{100, [{:clear, key}]}]
@@ -145,7 +150,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
   describe "merge/3 with multiple versions" do
     test "applies updates from multiple versions in order" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       updates = [
         {100, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)}]},
@@ -164,7 +169,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
   describe "merge/3 with unknown key types" do
     test "ignores unrecognized system keys" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       # Unknown system key
       updates = [{100, [{:set, "\xff/system/unknown/foo", "bar"}]}]
@@ -177,7 +182,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "ignores non-system keys" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       # Non-system key (shouldn't happen in practice, but handle gracefully)
       updates = [{100, [{:set, "user/data", "value"}]}]
@@ -189,7 +194,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataMergeTest do
 
     test "ignores unsupported mutation types" do
       table = :ets.new(:test_shards, [:ordered_set, :public])
-      routing_data = {table, %{}, 3}
+      routing_data = make_routing_data(table)
 
       # clear_range not supported yet
       updates = [{100, [{:clear_range, "start", "end"}]}]

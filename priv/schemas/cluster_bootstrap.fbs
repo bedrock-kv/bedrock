@@ -15,7 +15,6 @@ table ClusterBootstrap {
   cluster_id: string;
   epoch: ulong;
   logs: [LogInfo];
-  metadata_snapshot_path: string;
 }
 
 root_type ClusterBootstrap;

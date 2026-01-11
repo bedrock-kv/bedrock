@@ -12,7 +12,6 @@ defmodule Bedrock.SystemKeys.ClusterBootstrap do
     * `cluster_id` - Unique cluster identifier
     * `epoch` - Current cluster epoch
     * `logs` - List of log IDs and their last known locations
-    * `metadata_snapshot_path` - Path to metadata snapshot in object storage
 
   ## Example
 
@@ -23,8 +22,7 @@ defmodule Bedrock.SystemKeys.ClusterBootstrap do
         logs: [
           %{id: "log-001", otp_ref: %{otp_name: "log_001", node: "node1"}},
           %{id: "log-002", otp_ref: %{otp_name: "log_002", node: "node2"}}
-        ],
-        metadata_snapshot_path: "bedrock://metadata/snapshots/v1000"
+        ]
       })
 
       # Decode

@@ -111,7 +111,7 @@ defmodule Bedrock.DataPlane.Transaction do
   """
 
   import Bitwise
-  import Bitwise, only: [>>>: 2, &&&: 2]
+  import Bitwise, only: [>>>: 2, &&&: 2, <<<: 2]
 
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.TransactionBuilder.Tx
@@ -129,6 +129,7 @@ defmodule Bedrock.DataPlane.Transaction do
   @read_conflicts_tag 0x02
   @write_conflicts_tag 0x03
   @commit_version_tag 0x04
+  @shard_index_tag 0x05
 
   @doc """
   Encodes a transaction map into the tagged binary format.
@@ -148,6 +149,7 @@ defmodule Bedrock.DataPlane.Transaction do
       |> add_read_conflicts_section(transaction)
       |> add_write_conflicts_section(transaction)
       |> add_commit_version_section(transaction)
+      |> add_shard_index_section(transaction)
 
     overall_header = encode_overall_header(length(sections))
 
@@ -198,6 +200,14 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   defp add_commit_version_section(sections, _), do: sections
+
+  defp add_shard_index_section(sections, %{shard_index: entries}) when is_list(entries) and entries != [] do
+    payload = encode_shard_index_payload(entries)
+    section = encode_section(@shard_index_tag, payload)
+    [section | sections]
+  end
+
+  defp add_shard_index_section(sections, _), do: sections
 
   @doc """
   Decodes a tagged binary transaction back to the transaction map format.
@@ -443,6 +453,7 @@ defmodule Bedrock.DataPlane.Transaction do
   defp atom_to_tag(:read_conflicts), do: @read_conflicts_tag
   defp atom_to_tag(:write_conflicts), do: @write_conflicts_tag
   defp atom_to_tag(:commit_version), do: @commit_version_tag
+  defp atom_to_tag(:shard_index), do: @shard_index_tag
 
   @doc """
   Efficiently extracts specific sections from a transaction into a smaller binary transaction.
@@ -665,6 +676,38 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
+  @doc """
+  Extracts the shard index from the SHARD_INDEX section.
+
+  Returns a list of `{tag, count}` tuples indicating how many contiguous
+  mutations belong to each shard. Returns nil if no SHARD_INDEX section exists.
+
+  ## Example
+
+      {:ok, [{0, 5}, {1, 3}]} = Transaction.shard_index(encoded_tx)
+      # First 5 mutations are shard 0, next 3 are shard 1
+  """
+  @spec shard_index(binary()) :: {:ok, [{integer(), integer()}] | nil} | {:error, term()}
+  def shard_index(encoded_transaction) do
+    extract_and_process_section(
+      encoded_transaction,
+      @shard_index_tag,
+      &decode_shard_index_payload/1,
+      {:ok, nil}
+    )
+  end
+
+  @doc """
+  Extracts the shard index from an encoded transaction, raising on error.
+  """
+  @spec shard_index!(binary()) :: [{integer(), integer()}] | nil
+  def shard_index!(encoded_transaction) do
+    case shard_index(encoded_transaction) do
+      {:ok, index} -> index
+      {:error, reason} -> raise "Failed to extract shard index: #{inspect(reason)}"
+    end
+  end
+
   # Constant header-only transaction for version advancement (no sections at all)
   @empty_transaction <<
     @magic_number::unsigned-big-32,
@@ -742,6 +785,21 @@ defmodule Bedrock.DataPlane.Transaction do
       conflicts_data
     ])
   end
+
+  defp encode_shard_index_payload(entries) do
+    entry_count = length(entries)
+
+    encoded_entries =
+      Enum.map(entries, fn {tag, count} ->
+        [encode_varint(tag), encode_varint(count)]
+      end)
+
+    IO.iodata_to_binary([encode_varint(entry_count) | encoded_entries])
+  end
+
+  # Varint encoding (LEB128 unsigned)
+  defp encode_varint(n) when n < 128, do: <<n>>
+  defp encode_varint(n), do: <<1::1, n &&& 0x7F::7, encode_varint(n >>> 7)::binary>>
 
   @doc false
   def encode_conflict_range({start_key, end_key}) when is_binary(start_key) and is_binary(end_key) do
@@ -862,6 +920,27 @@ defmodule Bedrock.DataPlane.Transaction do
       {:ok, conflicts} -> {:ok, Enum.reverse(conflicts)}
       error -> error
     end
+  end
+
+  defp decode_shard_index_payload(data) do
+    {entry_count, rest} = decode_varint(data)
+    decode_shard_index_entries(rest, entry_count, [])
+  end
+
+  defp decode_shard_index_entries(_data, 0, entries), do: {:ok, Enum.reverse(entries)}
+
+  defp decode_shard_index_entries(data, remaining, entries) do
+    {tag, rest1} = decode_varint(data)
+    {count, rest2} = decode_varint(rest1)
+    decode_shard_index_entries(rest2, remaining - 1, [{tag, count} | entries])
+  end
+
+  # Varint decoding (LEB128 unsigned)
+  defp decode_varint(<<0::1, value::7, rest::binary>>), do: {value, rest}
+
+  defp decode_varint(<<1::1, value::7, rest::binary>>) do
+    {next_value, remaining} = decode_varint(rest)
+    {value + (next_value <<< 7), remaining}
   end
 
   defp decode_conflict_ranges(_data, 0, conflicts), do: {:ok, conflicts}

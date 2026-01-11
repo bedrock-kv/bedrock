@@ -201,6 +201,70 @@ defmodule Bedrock.DataPlane.ShardRouter do
   end
 
   @doc """
+  Returns shards overlapping a key range, with their boundaries.
+
+  Unlike `lookup_shards_for_range/3` which returns only tags, this function
+  returns `{tag, shard_start, shard_end}` tuples to enable clamping range
+  mutations to shard boundaries.
+
+  ## Parameters
+
+    - `table` - ETS table reference with `{end_key, tag}` entries
+    - `start_key` - Start of the range (inclusive)
+    - `end_key` - End of the range (exclusive)
+
+  ## Returns
+
+  List of `{tag, shard_start, shard_end}` tuples for all shards that
+  overlap [start_key, end_key).
+
+  ## Examples
+
+      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\\xff", 3}
+      # Shards: 0 = ["", "d"), 1 = ["d", "h"), 2 = ["h", "m"), 3 = ["m", "\\xff")
+      iex> lookup_shards_with_ranges(table, "a", "c")
+      [{0, "", "d"}]
+      iex> lookup_shards_with_ranges(table, "c", "j")
+      [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}]
+
+  """
+  @spec lookup_shards_with_ranges(:ets.table(), binary(), binary()) ::
+          [{non_neg_integer(), binary(), binary()}]
+  def lookup_shards_with_ranges(table, start_key, end_key) when is_binary(start_key) and is_binary(end_key) do
+    # Find first end_key > start_key (the shard containing start_key)
+    first_end = :ets.next(table, start_key)
+
+    # Find the start boundary of the first shard (previous key in table, or "" if first)
+    first_start = find_shard_start(table, first_end)
+    collect_shards_with_ranges(table, first_end, end_key, first_start, [])
+  end
+
+  # Find the start of a shard (the previous end_key in the table, or "" if first)
+  defp find_shard_start(table, shard_end) do
+    case :ets.prev(table, shard_end) do
+      :"$end_of_table" -> ""
+      prev_key -> prev_key
+    end
+  end
+
+  defp collect_shards_with_ranges(_table, :"$end_of_table", _end_key, _prev_end, acc) do
+    Enum.reverse(acc)
+  end
+
+  defp collect_shards_with_ranges(table, shard_end, end_key, shard_start, acc) when shard_end >= end_key do
+    # Last shard - includes the end_key
+    tag = extract_tag(:ets.lookup_element(table, shard_end, 2))
+    Enum.reverse([{tag, shard_start, shard_end} | acc])
+  end
+
+  defp collect_shards_with_ranges(table, shard_end, end_key, shard_start, acc) do
+    tag = extract_tag(:ets.lookup_element(table, shard_end, 2))
+    next_end = :ets.next(table, shard_end)
+    # Current shard_end becomes the start of the next shard
+    collect_shards_with_ranges(table, next_end, end_key, shard_end, [{tag, shard_start, shard_end} | acc])
+  end
+
+  @doc """
   Routes a key to its logs using shard lookup and golden ratio log selection.
 
   Uses lazy caching: first call computes log_indices and caches in ETS,

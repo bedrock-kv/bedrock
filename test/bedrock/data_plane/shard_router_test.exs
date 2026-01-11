@@ -369,4 +369,83 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       assert logs == ["log-b", "log-c"]
     end
   end
+
+  describe "lookup_shards_with_ranges/3 - range to tags with boundaries" do
+    setup do
+      table = :ets.new(:ranges_with_bounds, [:ordered_set, :public])
+      # 4 shards with [min, max) ranges:
+      # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m"), Tag 3: ["m", \xff)
+      :ets.insert(table, {"d", 0})
+      :ets.insert(table, {"h", 1})
+      :ets.insert(table, {"m", 2})
+      :ets.insert(table, {"\xff", 3})
+
+      on_exit(fn ->
+        try do
+          :ets.delete(table)
+        rescue
+          ArgumentError -> :ok
+        end
+      end)
+
+      {:ok, table: table}
+    end
+
+    test "returns shard boundaries for single shard range", %{table: table} do
+      # ["a", "c") is entirely within tag 0's range ["", "d")
+      result = ShardRouter.lookup_shards_with_ranges(table, "a", "c")
+      assert result == [{0, "", "d"}]
+    end
+
+    test "returns boundaries for range spanning two shards", %{table: table} do
+      # ["c", "f") spans tag 0 ["", "d") and tag 1 ["d", "h")
+      result = ShardRouter.lookup_shards_with_ranges(table, "c", "f")
+      assert result == [{0, "", "d"}, {1, "d", "h"}]
+    end
+
+    test "returns boundaries for range spanning all shards", %{table: table} do
+      # ["", \xff) spans all shards
+      result = ShardRouter.lookup_shards_with_ranges(table, "", "\xff")
+      assert result == [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}, {3, "m", "\xff"}]
+    end
+
+    test "returns boundaries at exact shard boundary", %{table: table} do
+      # ["d", "h") exactly matches tag 1's range
+      result = ShardRouter.lookup_shards_with_ranges(table, "d", "h")
+      assert result == [{1, "d", "h"}]
+    end
+
+    test "returns boundaries for range in last shard", %{table: table} do
+      # ["z", \xff) is entirely in tag 3's range ["m", \xff)
+      result = ShardRouter.lookup_shards_with_ranges(table, "z", "\xff")
+      assert result == [{3, "m", "\xff"}]
+    end
+
+    test "returns boundaries for range crossing multiple boundaries", %{table: table} do
+      # ["c", "i") spans tags 0, 1, and 2
+      result = ShardRouter.lookup_shards_with_ranges(table, "c", "i")
+      assert result == [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}]
+    end
+
+    test "enables correct clamping of clear_range", %{table: table} do
+      # Test the use case: clamping clear_range "a" to "z" to shard boundaries
+      shards = ShardRouter.lookup_shards_with_ranges(table, "a", "z")
+
+      # Use boundaries to clamp the original range
+      clamped =
+        Enum.map(shards, fn {tag, shard_start, shard_end} ->
+          clamped_start = max("a", shard_start)
+          clamped_end = min("z", shard_end)
+          {tag, clamped_start, clamped_end}
+        end)
+
+      # Verify clamped ranges
+      assert clamped == [
+               {0, "a", "d"},
+               {1, "d", "h"},
+               {2, "h", "m"},
+               {3, "m", "z"}
+             ]
+    end
+  end
 end

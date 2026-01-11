@@ -640,16 +640,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       end
     )
     |> case do
-      {:ok, mutations_by_log} ->
+      {:ok, tagged_mutations_by_log} ->
         result =
-          Map.new(mutations_by_log, fn {log_id, mutations_list} ->
-            # Use the existing encode approach for transaction building
-            encoded =
-              Transaction.encode(%{
-                mutations: Enum.reverse(mutations_list),
-                commit_version: plan.commit_version
-              })
-
+          Map.new(tagged_mutations_by_log, fn {log_id, tagged_mutations_list} ->
+            encoded = encode_log_transaction(tagged_mutations_list, plan.commit_version)
             {log_id, encoded}
           end)
 
@@ -658,6 +652,43 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # Encode a log transaction with stable sort by shard tag and SHARD_INDEX section
+  @spec encode_log_transaction([{term(), non_neg_integer()}], Bedrock.version()) :: Transaction.encoded()
+  defp encode_log_transaction(tagged_mutations_list, commit_version) do
+    # 1. Stable sort by shard tag (preserves relative order within each shard)
+    sorted =
+      tagged_mutations_list
+      |> Enum.reverse()
+      |> Enum.sort_by(fn {_mutation, tag} -> tag_to_integer(tag) end, &<=/2)
+
+    # 2. Build shard index from sorted list
+    shard_index = build_shard_index(sorted)
+
+    # 3. Extract just mutations (drop tags)
+    mutations = Enum.map(sorted, fn {mutation, _tag} -> mutation end)
+
+    # 4. Encode with shard index
+    Transaction.encode(%{
+      mutations: mutations,
+      commit_version: commit_version,
+      shard_index: shard_index
+    })
+  end
+
+  # Build shard index from sorted tagged mutations
+  # Returns list of {tag, count} tuples
+  @spec build_shard_index([{term(), non_neg_integer()}]) :: [{non_neg_integer(), non_neg_integer()}]
+  defp build_shard_index([]), do: []
+
+  defp build_shard_index(sorted_tagged_mutations) do
+    sorted_tagged_mutations
+    |> Enum.chunk_by(fn {_mutation, tag} -> tag_to_integer(tag) end)
+    |> Enum.map(fn chunk ->
+      {_mutation, tag} = hd(chunk)
+      {tag_to_integer(tag), length(chunk)}
+    end)
   end
 
   @spec process_transaction_for_logs(
@@ -706,40 +737,50 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # New routing using ShardRouter with ceiling search and golden ratio
+  # Splits cross-shard mutations and stores {mutation, tag} tuples for SHARD_INDEX building
   @spec distribute_mutation_to_logs_via_shard_router(term(), FinalizationPlan.t(), %{Log.id() => [term()]}) ::
           {:cont, {:ok, %{Log.id() => [term()]}}} | {:halt, {:error, term()}}
   defp distribute_mutation_to_logs_via_shard_router(mutation, plan, mutations_acc) do
-    key_or_range = mutation_to_key_or_range(mutation)
     %{shard_table: shard_table, log_map: log_map, replication_factor: m} = plan
 
-    # Get tags for this mutation using ceiling search
-    tags = get_tags_for_mutation(key_or_range, shard_table)
+    # Split mutation by shards (handles cross-shard clear_range with clamping)
+    tagged_mutations = split_mutation_by_shards(mutation, shard_table)
 
-    if tags == [] do
+    if tagged_mutations == [] do
+      key_or_range = mutation_to_key_or_range(mutation)
       {:halt, {:error, {:storage_team_coverage_error, key_or_range}}}
     else
-      # For each tag, compute log indices using golden ratio and collect unique log_ids
+      # For each (mutation, tag) pair, find logs and add the tagged mutation
       n = map_size(log_map)
 
-      affected_log_ids =
-        tags
-        |> Enum.flat_map(fn tag ->
-          # Convert non-integer tags to integers for golden ratio algorithm
-          numeric_tag = tag_to_integer(tag)
-
-          numeric_tag
-          |> ShardRouter.get_log_indices(n, m)
-          |> Enum.map(&Map.fetch!(log_map, &1))
-        end)
-        |> Enum.uniq()
-
       updated_acc =
-        Enum.reduce(affected_log_ids, mutations_acc, fn log_id, acc_inner ->
-          Map.update!(acc_inner, log_id, &[mutation | &1])
+        Enum.reduce(tagged_mutations, mutations_acc, fn {split_mutation, tag}, acc ->
+          add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, n, m)
         end)
 
       {:cont, {:ok, updated_acc}}
     end
+  end
+
+  # Add a tagged mutation to the appropriate logs
+  @spec add_tagged_mutation_to_logs(
+          {term(), non_neg_integer()},
+          %{Log.id() => [term()]},
+          %{non_neg_integer() => Log.id()},
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: %{Log.id() => [term()]}
+  defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, n, m) do
+    numeric_tag = tag_to_integer(tag)
+
+    log_ids =
+      numeric_tag
+      |> ShardRouter.get_log_indices(n, m)
+      |> Enum.map(&Map.fetch!(log_map, &1))
+
+    Enum.reduce(log_ids, acc, fn log_id, acc_inner ->
+      Map.update!(acc_inner, log_id, &[{mutation, tag} | &1])
+    end)
   end
 
   # Convert tag to integer for golden ratio algorithm
@@ -753,17 +794,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   defp tag_to_integer(tag), do: :erlang.phash2(tag)
-
-  # Get shard tags for a key or range using ShardRouter
-  # Returns whatever tag type is stored in the ETS table (can be integer or string in tests)
-  @spec get_tags_for_mutation(Bedrock.key() | Bedrock.key_range(), :ets.table()) :: [term()]
-  defp get_tags_for_mutation({start_key, end_key}, shard_table) do
-    ShardRouter.lookup_shards_for_range(shard_table, start_key, end_key)
-  end
-
-  defp get_tags_for_mutation(key, shard_table) do
-    [ShardRouter.lookup_shard(shard_table, key)]
-  end
 
   @spec mutation_to_key_or_range(
           {:set, Bedrock.key(), Bedrock.value()}
@@ -812,6 +842,44 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec ranges_intersect?(Bedrock.key(), Bedrock.key(), Bedrock.key(), Bedrock.key()) :: boolean()
   defp ranges_intersect?(start1, end1, start2, end2), do: start1 < end2 and end1 > start2
+
+  # ============================================================================
+  # Mutation Splitting and Tagging
+  # ============================================================================
+
+  # Split mutation by shards (handles cross-shard clear_range)
+  # Returns list of {mutation, tag} tuples
+  @spec split_mutation_by_shards(term(), :ets.table()) :: [{term(), non_neg_integer()}]
+  defp split_mutation_by_shards({:clear_range, start_key, end_key}, shard_table) do
+    shards = ShardRouter.lookup_shards_with_ranges(shard_table, start_key, end_key)
+
+    Enum.map(shards, fn {tag, shard_start, shard_end} ->
+      # Clamp range to shard boundaries
+      clamped_start = max_binary(start_key, shard_start)
+      clamped_end = min_binary(end_key, shard_end)
+      {{:clear_range, clamped_start, clamped_end}, tag}
+    end)
+  end
+
+  # Single-key mutations don't split
+  defp split_mutation_by_shards({:set, key, _value} = mutation, shard_table) do
+    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  end
+
+  defp split_mutation_by_shards({:clear, key} = mutation, shard_table) do
+    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  end
+
+  defp split_mutation_by_shards({:atomic, _op, key, _value} = mutation, shard_table) do
+    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  end
+
+  # Binary comparison helpers for clamping ranges
+  defp max_binary(a, b) when a >= b, do: a
+  defp max_binary(_a, b), do: b
+
+  defp min_binary(a, b) when a <= b, do: a
+  defp min_binary(_a, b), do: b
 
   # ============================================================================
   # Log Distribution

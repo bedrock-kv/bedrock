@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       {:ok, resolvers} ->
         updated_recovery_attempt = %{recovery_attempt | resolvers: resolvers}
 
-        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.TopologyPhase}
     end
   end
 

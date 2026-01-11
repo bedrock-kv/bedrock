@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @moduledoc """
   Constructs the Transaction System Layout (TSL), the blueprint defining how all
   components in the recovered system connect and communicate.
@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   as their status was confirmed during storage recruitment):
 
   - **Sequencer**: Must have valid process ID (exactly one runs cluster-wide)
-  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)  
+  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)
   - **Resolvers**: Must have valid `{start_key, process_id}` pairs defining key range responsibilities
   - **Logs**: Must have corresponding service entries with `{:up, process_id}` status
 
@@ -73,7 +73,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   This function implements the three-step TSL construction process:
 
   1. **Validation**: Confirms all transaction components are operational via `validate_recovery_state/1`
-  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`  
+  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`
   3. **Unlocking**: Selectively unlocks commit proxies and storage servers via `unlock_services/4`
 
   ## Parameters

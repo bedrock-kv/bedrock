@@ -1,9 +1,9 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
   use ExUnit.Case, async: true
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase
+  alias Bedrock.ControlPlane.Director.Recovery.TopologyPhase
 
   # Helper functions for common test setup
   defp base_recovery_attempt do
@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
       expected_proxies = recovery_attempt.proxies
       expected_resolvers = recovery_attempt.resolvers
 
-      {result, next_phase} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
+      {result, next_phase} = TopologyPhase.execute(recovery_attempt, context)
 
       # Pattern match the entire expected structure
       assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
@@ -69,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         |> Map.put(:unlock_storage_fn, fn _storage_pid, _version, _layout -> :ok end)
 
       expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}
-      assert {_result, ^expected_error} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
+      assert {_result, ^expected_error} = TopologyPhase.execute(recovery_attempt, context)
     end
 
     test "fails when storage server unlocking fails" do
@@ -94,7 +94,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         )
 
       expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:storage_unlock_failed, :unavailable}}}}
-      assert {_result, ^expected_error} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
+      assert {_result, ^expected_error} = TopologyPhase.execute(recovery_attempt, context)
     end
 
     test "builds transaction system layout with correct service descriptors" do
@@ -119,7 +119,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
           "storage_2" => {:storage, {:storage_2, :node1}}
         })
 
-      {result, _next_phase} = TransactionSystemLayoutPhase.execute(recovery_attempt, context)
+      {result, _next_phase} = TopologyPhase.execute(recovery_attempt, context)
 
       # Pattern match the expected service structure
       assert %{

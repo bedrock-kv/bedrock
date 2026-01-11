@@ -73,7 +73,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @doc """
   Inserts or updates a shard entry in the routing table.
 
-  Called from MetadataMerge when processing shard_key mutations.
+  Called from apply_mutations/2 when processing shard_key mutations.
   """
   @spec insert_shard(t(), binary(), term()) :: true
   def insert_shard(%__MODULE__{shard_table: table}, end_key, tag) do
@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @doc """
   Deletes a shard entry from the routing table.
 
-  Called from MetadataMerge when processing shard_key clear mutations.
+  Called from apply_mutations/2 when processing shard_key clear mutations.
   """
   @spec delete_shard(t(), binary()) :: true
   def delete_shard(%__MODULE__{shard_table: table}, end_key) do

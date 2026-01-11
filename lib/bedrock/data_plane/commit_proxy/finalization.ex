@@ -28,7 +28,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
-  alias Bedrock.DataPlane.CommitProxy.MetadataMerge
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.Tracing
@@ -132,8 +131,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       aborted_count: 0,
       stage: :initialized,
       error: nil,
-      metadata_updates: [],
-      metadata: %{}
+      metadata_updates: []
     ]
 
     @type t :: %__MODULE__{
@@ -152,8 +150,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             aborted_count: non_neg_integer(),
             stage: atom(),
             error: term() | nil,
-            metadata_updates: [MetadataAccumulator.entry()],
-            metadata: map()
+            metadata_updates: [MetadataAccumulator.entry()]
           }
   end
 
@@ -254,8 +251,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(Batch.t(), RoutingData.t(), map()) :: FinalizationPlan.t()
-  def create_finalization_plan(batch, routing_data, initial_metadata \\ %{}) do
+  @spec create_finalization_plan(Batch.t(), RoutingData.t()) :: FinalizationPlan.t()
+  def create_finalization_plan(batch, routing_data) do
     # Routing data is passed in from the commit proxy server
     # Table is created once on recovery and kept up-to-date as metadata changes
     %RoutingData{
@@ -274,8 +271,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       log_map: log_map,
       log_services: log_services,
       replication_factor: replication_factor,
-      stage: :ready_for_resolution,
-      metadata: initial_metadata
+      stage: :ready_for_resolution
     }
   end
 
@@ -412,7 +408,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec apply_metadata_updates(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
           FinalizationPlan.t()
-  defp apply_metadata_updates(plan, metadata_updates, opts) do
+  defp apply_metadata_updates(plan, metadata_updates, _opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
 
     # Build routing_data from plan fields
@@ -426,15 +422,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # Apply routing mutations (shard_key, layout_log) to routing_data
     updated_routing_data = RoutingData.apply_mutations(routing_data, metadata_updates)
 
-    # Apply non-routing mutations (shard) to metadata
-    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/2)
-    merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates)
-
     %{
       plan
       | stage: :conflicts_resolved,
         metadata_updates: metadata_updates,
-        metadata: merged_metadata,
         log_map: updated_routing_data.log_map,
         log_services: updated_routing_data.log_services
     }

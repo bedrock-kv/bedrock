@@ -219,28 +219,12 @@ defmodule Bedrock.SystemKeys do
           | {:materializer_key, String.t()}
           | :unknown
           | :error
-  def parse_key(key) when is_binary(key) do
-    # Order matters: more specific prefixes first (shard_keys before shards)
-    cond do
-      String.starts_with?(key, layout_logs_prefix()) ->
-        {:layout_log, String.replace_prefix(key, layout_logs_prefix(), "")}
-
-      String.starts_with?(key, shard_keys_prefix()) ->
-        {:shard_key, String.replace_prefix(key, shard_keys_prefix(), "")}
-
-      String.starts_with?(key, shards_prefix()) ->
-        {:shard, String.replace_prefix(key, shards_prefix(), "")}
-
-      String.starts_with?(key, materializer_keys_prefix()) ->
-        {:materializer_key, String.replace_prefix(key, materializer_keys_prefix(), "")}
-
-      system_key?(key) ->
-        :unknown
-
-      true ->
-        :error
-    end
-  end
-
+  # Order matters: more specific prefixes first (shard_keys before shards)
+  def parse_key(<<@system_prefix, "/layout/logs/", rest::binary>>), do: {:layout_log, rest}
+  def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
+  def parse_key(<<@system_prefix, "/shards/", rest::binary>>), do: {:shard, rest}
+  def parse_key(<<@system_prefix, "/materializer_keys/", rest::binary>>), do: {:materializer_key, rest}
+  def parse_key(<<@system_prefix, _rest::binary>>), do: :unknown
+  def parse_key(key) when is_binary(key), do: :error
   def parse_key(_), do: :error
 end

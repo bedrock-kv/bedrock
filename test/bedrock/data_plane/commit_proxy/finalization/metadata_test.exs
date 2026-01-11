@@ -216,7 +216,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert_receive {:reply, {:ok, _, _}}
     end
 
-    test "returns plan metadata independent of passed metadata arg", %{
+    test "returns routing_data from finalization", %{
       layout: transaction_system_layout,
       routing_data: routing_data
     } do
@@ -229,14 +229,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         create_batch_with_transactions(100, 99, [
           {reply_fn, tx_binary, task}
         ])
-
-      # Existing metadata from previous batches (passed as arg but ignored)
-      existing_version = Version.from_integer(50)
-      existing_metadata = [{existing_version, [{:set, <<0xFF, "old_key">>, "old_value"}]}]
-
-      # New metadata from resolver
-      new_version = Version.from_integer(100)
-      resolver_metadata = [{new_version, [{:set, <<0xFF, "new_key">>, "new_value"}]}]
 
       mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         {:ok, [], []}
@@ -254,7 +246,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
-      # Routing data is returned (metadata handling removed)
       assert_receive {:reply, {:ok, _, _}}
     end
 

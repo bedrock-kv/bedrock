@@ -94,14 +94,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           module()
         ) ::
           Tx.t()
-  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster) do
-    encoded_sequencer = encode_component_for_storage(transaction_system_layout.sequencer, cluster)
-    encoded_proxies = encode_components_for_storage(transaction_system_layout.proxies, cluster)
-
-    encoded_resolvers =
-      encode_components_for_storage(transaction_system_layout.resolvers, cluster)
-
-    encoded_services = encode_services_for_storage(transaction_system_layout.services, cluster)
+  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, _cluster) do
+    encoded_services = encode_services_for_storage(transaction_system_layout.services)
 
     # Set cluster keys directly
     tx =
@@ -152,28 +146,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         :erlang.term_to_binary(cluster_config.parameters.transaction_window_in_ms)
       )
 
-    # Set layout keys directly
+    # Set layout keys directly (only durable config - services and id)
     tx =
       tx
-      |> Tx.set(SystemKeys.layout_sequencer(), :erlang.term_to_binary(encoded_sequencer))
-      |> Tx.set(SystemKeys.layout_proxies(), :erlang.term_to_binary(encoded_proxies))
       |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
-      |> Tx.set(
-        SystemKeys.layout_director(),
-        :erlang.term_to_binary(encode_component_for_storage(self(), cluster))
-      )
-      |> Tx.set(SystemKeys.layout_rate_keeper(), :erlang.term_to_binary(nil))
       |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
-
-    # Set resolver keys using ceiling-search pattern (keyed by end_key)
-    tx = build_resolver_keys(tx, encoded_resolvers)
 
     # Set log keys directly
     tx =
       Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         encoded_descriptor =
           log_descriptor
-          |> encode_log_descriptor_for_storage(cluster)
+          |> encode_log_descriptor_for_storage()
           |> :erlang.term_to_binary()
 
         Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
@@ -191,49 +175,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     )
   end
 
-  @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()}, module()) ::
-          nil | pid() | {Bedrock.key(), pid()}
-  defp encode_component_for_storage(nil, _cluster), do: nil
-  defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
+  defp encode_services_for_storage(services) when is_map(services), do: services
 
-  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid), do: {start_key, pid}
-
-  defp encode_components_for_storage(components, cluster) when is_list(components),
-    do: Enum.map(components, &encode_component_for_storage(&1, cluster))
-
-  defp encode_services_for_storage(services, _cluster) when is_map(services), do: services
-
-  @spec encode_log_descriptor_for_storage([term()], module()) :: [term()]
-  defp encode_log_descriptor_for_storage(log_descriptor, _cluster) do
+  @spec encode_log_descriptor_for_storage([term()]) :: [term()]
+  defp encode_log_descriptor_for_storage(log_descriptor) do
     # Log descriptors typically don't contain PIDs directly
     log_descriptor
-  end
-
-  # Build resolver keys using ceiling-search pattern
-  # Resolvers are stored as {start_key, pid} tuples
-  # We convert to {end_key -> resolver} format where end_key is the next resolver's start_key or \xff
-  @spec build_resolver_keys(Tx.t(), [{Bedrock.key(), pid()}]) :: Tx.t()
-  defp build_resolver_keys(tx, []), do: tx
-
-  defp build_resolver_keys(tx, resolvers) when is_list(resolvers) do
-    # Sort by start_key
-    sorted = Enum.sort_by(resolvers, fn {start_key, _pid} -> start_key end)
-
-    # Build ceiling-search keys: each resolver is keyed by the END of its range
-    # The last resolver covers up to \xff
-    sorted
-    |> Enum.with_index()
-    |> Enum.reduce(tx, fn {{_start_key, pid}, index}, tx ->
-      # End key is either the next resolver's start_key, or \xff for the last one
-      end_key =
-        case Enum.at(sorted, index + 1) do
-          {next_start, _} -> next_start
-          nil -> "\xff"
-        end
-
-      # Still use term_to_binary for pid values until services use named processes
-      Tx.set(tx, SystemKeys.layout_resolver(end_key), :erlang.term_to_binary(pid))
-    end)
   end
 
   # Build shard keys from storage_teams

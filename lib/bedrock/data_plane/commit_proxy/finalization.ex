@@ -432,7 +432,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # Apply routing mutations (shard_key, layout_log) to routing_data
     updated_routing_data = RoutingData.apply_mutations(routing_data, metadata_updates)
 
-    # Apply non-routing mutations (shard, layout_resolver) to metadata
+    # Apply non-routing mutations (shard) to metadata
     metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, &MetadataMerge.merge/2)
     merged_metadata = metadata_merge_fn.(plan.metadata, metadata_updates)
 

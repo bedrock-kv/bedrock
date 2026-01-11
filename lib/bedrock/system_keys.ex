@@ -69,23 +69,7 @@ defmodule Bedrock.SystemKeys do
   def cluster_parameters_transaction_window_in_ms, do: "#{@system_prefix}/cluster/parameters/transaction_window_in_ms"
 
   # Transaction System Layout Keys
-  # These contain dynamic transaction system state that changes during recovery
-
-  @doc "Current sequencer reference"
-  @spec layout_sequencer() :: Bedrock.key()
-  def layout_sequencer, do: "#{@system_prefix}/layout/sequencer"
-
-  @doc "List of commit proxy references"
-  @spec layout_proxies() :: Bedrock.key()
-  def layout_proxies, do: "#{@system_prefix}/layout/proxies"
-
-  @doc "Resolver for a key range (ceiling search by end_key)"
-  @spec layout_resolver(end_key :: Bedrock.key()) :: Bedrock.key()
-  def layout_resolver(end_key), do: "#{@system_prefix}/layout/resolvers/#{end_key}"
-
-  @doc "Prefix for resolver keys (for range queries)"
-  @spec layout_resolvers_prefix() :: Bedrock.key()
-  def layout_resolvers_prefix, do: "#{@system_prefix}/layout/resolvers/"
+  # These contain durable transaction system configuration
 
   @doc "Configuration for a specific log by ID"
   @spec layout_log(Bedrock.service_id()) :: Bedrock.key()
@@ -125,14 +109,6 @@ defmodule Bedrock.SystemKeys do
   @doc "Map of all services in the transaction system"
   @spec layout_services() :: Bedrock.key()
   def layout_services, do: "#{@system_prefix}/layout/services"
-
-  @doc "Current director reference"
-  @spec layout_director() :: Bedrock.key()
-  def layout_director, do: "#{@system_prefix}/layout/director"
-
-  @doc "Current rate keeper reference"
-  @spec layout_rate_keeper() :: Bedrock.key()
-  def layout_rate_keeper, do: "#{@system_prefix}/layout/rate_keeper"
 
   @doc "Transaction system layout ID"
   @spec layout_id() :: Bedrock.key()
@@ -203,11 +179,7 @@ defmodule Bedrock.SystemKeys do
   @spec all_layout_keys() :: [Bedrock.key()]
   def all_layout_keys do
     [
-      layout_sequencer(),
-      layout_proxies(),
       layout_services(),
-      layout_director(),
-      layout_rate_keeper(),
       layout_id()
     ]
   end
@@ -251,7 +223,6 @@ defmodule Bedrock.SystemKeys do
 
   Returns:
   - `{:layout_log, log_id}` for log keys
-  - `{:layout_resolver, end_key}` for resolver keys
   - `{:shard_key, end_key}` for shard key mappings
   - `{:shard, tag}` for shard metadata keys
   - `{:materializer_key, end_key}` for materializer keys
@@ -260,7 +231,6 @@ defmodule Bedrock.SystemKeys do
   """
   @spec parse_key(Bedrock.key()) ::
           {:layout_log, String.t()}
-          | {:layout_resolver, String.t()}
           | {:shard_key, String.t()}
           | {:shard, String.t()}
           | {:materializer_key, String.t()}
@@ -271,9 +241,6 @@ defmodule Bedrock.SystemKeys do
     cond do
       String.starts_with?(key, layout_logs_prefix()) ->
         {:layout_log, String.replace_prefix(key, layout_logs_prefix(), "")}
-
-      String.starts_with?(key, layout_resolvers_prefix()) ->
-        {:layout_resolver, String.replace_prefix(key, layout_resolvers_prefix(), "")}
 
       String.starts_with?(key, shard_keys_prefix()) ->
         {:shard_key, String.replace_prefix(key, shard_keys_prefix(), "")}

@@ -163,7 +163,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     end)
   end
 
-  # Handle {:set, key, value} mutations
   defp apply_mutation({:set, key, value}, routing_data) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
@@ -179,12 +178,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         |> put_log_service(log_id, service_ref)
 
       _ ->
-        # Unknown or non-routable key type - ignore
         routing_data
     end
   end
 
-  # Handle {:clear, key} mutations
   defp apply_mutation({:clear, key}, routing_data) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
@@ -201,6 +198,5 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     end
   end
 
-  # Ignore other mutation types (clear_range, atomic, etc.)
   defp apply_mutation(_mutation, routing_data), do: routing_data
 end

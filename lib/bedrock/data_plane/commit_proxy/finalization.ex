@@ -411,7 +411,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp apply_metadata_updates(plan, metadata_updates, _opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
 
-    # Build routing_data from plan fields
     routing_data = %RoutingData{
       shard_table: plan.shard_table,
       log_map: plan.log_map,
@@ -419,7 +418,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       replication_factor: plan.replication_factor
     }
 
-    # Apply routing mutations (shard_key, layout_log) to routing_data
     updated_routing_data = RoutingData.apply_mutations(routing_data, metadata_updates)
 
     %{
@@ -600,7 +598,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
 
   def prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
-    # Get unique log_ids from log_map
     log_ids = plan.log_map |> Map.values() |> Enum.uniq()
 
     case build_transactions_for_logs(plan, log_ids) do
@@ -662,8 +659,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     })
   end
 
-  # Build shard index from sorted tagged mutations
-  # Returns list of {tag, count} tuples
   @spec build_shard_index([{term(), non_neg_integer()}]) :: [{non_neg_integer(), non_neg_integer()}]
   defp build_shard_index([]), do: []
 
@@ -839,8 +834,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   def push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, opts) do
     batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_direct/4)
-
-    # Pass log_services from the plan
     opts_with_log_services = Keyword.put(opts, :log_services, plan.log_services)
 
     case batch_log_push_fn.(
@@ -1039,7 +1032,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
-    # Build updated routing_data from plan fields
     updated_routing_data = %RoutingData{
       shard_table: plan.shard_table,
       log_map: plan.log_map,

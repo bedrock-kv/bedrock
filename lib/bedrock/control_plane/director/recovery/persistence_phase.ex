@@ -93,7 +93,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, _cluster) do
     encoded_services = encode_services_for_storage(transaction_system_layout.services)
 
-    # Set cluster keys directly
     tx =
       tx
       |> Tx.set(
@@ -142,13 +141,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         :erlang.term_to_binary(cluster_config.parameters.transaction_window_in_ms)
       )
 
-    # Set layout keys directly (only durable config - services and id)
+    # Only durable layout config (services and id)
     tx =
       tx
       |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
       |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
 
-    # Set log keys directly
     tx =
       Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         encoded_descriptor =
@@ -159,10 +157,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
       end)
 
-    # Set shard keys using ceiling-search pattern
+    # Shard keys use ceiling-search pattern
     tx = build_shard_keys(tx, transaction_system_layout.storage_teams)
 
-    # Set recovery keys directly and return tx
     tx
     |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
     |> Tx.set(
@@ -179,8 +176,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     log_descriptor
   end
 
-  # Build shard keys from storage_teams
-  # Creates both shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
+  # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
   @spec build_shard_keys(Tx.t(), [map()]) :: Tx.t()
   defp build_shard_keys(tx, []), do: tx
 

@@ -128,19 +128,6 @@ defmodule Bedrock.SystemKeysTest do
       assert_keys_present(keys, expected_keys)
     end
 
-    test "all_layout_keys/0 returns all transaction layout keys" do
-      keys = SystemKeys.all_layout_keys()
-
-      expected_keys = [
-        SystemKeys.layout_services(),
-        SystemKeys.layout_id()
-      ]
-
-      # Verify all expected keys are present and count is correct
-      assert length(keys) == 2
-      assert_keys_present(keys, expected_keys)
-    end
-
     test "all_legacy_keys/0 returns all legacy compatibility keys" do
       keys = SystemKeys.all_legacy_keys()
 
@@ -261,7 +248,7 @@ defmodule Bedrock.SystemKeysTest do
       # Collect all static keys from different categories
       all_static_keys =
         SystemKeys.all_cluster_keys() ++
-          SystemKeys.all_layout_keys() ++
+          [SystemKeys.layout_services(), SystemKeys.layout_id()] ++
           SystemKeys.all_legacy_keys()
 
       # Test all static keys have correct prefix
@@ -287,7 +274,7 @@ defmodule Bedrock.SystemKeysTest do
     test "no duplicate keys across categories" do
       all_keys =
         SystemKeys.all_cluster_keys() ++
-          SystemKeys.all_layout_keys() ++
+          [SystemKeys.layout_services(), SystemKeys.layout_id()] ++
           SystemKeys.all_legacy_keys()
 
       unique_keys = Enum.uniq(all_keys)

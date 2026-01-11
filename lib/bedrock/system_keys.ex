@@ -169,18 +169,6 @@ defmodule Bedrock.SystemKeys do
   end
 
   @doc """
-  Returns all transaction layout keys as a list (excluding dynamic keys with IDs/end_keys).
-  Useful for batch operations or validation.
-  """
-  @spec all_layout_keys() :: [Bedrock.key()]
-  def all_layout_keys do
-    [
-      layout_services(),
-      layout_id()
-    ]
-  end
-
-  @doc """
   Returns all legacy compatibility keys as a list.
   Useful for migration and cleanup operations.
   """

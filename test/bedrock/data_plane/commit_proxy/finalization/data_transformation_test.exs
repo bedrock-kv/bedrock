@@ -7,29 +7,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   alias Bedrock.DataPlane.Transaction
 
   # Helper functions for creating test data
-  defp create_storage_teams do
-    [
-      %{tag: 0, key_range: {<<>>, <<"m">>}, storage_ids: ["storage_1"]},
-      %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-      %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
-    ]
-  end
-
-  defp create_overlapping_storage_teams do
-    [
-      %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-      %{tag: 1, key_range: {<<"h">>, <<"z">>}, storage_ids: ["storage_2"]}
-    ]
-  end
-
-  defp create_binary_storage_teams do
-    [
-      %{tag: 0, key_range: {<<>>, <<0xFF>>}, storage_ids: ["storage_1", "storage_2"]},
-      %{tag: 1, key_range: {<<0x80>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3", "storage_4"]},
-      %{tag: 2, key_range: {<<0x40>>, <<0xC0>>}, storage_ids: ["storage_5"]}
-    ]
-  end
-
   defp create_transaction(mutations, write_conflicts, read_conflicts \\ {nil, []}) do
     %{
       mutations: mutations,
@@ -109,113 +86,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     test "extracts range from clear_range mutation" do
       mutation = {:clear_range, <<"a">>, <<"z">>}
       assert Finalization.mutation_to_key_or_range(mutation) == {<<"a">>, <<"z">>}
-    end
-  end
-
-  describe "key_or_range_to_tags/2" do
-    setup do
-      %{storage_teams: create_storage_teams()}
-    end
-
-    test "maps single key to tags", %{storage_teams: storage_teams} do
-      assert {:ok, [0]} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
-      assert {:ok, [1]} = Finalization.key_or_range_to_tags(<<"orange">>, storage_teams)
-      assert {:ok, [2]} = Finalization.key_or_range_to_tags(<<"zebra">>, storage_teams)
-    end
-
-    test "maps range to intersecting tags", %{storage_teams: storage_teams} do
-      range = {<<"a">>, <<"s">>}
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert [0, 1] = Enum.sort(tags)
-    end
-
-    test "maps range that spans all storage teams", %{storage_teams: storage_teams} do
-      range = {<<>>, <<0xFF, 0xFF>>}
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert [0, 1, 2] = Enum.sort(tags)
-    end
-
-    test "maps range within single storage team", %{storage_teams: storage_teams} do
-      range = {<<"n">>, <<"p">>}
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert tags == [1]
-    end
-
-    test "handles overlapping storage teams" do
-      storage_teams = create_overlapping_storage_teams()
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
-      assert [0, 1] = Enum.sort(tags)
-
-      range = {<<"i">>, <<"j">>}
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(range, storage_teams)
-      assert [0, 1] = Enum.sort(tags)
-    end
-
-    test "maps key to multiple tags when overlapping (binary keys)" do
-      storage_teams = create_binary_storage_teams()
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x90>>, storage_teams)
-      assert [0, 1, 2] = Enum.sort(tags)
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x50>>, storage_teams)
-      assert [0, 2] = Enum.sort(tags)
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x85>>, storage_teams)
-      assert [0, 1, 2] = Enum.sort(tags)
-    end
-
-    test "returns empty list for key with no matching teams" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<0x10>>, <<0x20>>}, storage_ids: ["storage_1"]}
-      ]
-
-      assert {:ok, []} = Finalization.key_or_range_to_tags(<<0x05>>, storage_teams)
-      assert {:ok, []} = Finalization.key_or_range_to_tags(<<0x25>>, storage_teams)
-    end
-
-    test "handles boundary conditions correctly" do
-      storage_teams = create_binary_storage_teams()
-
-      # Boundary inclusive behavior at key range edges
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x80>>, storage_teams)
-      assert [0, 1, 2] = Enum.sort(tags)
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<0x40>>, storage_teams)
-      assert [0, 2] = Enum.sort(tags)
-    end
-  end
-
-  describe "find_logs_for_tags/2" do
-    test "finds logs that intersect with given tags" do
-      logs_by_id = %{
-        "log1" => [0, 1],
-        "log2" => [1, 2],
-        "log3" => [2, 3],
-        "log4" => [4]
-      }
-
-      assert ["log1", "log2", "log3"] = Enum.sort(Finalization.find_logs_for_tags([1, 2], logs_by_id))
-      assert ["log1"] = Finalization.find_logs_for_tags([0], logs_by_id)
-      assert ["log4"] = Finalization.find_logs_for_tags([4], logs_by_id)
-    end
-
-    test "handles empty tag list" do
-      logs_by_id = %{
-        "log1" => [0, 1],
-        "log2" => [1, 2]
-      }
-
-      assert [] = Finalization.find_logs_for_tags([], logs_by_id)
-    end
-
-    test "handles tags with no matching logs" do
-      logs_by_id = %{
-        "log1" => [0, 1],
-        "log2" => [1, 2]
-      }
-
-      assert [] = Finalization.find_logs_for_tags([5, 6], logs_by_id)
     end
   end
 
@@ -447,28 +317,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         assert {:ok, [{^expected_key, _}]} = Transaction.write_conflicts(conflict_binary),
                "Transaction #{idx} should be at position #{idx}"
       end)
-    end
-  end
-
-  describe "edge cases and error handling" do
-    test "key_or_range_to_tags handles unknown keys by returning empty list" do
-      storage_teams = [
-        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]}
-      ]
-
-      assert {:ok, []} = Finalization.key_or_range_to_tags(<<"z_unknown">>, storage_teams)
-    end
-
-    test "key_or_range_to_tags distributes keys to multiple tags for overlapping teams" do
-      storage_teams = create_overlapping_storage_teams()
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"hello">>, storage_teams)
-      assert [0, 1] = Enum.sort(tags)
-
-      assert {:ok, tags} = Finalization.key_or_range_to_tags(<<"india">>, storage_teams)
-      assert [0, 1] = Enum.sort(tags)
-
-      assert {:ok, [0]} = Finalization.key_or_range_to_tags(<<"apple">>, storage_teams)
     end
   end
 end

@@ -10,7 +10,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   ## Lifecycle
 
-  - `new/1` - Creates routing data from a transaction system layout
   - `new_empty/0` - Creates empty routing data for dynamic population
   - `cleanup/1` - Deletes the ETS table when the commit proxy terminates
 
@@ -40,26 +39,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         }
 
   defstruct [:shard_table, :log_map, :log_services, :replication_factor]
-
-  @doc """
-  Creates routing data from a transaction system layout.
-
-  Builds an ETS ordered_set table for shard ceiling search, a log map
-  for golden ratio log selection, and log_services for contacting logs.
-  """
-  @spec new(map()) :: t()
-  def new(transaction_system_layout) do
-    storage_teams = transaction_system_layout.storage_teams
-    logs = transaction_system_layout.logs
-    services = Map.get(transaction_system_layout, :services, %{})
-
-    %__MODULE__{
-      shard_table: build_shard_table(storage_teams),
-      log_map: build_log_map(logs),
-      log_services: build_log_services(logs, services),
-      replication_factor: infer_replication_factor(storage_teams, logs)
-    }
-  end
 
   @doc """
   Creates empty routing data for dynamic population via metadata.
@@ -224,59 +203,4 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   # Ignore other mutation types (clear_range, atomic, etc.)
   defp apply_mutation(_mutation, routing_data), do: routing_data
-
-  # Build an ETS ordered_set table for ceiling search from storage_teams
-  @spec build_shard_table([map()]) :: :ets.table()
-  defp build_shard_table(storage_teams) do
-    table = :ets.new(:shard_keys, [:ordered_set, :public])
-
-    Enum.each(storage_teams, fn team ->
-      %{tag: tag, key_range: {_start_key, end_key}} = team
-      :ets.insert(table, {end_key, tag})
-    end)
-
-    table
-  end
-
-  # Build a map from log index to log_id for golden ratio lookup
-  @spec build_log_map(map()) :: map()
-  defp build_log_map(logs) do
-    logs
-    |> Map.keys()
-    |> Enum.sort()
-    |> Enum.with_index()
-    |> Map.new(fn {log_id, index} -> {index, log_id} end)
-  end
-
-  # Build log_services map from logs and services
-  @spec build_log_services(map(), map()) :: map()
-  defp build_log_services(logs, services) do
-    logs
-    |> Map.keys()
-    |> Enum.reduce(%{}, fn log_id, acc ->
-      case Map.get(services, log_id) do
-        %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
-          Map.put(acc, log_id, pid)
-
-        %{kind: :log, status: {:up, {name, node}}} when is_atom(name) and is_atom(node) ->
-          Map.put(acc, log_id, {name, node})
-
-        _ ->
-          acc
-      end
-    end)
-  end
-
-  # Infer replication factor from the data
-  @spec infer_replication_factor([map()], map()) :: pos_integer()
-  defp infer_replication_factor([], logs) do
-    max(1, map_size(logs))
-  end
-
-  defp infer_replication_factor([first_team | _], logs) do
-    case Map.get(first_team, :storage_ids) do
-      nil -> max(1, map_size(logs))
-      storage_ids -> max(1, length(storage_ids))
-    end
-  end
 end

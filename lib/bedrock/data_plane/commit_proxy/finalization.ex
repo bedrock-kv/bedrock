@@ -26,7 +26,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   import Bitwise, only: [<<<: 2]
 
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.CommitProxy.MetadataMerge
@@ -40,7 +39,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
-  alias Bedrock.KeyRange
 
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
@@ -115,7 +113,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :transaction_count,
       :commit_version,
       :last_commit_version,
-      :storage_teams,
       :shard_table,
       :log_map,
       :log_services,
@@ -126,7 +123,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :transaction_count,
       :commit_version,
       :last_commit_version,
-      :storage_teams,
       :shard_table,
       :log_map,
       :replication_factor,
@@ -147,7 +143,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             transaction_count: non_neg_integer(),
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
-            storage_teams: [StorageTeamDescriptor.t()],
             shard_table: :ets.table(),
             log_map: %{non_neg_integer() => Log.id()},
             log_services: %{Log.id() => {atom(), node()} | pid()},
@@ -275,7 +270,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       transaction_count: Batch.transaction_count(batch),
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
-      storage_teams: [],
       shard_table: shard_table,
       log_map: log_map,
       log_services: log_services,
@@ -806,42 +800,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def mutation_to_key_or_range({:clear, key}), do: key
   def mutation_to_key_or_range({:clear_range, start_key, end_key}), do: {start_key, end_key}
   def mutation_to_key_or_range({:atomic, _op, key, _value}), do: key
-
-  @spec key_or_range_to_tags(Bedrock.key() | Bedrock.key_range(), [StorageTeamDescriptor.t()]) ::
-          {:ok, [Bedrock.range_tag()]}
-  def key_or_range_to_tags({start_key, end_key}, storage_teams) do
-    tags =
-      for %{tag: tag, key_range: {team_start, team_end}} <- storage_teams,
-          ranges_intersect?(start_key, end_key, team_start, team_end) do
-        tag
-      end
-
-    {:ok, tags}
-  end
-
-  def key_or_range_to_tags(key, storage_teams) do
-    tags =
-      for %{tag: tag, key_range: {min_key, max_key_ex}} <- storage_teams,
-          KeyRange.contains?({min_key, max_key_ex}, key) do
-        tag
-      end
-
-    {:ok, tags}
-  end
-
-  @spec find_logs_for_tags([Bedrock.range_tag()], %{Log.id() => [Bedrock.range_tag()]}) :: [Log.id()]
-  def find_logs_for_tags(tags, logs_by_id) do
-    tag_set = MapSet.new(tags)
-
-    logs_by_id
-    |> Enum.filter(fn {_log_id, log_tags} ->
-      Enum.any?(log_tags, &MapSet.member?(tag_set, &1))
-    end)
-    |> Enum.map(fn {log_id, _log_tags} -> log_id end)
-  end
-
-  @spec ranges_intersect?(Bedrock.key(), Bedrock.key(), Bedrock.key(), Bedrock.key()) :: boolean()
-  defp ranges_intersect?(start1, end1, start2, end2), do: start1 < end2 and end1 > start2
 
   # ============================================================================
   # Mutation Splitting and Tagging

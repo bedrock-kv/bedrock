@@ -71,6 +71,63 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     Map.merge(base, overrides)
   end
 
+  # Build routing data from a transaction system layout for testing
+  # This replaces the deleted RoutingData.new/1 for test purposes
+  defp build_routing_data(transaction_system_layout) do
+    storage_teams = Map.get(transaction_system_layout, :storage_teams, [])
+    logs = Map.get(transaction_system_layout, :logs, %{})
+    services = Map.get(transaction_system_layout, :services, %{})
+
+    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
+
+    Enum.each(storage_teams, fn team ->
+      %{tag: tag, key_range: {_start_key, end_key}} = team
+      :ets.insert(table, {end_key, tag})
+    end)
+
+    log_map =
+      logs
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    log_services =
+      logs
+      |> Map.keys()
+      |> Enum.reduce(%{}, fn log_id, acc ->
+        case Map.get(services, log_id) do
+          %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
+            Map.put(acc, log_id, pid)
+
+          %{kind: :log, status: {:up, {name, node}}} when is_atom(name) and is_atom(node) ->
+            Map.put(acc, log_id, {name, node})
+
+          _ ->
+            acc
+        end
+      end)
+
+    replication_factor =
+      case storage_teams do
+        [] ->
+          max(1, map_size(logs))
+
+        [first_team | _] ->
+          case Map.get(first_team, :storage_ids) do
+            nil -> max(1, map_size(logs))
+            storage_ids -> max(1, length(storage_ids))
+          end
+      end
+
+    %RoutingData{
+      shard_table: table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    }
+  end
+
   describe "error handling integration" do
     test "handles director failures and error states without crashing batching logic" do
       # This test verifies that our fix prevents the KeyError we encountered
@@ -223,7 +280,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         lock_token: "index_test_token",
         sequencer: sequencer,
         resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-        routing_data: RoutingData.new(transaction_system_layout)
+        routing_data: build_routing_data(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -323,7 +380,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         lock_token: "failure_test_token",
         sequencer: sequencer,
         resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-        routing_data: RoutingData.new(transaction_system_layout)
+        routing_data: build_routing_data(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -478,7 +535,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         lock_token: lock_token,
         sequencer: sequencer,
         resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-        routing_data: RoutingData.new(transaction_system_layout)
+        routing_data: build_routing_data(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -650,7 +707,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         lock_token: lock_token,
         sequencer: sequencer,
         resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-        routing_data: RoutingData.new(transaction_system_layout)
+        routing_data: build_routing_data(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))

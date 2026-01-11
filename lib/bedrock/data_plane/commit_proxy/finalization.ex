@@ -981,9 +981,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   def notify_sequencer(%FinalizationPlan{stage: :logged} = plan, sequencer, opts) do
     epoch = Keyword.fetch!(opts, :epoch)
-    sequencer_notify_fn = Keyword.get(opts, :sequencer_notify_fn, &Sequencer.report_successful_commit/3)
+    sequencer_notify_fn = Keyword.get(opts, :sequencer_notify_fn, &Sequencer.report_successful_commit/4)
 
-    case sequencer_notify_fn.(sequencer, plan.commit_version, epoch: epoch) do
+    case sequencer_notify_fn.(sequencer, epoch, plan.commit_version, []) do
       :ok ->
         %{plan | stage: :sequencer_notified}
 

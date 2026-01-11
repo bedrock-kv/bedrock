@@ -55,7 +55,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
   end
 
   defp mock_sequencer_notify do
-    fn sequencer, commit_version, _opts ->
+    fn sequencer, _epoch, commit_version, _opts ->
       assert sequencer == :test_sequencer
       assert commit_version == Version.from_integer(100)
       :ok
@@ -157,7 +157,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
-                 sequencer_notify_fn: fn sequencer, _commit_version, _opts ->
+                 sequencer_notify_fn: fn sequencer, _epoch, _commit_version, _opts ->
                    assert sequencer == :test_sequencer
                    :ok
                  end,
@@ -201,7 +201,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
-                 sequencer_notify_fn: fn sequencer, _commit_version, _opts ->
+                 sequencer_notify_fn: fn sequencer, _epoch, _commit_version, _opts ->
                    assert sequencer == :test_sequencer
                    :ok
                  end,
@@ -313,7 +313,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
-                 sequencer_notify_fn: fn sequencer, _commit_version, _opts ->
+                 sequencer_notify_fn: fn sequencer, _epoch, _commit_version, _opts ->
                    assert sequencer == :test_sequencer
                    :ok
                  end,

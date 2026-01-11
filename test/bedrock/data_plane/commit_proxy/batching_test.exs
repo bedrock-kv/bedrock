@@ -124,7 +124,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       transaction = sample_transaction()
 
-      assert {:error, :sequencer_unavailable} = Batching.single_transaction_batch(state, transaction)
+      assert {:error, {:sequencer_unavailable, _reason}} = Batching.single_transaction_batch(state, transaction)
     end
 
     test "uses default reply_fn when not provided" do

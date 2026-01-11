@@ -4,7 +4,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
-  alias Bedrock.DataPlane.Resolver.MetadataAccumulator
 
   @type mode :: :locked | :running
 
@@ -20,7 +19,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           empty_transaction_timeout_ms: non_neg_integer(),
           mode: mode(),
           lock_token: binary(),
-          metadata: [MetadataAccumulator.entry()],
           routing_data: RoutingData.t() | nil
         }
   defstruct cluster: nil,
@@ -34,6 +32,5 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             empty_transaction_timeout_ms: nil,
             mode: :locked,
             lock_token: nil,
-            metadata: [],
             routing_data: nil
 end

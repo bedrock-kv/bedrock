@@ -79,7 +79,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       # Test error case when resolve_transactions fails
       result =
-        Finalization.finalize_batch(batch, [],
+        Finalization.finalize_batch(batch,
           epoch: 1,
           sequencer: :test_sequencer,
           resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -124,10 +124,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           end
         end)
 
-      assert {:ok, 1, 1, _metadata} =
+      assert {:ok, 1, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -150,10 +149,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 0, _metadata} =
+      assert {:ok, 0, 0, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -195,10 +193,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [0, 1], []}
       end
 
-      assert {:ok, 2, 0, _metadata} =
+      assert {:ok, 2, 0, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -234,7 +231,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:log_failures, [{"log_1", :timeout}]}} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -265,7 +261,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:insufficient_acknowledgments, 2, 3, [{"log_3", :timeout}]}} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -310,10 +305,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         :ok
       end
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -373,7 +367,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:resolver_unavailable, :timeout}} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),

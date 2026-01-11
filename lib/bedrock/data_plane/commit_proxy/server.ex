@@ -44,7 +44,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       single_transaction_batch: 2
     ]
 
-  import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 3]
+  import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
     only: [trace_metadata: 0, trace_metadata: 1]
@@ -199,7 +199,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
-  @spec handle_info(:timeout | {:metadata_update, [term()]}, State.t()) :: {:noreply, State.t(), timeout()}
+  @spec handle_info(:timeout | {:routing_data_update, RoutingData.t()}, State.t()) ::
+          {:noreply, State.t(), timeout()}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
     empty_transaction = Transaction.empty_transaction()
 
@@ -226,12 +227,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
   end
 
-  def handle_info({:metadata_update, updated_metadata}, %{mode: :running} = t) do
-    noreply(%{t | metadata: updated_metadata}, timeout: t.empty_transaction_timeout_ms)
+  def handle_info({:routing_data_update, updated_routing_data}, %{mode: :running} = t) do
+    noreply(%{t | routing_data: updated_routing_data}, timeout: t.empty_transaction_timeout_ms)
   end
 
-  def handle_info({:metadata_update, updated_metadata}, t) do
-    noreply(%{t | metadata: updated_metadata})
+  def handle_info({:routing_data_update, updated_routing_data}, t) do
+    noreply(%{t | routing_data: updated_routing_data})
   end
 
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
@@ -248,7 +249,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     server_pid = self()
 
     %{
-      metadata: current_metadata,
       epoch: epoch,
       sequencer: sequencer,
       resolver_layout: resolver_layout,
@@ -258,14 +258,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     Task.start_link(fn ->
       trace_metadata(trace_meta)
 
-      case finalize_batch(batch, current_metadata,
+      case finalize_batch(batch,
              epoch: epoch,
              sequencer: sequencer,
              resolver_layout: resolver_layout,
              routing_data: routing_data
            ) do
-        {:ok, _n_aborts, _n_oks, updated_metadata} ->
-          send(server_pid, {:metadata_update, updated_metadata})
+        {:ok, _n_aborts, _n_oks, updated_routing_data} ->
+          send(server_pid, {:routing_data_update, updated_routing_data})
 
         {:error, reason} ->
           exit(reason)

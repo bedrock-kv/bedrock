@@ -198,7 +198,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
 
-    - `{:ok, n_aborts, n_successes, updated_metadata}` - Pipeline completed with updated metadata
+    - `{:ok, n_aborts, n_successes, updated_routing_data}` - Pipeline completed with updated routing
     - `{:error, finalization_error()}` - Pipeline failed; all pending clients notified of failure
 
   ## Error Handling
@@ -208,7 +208,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   """
   @spec finalize_batch(
           Batch.t(),
-          metadata :: [MetadataAccumulator.entry()],
           opts :: [
             epoch: Bedrock.epoch(),
             sequencer: pid(),
@@ -224,10 +223,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) ::
-          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer(),
-           updated_metadata :: [MetadataAccumulator.entry()]}
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer(), updated_routing_data :: RoutingData.t()}
           | {:error, finalization_error()}
-  def finalize_batch(batch, metadata, opts) do
+  def finalize_batch(batch, opts) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
@@ -243,13 +241,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       |> push_to_logs(opts)
       |> notify_sequencer(sequencer, opts)
       |> notify_successes(opts)
-      |> extract_result_or_handle_error(metadata, opts)
+      |> extract_result_or_handle_error(opts)
     end
     |> :timer.tc()
     |> case do
-      {n_usec, {:ok, n_aborts, n_oks, updated_metadata}} ->
+      {n_usec, {:ok, n_aborts, n_oks, updated_routing_data}} ->
         trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
-        {:ok, n_aborts, n_oks, updated_metadata}
+        {:ok, n_aborts, n_oks, updated_routing_data}
 
       {n_usec, {:error, reason}} ->
         trace_commit_proxy_batch_failed(batch, reason, n_usec)
@@ -1016,19 +1014,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Result Extraction and Error Handling
   # ============================================================================
 
-  @spec extract_result_or_handle_error(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
-          {:ok, non_neg_integer(), non_neg_integer(), map()}
+  @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
+          {:ok, non_neg_integer(), non_neg_integer(), RoutingData.t()}
           | {:error, finalization_error()}
-  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _current_metadata, _opts) do
+  def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _opts) do
     # Table is managed by commit proxy server - no cleanup needed here
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
-    {:ok, n_aborts, n_successes, plan.metadata}
+    # Build updated routing_data from plan fields
+    updated_routing_data = %RoutingData{
+      shard_table: plan.shard_table,
+      log_map: plan.log_map,
+      log_services: plan.log_services,
+      replication_factor: plan.replication_factor
+    }
+
+    {:ok, n_aborts, n_successes, updated_routing_data}
   end
 
-  def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, _metadata, opts),
-    do: handle_error(plan, opts)
+  def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, opts), do: handle_error(plan, opts)
 
   @spec handle_error(FinalizationPlan.t(), keyword()) :: {:error, finalization_error()}
   defp handle_error(%FinalizationPlan{error: error} = plan, opts) when not is_nil(error) do

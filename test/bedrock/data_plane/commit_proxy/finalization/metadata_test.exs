@@ -105,10 +105,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -151,10 +150,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -202,10 +200,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], metadata_updates}
       end
 
-      assert {:ok, 0, 1, returned_metadata} =
+      assert {:ok, 0, 1, _returned_routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -215,8 +212,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
-      # Returns plan.metadata (empty until metadata_merge_fn is injected)
-      assert returned_metadata == %{}
+      # Routing data is returned (metadata handling removed)
+      assert_receive {:reply, {:ok, _, _}}
     end
 
     test "returns plan metadata independent of passed metadata arg", %{
@@ -242,13 +239,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       resolver_metadata = [{new_version, [{:set, <<0xFF, "new_key">>, "new_value"}]}]
 
       mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], resolver_metadata}
+        {:ok, [], []}
       end
 
-      assert {:ok, 0, 1, returned_metadata} =
+      assert {:ok, 0, 1, _returned_routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 existing_metadata,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -258,8 +254,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
-      # Returns plan.metadata (empty until metadata_merge_fn is injected)
-      assert returned_metadata == %{}
+      # Routing data is returned (metadata handling removed)
+      assert_receive {:reply, {:ok, _, _}}
     end
 
     test "handles empty metadata updates from resolver", %{
@@ -281,10 +277,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 1, returned_metadata} =
+      assert {:ok, 0, 1, _returned_routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -294,8 +289,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer_notify_fn: fn _sequencer, _commit_version, _opts -> :ok end
                )
 
-      # Returns plan.metadata (empty map by default)
-      assert returned_metadata == %{}
+      # Routing data is returned (metadata handling removed)
+      assert_receive {:reply, {:ok, _, _}}
     end
   end
 
@@ -343,10 +338,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 3, _metadata} =
+      assert {:ok, 0, 3, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -396,10 +390,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 0, _metadata} =
+      assert {:ok, 0, 0, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -455,10 +448,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], []}
       end
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),

@@ -80,10 +80,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(transaction_system_layout)
 
-      assert {:ok, 0, 3, _metadata} =
+      assert {:ok, 0, 3, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
@@ -128,10 +127,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(layout)
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
@@ -172,10 +170,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(layout)
 
-      assert {:ok, 0, 1, _metadata} =
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
@@ -236,10 +233,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       routing_data = Support.build_routing_data(layout)
 
       # Should have 1 abort (transaction 1) and 2 successes (transactions 0, 2)
-      assert {:ok, 1, 2, _metadata} =
+      assert {:ok, 1, 2, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
@@ -622,7 +618,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:error, {:log_failures, _}} =
                Finalization.finalize_batch(
                  batch,
-                 [],
                  epoch: 1,
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),

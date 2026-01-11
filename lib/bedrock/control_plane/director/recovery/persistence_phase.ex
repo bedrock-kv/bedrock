@@ -64,18 +64,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
 
-    encoded_layout =
-      Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
-
     tx = Tx.new()
-    tx = build_monolithic_keys(tx, epoch, encoded_config, encoded_layout)
+    tx = build_monolithic_keys(tx, epoch, encoded_config)
     tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
 
     Tx.commit(tx, nil)
   end
 
-  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map(), map()) :: Tx.t()
-  defp build_monolithic_keys(tx, epoch, encoded_config, encoded_layout) do
+  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map()) :: Tx.t()
+  defp build_monolithic_keys(tx, epoch, encoded_config) do
     tx
     |> Tx.set(SystemKeys.config_monolithic(), :erlang.term_to_binary({epoch, encoded_config}))
     |> Tx.set(SystemKeys.epoch_legacy(), :erlang.term_to_binary(epoch))
@@ -83,7 +80,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       SystemKeys.last_recovery_legacy(),
       :erlang.term_to_binary(System.system_time(:millisecond))
     )
-    |> Tx.set(SystemKeys.layout_monolithic(), :erlang.term_to_binary(encoded_layout))
   end
 
   @spec build_decomposed_keys(

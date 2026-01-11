@@ -136,10 +136,6 @@ defmodule Bedrock.SystemKeys do
   @spec config_monolithic() :: Bedrock.key()
   def config_monolithic, do: "#{@system_prefix}/config"
 
-  @doc "Monolithic transaction system layout (deprecated, use decomposed keys)"
-  @spec layout_monolithic() :: Bedrock.key()
-  def layout_monolithic, do: "#{@system_prefix}/transaction_system_layout"
-
   @doc "Legacy epoch key (use cluster_epoch instead)"
   @spec epoch_legacy() :: Bedrock.key()
   def epoch_legacy, do: "#{@system_prefix}/epoch"
@@ -192,7 +188,6 @@ defmodule Bedrock.SystemKeys do
   def all_legacy_keys do
     [
       config_monolithic(),
-      layout_monolithic(),
       epoch_legacy(),
       last_recovery_legacy()
     ]

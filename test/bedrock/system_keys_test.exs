@@ -96,7 +96,6 @@ defmodule Bedrock.SystemKeysTest do
     test "legacy keys return correct values" do
       legacy_keys = [
         {SystemKeys.config_monolithic(), "\xff/system/config"},
-        {SystemKeys.layout_monolithic(), "\xff/system/transaction_system_layout"},
         {SystemKeys.epoch_legacy(), "\xff/system/epoch"},
         {SystemKeys.last_recovery_legacy(), "\xff/system/last_recovery"}
       ]
@@ -147,13 +146,12 @@ defmodule Bedrock.SystemKeysTest do
 
       expected_keys = [
         SystemKeys.config_monolithic(),
-        SystemKeys.layout_monolithic(),
         SystemKeys.epoch_legacy(),
         SystemKeys.last_recovery_legacy()
       ]
 
       # Verify all expected keys are present and count is correct
-      assert length(keys) == 4
+      assert length(keys) == 3
       assert_keys_present(keys, expected_keys)
     end
 

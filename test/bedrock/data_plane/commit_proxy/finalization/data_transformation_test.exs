@@ -51,13 +51,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
     }
   end
 
-  defp default_layout do
-    %{
-      storage_teams: [],
-      logs: %{}
-    }
-  end
-
   # Build routing data for tests
   defp build_routing_data(storage_teams, logs) do
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
@@ -263,7 +256,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       routing_data = build_routing_data(layout.storage_teams, layout.logs)
 
       assert %{stage: :ready_for_resolution, transactions: transactions} =
-               Finalization.create_finalization_plan(batch, layout, routing_data)
+               Finalization.create_finalization_plan(batch, routing_data)
 
       assert map_size(transactions) == 2
 
@@ -294,7 +287,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch([], 200)
 
       assert %{transactions: transactions, stage: :ready_for_resolution} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       assert map_size(transactions) == 0
     end
@@ -309,7 +302,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
       assert %{transactions: transactions} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       assert map_size(transactions) == 1
       {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
@@ -334,7 +327,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
       assert %{transactions: transactions} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       assert map_size(transactions) == 1
       {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
@@ -365,7 +358,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch([{fn _ -> :ok end, Transaction.encode(transaction_map)}], 200)
 
       assert %{transactions: transactions} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       assert map_size(transactions) == 1
       {_idx, _reply_fn, binary} = Map.fetch!(transactions, 0)
@@ -390,7 +383,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch(transactions, 100)
 
       assert %{transactions: transactions} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       # Verify transactions map contains all transactions
       assert map_size(transactions) == 4
@@ -443,7 +436,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       batch = create_batch(transactions, 100)
 
       assert %{transactions: transactions} =
-               Finalization.create_finalization_plan(batch, default_layout(), default_routing_data())
+               Finalization.create_finalization_plan(batch, default_routing_data())
 
       # For each transaction index, verify the corresponding transaction data
       Enum.each(0..2, fn idx ->

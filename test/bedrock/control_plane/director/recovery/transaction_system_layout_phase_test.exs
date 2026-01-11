@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
   defp successful_unlock_context do
     recovery_context()
     |> with_lock_token("test_token")
-    |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _layout -> :ok end)
+    |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout -> :ok end)
     |> Map.put(:unlock_storage_fn, fn _storage_pid, _version, _layout -> :ok end)
   end
 
@@ -64,7 +64,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
         |> with_lock_token("test_token")
         |> Map.put(
           :unlock_commit_proxy_fn,
-          fn _proxy, _token, _layout -> {:error, :timeout} end
+          fn _proxy, _token, _sequencer, _resolver_layout -> {:error, :timeout} end
         )
         |> Map.put(:unlock_storage_fn, fn _storage_pid, _version, _layout -> :ok end)
 
@@ -87,7 +87,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhaseTes
       context =
         recovery_context()
         |> with_lock_token("test_token")
-        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _layout -> :ok end)
+        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout -> :ok end)
         |> Map.put(
           :unlock_storage_fn,
           fn _storage_pid, _version, _layout -> {:error, :unavailable} end

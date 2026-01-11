@@ -79,8 +79,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       # Test error case when resolve_transactions fails
       result =
-        Finalization.finalize_batch(batch, transaction_system_layout, [],
+        Finalization.finalize_batch(batch, [],
           epoch: 1,
+          sequencer: :test_sequencer,
           resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
           routing_data: routing_data
         )
@@ -126,9 +127,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:ok, 1, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
@@ -152,9 +153,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:ok, 0, 0, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
@@ -197,9 +198,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:ok, 2, 0, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
@@ -233,9 +234,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:log_failures, [{"log_1", :timeout}]}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
@@ -264,9 +265,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:insufficient_acknowledgments, 2, 3, [{"log_3", :timeout}]}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
@@ -312,9 +313,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
@@ -372,9 +373,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert {:error, {:resolver_unavailable, :timeout}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  abort_reply_fn: custom_abort_fn,

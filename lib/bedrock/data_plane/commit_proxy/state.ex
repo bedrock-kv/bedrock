@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.CommitProxy.State do
   @moduledoc false
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
@@ -13,7 +12,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           cluster: module(),
           director: pid(),
           sequencer: pid() | nil,
-          transaction_system_layout: TransactionSystemLayout.t() | nil,
           resolver_layout: ResolverLayout.t() | nil,
           epoch: Bedrock.epoch(),
           batch: Batch.t() | nil,
@@ -28,7 +26,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   defstruct cluster: nil,
             director: nil,
             sequencer: nil,
-            transaction_system_layout: nil,
             resolver_layout: nil,
             epoch: nil,
             batch: nil,

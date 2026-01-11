@@ -44,7 +44,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       single_transaction_batch: 2
     ]
 
-  import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 4]
+  import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 3]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
     only: [trace_metadata: 0, trace_metadata: 1]
@@ -65,6 +65,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
             epoch: Bedrock.epoch(),
             lock_token: Bedrock.lock_token(),
             instance: non_neg_integer(),
+            sequencer: pid(),
+            resolver_layout: ResolverLayout.t(),
             max_latency_in_ms: non_neg_integer(),
             max_per_batch: pos_integer(),
             empty_transaction_timeout_ms: non_neg_integer()
@@ -76,9 +78,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     epoch = opts[:epoch] || raise "Missing :epoch option"
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     instance = opts[:instance] || raise "Missing :instance option"
+    # sequencer and resolver_layout can be nil at startup - set via recover_from/3
+    sequencer = opts[:sequencer]
+    resolver_layout = opts[:resolver_layout]
     max_latency_in_ms = opts[:max_latency_in_ms] || 4
     max_per_batch = opts[:max_per_batch] || 32
     empty_transaction_timeout_ms = opts[:empty_transaction_timeout_ms] || 1_000
+    routing_data = opts[:routing_data]
 
     %{
       id: {__MODULE__, cluster, epoch, instance},
@@ -86,20 +92,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token}
+           {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
+            sequencer, resolver_layout, routing_data}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  @spec init({module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), non_neg_integer(), binary()}) ::
+  @spec init(
+          {module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), non_neg_integer(), binary(), pid(),
+           ResolverLayout.t(), RoutingData.t() | nil}
+        ) ::
           {:ok, State.t(), timeout()}
-  def init({cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token}) do
+  def init(
+        {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
+         sequencer, resolver_layout, provided_routing_data}
+      ) do
     # Monitor the Director - if it dies, this commit proxy should terminate
     Process.monitor(director)
 
     trace_metadata(%{cluster: cluster, pid: self()})
+
+    # Use provided routing data or start with empty (populated via metadata from first transaction)
+    routing_data = provided_routing_data || RoutingData.new_empty()
 
     then(
       %State{
@@ -109,7 +125,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         max_latency_in_ms: max_latency_in_ms,
         max_per_batch: max_per_batch,
         empty_transaction_timeout_ms: empty_transaction_timeout_ms,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: sequencer,
+        resolver_layout: resolver_layout,
+        routing_data: routing_data
       },
       &{:ok, &1, empty_transaction_timeout_ms}
     )
@@ -125,27 +144,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec handle_call(
-          {:recover_from, binary(), map()} | {:commit, Bedrock.transaction()},
+          {:recover_from, binary(), pid(), ResolverLayout.t()}
+          | {:recover_from, binary()}
+          | {:commit, Bedrock.transaction()},
           GenServer.from(),
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
-  def handle_call({:recover_from, lock_token, transaction_system_layout}, _from, %{mode: :locked} = t) do
+  # recover_from with sequencer and resolver_layout
+  def handle_call({:recover_from, lock_token, sequencer, resolver_layout}, _from, %{mode: :locked} = t) do
     if lock_token == t.lock_token do
-      resolver_layout = ResolverLayout.from_layout(transaction_system_layout)
-      routing_data = RoutingData.new(transaction_system_layout)
+      reply(%{t | mode: :running, sequencer: sequencer, resolver_layout: resolver_layout}, :ok)
+    else
+      reply(t, {:error, :unauthorized})
+    end
+  end
 
-      reply(
-        %{
-          t
-          | sequencer: transaction_system_layout.sequencer,
-            transaction_system_layout: transaction_system_layout,
-            resolver_layout: resolver_layout,
-            routing_data: routing_data,
-            mode: :running
-        },
-        :ok
-      )
+  # Simple recover_from - assumes sequencer/resolver_layout already set at init (for tests)
+  def handle_call({:recover_from, lock_token}, _from, %{mode: :locked} = t) do
+    if lock_token == t.lock_token do
+      reply(%{t | mode: :running}, :ok)
     else
       reply(t, {:error, :unauthorized})
     end
@@ -169,14 +187,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
           {t, batch} ->
             # Finalize asynchronously and reset for next batch
-            finalize_batch_async(
-              batch,
-              t.transaction_system_layout,
-              t.metadata,
-              t.epoch,
-              t.resolver_layout,
-              t.routing_data
-            )
+            finalize_batch_async(batch, t)
 
             maybe_set_empty_transaction_timeout(t)
         end
@@ -195,14 +206,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     case single_transaction_batch(t, empty_transaction) do
       {:ok, batch} ->
         # Send empty batch asynchronously
-        finalize_batch_async(
-          batch,
-          t.transaction_system_layout,
-          t.metadata,
-          t.epoch,
-          t.resolver_layout,
-          t.routing_data
-        )
+        finalize_batch_async(batch, t)
 
         maybe_set_empty_transaction_timeout(t)
 
@@ -217,14 +221,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_info(:timeout, %{batch: batch} = t) do
     # Timeout reached - finalize current batch asynchronously
-    finalize_batch_async(
-      batch,
-      t.transaction_system_layout,
-      t.metadata,
-      t.epoch,
-      t.resolver_layout,
-      t.routing_data
-    )
+    finalize_batch_async(batch, t)
 
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
   end
@@ -246,15 +243,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:noreply, t}
   end
 
-  defp finalize_batch_async(batch, transaction_system_layout, current_metadata, epoch, resolver_layout, routing_data) do
+  defp finalize_batch_async(batch, state) do
     trace_meta = trace_metadata()
     server_pid = self()
+
+    %{
+      metadata: current_metadata,
+      epoch: epoch,
+      sequencer: sequencer,
+      resolver_layout: resolver_layout,
+      routing_data: routing_data
+    } = state
 
     Task.start_link(fn ->
       trace_metadata(trace_meta)
 
-      case finalize_batch(batch, transaction_system_layout, current_metadata,
+      case finalize_batch(batch, current_metadata,
              epoch: epoch,
+             sequencer: sequencer,
              resolver_layout: resolver_layout,
              routing_data: routing_data
            ) do

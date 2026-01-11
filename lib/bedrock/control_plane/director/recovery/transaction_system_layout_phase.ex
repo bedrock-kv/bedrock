@@ -228,11 +228,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context) when is_list(proxies) do
-    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/3)
+    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/4)
+
+    # Extract what proxies need from TSL
+    sequencer = transaction_system_layout.sequencer
+    resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
 
     proxies
     |> Task.async_stream(
-      &unlock_fn.(&1, lock_token, transaction_system_layout),
+      &unlock_fn.(&1, lock_token, sequencer, resolver_layout),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn

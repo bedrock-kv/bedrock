@@ -27,7 +27,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.CommitProxy.MetadataMerge
@@ -209,10 +208,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   """
   @spec finalize_batch(
           Batch.t(),
-          TransactionSystemLayout.t(),
           metadata :: [MetadataAccumulator.entry()],
           opts :: [
             epoch: Bedrock.epoch(),
+            sequencer: pid(),
             resolver_layout: ResolverLayout.t(),
             routing_data: RoutingData.t(),
             resolver_fn: resolver_fn(),
@@ -228,19 +227,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer(),
            updated_metadata :: [MetadataAccumulator.entry()]}
           | {:error, finalization_error()}
-  def finalize_batch(batch, transaction_system_layout, metadata, opts \\ []) do
+  def finalize_batch(batch, metadata, opts) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
+    sequencer = Keyword.get(opts, :sequencer) || raise "Missing sequencer in finalization opts"
     resolver_layout = Keyword.get(opts, :resolver_layout) || raise "Missing resolver_layout in finalization opts"
     routing_data = Keyword.get(opts, :routing_data) || raise "Missing routing_data in finalization opts"
 
     fn ->
-      sequencer = Keyword.get(opts, :sequencer) || transaction_system_layout.sequencer
-
       batch
-      |> create_finalization_plan(transaction_system_layout, routing_data)
-      |> resolve_conflicts(transaction_system_layout, epoch, resolver_layout, opts)
+      |> create_finalization_plan(routing_data)
+      |> resolve_conflicts(epoch, resolver_layout, opts)
       |> prepare_for_logging()
       |> push_to_logs(opts)
       |> notify_sequencer(sequencer, opts)
@@ -263,11 +261,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(Batch.t(), TransactionSystemLayout.t(), RoutingData.t(), map()) ::
-          FinalizationPlan.t()
-  def create_finalization_plan(batch, transaction_system_layout, routing_data, initial_metadata \\ %{}) do
-    storage_teams = transaction_system_layout.storage_teams
-
+  @spec create_finalization_plan(Batch.t(), RoutingData.t(), map()) :: FinalizationPlan.t()
+  def create_finalization_plan(batch, routing_data, initial_metadata \\ %{}) do
     # Routing data is passed in from the commit proxy server
     # Table is created once on recovery and kept up-to-date as metadata changes
     %RoutingData{
@@ -282,7 +277,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       transaction_count: Batch.transaction_count(batch),
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
-      storage_teams: storage_teams,
+      storage_teams: [],
       shard_table: shard_table,
       log_map: log_map,
       log_services: log_services,
@@ -298,7 +293,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec resolve_conflicts(
           FinalizationPlan.t(),
-          TransactionSystemLayout.t(),
           Bedrock.epoch(),
           ResolverLayout.t(),
           keyword()
@@ -307,7 +301,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Single-resolver fast path: bypass async_stream overhead
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution, transaction_count: 0} = plan,
-        _layout,
         epoch,
         %ResolverLayout.Single{resolver_ref: resolver_ref},
         opts
@@ -333,7 +326,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
-        _layout,
         epoch,
         %ResolverLayout.Single{resolver_ref: resolver_ref},
         opts
@@ -375,14 +367,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # metadata lists to sharded resolvers and don't aggregate metadata updates.
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
-        layout,
         epoch,
-        %ResolverLayout.Sharded{} = resolver_layout,
+        %ResolverLayout.Sharded{resolver_refs: refs, resolver_ends: ends} = resolver_layout,
         opts
       ) do
+    # Build resolvers list from ResolverLayout.Sharded for iteration
+    resolvers = Enum.zip(ends, refs)
+
     {resolver_transaction_map, metadata_per_tx} =
       if plan.transaction_count == 0 do
-        {Map.new(layout.resolvers, fn {_key, ref} -> {ref, []} end), []}
+        {Map.new(resolvers, fn {_key, ref} -> {ref, []} end), []}
       else
         # Create and await resolver tasks within the finalization process
         # Also extract metadata from each transaction
@@ -398,7 +392,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           |> Enum.unzip()
 
         txn_map =
-          Map.new(layout.resolvers, fn {_key, ref} ->
+          Map.new(resolvers, fn {_key, ref} ->
             transactions = Enum.map(maps, &Map.fetch!(&1, ref))
             {ref, transactions}
           end)
@@ -412,7 +406,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            epoch,
            plan.last_commit_version,
            plan.commit_version,
-           layout.resolvers,
+           resolvers,
            opts
          ) do
       {:ok, aborted_set, metadata_updates} ->

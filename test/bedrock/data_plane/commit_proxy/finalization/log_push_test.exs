@@ -83,9 +83,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:ok, 0, 3, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn,
@@ -131,9 +131,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
                  [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn,
@@ -175,9 +175,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
                  [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn,
@@ -239,9 +239,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:ok, 1, 2, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
                  [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  sequencer_notify_fn: sequencer_notify_fn,
@@ -622,9 +622,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert {:error, {:log_failures, _}} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
                  [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
                  routing_data: routing_data

@@ -5,6 +5,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
   import Bedrock.Test.TelemetryTestHelper
 
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.Server
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
@@ -61,7 +63,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       max_latency_in_ms: 10,
       max_per_batch: 5,
       empty_transaction_timeout_ms: 1000,
-      transaction_system_layout: nil,
+      sequencer: nil,
+      resolver_layout: nil,
       batch: nil
     }
 
@@ -84,10 +87,10 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
     test "state validation ensures proper structure" do
       # Test that valid states have the required structure
-      valid_state = build_base_state(%{transaction_system_layout: %{sequencer: nil}})
+      valid_state = build_base_state(%{sequencer: nil, resolver_layout: nil})
 
       # Valid states should be maps with required keys - use pattern matching
-      assert %State{batch: _, transaction_system_layout: _, director: _} = valid_state
+      assert %State{batch: _, sequencer: _, director: _} = valid_state
 
       # Error states should not be passed to batching functions
       error_state = {:stop, :some_error}
@@ -104,7 +107,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       state =
         build_base_state(%{
-          transaction_system_layout: %{sequencer: nil},
+          sequencer: nil,
+          resolver_layout: nil,
           batch: nil,
           mode: :running,
           lock_token: "test_token"
@@ -119,7 +123,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       # Create a mock state in locked mode with no active batch
       state =
         build_base_state(%{
-          transaction_system_layout: %{sequencer: nil},
+          sequencer: nil,
+          resolver_layout: nil,
           batch: nil,
           mode: :locked,
           lock_token: "test_token"
@@ -142,7 +147,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       # Create a mock state with an active batch
       state =
         build_base_state(%{
-          transaction_system_layout: %{sequencer: nil},
+          sequencer: nil,
+          resolver_layout: nil,
           batch: batch,
           mode: :running,
           lock_token: "test_token"
@@ -157,7 +163,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
   describe "init/1" do
     test "sets empty_transaction_timeout_ms in state and initial timeout" do
-      init_args = {TestCluster, self(), 1, 10, 5, 1000, "test_token"}
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+      init_args = {TestCluster, self(), 1, 10, 5, 1000, "test_token", :fake_sequencer, resolver_layout, nil}
 
       assert {:ok, %State{empty_transaction_timeout_ms: 1000}, 1000} =
                Server.init(init_args)
@@ -213,11 +220,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         # Larger batches
         max_per_batch: 10,
         empty_transaction_timeout_ms: 1000,
-        lock_token: "index_test_token"
+        lock_token: "index_test_token",
+        sequencer: sequencer,
+        resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
+        routing_data: RoutingData.new(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
-      :ok = GenServer.call(commit_proxy, {:recover_from, "index_test_token", transaction_system_layout})
+      :ok = GenServer.call(commit_proxy, {:recover_from, "index_test_token"})
 
       {:ok, commit_proxy: commit_proxy}
     end
@@ -310,11 +320,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         # Small batches
         max_per_batch: 3,
         empty_transaction_timeout_ms: 1000,
-        lock_token: "failure_test_token"
+        lock_token: "failure_test_token",
+        sequencer: sequencer,
+        resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
+        routing_data: RoutingData.new(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
-      :ok = GenServer.call(commit_proxy, {:recover_from, "failure_test_token", transaction_system_layout})
+      :ok = GenServer.call(commit_proxy, {:recover_from, "failure_test_token"})
 
       {:ok, commit_proxy: commit_proxy, failing_log: failing_log}
     end
@@ -462,20 +475,18 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: sequencer,
+        resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
+        routing_data: RoutingData.new(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
 
-      # Unlock the commit proxy with our fake transaction system layout
-      :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
+      # Unlock the commit proxy
+      :ok = GenServer.call(commit_proxy, {:recover_from, lock_token})
 
-      {:ok,
-       commit_proxy: commit_proxy,
-       transaction_system_layout: transaction_system_layout,
-       sequencer: sequencer,
-       resolver: resolver,
-       log: log}
+      {:ok, commit_proxy: commit_proxy, sequencer: sequencer, resolver: resolver, log: log}
     end
 
     property "all clients receive responses under transaction onslaught", %{commit_proxy: commit_proxy} do
@@ -636,20 +647,18 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: sequencer,
+        resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
+        routing_data: RoutingData.new(transaction_system_layout)
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
 
-      # Unlock the commit proxy with our fake transaction system layout
-      :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
+      # Unlock the commit proxy
+      :ok = GenServer.call(commit_proxy, {:recover_from, lock_token})
 
-      {:ok,
-       commit_proxy: commit_proxy,
-       transaction_system_layout: transaction_system_layout,
-       sequencer: sequencer,
-       resolver: resolver,
-       log: log}
+      {:ok, commit_proxy: commit_proxy, sequencer: sequencer, resolver: resolver, log: log}
     end
   end
 
@@ -657,6 +666,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     test "starts in locked mode and transitions to running after recovery" do
       director = self()
       lock_token = "state_test_token"
+
+      # Create minimal resolver layout for test
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
 
       opts = [
         cluster: TestCluster,
@@ -666,7 +678,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -676,17 +690,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
 
       # After recovery with correct token, should transition to running
-      transaction_system_layout = %{
-        sequencer: nil,
-        resolvers: [],
-        logs: %{},
-        services: %{},
-        storage_teams: []
-      }
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token})
 
-      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
-
-      # Now commit returns different error (no_transaction_system_layout because sequencer is nil)
+      # Now commit returns different error (sequencer unavailable)
       # but NOT :locked anymore
       result = GenServer.call(commit_proxy, {:commit, 1, transaction})
       refute result == {:error, :locked}
@@ -697,6 +703,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       correct_token = "correct_token"
       wrong_token = "wrong_token"
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -705,22 +713,16 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: correct_token
+        lock_token: correct_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
 
-      transaction_system_layout = %{
-        sequencer: nil,
-        resolvers: [],
-        logs: %{},
-        services: %{},
-        storage_teams: []
-      }
-
       # Recovery with wrong token should fail
       assert {:error, :unauthorized} =
-               GenServer.call(commit_proxy, {:recover_from, wrong_token, transaction_system_layout})
+               GenServer.call(commit_proxy, {:recover_from, wrong_token})
 
       # Should still be locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
@@ -732,6 +734,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       correct_token = "correct_token"
       wrong_token = "wrong_token"
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -740,25 +744,19 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: correct_token
+        lock_token: correct_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
 
-      transaction_system_layout = %{
-        sequencer: nil,
-        resolvers: [],
-        logs: %{},
-        services: %{},
-        storage_teams: []
-      }
-
       # First attempt with wrong token
       assert {:error, :unauthorized} =
-               GenServer.call(commit_proxy, {:recover_from, wrong_token, transaction_system_layout})
+               GenServer.call(commit_proxy, {:recover_from, wrong_token})
 
       # Second attempt with correct token should succeed
-      assert :ok = GenServer.call(commit_proxy, {:recover_from, correct_token, transaction_system_layout})
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, correct_token})
 
       # Verify no longer locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
@@ -773,8 +771,13 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       director = spawn(fn -> Process.sleep(:infinity) end)
 
       lock_token = "director_test_token"
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
 
-      {:ok, commit_proxy} = GenServer.start_link(Server, {TestCluster, director, 1, 50, 5, 1000, lock_token})
+      {:ok, commit_proxy} =
+        GenServer.start_link(
+          Server,
+          {TestCluster, director, 1, 50, 5, 1000, lock_token, :fake_sequencer, resolver_layout, nil}
+        )
 
       # Monitor the commit proxy
       ref = Process.monitor(commit_proxy)
@@ -791,6 +794,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       director = self()
       lock_token = "unrelated_test_token"
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -799,7 +804,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -821,6 +828,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       director = self()
       lock_token = "metadata_test_token"
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -829,21 +838,15 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
 
       # Recover first
-      transaction_system_layout = %{
-        sequencer: nil,
-        resolvers: [],
-        logs: %{},
-        services: %{},
-        storage_teams: []
-      }
-
-      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token, transaction_system_layout})
+      assert :ok = GenServer.call(commit_proxy, {:recover_from, lock_token})
 
       # Send metadata update
       new_metadata = [{Bedrock.DataPlane.Version.from_integer(100), [{:set, <<0xFF, "key">>, "value"}]}]
@@ -858,6 +861,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       director = self()
       lock_token = "metadata_locked_test_token"
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -866,7 +871,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: lock_token
+        lock_token: lock_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
@@ -935,6 +942,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     test "rejects commit with wrong epoch" do
       director = self()
 
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
       opts = [
         cluster: TestCluster,
         director: director,
@@ -943,12 +952,13 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         max_latency_in_ms: 50,
         max_per_batch: 5,
         empty_transaction_timeout_ms: 1000,
-        lock_token: "token"
+        lock_token: "token",
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
       ]
 
       commit_proxy = start_supervised!(Server.child_spec(opts))
-      layout = %{sequencer: nil, resolvers: [], logs: %{}, services: %{}, storage_teams: []}
-      :ok = GenServer.call(commit_proxy, {:recover_from, "token", layout})
+      :ok = GenServer.call(commit_proxy, {:recover_from, "token"})
 
       transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
       assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 41, transaction})

@@ -108,9 +108,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -154,9 +154,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -205,9 +205,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, returned_metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -248,9 +248,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, returned_metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  existing_metadata,
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -284,9 +284,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, returned_metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -346,9 +346,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 3, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -399,9 +399,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 0, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,
@@ -458,9 +458,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  routing_data: routing_data,

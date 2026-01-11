@@ -90,9 +90,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
@@ -132,9 +132,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
@@ -173,9 +173,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
@@ -219,9 +219,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:error, {:resolver_unavailable, :timeout}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
@@ -259,9 +259,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:error, {:resolver_unavailable, :unavailable}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 2,
@@ -294,9 +294,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:error, {:resolver_unavailable, :unavailable}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
@@ -338,9 +338,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:error, {:epoch_mismatch, expected: 2, received: 1}} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
@@ -373,9 +373,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:error, :some_internal_error} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
@@ -435,9 +435,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:ok, 0, 1, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
@@ -502,9 +502,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       assert {:ok, 0, 2, _metadata} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
                  [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
@@ -567,9 +567,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
         assert {:error, {:resolver_unavailable, :timeout}} =
                  Finalization.finalize_batch(
                    batch,
-                   transaction_system_layout,
                    [],
                    epoch: 1,
+                   sequencer: :test_sequencer,
                    resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                    resolver_fn: mock_resolver_fn,
                    max_attempts: 3,

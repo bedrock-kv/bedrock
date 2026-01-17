@@ -33,6 +33,19 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
           | {:ok, :worker, bootstrap()}
 
   @doc """
+  Discovers the cluster bootstrap using configured ObjectStorage.
+
+  Convenience wrapper that reads backend and bootstrap_key from application config.
+  See `discover/3` for full documentation.
+  """
+  @spec discover(node()) :: discovery_result()
+  def discover(self_node) do
+    alias Bedrock.ObjectStorage.Config
+
+    discover(Config.backend(), Config.bootstrap_key!(), self_node)
+  end
+
+  @doc """
   Discovers the cluster bootstrap, creating one if this is first boot.
 
   Returns `{:ok, :coordinator, bootstrap}` if this node should run as a coordinator,

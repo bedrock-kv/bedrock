@@ -109,7 +109,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
       {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", time_gap_ms: 60_000)
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")
 
-      {:ok, writer, status} = ChunkWriter.maybe_flush(writer)
+      {:ok, _writer, status} = ChunkWriter.maybe_flush(writer)
       assert status == :not_needed
     end
   end
@@ -117,7 +117,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
   describe "maybe_flush/1 - empty buffer" do
     test "returns not_needed for empty buffer", %{backend: backend} do
       {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
-      {:ok, writer, status} = ChunkWriter.maybe_flush(writer)
+      {:ok, _writer, status} = ChunkWriter.maybe_flush(writer)
       assert status == :not_needed
     end
   end

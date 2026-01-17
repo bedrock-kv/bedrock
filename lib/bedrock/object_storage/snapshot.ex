@@ -41,7 +41,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   alias Bedrock.ObjectStorage.Keys
 
   @type version :: non_neg_integer()
-  @type snapshot_data :: binary()
+  @type snapshot_data :: iodata()
 
   @type t :: %__MODULE__{
           backend: ObjectStorage.backend(),
@@ -67,7 +67,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   Writes a snapshot using conditional put.
 
   If a snapshot already exists for this version, returns `:ok` (idempotent).
-  The data must be the complete serialized state at the given version.
+  The data can be binary or iodata (list of binaries).
 
   ## Returns
 
@@ -75,7 +75,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   - `{:error, reason}` - Write failed
   """
   @spec write(t(), version(), snapshot_data()) :: :ok | {:error, term()}
-  def write(%__MODULE__{} = snapshot, version, data) when is_binary(data) do
+  def write(%__MODULE__{} = snapshot, version, data) do
     key = Keys.snapshot_path(snapshot.cluster, snapshot.shard_tag, version)
 
     case ObjectStorage.put_if_not_exists(snapshot.backend, key, data) do

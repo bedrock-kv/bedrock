@@ -57,6 +57,95 @@ defmodule Bedrock.ObjectStorage.SnapshotBundle do
   end
 
   @doc """
+  Split a bundle file in place, avoiding data copies.
+
+  This is more efficient than `split/3` for large bundles:
+  1. Reads only the index portion (small) from the end of the bundle
+  2. Writes index to a separate file
+  3. Truncates the bundle at the data boundary (no copy!)
+  4. Renames the truncated bundle to the data path
+
+  The bundle file is consumed (renamed to data_path).
+  Returns {:ok, data_size, idx_size} on success.
+  """
+  @spec split_in_place(bundle_path :: Path.t(), data_path :: Path.t(), idx_path :: Path.t()) ::
+          {:ok, data_size :: non_neg_integer(), idx_size :: non_neg_integer()}
+          | {:error, term()}
+  def split_in_place(bundle_path, data_path, idx_path) do
+    with {:ok, %{size: bundle_size}} <- File.stat(bundle_path),
+         {:ok, data_end, idx_size} <- find_index_boundary_from_file(bundle_path, bundle_size),
+         {:ok, idx} <- read_bytes_at(bundle_path, data_end, idx_size),
+         :ok <- File.write(idx_path, idx),
+         :ok <- truncate_file(bundle_path, data_end),
+         :ok <- File.rename(bundle_path, data_path) do
+      {:ok, data_end, idx_size}
+    end
+  end
+
+  @doc """
+  Find the index boundary by reading only the footer and header from a file.
+
+  More efficient than `find_index_boundary/1` for large files since it
+  doesn't read the entire bundle into memory.
+  """
+  @spec find_index_boundary_from_file(Path.t(), non_neg_integer()) ::
+          {:ok, data_end_offset :: non_neg_integer(), idx_size :: non_neg_integer()}
+          | {:error, :invalid_bundle | :no_index_record | term()}
+  def find_index_boundary_from_file(_path, file_size) when file_size < @min_record_size do
+    {:error, :invalid_bundle}
+  end
+
+  def find_index_boundary_from_file(path, file_size) do
+    # Read footer (last 4 bytes) to get payload size
+    with {:ok, <<payload_size::32>>} <- read_bytes_at(path, file_size - @footer_size, @footer_size) do
+      idx_size = @header_size + payload_size + @footer_size
+      data_end_offset = file_size - idx_size
+
+      if data_end_offset >= 0 do
+        # Read header to validate magic number
+        case read_bytes_at(path, data_end_offset, @header_size) do
+          {:ok, <<@magic_number::32, _rest::binary>>} ->
+            {:ok, data_end_offset, idx_size}
+
+          {:ok, _} ->
+            {:error, :no_index_record}
+
+          error ->
+            error
+        end
+      else
+        {:error, :invalid_bundle}
+      end
+    end
+  end
+
+  # Read a specific range of bytes from a file
+  defp read_bytes_at(path, offset, size) do
+    case :file.open(to_charlist(path), [:read, :raw, :binary]) do
+      {:ok, fd} ->
+        result = :file.pread(fd, offset, size)
+        :file.close(fd)
+        result
+
+      error ->
+        error
+    end
+  end
+
+  # Truncate a file at the given offset
+  defp truncate_file(path, offset) do
+    case :file.open(to_charlist(path), [:read, :write, :raw]) do
+      {:ok, fd} ->
+        {:ok, _} = :file.position(fd, offset)
+        :ok = :file.truncate(fd)
+        :file.close(fd)
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
   Find where the index record starts in a bundle.
 
   Returns {:ok, data_end_offset, idx_size} where:

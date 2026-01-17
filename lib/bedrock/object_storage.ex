@@ -32,7 +32,7 @@ defmodule Bedrock.ObjectStorage do
   """
 
   @type key :: String.t()
-  @type data :: binary()
+  @type data :: iodata()
   @type content_type :: String.t()
   @type opts :: keyword()
   @type error :: {:error, :not_found | :already_exists | :access_denied | term()}

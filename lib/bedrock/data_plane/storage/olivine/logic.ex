@@ -17,7 +17,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage.Snapshot
-  alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
 
   require Logger
@@ -302,10 +301,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   Optionally uploads a snapshot to ObjectStorage after compaction.
 
   This is a fire-and-forget operation. If snapshot_upload is not configured,
-  this is a no-op. If configured, spawns an async task to:
-  1. Create a bundle from the data and index files
-  2. Upload the bundle to ObjectStorage
-  3. Clean up the temporary bundle file
+  this is a no-op. If configured, spawns an async task to read the data and
+  index files and upload them directly as a bundle (iodata).
 
   The task logs success or failure but does not affect the caller.
   """
@@ -320,20 +317,18 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
     :ok
   end
 
-  def maybe_upload_snapshot(%State{snapshot_upload: snapshot, path: storage_path}, data_path, idx_path, durable_version) do
-    bundle_path = Path.join(storage_path, "snapshot.bundle")
+  def maybe_upload_snapshot(%State{snapshot_upload: snapshot}, data_path, idx_path, durable_version) do
     version_int = Version.to_integer(durable_version)
 
     Task.start(fn ->
-      with {:ok, _size} <- SnapshotBundle.create(to_string(data_path), to_string(idx_path), bundle_path),
-           {:ok, data} <- File.read(bundle_path),
-           :ok <- Snapshot.write(snapshot, version_int, data) do
+      # Read files and upload as iodata (no intermediate bundle file)
+      with {:ok, data} <- File.read(to_string(data_path)),
+           {:ok, idx} <- File.read(to_string(idx_path)),
+           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
         Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
-        File.rm(bundle_path)
       else
         {:error, reason} ->
           Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
-          File.rm(bundle_path)
       end
     end)
 

@@ -12,7 +12,9 @@ defmodule Bedrock.ObjectStorage do
   - `get/2` - Retrieve an object
   - `delete/2` - Remove an object
   - `list/2` - List objects with a prefix (returns lazy stream)
-  - `put_if_not_exists/4` - Store an object only if it doesn't exist (conditional write)
+  - `put_if_not_exists/4` - Store an object only if it doesn't exist (conditional create)
+  - `get_with_version/2` - Retrieve an object with version token
+  - `put_if_version_matches/5` - Store an object only if version matches (conditional update)
 
   ## Path Structure
 
@@ -35,6 +37,7 @@ defmodule Bedrock.ObjectStorage do
   @type opts :: keyword()
   @type error :: {:error, :not_found | :already_exists | :access_denied | term()}
   @type backend :: {module(), keyword()}
+  @type version_token :: String.t()
 
   @doc """
   Store an object at the given key.
@@ -113,6 +116,43 @@ defmodule Bedrock.ObjectStorage do
               :ok | error()
 
   @doc """
+  Retrieve an object with its version token for conditional updates.
+
+  Returns the object data along with an opaque version token that can be
+  passed to `put_if_version_matches/5` to implement optimistic concurrency.
+
+  ## Returns
+
+  - `{:ok, data, version_token}` - Object data and version token
+  - `{:error, :not_found}` - Object does not exist
+  - `{:error, reason}` - Retrieval failed
+  """
+  @callback get_with_version(backend :: term(), key :: key()) ::
+              {:ok, data(), version_token()} | error()
+
+  @doc """
+  Store an object only if its version matches the expected token.
+
+  This implements optimistic locking (compare-and-swap) semantics.
+  The operation succeeds only if the current version of the object
+  matches the provided version_token (obtained from `get_with_version/2`).
+
+  ## Returns
+
+  - `:ok` - Object updated successfully
+  - `{:error, :version_mismatch}` - Object was modified since version_token was obtained
+  - `{:error, :not_found}` - Object does not exist
+  - `{:error, reason}` - Update failed
+  """
+  @callback put_if_version_matches(
+              backend :: term(),
+              key :: key(),
+              version_token :: version_token(),
+              data :: data(),
+              opts :: opts()
+            ) :: :ok | error()
+
+  @doc """
   Creates an opaque backend reference for the given module and config.
 
   ## Examples
@@ -173,5 +213,28 @@ defmodule Bedrock.ObjectStorage do
           :ok | error()
   def put_if_not_exists({module, config}, key, data, opts \\ []) do
     module.put_if_not_exists(config, key, data, opts)
+  end
+
+  @doc """
+  Retrieve an object with its version token.
+  """
+  @spec get_with_version(backend :: {module(), keyword()}, key :: key()) ::
+          {:ok, data(), version_token()} | error()
+  def get_with_version({module, config}, key) do
+    module.get_with_version(config, key)
+  end
+
+  @doc """
+  Store an object only if its version matches.
+  """
+  @spec put_if_version_matches(
+          backend :: {module(), keyword()},
+          key :: key(),
+          version_token :: version_token(),
+          data :: data(),
+          opts :: opts()
+        ) :: :ok | error()
+  def put_if_version_matches({module, config}, key, version_token, data, opts \\ []) do
+    module.put_if_version_matches(config, key, version_token, data, opts)
   end
 end

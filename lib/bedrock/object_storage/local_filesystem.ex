@@ -89,6 +89,39 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     end
   end
 
+  @impl true
+  def get_with_version(config, key) do
+    case get(config, key) do
+      {:ok, data} ->
+        hash = :sha256 |> :crypto.hash(data) |> Base.encode16(case: :lower)
+        {:ok, data, "sha256:#{hash}"}
+
+      error ->
+        error
+    end
+  end
+
+  @impl true
+  def put_if_version_matches(config, key, version_token, data, opts \\ []) do
+    case get(config, key) do
+      {:ok, current_data} ->
+        current_hash = :sha256 |> :crypto.hash(current_data) |> Base.encode16(case: :lower)
+        "sha256:" <> expected_hash = version_token
+
+        if current_hash == expected_hash do
+          put(config, key, data, opts)
+        else
+          {:error, :version_mismatch}
+        end
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+
+      error ->
+        error
+    end
+  end
+
   # Private helpers
 
   defp build_path(root, key) do

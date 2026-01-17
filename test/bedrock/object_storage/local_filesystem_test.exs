@@ -165,6 +165,91 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
     end
   end
 
+  describe "get_with_version/2" do
+    test "returns data and version token", %{backend: backend} do
+      data = "hello world"
+      :ok = ObjectStorage.put(backend, "versioned/key", data)
+
+      assert {:ok, ^data, version_token} = ObjectStorage.get_with_version(backend, "versioned/key")
+      assert is_binary(version_token)
+      assert String.starts_with?(version_token, "sha256:")
+    end
+
+    test "returns not_found for missing key", %{backend: backend} do
+      assert {:error, :not_found} = ObjectStorage.get_with_version(backend, "nonexistent/key")
+    end
+
+    test "same content produces same version token", %{backend: backend} do
+      data = "identical content"
+      :ok = ObjectStorage.put(backend, "key1", data)
+      :ok = ObjectStorage.put(backend, "key2", data)
+
+      {:ok, _, token1} = ObjectStorage.get_with_version(backend, "key1")
+      {:ok, _, token2} = ObjectStorage.get_with_version(backend, "key2")
+
+      assert token1 == token2
+    end
+
+    test "different content produces different version token", %{backend: backend} do
+      :ok = ObjectStorage.put(backend, "diff/key", "content v1")
+      {:ok, _, token1} = ObjectStorage.get_with_version(backend, "diff/key")
+
+      :ok = ObjectStorage.put(backend, "diff/key", "content v2")
+      {:ok, _, token2} = ObjectStorage.get_with_version(backend, "diff/key")
+
+      assert token1 != token2
+    end
+  end
+
+  describe "put_if_version_matches/5" do
+    test "succeeds when version matches", %{backend: backend} do
+      :ok = ObjectStorage.put(backend, "cas/key", "original")
+      {:ok, _, version_token} = ObjectStorage.get_with_version(backend, "cas/key")
+
+      assert :ok = ObjectStorage.put_if_version_matches(backend, "cas/key", version_token, "updated")
+      assert {:ok, "updated"} = ObjectStorage.get(backend, "cas/key")
+    end
+
+    test "returns version_mismatch when content changed", %{backend: backend} do
+      :ok = ObjectStorage.put(backend, "cas/key", "original")
+      {:ok, _, stale_token} = ObjectStorage.get_with_version(backend, "cas/key")
+
+      # Another writer updates the content
+      :ok = ObjectStorage.put(backend, "cas/key", "updated by other")
+
+      # Our stale write should fail
+      assert {:error, :version_mismatch} =
+               ObjectStorage.put_if_version_matches(backend, "cas/key", stale_token, "our update")
+
+      # Content should remain as the other writer left it
+      assert {:ok, "updated by other"} = ObjectStorage.get(backend, "cas/key")
+    end
+
+    test "returns not_found when key doesn't exist", %{backend: backend} do
+      fake_token = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+      assert {:error, :not_found} =
+               ObjectStorage.put_if_version_matches(backend, "nonexistent/key", fake_token, "data")
+    end
+
+    test "sequential writers - second fails after first succeeds", %{backend: backend} do
+      # LocalFilesystem has TOCTOU race for concurrent writes.
+      # This test verifies sequential behavior; S3/GCS use native atomic conditionals.
+      :ok = ObjectStorage.put(backend, "race/key", "initial")
+      {:ok, _, version_token} = ObjectStorage.get_with_version(backend, "race/key")
+
+      # First writer succeeds
+      assert :ok = ObjectStorage.put_if_version_matches(backend, "race/key", version_token, "first")
+
+      # Second writer with stale token fails
+      assert {:error, :version_mismatch} =
+               ObjectStorage.put_if_version_matches(backend, "race/key", version_token, "second")
+
+      # Content is from first writer
+      assert {:ok, "first"} = ObjectStorage.get(backend, "race/key")
+    end
+  end
+
   describe "integration with Keys module" do
     alias Bedrock.ObjectStorage.Keys
 

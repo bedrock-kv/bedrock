@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @moduledoc """
   Constructs the Transaction System Layout (TSL), the blueprint defining how all
   components in the recovered system connect and communicate.
@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   as their status was confirmed during storage recruitment):
 
   - **Sequencer**: Must have valid process ID (exactly one runs cluster-wide)
-  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)  
+  - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)
   - **Resolvers**: Must have valid `{start_key, process_id}` pairs defining key range responsibilities
   - **Logs**: Must have corresponding service entries with `{:up, process_id}` status
 
@@ -73,7 +73,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   This function implements the three-step TSL construction process:
 
   1. **Validation**: Confirms all transaction components are operational via `validate_recovery_state/1`
-  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`  
+  2. **Construction**: Builds the complete TSL data structure via `build_transaction_system_layout/2`
   3. **Unlocking**: Selectively unlocks commit proxies and storage servers via `unlock_services/4`
 
   ## Parameters
@@ -228,11 +228,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase do
   @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context) when is_list(proxies) do
-    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/3)
+    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/4)
+
+    # Extract what proxies need from TSL
+    sequencer = transaction_system_layout.sequencer
+    resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
 
     proxies
     |> Task.async_stream(
-      &unlock_fn.(&1, lock_token, transaction_system_layout),
+      &unlock_fn.(&1, lock_token, sequencer, resolver_layout),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn

@@ -3,6 +3,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   Shared test utilities and fixtures for finalization tests.
   """
 
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -133,6 +134,61 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
       %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
       %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
     ]
+  end
+
+  @doc """
+  Builds routing data from a transaction system layout.
+  Used by finalize_batch opts.
+  """
+  def build_routing_data(transaction_system_layout) do
+    storage_teams = Map.get(transaction_system_layout, :storage_teams, [])
+    logs = Map.get(transaction_system_layout, :logs, %{})
+    services = Map.get(transaction_system_layout, :services, %{})
+
+    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
+
+    Enum.each(storage_teams, fn team ->
+      {_start_key, end_key} = team.key_range
+      :ets.insert(table, {end_key, team.tag})
+    end)
+
+    log_map =
+      logs
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    # Build log_services from services map - extract log refs
+    log_services =
+      logs
+      |> Map.keys()
+      |> Enum.reduce(%{}, fn log_id, acc ->
+        case Map.get(services, log_id) do
+          %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
+            # For test purposes, store pid as service ref
+            Map.put(acc, log_id, pid)
+
+          %{kind: :log, status: {:up, {name, node}}} ->
+            Map.put(acc, log_id, {name, node})
+
+          _ ->
+            acc
+        end
+      end)
+
+    replication_factor =
+      case storage_teams do
+        [] -> max(1, map_size(logs))
+        [first | _] -> max(1, length(Map.get(first, :storage_ids, [])))
+      end
+
+    %RoutingData{
+      shard_table: table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    }
   end
 
   # Helper function to create test resolver task

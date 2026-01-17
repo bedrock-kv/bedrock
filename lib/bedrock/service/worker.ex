@@ -7,6 +7,8 @@ defmodule Bedrock.Service.Worker do
 
   use Bedrock.Internal.GenServerApi
 
+  alias Bedrock.Internal.Id
+
   @type ref :: pid() | atom() | {atom(), node()}
   @type id :: Bedrock.service_id()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
@@ -17,7 +19,7 @@ defmodule Bedrock.Service.Worker do
   @type otp_name :: atom()
 
   @spec random_id() :: binary()
-  def random_id, do: 5 |> :crypto.strong_rand_bytes() |> Base.encode32(case: :lower)
+  def random_id, do: Id.random()
 
   @spec info(
           worker_ref :: ref(),

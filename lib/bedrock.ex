@@ -23,7 +23,8 @@ defmodule Bedrock do
           optional(:mutations) => [mutation()] | nil,
           optional(:write_conflicts) => [key_range()] | nil,
           optional(:read_conflicts) => {version(), [key_range()]} | nil,
-          optional(:commit_version) => version() | nil
+          optional(:commit_version) => version() | nil,
+          optional(:shard_index) => [{non_neg_integer(), non_neg_integer()}] | nil
         }
 
   @type mutation ::

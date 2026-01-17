@@ -20,6 +20,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
   def create_test_transaction_system_layout do
     %{
+      epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [
@@ -43,6 +44,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       end)
 
     %{
+      epoch: 1,
       sequencer: mock_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [
@@ -60,7 +62,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
   defp mock_sequencer_loop(read_version) do
     receive do
-      {:"$gen_call", from, :next_read_version} ->
+      {:"$gen_call", from, {:next_read_version, _epoch}} ->
         GenServer.reply(from, {:ok, read_version})
         mock_sequencer_loop(read_version)
     end

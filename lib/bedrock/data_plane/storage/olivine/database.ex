@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   Database handle for Olivine storage, combining data and index databases.
   """
 
+  alias Bedrock.DataPlane.Storage.Olivine.CompactionWriter
   alias Bedrock.DataPlane.Storage.Olivine.DataDatabase
   alias Bedrock.DataPlane.Storage.Olivine.Index.Page
   alias Bedrock.DataPlane.Storage.Olivine.IndexDatabase
@@ -104,47 +105,43 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
   @doc """
   Compacts the database files by building new files with sequential data layout.
 
-  Returns compacted file handles and the page_map built during compaction.
-  The page_map can be used directly to construct in-memory structures without re-reading.
+  Accepts a writer module and writer state for pluggable output format.
+  Returns the writer result, compacted pages, and durable version.
 
   This is run in a background task and should not block normal operations.
   """
-  @spec compact(t(), complete_page_map :: %{Page.id() => {Page.t(), Page.id()}}) ::
-          {:ok, compact_data_fd :: :file.fd(), compact_idx_fd :: :file.fd(), compact_data_path :: charlist(),
-           compact_idx_path :: charlist(), new_data_offset :: non_neg_integer(),
-           compacted_pages :: %{Page.id() => {Page.t(), Page.id()}}, durable_version :: Bedrock.version()}
+  @spec compact(
+          t(),
+          complete_page_map :: %{Page.id() => {Page.t(), Page.id()}},
+          writer_module :: module(),
+          writer :: CompactionWriter.t()
+        ) ::
+          {:ok, CompactionWriter.result(), compacted_pages :: %{Page.id() => {Page.t(), Page.id()}},
+           durable_version :: Bedrock.version()}
           | {:error, term()}
-  def compact({data_db, index_db}, complete_page_map) do
+  def compact({data_db, index_db}, complete_page_map, writer_module, writer) do
     durable_version = IndexDatabase.durable_version(index_db)
 
-    # Use actual file paths from database structs
-    data_file_path = data_db.file_name
-    idx_file_path = index_db.file_name
+    # Build compacted data, updating writer state
+    {compacted_pages, writer} = build_compacted_data(data_db, complete_page_map, writer_module, writer)
 
-    compact_data_path = data_file_path ++ ~c".compact"
-    compact_idx_path = idx_file_path ++ ~c".compact"
+    # Write snapshot index record
+    index_record = IndexDatabase.build_snapshot_record(durable_version, compacted_pages)
 
-    with {:ok, compact_data_fd} <- :file.open(compact_data_path, [:write, :raw, :binary]),
-         {:ok, compact_idx_fd} <- :file.open(compact_idx_path, [:write, :raw, :binary]) do
-      # Build compacted data file and updated pages
-      {compacted_pages, final_offset} = build_compacted_data(data_db, complete_page_map, compact_data_fd)
-
-      # Write snapshot index block
-      :ok = IndexDatabase.write_snapshot_block(compact_idx_fd, durable_version, compacted_pages)
-
-      # Sync files to disk
-      :ok = :file.sync(compact_data_fd)
-      :ok = :file.sync(compact_idx_fd)
-
-      {:ok, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, final_offset, compacted_pages,
-       durable_version}
+    with {:ok, writer} <- writer_module.write_index(writer, index_record),
+         {:ok, result} <- writer_module.finish(writer) do
+      {:ok, result, compacted_pages, durable_version}
     end
   end
 
-  # Build compacted data file by iterating pages in key order
-  @spec build_compacted_data(DataDatabase.t(), %{Page.id() => {Page.t(), Page.id()}}, :file.fd()) ::
-          {%{Page.id() => {Page.t(), Page.id()}}, non_neg_integer()}
-  defp build_compacted_data(data_db, page_map, compact_fd) do
+  # Build compacted data by iterating pages in key order
+  @spec build_compacted_data(
+          DataDatabase.t(),
+          %{Page.id() => {Page.t(), Page.id()}},
+          module(),
+          CompactionWriter.t()
+        ) :: {%{Page.id() => {Page.t(), Page.id()}}, CompactionWriter.t()}
+  defp build_compacted_data(data_db, page_map, writer_module, writer) do
     # Sort pages by their first key for better read locality
     sorted_pages =
       Enum.sort_by(page_map, fn {_id, {page, _next}} ->
@@ -152,29 +149,31 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Database do
       end)
 
     # Process each page, accumulating writes
-    Enum.reduce(sorted_pages, {%{}, 0}, fn {page_id, {page, next_id}}, {pages_acc, offset} ->
+    sorted_pages
+    |> Enum.reduce({%{}, 0, writer}, fn {page_id, {page, next_id}}, {pages_acc, offset, w} ->
       # Process all keys in this page
-      {new_kvs, new_offset} =
+      {new_kvs, new_offset, updated_writer} =
         page
         |> Page.key_locators()
-        |> Enum.reduce({[], offset}, fn {key, old_locator}, {kvs_acc, current_offset} ->
+        |> Enum.reduce({[], offset, w}, fn {key, old_locator}, {kvs_acc, current_offset, wr} ->
           # Load value from old location (buffer or disk)
           {:ok, value} = DataDatabase.load_value(data_db, old_locator)
 
-          # Write to compacted file
-          :ok = :file.write(compact_fd, value)
+          # Write to compacted output
+          {:ok, wr} = writer_module.write_data(wr, value)
 
           # Create new locator for compacted position
           size = byte_size(value)
           new_locator = <<current_offset::47, size::17>>
 
-          {[{key, new_locator} | kvs_acc], current_offset + size}
+          {[{key, new_locator} | kvs_acc], current_offset + size, wr}
         end)
 
       # Build page with new locators
       compacted_page = Page.new(page_id, Enum.reverse(new_kvs))
 
-      {Map.put(pages_acc, page_id, {compacted_page, next_id}), new_offset}
+      {Map.put(pages_acc, page_id, {compacted_page, next_id}), new_offset, updated_writer}
     end)
+    |> then(fn {pages, _offset, writer} -> {pages, writer} end)
   end
 end

@@ -54,7 +54,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
   end
 
   defp create_successful_commit_fn(expected_transaction) do
-    fn _proxy, binary_transaction ->
+    fn _proxy, _epoch, binary_transaction ->
       assert ^expected_transaction = decode_transaction(binary_transaction)
       {:ok, 42, 0}
     end
@@ -162,7 +162,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
         {:set, "balances:2", "500"}
       ]
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
 
         assert %{
@@ -206,7 +206,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
         {:set, "balances:2", "510"}
       ]
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
 
         assert %{
@@ -268,7 +268,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       read_version = Bedrock.DataPlane.Version.from_integer(789)
       state = create_test_state(read_version, reads, writes)
 
-      failing_commit_fn = fn _proxy, _transaction ->
+      failing_commit_fn = fn _proxy, _epoch, _transaction ->
         {:error, :timeout}
       end
 
@@ -287,7 +287,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: %{"account_balance" => "250"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, [{:set, "account_balance", "240"}], 1, 1)
         {:ok, 42, 0}
@@ -312,7 +312,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
 
         assert %{
@@ -357,7 +357,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, transaction.mutations, 3, 2)
         {:ok, 42, 0}
@@ -380,7 +380,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{Tx.new() | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, _binary_transaction ->
+      commit_fn = fn _proxy, _epoch, _binary_transaction ->
         # This should never be called for read-only transactions
         raise "commit_fn should not be called for read-only transactions"
       end
@@ -402,7 +402,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = Tx.new()
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, _binary_transaction ->
+      commit_fn = fn _proxy, _epoch, _binary_transaction ->
         # This should never be called for read-only transactions
         raise "commit_fn should not be called for read-only transactions"
       end
@@ -423,7 +423,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: %{"counter" => "0"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, [{:set, "counter", "1"}], 1, 1)
         {:ok, 42, 0}
@@ -442,7 +442,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: %{"large_dataset" => "chunk_1"}}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, [{:set, "large_dataset", "chunk_1_processed"}], 1, 1)
         {:ok, 42, 0}
@@ -466,7 +466,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, [{:set, "result", "processed"}], 1, 3)
         {:ok, 42, 0}
@@ -498,7 +498,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       tx = %{tx | reads: reads}
       state = %{create_test_state(read_version, reads, writes) | tx: tx}
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         assert_transaction_fields(transaction, read_version, transaction.mutations, 2, 2)
         {:ok, 42, 0}
@@ -519,7 +519,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       read_version = Bedrock.DataPlane.Version.from_integer(999)
       state = create_test_state(read_version, reads, writes)
 
-      commit_fn = fn _proxy, binary_transaction ->
+      commit_fn = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
 
         assert %{
@@ -544,7 +544,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       # Scenario 1: nil read_version (should remain unchanged)
       state1 = create_test_state(nil, %{}, %{"key" => "val"})
 
-      commit_fn1 = fn _proxy, binary_transaction ->
+      commit_fn1 = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
 
         assert %{
@@ -570,7 +570,7 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
         | tx: tx2
       }
 
-      commit_fn2 = fn _proxy, binary_transaction ->
+      commit_fn2 = fn _proxy, _epoch, binary_transaction ->
         transaction = decode_transaction(binary_transaction)
         expected_read_version = Bedrock.DataPlane.Version.from_integer(100)
         assert_transaction_fields(transaction, expected_read_version, [{:set, "wkey", "wval"}], 1, 1)

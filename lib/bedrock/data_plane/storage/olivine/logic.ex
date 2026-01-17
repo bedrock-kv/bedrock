@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Pulling
@@ -15,7 +16,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
@@ -253,35 +257,36 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       index_size_before: index_db.file_offset
     )
 
+    # Prepare compact file paths
+    compact_data_path = data_db.file_name ++ ~c".compact"
+    compact_idx_path = index_db.file_name ++ ~c".compact"
+
     task =
       Task.async(fn ->
         start_time = System.monotonic_time(:microsecond)
 
-        case Database.compact(database, complete_page_map) do
-          {:ok, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, new_data_offset, compacted_pages,
-           durable_version} ->
-            duration = System.monotonic_time(:microsecond) - start_time
+        with {:ok, writer} <- SplitFileWriter.new(compact_data_path, compact_idx_path),
+             {:ok, result, compacted_pages, durable_version} <-
+               Database.compact(database, complete_page_map, SplitFileWriter, writer) do
+          duration = System.monotonic_time(:microsecond) - start_time
 
-            # Get index file offset now (before sending to different process)
-            {:ok, index_offset} = :file.position(compact_idx_fd, {:cur, 0})
+          send(caller, {
+            :compaction_ready,
+            result.data_fd,
+            result.idx_fd,
+            result.data_path,
+            result.idx_path,
+            result.data_offset,
+            result.idx_offset,
+            compacted_pages,
+            durable_version,
+            duration,
+            data_db.file_offset,
+            index_db.file_offset
+          })
 
-            send(caller, {
-              :compaction_ready,
-              compact_data_fd,
-              compact_idx_fd,
-              compact_data_path,
-              compact_idx_path,
-              new_data_offset,
-              index_offset,
-              compacted_pages,
-              durable_version,
-              duration,
-              data_db.file_offset,
-              index_db.file_offset
-            })
-
-            :ok
-
+          :ok
+        else
           {:error, reason} ->
             OlivineTelemetry.trace_compaction_failed(reason)
             send(caller, {:compaction_failed, reason})
@@ -290,5 +295,43 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       end)
 
     {:ok, task}
+  end
+
+  @doc """
+  Optionally uploads a snapshot to ObjectStorage after compaction.
+
+  This is a fire-and-forget operation. If snapshot_upload is not configured,
+  this is a no-op. If configured, spawns an async task to read the data and
+  index files and upload them directly as a bundle (iodata).
+
+  The task logs success or failure but does not affect the caller.
+  """
+  @spec maybe_upload_snapshot(
+          State.t(),
+          data_path :: charlist(),
+          idx_path :: charlist(),
+          durable_version :: Bedrock.version()
+        ) ::
+          :ok
+  def maybe_upload_snapshot(%State{snapshot_upload: nil}, _data_path, _idx_path, _durable_version) do
+    :ok
+  end
+
+  def maybe_upload_snapshot(%State{snapshot_upload: snapshot}, data_path, idx_path, durable_version) do
+    version_int = Version.to_integer(durable_version)
+
+    Task.start(fn ->
+      # Read files and upload as iodata (no intermediate bundle file)
+      with {:ok, data} <- File.read(to_string(data_path)),
+           {:ok, idx} <- File.read(to_string(idx_path)),
+           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
+        Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
+      else
+        {:error, reason} ->
+          Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
+      end
+    end)
+
+    :ok
   end
 end

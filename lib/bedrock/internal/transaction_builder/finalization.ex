@@ -16,11 +16,12 @@ defmodule Bedrock.Internal.TransactionBuilder.Finalization do
   end
 
   def commit(%{stack: []} = t, opts) do
-    commit_fn = Keyword.get(opts, :commit_fn, &CommitProxy.commit/2)
+    commit_fn = Keyword.get(opts, :commit_fn, &CommitProxy.commit/3)
+    epoch = Keyword.get(opts, :epoch, 0)
     transaction = prepare_transaction_for_commit(t.read_version, t.tx)
 
     with {:ok, commit_proxy} <- select_commit_proxy(t.transaction_system_layout),
-         {:ok, version, _sequence} <- commit_fn.(commit_proxy, transaction) do
+         {:ok, version, _sequence} <- commit_fn.(commit_proxy, epoch, transaction) do
       {:ok, %{t | state: :committed, commit_version: version}}
     end
   end

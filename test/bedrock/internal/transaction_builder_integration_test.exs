@@ -19,6 +19,7 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
 
   def create_test_transaction_system_layout do
     %{
+      epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       storage_teams: [

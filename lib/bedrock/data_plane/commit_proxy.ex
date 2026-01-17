@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.Transaction
 
   @type ref :: pid() | atom() | {atom(), node()}
@@ -31,12 +31,14 @@ defmodule Bedrock.DataPlane.CommitProxy do
   @spec recover_from(
           commit_proxy_ref :: ref(),
           lock_token :: binary(),
-          transaction_system_layout :: TransactionSystemLayout.t()
+          sequencer :: pid(),
+          resolver_layout :: ResolverLayout.t()
         ) :: :ok | {:error, :timeout} | {:error, :unavailable}
-  def recover_from(commit_proxy, lock_token, transaction_system_layout),
-    do: call(commit_proxy, {:recover_from, lock_token, transaction_system_layout}, :infinity)
+  def recover_from(commit_proxy, lock_token, sequencer, resolver_layout),
+    do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout}, :infinity)
 
-  @spec commit(commit_proxy_ref :: ref(), transaction :: Transaction.encoded()) ::
-          {:ok, version :: Bedrock.version(), index :: non_neg_integer()} | {:error, :timeout | :unavailable}
-  def commit(commit_proxy, transaction), do: call(commit_proxy, {:commit, transaction}, :infinity)
+  @spec commit(commit_proxy_ref :: ref(), epoch :: Bedrock.epoch(), transaction :: Transaction.encoded()) ::
+          {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
+          | {:error, :wrong_epoch | :timeout | :unavailable}
+  def commit(commit_proxy, epoch, transaction), do: call(commit_proxy, {:commit, epoch, transaction}, :infinity)
 end

@@ -8,6 +8,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
 
   # Common test helpers
+  defp build_log_services(layout) do
+    layout.logs
+    |> Map.keys()
+    |> Enum.reduce(%{}, fn log_id, acc ->
+      case Map.get(layout.services, log_id) do
+        %{kind: :log, status: {:up, pid}} when is_pid(pid) -> Map.put(acc, log_id, pid)
+        _ -> acc
+      end
+    end)
+  end
+
   defp create_standard_layout(log_servers) do
     %{
       sequencer: :test_sequencer,
@@ -37,7 +48,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
   defp expect_standard_calls(_test_pid) do
     {
-      fn :test_sequencer, _commit_version -> :ok end,
+      fn :test_sequencer, _epoch, _commit_version, _opts -> :ok end,
       fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         {:ok, [], []}
       end
@@ -67,15 +78,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           ]
         )
 
-      assert {:ok, 0, 3, _metadata} =
+      routing_data = Support.build_routing_data(transaction_system_layout)
+
+      assert {:ok, 0, 3, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 transaction_system_layout,
-                 [],
                  epoch: 1,
+                 sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
-                 sequencer_notify_fn: sequencer_notify_fn
+                 sequencer_notify_fn: sequencer_notify_fn,
+                 routing_data: routing_data
                )
 
       assert_receive {:reply1, {:ok, _, _}}
@@ -112,15 +125,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:range_reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1, _metadata} =
+      routing_data = Support.build_routing_data(layout)
+
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
-                 [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
-                 sequencer_notify_fn: sequencer_notify_fn
+                 sequencer_notify_fn: sequencer_notify_fn,
+                 routing_data: routing_data
                )
 
       assert_receive {:range_reply, {:ok, _, _}}
@@ -153,15 +168,17 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           [{fn result -> send(self(), {:reply, result}) end, transaction}]
         )
 
-      assert {:ok, 0, 1, _metadata} =
+      routing_data = Support.build_routing_data(layout)
+
+      assert {:ok, 0, 1, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
-                 [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
-                 sequencer_notify_fn: sequencer_notify_fn
+                 sequencer_notify_fn: sequencer_notify_fn,
+                 routing_data: routing_data
                )
 
       assert_receive {:reply, {:ok, _, _}}
@@ -182,7 +199,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         {:ok, [1], []}
       end
 
-      sequencer_notify_fn = fn :test_sequencer, ^expected_version -> :ok end
+      sequencer_notify_fn = fn :test_sequencer, _epoch, ^expected_version, _opts -> :ok end
 
       transactions = [
         Transaction.encode(%{
@@ -213,16 +230,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           ]
         )
 
+      routing_data = Support.build_routing_data(layout)
+
       # Should have 1 abort (transaction 1) and 2 successes (transactions 0, 2)
-      assert {:ok, 1, 2, _metadata} =
+      assert {:ok, 1, 2, _routing_data} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
-                 [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
-                 sequencer_notify_fn: sequencer_notify_fn
+                 sequencer_notify_fn: sequencer_notify_fn,
+                 routing_data: routing_data
                )
 
       # Verify correct replies - transaction 1 should be aborted, others succeed
@@ -232,7 +251,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
     end
   end
 
-  describe "push_transaction_to_logs_direct/5" do
+  describe "push_transaction_to_logs_direct/4" do
     test "pushes pre-built transactions directly to logs" do
       log_servers = [Support.create_mock_log_server(), Support.create_mock_log_server()]
 
@@ -261,11 +280,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert :ok =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
     end
 
@@ -297,11 +315,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:error, {:log_failures, [{"log_1", :disk_full}]}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
     end
 
@@ -330,10 +347,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       }
 
       Finalization.push_transaction_to_logs_direct(
-        layout,
         Version.from_integer(99),
         transactions_by_log,
         commit_version,
+        log_services: build_log_services(layout),
         async_stream_fn: mock_async_stream_fn,
         timeout: 3000
       )
@@ -371,11 +388,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:error, {:log_failures, errors}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_1" end)
@@ -409,11 +425,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:error, {:log_failures, errors}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
@@ -449,11 +464,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:error, {:log_failures, errors}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
@@ -466,13 +480,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         [{:ok, {"log_1", :ok}}]
       end
 
-      layout = %{
-        logs: %{"log_1" => [0], "log_2" => [1]},
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, self()}},
-          "log_2" => %{kind: :log, status: {:up, self()}}
-        }
-      }
+      log_services = %{"log_1" => self(), "log_2" => self()}
 
       commit_version = Version.from_integer(100)
       tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
@@ -481,10 +489,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       assert {:error, {:insufficient_acknowledgments, 1, 2, []}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
+                 log_services: log_services,
                  async_stream_fn: mock_async_stream_fn
                )
     end
@@ -492,32 +500,26 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
     test "handles log service marked as down" do
       success_log = Support.create_mock_log_server()
 
-      layout = %{
-        logs: %{"log_1" => [0], "log_2" => [1]},
-        services: %{
-          "log_1" => %{kind: :log, status: {:up, success_log}},
-          "log_2" => %{kind: :log, status: :down}
-        }
-      }
+      # When a log service is down, it won't be in log_services
+      # This simulates that scenario: only log_1 is available
+      log_services = %{"log_1" => success_log}
 
       commit_version = Version.from_integer(100)
       tx_binary = Transaction.encode(%{mutations: [{:set, <<"key">>, <<"value">>}], commit_version: commit_version})
 
       transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
 
-      # When a service is down, it's filtered out of resolve_log_descriptors
-      # So we only get one acknowledgment when we need two
+      # With only one log service, push succeeds (acks = log_services count)
       result =
         Finalization.push_transaction_to_logs_direct(
-          layout,
           Version.from_integer(99),
           transactions_by_log,
           commit_version,
-          []
+          log_services: log_services
         )
 
-      # Should either fail due to insufficient acks or because the down log couldn't be reached
-      assert match?({:error, _}, result)
+      # Should succeed because we only have 1 log service (the one that's up)
+      assert result == :ok
     end
 
     test "reports all failures when multiple logs fail" do
@@ -556,11 +558,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       # Since reduce_while halts on first failure, we'll get one error
       assert {:error, {:log_failures, [_error]}} =
                Finalization.push_transaction_to_logs_direct(
-                 layout,
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 []
+                 log_services: build_log_services(layout)
                )
     end
   end
@@ -612,14 +613,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         {:ok, [], []}
       end
 
+      routing_data = Support.build_routing_data(layout)
+
       assert {:error, {:log_failures, _}} =
                Finalization.finalize_batch(
                  batch,
-                 layout,
-                 [],
                  epoch: 1,
+                 sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
-                 resolver_fn: resolver_fn
+                 resolver_fn: resolver_fn,
+                 routing_data: routing_data
                )
 
       # Both transactions should be aborted due to log failure

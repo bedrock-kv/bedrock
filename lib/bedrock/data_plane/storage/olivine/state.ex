@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Storage.Olivine.Reading
+  alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -24,7 +25,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
           intake_queue: IntakeQueue.t(),
           window_lag_time_μs: non_neg_integer(),
           compaction_task: Task.t() | nil,
-          allow_window_advancement: boolean()
+          allow_window_advancement: boolean(),
+          snapshot_upload: Snapshot.t() | nil
         }
   defstruct otp_name: nil,
             path: nil,
@@ -40,7 +42,8 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
             intake_queue: IntakeQueue.new(),
             window_lag_time_μs: 5_000_000,
             compaction_task: nil,
-            allow_window_advancement: true
+            allow_window_advancement: true,
+            snapshot_upload: nil
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

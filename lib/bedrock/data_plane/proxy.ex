@@ -45,11 +45,11 @@ defmodule Bedrock.DataPlane.Proxy do
 
   @impl GenServer
   def handle_call(:get_read_version, from, state) do
-    forward_call(state.layout.sequencer, from, :next_read_version)
+    forward_call(state.layout.sequencer, from, {:next_read_version, state.layout.epoch})
     noreply(state)
   end
 
-  @spec forward_call(Sequencer.ref(), GenServer.from(), :next_read_version) ::
+  @spec forward_call(Sequencer.ref(), GenServer.from(), {:next_read_version, Bedrock.epoch()}) ::
           :ok
   defp forward_call(gen_server, from, message), do: send(gen_server, {:"$gen_call", from, message})
 end

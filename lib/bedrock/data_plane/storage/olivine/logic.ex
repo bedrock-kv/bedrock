@@ -16,7 +16,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage.Snapshot
+  alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
@@ -292,5 +296,47 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       end)
 
     {:ok, task}
+  end
+
+  @doc """
+  Optionally uploads a snapshot to ObjectStorage after compaction.
+
+  This is a fire-and-forget operation. If snapshot_upload is not configured,
+  this is a no-op. If configured, spawns an async task to:
+  1. Create a bundle from the data and index files
+  2. Upload the bundle to ObjectStorage
+  3. Clean up the temporary bundle file
+
+  The task logs success or failure but does not affect the caller.
+  """
+  @spec maybe_upload_snapshot(
+          State.t(),
+          data_path :: charlist(),
+          idx_path :: charlist(),
+          durable_version :: Bedrock.version()
+        ) ::
+          :ok
+  def maybe_upload_snapshot(%State{snapshot_upload: nil}, _data_path, _idx_path, _durable_version) do
+    :ok
+  end
+
+  def maybe_upload_snapshot(%State{snapshot_upload: snapshot, path: storage_path}, data_path, idx_path, durable_version) do
+    bundle_path = Path.join(storage_path, "snapshot.bundle")
+    version_int = Version.to_integer(durable_version)
+
+    Task.start(fn ->
+      with {:ok, _size} <- SnapshotBundle.create(to_string(data_path), to_string(idx_path), bundle_path),
+           {:ok, data} <- File.read(bundle_path),
+           :ok <- Snapshot.write(snapshot, version_int, data) do
+        Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
+        File.rm(bundle_path)
+      else
+        {:error, reason} ->
+          Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
+          File.rm(bundle_path)
+      end
+    end)
+
+    :ok
   end
 end

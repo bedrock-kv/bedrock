@@ -17,6 +17,23 @@ defmodule Bedrock.ObjectStorage.SnapshotBundle do
   @min_record_size @header_size + @footer_size
 
   @doc """
+  Create a bundle file from separate data and index files.
+
+  Concatenates data and index into a single bundle file.
+  Returns {:ok, bundle_size} on success.
+  """
+  @spec create(data_path :: Path.t(), idx_path :: Path.t(), bundle_path :: Path.t()) ::
+          {:ok, bundle_size :: non_neg_integer()} | {:error, term()}
+  def create(data_path, idx_path, bundle_path) do
+    with {:ok, data} <- File.read(data_path),
+         {:ok, idx} <- File.read(idx_path),
+         bundle = [data, idx],
+         :ok <- File.write(bundle_path, bundle) do
+      {:ok, byte_size(data) + byte_size(idx)}
+    end
+  end
+
+  @doc """
   Split a bundle file into separate data and index files.
 
   Reads the bundle, identifies the index record at the end, and writes:

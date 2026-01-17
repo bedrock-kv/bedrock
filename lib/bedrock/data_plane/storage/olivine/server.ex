@@ -355,6 +355,9 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
       values_compacted: values_compacted
     )
 
+    # Optionally upload snapshot to ObjectStorage (async, fire-and-forget)
+    Logic.maybe_upload_snapshot(new_state, data_path, idx_path, durable_version)
+
     # Resume normal operation
     # The puller will automatically fetch transactions from durable_version + 1
     # and rebuild the buffer through normal transaction processing

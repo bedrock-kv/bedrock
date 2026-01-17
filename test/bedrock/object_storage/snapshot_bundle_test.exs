@@ -70,21 +70,107 @@ defmodule Bedrock.ObjectStorage.SnapshotBundleTest do
     end
   end
 
-  describe "split/3" do
-    @tag :tmp_dir
-    setup context do
-      tmp_dir =
-        context[:tmp_dir] ||
-          Path.join(System.tmp_dir!(), "snapshot_bundle_test_#{System.unique_integer([:positive])}")
+  # Shared setup for file-based tests
+  defp setup_tmp_dir(context) do
+    tmp_dir =
+      context[:tmp_dir] ||
+        Path.join(System.tmp_dir!(), "snapshot_bundle_test_#{System.unique_integer([:positive])}")
 
-      File.mkdir_p!(tmp_dir)
+    File.mkdir_p!(tmp_dir)
 
-      on_exit(fn ->
-        File.rm_rf(tmp_dir)
-      end)
+    on_exit(fn ->
+      File.rm_rf(tmp_dir)
+    end)
 
-      {:ok, tmp_dir: tmp_dir}
+    {:ok, tmp_dir: tmp_dir}
+  end
+
+  describe "create/3" do
+    setup :setup_tmp_dir
+
+    test "creates bundle from data and idx files", %{tmp_dir: tmp_dir} do
+      data = "this is the data portion"
+      version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+      pages_map = %{}
+
+      index_record = IndexDatabase.build_snapshot_record(version, pages_map)
+      index_binary = IO.iodata_to_binary(index_record)
+
+      data_path = Path.join(tmp_dir, "source.data")
+      idx_path = Path.join(tmp_dir, "source.idx")
+      bundle_path = Path.join(tmp_dir, "output.bundle")
+
+      File.write!(data_path, data)
+      File.write!(idx_path, index_binary)
+
+      assert {:ok, bundle_size} = SnapshotBundle.create(data_path, idx_path, bundle_path)
+      assert bundle_size == byte_size(data) + byte_size(index_binary)
+
+      # Verify bundle contains data followed by index
+      bundle_content = File.read!(bundle_path)
+      assert bundle_content == data <> index_binary
     end
+
+    test "create and split are inverse operations", %{tmp_dir: tmp_dir} do
+      data = String.duplicate("D", 500)
+      version = <<0, 0, 0, 0, 0, 0, 0, 7>>
+      pages_map = %{}
+
+      index_record = IndexDatabase.build_snapshot_record(version, pages_map)
+      index_binary = IO.iodata_to_binary(index_record)
+
+      # Start with separate files
+      data_path = Path.join(tmp_dir, "original.data")
+      idx_path = Path.join(tmp_dir, "original.idx")
+      bundle_path = Path.join(tmp_dir, "roundtrip.bundle")
+      split_data_path = Path.join(tmp_dir, "split.data")
+      split_idx_path = Path.join(tmp_dir, "split.idx")
+
+      File.write!(data_path, data)
+      File.write!(idx_path, index_binary)
+
+      # Create bundle
+      {:ok, _} = SnapshotBundle.create(data_path, idx_path, bundle_path)
+
+      # Split bundle
+      {:ok, _, _} = SnapshotBundle.split(bundle_path, split_data_path, split_idx_path)
+
+      # Verify round-trip preserves content
+      assert File.read!(split_data_path) == data
+      assert File.read!(split_idx_path) == index_binary
+    end
+
+    test "returns error for non-existent data file", %{tmp_dir: tmp_dir} do
+      idx_path = Path.join(tmp_dir, "exists.idx")
+      bundle_path = Path.join(tmp_dir, "output.bundle")
+
+      File.write!(idx_path, "index content")
+
+      assert {:error, :enoent} =
+               SnapshotBundle.create(
+                 Path.join(tmp_dir, "nonexistent.data"),
+                 idx_path,
+                 bundle_path
+               )
+    end
+
+    test "returns error for non-existent idx file", %{tmp_dir: tmp_dir} do
+      data_path = Path.join(tmp_dir, "exists.data")
+      bundle_path = Path.join(tmp_dir, "output.bundle")
+
+      File.write!(data_path, "data content")
+
+      assert {:error, :enoent} =
+               SnapshotBundle.create(
+                 data_path,
+                 Path.join(tmp_dir, "nonexistent.idx"),
+                 bundle_path
+               )
+    end
+  end
+
+  describe "split/3" do
+    setup :setup_tmp_dir
 
     test "splits bundle into data and idx files", %{tmp_dir: tmp_dir} do
       # Create a bundle

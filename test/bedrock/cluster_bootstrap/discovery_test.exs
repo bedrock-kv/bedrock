@@ -18,32 +18,39 @@ defmodule Bedrock.ClusterBootstrap.DiscoveryTest do
   end
 
   describe "discover/3 when ClusterBootstrap exists" do
-    test "returns {:ok, :coordinator, bootstrap} when node is in coordinators list", ctx do
+    test "returns {:ok, :coordinator, bootstrap, version_token} when node is in coordinators list",
+         ctx do
       self_node = :test@localhost
       bootstrap = create_bootstrap_with_coordinator(self_node)
       write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
 
-      assert {:ok, :coordinator, result} = Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+      assert {:ok, :coordinator, result, _version_token} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
       assert result.cluster_id == bootstrap.cluster_id
       assert result.epoch == bootstrap.epoch
     end
 
-    test "returns {:ok, :worker, bootstrap} when node is NOT in coordinators list", ctx do
+    test "returns {:ok, :worker, bootstrap, version_token} when node is NOT in coordinators list",
+         ctx do
       self_node = :test@localhost
       other_node = :other@localhost
       bootstrap = create_bootstrap_with_coordinator(other_node)
       write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
 
-      assert {:ok, :worker, result} = Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+      assert {:ok, :worker, result, _version_token} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
       assert result.cluster_id == bootstrap.cluster_id
     end
   end
 
   describe "discover/3 when ClusterBootstrap does not exist (first boot)" do
-    test "creates initial bootstrap and returns {:ok, :coordinator, bootstrap}", ctx do
+    test "creates initial bootstrap and returns {:ok, :coordinator, bootstrap, nil}", ctx do
       self_node = :test@localhost
 
-      assert {:ok, :coordinator, bootstrap} = Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+      assert {:ok, :coordinator, bootstrap, nil} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
 
       # Verify bootstrap was created
       assert is_binary(bootstrap.cluster_id)
@@ -57,7 +64,8 @@ defmodule Bedrock.ClusterBootstrap.DiscoveryTest do
       assert stored.cluster_id == bootstrap.cluster_id
     end
 
-    test "loses race and returns {:ok, :coordinator, bootstrap} if in winning bootstrap", ctx do
+    test "loses race and returns {:ok, :coordinator, bootstrap, version_token} if in winning bootstrap",
+         ctx do
       self_node = :test@localhost
 
       # Simulate race: another node writes first with us as coordinator
@@ -65,11 +73,14 @@ defmodule Bedrock.ClusterBootstrap.DiscoveryTest do
       write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
 
       # Our discover should re-read and find we're a coordinator
-      assert {:ok, :coordinator, result} = Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+      assert {:ok, :coordinator, result, _version_token} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
       assert result.cluster_id == bootstrap.cluster_id
     end
 
-    test "loses race and returns {:ok, :worker, bootstrap} if not in winning bootstrap", ctx do
+    test "loses race and returns {:ok, :worker, bootstrap, version_token} if not in winning bootstrap",
+         ctx do
       self_node = :test@localhost
       winner_node = :winner@localhost
 
@@ -78,7 +89,9 @@ defmodule Bedrock.ClusterBootstrap.DiscoveryTest do
       write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
 
       # Our discover should re-read and find we're not a coordinator
-      assert {:ok, :worker, result} = Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+      assert {:ok, :worker, result, _version_token} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
       assert result.cluster_id == bootstrap.cluster_id
     end
   end
@@ -106,6 +119,82 @@ defmodule Bedrock.ClusterBootstrap.DiscoveryTest do
       node = :test@localhost
       bootstrap = Discovery.create_initial(node)
       assert coordinator_nodes(bootstrap) == [node]
+    end
+  end
+
+  describe "discover/3 returns version token" do
+    test "returns version token when bootstrap exists", ctx do
+      self_node = :test@localhost
+      bootstrap = create_bootstrap_with_coordinator(self_node)
+      write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
+
+      assert {:ok, :coordinator, _bootstrap, version_token} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
+      assert is_binary(version_token)
+      assert String.starts_with?(version_token, "sha256:")
+    end
+
+    test "returns nil version token on first boot", ctx do
+      self_node = :test@localhost
+
+      assert {:ok, :coordinator, _bootstrap, nil} =
+               Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+    end
+  end
+
+  describe "write_bootstrap/4" do
+    test "succeeds with valid version token", ctx do
+      self_node = :test@localhost
+      bootstrap = create_bootstrap_with_coordinator(self_node)
+      write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
+
+      {:ok, :coordinator, _bootstrap, version_token} =
+        Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
+      updated_bootstrap = %{bootstrap | epoch: 2}
+
+      assert :ok =
+               Discovery.write_bootstrap(
+                 ctx.backend,
+                 ctx.bootstrap_key,
+                 version_token,
+                 updated_bootstrap
+               )
+
+      # Verify update was written
+      {:ok, data} = ObjectStorage.get(ctx.backend, ctx.bootstrap_key)
+      {:ok, stored} = ClusterBootstrap.read(data)
+      assert stored.epoch == 2
+    end
+
+    test "fails with stale version token", ctx do
+      self_node = :test@localhost
+      bootstrap = create_bootstrap_with_coordinator(self_node)
+      write_bootstrap(ctx.backend, ctx.bootstrap_key, bootstrap)
+
+      {:ok, :coordinator, _bootstrap, stale_token} =
+        Discovery.discover(ctx.backend, ctx.bootstrap_key, self_node)
+
+      # Another recovery completes first
+      concurrent_bootstrap = %{bootstrap | epoch: 99}
+      write_bootstrap(ctx.backend, ctx.bootstrap_key, concurrent_bootstrap)
+
+      # Our write with stale token should fail
+      our_bootstrap = %{bootstrap | epoch: 2}
+
+      assert {:error, :version_mismatch} =
+               Discovery.write_bootstrap(
+                 ctx.backend,
+                 ctx.bootstrap_key,
+                 stale_token,
+                 our_bootstrap
+               )
+
+      # Content should remain from concurrent recovery
+      {:ok, data} = ObjectStorage.get(ctx.backend, ctx.bootstrap_key)
+      {:ok, stored} = ClusterBootstrap.read(data)
+      assert stored.epoch == 99
     end
   end
 

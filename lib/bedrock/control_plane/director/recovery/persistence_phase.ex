@@ -20,13 +20,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.ClusterBootstrap.Discovery
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Config, as: StorageConfig
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.ClusterBootstrap
   alias Bedrock.SystemKeys.ShardMetadata
 
   @impl true
@@ -47,12 +52,72 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, _version, _sequence} ->
         trace_recovery_system_state_persisted()
 
-        {recovery_attempt, :completed}
+        case write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+          :ok ->
+            {recovery_attempt, :completed}
+
+          {:error, :version_mismatch} ->
+            {recovery_attempt, {:stalled, {:recovery_system_failed, :bootstrap_version_mismatch}}}
+
+          {:error, reason} ->
+            {recovery_attempt, {:stalled, {:recovery_system_failed, {:bootstrap_write_failed, reason}}}}
+        end
 
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
     end
+  end
+
+  defp write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+    backend = StorageConfig.backend()
+    bootstrap_key = StorageConfig.bootstrap_key()
+
+    # bootstrap_key is optional - skip write if not configured
+    if bootstrap_key do
+      do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout)
+    else
+      :ok
+    end
+  end
+
+  defp do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout) do
+    case ObjectStorage.get_with_version(backend, bootstrap_key) do
+      {:ok, data, version_token} ->
+        {:ok, current_bootstrap} = ClusterBootstrap.read(data)
+        updated_bootstrap = build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout)
+        Discovery.write_bootstrap(backend, bootstrap_key, version_token, updated_bootstrap)
+
+      {:error, :not_found} ->
+        # First boot - create new bootstrap
+        bootstrap = build_initial_bootstrap(recovery_attempt, transaction_system_layout)
+        data = ClusterBootstrap.to_binary(bootstrap)
+        ObjectStorage.put_if_not_exists(backend, bootstrap_key, data)
+    end
+  end
+
+  defp build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout) do
+    %{
+      current_bootstrap
+      | epoch: recovery_attempt.epoch,
+        logs: build_log_entries(transaction_system_layout)
+    }
+  end
+
+  defp build_initial_bootstrap(recovery_attempt, transaction_system_layout) do
+    %{
+      cluster_id: Id.random(),
+      epoch: recovery_attempt.epoch,
+      logs: build_log_entries(transaction_system_layout),
+      coordinators: [%{node: Atom.to_string(node())}]
+    }
+  end
+
+  defp build_log_entries(transaction_system_layout) do
+    Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} ->
+      # For now, log entries don't include OTP refs - that requires service lookup
+      %{id: log_id, otp_ref: nil}
+    end)
   end
 
   @spec build_system_transaction(

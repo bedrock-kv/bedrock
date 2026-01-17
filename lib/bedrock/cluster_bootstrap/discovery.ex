@@ -28,9 +28,11 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
           coordinators: [%{node: String.t()}]
         }
 
+  @type version_token :: String.t() | nil
+
   @type discovery_result ::
-          {:ok, :coordinator, bootstrap()}
-          | {:ok, :worker, bootstrap()}
+          {:ok, :coordinator, bootstrap(), version_token()}
+          | {:ok, :worker, bootstrap(), version_token()}
 
   @doc """
   Discovers the cluster bootstrap using configured ObjectStorage.
@@ -53,9 +55,9 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
   """
   @spec discover(ObjectStorage.backend(), String.t(), node()) :: discovery_result()
   def discover(backend, bootstrap_key, self_node) do
-    case ObjectStorage.get(backend, bootstrap_key) do
-      {:ok, data} ->
-        handle_existing_bootstrap(data, self_node)
+    case ObjectStorage.get_with_version(backend, bootstrap_key) do
+      {:ok, data, version_token} ->
+        handle_existing_bootstrap(data, version_token, self_node)
 
       {:error, :not_found} ->
         handle_first_boot(backend, bootstrap_key, self_node)
@@ -81,12 +83,26 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
     }
   end
 
+  @doc """
+  Writes updated bootstrap to object storage with version check.
+
+  Uses conditional write to prevent overwriting a newer bootstrap from
+  a concurrent recovery. Returns `:ok` on success or `{:error, :version_mismatch}`
+  if another recovery completed first.
+  """
+  @spec write_bootstrap(ObjectStorage.backend(), String.t(), String.t(), bootstrap()) ::
+          :ok | {:error, :version_mismatch | term()}
+  def write_bootstrap(backend, bootstrap_key, version_token, bootstrap) do
+    data = ClusterBootstrap.to_binary(bootstrap)
+    ObjectStorage.put_if_version_matches(backend, bootstrap_key, version_token, data)
+  end
+
   # Private functions
 
-  defp handle_existing_bootstrap(data, self_node) do
+  defp handle_existing_bootstrap(data, version_token, self_node) do
     {:ok, bootstrap} = ClusterBootstrap.read(data)
     role = determine_role(bootstrap, self_node)
-    {:ok, role, bootstrap}
+    {:ok, role, bootstrap, version_token}
   end
 
   defp handle_first_boot(backend, bootstrap_key, self_node) do
@@ -95,13 +111,13 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
 
     case ObjectStorage.put_if_not_exists(backend, bootstrap_key, data) do
       :ok ->
-        # We won the race - we're the coordinator
-        {:ok, :coordinator, initial}
+        # We won the race - we're the coordinator, no version token yet
+        {:ok, :coordinator, initial, nil}
 
       {:error, :already_exists} ->
         # Someone beat us - re-read and check our role
-        {:ok, data} = ObjectStorage.get(backend, bootstrap_key)
-        handle_existing_bootstrap(data, self_node)
+        {:ok, data, version_token} = ObjectStorage.get_with_version(backend, bootstrap_key)
+        handle_existing_bootstrap(data, version_token, self_node)
     end
   end
 

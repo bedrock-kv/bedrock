@@ -193,6 +193,16 @@ defmodule Bedrock.DataPlane.Storage.Olivine.IndexDatabase do
     :file.write(file_fd, record)
   end
 
+  @doc """
+  Builds a snapshot record as iodata without writing to a file.
+  Used by CompactionWriter implementations to get the index bytes.
+  The previous_version equals version (self-loop) to terminate the chain.
+  """
+  @spec build_snapshot_record(Bedrock.version(), %{Page.id() => {Page.t(), Page.id()}}) :: iodata()
+  def build_snapshot_record(version, pages_map) do
+    build_record(version, version, pages_map)
+  end
+
   @spec info(t(), :n_keys | :utilization | :size_in_bytes | :key_ranges) :: any() | :undefined
   def info(index_db, stat) do
     case stat do

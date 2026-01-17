@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Storage.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
   alias Bedrock.DataPlane.Storage.Olivine.Database
   alias Bedrock.DataPlane.Storage.Olivine.IndexManager
   alias Bedrock.DataPlane.Storage.Olivine.Pulling
@@ -253,35 +254,36 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
       index_size_before: index_db.file_offset
     )
 
+    # Prepare compact file paths
+    compact_data_path = data_db.file_name ++ ~c".compact"
+    compact_idx_path = index_db.file_name ++ ~c".compact"
+
     task =
       Task.async(fn ->
         start_time = System.monotonic_time(:microsecond)
 
-        case Database.compact(database, complete_page_map) do
-          {:ok, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, new_data_offset, compacted_pages,
-           durable_version} ->
-            duration = System.monotonic_time(:microsecond) - start_time
+        with {:ok, writer} <- SplitFileWriter.new(compact_data_path, compact_idx_path),
+             {:ok, result, compacted_pages, durable_version} <-
+               Database.compact(database, complete_page_map, SplitFileWriter, writer) do
+          duration = System.monotonic_time(:microsecond) - start_time
 
-            # Get index file offset now (before sending to different process)
-            {:ok, index_offset} = :file.position(compact_idx_fd, {:cur, 0})
+          send(caller, {
+            :compaction_ready,
+            result.data_fd,
+            result.idx_fd,
+            result.data_path,
+            result.idx_path,
+            result.data_offset,
+            result.idx_offset,
+            compacted_pages,
+            durable_version,
+            duration,
+            data_db.file_offset,
+            index_db.file_offset
+          })
 
-            send(caller, {
-              :compaction_ready,
-              compact_data_fd,
-              compact_idx_fd,
-              compact_data_path,
-              compact_idx_path,
-              new_data_offset,
-              index_offset,
-              compacted_pages,
-              durable_version,
-              duration,
-              data_db.file_offset,
-              index_db.file_offset
-            })
-
-            :ok
-
+          :ok
+        else
           {:error, reason} ->
             OlivineTelemetry.trace_compaction_failed(reason)
             send(caller, {:compaction_failed, reason})

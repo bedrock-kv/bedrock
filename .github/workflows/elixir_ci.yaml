@@ -75,7 +75,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: priv/plts
-        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-${{ hashFiles('**/mix.lock') }}
+        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-v2-${{ hashFiles('**/mix.lock') }}
 
     - name: Dialyzer
       run: mix dialyzer

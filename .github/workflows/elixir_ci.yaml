@@ -76,8 +76,6 @@ jobs:
       with:
         path: priv/plts
         key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-
 
     - name: Dialyzer
       run: mix dialyzer

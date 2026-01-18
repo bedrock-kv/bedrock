@@ -15,6 +15,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
           path: Path.t(),
           foreman: Foreman.ref(),
           id: Worker.id(),
+          shard_id: String.t(),
           database: Database.t(),
           index_manager: IndexManager.t(),
           pull_task: Task.t() | nil,
@@ -26,12 +27,13 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
           window_lag_time_μs: non_neg_integer(),
           compaction_task: Task.t() | nil,
           allow_window_advancement: boolean(),
-          snapshot_upload: Snapshot.t() | nil
+          snapshot: Snapshot.t() | nil
         }
   defstruct otp_name: nil,
             path: nil,
             foreman: nil,
             id: nil,
+            shard_id: nil,
             database: nil,
             index_manager: nil,
             pull_task: nil,
@@ -43,7 +45,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.State do
             window_lag_time_μs: 5_000_000,
             compaction_task: nil,
             allow_window_advancement: true,
-            snapshot_upload: nil
+            snapshot: nil
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

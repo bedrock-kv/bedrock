@@ -16,28 +16,92 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   alias Bedrock.DataPlane.Storage.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.ObjectStorage.Snapshot
+  alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
 
   require Logger
 
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
-  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), db_opts :: keyword()) ::
+  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), opts :: keyword()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
-  def startup(otp_name, foreman, id, path, db_opts \\ []) do
+  def startup(otp_name, foreman, id, path, opts \\ []) do
+    cluster = Keyword.get(opts, :cluster)
+    shard_id = Keyword.get(opts, :shard_id)
+    snapshot = build_snapshot_handle(cluster, shard_id)
+
     with :ok <- ensure_directory_exists(path),
-         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets"), db_opts),
+         :ok <- maybe_load_snapshot(path, snapshot),
+         {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets"), opts),
          {:ok, index_manager} <- IndexManager.recover_from_database(database) do
       {:ok,
        %State{
          path: path,
          otp_name: otp_name,
          id: id,
+         shard_id: shard_id,
          foreman: foreman,
          database: database,
-         index_manager: index_manager
+         index_manager: index_manager,
+         snapshot: snapshot
        }}
+    end
+  end
+
+  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: String.t() | nil) :: Snapshot.t() | nil
+  defp build_snapshot_handle(nil, _shard_id), do: nil
+  defp build_snapshot_handle(_cluster, nil), do: nil
+
+  defp build_snapshot_handle(cluster, shard_id) do
+    backend = ObjectStorageConfig.backend()
+    cluster_name = cluster.name()
+    Snapshot.new(backend, cluster_name, shard_id)
+  end
+
+  @doc """
+  Checks if local database files exist. If not, attempts to discover and
+  restore from the latest snapshot in ObjectStorage.
+  """
+  @spec maybe_load_snapshot(Path.t(), Snapshot.t() | nil) :: :ok | {:error, term()}
+  def maybe_load_snapshot(_path, nil), do: :ok
+
+  def maybe_load_snapshot(path, %Snapshot{} = snapshot) do
+    # Database.open uses Path.dirname(file_path) and creates data/idx files there
+    # We pass Path.join(path, "dets") to Database.open, so files are at path/data, path/idx
+    data_path = Path.join(path, "data")
+    idx_path = Path.join(path, "idx")
+
+    if File.exists?(data_path) and File.exists?(idx_path) do
+      # Local files exist - use them (warm start)
+      :ok
+    else
+      # Cold start - discover and download from ObjectStorage
+      load_snapshot_from_object_storage(path, snapshot)
+    end
+  end
+
+  @spec load_snapshot_from_object_storage(Path.t(), Snapshot.t()) :: :ok | {:error, term()}
+  defp load_snapshot_from_object_storage(path, snapshot) do
+    bundle_path = Path.join(path, "snapshot.bundle")
+    data_path = Path.join(path, "data")
+    idx_path = Path.join(path, "idx")
+
+    # Discovery: find latest snapshot in ObjectStorage
+    with {:ok, version, data} <- Snapshot.read_latest(snapshot),
+         :ok <- File.write(bundle_path, data),
+         {:ok, _, _} <- SnapshotBundle.split_in_place(bundle_path, data_path, idx_path) do
+      Logger.info("Discovered and loaded snapshot from ObjectStorage", version: version)
+      :ok
+    else
+      {:error, :not_found} ->
+        # No snapshot discovered - proceed with empty state
+        Logger.info("No snapshot discovered in ObjectStorage, starting fresh")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:snapshot_load_failed, reason}}
     end
   end
 
@@ -300,7 +364,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
   @doc """
   Optionally uploads a snapshot to ObjectStorage after compaction.
 
-  This is a fire-and-forget operation. If snapshot_upload is not configured,
+  This is a fire-and-forget operation. If snapshot is not configured,
   this is a no-op. If configured, spawns an async task to read the data and
   index files and upload them directly as a bundle (iodata).
 
@@ -313,11 +377,11 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Logic do
           durable_version :: Bedrock.version()
         ) ::
           :ok
-  def maybe_upload_snapshot(%State{snapshot_upload: nil}, _data_path, _idx_path, _durable_version) do
+  def maybe_upload_snapshot(%State{snapshot: nil}, _data_path, _idx_path, _durable_version) do
     :ok
   end
 
-  def maybe_upload_snapshot(%State{snapshot_upload: snapshot}, data_path, idx_path, durable_version) do
+  def maybe_upload_snapshot(%State{snapshot: snapshot}, data_path, idx_path, durable_version) do
     version_int = Version.to_integer(durable_version)
 
     Task.start(fn ->

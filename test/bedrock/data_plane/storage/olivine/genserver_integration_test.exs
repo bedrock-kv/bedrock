@@ -69,8 +69,10 @@ defmodule Bedrock.DataPlane.Storage.Olivine.GenServerIntegrationTest do
                start: {GenServer, :start_link, [Olivine.Server, init_args, [name: ^otp_name]]}
              } = child_spec
 
-      {^otp_name, foreman_pid, ^worker_id, ^tmp_dir} = init_args
+      # Init args is a 5-tuple: {otp_name, foreman, id, path, opts}
+      {^otp_name, foreman_pid, ^worker_id, ^tmp_dir, opts} = init_args
       assert is_pid(foreman_pid)
+      assert is_list(opts)
 
       {:ok, pid} = GenServer.start_link(Olivine.Server, init_args, name: otp_name)
       assert Process.alive?(pid)

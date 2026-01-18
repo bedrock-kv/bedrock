@@ -29,6 +29,17 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     foreman = opts[:foreman] || raise "Missing :foreman option"
     id = opts[:id] || raise "Missing :id option"
     path = opts[:path] || raise "Missing :path option"
+    cluster = opts[:cluster]
+    params = opts[:params] || %{}
+    shard_id = params["shard_id"]
+
+    # Build startup opts only if cluster and shard_id are provided
+    startup_opts =
+      if cluster && shard_id do
+        [cluster: cluster, shard_id: shard_id]
+      else
+        []
+      end
 
     %{
       id: {__MODULE__, id},
@@ -36,7 +47,7 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {otp_name, foreman, id, path},
+           {otp_name, foreman, id, path, startup_opts},
            [name: otp_name]
          ]}
     }
@@ -132,30 +143,21 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
   def handle_call(_, _from, t), do: reply(t, {:error, :not_ready})
 
   @impl true
-  def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
-    # Set persistent telemetry metadata for this server
-    Telemetry.trace_metadata(%{otp_name: otp_name, storage_id: id})
-
-    Telemetry.trace_startup_start()
-
-    case Logic.startup(otp_name, foreman, id, path) do
-      {:ok, state} ->
-        Telemetry.trace_startup_complete()
-        noreply(state, continue: :report_health_to_foreman)
-
-      {:error, reason} ->
-        Telemetry.trace_startup_failed(reason)
-        stop(:no_state, reason)
-    end
+  # Handle new 5-tuple format with opts
+  def handle_continue(:finish_startup, {otp_name, foreman, id, path, opts}) when is_list(opts) do
+    do_finish_startup(otp_name, foreman, id, path, opts)
   end
 
-  @impl true
+  # Backward compatibility: handle old 4-tuple format (for tests that bypass child_spec)
+  def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
+    do_finish_startup(otp_name, foreman, id, path, [])
+  end
+
   def handle_continue(:report_health_to_foreman, %State{} = t) do
     :ok = Foreman.report_health(t.foreman, t.id, {:ok, self()})
     noreply(t, continue: :process_transactions)
   end
 
-  @impl true
   def handle_continue(:process_transactions, %State{} = t) do
     case IntakeQueue.take_batch_by_count(t.intake_queue, @continuation_batch_count) do
       {[], nil, updated_intake_queue} ->
@@ -174,7 +176,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     end
   end
 
-  @impl true
   def handle_continue(:maybe_process_transactions, %State{} = t) do
     if IntakeQueue.empty?(t.intake_queue) do
       noreply(t, timeout: 0)
@@ -183,7 +184,6 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     end
   end
 
-  @impl true
   def handle_continue(:advance_window, %State{} = t) do
     if t.allow_window_advancement do
       {:ok, state_after_window} = Logic.advance_window(t)
@@ -191,6 +191,23 @@ defmodule Bedrock.DataPlane.Storage.Olivine.Server do
     else
       # Compaction in progress - skip window advancement
       noreply(t)
+    end
+  end
+
+  defp do_finish_startup(otp_name, foreman, id, path, opts) do
+    # Set persistent telemetry metadata for this server
+    Telemetry.trace_metadata(%{otp_name: otp_name, storage_id: id})
+
+    Telemetry.trace_startup_start()
+
+    case Logic.startup(otp_name, foreman, id, path, opts) do
+      {:ok, state} ->
+        Telemetry.trace_startup_complete()
+        noreply(state, continue: :report_health_to_foreman)
+
+      {:error, reason} ->
+        Telemetry.trace_startup_failed(reason)
+        stop(:no_state, reason)
     end
   end
 

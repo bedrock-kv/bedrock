@@ -29,6 +29,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
+  require Logger
+
+  # Retry backoff configuration for resource exhaustion
+  @initial_retry_delay_ms 1_000
+  @max_retry_delay_ms 30_000
+  @max_retry_attempts 10
+
   @doc false
   @spec child_spec(
           opts :: [
@@ -81,6 +88,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        path: path,
        cluster: cluster,
        mode: initial_mode,
+       init_state: {:retrying, 1},
        id: id,
        otp_name: otp_name,
        foreman: foreman,
@@ -103,51 +111,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     trace_metadata(%{cluster: t.cluster, id: t.id, otp_name: t.otp_name})
     trace_started()
 
-    {:ok, pid} =
-      SegmentRecycler.start_link(
-        path: t.path,
-        min_available: 2,
-        max_available: 3,
-        segment_size: 64 * 1024 * 1024
-      )
+    case do_initialization(t) do
+      {:ok, t} ->
+        t
+        |> Map.put(:init_state, :initialized)
+        |> noreply()
 
-    {oldest_version, last_version, active_segment, segments} =
-      t.path
-      |> reload_segments_at_path()
-      |> case do
-        {:error, :unable_to_list_segments} ->
-          raise "Unable to read WAL segment files from path: #{t.path}. Check directory permissions and filesystem health."
-
-        {:ok, []} ->
-          # Create initial active segment for empty log
-          new_segment = Segment.allocate_from_recycler!(pid, t.path, Version.zero())
-          {Version.zero(), Version.zero(), new_segment, []}
-
-        {:ok, [active_segment | segments]} ->
-          active_segment = Segment.ensure_transactions_are_loaded(active_segment)
-          last_version = Segment.last_version(active_segment)
-
-          oldest_version = Enum.min([active_segment.min_version | Enum.map(segments, & &1.min_version)])
-
-          {oldest_version, last_version, active_segment, segments}
-      end
-
-    # Start Demux linked to this process
-    {:ok, demux} =
-      Demux.Server.start_link(
-        cluster: t.cluster,
-        object_storage: t.object_storage,
-        log: self()
-      )
-
-    t
-    |> Map.put(:oldest_version, oldest_version)
-    |> Map.put(:last_version, last_version)
-    |> Map.put(:active_segment, active_segment)
-    |> Map.put(:segments, segments)
-    |> Map.put(:segment_recycler, pid)
-    |> Map.put(:demux, demux)
-    |> noreply()
+      {:error, {:resource_exhausted, reason}} ->
+        handle_resource_exhaustion(t, reason)
+    end
   end
 
   @impl true
@@ -182,9 +154,26 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec handle_info(:timeout | {:min_durable_version, Bedrock.version()}, State.t()) ::
+  @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, Bedrock.version()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
+
+  def handle_info(:retry_initialization, t) do
+    case do_initialization(t) do
+      {:ok, t} ->
+        Logger.info("Shale initialization succeeded after retry",
+          log_id: t.id,
+          path: t.path
+        )
+
+        t
+        |> Map.put(:init_state, :initialized)
+        |> noreply()
+
+      {:error, {:resource_exhausted, reason}} ->
+        handle_resource_exhaustion(t, reason)
+    end
+  end
 
   def handle_info({:min_durable_version, version}, t) do
     noreply(%{t | min_durable_version: version})
@@ -299,4 +288,117 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @spec monotonic_now() :: integer()
   def monotonic_now, do: :erlang.monotonic_time(:millisecond)
+
+  # Initialization with resource exhaustion detection
+  defp do_initialization(t) do
+    with {:ok, recycler_pid} <- start_segment_recycler(t.path),
+         {:ok, {oldest_version, last_version, active_segment, segments}} <-
+           load_or_create_segments(t.path, recycler_pid),
+         {:ok, demux} <- start_demux(t) do
+      {:ok,
+       t
+       |> Map.put(:oldest_version, oldest_version)
+       |> Map.put(:last_version, last_version)
+       |> Map.put(:active_segment, active_segment)
+       |> Map.put(:segments, segments)
+       |> Map.put(:segment_recycler, recycler_pid)
+       |> Map.put(:demux, demux)}
+    end
+  end
+
+  defp start_segment_recycler(path) do
+    case SegmentRecycler.start_link(
+           path: path,
+           min_available: 2,
+           max_available: 3,
+           segment_size: 64 * 1024 * 1024
+         ) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, reason} when reason in [:emfile, :enfile, :enomem] ->
+        {:error, {:resource_exhausted, reason}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp load_or_create_segments(path, recycler_pid) do
+    case reload_segments_at_path(path) do
+      {:ok, []} ->
+        case Segment.allocate_from_recycler(recycler_pid, path, Version.zero()) do
+          {:ok, new_segment} ->
+            {:ok, {Version.zero(), Version.zero(), new_segment, []}}
+
+          {:error, :allocation_failed} ->
+            # Segment allocation can fail due to resource exhaustion (emfile/enfile)
+            # or because the recycler is unavailable. Treat as recoverable.
+            {:error, {:resource_exhausted, :allocation_failed}}
+        end
+
+      {:ok, [active_segment | segments]} ->
+        active_segment = Segment.ensure_transactions_are_loaded(active_segment)
+        last_version = Segment.last_version(active_segment)
+        oldest_version = Enum.min([active_segment.min_version | Enum.map(segments, & &1.min_version)])
+        {:ok, {oldest_version, last_version, active_segment, segments}}
+
+      {:error, {:unable_to_list_segments, reason}} when reason in [:emfile, :enfile, :enomem] ->
+        {:error, {:resource_exhausted, reason}}
+
+      {:error, {:unable_to_list_segments, reason}} ->
+        raise "Unable to read WAL segment files from path: #{path}. Error: #{inspect(reason)}. Check directory permissions and filesystem health."
+    end
+  end
+
+  defp start_demux(t) do
+    case Demux.Server.start_link(
+           cluster: t.cluster,
+           object_storage: t.object_storage,
+           log: self()
+         ) do
+      {:ok, demux} -> {:ok, demux}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp handle_resource_exhaustion(t, reason) do
+    attempt =
+      case t.init_state do
+        {:retrying, n} -> n
+        :initialized -> 1
+      end
+
+    if attempt >= @max_retry_attempts do
+      Logger.error("Shale initialization failed: resource exhaustion after #{attempt} attempts",
+        log_id: t.id,
+        path: t.path,
+        reason: reason
+      )
+
+      raise "Shale initialization failed after #{attempt} attempts due to #{reason}. Check system resource limits (file descriptors, memory)."
+    end
+
+    delay = calculate_retry_delay(attempt)
+
+    Logger.warning("Shale initialization delayed due to resource exhaustion",
+      log_id: t.id,
+      path: t.path,
+      reason: reason,
+      attempt: attempt,
+      retry_in_ms: delay
+    )
+
+    Process.send_after(self(), :retry_initialization, delay)
+
+    t
+    |> Map.put(:init_state, {:retrying, attempt + 1})
+    |> noreply()
+  end
+
+  defp calculate_retry_delay(attempt) do
+    # Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 30s
+    delay = trunc(@initial_retry_delay_ms * :math.pow(2, attempt - 1))
+    min(delay, @max_retry_delay_ms)
+  end
 end

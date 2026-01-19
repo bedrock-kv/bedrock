@@ -11,7 +11,10 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
 
   @type mode :: :locked | :running | :recovering
 
+  @type init_state :: :initialized | {:retrying, attempt :: pos_integer()}
+
   @type t :: %__MODULE__{
+          init_state: init_state(),
           cluster: module(),
           director: Director.ref() | nil,
           epoch: Bedrock.epoch() | nil,
@@ -46,7 +49,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             ]
           }
         }
-  defstruct cluster: nil,
+  defstruct init_state: :initialized,
+            cluster: nil,
             director: nil,
             epoch: nil,
             foreman: nil,

@@ -226,6 +226,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
     with {:ok, transaction} <- Transaction.validate(transaction_bytes),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
+      # Push to Demux for distribution to ShardServers (async)
+      Demux.Server.push(t.demux, expected_version, transaction)
       noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
       {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)

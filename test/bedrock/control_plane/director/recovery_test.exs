@@ -246,8 +246,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           }
         )
 
-      # Recovery now goes directly from LogRecoveryPlanningPhase to LogRecruitmentPhase,
-      # skipping VersionDeterminationPhase. Without full mocking, fails at sequencer start.
+      # Without full mocking, recovery fails at sequencer start.
       assert {{:error, {:failed_to_start, :sequencer, _, _}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
@@ -359,8 +358,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           old_transaction_system_layout: old_layout
         )
 
-      # Recovery now goes directly from LogRecoveryPlanningPhase to LogRecruitmentPhase,
-      # skipping VersionDeterminationPhase. Stalls at TopologyPhase validation.
+      # Stalls at TopologyPhase validation due to no resolvers.
       assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
 

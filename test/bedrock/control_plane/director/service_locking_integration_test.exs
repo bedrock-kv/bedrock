@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
-  alias Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
   alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   describe "Selective Service Locking" do
@@ -118,8 +118,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       context = create_tracking_context(available_services, old_transaction_system_layout)
 
       # Execute log recruitment phase
-      # Should have recruited kilvu2af and proceed to StorageRecruitmentPhase
-      assert {%{transaction_services: transaction_services}, StorageRecruitmentPhase} =
+      # Should have recruited kilvu2af and proceed to LogReplayPhase
+      assert {%{transaction_services: transaction_services}, LogReplayPhase} =
                LogRecruitmentPhase.execute(recovery_attempt, context)
 
       assert "kilvu2af" in Map.keys(transaction_services)
@@ -127,58 +127,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       # Most importantly: kilvu2af should have been locked during recruitment
       locked_services = get_locked_services_from_context(context)
       assert "kilvu2af" in locked_services
-    end
-
-    test "storage recruitment phase should lock newly assigned services" do
-      # This test verifies that storage recruitment phase locks services they assign
-      # and excludes old system storage services from recruitment
-
-      # Start with recovery attempt that has completed log recruitment
-      recovery_attempt =
-        existing_cluster_recovery()
-        |> Map.put(:epoch, 2)
-        |> Map.put(:state, :recruit_storage_to_fill_vacancies)
-        # Need to fill one storage vacancy - ukawgc4e should be recruited for this
-        |> Map.put(:storage_teams, [%{tag: 0, storage_ids: [{:vacancy, 1}]}])
-        # Old services already locked
-        |> Map.put(:locked_service_ids, MapSet.new(["bwecaxvz", "gb6cddk5"]))
-        |> Map.put(:transaction_services, %{
-          "bwecaxvz" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
-          "gb6cddk5" => %{status: {:up, self()}, kind: :storage, last_seen: {:storage_1, :node1}}
-        })
-        |> with_storage_recovery_info(%{
-          "gb6cddk5" => %{kind: :storage, durable_version: 0, oldest_durable_version: 0}
-        })
-
-      available_services = %{
-        # old services (should be excluded from recruitment)
-        "bwecaxvz" => {:log, {:log_1, :node1}},
-        "gb6cddk5" => {:storage, {:storage_1, :node1}},
-        # new service (should be recruited and locked)
-        "ukawgc4e" => {:storage, {:storage_2, :node2}}
-      }
-
-      # Set up old system layout so gb6cddk5 is excluded from recruitment
-      old_transaction_system_layout = %{
-        logs: %{"bwecaxvz" => [0, 1]},
-        storage_teams: [%{tag: 0, storage_ids: ["gb6cddk5"]}]
-      }
-
-      context = create_tracking_context(available_services, old_transaction_system_layout)
-
-      # Execute storage recruitment phase
-      # Should have recruited ukawgc4e and proceed to LogReplayPhase
-      assert {%{transaction_services: transaction_services}, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase} =
-               StorageRecruitmentPhase.execute(recovery_attempt, context)
-
-      assert "ukawgc4e" in Map.keys(transaction_services)
-
-      # Most importantly: ukawgc4e should have been locked during recruitment
-      # and gb6cddk5 should NOT have been locked again (excluded from recruitment)
-      locked_services = get_locked_services_from_context(context)
-      assert "ukawgc4e" in locked_services
-      # Should be excluded from recruitment
-      refute "gb6cddk5" in locked_services
     end
 
     test "selective locking integration: lock old system, recruit and lock new services" do
@@ -201,8 +149,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       available_services = %{
         "bwecaxvz" => {:log, {:log_1, :node1}},
         "gb6cddk5" => {:storage, {:storage_1, :node1}},
-        "kilvu2af" => {:log, {:log_2, :node2}},
-        "ukawgc4e" => {:storage, {:storage_2, :node2}}
+        "kilvu2af" => {:log, {:log_2, :node2}}
       }
 
       old_transaction_system_layout = %{
@@ -235,25 +182,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       assert "kilvu2af" in Map.keys(log_result.transaction_services)
       assert_service_has_proper_format(log_result.transaction_services, "kilvu2af", :log)
 
-      # 3. Test storage recruitment phase
-      storage_recovery_attempt = %{
-        log_result
-        | storage_teams: [%{tag: 0, storage_ids: [{:vacancy, 1}]}]
-      }
-
-      # Should recruit ukawgc4e (excluding gb6cddk5 from old system)
-      assert {storage_result, _next_phase} =
-               StorageRecruitmentPhase.execute(storage_recovery_attempt, context)
-
-      assert "ukawgc4e" in Map.keys(storage_result.transaction_services)
-      assert_service_has_proper_format(storage_result.transaction_services, "ukawgc4e", :storage)
-
       # Final verification: all services locked with proper format
-      assert_services_locked(context, ["bwecaxvz", "gb6cddk5", "kilvu2af", "ukawgc4e"])
+      assert_services_locked(context, ["bwecaxvz", "gb6cddk5", "kilvu2af"])
 
       # Verify all services have the required fields for persistence phase
-      final_services = storage_result.transaction_services
-      assert map_size(final_services) == 4
+      final_services = log_result.transaction_services
+      assert map_size(final_services) == 3
 
       Enum.each(final_services, fn {_id, service} ->
         assert %{status: {:up, _}, kind: _, last_seen: _} = service

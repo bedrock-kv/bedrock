@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
-  alias Bedrock.SystemKeys.OtpRef
 
   describe "new_empty/0" do
     test "creates empty routing data with all fields initialized" do
@@ -326,18 +325,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       RoutingData.cleanup(routing_data)
     end
 
-    test "handles layout_log set mutation - updates log_map and log_services" do
+    test "handles layout_log set mutation - updates log_map" do
       routing_data = RoutingData.new_empty()
       key = SystemKeys.layout_log("log-123")
-      value = OtpRef.from_tuple({:my_log, :node@host})
+      # layout_log stores log descriptor (tags) as erlang term
+      log_descriptor = [0, 1]
+      value = :erlang.term_to_binary(log_descriptor)
       updates = [{100, [{:set, key, value}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       # Should add to log_map at next index
       assert updated.log_map == %{0 => "log-123"}
-      # Should add to log_services
-      assert updated.log_services == %{"log-123" => {:my_log, :node@host}}
+      # log_services are NOT populated from persisted data - they're runtime state
+      assert updated.log_services == %{}
 
       RoutingData.cleanup(routing_data)
     end
@@ -348,16 +349,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updates = [
         {100,
          [
-           {:set, SystemKeys.layout_log("log-1"), OtpRef.from_tuple({:log1, :n1@host})},
-           {:set, SystemKeys.layout_log("log-2"), OtpRef.from_tuple({:log2, :n2@host})}
+           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])},
+           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])}
          ]}
       ]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
-      assert updated.log_services["log-1"] == {:log1, :n1@host}
-      assert updated.log_services["log-2"] == {:log2, :n2@host}
+      # log_services are NOT populated from persisted data
+      assert updated.log_services == %{}
 
       RoutingData.cleanup(routing_data)
     end
@@ -462,9 +463,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         {100,
          [
            {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
-           {:set, SystemKeys.layout_log("log-1"), OtpRef.from_tuple({:log1, :n1@host})},
+           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])},
            {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(2)},
-           {:set, SystemKeys.layout_log("log-2"), OtpRef.from_tuple({:log2, :n2@host})}
+           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])}
          ]}
       ]
 
@@ -473,10 +474,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       # Shard entries
       assert :ets.lookup(updated.shard_table, "m") == [{"m", 1}]
       assert :ets.lookup(updated.shard_table, "z") == [{"z", 2}]
-      # Log entries
+      # Log entries - only log_map populated, not log_services
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
-      assert updated.log_services["log-1"] == {:log1, :n1@host}
-      assert updated.log_services["log-2"] == {:log2, :n2@host}
+      assert updated.log_services == %{}
 
       RoutingData.cleanup(routing_data)
     end

@@ -29,7 +29,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.SystemKeys
-  alias Bedrock.SystemKeys.OtpRef
 
   @type t :: %__MODULE__{
           shard_table: :ets.table(),
@@ -171,11 +170,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         routing_data
 
       {:layout_log, log_id} ->
-        service_ref = OtpRef.to_tuple(value)
-
-        routing_data
-        |> insert_log(log_id)
-        |> put_log_service(log_id, service_ref)
+        # layout_log stores the log descriptor (tags) as erlang term, not OtpRef
+        # Service refs are populated at runtime by the director, not from persisted data
+        _log_descriptor = :erlang.binary_to_term(value)
+        insert_log(routing_data, log_id)
 
       _ ->
         routing_data

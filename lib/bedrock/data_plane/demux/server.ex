@@ -21,8 +21,14 @@ defmodule Bedrock.DataPlane.Demux.Server do
   ## Shard Activation
 
   When the first transaction touches a shard, we:
-  1. Start a ShardServer via DynamicSupervisor
+  1. Start a ShardServer linked to this process
   2. Add the shard to durability tracking with initial version = last_seen_version
+
+  ## Failure Semantics
+
+  ShardServers are linked to this process. If any ShardServer crashes,
+  this process crashes, which should crash the owning Log. Recovery
+  replays from WAL with idempotent ObjectStorage writes.
   """
 
   use GenServer
@@ -30,7 +36,6 @@ defmodule Bedrock.DataPlane.Demux.Server do
   alias Bedrock.DataPlane.Demux.Durability
   alias Bedrock.DataPlane.Demux.MutationSlicer
   alias Bedrock.DataPlane.Demux.ShardServer
-  alias Bedrock.DataPlane.Demux.ShardServerSupervisor
   alias Bedrock.DataPlane.Transaction
 
   require Logger
@@ -42,24 +47,22 @@ defmodule Bedrock.DataPlane.Demux.Server do
     :cluster,
     :object_storage,
     :log,
-    :shard_supervisor,
     shard_servers: %{},
     durability: nil,
     last_seen_version: nil
   ]
 
   @doc """
-  Starts the Demux.Server.
+  Starts the Demux.Server linked to the calling process.
 
   ## Options
 
   - `:cluster` - Required. Cluster name.
   - `:object_storage` - Required. ObjectStorage backend.
   - `:log` - Required. PID of the owning Log.
-  - `:shard_supervisor` - Required. Module for ShardServer supervisor.
   """
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    GenServer.start_link(__MODULE__, opts)
   end
 
   @doc """
@@ -106,13 +109,11 @@ defmodule Bedrock.DataPlane.Demux.Server do
     cluster = Keyword.fetch!(opts, :cluster)
     object_storage = Keyword.fetch!(opts, :object_storage)
     log = Keyword.fetch!(opts, :log)
-    shard_supervisor = Keyword.fetch!(opts, :shard_supervisor)
 
     state = %__MODULE__{
       cluster: cluster,
       object_storage: object_storage,
       log: log,
-      shard_supervisor: shard_supervisor,
       shard_servers: %{},
       durability: Durability.new(),
       last_seen_version: nil
@@ -206,7 +207,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
       object_storage: state.object_storage
     ]
 
-    case ShardServerSupervisor.start_child(opts) do
+    # Start ShardServer linked to this process - crash propagates up
+    case ShardServer.start_link(opts) do
       {:ok, pid} ->
         # Track the new ShardServer
         shard_servers = Map.put(state.shard_servers, shard_id, pid)

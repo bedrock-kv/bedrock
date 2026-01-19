@@ -5,7 +5,6 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
   alias Bedrock.DataPlane.Demux.Server
   alias Bedrock.DataPlane.Demux.ShardServer
-  alias Bedrock.DataPlane.Demux.ShardServerSupervisor
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
@@ -16,15 +15,9 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
     backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
     log_pid = self()
 
-    # Start the ShardServer supervisor
-    start_supervised!({ShardServerSupervisor, cluster: "test-cluster", object_storage: backend})
-
-    # Start the Demux server
+    # Start the Demux server (ShardServers are started linked directly)
     {:ok, server} =
-      start_supervised(
-        {Server,
-         cluster: "test-cluster", object_storage: backend, log: log_pid, shard_supervisor: ShardServerSupervisor}
-      )
+      start_supervised({Server, cluster: "test-cluster", object_storage: backend, log: log_pid})
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
 

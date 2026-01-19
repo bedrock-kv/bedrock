@@ -58,8 +58,12 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :storage_recovery_info_by_id,
     :transaction_services,
     :service_pids,
-    :transaction_system_layout
+    :transaction_system_layout,
+    :metadata_materializer,
+    :shard_layout
   ]
+
+  @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
 
   @type t :: %__MODULE__{
           attempt: non_neg_integer(),
@@ -81,7 +85,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           sequencer: pid() | nil,
           transaction_services: %{Worker.id() => ServiceDescriptor.t()},
           service_pids: %{Worker.id() => pid()},
-          transaction_system_layout: TransactionSystemLayout.t() | nil
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
+          metadata_materializer: pid() | nil,
+          shard_layout: shard_layout() | nil
         }
 
   @doc """
@@ -109,7 +115,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       sequencer: nil,
       transaction_services: %{},
       service_pids: %{},
-      transaction_system_layout: nil
+      transaction_system_layout: nil,
+      metadata_materializer: nil,
+      shard_layout: nil
     }
   end
 end

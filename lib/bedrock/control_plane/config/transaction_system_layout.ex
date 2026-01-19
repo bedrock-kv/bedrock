@@ -31,6 +31,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
        a list of the storage worker ids that are responsible for the shard.
     - `services` - A list of all of the workers within the system, their types, ids and
        the otp names used to communicate with them.
+    - `metadata_materializer` - The pid of the metadata materializer process, or nil if not yet started.
+    - `shard_layout` - A map from end_key to {tag, start_key} describing the shard boundaries.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
@@ -38,18 +40,21 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   @type log_map :: %{Log.id() => LogDescriptor.t()}
   @type storage_team_list :: [StorageTeamDescriptor.t()]
   @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
+  @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
 
   @type t :: %{
-          id: id(),
-          epoch: non_neg_integer(),
-          director: process_ref() | :unavailable,
-          sequencer: process_ref(),
-          rate_keeper: process_ref(),
-          proxies: proxy_list(),
-          resolvers: resolver_list(),
-          logs: log_map(),
-          storage_teams: storage_team_list(),
-          services: service_map()
+          required(:id) => id(),
+          required(:epoch) => non_neg_integer(),
+          required(:director) => process_ref() | :unavailable,
+          required(:sequencer) => process_ref(),
+          required(:rate_keeper) => process_ref(),
+          required(:proxies) => proxy_list(),
+          required(:resolvers) => resolver_list(),
+          required(:logs) => log_map(),
+          required(:storage_teams) => storage_team_list(),
+          required(:services) => service_map(),
+          optional(:metadata_materializer) => process_ref(),
+          optional(:shard_layout) => shard_layout() | nil
         }
 
   @type id :: non_neg_integer()

@@ -235,7 +235,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "existing cluster stalls unable to meet log quorum when logs unavailable" do
+    test "existing cluster stalls when sequencer fails to start" do
       recovery_attempt = create_existing_cluster_recovery_attempt()
 
       context =
@@ -246,8 +246,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           }
         )
 
-      # With selective locking, we now fail more specifically when trying to create new workers
-      assert {{:stalled, {:insufficient_replication, [0]}}, _stalled_attempt} =
+      # Recovery now goes directly from LogRecoveryPlanningPhase to LogRecruitmentPhase,
+      # skipping VersionDeterminationPhase. Without full mocking, fails at sequencer start.
+      assert {{:error, {:failed_to_start, :sequencer, _, _}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -358,8 +359,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           old_transaction_system_layout: old_layout
         )
 
-      # Should stall at insufficient replication but complete service setup first
-      assert {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
+      # Recovery now goes directly from LogRecoveryPlanningPhase to LogRecruitmentPhase,
+      # skipping VersionDeterminationPhase. Stalls at TopologyPhase validation.
+      assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
 
       # Verify service tracking was populated during recovery

@@ -10,8 +10,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
 
   ## Validation Process
 
-  Validates four core transaction components (storage teams are not validated
-  as their status was confirmed during storage recruitment):
+  Validates core transaction components:
 
   - **Sequencer**: Must have valid process ID (exactly one runs cluster-wide)
   - **Commit Proxies**: Must have valid process IDs for all proxies (list cannot be empty)
@@ -21,26 +20,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   ## TSL Construction
 
   Builds the complete TSL data structure containing component process IDs,
-  service mappings, and operational status.
+  service mappings, metadata materializer reference, and shard layout.
 
   ## Service Mapping Algorithm
 
   The services field maps service IDs to descriptors through:
 
-  1. Extract all service IDs from logs and storage teams
+  1. Extract all service IDs from logs
   2. For each service ID, check existence in context.available_services
   3. Build service descriptors containing:
-     - **kind**: Service type (log, storage, etc.)
+     - **kind**: Service type (log, etc.)
      - **last_seen**: Timestamp from service discovery
      - **status**: Either `{:up, process_id}` or `:down`
 
   ## Selective Service Unlocking
 
-  Only specific components require unlocking before system transaction:
-
-  - **Commit Proxies**: Unlocked via `CommitProxy.recover_from/3` with lock token and TSL
-  - **Storage Servers**: Unlocked via `Storage.unlock_after_recovery/3` with durable version and TSL (5000ms timeout)
-
+  Commit proxies are unlocked via `CommitProxy.recover_from/3` with lock token and TSL.
   Other components (sequencer, resolvers, logs) transition automatically when
   system transaction completes.
 
@@ -64,7 +59,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Storage
   alias Bedrock.Service.Worker
 
   @doc """
@@ -130,7 +124,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
        proxies: recovery_attempt.proxies,
        resolvers: recovery_attempt.resolvers,
        logs: recovery_attempt.logs,
-       storage_teams: recovery_attempt.storage_teams,
+       # Storage teams retired - materializers self-organize from logs
+       storage_teams: [],
+       # Metadata materializer and shard layout from MaterializerBootstrapPhase
+       metadata_materializer: recovery_attempt.metadata_materializer,
+       shard_layout: recovery_attempt.shard_layout,
        services:
          build_services_for_layout(
            recovery_attempt,
@@ -152,22 +150,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   end
 
   defp extract_service_ids(recovery_attempt) do
-    Enum.reduce(
-      [extract_log_service_ids(recovery_attempt), extract_storage_service_ids(recovery_attempt)],
-      MapSet.new(),
-      &MapSet.union/2
-    )
-  end
-
-  defp extract_log_service_ids(recovery_attempt) do
+    # Only log services - storage teams are retired
     recovery_attempt.logs
     |> Map.keys()
-    |> MapSet.new()
-  end
-
-  defp extract_storage_service_ids(recovery_attempt) do
-    recovery_attempt.storage_teams
-    |> Enum.flat_map(& &1.storage_ids)
     |> MapSet.new()
   end
 
@@ -201,7 +186,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     end
   end
 
-  # Unlock commit proxies and storage servers before exercising the transaction system
+  # Unlock commit proxies before exercising the transaction system
+  # Storage servers are no longer unlocked here - materializers self-organize from logs
   @spec unlock_services(
           RecoveryAttempt.t(),
           TransactionSystemLayout.t(),
@@ -210,17 +196,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
         ) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(recovery_attempt, transaction_system_layout, lock_token, context) when is_binary(lock_token) do
-    with :ok <-
-           unlock_commit_proxies(
-             recovery_attempt.proxies,
-             transaction_system_layout,
-             lock_token,
-             context
-           ),
-         :ok <-
-           unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
-      :ok
-    else
+    case unlock_commit_proxies(
+           recovery_attempt.proxies,
+           transaction_system_layout,
+           lock_token,
+           context
+         ) do
+      :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason}}
     end
   end
@@ -243,42 +225,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       {:ok, :ok}, :ok -> {:cont, :ok}
       {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
       {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
-    end)
-  end
-
-  @spec unlock_storage_servers(RecoveryAttempt.t(), TransactionSystemLayout.t(), map()) ::
-          :ok | {:error, :timeout | :unavailable}
-  defp unlock_storage_servers(recovery_attempt, transaction_system_layout, context) do
-    # Use the latest version from logs (high end of version vector) instead of conservative durable_version
-    # This prevents storage from purging committed data it already has
-    {_first, latest_log_version} = recovery_attempt.version_vector
-    unlock_fn = Map.get(context, :unlock_storage_fn, &Storage.unlock_after_recovery/3)
-
-    transaction_system_layout.storage_teams
-    |> Enum.flat_map(fn %{storage_ids: storage_ids} -> storage_ids end)
-    |> Enum.uniq()
-    |> Enum.map(fn storage_id ->
-      recovery_attempt.transaction_services
-      |> Map.fetch!(storage_id)
-      |> then(fn %{status: {:up, pid}} -> {storage_id, pid} end)
-    end)
-    |> Task.async_stream(
-      fn {storage_id, storage_pid} ->
-        {storage_id, unlock_fn.(storage_pid, latest_log_version, transaction_system_layout)}
-      end,
-      ordered: false,
-      timeout: 5000
-    )
-    |> Enum.reduce_while(:ok, fn
-      {:ok, {storage_id, :ok}}, :ok ->
-        trace_recovery_storage_unlocking(storage_id)
-        {:cont, :ok}
-
-      {:ok, {_storage_id, {:error, reason}}}, _ ->
-        {:halt, {:error, {:storage_unlock_failed, reason}}}
-
-      {:exit, reason}, _ ->
-        {:halt, {:error, {:storage_unlock_crashed, reason}}}
     end)
   end
 

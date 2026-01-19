@@ -148,15 +148,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
         }) ::
           %{Worker.id() => {atom(), {atom(), node()}}}
   defp extract_old_system_services(old_layout, available_services) do
-    old_service_ids =
-      MapSet.new(
-        Map.keys(Map.get(old_layout, :logs, %{})) ++
-          Enum.flat_map(Map.get(old_layout, :storage_teams, []), & &1.storage_ids)
-      )
+    # Only extract log service IDs - storage teams are retired
+    old_log_ids =
+      old_layout
+      |> Map.get(:logs, %{})
+      |> Map.keys()
+      |> MapSet.new()
 
     available_services
     |> Enum.filter(fn {service_id, _} ->
-      MapSet.member?(old_service_ids, service_id)
+      MapSet.member?(old_log_ids, service_id)
     end)
     |> Map.new()
   end

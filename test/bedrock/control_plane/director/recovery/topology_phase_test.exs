@@ -17,7 +17,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
     recovery_context()
     |> with_lock_token("test_token")
     |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout -> :ok end)
-    |> Map.put(:unlock_storage_fn, fn _storage_pid, _version, _layout -> :ok end)
   end
 
   describe "execute/2" do
@@ -66,34 +65,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
           :unlock_commit_proxy_fn,
           fn _proxy, _token, _sequencer, _resolver_layout -> {:error, :timeout} end
         )
-        |> Map.put(:unlock_storage_fn, fn _storage_pid, _version, _layout -> :ok end)
 
       expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}
-      assert {_result, ^expected_error} = TopologyPhase.execute(recovery_attempt, context)
-    end
-
-    test "fails when storage server unlocking fails" do
-      recovery_attempt =
-        base_recovery_attempt()
-        |> with_logs(%{"log_1" => [1, 2]})
-        |> with_storage_teams([
-          %{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}
-        ])
-        |> with_transaction_services(%{
-          "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
-          "storage_1" => %{status: {:up, self()}, kind: :storage, last_seen: {:storage_1, :node1}}
-        })
-
-      context =
-        recovery_context()
-        |> with_lock_token("test_token")
-        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout -> :ok end)
-        |> Map.put(
-          :unlock_storage_fn,
-          fn _storage_pid, _version, _layout -> {:error, :unavailable} end
-        )
-
-      expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:storage_unlock_failed, :unavailable}}}}
       assert {_result, ^expected_error} = TopologyPhase.execute(recovery_attempt, context)
     end
 
@@ -101,38 +74,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       recovery_attempt =
         base_recovery_attempt()
         |> with_logs(%{"log_1" => [1, 2], "log_2" => [3, 4]})
-        |> with_storage_teams([
-          %{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1", "storage_2"]}
-        ])
         |> with_transaction_services(%{
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
-          "log_2" => %{status: {:up, self()}, kind: :log, last_seen: {:log_2, :node1}},
-          "storage_1" => %{status: {:up, self()}, kind: :storage, last_seen: {:storage_1, :node1}},
-          "storage_2" => %{status: {:up, self()}, kind: :storage, last_seen: {:storage_2, :node1}}
+          "log_2" => %{status: {:up, self()}, kind: :log, last_seen: {:log_2, :node1}}
         })
 
       context =
         with_available_services(successful_unlock_context(), %{
           "log_1" => {:log, {:log_1, :node1}},
-          "log_2" => {:log, {:log_2, :node1}},
-          "storage_1" => {:storage, {:storage_1, :node1}},
-          "storage_2" => {:storage, {:storage_2, :node1}}
+          "log_2" => {:log, {:log_2, :node1}}
         })
 
       {result, _next_phase} = TopologyPhase.execute(recovery_attempt, context)
 
-      # Pattern match the expected service structure
+      # Pattern match the expected service structure - only log services
       assert %{
                transaction_system_layout: %{
                  services:
                    %{
                      "log_1" => %{kind: :log},
-                     "storage_1" => %{kind: :storage}
-                   } = services
+                     "log_2" => %{kind: :log}
+                   } = services,
+                 # Storage teams should be empty
+                 storage_teams: []
                }
              } = result
 
-      assert map_size(services) == 4
+      assert map_size(services) == 2
     end
   end
 end

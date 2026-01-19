@@ -21,6 +21,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster
+  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
@@ -131,12 +132,21 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
           {oldest_version, last_version, active_segment, segments}
       end
 
+    # Start Demux linked to this process
+    {:ok, demux} =
+      Demux.Server.start_link(
+        cluster: t.cluster,
+        object_storage: t.object_storage,
+        log: self()
+      )
+
     t
     |> Map.put(:oldest_version, oldest_version)
     |> Map.put(:last_version, last_version)
     |> Map.put(:active_segment, active_segment)
     |> Map.put(:segments, segments)
     |> Map.put(:segment_recycler, pid)
+    |> Map.put(:demux, demux)
     |> noreply()
   end
 

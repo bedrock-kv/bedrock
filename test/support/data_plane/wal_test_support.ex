@@ -16,6 +16,8 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @doc """
@@ -229,6 +231,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
     cluster = Bedrock.Cluster
     otp_name = :"test_log_#{System.unique_integer([:positive])}"
     id = "test_log_#{System.unique_integer([:positive])}"
+    object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(test_dir, "object_storage"))
 
     log_opts = [
       cluster: cluster,
@@ -236,6 +239,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
       id: id,
       foreman: self(),
       path: test_dir,
+      object_storage: object_storage,
       # Start in :running mode
       start_unlocked: true
     ]

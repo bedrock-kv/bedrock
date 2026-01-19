@@ -5,6 +5,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @moduletag :tmp_dir
@@ -15,6 +17,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     id = "test_log_#{:rand.uniform(10_000)}"
     foreman = self()
     path = Path.join(tmp_dir, "log_segments")
+    object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
 
     File.mkdir_p!(path)
 
@@ -24,12 +27,14 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
      id: id,
      foreman: foreman,
      path: path,
+     object_storage: object_storage,
      server_opts: [
        cluster: cluster,
        otp_name: otp_name,
        id: id,
        foreman: foreman,
-       path: path
+       path: path,
+       object_storage: object_storage
      ]}
   end
 
@@ -46,7 +51,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "raises error when cluster option is missing" do
-      opts = [otp_name: :test, id: "test", foreman: self(), path: "/tmp"]
+      opts = [otp_name: :test, id: "test", foreman: self(), path: "/tmp", object_storage: :mock]
 
       assert_raise RuntimeError, "Missing :cluster option", fn ->
         Server.child_spec(opts)
@@ -54,7 +59,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "raises error when otp_name option is missing" do
-      opts = [cluster: Cluster, id: "test", foreman: self(), path: "/tmp"]
+      opts = [cluster: Cluster, id: "test", foreman: self(), path: "/tmp", object_storage: :mock]
 
       assert_raise RuntimeError, "Missing :otp_name option", fn ->
         Server.child_spec(opts)
@@ -62,9 +67,10 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     for {missing_key, opts_without_key} <- [
-          {:id, [cluster: Cluster, otp_name: :test, foreman: self(), path: "/tmp"]},
-          {:foreman, [cluster: Cluster, otp_name: :test, id: "test", path: "/tmp"]},
-          {:path, [cluster: Cluster, otp_name: :test, id: "test", foreman: self()]}
+          {:id, [cluster: Cluster, otp_name: :test, foreman: self(), path: "/tmp", object_storage: :mock]},
+          {:foreman, [cluster: Cluster, otp_name: :test, id: "test", path: "/tmp", object_storage: :mock]},
+          {:path, [cluster: Cluster, otp_name: :test, id: "test", foreman: self(), object_storage: :mock]},
+          {:object_storage, [cluster: Cluster, otp_name: :test, id: "test", foreman: self(), path: "/tmp"]}
         ] do
       test "raises KeyError when #{missing_key} option is missing" do
         assert_raise KeyError, fn ->
@@ -277,7 +283,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     test "handles missing directory error during initialization", %{
       cluster: cluster,
       id: id,
-      foreman: foreman
+      foreman: foreman,
+      object_storage: object_storage
     } do
       invalid_path = "/nonexistent/path/that/should/not/exist"
       otp_name = :"test_log_error_#{:rand.uniform(10_000)}"
@@ -287,7 +294,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         otp_name: otp_name,
         id: id,
         foreman: foreman,
-        path: invalid_path
+        path: invalid_path,
+        object_storage: object_storage
       ]
 
       Process.flag(:trap_exit, true)

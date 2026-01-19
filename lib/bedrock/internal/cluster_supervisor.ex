@@ -18,6 +18,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.DataPlane.Storage.Olivine.Tracing, as: OlivineTracing
   alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
   alias Bedrock.Internal.Tracing.RaftTelemetry
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Service.Foreman
   alias Cluster.Link.Tracing, as: LinkTracing
 
@@ -167,12 +169,40 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       # Merge configs with capability-specific taking precedence
       merged_config = Keyword.merge(module_config, capability_configs)
 
+      # For Foreman, ensure object_storage is set (with a default based on path)
+      merged_config =
+        if module == Foreman do
+          ensure_object_storage(merged_config)
+        else
+          merged_config
+        end
+
       {module,
        [
          cluster: cluster,
          capabilities: capabilities
        ] ++ merged_config}
     end)
+  end
+
+  defp ensure_object_storage(config) do
+    case Keyword.fetch(config, :object_storage) do
+      {:ok, _object_storage} ->
+        config
+
+      :error ->
+        # Create default object_storage based on the path
+        path = Keyword.get(config, :path)
+
+        if path do
+          object_storage_root = Path.join(path, "object_storage")
+          object_storage = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+          Keyword.put(config, :object_storage, object_storage)
+        else
+          # No path means we can't create a default - raise to signal configuration issue
+          raise "Missing :path configuration for Foreman - cannot create default object_storage"
+        end
+    end
   end
 
   defp module_for_capability(:coordination), do: Coordinator

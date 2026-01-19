@@ -6,8 +6,8 @@ defmodule Bedrock.Service.Foreman.Impl do
   import Bedrock.Service.Foreman.StartingWorkers,
     only: [
       worker_info_from_path: 2,
-      try_to_start_workers: 2,
-      try_to_start_worker: 2,
+      try_to_start_workers: 3,
+      try_to_start_worker: 3,
       initialize_new_worker: 5
     ]
 
@@ -40,7 +40,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     worker_info =
       id
       |> initialize_new_worker(worker_for_kind(kind), %{}, t.path, t.cluster)
-      |> try_to_start_worker(t.cluster)
+      |> try_to_start_worker(t.cluster, t.object_storage)
       |> advertise_running_worker(t.cluster)
 
     t = update_workers(t, &Map.put(&1, id, worker_info))
@@ -206,7 +206,7 @@ defmodule Bedrock.Service.Foreman.Impl do
       workers
       |> Map.values()
       |> Enum.filter(&(&1.health == :stopped))
-      |> try_to_start_workers(t.cluster)
+      |> try_to_start_workers(t.cluster, t.object_storage)
       |> advertise_running_workers(t.cluster)
       |> merge_worker_info_into_workers(workers)
     end)

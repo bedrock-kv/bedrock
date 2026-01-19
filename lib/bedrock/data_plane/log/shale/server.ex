@@ -182,9 +182,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec handle_info(:timeout, State.t()) ::
-          {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
+  @spec handle_info(:timeout | {:min_durable_version, Bedrock.version()}, State.t()) ::
+          {:noreply, State.t()} | {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
+
+  def handle_info({:min_durable_version, version}, t) do
+    noreply(%{t | min_durable_version: version})
+  end
 
   @impl true
   @spec handle_call(

@@ -277,6 +277,32 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert Process.alive?(pid)
       assert :pong = GenServer.call(pid, :ping)
     end
+
+    test "handles min_durable_version message and updates state", %{server: pid} do
+      version = Version.from_integer(42)
+      send(pid, {:min_durable_version, version})
+
+      # Allow message to be processed
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == version
+    end
+
+    test "exposes min_durable_version via info after receiving message", %{server: pid} do
+      # Initially unavailable
+      assert {:ok, %{minimum_durable_version: :unavailable}} =
+               GenServer.call(pid, {:info, [:minimum_durable_version]})
+
+      # Send durability update
+      version = Version.from_integer(100)
+      send(pid, {:min_durable_version, version})
+      :pong = GenServer.call(pid, :ping)
+
+      # Now should return actual version
+      assert {:ok, %{minimum_durable_version: ^version}} =
+               GenServer.call(pid, {:info, [:minimum_durable_version]})
+    end
   end
 
   describe "error conditions" do

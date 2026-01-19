@@ -143,6 +143,20 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert {:ok, info} = GenServer.call(pid, {:info, []})
       assert info == %{}
     end
+
+    test "handles get_shard_server request", %{server: pid} do
+      shard_id = "test_shard_123"
+
+      # First call creates the shard server
+      result = GenServer.call(pid, {:get_shard_server, shard_id})
+
+      assert {:ok, shard_pid} = result
+      assert is_pid(shard_pid)
+      assert Process.alive?(shard_pid)
+
+      # Second call returns the same shard server
+      assert {:ok, ^shard_pid} = GenServer.call(pid, {:get_shard_server, shard_id})
+    end
   end
 
   describe "handle_call/3 - lock_for_recovery" do

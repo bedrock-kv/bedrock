@@ -79,9 +79,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   defp handle_existing_cluster(recovery_attempt, context) do
+    # Read at the newest version determined during log recovery planning
+    {_oldest, read_version} = recovery_attempt.version_vector
+
     with {:ok, materializer_service} <- find_materializer_service(context),
          {:ok, materializer_pid} <- lock_materializer(materializer_service, recovery_attempt.epoch, context),
-         {:ok, shard_layout} <- get_shard_layout(materializer_pid, context) do
+         {:ok, shard_layout} <- get_shard_layout(materializer_pid, read_version, context) do
       updated_attempt =
         recovery_attempt
         |> Map.put(:metadata_materializer, materializer_pid)
@@ -115,20 +118,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  defp get_shard_layout(materializer_pid, context) do
-    get_layout_fn = Map.get(context, :get_shard_layout_fn, &default_get_shard_layout/1)
-    get_layout_fn.(materializer_pid)
+  defp get_shard_layout(materializer_pid, read_version, context) do
+    get_layout_fn = Map.get(context, :get_shard_layout_fn, &default_get_shard_layout/2)
+    get_layout_fn.(materializer_pid, read_version)
   end
 
-  defp default_get_shard_layout(materializer_pid) do
-    # Read at maximum possible version to get latest shard layout
-    max_version = <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
-
+  defp default_get_shard_layout(materializer_pid, read_version) do
     # Query the materializer for shard layout via get_range on shard_keys prefix
     prefix = Bedrock.SystemKeys.shard_keys_prefix()
     end_key = prefix <> <<0xFF, 0xFF, 0xFF, 0xFF>>
 
-    case Storage.get_range(materializer_pid, prefix, end_key, max_version, limit: 1000) do
+    case Storage.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, entries} ->
         shard_layout =
           Map.new(entries, fn {key, value} ->

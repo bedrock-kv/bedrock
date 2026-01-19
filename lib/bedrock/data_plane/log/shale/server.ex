@@ -229,6 +229,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
     with {:ok, transaction} <- Transaction.validate(transaction_bytes),
+         :ok <- validate_has_shard_index(transaction),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
       # Push to Demux for distribution to ShardServers (async)
       Demux.Server.push(t.demux, expected_version, transaction)
@@ -277,6 +278,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:get_shard_server, shard_id}, _from, t) do
     result = Demux.Server.get_shard_server(t.demux, shard_id)
     reply(t, result)
+  end
+
+  defp validate_has_shard_index(transaction) do
+    case Transaction.shard_index(transaction) do
+      {:ok, [_ | _]} -> :ok
+      {:ok, _} -> {:error, :missing_shard_index}
+      {:error, _} -> {:error, :missing_shard_index}
+    end
   end
 
   @spec check_running(term()) :: {:error, :unavailable}

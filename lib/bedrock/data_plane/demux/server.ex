@@ -165,10 +165,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
         end)
 
       {:error, :no_shard_index} ->
-        # Transaction has no shard index - might be metadata-only
-        # Log but don't fail
-        Logger.debug("Transaction #{inspect(version)} has no shard index, skipping demux")
-        state
+        # Should never reach here - Log validates shard_index on push
+        raise "BUG: Transaction #{inspect(version)} reached Demux without SHARD_INDEX"
 
       {:error, reason} ->
         Logger.error("Failed to slice transaction: #{inspect(reason)}")

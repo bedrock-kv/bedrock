@@ -1,8 +1,6 @@
 defmodule Bedrock.DataPlane.Demux.ServerTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias Bedrock.DataPlane.Demux.Server
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Transaction
@@ -66,29 +64,6 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
       assert ShardServer.latest_version(shard0) == version
       assert ShardServer.latest_version(shard5) == version
-    end
-
-    test "handles transaction without shard_index gracefully", %{server: server} do
-      # Transaction without shard_index
-      txn =
-        Transaction.encode(%{
-          mutations: [{:set, "key", "value"}],
-          commit_version: <<0, 0, 0, 0, 0, 0, 10, 0>>
-        })
-
-      version = <<0, 0, 0, 0, 0, 0, 30, 0>>
-
-      # Should log debug message and not crash
-      log =
-        capture_log(fn ->
-          :ok = Server.push(server, version, txn)
-          :timer.sleep(10)
-        end)
-
-      assert log =~ "has no shard index, skipping demux"
-
-      # Server should still be alive
-      assert Process.alive?(server)
     end
   end
 

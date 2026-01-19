@@ -199,8 +199,9 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   def create_test_transaction(version_int, key_value_pairs) do
     version = Version.from_integer(version_int)
     mutations = Enum.map(key_value_pairs, fn {k, v} -> {:set, k, v} end)
+    shard_index = if mutations == [], do: [], else: [{0, length(mutations)}]
 
-    encoded = Transaction.encode(%{mutations: mutations})
+    encoded = Transaction.encode(%{mutations: mutations, shard_index: shard_index})
     {:ok, with_version} = Transaction.add_commit_version(encoded, version)
     with_version
   end

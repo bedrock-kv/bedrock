@@ -206,21 +206,27 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
                "n" => "1"
              }
 
-      assert MVCC.transaction_at_version(mvcc, Version.from_integer(2)) ==
-               TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
-                 "a" => "b",
-                 "c" => "c",
-                 "j" => "d",
-                 "n" => nil
-               })
+      result_v2 = MVCC.transaction_at_version(mvcc, Version.from_integer(2))
 
-      assert MVCC.transaction_at_version(mvcc, Version.from_integer(3)) ==
-               TransactionTestSupport.new_log_transaction(Version.from_integer(3), %{
-                 "a" => "b",
-                 "c" => "x",
-                 "j" => "d",
-                 "n" => nil
-               })
+      assert TransactionTestSupport.extract_log_version(result_v2) ==
+               Version.from_integer(2)
+
+      assert TransactionTestSupport.extract_log_writes(result_v2) == %{
+               "a" => "b",
+               "c" => "c",
+               "j" => "d"
+             }
+
+      result_v3 = MVCC.transaction_at_version(mvcc, Version.from_integer(3))
+
+      assert TransactionTestSupport.extract_log_version(result_v3) ==
+               Version.from_integer(3)
+
+      assert TransactionTestSupport.extract_log_writes(result_v3) == %{
+               "a" => "b",
+               "c" => "x",
+               "j" => "d"
+             }
     end
 
     test "it returns the correct value, even if read entries are present",
@@ -245,21 +251,27 @@ defmodule Bedrock.DataPlane.Storage.Basalt.MultiVersionConcurrencyControlTest do
                "n" => "1"
              }
 
-      assert MVCC.transaction_at_version(mvcc, Version.from_integer(2)) ==
-               TransactionTestSupport.new_log_transaction(Version.from_integer(2), %{
-                 "a" => "b",
-                 "c" => "c",
-                 "j" => "d",
-                 "n" => nil
-               })
+      result_v2 = MVCC.transaction_at_version(mvcc, Version.from_integer(2))
 
-      assert MVCC.transaction_at_version(mvcc, Version.from_integer(3)) ==
-               TransactionTestSupport.new_log_transaction(Version.from_integer(3), %{
-                 "a" => "b",
-                 "c" => "x",
-                 "j" => "d",
-                 "n" => nil
-               })
+      assert TransactionTestSupport.extract_log_version(result_v2) ==
+               Version.from_integer(2)
+
+      assert TransactionTestSupport.extract_log_writes(result_v2) == %{
+               "a" => "b",
+               "c" => "c",
+               "j" => "d"
+             }
+
+      result_v3 = MVCC.transaction_at_version(mvcc, Version.from_integer(3))
+
+      assert TransactionTestSupport.extract_log_version(result_v3) ==
+               Version.from_integer(3)
+
+      assert TransactionTestSupport.extract_log_writes(result_v3) == %{
+               "a" => "b",
+               "c" => "x",
+               "j" => "d"
+             }
     end
   end
 

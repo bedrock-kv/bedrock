@@ -25,14 +25,21 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   @spec open(path_to_file :: String.t()) :: {:ok, t()} | {:error, File.posix()}
   def open(path_to_file) do
     with {:ok, stat} <- File.stat(path_to_file),
-         {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]),
-         :ok <- :file.pwrite(fd, 0, @empty_segment_header) do
-      {:ok,
-       %__MODULE__{
-         fd: fd,
-         write_offset: 4,
-         bytes_remaining: stat.size - 4 - 16
-       }}
+         {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]) do
+      # Write header - close fd on failure to avoid leak
+      case :file.pwrite(fd, 0, @empty_segment_header) do
+        :ok ->
+          {:ok,
+           %__MODULE__{
+             fd: fd,
+             write_offset: 4,
+             bytes_remaining: stat.size - 4 - 16
+           }}
+
+        {:error, reason} ->
+          File.close(fd)
+          {:error, reason}
+      end
     end
   end
 

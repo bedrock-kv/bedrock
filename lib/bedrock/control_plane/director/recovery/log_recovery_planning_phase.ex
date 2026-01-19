@@ -1,21 +1,26 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   @moduledoc """
-  Determines which logs from the previous layout should be copied to preserve committed transactions.
+  Determines which logs from the previous layout should be copied to preserve committed transactions,
+  and establishes the minimum durable version across all logs.
 
-  Runs when logs existed in the previous layout. Groups logs by shard (range tag) and evaluates 
-  quorum combinations within each shard. For each shard combination, calculates version ranges 
-  (max oldest, min newest) and ranks by range size. The final version vector takes the minimum 
-  of the maximum edges across all shards—the highest transaction version guaranteed complete 
+  Runs when logs existed in the previous layout. Groups logs by shard (range tag) and evaluates
+  quorum combinations within each shard. For each shard combination, calculates version ranges
+  (max oldest, min newest) and ranks by range size. The final version vector takes the minimum
+  of the maximum edges across all shards—the highest transaction version guaranteed complete
   across every shard.
 
-  This shard-aware approach directly examines what transactions are actually persisted in logs 
-  rather than relying on proxy-tracked commit confirmations, avoiding version lag issues where 
+  Also calculates `durable_version` as the minimum of all logs' `minimum_durable_version` values,
+  representing the highest version guaranteed to be persisted to durable storage (ObjectStorage)
+  via Demux across all logs.
+
+  This shard-aware approach directly examines what transactions are actually persisted in logs
+  rather than relying on proxy-tracked commit confirmations, avoiding version lag issues where
   successfully persisted transactions might be discarded.
 
-  Stalls with `:unable_to_meet_log_quorum` if any shard cannot meet quorum requirements 
+  Stalls with `:unable_to_meet_log_quorum` if any shard cannot meet quorum requirements
   or no valid cross-shard version range can be established.
 
-  Transitions to vacancy creation with the selected logs and established version vector.
+  Transitions to log recruitment with the selected logs, version vector, and durable version.
 
   """
 
@@ -42,12 +47,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
       {:ok, log_ids, version_vector} ->
         trace_recovery_suitable_logs_chosen(log_ids, version_vector)
 
+        durable_version = calculate_durable_version(recovery_attempt.log_recovery_info_by_id)
+
         updated_recovery_attempt =
           recovery_attempt
           |> Map.put(:old_log_ids_to_copy, log_ids)
           |> Map.put(:version_vector, version_vector)
+          |> Map.put(:durable_version, durable_version)
 
-        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase}
+        {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
     end
   end
 
@@ -147,6 +155,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
       fn {_, {oldest, newest}} -> Version.distance(newest, oldest) end,
       :desc
     )
+  end
+
+  @doc """
+  Calculates the minimum durable version across all logs.
+
+  Takes the minimum of all available `minimum_durable_version` values from
+  log recovery info. Returns `Version.zero()` if no logs have durability info.
+  """
+  @spec calculate_durable_version(%{Log.id() => Log.recovery_info()}) :: Bedrock.version()
+  def calculate_durable_version(log_recovery_info) do
+    log_recovery_info
+    |> Map.values()
+    |> Enum.map(&Map.get(&1, :minimum_durable_version))
+    |> Enum.reject(&(&1 == :unavailable))
+    |> Enum.min(fn -> Version.zero() end)
   end
 
   @spec determine_quorum(non_neg_integer()) :: pos_integer()

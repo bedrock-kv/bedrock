@@ -24,8 +24,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
@@ -42,8 +42,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       sequencer: mock_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
@@ -163,7 +163,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
         sequencer: :custom,
         proxies: [],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -350,7 +350,7 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
     test "state fields are preserved across operations" do
       custom_layout = %{
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -479,8 +479,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy1, :custom_proxy2],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}},
-          "storage2" => %{kind: :storage, status: {:up, :pid2}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}},
+          "storage2" => %{kind: :materializer, status: {:up, :pid2}}
         }
       }
 

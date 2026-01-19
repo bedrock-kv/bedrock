@@ -127,7 +127,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "register_node_resources/4 with default timeout", %{coordinator: coordinator} do
       client_pid = self()
-      compact_services = [{:log, :log_server}, {:storage, :storage_server}]
+      compact_services = [{:log, :log_server}, {:materializer, :storage_server}]
       capabilities = [:can_host_logs, :can_host_storage]
 
       assert {:ok, :txn_def} =
@@ -154,13 +154,13 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     test "service_info structure" do
       service_info = {"service_id", :log, {:service_name, :node1}}
       assert {service_id, kind, {name, node}} = service_info
-      assert is_binary(service_id) and kind in [:log, :storage] and is_atom(name) and is_atom(node)
+      assert is_binary(service_id) and kind in [:log, :materializer] and is_atom(name) and is_atom(node)
     end
 
     test "compact_service_info structure" do
-      compact_info = {:storage, :storage_server}
+      compact_info = {:materializer, :storage_server}
       assert {kind, name} = compact_info
-      assert kind in [:log, :storage] and is_atom(name)
+      assert kind in [:log, :materializer] and is_atom(name)
     end
   end
 
@@ -253,7 +253,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "registers gateway with services and capabilities", %{coordinator: coordinator} do
       gateway_pid = self()
-      compact_services = [{:log, :log_1}, {:log, :log_2}, {:storage, :storage_1}]
+      compact_services = [{:log, :log_1}, {:log, :log_2}, {:materializer, :storage_1}]
       capabilities = [:can_host_logs, :can_host_storage, :high_memory]
 
       assert {:ok, {:node_resources_registered, 3, 3}} =
@@ -280,7 +280,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
   defp create_test_services do
     [
       {"service_1", :log, {:log_server, :node1}},
-      {"service_2", :storage, {:storage_server, :node2}}
+      {"service_2", :materializer, {:storage_server, :node2}}
     ]
   end
 
@@ -288,7 +288,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     [
       {"log_1", :log, {:log_server_1, :node1}},
       {"log_2", :log, {:log_server_2, :node1}},
-      {"storage_1", :storage, {:storage_server_1, :node2}}
+      {"storage_1", :materializer, {:storage_server_1, :node2}}
     ]
   end
 

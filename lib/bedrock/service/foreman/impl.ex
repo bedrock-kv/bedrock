@@ -23,10 +23,10 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_fetch_workers(State.t()) :: [Worker.ref()]
   def do_fetch_workers(t), do: otp_names_for_running_workers(t)
 
-  @spec do_fetch_storage_workers(State.t()) :: [Worker.ref()]
-  def do_fetch_storage_workers(t), do: otp_names_for_running_storage_workers(t)
+  @spec do_fetch_materializer_workers(State.t()) :: [Worker.ref()]
+  def do_fetch_materializer_workers(t), do: otp_names_for_running_materializer_workers(t)
 
-  @spec do_get_all_running_services(State.t()) :: [{:log | :storage, atom()}]
+  @spec do_get_all_running_services(State.t()) :: [{:log | :materializer, atom()}]
   def do_get_all_running_services(t) do
     t.workers
     |> Enum.filter(fn {_id, worker_info} ->
@@ -35,7 +35,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     |> Enum.map(fn {_id, worker_info} -> compact_service_info_from_worker_info(worker_info) end)
   end
 
-  @spec do_new_worker(State.t(), Worker.id(), :log | :storage) :: {State.t(), Worker.ref()}
+  @spec do_new_worker(State.t(), Worker.id(), :log | :materializer) :: {State.t(), Worker.ref()}
   def do_new_worker(t, id, kind) do
     worker_info =
       id
@@ -241,39 +241,39 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec worker_for_kind(:log) :: module()
   defp worker_for_kind(:log), do: Bedrock.DataPlane.Log.Shale
 
-  @spec worker_for_kind(:storage) :: module()
-  defp worker_for_kind(:storage), do: Bedrock.DataPlane.Storage.Olivine
+  @spec worker_for_kind(:materializer) :: module()
+  defp worker_for_kind(:materializer), do: Bedrock.DataPlane.Materializer.Olivine
 
   @spec otp_names_for_running_workers(State.t()) :: [atom()]
   def otp_names_for_running_workers(t), do: Enum.map(t.workers, fn {_id, %{otp_name: otp_name}} -> otp_name end)
 
-  @spec otp_names_for_running_storage_workers(State.t()) :: [atom()]
-  def otp_names_for_running_storage_workers(t) do
+  @spec otp_names_for_running_materializer_workers(State.t()) :: [atom()]
+  def otp_names_for_running_materializer_workers(t) do
     t.workers
     |> Enum.filter(fn {_id, worker_info} ->
-      storage_worker?(worker_info)
+      materializer_worker?(worker_info)
     end)
     |> Enum.map(fn {_id, %{otp_name: otp_name}} -> otp_name end)
   end
 
-  @spec storage_worker?(WorkerInfo.t()) :: boolean()
-  def storage_worker?(%{manifest: %{worker: worker}}) when not is_nil(worker), do: worker.kind() == :storage
+  @spec materializer_worker?(WorkerInfo.t()) :: boolean()
+  def materializer_worker?(%{manifest: %{worker: worker}}) when not is_nil(worker), do: worker.kind() == :materializer
 
-  def storage_worker?(_), do: false
+  def materializer_worker?(_), do: false
 
   @spec worker_healthy?(WorkerInfo.t()) :: boolean()
   def worker_healthy?(%{health: {:ok, _pid}}), do: true
   def worker_healthy?(_), do: false
 
   @spec compact_service_info_from_worker_info(WorkerInfo.t()) ::
-          {String.t(), :log | :storage, atom()}
+          {String.t(), :log | :materializer, atom()}
   def compact_service_info_from_worker_info(%{id: id, manifest: %{worker: worker}, otp_name: otp_name}) do
     kind = worker.kind()
     {id, kind, otp_name}
   end
 
   @spec service_info_from_worker_info(WorkerInfo.t()) ::
-          {String.t(), :log | :storage, {atom(), node()}}
+          {String.t(), :log | :materializer, {atom(), node()}}
   def service_info_from_worker_info(%{id: id, manifest: %{worker: worker}, otp_name: otp_name}) do
     kind = worker.kind()
     worker_ref = {otp_name, Node.self()}

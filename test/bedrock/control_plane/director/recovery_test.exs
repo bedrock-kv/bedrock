@@ -293,8 +293,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
             services: %{
               "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
               "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage},
-              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage}
+              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
+              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
             }
           }
         })
@@ -320,9 +320,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       coordinator_services = %{
         "log_worker_1" => {:log, {:log_worker_1, :node1}},
         "log_worker_2" => {:log, {:log_worker_2, :node1}},
-        "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
-        "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
-        "storage_worker_3" => {:storage, {:storage_worker_3, :node1}}
+        "storage_worker_1" => {:materializer, {:storage_worker_1, :node1}},
+        "storage_worker_2" => {:materializer, {:storage_worker_2, :node1}},
+        "storage_worker_3" => {:materializer, {:storage_worker_3, :node1}}
       }
 
       context = create_coordinator_format_context(coordinator_services)
@@ -349,14 +349,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:storage, {:storage_worker_1, :node1}},
-        "metadata_materializer" => {:storage, {:materializer, :node1}}
+        "storage_1" => {:materializer, {:storage_worker_1, :node1}},
+        "metadata_materializer" => {:materializer, {:materializer, :node1}}
       }
 
       context =
         coordinator_services
         |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
-        |> Map.update!(:available_services, &Map.put(&1, "metadata_materializer", {:storage, {:materializer, :node1}}))
+        |> Map.update!(
+          :available_services,
+          &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
+        )
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
@@ -386,7 +389,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_multiple_nodes()
         |> Map.put(:available_services, %{
           "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-          "existing_storage_1" => {:storage, {:storage_worker_1, :node1}}
+          "existing_storage_1" => {:materializer, {:storage_worker_1, :node1}}
         })
         |> Map.put(:lock_service_fn, fn _service, _epoch ->
           {:error, :newer_epoch_exists}
@@ -432,17 +435,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     })
     |> with_storage_recovery_info(%{
       "existing_storage_1" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       },
       "storage_worker_2" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       },
       "storage_worker_3" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       }
@@ -513,12 +516,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   defp with_available_storage_services(context) do
     storage_services = %{
-      "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
-      "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
-      "storage_worker_3" => {:storage, {:storage_worker_3, :node1}},
-      "storage_worker_4" => {:storage, {:storage_worker_4, :node1}},
-      "storage_worker_5" => {:storage, {:storage_worker_5, :node1}},
-      "storage_worker_6" => {:storage, {:storage_worker_6, :node1}}
+      "storage_worker_1" => {:materializer, {:storage_worker_1, :node1}},
+      "storage_worker_2" => {:materializer, {:storage_worker_2, :node1}},
+      "storage_worker_3" => {:materializer, {:storage_worker_3, :node1}},
+      "storage_worker_4" => {:materializer, {:storage_worker_4, :node1}},
+      "storage_worker_5" => {:materializer, {:storage_worker_5, :node1}},
+      "storage_worker_6" => {:materializer, {:storage_worker_6, :node1}}
     }
 
     Map.update(context, :available_services, storage_services, &Map.merge(&1, storage_services))

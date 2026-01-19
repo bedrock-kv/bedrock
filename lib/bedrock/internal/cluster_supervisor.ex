@@ -13,10 +13,10 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
+  alias Bedrock.DataPlane.Materializer.Olivine.Tracing, as: OlivineTracing
+  alias Bedrock.DataPlane.Materializer.Tracing, as: StorageTracing
   alias Bedrock.DataPlane.Resolver.Tracing, as: ResolverTracing
   alias Bedrock.DataPlane.Sequencer.Tracing, as: SequencerTracing
-  alias Bedrock.DataPlane.Storage.Olivine.Tracing, as: OlivineTracing
-  alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
   alias Bedrock.Internal.Tracing.RaftTelemetry
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
@@ -206,7 +206,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   end
 
   defp module_for_capability(:coordination), do: Coordinator
-  defp module_for_capability(:storage), do: Foreman
+  defp module_for_capability(:materializer), do: Foreman
   defp module_for_capability(:log), do: Foreman
 
   defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")

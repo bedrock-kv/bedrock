@@ -1,7 +1,7 @@
 defmodule Bedrock.ObjectStorage.SnapshotBundleTest do
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.Storage.Olivine.IndexDatabase
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.ObjectStorage.SnapshotBundle
 
   # IndexDatabase constants

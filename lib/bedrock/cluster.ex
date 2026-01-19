@@ -11,7 +11,7 @@ defmodule Bedrock.Cluster do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Transaction
 
   require Logger
@@ -20,9 +20,9 @@ defmodule Bedrock.Cluster do
   @type name :: String.t()
   @type version :: Bedrock.version()
   @type transaction :: Transaction.encoded()
-  @type storage :: Storage.ref()
+  @type materializer :: Materializer.ref()
   @type log :: Log.ref()
-  @type capability :: :coordination | :log | :storage | :resolution
+  @type capability :: :coordination | :log | :materializer | :resolution
 
   @callback node_capabilities() :: [Bedrock.Cluster.capability()]
   @callback coordinator!() :: Coordinator.ref()
@@ -189,7 +189,7 @@ defmodule Bedrock.Cluster do
               | :foreman
               | :coordinator
               | :link
-              | :storage
+              | :materializer
               | :log
             ) :: atom()
       def otp_name(:coordinator), do: @coordinator_otp_name

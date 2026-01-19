@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
@@ -32,7 +32,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @type copy_error :: :source_unavailable | :destination_full | {:transfer_failed, atom()}
 
   @type log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()}
-  @type storage_recovery_info_by_id :: %{Storage.id() => Storage.recovery_info()}
+  @type materializer_recovery_info_by_id :: %{Materializer.id() => Materializer.recovery_info()}
 
   defstruct [
     :attempt,
@@ -49,7 +49,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :proxies,
     :sequencer,
     :log_recovery_info_by_id,
-    :storage_recovery_info_by_id,
+    :materializer_recovery_info_by_id,
     :transaction_services,
     :service_pids,
     :transaction_system_layout,
@@ -67,7 +67,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           required_services: %{Worker.id() => ServiceDescriptor.t()},
           locked_service_ids: MapSet.t(Worker.id()),
           log_recovery_info_by_id: log_recovery_info_by_id(),
-          storage_recovery_info_by_id: storage_recovery_info_by_id(),
+          materializer_recovery_info_by_id: materializer_recovery_info_by_id(),
           old_log_ids_to_copy: [Log.id()],
           version_vector: Bedrock.version_vector() | {0, 0},
           durable_version: Bedrock.version(),
@@ -95,7 +95,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       required_services: %{},
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},
-      storage_recovery_info_by_id: %{},
+      materializer_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
       version_vector: {Version.zero(), Version.zero()},
       durable_version: Version.zero(),

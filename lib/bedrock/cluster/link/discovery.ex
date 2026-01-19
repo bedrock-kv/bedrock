@@ -195,7 +195,7 @@ defmodule Bedrock.Cluster.Link.Discovery do
   @spec get_running_services_from_foreman(State.t()) :: [Coordinator.compact_service_info()]
   defp get_running_services_from_foreman(t) do
     # Only query Foreman if we have storage or log capabilities
-    if :storage in t.capabilities or :log in t.capabilities do
+    if :materializer in t.capabilities or :log in t.capabilities do
       foreman_ref = t.cluster.otp_name(:foreman)
 
       case GenServer.call(foreman_ref, :get_all_running_services, 1000) do

@@ -23,7 +23,7 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
 
   describe "service registration integration" do
     test "handles register_services call" do
-      services = [{"test_service", :storage, {:worker, :node@host}}]
+      services = [{"test_service", :materializer, {:worker, :node@host}}]
 
       # Test that the command is properly formed
       command = Commands.register_services(services)
@@ -61,7 +61,7 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
   describe "director startup integration" do
     test "director receives service directory at startup" do
       services = %{
-        "service_1" => {:storage, {:worker1, :node1@host}},
+        "service_1" => {:materializer, {:worker1, :node1@host}},
         "service_2" => {:log, {:worker2, :node2@host}}
       }
 

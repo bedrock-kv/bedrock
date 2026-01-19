@@ -50,7 +50,8 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_call(:workers, _from, t), do: t |> do_fetch_workers() |> then(&reply(t, {:ok, &1}))
 
   @impl true
-  def handle_call(:storage_workers, _from, t), do: t |> do_fetch_storage_workers() |> then(&reply(t, {:ok, &1}))
+  def handle_call(:materializer_workers, _from, t),
+    do: t |> do_fetch_materializer_workers() |> then(&reply(t, {:ok, &1}))
 
   @impl true
   def handle_call(:get_all_running_services, _from, t),

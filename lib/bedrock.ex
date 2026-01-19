@@ -55,7 +55,7 @@ defmodule Bedrock do
 
   @type range_tag :: non_neg_integer()
 
-  @type service :: :coordination | :log | :storage
+  @type service :: :coordination | :log | :materializer
   @type service_id :: String.t()
   @type lock_token :: binary()
 

@@ -25,9 +25,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       # Available services (simulating c1 startup)
       available_services = %{
         "bwecaxvz" => {:log, {:log_worker_1, :node1}},
-        "gb6cddk5" => {:storage, {:storage_worker_1, :node1}},
+        "gb6cddk5" => {:materializer, {:storage_worker_1, :node1}},
         "kilvu2af" => {:log, {:log_worker_2, :node1}},
-        "zwtq7mfs" => {:storage, {:storage_worker_2, :node1}}
+        "zwtq7mfs" => {:materializer, {:storage_worker_2, :node1}}
       }
 
       # Empty old layout (first-time initialization)
@@ -53,18 +53,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
           "bwecaxvz" => %{kind: :log, oldest_version: 0, last_version: 5}
         })
         |> with_storage_recovery_info(%{
-          "gb6cddk5" => %{kind: :storage, durable_version: 5, oldest_durable_version: 0}
+          "gb6cddk5" => %{kind: :materializer, durable_version: 5, oldest_durable_version: 0}
         })
 
       # Available services (simulating c2 restart after c1 established system)
       available_services = %{
         "bwecaxvz" => {:log, {:log_worker_1, :node1}},
-        "gb6cddk5" => {:storage, {:storage_worker_1, :node1}},
+        "gb6cddk5" => {:materializer, {:storage_worker_1, :node1}},
         # new node service
         "kilvu2af" => {:log, {:log_worker_2, :node2}},
         # new node service
-        "ukawgc4e" => {:storage, {:storage_worker_3, :node2}},
-        "zwtq7mfs" => {:storage, {:storage_worker_2, :node1}}
+        "ukawgc4e" => {:materializer, {:storage_worker_3, :node2}},
+        "zwtq7mfs" => {:materializer, {:storage_worker_2, :node1}}
       }
 
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
@@ -104,7 +104,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         "bwecaxvz" => {:log, {:log_1, :node1}},
         # new service (should be locked during recruitment)
         "kilvu2af" => {:log, {:log_2, :node2}},
-        "gb6cddk5" => {:storage, {:storage_1, :node1}}
+        "gb6cddk5" => {:materializer, {:storage_1, :node1}}
       }
 
       # Set up old system layout so bwecaxvz is excluded from recruitment

@@ -23,8 +23,8 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end

@@ -12,7 +12,7 @@ defmodule Bedrock.Service.Foreman.StateTest do
 
       params = %{
         cluster: cluster,
-        capabilities: [:log, :storage],
+        capabilities: [:log, :materializer],
         path: "/tmp/test",
         otp_name: :test_foreman,
         object_storage: object_storage
@@ -20,7 +20,7 @@ defmodule Bedrock.Service.Foreman.StateTest do
 
       assert {:ok, state} = State.new_state(params)
       assert state.cluster == cluster
-      assert state.capabilities == [:log, :storage]
+      assert state.capabilities == [:log, :materializer]
       assert state.path == "/tmp/test"
       assert state.otp_name == :test_foreman
       assert state.object_storage == object_storage

@@ -69,7 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         ]
         |> create_test_context()
         |> Map.put(:available_services, %{
-          "metadata_materializer" => {:storage, {:test_materializer, node()}}
+          "metadata_materializer" => {:materializer, {:test_materializer, node()}}
         })
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}

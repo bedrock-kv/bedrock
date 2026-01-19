@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   import Bedrock, only: [end_of_keyspace: 0]
 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Materializer
 
   require Logger
 
@@ -109,9 +109,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     lock_fn.(service, epoch)
   end
 
-  defp default_lock_materializer({:storage, name}, epoch) do
+  defp default_lock_materializer({:materializer, name}, epoch) do
     name
-    |> Storage.lock_for_recovery(epoch)
+    |> Materializer.lock_for_recovery(epoch)
     |> case do
       {:ok, pid, _info} -> {:ok, pid}
       {:error, reason} -> {:error, {:materializer_lock_failed, reason}}
@@ -128,7 +128,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     prefix = Bedrock.SystemKeys.shard_keys_prefix()
     end_key = prefix <> <<0xFF, 0xFF, 0xFF, 0xFF>>
 
-    case Storage.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
+    case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, entries} ->
         shard_layout =
           Map.new(entries, fn {key, value} ->

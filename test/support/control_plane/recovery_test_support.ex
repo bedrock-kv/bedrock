@@ -84,7 +84,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       required_services: %{},
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},
-      storage_recovery_info_by_id: %{},
+      materializer_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
       version_vector: {Version.from_integer(0), Version.from_integer(0)},
       durable_version: Version.from_integer(0),
@@ -134,14 +134,14 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
           last_version: Version.from_integer(100)
         }
       },
-      storage_recovery_info_by_id: %{
+      materializer_recovery_info_by_id: %{
         "storage_1" => %{
-          kind: :storage,
+          kind: :materializer,
           durable_version: Version.from_integer(95),
           oldest_durable_version: Version.zero()
         },
         "storage_2" => %{
-          kind: :storage,
+          kind: :materializer,
           durable_version: Version.from_integer(95),
           oldest_durable_version: Version.zero()
         }
@@ -223,7 +223,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   Sets storage recovery info by ID.
   """
   def with_storage_recovery_info(recovery_attempt, info),
-    do: Map.put(recovery_attempt, :storage_recovery_info_by_id, info)
+    do: Map.put(recovery_attempt, :materializer_recovery_info_by_id, info)
 
   @doc """
   Sets log recovery info by ID.
@@ -298,9 +298,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
             {"log_#{i}", %{kind: :log, status: {:up, spawn(fn -> :ok end)}}}
           end
 
-        {:storage, count} when is_integer(count) ->
+        {:materializer, count} when is_integer(count) ->
           for i <- 1..count, into: %{} do
-            {"storage_#{i}", %{kind: :storage, status: {:up, spawn(fn -> :ok end)}}}
+            {"storage_#{i}", %{kind: :materializer, status: {:up, spawn(fn -> :ok end)}}}
           end
 
         {_, services} when is_map(services) ->
@@ -328,9 +328,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
             {"log_#{i}", %{kind: :log, status: {:up, spawn(fn -> :ok end)}}}
           end
 
-        {:storage, count} when is_integer(count) ->
+        {:materializer, count} when is_integer(count) ->
           for i <- 1..count, into: %{} do
-            {"storage_#{i}", %{kind: :storage, status: {:up, spawn(fn -> :ok end)}}}
+            {"storage_#{i}", %{kind: :materializer, status: {:up, spawn(fn -> :ok end)}}}
           end
 
         {_, services} when is_map(services) ->
@@ -491,7 +491,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   defp add_mock_function(:service_discovery, context) do
     discover_services_fn = fn
       :log -> %{"log_1" => %{kind: :log, status: {:up, self()}}}
-      :storage -> %{"storage_1" => %{kind: :storage, status: {:up, self()}}}
+      :materializer -> %{"storage_1" => %{kind: :materializer, status: {:up, self()}}}
       _ -> %{}
     end
 

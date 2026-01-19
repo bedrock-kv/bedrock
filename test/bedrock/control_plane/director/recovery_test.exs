@@ -338,9 +338,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         logs: %{"existing_log_1" => [0, 100]}
       }
 
+      durable_version = Version.from_integer(100)
+
       recovery_attempt =
         existing_cluster_recovery()
         |> Map.put(:epoch, 2)
+        |> Map.put(:durable_version, durable_version)
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
@@ -361,17 +364,27 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
         )
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
+          {:ok, %{durable_version: durable_version}}
+        end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
         end)
 
       # Stalls at TopologyPhase validation due to no resolvers.
-      assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
-               Recovery.run_recovery_attempt(recovery_attempt, context)
+      log =
+        capture_log(fn ->
+          assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
+                   Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Verify service tracking was populated during recovery
-      assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
-      assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+          # Verify service tracking was populated during recovery
+          assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
+          assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+        end)
+
+      # Materializer bootstrap phase should log catchup completion
+      assert log =~ "Materializer caught up to version"
     end
 
     test "newer epoch exists returns error instead of stall" do

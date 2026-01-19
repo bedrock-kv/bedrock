@@ -83,6 +83,15 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
         }
 
   @doc """
+  Returns the shard ID for system/metadata keys (tag 0).
+
+  The system shard contains all keys starting with 0xFF, including the shard layout
+  stored at `\\xff/system/shard_keys/*`.
+  """
+  @spec system_shard_id() :: non_neg_integer()
+  def system_shard_id, do: 0
+
+  @doc """
   Creates a new recovery attempt with the required parameters.
   """
   @spec new(cluster :: module(), epoch :: non_neg_integer(), started_at :: DateTime.t()) :: t()

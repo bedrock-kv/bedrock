@@ -160,10 +160,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       # Push transaction that exceeds the gap (version_gap: 100)
       ShardServer.push(flush_server, v1200, slice)
-      :timer.sleep(50)
 
-      # Should have received durability report
-      assert_received {:durable, 99, durable_version}
+      # Should receive durability report (use assert_receive with timeout for reliability)
+      assert_receive {:durable, 99, durable_version}, 1000
       assert durable_version >= v1000
     end
   end

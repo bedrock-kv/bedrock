@@ -19,7 +19,11 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
 
-    %{server: server, backend: backend, log: log_pid, test_dir: test_dir}
+    # Use unique shard IDs per test to avoid global registration conflicts
+    # ShardServer uses {:global, {ShardServer, shard_id}} by default
+    shard_base = :erlang.unique_integer([:positive]) * 1000
+
+    %{server: server, backend: backend, log: log_pid, test_dir: test_dir, shard_base: shard_base}
   end
 
   defp make_transaction(mutations, shard_index) do
@@ -31,63 +35,69 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
   end
 
   describe "push/3" do
-    test "routes transaction to correct ShardServer", %{server: server} do
-      # Transaction with mutations for shard 0
+    test "routes transaction to correct ShardServer", %{server: server, shard_base: shard_base} do
+      shard_id = shard_base + 1
+      # Transaction with mutations for unique shard
       mutations = [{:set, "key1", "value1"}, {:set, "key2", "value2"}]
-      txn = make_transaction(mutations, [{0, 2}])
+      txn = make_transaction(mutations, [{shard_id, 2}])
       version = <<0, 0, 0, 0, 0, 0, 10, 0>>
 
       :ok = Server.push(server, version, txn)
       :timer.sleep(50)
 
       # Verify ShardServer was created and received data
-      {:ok, shard_server} = Server.get_shard_server(server, 0)
+      {:ok, shard_server} = Server.get_shard_server(server, shard_id)
       assert ShardServer.latest_version(shard_server) == version
     end
 
-    test "routes to multiple ShardServers", %{server: server} do
-      # Transaction touching shards 0 and 5
+    test "routes to multiple ShardServers", %{server: server, shard_base: shard_base} do
+      shard_a = shard_base + 2
+      shard_b = shard_base + 3
+      # Transaction touching two unique shards
       mutations = [
-        {:set, "shard0_key", "value"},
-        {:set, "shard5_key", "value"}
+        {:set, "shard_a_key", "value"},
+        {:set, "shard_b_key", "value"}
       ]
 
-      txn = make_transaction(mutations, [{0, 1}, {5, 1}])
+      txn = make_transaction(mutations, [{shard_a, 1}, {shard_b, 1}])
       version = <<0, 0, 0, 0, 0, 0, 20, 0>>
 
       :ok = Server.push(server, version, txn)
       :timer.sleep(50)
 
       # Both ShardServers should exist and have data
-      {:ok, shard0} = Server.get_shard_server(server, 0)
-      {:ok, shard5} = Server.get_shard_server(server, 5)
+      {:ok, server_a} = Server.get_shard_server(server, shard_a)
+      {:ok, server_b} = Server.get_shard_server(server, shard_b)
 
-      assert ShardServer.latest_version(shard0) == version
-      assert ShardServer.latest_version(shard5) == version
+      assert ShardServer.latest_version(server_a) == version
+      assert ShardServer.latest_version(server_b) == version
     end
   end
 
   describe "get_shard_server/2" do
-    test "creates ShardServer on demand", %{server: server} do
-      {:ok, shard_server} = Server.get_shard_server(server, 42)
+    test "creates ShardServer on demand", %{server: server, shard_base: shard_base} do
+      shard_id = shard_base + 10
+      {:ok, shard_server} = Server.get_shard_server(server, shard_id)
       assert is_pid(shard_server)
       assert Process.alive?(shard_server)
     end
 
-    test "returns same pid on subsequent calls", %{server: server} do
-      {:ok, pid1} = Server.get_shard_server(server, 10)
-      {:ok, pid2} = Server.get_shard_server(server, 10)
+    test "returns same pid on subsequent calls", %{server: server, shard_base: shard_base} do
+      shard_id = shard_base + 11
+      {:ok, pid1} = Server.get_shard_server(server, shard_id)
+      {:ok, pid2} = Server.get_shard_server(server, shard_id)
       assert pid1 == pid2
     end
   end
 
   describe "durability tracking" do
-    test "tracks minimum durable version", %{server: server} do
+    test "tracks minimum durable version", %{server: server, shard_base: shard_base} do
+      shard_id = shard_base + 20
       # Initially nil (no shards)
       assert Server.min_durable_version(server) == nil
 
       # Create some shards by pushing data
-      txn = make_transaction([{:set, "key", "value"}], [{0, 1}])
+      txn = make_transaction([{:set, "key", "value"}], [{shard_id, 1}])
       Server.push(server, <<0, 0, 0, 0, 0, 0, 10, 0>>, txn)
       :timer.sleep(50)
 

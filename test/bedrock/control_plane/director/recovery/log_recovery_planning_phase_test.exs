@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       with_log_recovery_info(recovery_attempt(), log_recovery_info),
       %{
         node_tracking: nil,
-        old_transaction_system_layout: %{logs: old_logs, storage_teams: []},
+        old_transaction_system_layout: %{logs: old_logs},
         cluster_config: %{
           parameters: %{desired_logs: desired_logs},
           transaction_system_layout: %{logs: old_logs}

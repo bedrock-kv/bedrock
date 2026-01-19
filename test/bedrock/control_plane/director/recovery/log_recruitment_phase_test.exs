@@ -17,8 +17,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   defp create_recovery_context(old_logs, available_services \\ %{}, opts \\ []) do
     [
       old_transaction_system_layout: %{
-        logs: old_logs,
-        storage_teams: []
+        logs: old_logs
       }
     ]
     |> create_test_context()

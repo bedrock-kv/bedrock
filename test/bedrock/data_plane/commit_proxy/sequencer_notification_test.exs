@@ -21,7 +21,6 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       sequencer: sequencer,
       resolvers: [{"", :test_resolver}],
       logs: %{},
-      storage_teams: [],
       services: %{}
     }
   end

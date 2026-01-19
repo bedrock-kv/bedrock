@@ -74,14 +74,15 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
   # Build routing data from a transaction system layout for testing
   # This replaces the deleted RoutingData.new/1 for test purposes
   defp build_routing_data(transaction_system_layout) do
-    storage_teams = Map.get(transaction_system_layout, :storage_teams, [])
     logs = Map.get(transaction_system_layout, :logs, %{})
     services = Map.get(transaction_system_layout, :services, %{})
+    # Default shard layout covering entire keyspace with a single shard (tag 0)
+    shard_layout = Map.get(transaction_system_layout, :shard_layout, %{<<0xFF, 0xFF>> => {0, <<>>}})
 
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
 
-    Enum.each(storage_teams, fn team ->
-      %{tag: tag, key_range: {_start_key, end_key}} = team
+    # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
+    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
       :ets.insert(table, {end_key, tag})
     end)
 
@@ -108,17 +109,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         end
       end)
 
-    replication_factor =
-      case storage_teams do
-        [] ->
-          max(1, map_size(logs))
-
-        [first_team | _] ->
-          case Map.get(first_team, :storage_ids) do
-            nil -> max(1, map_size(logs))
-            storage_ids -> max(1, length(storage_ids))
-          end
-      end
+    replication_factor = max(1, map_size(logs))
 
     %RoutingData{
       shard_table: table,
@@ -256,10 +247,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         resolvers: [{"", resolver}],
         # Correct structure: log_id -> tags
         logs: %{"test_log" => ["tag1"]},
-        storage_teams: [
-          # Correct structure expected by finalization logic
-          %{tag: "tag1", key_range: {"", "\xFF"}}
-        ],
         services: %{
           # Service descriptors
           "test_log" => %{kind: :log, status: {:up, log}}
@@ -357,10 +344,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         resolvers: [{"", resolver}],
         # Correct structure: log_id -> tags
         logs: %{"failing_log" => ["tag1"]},
-        storage_teams: [
-          # Correct structure expected by finalization logic
-          %{tag: "tag1", key_range: {"", "\xFF"}}
-        ],
         services: %{
           # Service descriptors
           "failing_log" => %{kind: :log, status: {:up, failing_log}}
@@ -510,10 +493,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         # PID, not name
         resolvers: [{"", resolver}],
         logs: %{"test_log" => ["tag1"]},
-        storage_teams: [
-          # Correct structure expected by finalization logic
-          %{tag: "tag1", key_range: {"", "\xFF\xFF\xFF\xFF"}}
-        ],
         services: %{
           # PID, not name
           "test_log" => %{kind: :log, status: {:up, log}}
@@ -682,10 +661,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         resolvers: [{"", resolver}],
         # Correct structure: log_id -> tags
         logs: %{"test_log" => ["tag1"]},
-        storage_teams: [
-          # Correct structure expected by finalization logic
-          %{tag: "tag1", key_range: {"", "\xFF"}}
-        ],
         services: %{
           # Service descriptors
           "test_log" => %{kind: :log, status: {:up, log}}

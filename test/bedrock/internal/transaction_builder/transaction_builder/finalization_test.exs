@@ -16,7 +16,6 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
       state: :valid,
       transaction_system_layout: %{
         proxies: [:test_proxy1, :test_proxy2],
-        storage_teams: [],
         services: %{}
       },
       read_version: read_version,
@@ -254,7 +253,6 @@ defmodule Bedrock.Internal.TransactionBuilder.FinalizationTest do
         create_test_state(Bedrock.DataPlane.Version.from_integer(100), %{}, %{"key" => "val"})
         | transaction_system_layout: %{
             proxies: [],
-            storage_teams: [],
             services: %{}
           }
       }

@@ -56,17 +56,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
 
     test "traces creating vacancies events" do
       test_cases = [
-        {0, 0, "No vacancies to create"},
-        {3, 0, "Creating 3 log vacancies"},
-        {0, 2, "Creating 2 storage team vacancies"},
-        {3, 2, "Creating 3 log vacancies and 2 storage team vacancies"}
+        {0, "No vacancies to create"},
+        {3, "Creating 3 log vacancies"}
       ]
 
-      for {log_count, storage_count, expected_message} <- test_cases do
+      for {log_count, expected_message} <- test_cases do
         log_output =
           capture_trace(
             :creating_vacancies,
-            %{n_log_vacancies: log_count, n_storage_team_vacancies: storage_count}
+            %{n_log_vacancies: log_count}
           )
 
         assert log_output =~ "Bedrock [test_cluster/42]: #{expected_message}"
@@ -87,33 +85,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
       end
     end
 
-    test "traces team health events" do
-      test_cases = [
-        {[], [], "No teams available"},
-        {["team_a", "team_b"], [], "All teams healthy (team_a, team_b)"},
-        {[], ["team_c", "team_d"], "All teams degraded (team_c, team_d)"},
-        {["team_a"], ["team_b"], "Healthy teams are team_a, with some teams degraded (team_b)"}
-      ]
-
-      for {healthy_teams, degraded_teams, expected_message} <- test_cases do
-        log_output =
-          capture_trace(:team_health, %{}, %{
-            healthy_teams: healthy_teams,
-            degraded_teams: degraded_teams
-          })
-
-        assert log_output =~ "Bedrock [test_cluster/42]: #{expected_message}"
-      end
-    end
-
     test "traces all log vacancies filled" do
       log_output = capture_trace(:all_log_vacancies_filled)
       assert log_output =~ "Bedrock [test_cluster/42]: All log vacancies filled"
-    end
-
-    test "traces all storage team vacancies filled" do
-      log_output = capture_trace(:all_storage_team_vacancies_filled)
-      assert log_output =~ "Bedrock [test_cluster/42]: All storage team vacancies filled"
     end
 
     test "traces replaying old logs events" do
@@ -149,11 +123,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
 
       assert log_output =~ ~s(Bedrock [test_cluster/42]: Suitable logs chosen for copying: "log:1", "log:2")
       assert log_output =~ "Bedrock [test_cluster/42]: Version vector: {5, 25}"
-    end
-
-    test "traces storage unlocking" do
-      log_output = capture_trace(:storage_unlocking, %{}, %{storage_worker_id: "storage_123"})
-      assert log_output =~ "Bedrock [test_cluster/42]: Storage worker storage_123 unlocking"
     end
   end
 

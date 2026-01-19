@@ -16,9 +16,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       proxies: [self()],
       resolvers: [{<<0>>, self()}],
       logs: %{"log_1" => [1, 2]},
-      storage_teams: [],
       services: %{
         "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
+      },
+      shard_layout: %{
+        <<0xFF>> => {1, <<>>},
+        <<0xFF, 0xFF>> => {0, <<0xFF>>}
       }
     }
   end

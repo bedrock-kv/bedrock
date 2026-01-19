@@ -22,8 +22,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       epoch: 1,
       node_capabilities: node_capabilities,
       old_transaction_system_layout: %{
-        logs: %{},
-        storage_teams: []
+        logs: %{}
       },
       config: %{
         coordinators: [],
@@ -34,7 +33,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         },
         transaction_system_layout: %{
           logs: %{},
-          storage_teams: [],
           services: %{}
         }
       },
@@ -241,8 +239,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       context =
         create_test_context(
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
+            logs: %{"existing_log_1" => [0, 100]}
           }
         )
 
@@ -338,8 +335,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "recovery with coordinator-format services handles existing cluster (regression test)" do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
-        logs: %{"existing_log_1" => [0, 100]},
-        storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}]
+        logs: %{"existing_log_1" => [0, 100]}
       }
 
       recovery_attempt =
@@ -348,15 +344,23 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
+      # Include materializer so MaterializerBootstrapPhase passes
+      materializer_pid = spawn(fn -> Process.sleep(5000) end)
+
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:storage, {:storage_worker_1, :node1}}
+        "storage_1" => {:storage, {:storage_worker_1, :node1}},
+        "metadata_materializer" => {:storage, {:materializer, :node1}}
       }
 
       context =
-        create_coordinator_format_context(coordinator_services,
-          old_transaction_system_layout: old_layout
-        )
+        coordinator_services
+        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
+        |> Map.update!(:available_services, &Map.put(&1, "metadata_materializer", {:storage, {:materializer, :node1}}))
+        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+        end)
 
       # Stalls at TopologyPhase validation due to no resolvers.
       assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
@@ -375,8 +379,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       context =
         [
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
+            logs: %{"existing_log_1" => [0, 100]}
           }
         ]
         |> create_test_context()

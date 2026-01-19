@@ -22,12 +22,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
         "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
         "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
@@ -277,7 +271,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       custom_layout = %{
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy],
-        storage_teams: [],
         services: %{}
       }
 

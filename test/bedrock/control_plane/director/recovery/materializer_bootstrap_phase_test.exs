@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> Map.put(:shard_layout, nil)
 
       # Fresh cluster context - no old logs
-      context = create_test_context(old_transaction_system_layout: %{logs: %{}, storage_teams: []})
+      context = create_test_context(old_transaction_system_layout: %{logs: %{}})
 
       log =
         capture_log(fn ->
@@ -43,8 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         create_test_context(
           old_transaction_system_layout: %{
-            logs: %{"log_1" => [0, 1]},
-            storage_teams: []
+            logs: %{"log_1" => [0, 1]}
           },
           available_services: %{}
         )
@@ -65,8 +64,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           old_transaction_system_layout: %{
-            logs: %{"log_1" => [0, 1]},
-            storage_teams: []
+            logs: %{"log_1" => [0, 1]}
           }
         ]
         |> create_test_context()

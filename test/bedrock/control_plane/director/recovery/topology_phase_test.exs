@@ -94,9 +94,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
                    %{
                      "log_1" => %{kind: :log},
                      "log_2" => %{kind: :log}
-                   } = services,
-                 # Storage teams should be empty
-                 storage_teams: []
+                   } = services
                }
              } = result
 

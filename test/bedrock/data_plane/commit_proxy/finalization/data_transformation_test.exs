@@ -29,13 +29,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   end
 
   # Build routing data for tests
-  defp build_routing_data(storage_teams, logs) do
+  defp build_routing_data(logs) do
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
-
-    Enum.each(storage_teams, fn team ->
-      {_start_key, end_key} = team.key_range
-      :ets.insert(table, {end_key, team.tag})
-    end)
+    # Default shard layout covering entire keyspace with a single shard (tag 0)
+    :ets.insert(table, {<<0xFF, 0xFF>>, 0})
 
     log_map =
       logs
@@ -44,17 +41,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       |> Enum.with_index()
       |> Map.new(fn {log_id, index} -> {index, log_id} end)
 
-    replication_factor =
-      case storage_teams do
-        [] -> max(1, map_size(logs))
-        [first | _] -> max(1, length(first.storage_ids))
-      end
+    replication_factor = max(1, map_size(logs))
 
     %RoutingData{shard_table: table, log_map: log_map, replication_factor: replication_factor}
   end
 
   defp default_routing_data do
-    build_routing_data([], %{})
+    build_routing_data(%{})
   end
 
   defp create_ordered_transactions(count) do
@@ -119,11 +112,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       }
 
       layout = %{
-        storage_teams: [],
         logs: %{}
       }
 
-      routing_data = build_routing_data(layout.storage_teams, layout.logs)
+      routing_data = build_routing_data(layout.logs)
 
       assert %{stage: :ready_for_resolution, transactions: transactions} =
                Finalization.create_finalization_plan(batch, routing_data)

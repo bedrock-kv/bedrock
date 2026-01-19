@@ -115,19 +115,14 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
+  # Storage teams have been retired - materializers self-organize from logs.
+  # This function now returns empty ranges, making the LayoutIndex return no segments.
+  # The storage racing and direct storage reads will need to be replaced with
+  # materializer-based reads in a future update.
   @spec collect_active_ranges(TransactionSystemLayout.t()) ::
           [{binary(), binary(), [pid()]}]
-  defp collect_active_ranges(transaction_system_layout) do
-    Enum.flat_map(transaction_system_layout.storage_teams, fn
-      %{key_range: {start_key, end_key}, storage_ids: storage_ids} ->
-        storage_ids
-        |> Enum.map(&get_storage_server_pid(transaction_system_layout, &1))
-        |> Enum.filter(&(&1 != nil))
-        |> case do
-          [] -> []
-          pids -> [{start_key, end_key, pids}]
-        end
-    end)
+  defp collect_active_ranges(_transaction_system_layout) do
+    []
   end
 
   @spec create_segments_with_pids([{binary(), binary(), [pid()]}]) ::
@@ -184,13 +179,6 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
       :none ->
         Enum.reverse(acc)
-    end
-  end
-
-  defp get_storage_server_pid(%{services: services}, storage_id) do
-    case Map.get(services, storage_id) do
-      %{kind: :storage, status: {:up, pid}} -> pid
-      _ -> nil
     end
   end
 

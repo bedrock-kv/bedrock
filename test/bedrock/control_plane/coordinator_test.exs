@@ -30,7 +30,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
                 proxies: [],
                 resolvers: [],
                 logs: %{},
-                storage_teams: [],
                 services: %{}
               }
 
@@ -274,7 +273,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       proxies: [],
       resolvers: [],
       logs: %{},
-      storage_teams: [],
       services: %{}
     }
   end

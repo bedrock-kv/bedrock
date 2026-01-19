@@ -30,12 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       services: %{
         "log_1" => %{kind: :log, status: {:up, Enum.at(log_servers, 0)}},
         "log_2" => %{kind: :log, status: {:up, Enum.at(log_servers, 1)}}
-      },
-      storage_teams: [
-        %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-        %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-        %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
-      ]
+      }
     }
   end
 
@@ -104,12 +99,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         sequencer: :test_sequencer,
         resolvers: [{<<>>, :test_resolver}],
         logs: %{"log_1" => [0, 1, 2]},
-        services: %{"log_1" => %{kind: :log, status: {:up, log_server}}},
-        storage_teams: [
-          %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-          %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-          %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
-        ]
+        services: %{"log_1" => %{kind: :log, status: {:up, log_server}}}
       }
 
       transaction =
@@ -152,11 +142,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         services: %{
           "log_1" => %{kind: :log, status: {:up, Enum.at(log_servers, 0)}},
           "log_2" => %{kind: :log, status: {:up, Enum.at(log_servers, 1)}}
-        },
-        storage_teams: [
-          %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-          %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]}
-        ]
+        }
       }
 
       transaction = create_simple_transaction(<<"apple">>, <<"fruit">>)
@@ -587,11 +573,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         services: %{
           "log_1" => %{kind: :log, status: {:up, success_log}},
           "log_2" => %{kind: :log, status: {:up, failing_log}}
-        },
-        storage_teams: [
-          %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-          %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]}
-        ]
+        }
       }
 
       transactions = [

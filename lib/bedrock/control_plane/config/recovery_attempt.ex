@@ -5,7 +5,6 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Storage
@@ -17,19 +16,16 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           | :waiting_for_services
           | :unable_to_meet_log_quorum
           | :no_unassigned_logs
-          | :no_unassigned_storage
           | {:source_log_unavailable, log_to_pull :: Log.ref()}
           | {:failed_to_start, :resolver | :commit_proxy | :sequencer, node(),
              reason :: :timeout | :already_started | {:error, start_error()}}
           | {:failed_to_playback_logs, %{(log_pid :: pid()) => reason :: playback_error()}}
           | {:failed_to_copy_some_logs, [{reason :: copy_error(), new_log_id :: Log.id(), old_log_id :: Log.id()}]}
           | {:need_log_workers, pos_integer()}
-          | {:need_storage_workers, pos_integer()}
-          | {:insufficient_replication, [Bedrock.range_tag()]}
+          | {:materializer_unavailable, term()}
           | {:recovery_system_failed, term()}
 
   @type log_replication_factor :: pos_integer()
-  @type storage_replication_factor :: pos_integer()
 
   @type start_error :: :process_not_found | :network_timeout | {:exit, any()}
   @type playback_error :: :log_corrupted | :version_mismatch | {:read_failed, atom()}
@@ -48,9 +44,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :old_log_ids_to_copy,
     :version_vector,
     :durable_version,
-    :degraded_teams,
     :logs,
-    :storage_teams,
     :resolvers,
     :proxies,
     :sequencer,
@@ -77,9 +71,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           old_log_ids_to_copy: [Log.id()],
           version_vector: Bedrock.version_vector() | {0, 0},
           durable_version: Bedrock.version(),
-          degraded_teams: [Bedrock.range_tag()],
           logs: %{Log.id() => LogDescriptor.t()},
-          storage_teams: [StorageTeamDescriptor.t()],
           resolvers: [{Bedrock.key(), pid()}],
           proxies: [pid()],
           sequencer: pid() | nil,
@@ -107,9 +99,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       old_log_ids_to_copy: [],
       version_vector: {Version.zero(), Version.zero()},
       durable_version: Version.zero(),
-      degraded_teams: [],
       logs: %{},
-      storage_teams: [],
       resolvers: [],
       proxies: [],
       sequencer: nil,

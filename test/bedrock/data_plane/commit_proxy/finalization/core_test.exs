@@ -333,8 +333,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         sequencer: :test_sequencer,
         resolvers: [{<<0>>, :test_resolver}],
         logs: %{"log_1" => [0]},
-        services: %{"log_1" => %{kind: :log, status: {:up, self()}}},
-        storage_teams: [%{tag: 0, key_range: {<<>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}]
+        services: %{"log_1" => %{kind: :log, status: {:up, self()}}}
       }
 
       routing_data = Support.build_routing_data(transaction_system_layout)

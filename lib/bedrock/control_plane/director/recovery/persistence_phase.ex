@@ -223,7 +223,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       end)
 
     # Shard keys use ceiling-search pattern
-    tx = build_shard_keys(tx, transaction_system_layout.storage_teams)
+    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
 
     tx
     |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
@@ -242,13 +242,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
-  @spec build_shard_keys(Tx.t(), [map()]) :: Tx.t()
-  defp build_shard_keys(tx, []), do: tx
+  # shard_layout format: %{end_key => {tag, start_key}}
+  @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
+  defp build_shard_keys(tx, nil), do: tx
+  defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
 
-  defp build_shard_keys(tx, storage_teams) when is_list(storage_teams) do
-    Enum.reduce(storage_teams, tx, fn storage_team, tx ->
-      %{tag: tag, key_range: {start_key, end_key}} = storage_team
-
+  defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
+    Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
       # Write shard_key(end_key) -> tag (for ceiling search)
       tx = Tx.set(tx, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag))
 

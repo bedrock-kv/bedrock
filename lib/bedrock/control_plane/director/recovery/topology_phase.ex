@@ -124,8 +124,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
        proxies: recovery_attempt.proxies,
        resolvers: recovery_attempt.resolvers,
        logs: recovery_attempt.logs,
-       # Storage teams retired - materializers self-organize from logs
-       storage_teams: [],
        # Metadata materializer and shard layout from MaterializerBootstrapPhase
        metadata_materializer: recovery_attempt.metadata_materializer,
        shard_layout: recovery_attempt.shard_layout,

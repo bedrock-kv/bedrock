@@ -41,7 +41,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       })
 
     old_transaction_system_layout =
-      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}})
 
     %{
       node_capabilities: node_capabilities,
@@ -88,15 +88,15 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       old_log_ids_to_copy: [],
       version_vector: {Version.from_integer(0), Version.from_integer(0)},
       durable_version: Version.from_integer(0),
-      degraded_teams: [],
       logs: %{},
-      storage_teams: [],
       resolvers: [],
       proxies: [],
       sequencer: nil,
       transaction_services: %{},
       service_pids: %{},
-      transaction_system_layout: nil
+      transaction_system_layout: nil,
+      metadata_materializer: nil,
+      shard_layout: nil
     }
 
     struct(base, overrides)
@@ -193,11 +193,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   end
 
   @doc """
-  Sets storage teams.
-  """
-  def with_storage_teams(recovery_attempt, teams), do: Map.put(recovery_attempt, :storage_teams, teams)
-
-  @doc """
   Sets the sequencer PID.
   """
   def with_sequencer(recovery_attempt, sequencer), do: Map.put(recovery_attempt, :sequencer, sequencer)
@@ -286,17 +281,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
 
           logs when is_map(logs) ->
             logs
-        end,
-      storage_teams:
-        case Keyword.get(opts, :storage_teams) do
-          nil ->
-            []
-
-          count when is_integer(count) ->
-            for i <- 1..count, do: %{tag: "team_#{i}", storage_ids: ["storage_#{i}"]}
-
-          teams when is_list(teams) ->
-            teams
         end
     }
 

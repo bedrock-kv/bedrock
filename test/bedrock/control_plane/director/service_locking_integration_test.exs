@@ -32,8 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       # Empty old layout (first-time initialization)
       old_transaction_system_layout = %{
-        logs: %{},
-        storage_teams: []
+        logs: %{}
       }
 
       context = create_full_mocked_context(available_services, old_transaction_system_layout)
@@ -70,8 +69,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
       old_transaction_system_layout = %{
-        logs: %{"bwecaxvz" => [0, 5]},
-        storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["gb6cddk5"]}]
+        logs: %{"bwecaxvz" => [0, 5]}
       }
 
       context =
@@ -111,8 +109,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       # Set up old system layout so bwecaxvz is excluded from recruitment
       old_transaction_system_layout = %{
-        logs: %{"bwecaxvz" => [0, 1]},
-        storage_teams: []
+        logs: %{"bwecaxvz" => [0, 1]}
       }
 
       context = create_tracking_context(available_services, old_transaction_system_layout)
@@ -150,8 +147,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       old_transaction_system_layout = %{
-        logs: %{"bwecaxvz" => [0, 1]},
-        storage_teams: []
+        logs: %{"bwecaxvz" => [0, 1]}
       }
 
       context = create_tracking_context(available_services, old_transaction_system_layout)
@@ -234,8 +230,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       old_layout = %{
-        logs: %{"slow_log_1" => [0, 1], "slow_log_2" => [0, 10]},
-        storage_teams: []
+        logs: %{"slow_log_1" => [0, 1], "slow_log_2" => [0, 10]}
       }
 
       context =

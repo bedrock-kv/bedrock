@@ -100,10 +100,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
       logs: %{"log_1" => [0, 1]},
       services: %{
         "log_1" => %{kind: :log, status: {:up, log_server}}
-      },
-      storage_teams: [
-        %{tag: 0, key_range: {<<>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}
-      ]
+      }
     }
   end
 
@@ -126,30 +123,19 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   @doc """
-  Creates sample storage teams configuration for testing.
-  """
-  def sample_storage_teams do
-    [
-      %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-      %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-      %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
-    ]
-  end
-
-  @doc """
   Builds routing data from a transaction system layout.
   Used by finalize_batch opts.
   """
   def build_routing_data(transaction_system_layout) do
-    storage_teams = Map.get(transaction_system_layout, :storage_teams, [])
     logs = Map.get(transaction_system_layout, :logs, %{})
     services = Map.get(transaction_system_layout, :services, %{})
+    shard_layout = Map.get(transaction_system_layout, :shard_layout, default_shard_layout())
 
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
 
-    Enum.each(storage_teams, fn team ->
-      {_start_key, end_key} = team.key_range
-      :ets.insert(table, {end_key, team.tag})
+    # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
+    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
+      :ets.insert(table, {end_key, tag})
     end)
 
     log_map =
@@ -177,11 +163,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
         end
       end)
 
-    replication_factor =
-      case storage_teams do
-        [] -> max(1, map_size(logs))
-        [first | _] -> max(1, length(Map.get(first, :storage_ids, [])))
-      end
+    replication_factor = max(1, map_size(logs))
 
     %RoutingData{
       shard_table: table,
@@ -189,6 +171,11 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
       log_services: log_services,
       replication_factor: replication_factor
     }
+  end
+
+  # Default shard layout covering entire keyspace with a single shard (tag 0)
+  defp default_shard_layout do
+    %{<<0xFF, 0xFF>> => {0, <<>>}}
   end
 
   # Helper function to create test resolver task

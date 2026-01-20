@@ -115,14 +115,38 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
-  # Storage teams have been retired - materializers self-organize from logs.
-  # This function now returns empty ranges, making the LayoutIndex return no segments.
-  # The storage racing and direct storage reads will need to be replaced with
-  # materializer-based reads in a future update.
+  # Build active ranges from shard_layout and available materializers.
+  # For each shard in the layout, we need a materializer process that can serve reads.
+  # Shards without materializers will have no read server, causing layout_lookup_failed.
   @spec collect_active_ranges(TransactionSystemLayout.t()) ::
           [{binary(), binary(), [pid()]}]
-  defp collect_active_ranges(_transaction_system_layout) do
-    []
+  defp collect_active_ranges(transaction_system_layout) do
+    shard_layout = Map.get(transaction_system_layout, :shard_layout) || %{}
+    metadata_materializer = Map.get(transaction_system_layout, :metadata_materializer)
+    shard_materializers = Map.get(transaction_system_layout, :shard_materializers) || %{}
+
+    # Convert shard_layout to ranges with materializer servers
+    shard_layout
+    |> Enum.map(fn {end_key, {tag, start_key}} ->
+      read_server = get_materializer_for_shard(tag, metadata_materializer, shard_materializers)
+      {start_key, end_key, read_server}
+    end)
+    |> Enum.filter(fn {_start, _end, pids} -> pids != [] end)
+    |> Enum.sort_by(fn {start_key, _end, _pids} -> start_key end)
+  end
+
+  # Get materializer for a shard tag
+  defp get_materializer_for_shard(0, metadata_materializer, _shard_materializers) when is_pid(metadata_materializer) do
+    # System shard (tag 0) uses metadata_materializer
+    [metadata_materializer]
+  end
+
+  defp get_materializer_for_shard(tag, _metadata_materializer, shard_materializers) do
+    # Other shards use their assigned materializer from shard_materializers map
+    case Map.get(shard_materializers, tag) do
+      pid when is_pid(pid) -> [pid]
+      _ -> []
+    end
   end
 
   @spec create_segments_with_pids([{binary(), binary(), [pid()]}]) ::

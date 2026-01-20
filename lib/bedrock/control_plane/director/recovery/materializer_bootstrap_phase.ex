@@ -81,10 +81,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp handle_fresh_cluster(recovery_attempt) do
     Logger.debug("Fresh cluster detected, using default shard layout")
 
+    shard_layout = default_shard_layout()
+
+    # For fresh cluster, we don't have materializers yet - they'll be created
+    # after logs exist. Store the shard layout so reads can fail gracefully
+    # with a clear error until materializers are available.
     updated_attempt =
       recovery_attempt
       |> Map.put(:metadata_materializer, nil)
-      |> Map.put(:shard_layout, default_shard_layout())
+      |> Map.put(:shard_layout, shard_layout)
+      # Empty map of shard -> materializer PID, to be populated later
+      |> Map.put(:shard_materializers, %{})
 
     {updated_attempt, CommitProxyStartupPhase}
   end

@@ -158,15 +158,15 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
     # Slice transaction by shard
     case MutationSlicer.slice(transaction, commit_version) do
+      {:ok, []} ->
+        # Empty transaction (heartbeat) - nothing to route, just update version tracking
+        state
+
       {:ok, slices} ->
         # Route each slice to its ShardServer
         Enum.reduce(slices, state, fn {shard_id, slice}, acc ->
           route_to_shard(acc, shard_id, version, slice)
         end)
-
-      {:error, :no_shard_index} ->
-        # Should never reach here - Log validates shard_index on push
-        raise "BUG: Transaction #{inspect(version)} reached Demux without SHARD_INDEX"
 
       {:error, reason} ->
         Logger.error("Failed to slice transaction: #{inspect(reason)}")

@@ -271,9 +271,21 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   defp validate_has_shard_index(transaction) do
     case Transaction.shard_index(transaction) do
-      {:ok, [_ | _]} -> :ok
-      {:ok, _} -> {:error, :missing_shard_index}
-      {:error, _} -> {:error, :missing_shard_index}
+      {:ok, [_ | _]} ->
+        # Non-empty shard_index is valid
+        :ok
+
+      {:ok, []} ->
+        # Empty shard_index is valid for empty/heartbeat transactions
+        # that advance the Lamport clock without mutations
+        :ok
+
+      {:ok, nil} ->
+        # No shard_index section at all is valid for empty/heartbeat transactions
+        :ok
+
+      {:error, _} ->
+        {:error, :missing_shard_index}
     end
   end
 

@@ -78,7 +78,9 @@ defmodule Bedrock.DataPlane.Demux.MutationSlicer do
   @spec touched_shards(binary()) :: {:ok, [shard_id()]} | {:error, term()}
   def touched_shards(transaction) do
     case Transaction.shard_index(transaction) do
-      {:ok, nil} -> {:error, :no_shard_index}
+      # Empty transactions touch no shards
+      {:ok, nil} -> {:ok, []}
+      {:ok, []} -> {:ok, []}
       {:ok, shard_index} -> {:ok, Enum.map(shard_index, fn {shard_id, _count} -> shard_id end)}
       {:error, reason} -> {:error, reason}
     end
@@ -88,8 +90,9 @@ defmodule Bedrock.DataPlane.Demux.MutationSlicer do
 
   defp get_shard_index(transaction) do
     case Transaction.shard_index(transaction) do
-      {:ok, nil} -> {:error, :no_shard_index}
-      {:ok, []} -> {:error, :empty_shard_index}
+      # Empty transactions (heartbeats) have no shard_index - return empty list
+      {:ok, nil} -> {:ok, []}
+      {:ok, []} -> {:ok, []}
       {:ok, shard_index} -> {:ok, shard_index}
       {:error, reason} -> {:error, reason}
     end

@@ -10,14 +10,39 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.DataPlane.Version
 
   describe "execute/2" do
-    test "for fresh cluster, creates default shard layout" do
+    test "for fresh cluster, creates default shard layout and materializers" do
+      system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      # Track which shards we create materializers for
+      created_shards = :ets.new(:created_shards, [:bag, :public])
+
       recovery_attempt =
         recovery_attempt()
         |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
 
-      # Fresh cluster context - no old logs
-      context = create_test_context(old_transaction_system_layout: %{logs: %{}})
+      # Fresh cluster context - no old logs, but with materializer capability
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{
+            log: [Node.self()],
+            materializer: [Node.self()]
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, shard_tag}, _epoch ->
+          :ets.insert(created_shards, {:shard, shard_tag})
+          # Return different PIDs for different shards
+          pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
+          {:ok, pid}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
 
       log =
         capture_log(fn ->
@@ -30,9 +55,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
           # Default layout has two shards: system and user
           assert map_size(updated_attempt.shard_layout) == 2
+
+          # Should have created materializers for both shards
+          assert map_size(updated_attempt.shard_materializers) == 2
+          assert Map.has_key?(updated_attempt.shard_materializers, 0)
+          assert Map.has_key?(updated_attempt.shard_materializers, 1)
+
+          # metadata_materializer should be the system shard materializer
+          assert updated_attempt.metadata_materializer == system_materializer_pid
         end)
 
       assert log =~ "Fresh cluster detected"
+
+      # Verify both shards were created
+      shards = created_shards |> :ets.lookup(:shard) |> Enum.map(fn {:shard, tag} -> tag end)
+      assert 0 in shards
+      assert 1 in shards
+
+      :ets.delete(created_shards)
     end
 
     test "stalls when no materializer capable nodes exist" do

@@ -46,7 +46,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
     if fresh_cluster?(context) do
-      handle_fresh_cluster(recovery_attempt)
+      handle_fresh_cluster(recovery_attempt, context)
     else
       handle_existing_cluster(recovery_attempt, context)
     end
@@ -78,22 +78,108 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   defp fresh_cluster?(_context), do: false
 
-  defp handle_fresh_cluster(recovery_attempt) do
+  defp handle_fresh_cluster(recovery_attempt, context) do
     Logger.debug("Fresh cluster detected, using default shard layout")
 
     shard_layout = default_shard_layout()
+    shard_tags = extract_shard_tags(shard_layout)
 
-    # For fresh cluster, we don't have materializers yet - they'll be created
-    # after logs exist. Store the shard layout so reads can fail gracefully
-    # with a clear error until materializers are available.
-    updated_attempt =
-      recovery_attempt
-      |> Map.put(:metadata_materializer, nil)
-      |> Map.put(:shard_layout, shard_layout)
-      # Empty map of shard -> materializer PID, to be populated later
-      |> Map.put(:shard_materializers, %{})
+    # Create materializers for all shards in the layout
+    case create_materializers_for_shards(shard_tags, recovery_attempt, context) do
+      {:ok, shard_materializers} ->
+        # Get the system shard materializer as metadata_materializer for backward compat
+        system_shard = RecoveryAttempt.system_shard_id()
+        metadata_materializer = Map.get(shard_materializers, system_shard)
 
-    {updated_attempt, CommitProxyStartupPhase}
+        updated_attempt =
+          recovery_attempt
+          |> Map.put(:metadata_materializer, metadata_materializer)
+          |> Map.put(:shard_layout, shard_layout)
+          |> Map.put(:shard_materializers, shard_materializers)
+
+        {updated_attempt, CommitProxyStartupPhase}
+
+      {:error, reason} ->
+        Logger.warning("Failed to create materializers for fresh cluster: #{inspect(reason)}")
+        {recovery_attempt, {:stalled, {:materializer_creation_failed, reason}}}
+    end
+  end
+
+  # Extract unique shard tags from shard_layout
+  defp extract_shard_tags(shard_layout) do
+    shard_layout
+    |> Map.values()
+    |> Enum.map(fn {tag, _start_key} -> tag end)
+    |> Enum.uniq()
+  end
+
+  # Create materializers for multiple shards
+  defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
+    Enum.reduce_while(shard_tags, {:ok, %{}}, fn shard_tag, {:ok, acc} ->
+      case create_and_start_materializer(shard_tag, recovery_attempt, context) do
+        {:ok, pid} ->
+          {:cont, {:ok, Map.put(acc, shard_tag, pid)}}
+
+        {:error, reason} ->
+          {:halt, {:error, {shard_tag, reason}}}
+      end
+    end)
+  end
+
+  # Create a materializer for a specific shard and start it pulling
+  defp create_and_start_materializer(shard_tag, recovery_attempt, context) do
+    with {:ok, node} <- find_materializer_capable_node(context),
+         {:ok, {worker_ref, node}} <- create_materializer_worker(node, shard_tag, recovery_attempt, context),
+         {:ok, pid} <-
+           lock_new_materializer({:materializer, {worker_ref, node}, shard_tag}, recovery_attempt.epoch, context),
+         :ok <- start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
+      {:ok, pid}
+    end
+  end
+
+  # Create worker via Foreman for a specific shard
+  defp create_materializer_worker(node, shard_tag, recovery_attempt, context) do
+    foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
+    worker_id = Worker.random_id()
+    create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
+
+    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+      {:ok, worker_ref} -> {:ok, {worker_ref, node}}
+      {:error, reason} -> {:error, {:failed_to_create_materializer, reason, shard_tag}}
+    end
+  end
+
+  # Lock a newly created materializer
+  defp lock_new_materializer(service, epoch, context) do
+    lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
+    lock_fn.(service, epoch)
+  end
+
+  # Start materializer pulling from logs for its shard
+  defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
+    shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
+
+    tsl = %{
+      id: TransactionSystemLayout.random_id(),
+      epoch: recovery_attempt.epoch,
+      director: :unavailable,
+      sequencer: recovery_attempt.sequencer,
+      rate_keeper: nil,
+      proxies: recovery_attempt.proxies,
+      resolvers: recovery_attempt.resolvers,
+      logs: shard_logs,
+      services: recovery_attempt.transaction_services
+    }
+
+    # For fresh cluster, start from version zero
+    durable_version = Bedrock.DataPlane.Version.zero()
+    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
+
+    case unlock_fn.(pid, durable_version, tsl) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:unlock_failed, reason}}
+      {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
+    end
   end
 
   defp handle_existing_cluster(recovery_attempt, context) do

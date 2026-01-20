@@ -136,9 +136,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     version_gap = Keyword.get(opts, :version_gap, @default_version_gap)
 
     shard_tag = "shard-#{shard_id}"
+    # Convert cluster to string once at boot for object storage paths
+    cluster_name = if is_atom(cluster), do: Atom.to_string(cluster), else: cluster
 
-    {:ok, chunk_writer} = ChunkWriter.new(object_storage, cluster, shard_tag)
-    chunk_reader = ChunkReader.new(object_storage, cluster, shard_tag)
+    {:ok, chunk_writer} = ChunkWriter.new(object_storage, cluster_name, shard_tag)
+    chunk_reader = ChunkReader.new(object_storage, cluster_name, shard_tag)
 
     state = %State{
       shard_id: shard_id,

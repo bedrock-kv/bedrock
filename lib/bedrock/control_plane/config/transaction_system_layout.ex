@@ -29,6 +29,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
        the otp names used to communicate with them.
     - `metadata_materializer` - The pid of the metadata materializer process, or nil if not yet started.
     - `shard_layout` - A map from end_key to {tag, start_key} describing the shard boundaries.
+    - `shard_materializers` - A map from shard tag to materializer pid.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
@@ -36,6 +37,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   @type log_map :: %{Log.id() => LogDescriptor.t()}
   @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
   @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
+  @type shard_materializers :: %{Bedrock.range_tag() => pid()}
 
   @type t :: %{
           required(:id) => id(),
@@ -48,7 +50,8 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           required(:logs) => log_map(),
           required(:services) => service_map(),
           optional(:metadata_materializer) => process_ref(),
-          optional(:shard_layout) => shard_layout() | nil
+          optional(:shard_layout) => shard_layout() | nil,
+          optional(:shard_materializers) => shard_materializers()
         }
 
   @type id :: non_neg_integer()

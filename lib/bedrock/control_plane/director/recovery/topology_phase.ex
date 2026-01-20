@@ -127,6 +127,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
        # Metadata materializer and shard layout from MaterializerBootstrapPhase
        metadata_materializer: recovery_attempt.metadata_materializer,
        shard_layout: recovery_attempt.shard_layout,
+       # Shard materializers map: shard_tag -> pid
+       shard_materializers: Map.get(recovery_attempt, :shard_materializers, %{}),
        services:
          build_services_for_layout(
            recovery_attempt,

@@ -35,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
 
   ## Selective Service Unlocking
 
-  Commit proxies are unlocked via `CommitProxy.recover_from/3` with lock token and TSL.
+  Commit proxies are unlocked via `CommitProxy.recover_from/5` with lock token and TSL.
   Other components (sequencer, resolvers, logs) transition automatically when
   system transaction completes.
 
@@ -208,15 +208,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
   defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context) when is_list(proxies) do
-    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/4)
+    unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/5)
 
     # Extract what proxies need from TSL
     sequencer = transaction_system_layout.sequencer
     resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
+    routing_data = build_routing_data(transaction_system_layout)
 
     proxies
     |> Task.async_stream(
-      &unlock_fn.(&1, lock_token, sequencer, resolver_layout),
+      &unlock_fn.(&1, lock_token, sequencer, resolver_layout, routing_data),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn
@@ -224,6 +225,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       {:ok, {:error, reason}}, _ -> {:halt, {:error, {:commit_proxy_unlock_failed, reason}}}
       {:exit, reason}, _ -> {:halt, {:error, {:commit_proxy_unlock_crashed, reason}}}
     end)
+  end
+
+  # Build full routing data from TSL for commit proxy unlock
+  @spec build_routing_data(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.t()
+  defp build_routing_data(%{logs: logs, services: services, shard_layout: shard_layout}) do
+    # Build shard_table ETS from shard_layout
+    shard_table = :ets.new(:commit_proxy_shards, [:ordered_set, :public])
+
+    Enum.each(shard_layout || %{}, fn {end_key, {tag, _start_key}} ->
+      :ets.insert(shard_table, {end_key, tag})
+    end)
+
+    # Build log_map: index -> log_id
+    log_map =
+      logs
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    # Build log_services: log_id -> pid or {name, node}
+    log_services =
+      logs
+      |> Map.keys()
+      |> Enum.reduce(%{}, fn log_id, acc ->
+        case Map.get(services, log_id) do
+          %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
+            Map.put(acc, log_id, pid)
+
+          %{kind: :log, status: {:up, {name, node}}} when is_atom(name) and is_atom(node) ->
+            Map.put(acc, log_id, {name, node})
+
+          _ ->
+            acc
+        end
+      end)
+
+    replication_factor = max(1, map_size(logs))
+
+    %CommitProxy.RoutingData{
+      shard_table: shard_table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    }
   end
 
   # Validate that recovery state is ready for system transaction

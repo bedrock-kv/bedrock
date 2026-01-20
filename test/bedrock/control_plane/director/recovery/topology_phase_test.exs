@@ -16,7 +16,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
   defp successful_unlock_context do
     recovery_context()
     |> with_lock_token("test_token")
-    |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout -> :ok end)
+    |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, _routing_data -> :ok end)
   end
 
   describe "execute/2" do
@@ -63,7 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
         |> with_lock_token("test_token")
         |> Map.put(
           :unlock_commit_proxy_fn,
-          fn _proxy, _token, _sequencer, _resolver_layout -> {:error, :timeout} end
+          fn _proxy, _token, _sequencer, _resolver_layout, _routing_data -> {:error, :timeout} end
         )
 
       expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}

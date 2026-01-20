@@ -144,26 +144,23 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec handle_call(
-          {:recover_from, binary(), pid(), ResolverLayout.t()}
-          | {:recover_from, binary()}
+          {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.t()}
           | {:commit, Bedrock.transaction()},
           GenServer.from(),
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
-  # recover_from with sequencer and resolver_layout
-  def handle_call({:recover_from, lock_token, sequencer, resolver_layout}, _from, %{mode: :locked} = t) do
+  def handle_call({:recover_from, lock_token, sequencer, resolver_layout, routing_data}, _from, %{mode: :locked} = t) do
     if lock_token == t.lock_token do
-      reply(%{t | mode: :running, sequencer: sequencer, resolver_layout: resolver_layout}, :ok)
-    else
-      reply(t, {:error, :unauthorized})
-    end
-  end
+      # Clean up old routing_data only if it's a different ETS table
+      if t.routing_data.shard_table != routing_data.shard_table do
+        RoutingData.cleanup(t.routing_data)
+      end
 
-  # Simple recover_from - assumes sequencer/resolver_layout already set at init (for tests)
-  def handle_call({:recover_from, lock_token}, _from, %{mode: :locked} = t) do
-    if lock_token == t.lock_token do
-      reply(%{t | mode: :running}, :ok)
+      reply(
+        %{t | mode: :running, sequencer: sequencer, resolver_layout: resolver_layout, routing_data: routing_data},
+        :ok
+      )
     else
       reply(t, {:error, :unauthorized})
     end

@@ -54,10 +54,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp build_snapshot_handle(nil, _shard_id), do: nil
   defp build_snapshot_handle(_cluster, nil), do: nil
 
-  defp build_snapshot_handle(cluster, shard_id) do
+  defp build_snapshot_handle(_cluster, shard_id) do
     backend = ObjectStorageConfig.backend()
-    cluster_name = cluster.name()
-    Snapshot.new(backend, cluster_name, shard_id)
+    Snapshot.new(backend, shard_id)
   end
 
   @doc """

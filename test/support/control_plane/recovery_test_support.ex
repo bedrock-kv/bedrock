@@ -17,6 +17,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
 
     def name, do: "test_cluster"
     def otp_name(component), do: :"test_#{component}"
+    def node_config, do: []
   end
 
   @doc """

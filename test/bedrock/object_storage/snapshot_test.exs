@@ -17,29 +17,28 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     {:ok, backend: backend, root: root}
   end
 
-  describe "new/3" do
+  describe "new/2" do
     test "creates snapshot handler", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
-      assert snapshot.cluster == "cluster"
+      snapshot = Snapshot.new(backend, "shard")
       assert snapshot.shard_tag == "shard"
     end
   end
 
   describe "write/3" do
     test "writes snapshot data", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert :ok = Snapshot.write(snapshot, 1000, "snapshot data")
     end
 
     test "is idempotent - duplicate writes succeed", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       assert :ok = Snapshot.write(snapshot, 1000, "snapshot data")
       assert :ok = Snapshot.write(snapshot, 1000, "snapshot data")
     end
 
     test "handles binary data", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       data = <<0, 1, 2, 255, 254, 253>>
 
       assert :ok = Snapshot.write(snapshot, 1000, data)
@@ -49,21 +48,21 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "read/2" do
     test "reads written snapshot", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 1000, "my state data")
       assert {:ok, "my state data"} = Snapshot.read(snapshot, 1000)
     end
 
     test "returns not_found for missing snapshot", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert {:error, :not_found} = Snapshot.read(snapshot, 9999)
     end
   end
 
   describe "read_latest/1" do
     test "returns latest snapshot", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 100, "state at 100")
       :ok = Snapshot.write(snapshot, 200, "state at 200")
@@ -73,12 +72,12 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "returns not_found when no snapshots exist", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert {:error, :not_found} = Snapshot.read_latest(snapshot)
     end
 
     test "works with single snapshot", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 500, "only snapshot")
       assert {:ok, 500, "only snapshot"} = Snapshot.read_latest(snapshot)
@@ -87,7 +86,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "list/2" do
     test "lists snapshots in newest-first order", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 100, "a")
       :ok = Snapshot.write(snapshot, 200, "b")
@@ -98,7 +97,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "respects limit option", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       for v <- 1..10 do
         :ok = Snapshot.write(snapshot, v * 100, "data")
@@ -109,14 +108,14 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "returns empty for no snapshots", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert [] == snapshot |> Snapshot.list() |> Enum.to_list()
     end
   end
 
   describe "latest_version/1" do
     test "returns latest version", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 100, "a")
       :ok = Snapshot.write(snapshot, 500, "b")
@@ -126,14 +125,14 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "returns not_found for empty shard", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert {:error, :not_found} = Snapshot.latest_version(snapshot)
     end
   end
 
   describe "delete/2" do
     test "deletes snapshot", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 100, "data")
       assert {:ok, "data"} = Snapshot.read(snapshot, 100)
@@ -143,14 +142,14 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "is idempotent - deleting non-existent succeeds", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       assert :ok = Snapshot.delete(snapshot, 9999)
     end
   end
 
   describe "delete_older_than/2" do
     test "deletes older snapshots", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 100, "a")
       :ok = Snapshot.write(snapshot, 200, "b")
@@ -165,7 +164,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
 
     test "returns 0 when nothing to delete", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 500, "data")
       assert {:ok, 0} = Snapshot.delete_older_than(snapshot, 100)
@@ -174,12 +173,12 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "exists?/1" do
     test "returns false for empty shard", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       refute Snapshot.exists?(snapshot)
     end
 
     test "returns true after write", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       refute Snapshot.exists?(snapshot)
       :ok = Snapshot.write(snapshot, 100, "data")
@@ -189,7 +188,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "count/1" do
     test "returns snapshot count", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       assert 0 == Snapshot.count(snapshot)
 
@@ -203,7 +202,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "concurrent writes" do
     test "only one write wins, others get already_exists", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
       version = 12_345
 
       results =
@@ -227,8 +226,8 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "isolation between shards" do
     test "snapshots are isolated by shard", %{backend: backend} do
-      snapshot1 = Snapshot.new(backend, "cluster", "shard-01")
-      snapshot2 = Snapshot.new(backend, "cluster", "shard-02")
+      snapshot1 = Snapshot.new(backend, "shard-01")
+      snapshot2 = Snapshot.new(backend, "shard-02")
 
       :ok = Snapshot.write(snapshot1, 100, "shard1 data")
       :ok = Snapshot.write(snapshot2, 100, "shard2 data")
@@ -240,7 +239,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
   describe "round-trip workflow" do
     test "materializer cold start scenario", %{backend: backend} do
-      snapshot = Snapshot.new(backend, "cluster", "shard")
+      snapshot = Snapshot.new(backend, "shard")
 
       # Materializer writes periodic snapshots
       :ok = Snapshot.write(snapshot, 1000, :erlang.term_to_binary(%{key1: "value1"}))

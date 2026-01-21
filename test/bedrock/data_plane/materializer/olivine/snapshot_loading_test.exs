@@ -76,7 +76,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       File.write!(Path.join(test_dir, "data"), "existing data")
       File.write!(Path.join(test_dir, "idx"), "existing idx")
 
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       {result, logs} =
         with_log(fn ->
@@ -89,7 +89,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
     end
 
     test "loads snapshot from ObjectStorage on cold start", %{test_dir: test_dir, backend: backend, shard_id: shard_id} do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       # Create a valid snapshot in ObjectStorage
       data_content = "snapshot data content"
@@ -125,7 +125,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       backend: backend,
       shard_id: shard_id
     } do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       {result, logs} =
         with_log(fn ->
@@ -144,7 +144,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
     end
 
     test "returns error when snapshot bundle is invalid", %{test_dir: test_dir, backend: backend, shard_id: shard_id} do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       # Write invalid bundle (no valid index record)
       :ok = Snapshot.write(snapshot, 100, "invalid bundle content without index")
@@ -161,7 +161,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       backend: backend,
       shard_id: shard_id
     } do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       # Create a valid snapshot with proper index structure
       data_content = ""
@@ -214,7 +214,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
     end
 
     test "warm start uses local files", %{test_dir: test_dir, backend: backend, shard_id: shard_id} do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       # Write a snapshot to ObjectStorage (should not be used)
       version = <<0, 0, 0, 0, 0, 0, 0, 999>>
@@ -283,7 +283,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
 
   describe "startup/5 error handling" do
     test "returns error when snapshot bundle is corrupted", %{test_dir: test_dir, backend: backend, shard_id: shard_id} do
-      snapshot = Snapshot.new(backend, TestCluster.name(), shard_id)
+      snapshot = Snapshot.new(backend, shard_id)
 
       # Write corrupted bundle
       :ok = Snapshot.write(snapshot, 50, "corrupted data without valid index")

@@ -22,36 +22,38 @@ defmodule Bedrock.ObjectStorage.KeysTest do
   end
 
   describe "format_inverted_version/1" do
-    test "formats zero as 20-character padded string" do
-      assert Keys.format_inverted_version(0) == "00000000000000000000"
+    test "formats zero as 13-character padded base36 string" do
+      assert Keys.format_inverted_version(0) == "0000000000000"
     end
 
     test "formats small number with padding" do
-      assert Keys.format_inverted_version(1000) == "00000000000000001000"
+      # 1000 in base36 is "rs"
+      assert Keys.format_inverted_version(1000) == "00000000000rs"
     end
 
     test "formats max version" do
-      # 18446744073709551615 is 20 digits
-      assert Keys.format_inverted_version(@max_version) == "18446744073709551615"
+      # max uint64 in base36 is "3w5e11264sgsf"
+      assert Keys.format_inverted_version(@max_version) == "3w5e11264sgsf"
     end
   end
 
   describe "parse_inverted_version/1" do
     test "parses valid padded string" do
-      assert Keys.parse_inverted_version("00000000000000001000") == {:ok, 1000}
+      assert Keys.parse_inverted_version("00000000000rs") == {:ok, 1000}
     end
 
     test "parses zero" do
-      assert Keys.parse_inverted_version("00000000000000000000") == {:ok, 0}
+      assert Keys.parse_inverted_version("0000000000000") == {:ok, 0}
     end
 
     test "parses max version" do
-      assert Keys.parse_inverted_version("18446744073709551615") == {:ok, @max_version}
+      assert Keys.parse_inverted_version("3w5e11264sgsf") == {:ok, @max_version}
     end
 
     test "returns error for invalid format" do
-      assert Keys.parse_inverted_version("invalid") == {:error, :invalid_format}
-      assert Keys.parse_inverted_version("123abc") == {:error, :invalid_format}
+      # Use characters outside base36 (0-9, a-z)
+      assert Keys.parse_inverted_version("invalid!") == {:error, :invalid_format}
+      assert Keys.parse_inverted_version("123@abc") == {:error, :invalid_format}
       assert Keys.parse_inverted_version("-1") == {:error, :invalid_format}
     end
   end
@@ -80,53 +82,95 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     end
   end
 
-  describe "cluster_state_path/1" do
-    test "builds correct path" do
-      assert Keys.cluster_state_path("my-cluster") == "my-cluster/state"
+  describe "shard_tag/1" do
+    test "formats single digit shard IDs" do
+      assert Keys.shard_tag(0) == "0"
+      assert Keys.shard_tag(9) == "9"
+    end
+
+    test "formats shard IDs 10-35 as single letters" do
+      assert Keys.shard_tag(10) == "a"
+      assert Keys.shard_tag(35) == "z"
+    end
+
+    test "formats larger shard IDs" do
+      assert Keys.shard_tag(36) == "10"
+      assert Keys.shard_tag(1000) == "rs"
     end
   end
 
-  describe "chunk_path/3" do
+  describe "parse_shard_tag/1" do
+    test "parses single digit tags" do
+      assert Keys.parse_shard_tag("0") == {:ok, 0}
+      assert Keys.parse_shard_tag("9") == {:ok, 9}
+    end
+
+    test "parses letter tags" do
+      assert Keys.parse_shard_tag("a") == {:ok, 10}
+      assert Keys.parse_shard_tag("z") == {:ok, 35}
+    end
+
+    test "parses multi-character tags" do
+      assert Keys.parse_shard_tag("10") == {:ok, 36}
+      assert Keys.parse_shard_tag("rs") == {:ok, 1000}
+    end
+
+    test "round-trips correctly" do
+      for id <- [0, 1, 10, 35, 36, 100, 1000] do
+        tag = Keys.shard_tag(id)
+        assert {:ok, ^id} = Keys.parse_shard_tag(tag)
+      end
+    end
+  end
+
+  describe "cluster_state_path/0" do
+    test "builds correct path" do
+      assert Keys.cluster_state_path() == "state"
+    end
+  end
+
+  describe "chunk_path/2" do
     test "builds correct path with inverted version" do
-      path = Keys.chunk_path("my-cluster", "shard-01", 1000)
-      assert String.starts_with?(path, "my-cluster/shards/shard-01/chunks/")
+      path = Keys.chunk_path("a", 1000)
+      assert String.starts_with?(path, "c/a/")
       assert {:ok, 1000} = Keys.extract_version(path)
     end
   end
 
-  describe "chunks_prefix/2" do
+  describe "chunks_prefix/1" do
     test "builds correct prefix" do
-      assert Keys.chunks_prefix("my-cluster", "shard-01") == "my-cluster/shards/shard-01/chunks/"
+      assert Keys.chunks_prefix("a") == "c/a/"
     end
   end
 
-  describe "snapshot_path/3" do
+  describe "snapshot_path/2" do
     test "builds correct path with inverted version" do
-      path = Keys.snapshot_path("my-cluster", "shard-01", 2000)
-      assert String.starts_with?(path, "my-cluster/shards/shard-01/snapshots/")
+      path = Keys.snapshot_path("b", 2000)
+      assert String.starts_with?(path, "s/b/")
       assert {:ok, 2000} = Keys.extract_version(path)
     end
   end
 
-  describe "snapshots_prefix/2" do
+  describe "snapshots_prefix/1" do
     test "builds correct prefix" do
-      assert Keys.snapshots_prefix("my-cluster", "shard-01") == "my-cluster/shards/shard-01/snapshots/"
+      assert Keys.snapshots_prefix("b") == "s/b/"
     end
   end
 
   describe "extract_version/1" do
     test "extracts version from chunk path" do
-      path = Keys.chunk_path("cluster", "shard", 12_345)
+      path = Keys.chunk_path("c", 12_345)
       assert {:ok, 12_345} = Keys.extract_version(path)
     end
 
     test "extracts version from snapshot path" do
-      path = Keys.snapshot_path("cluster", "shard", 67_890)
+      path = Keys.snapshot_path("d", 67_890)
       assert {:ok, 67_890} = Keys.extract_version(path)
     end
 
     test "returns error for invalid path" do
-      assert {:error, :invalid_format} = Keys.extract_version("invalid/path/abc")
+      # Path basename must contain invalid base36 chars
+      assert {:error, :invalid_format} = Keys.extract_version("invalid/path/abc!")
     end
   end
 end

@@ -19,19 +19,18 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     {:ok, backend: backend, root: root}
   end
 
-  describe "new/4" do
+  describe "new/3" do
     test "creates writer with default options", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard-01")
+      {:ok, writer} = ChunkWriter.new(backend, "shard-01")
 
-      assert writer.cluster == "cluster"
       assert writer.shard_tag == "shard-01"
       assert writer.size_threshold == 64 * 1024 * 1024
-      assert writer.time_gap_ms == 5 * 60 * 1000
+      assert writer.time_gap_ms == 5 * 1000
     end
 
     test "creates writer with custom options", %{backend: backend} do
       {:ok, writer} =
-        ChunkWriter.new(backend, "cluster", "shard",
+        ChunkWriter.new(backend, "shard",
           size_threshold: 1024,
           time_gap_ms: 1000
         )
@@ -43,7 +42,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "add_transaction/3" do
     test "adds transaction to buffer", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")
 
       assert ChunkWriter.buffer_count(writer) == 1
@@ -51,7 +50,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     end
 
     test "accumulates multiple transactions", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data1")
       {:ok, writer} = ChunkWriter.add_transaction(writer, 200, "data2")
       {:ok, writer} = ChunkWriter.add_transaction(writer, 300, "data3")
@@ -63,7 +62,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "maybe_flush/1 - size threshold" do
     test "flushes when size threshold reached", %{backend: backend, root: root} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 10)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 10)
 
       # Add transactions that exceed threshold
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "12345")
@@ -78,12 +77,12 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
       assert ChunkWriter.chunks_written(writer) == 1
 
       # Verify chunk was written
-      chunk_path = Path.join(root, Keys.chunk_path("cluster", "shard", 200))
+      chunk_path = Path.join(root, Keys.chunk_path("shard", 200))
       assert File.exists?(chunk_path)
     end
 
     test "does not flush below threshold", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 100)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 100)
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "small")
 
       {:ok, writer, status} = ChunkWriter.maybe_flush(writer)
@@ -94,7 +93,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "maybe_flush/1 - time gap" do
     test "flushes when time gap exceeded", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", time_gap_ms: 1)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", time_gap_ms: 1)
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")
 
       # Wait for time gap
@@ -106,7 +105,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     end
 
     test "does not flush before time gap", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", time_gap_ms: 60_000)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", time_gap_ms: 60_000)
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")
 
       {:ok, _writer, status} = ChunkWriter.maybe_flush(writer)
@@ -116,7 +115,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "maybe_flush/1 - empty buffer" do
     test "returns not_needed for empty buffer", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       {:ok, _writer, status} = ChunkWriter.maybe_flush(writer)
       assert status == :not_needed
     end
@@ -124,7 +123,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "flush/1" do
     test "forces flush even below threshold", %{backend: backend, root: root} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 1_000_000)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 1_000_000)
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "small data")
 
       {:ok, writer} = ChunkWriter.flush(writer)
@@ -132,12 +131,12 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
       assert ChunkWriter.chunks_written(writer) == 1
 
       # Verify chunk was written
-      chunk_path = Path.join(root, Keys.chunk_path("cluster", "shard", 100))
+      chunk_path = Path.join(root, Keys.chunk_path("shard", 100))
       assert File.exists?(chunk_path)
     end
 
     test "does nothing for empty buffer", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       {:ok, writer} = ChunkWriter.flush(writer)
       assert ChunkWriter.chunks_written(writer) == 0
     end
@@ -145,7 +144,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "chunk format integration" do
     test "written chunks are valid and decodable", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 10)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 10)
 
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "txn1")
       {:ok, writer} = ChunkWriter.add_transaction(writer, 200, "txn2data")
@@ -154,7 +153,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
       {:ok, _writer} = ChunkWriter.flush(writer)
 
       # Read and decode the chunk
-      key = Keys.chunk_path("cluster", "shard", 300)
+      key = Keys.chunk_path("shard", 300)
       {:ok, chunk_binary} = ObjectStorage.get(backend, key)
       {:ok, chunk} = Chunk.decode(chunk_binary)
 
@@ -170,12 +169,12 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "idempotency" do
     test "duplicate flush succeeds (already_exists is ok)", %{backend: backend} do
-      {:ok, writer1} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer1} = ChunkWriter.new(backend, "shard")
       {:ok, writer1} = ChunkWriter.add_transaction(writer1, 100, "data")
       {:ok, _writer1} = ChunkWriter.flush(writer1)
 
       # Create another writer and try to write the same chunk
-      {:ok, writer2} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer2} = ChunkWriter.new(backend, "shard")
       {:ok, writer2} = ChunkWriter.add_transaction(writer2, 100, "data")
       {:ok, writer2} = ChunkWriter.flush(writer2)
 
@@ -186,7 +185,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "multiple flushes" do
     test "writes multiple chunks over time", %{backend: backend, root: root} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 10)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 10)
 
       # First batch
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "batch1_a")
@@ -201,8 +200,8 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
       assert ChunkWriter.chunks_written(writer) == 2
 
       # Both chunks should exist
-      chunk1_path = Path.join(root, Keys.chunk_path("cluster", "shard", 200))
-      chunk2_path = Path.join(root, Keys.chunk_path("cluster", "shard", 400))
+      chunk1_path = Path.join(root, Keys.chunk_path("shard", 200))
+      chunk2_path = Path.join(root, Keys.chunk_path("shard", 400))
       assert File.exists?(chunk1_path)
       assert File.exists?(chunk2_path)
     end
@@ -210,7 +209,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
 
   describe "helper functions" do
     test "buffer_size/1 returns current size", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       assert ChunkWriter.buffer_size(writer) == 0
 
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "hello")
@@ -218,7 +217,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     end
 
     test "buffer_count/1 returns transaction count", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       assert ChunkWriter.buffer_count(writer) == 0
 
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "a")
@@ -227,7 +226,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     end
 
     test "empty?/1 returns buffer status", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       assert ChunkWriter.empty?(writer)
 
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")
@@ -235,7 +234,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriterTest do
     end
 
     test "chunks_written/1 tracks flush count", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard")
+      {:ok, writer} = ChunkWriter.new(backend, "shard")
       assert ChunkWriter.chunks_written(writer) == 0
 
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "data")

@@ -145,7 +145,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles get_shard_server request", %{server: pid} do
-      shard_id = "test_shard_123"
+      shard_id = 123
 
       # First call creates the shard server
       result = GenServer.call(pid, {:get_shard_server, shard_id})

@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.Config, as: StorageConfig
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.ClusterBootstrap
   alias Bedrock.SystemKeys.ShardMetadata
@@ -70,14 +70,49 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   defp write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
-    backend = StorageConfig.backend()
-    bootstrap_key = StorageConfig.bootstrap_key()
+    cluster = recovery_attempt.cluster
 
-    # bootstrap_key is optional - skip write if not configured
-    if bootstrap_key do
-      do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout)
+    case get_object_storage_backend(cluster) do
+      {:ok, backend} ->
+        # Bootstrap key is just "state" since object_storage root is already cluster-scoped
+        do_write_bootstrap(backend, "state", recovery_attempt, transaction_system_layout)
+
+      {:error, :no_object_storage} ->
+        # No object storage configured - skip bootstrap write
+        :ok
+    end
+  end
+
+  # Get object_storage backend from cluster's node config
+  defp get_object_storage_backend(cluster) do
+    node_config = cluster.node_config()
+
+    # Check for explicit object_storage config
+    case Keyword.fetch(node_config, :object_storage) do
+      {:ok, backend} ->
+        {:ok, backend}
+
+      :error ->
+        # Derive from path config (same logic as cluster_supervisor)
+        derive_object_storage_from_path(node_config)
+    end
+  end
+
+  defp derive_object_storage_from_path(node_config) do
+    # Try to find a path from any capability config
+    path =
+      Enum.find_value([:log, :storage, :materializer, :coordination], fn capability ->
+        node_config
+        |> Keyword.get(capability, [])
+        |> Keyword.get(:path)
+      end)
+
+    if path do
+      object_storage_root = Path.join(path, "object_storage")
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      {:ok, backend}
     else
-      :ok
+      {:error, :no_object_storage}
     end
   end
 

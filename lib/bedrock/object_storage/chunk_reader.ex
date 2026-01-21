@@ -21,7 +21,7 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
 
   ## Example
 
-      reader = ChunkReader.new(backend, "cluster", "shard-01")
+      reader = ChunkReader.new(backend, "a")
 
       # List all chunks (newest first)
       chunks = ChunkReader.list_chunks(reader) |> Enum.to_list()
@@ -40,20 +40,18 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
 
   @type t :: %__MODULE__{
           backend: ObjectStorage.backend(),
-          cluster: String.t(),
           shard_tag: String.t()
         }
 
-  defstruct [:backend, :cluster, :shard_tag]
+  defstruct [:backend, :shard_tag]
 
   @doc """
   Creates a new chunk reader for a shard.
   """
-  @spec new(ObjectStorage.backend(), String.t(), String.t()) :: t()
-  def new(backend, cluster, shard_tag) do
+  @spec new(ObjectStorage.backend(), String.t()) :: t()
+  def new(backend, shard_tag) do
     %__MODULE__{
       backend: backend,
-      cluster: cluster,
       shard_tag: shard_tag
     }
   end
@@ -70,7 +68,7 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   """
   @spec list_chunks(t(), keyword()) :: Enumerable.t()
   def list_chunks(%__MODULE__{} = reader, opts \\ []) do
-    prefix = Keys.chunks_prefix(reader.cluster, reader.shard_tag)
+    prefix = Keys.chunks_prefix(reader.shard_tag)
     ObjectStorage.list(reader.backend, prefix, opts)
   end
 

@@ -8,7 +8,8 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   ## Path Structure
 
-  Snapshots are stored at: `/{cluster}/shards/{tag}/snapshots/{inverted_version}`
+  Snapshots are stored at: `/shards/{tag}/snapshots/{inverted_version}`
+  (relative to the object storage root, which is already cluster-scoped)
 
   Using inverted versions ensures listing returns newest snapshots first,
   making it efficient to find the latest snapshot.
@@ -22,7 +23,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   ## Usage
 
-      snapshot = Snapshot.new(backend, "cluster", "shard-01")
+      snapshot = Snapshot.new(backend, "a")
 
       # Write a snapshot
       :ok = Snapshot.write(snapshot, version, state_binary)
@@ -45,20 +46,18 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   @type t :: %__MODULE__{
           backend: ObjectStorage.backend(),
-          cluster: String.t(),
           shard_tag: String.t()
         }
 
-  defstruct [:backend, :cluster, :shard_tag]
+  defstruct [:backend, :shard_tag]
 
   @doc """
   Creates a new snapshot handler for a shard.
   """
-  @spec new(ObjectStorage.backend(), String.t(), String.t()) :: t()
-  def new(backend, cluster, shard_tag) do
+  @spec new(ObjectStorage.backend(), String.t()) :: t()
+  def new(backend, shard_tag) do
     %__MODULE__{
       backend: backend,
-      cluster: cluster,
       shard_tag: shard_tag
     }
   end
@@ -76,7 +75,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec write(t(), version(), snapshot_data()) :: :ok | {:error, term()}
   def write(%__MODULE__{} = snapshot, version, data) do
-    key = Keys.snapshot_path(snapshot.cluster, snapshot.shard_tag, version)
+    key = Keys.snapshot_path(snapshot.shard_tag, version)
 
     case ObjectStorage.put_if_not_exists(snapshot.backend, key, data) do
       :ok -> :ok
@@ -96,7 +95,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec read_latest(t()) :: {:ok, version(), snapshot_data()} | {:error, :not_found | term()}
   def read_latest(%__MODULE__{} = snapshot) do
-    prefix = Keys.snapshots_prefix(snapshot.cluster, snapshot.shard_tag)
+    prefix = Keys.snapshots_prefix(snapshot.shard_tag)
 
     with [key] <- snapshot.backend |> ObjectStorage.list(prefix, limit: 1) |> Enum.take(1),
          {:ok, version} <- Keys.extract_version(key),
@@ -119,7 +118,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec read(t(), version()) :: {:ok, snapshot_data()} | {:error, :not_found | term()}
   def read(%__MODULE__{} = snapshot, version) do
-    key = Keys.snapshot_path(snapshot.cluster, snapshot.shard_tag, version)
+    key = Keys.snapshot_path(snapshot.shard_tag, version)
     ObjectStorage.get(snapshot.backend, key)
   end
 
@@ -134,7 +133,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec list(t(), keyword()) :: Enumerable.t()
   def list(%__MODULE__{} = snapshot, opts \\ []) do
-    prefix = Keys.snapshots_prefix(snapshot.cluster, snapshot.shard_tag)
+    prefix = Keys.snapshots_prefix(snapshot.shard_tag)
 
     snapshot.backend
     |> ObjectStorage.list(prefix, opts)
@@ -157,7 +156,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec latest_version(t()) :: {:ok, version()} | {:error, :not_found}
   def latest_version(%__MODULE__{} = snapshot) do
-    prefix = Keys.snapshots_prefix(snapshot.cluster, snapshot.shard_tag)
+    prefix = Keys.snapshots_prefix(snapshot.shard_tag)
 
     case snapshot.backend |> ObjectStorage.list(prefix, limit: 1) |> Enum.take(1) do
       [key] ->
@@ -180,7 +179,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec delete(t(), version()) :: :ok | {:error, term()}
   def delete(%__MODULE__{} = snapshot, version) do
-    key = Keys.snapshot_path(snapshot.cluster, snapshot.shard_tag, version)
+    key = Keys.snapshot_path(snapshot.shard_tag, version)
     ObjectStorage.delete(snapshot.backend, key)
   end
 

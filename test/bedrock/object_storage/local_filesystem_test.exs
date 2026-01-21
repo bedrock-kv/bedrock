@@ -255,7 +255,7 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
 
     test "stores and retrieves chunk with versioned key", %{backend: backend} do
       version = 12_345
-      key = Keys.chunk_path("cluster", "shard-01", version)
+      key = Keys.chunk_path("shard-01", version)
       data = "chunk data"
 
       assert :ok = ObjectStorage.put(backend, key, data)
@@ -266,11 +266,11 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
       versions = [100, 200, 300, 400, 500]
 
       for v <- versions do
-        key = Keys.chunk_path("cluster", "shard", v)
+        key = Keys.chunk_path("shard", v)
         :ok = ObjectStorage.put(backend, key, "data_#{v}")
       end
 
-      prefix = Keys.chunks_prefix("cluster", "shard")
+      prefix = Keys.chunks_prefix("shard")
       keys = backend |> ObjectStorage.list(prefix) |> Enum.to_list()
 
       # Keys should be sorted, and due to version inversion, highest versions come first
@@ -284,7 +284,7 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
     end
 
     test "conditional write for snapshots prevents duplicates", %{backend: backend} do
-      key = Keys.snapshot_path("cluster", "shard", 1000)
+      key = Keys.snapshot_path("shard", 1000)
 
       assert :ok = ObjectStorage.put_if_not_exists(backend, key, "snapshot_1")
       assert {:error, :already_exists} = ObjectStorage.put_if_not_exists(backend, key, "snapshot_2")

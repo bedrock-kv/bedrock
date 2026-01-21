@@ -28,7 +28,7 @@ defmodule Bedrock.ObjectStorage.ClusterStateTest do
     {:ok, backend: backend, root: root}
   end
 
-  describe "save/5 and load/3" do
+  describe "save/4 and load/2" do
     test "round-trips basic config without transaction_system_layout", %{backend: backend} do
       config = %{
         coordinators: [:node1@host, :node2@host],
@@ -48,8 +48,8 @@ defmodule Bedrock.ObjectStorage.ClusterStateTest do
         }
       }
 
-      assert :ok = ClusterState.save(backend, "test-cluster", 42, config, TestCluster)
-      assert {:ok, 42, loaded_config} = ClusterState.load(backend, "test-cluster", TestCluster)
+      assert :ok = ClusterState.save(backend, 42, config, TestCluster)
+      assert {:ok, 42, loaded_config} = ClusterState.load(backend, TestCluster)
 
       assert loaded_config.coordinators == config.coordinators
       assert loaded_config.parameters == config.parameters
@@ -59,12 +59,12 @@ defmodule Bedrock.ObjectStorage.ClusterStateTest do
     test "preserves epoch", %{backend: backend} do
       config = minimal_config()
 
-      assert :ok = ClusterState.save(backend, "cluster", 123, config, TestCluster)
-      assert {:ok, 123, _} = ClusterState.load(backend, "cluster", TestCluster)
+      assert :ok = ClusterState.save(backend, 123, config, TestCluster)
+      assert {:ok, 123, _} = ClusterState.load(backend, TestCluster)
 
       # Overwrite with new epoch
-      assert :ok = ClusterState.save(backend, "cluster", 456, config, TestCluster)
-      assert {:ok, 456, _} = ClusterState.load(backend, "cluster", TestCluster)
+      assert :ok = ClusterState.save(backend, 456, config, TestCluster)
+      assert {:ok, 456, _} = ClusterState.load(backend, TestCluster)
     end
 
     test "removes ephemeral recovery_attempt field", %{backend: backend} do
@@ -75,78 +75,62 @@ defmodule Bedrock.ObjectStorage.ClusterStateTest do
         recovery_attempt: %{some: :data}
       }
 
-      assert :ok = ClusterState.save(backend, "cluster", 1, config, TestCluster)
-      assert {:ok, 1, loaded_config} = ClusterState.load(backend, "cluster", TestCluster)
+      assert :ok = ClusterState.save(backend, 1, config, TestCluster)
+      assert {:ok, 1, loaded_config} = ClusterState.load(backend, TestCluster)
 
       refute Map.has_key?(loaded_config, :recovery_attempt)
     end
   end
 
-  describe "load/3 errors" do
+  describe "load/2 errors" do
     test "returns not_found for missing state", %{backend: backend} do
-      assert {:error, :not_found} = ClusterState.load(backend, "nonexistent", TestCluster)
+      assert {:error, :not_found} = ClusterState.load(backend, TestCluster)
     end
   end
 
-  describe "load_raw/2" do
+  describe "load_raw/1" do
     test "loads without PID resolution", %{backend: backend} do
       config = minimal_config()
 
-      assert :ok = ClusterState.save(backend, "cluster", 99, config, TestCluster)
-      assert {:ok, 99, encoded_config} = ClusterState.load_raw(backend, "cluster")
+      assert :ok = ClusterState.save(backend, 99, config, TestCluster)
+      assert {:ok, 99, encoded_config} = ClusterState.load_raw(backend)
 
       # Should have coordinators as-is
       assert encoded_config.coordinators == config.coordinators
     end
 
     test "returns not_found for missing state", %{backend: backend} do
-      assert {:error, :not_found} = ClusterState.load_raw(backend, "nonexistent")
+      assert {:error, :not_found} = ClusterState.load_raw(backend)
     end
   end
 
-  describe "exists?/2" do
+  describe "exists?/1" do
     test "returns false for non-existent state", %{backend: backend} do
-      refute ClusterState.exists?(backend, "nonexistent")
+      refute ClusterState.exists?(backend)
     end
 
     test "returns true after save", %{backend: backend} do
       config = minimal_config()
 
-      refute ClusterState.exists?(backend, "cluster")
-      assert :ok = ClusterState.save(backend, "cluster", 1, config, TestCluster)
-      assert ClusterState.exists?(backend, "cluster")
+      refute ClusterState.exists?(backend)
+      assert :ok = ClusterState.save(backend, 1, config, TestCluster)
+      assert ClusterState.exists?(backend)
     end
   end
 
-  describe "delete/2" do
+  describe "delete/1" do
     test "removes saved state", %{backend: backend} do
       config = minimal_config()
 
-      assert :ok = ClusterState.save(backend, "cluster", 1, config, TestCluster)
-      assert ClusterState.exists?(backend, "cluster")
+      assert :ok = ClusterState.save(backend, 1, config, TestCluster)
+      assert ClusterState.exists?(backend)
 
-      assert :ok = ClusterState.delete(backend, "cluster")
-      refute ClusterState.exists?(backend, "cluster")
+      assert :ok = ClusterState.delete(backend)
+      refute ClusterState.exists?(backend)
     end
 
     test "succeeds for non-existent state", %{backend: backend} do
-      assert :ok = ClusterState.delete(backend, "nonexistent")
-    end
-  end
-
-  describe "multiple clusters" do
-    test "clusters are isolated", %{backend: backend} do
-      config1 = %{minimal_config() | coordinators: [:node1@host]}
-      config2 = %{minimal_config() | coordinators: [:node2@host]}
-
-      assert :ok = ClusterState.save(backend, "cluster-1", 10, config1, TestCluster)
-      assert :ok = ClusterState.save(backend, "cluster-2", 20, config2, TestCluster)
-
-      assert {:ok, 10, loaded1} = ClusterState.load(backend, "cluster-1", TestCluster)
-      assert {:ok, 20, loaded2} = ClusterState.load(backend, "cluster-2", TestCluster)
-
-      assert loaded1.coordinators == [:node1@host]
-      assert loaded2.coordinators == [:node2@host]
+      assert :ok = ClusterState.delete(backend)
     end
   end
 
@@ -154,10 +138,10 @@ defmodule Bedrock.ObjectStorage.ClusterStateTest do
     test "uses correct path format", %{backend: backend, root: root} do
       config = minimal_config()
 
-      assert :ok = ClusterState.save(backend, "my-cluster", 1, config, TestCluster)
+      assert :ok = ClusterState.save(backend, 1, config, TestCluster)
 
-      # Verify the file exists at expected path
-      expected_path = Path.join(root, "my-cluster/state")
+      # Verify the file exists at expected path (now just "state" at root)
+      expected_path = Path.join(root, "state")
       assert File.exists?(expected_path)
     end
   end

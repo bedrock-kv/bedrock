@@ -17,7 +17,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriter do
 
   ## Usage
 
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard-01",
+      {:ok, writer} = ChunkWriter.new(backend, "a",
         size_threshold: 64 * 1024 * 1024,  # 64MB
         time_gap_ms: 5 * 60 * 1000         # 5 minutes
       )
@@ -40,14 +40,13 @@ defmodule Bedrock.ObjectStorage.ChunkWriter do
   alias Bedrock.ObjectStorage.Keys
 
   @default_size_threshold 64 * 1024 * 1024
-  @default_time_gap_ms 5 * 60 * 1000
+  @default_time_gap_ms 5 * 1000
 
   @type version :: non_neg_integer()
   @type transaction_data :: binary()
 
   @type t :: %__MODULE__{
           backend: ObjectStorage.backend(),
-          cluster: String.t(),
           shard_tag: String.t(),
           size_threshold: pos_integer(),
           time_gap_ms: pos_integer(),
@@ -59,7 +58,6 @@ defmodule Bedrock.ObjectStorage.ChunkWriter do
 
   defstruct [
     :backend,
-    :cluster,
     :shard_tag,
     :size_threshold,
     :time_gap_ms,
@@ -77,11 +75,10 @@ defmodule Bedrock.ObjectStorage.ChunkWriter do
   - `:size_threshold` - Flush when buffer exceeds this size (default: 64MB)
   - `:time_gap_ms` - Flush when this many ms pass without new transactions (default: 5 min)
   """
-  @spec new(ObjectStorage.backend(), String.t(), String.t(), keyword()) :: {:ok, t()}
-  def new(backend, cluster, shard_tag, opts \\ []) do
+  @spec new(ObjectStorage.backend(), String.t(), keyword()) :: {:ok, t()}
+  def new(backend, shard_tag, opts \\ []) do
     writer = %__MODULE__{
       backend: backend,
-      cluster: cluster,
       shard_tag: shard_tag,
       size_threshold: Keyword.get(opts, :size_threshold, @default_size_threshold),
       time_gap_ms: Keyword.get(opts, :time_gap_ms, @default_time_gap_ms)
@@ -205,7 +202,7 @@ defmodule Bedrock.ObjectStorage.ChunkWriter do
       {:ok, chunk_binary} ->
         # Get max version for chunk naming
         {max_version, _data} = List.last(transactions)
-        key = Keys.chunk_path(writer.cluster, writer.shard_tag, max_version)
+        key = Keys.chunk_path(writer.shard_tag, max_version)
 
         case ObjectStorage.put_if_not_exists(writer.backend, key, chunk_binary) do
           :ok ->

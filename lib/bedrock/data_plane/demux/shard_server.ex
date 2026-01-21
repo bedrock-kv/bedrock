@@ -31,6 +31,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   alias Bedrock.Internal.WaitingList
   alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.ChunkWriter
+  alias Bedrock.ObjectStorage.Keys
 
   @type shard_id :: non_neg_integer()
   @type version :: Bedrock.version()
@@ -44,6 +45,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   # Default pull limit
   @default_pull_limit 100
+
+  # Periodic flush check interval (5 seconds)
+  @flush_check_interval 5_000
 
   @doc """
   Starts a ShardServer for the given shard.
@@ -135,12 +139,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     object_storage = Keyword.fetch!(opts, :object_storage)
     version_gap = Keyword.get(opts, :version_gap, @default_version_gap)
 
-    shard_tag = "shard-#{shard_id}"
-    # Convert cluster to string once at boot for object storage paths
-    cluster_name = if is_atom(cluster), do: Atom.to_string(cluster), else: cluster
+    shard_tag = Keys.shard_tag(shard_id)
 
-    {:ok, chunk_writer} = ChunkWriter.new(object_storage, cluster_name, shard_tag)
-    chunk_reader = ChunkReader.new(object_storage, cluster_name, shard_tag)
+    {:ok, chunk_writer} = ChunkWriter.new(object_storage, shard_tag)
+    chunk_reader = ChunkReader.new(object_storage, shard_tag)
 
     state = %State{
       shard_id: shard_id,
@@ -155,6 +157,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       durable_version: nil,
       latest_version: nil
     }
+
+    # Schedule periodic flush check
+    schedule_flush_check()
 
     {:ok, state}
   end
@@ -200,6 +205,25 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     WaitingList.reply_to_expired(expired, {:error, :timeout})
     state = %{state | waiting_list: waiting_list}
     {:noreply, state, next_timeout(state)}
+  end
+
+  @impl true
+  def handle_info(:flush_check, state) do
+    # Time-based flush: if buffer has old data, flush it all
+    state = maybe_time_based_flush(state)
+    schedule_flush_check()
+    {:noreply, state, next_timeout(state)}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    # Force flush any remaining buffered data on shutdown
+    state = flush_all(state)
+
+    case ChunkWriter.flush(state.chunk_writer) do
+      {:ok, _} -> :ok
+      {:error, _} -> :ok
+    end
   end
 
   # Private implementation
@@ -299,6 +323,50 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     end
   end
 
+  # Time-based flush: if oldest buffered version is older than flush interval, flush all
+  defp maybe_time_based_flush(%{buffer: []} = state), do: state
+
+  defp maybe_time_based_flush(state) do
+    {oldest_version, _} = List.last(state.buffer)
+    oldest_us = Version.to_integer(oldest_version)
+    now_us = System.os_time(:microsecond)
+    age_us = now_us - oldest_us
+
+    # Flush if data is older than flush check interval (convert ms to μs)
+    if age_us >= @flush_check_interval * 1000 do
+      flush_all(state)
+    else
+      state
+    end
+  end
+
+  # Flush the entire buffer to object storage
+  defp flush_all(%{buffer: []} = state), do: state
+
+  defp flush_all(state) do
+    # Buffer is newest-first, reverse for oldest-first when adding to writer
+    to_flush = Enum.reverse(state.buffer)
+
+    chunk_writer =
+      Enum.reduce(to_flush, state.chunk_writer, fn {version, slice}, writer ->
+        version_int = Version.to_integer(version)
+        {:ok, writer} = ChunkWriter.add_transaction(writer, version_int, slice)
+        writer
+      end)
+
+    case ChunkWriter.flush(chunk_writer) do
+      {:ok, chunk_writer} ->
+        # Report durability - buffer was newest-first, so head is max version
+        {max_flushed_version, _} = hd(state.buffer)
+        report_durability(state.demux, state.shard_id, max_flushed_version)
+
+        %{state | buffer: [], chunk_writer: chunk_writer, durable_version: max_flushed_version}
+
+      {:error, _reason} ->
+        %{state | chunk_writer: chunk_writer}
+    end
+  end
+
   defp split_buffer_for_flush(%{buffer: buffer, latest_version: latest, version_gap: gap}) do
     # Buffer is newest-first, we want to flush oldest entries
     # Split where version < (latest - gap)
@@ -336,5 +404,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   defp next_timeout(%{waiting_list: waiting_list}) do
     WaitingList.next_timeout(waiting_list)
+  end
+
+  defp schedule_flush_check do
+    Process.send_after(self(), :flush_check, @flush_check_interval)
   end
 end

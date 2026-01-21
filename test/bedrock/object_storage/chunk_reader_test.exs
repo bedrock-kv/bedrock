@@ -21,35 +21,34 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
   end
 
   # Helper to write a chunk directly
-  defp write_chunk(backend, cluster, shard, transactions) do
+  defp write_chunk(backend, shard, transactions) do
     {:ok, chunk_binary} = Chunk.encode(transactions)
     {max_version, _} = List.last(transactions)
-    key = Keys.chunk_path(cluster, shard, max_version)
+    key = Keys.chunk_path(shard, max_version)
     :ok = ObjectStorage.put(backend, key, chunk_binary)
     key
   end
 
-  describe "new/3" do
+  describe "new/2" do
     test "creates reader", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
-      assert reader.cluster == "cluster"
+      reader = ChunkReader.new(backend, "shard")
       assert reader.shard_tag == "shard"
     end
   end
 
   describe "list_chunks/2" do
     test "returns empty for no chunks", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert [] == reader |> ChunkReader.list_chunks() |> Enum.to_list()
     end
 
     test "lists chunks in newest-first order", %{backend: backend} do
       # Write chunks with different max versions
-      write_chunk(backend, "cluster", "shard", [{100, "a"}])
-      write_chunk(backend, "cluster", "shard", [{200, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}])
+      write_chunk(backend, "shard", [{200, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       keys = reader |> ChunkReader.list_chunks() |> Enum.to_list()
 
       # Should be newest first (300, 200, 100)
@@ -63,11 +62,11 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     end
 
     test "respects limit option", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}])
-      write_chunk(backend, "cluster", "shard", [{200, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}])
+      write_chunk(backend, "shard", [{200, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       keys = reader |> ChunkReader.list_chunks(limit: 2) |> Enum.to_list()
 
       assert length(keys) == 2
@@ -76,10 +75,10 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
   describe "list_chunk_metadata/2" do
     test "returns version ranges", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {150, "b"}])
-      write_chunk(backend, "cluster", "shard", [{200, "c"}, {250, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {150, "b"}])
+      write_chunk(backend, "shard", [{200, "c"}, {250, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       metadata = reader |> ChunkReader.list_chunk_metadata() |> Enum.to_list()
 
       # Newest first
@@ -95,9 +94,9 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
   describe "read_chunk/2" do
     test "reads and decodes chunk", %{backend: backend} do
       transactions = [{100, "data1"}, {200, "data2"}]
-      key = write_chunk(backend, "cluster", "shard", transactions)
+      key = write_chunk(backend, "shard", transactions)
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       {:ok, chunk} = ChunkReader.read_chunk(reader, key)
 
       assert chunk.header.min_version == 100
@@ -106,7 +105,7 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     end
 
     test "returns error for missing chunk", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert {:error, :not_found} = ChunkReader.read_chunk(reader, "nonexistent")
     end
   end
@@ -114,9 +113,9 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
   describe "read_chunk_header/2" do
     test "reads only header", %{backend: backend} do
       transactions = [{100, String.duplicate("x", 10_000)}]
-      key = write_chunk(backend, "cluster", "shard", transactions)
+      key = write_chunk(backend, "shard", transactions)
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       {:ok, header} = ChunkReader.read_chunk_header(reader, key)
 
       assert header.min_version == 100
@@ -127,10 +126,10 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
   describe "find_chunk_for_version/2" do
     test "finds chunk containing version", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {150, "b"}])
-      write_chunk(backend, "cluster", "shard", [{200, "c"}, {250, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {150, "b"}])
+      write_chunk(backend, "shard", [{200, "c"}, {250, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
 
       # Find in first chunk
       key1 = ChunkReader.find_chunk_for_version(reader, 125)
@@ -144,9 +143,9 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     end
 
     test "returns nil when version not in any chunk", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {150, "b"}])
+      write_chunk(backend, "shard", [{100, "a"}, {150, "b"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert nil == ChunkReader.find_chunk_for_version(reader, 50)
       assert nil == ChunkReader.find_chunk_for_version(reader, 200)
     end
@@ -154,46 +153,46 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
   describe "read_from_version/3" do
     test "reads from exact version", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_from_version(200) |> Enum.to_list()
 
       assert transactions == [{200, "b"}, {300, "c"}]
     end
 
     test "reads from version between transactions", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_from_version(150) |> Enum.to_list()
 
       assert transactions == [{200, "b"}, {300, "c"}]
     end
 
     test "reads across multiple chunks", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}, {400, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}, {400, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_from_version(150) |> Enum.to_list()
 
       assert transactions == [{200, "b"}, {300, "c"}, {400, "d"}]
     end
 
     test "returns empty when version beyond all chunks", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_from_version(500) |> Enum.to_list()
 
       assert transactions == []
     end
 
     test "respects limit option", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}, {300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_from_version(100, limit: 2) |> Enum.to_list()
 
       assert transactions == [{100, "a"}, {200, "b"}]
@@ -202,10 +201,10 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     test "is lazy - doesn't read all chunks upfront", %{backend: backend} do
       # Write many chunks
       for i <- 1..10 do
-        write_chunk(backend, "cluster", "shard", [{i * 100, "data#{i}"}])
+        write_chunk(backend, "shard", [{i * 100, "data#{i}"}])
       end
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       stream = ChunkReader.read_from_version(reader, 100)
 
       # Taking just first 2 should work
@@ -216,10 +215,10 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
   describe "read_all_transactions/2" do
     test "reads all transactions in version order", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}, {400, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}, {400, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_all_transactions() |> Enum.to_list()
 
       versions = Enum.map(transactions, fn {v, _} -> v end)
@@ -227,15 +226,15 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     end
 
     test "returns empty for no chunks", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert [] == reader |> ChunkReader.read_all_transactions() |> Enum.to_list()
     end
 
     test "respects limit option", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {200, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}, {400, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {200, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}, {400, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_all_transactions(limit: 3) |> Enum.to_list()
 
       assert length(transactions) == 3
@@ -244,38 +243,38 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
   describe "latest_version/1" do
     test "returns highest version", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}])
-      write_chunk(backend, "cluster", "shard", [{500, "b"}])
-      write_chunk(backend, "cluster", "shard", [{300, "c"}])
+      write_chunk(backend, "shard", [{100, "a"}])
+      write_chunk(backend, "shard", [{500, "b"}])
+      write_chunk(backend, "shard", [{300, "c"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert 500 == ChunkReader.latest_version(reader)
     end
 
     test "returns nil for empty shard", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert nil == ChunkReader.latest_version(reader)
     end
   end
 
   describe "oldest_version/1" do
     test "returns lowest version", %{backend: backend} do
-      write_chunk(backend, "cluster", "shard", [{100, "a"}, {150, "b"}])
-      write_chunk(backend, "cluster", "shard", [{200, "c"}, {250, "d"}])
+      write_chunk(backend, "shard", [{100, "a"}, {150, "b"}])
+      write_chunk(backend, "shard", [{200, "c"}, {250, "d"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert 100 == ChunkReader.oldest_version(reader)
     end
 
     test "returns nil for empty shard", %{backend: backend} do
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       assert nil == ChunkReader.oldest_version(reader)
     end
   end
 
   describe "integration with ChunkWriter" do
     test "reads chunks written by writer", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "cluster", "shard", size_threshold: 10)
+      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 10)
 
       # Write first batch
       {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "batch1")
@@ -288,7 +287,7 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
       {:ok, _writer} = ChunkWriter.flush(writer)
 
       # Read with ChunkReader
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
       transactions = reader |> ChunkReader.read_all_transactions() |> Enum.to_list()
 
       assert [{100, "batch1"}, {200, "batch1_2"}, {300, "batch2"}, {400, "batch2_2"}] == transactions
@@ -298,11 +297,11 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
   describe "replay workflow" do
     test "cold start playback scenario", %{backend: backend} do
       # Simulate demux writing chunks over time
-      write_chunk(backend, "cluster", "shard", [{1000, "txn1"}, {2000, "txn2"}])
-      write_chunk(backend, "cluster", "shard", [{3000, "txn3"}, {4000, "txn4"}])
-      write_chunk(backend, "cluster", "shard", [{5000, "txn5"}, {6000, "txn6"}])
+      write_chunk(backend, "shard", [{1000, "txn1"}, {2000, "txn2"}])
+      write_chunk(backend, "shard", [{3000, "txn3"}, {4000, "txn4"}])
+      write_chunk(backend, "shard", [{5000, "txn5"}, {6000, "txn6"}])
 
-      reader = ChunkReader.new(backend, "cluster", "shard")
+      reader = ChunkReader.new(backend, "shard")
 
       # Materializer cold starts, wants to replay from version 2500
       transactions =

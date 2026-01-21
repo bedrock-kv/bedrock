@@ -9,14 +9,21 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   This ensures that newer versions (higher numbers) sort first.
 
+  Version numbers are encoded in base36 (0-9, a-z) for compact filenames.
+  A 64-bit integer requires 13 base36 characters.
+
   ## Path Structure
 
-  - Cluster state: `/{cluster}/state`
-  - Chunks: `/{cluster}/shards/{tag}/chunks/{inverted_version}`
-  - Snapshots: `/{cluster}/shards/{tag}/snapshots/{inverted_version}`
+  Paths are relative to the object storage root, which is already cluster-scoped:
+
+  - Cluster state: `state`
+  - Chunks: `c/{shard}/{version}`
+  - Snapshots: `s/{shard}/{version}`
   """
 
   @max_version 0xFFFFFFFFFFFFFFFF
+  # max uint64 in base36 is 13 chars
+  @base36_width 13
 
   @doc """
   Converts a version to an inverted version for sorting.
@@ -56,59 +63,60 @@ defmodule Bedrock.ObjectStorage.Keys do
   end
 
   @doc """
-  Formats an inverted version as a zero-padded string for lexicographic sorting.
+  Formats an inverted version as a base36-encoded string for lexicographic sorting.
 
-  The string is 20 characters wide (max uint64 is 20 digits).
+  The string is 13 characters wide, zero-padded.
 
   ## Examples
 
       iex> Keys.format_inverted_version(0)
-      "00000000000000000000"
+      "0000000000000"
 
       iex> Keys.format_inverted_version(1000)
-      "00000000000000001000"
+      "00000000000rs"
   """
   @spec format_inverted_version(non_neg_integer()) :: String.t()
   def format_inverted_version(inverted) when is_integer(inverted) and inverted >= 0 do
     inverted
-    |> Integer.to_string()
-    |> String.pad_leading(20, "0")
+    |> Integer.to_string(36)
+    |> String.downcase()
+    |> String.pad_leading(@base36_width, "0")
   end
 
   @doc """
-  Parses a zero-padded inverted version string back to an integer.
+  Parses a base36-encoded inverted version string back to an integer.
 
   ## Examples
 
-      iex> Keys.parse_inverted_version("00000000000000000000")
+      iex> Keys.parse_inverted_version("0000000000000")
       {:ok, 0}
 
-      iex> Keys.parse_inverted_version("00000000000000001000")
+      iex> Keys.parse_inverted_version("00000000000rs")
       {:ok, 1000}
 
-      iex> Keys.parse_inverted_version("invalid")
+      iex> Keys.parse_inverted_version("invalid!")
       {:error, :invalid_format}
   """
   @spec parse_inverted_version(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}
   def parse_inverted_version(str) when is_binary(str) do
-    case Integer.parse(str) do
+    case Integer.parse(str, 36) do
       {value, ""} when value >= 0 -> {:ok, value}
       _ -> {:error, :invalid_format}
     end
   end
 
   @doc """
-  Formats a version as an inverted, zero-padded string key component.
+  Formats a version as an inverted, base36-encoded string key component.
 
   Combines `invert_version/1` and `format_inverted_version/1`.
 
   ## Examples
 
       iex> Keys.version_to_key(0)
-      "18446744073709551615"
+      "3w5e11264sgsf"
 
       iex> Keys.version_to_key(18446744073709551615)
-      "00000000000000000000"
+      "0000000000000"
   """
   @spec version_to_key(non_neg_integer()) :: String.t()
   def version_to_key(version) do
@@ -124,10 +132,10 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.key_to_version("18446744073709551615")
+      iex> Keys.key_to_version("3w5e11264sgsf")
       {:ok, 0}
 
-      iex> Keys.key_to_version("00000000000000000000")
+      iex> Keys.key_to_version("0000000000000")
       {:ok, 18446744073709551615}
   """
   @spec key_to_version(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}
@@ -138,19 +146,62 @@ defmodule Bedrock.ObjectStorage.Keys do
     end
   end
 
-  # Path builders
+  # Shard tag formatting
 
   @doc """
-  Builds a cluster state path.
+  Formats a shard ID as a base36 string for use in paths.
 
   ## Examples
 
-      iex> Keys.cluster_state_path("my-cluster")
-      "my-cluster/state"
+      iex> Keys.shard_tag(0)
+      "0"
+
+      iex> Keys.shard_tag(35)
+      "z"
+
+      iex> Keys.shard_tag(1000)
+      "rs"
   """
-  @spec cluster_state_path(String.t()) :: String.t()
-  def cluster_state_path(cluster) when is_binary(cluster) do
-    "#{cluster}/state"
+  @spec shard_tag(non_neg_integer()) :: String.t()
+  def shard_tag(shard_id) when is_integer(shard_id) and shard_id >= 0 do
+    shard_id |> Integer.to_string(36) |> String.downcase()
+  end
+
+  @doc """
+  Parses a shard tag back to an integer shard ID.
+
+  ## Examples
+
+      iex> Keys.parse_shard_tag("0")
+      {:ok, 0}
+
+      iex> Keys.parse_shard_tag("z")
+      {:ok, 35}
+
+      iex> Keys.parse_shard_tag("rs")
+      {:ok, 1000}
+  """
+  @spec parse_shard_tag(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}
+  def parse_shard_tag(tag) when is_binary(tag) do
+    case Integer.parse(tag, 36) do
+      {value, ""} when value >= 0 -> {:ok, value}
+      _ -> {:error, :invalid_format}
+    end
+  end
+
+  # Path builders
+
+  @doc """
+  Builds the cluster state path.
+
+  ## Examples
+
+      iex> Keys.cluster_state_path()
+      "state"
+  """
+  @spec cluster_state_path() :: String.t()
+  def cluster_state_path do
+    "state"
   end
 
   @doc """
@@ -158,12 +209,12 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.chunk_path("my-cluster", "shard-01", 1000)
-      "my-cluster/shards/shard-01/chunks/18446744073709550615"
+      iex> Keys.chunk_path("a", 1000)
+      "c/a/3w5e11264sg0n"
   """
-  @spec chunk_path(String.t(), String.t(), non_neg_integer()) :: String.t()
-  def chunk_path(cluster, shard_tag, highest_version) when is_binary(cluster) and is_binary(shard_tag) do
-    "#{cluster}/shards/#{shard_tag}/chunks/#{version_to_key(highest_version)}"
+  @spec chunk_path(String.t(), non_neg_integer()) :: String.t()
+  def chunk_path(shard_tag, highest_version) when is_binary(shard_tag) do
+    "c/#{shard_tag}/#{version_to_key(highest_version)}"
   end
 
   @doc """
@@ -171,12 +222,12 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.chunks_prefix("my-cluster", "shard-01")
-      "my-cluster/shards/shard-01/chunks/"
+      iex> Keys.chunks_prefix("a")
+      "c/a/"
   """
-  @spec chunks_prefix(String.t(), String.t()) :: String.t()
-  def chunks_prefix(cluster, shard_tag) when is_binary(cluster) and is_binary(shard_tag) do
-    "#{cluster}/shards/#{shard_tag}/chunks/"
+  @spec chunks_prefix(String.t()) :: String.t()
+  def chunks_prefix(shard_tag) when is_binary(shard_tag) do
+    "c/#{shard_tag}/"
   end
 
   @doc """
@@ -184,12 +235,12 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.snapshot_path("my-cluster", "shard-01", 1000)
-      "my-cluster/shards/shard-01/snapshots/18446744073709550615"
+      iex> Keys.snapshot_path("a", 1000)
+      "s/a/3w5e11264sg0n"
   """
-  @spec snapshot_path(String.t(), String.t(), non_neg_integer()) :: String.t()
-  def snapshot_path(cluster, shard_tag, version) when is_binary(cluster) and is_binary(shard_tag) do
-    "#{cluster}/shards/#{shard_tag}/snapshots/#{version_to_key(version)}"
+  @spec snapshot_path(String.t(), non_neg_integer()) :: String.t()
+  def snapshot_path(shard_tag, version) when is_binary(shard_tag) do
+    "s/#{shard_tag}/#{version_to_key(version)}"
   end
 
   @doc """
@@ -197,12 +248,12 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.snapshots_prefix("my-cluster", "shard-01")
-      "my-cluster/shards/shard-01/snapshots/"
+      iex> Keys.snapshots_prefix("a")
+      "s/a/"
   """
-  @spec snapshots_prefix(String.t(), String.t()) :: String.t()
-  def snapshots_prefix(cluster, shard_tag) when is_binary(cluster) and is_binary(shard_tag) do
-    "#{cluster}/shards/#{shard_tag}/snapshots/"
+  @spec snapshots_prefix(String.t()) :: String.t()
+  def snapshots_prefix(shard_tag) when is_binary(shard_tag) do
+    "s/#{shard_tag}/"
   end
 
   @doc """
@@ -210,10 +261,10 @@ defmodule Bedrock.ObjectStorage.Keys do
 
   ## Examples
 
-      iex> Keys.extract_version("my-cluster/shards/shard-01/chunks/18446744073709550615")
+      iex> Keys.extract_version("c/a/3w5e11264sg0n")
       {:ok, 1000}
 
-      iex> Keys.extract_version("invalid")
+      iex> Keys.extract_version("invalid!")
       {:error, :invalid_format}
   """
   @spec extract_version(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}

@@ -120,13 +120,14 @@ defmodule Bedrock.DataPlane.Demux.MutationSlicerTest do
       assert decoded.mutations == mutations
     end
 
-    test "returns error for transaction without shard_index" do
+    test "returns empty list for transaction without shard_index (heartbeat)" do
       txn =
         Transaction.encode(%{
           mutations: [{:set, "key", "value"}]
         })
 
-      assert {:error, :no_shard_index} = MutationSlicer.slice(txn, @commit_version)
+      # Transactions without shard_index are treated as heartbeats - return empty slices
+      assert {:ok, []} = MutationSlicer.slice(txn, @commit_version)
     end
 
     test "returns error for invalid commit version" do
@@ -148,15 +149,14 @@ defmodule Bedrock.DataPlane.Demux.MutationSlicerTest do
       assert [{0, _slice}] = slices
     end
 
-    test "raises on error" do
+    test "returns empty list for transaction without shard_index (heartbeat)" do
       txn =
         Transaction.encode(%{
           mutations: [{:set, "key", "value"}]
         })
 
-      assert_raise RuntimeError, ~r/no_shard_index/, fn ->
-        MutationSlicer.slice!(txn, @commit_version)
-      end
+      # Transactions without shard_index are treated as heartbeats - return empty slices
+      assert [] = MutationSlicer.slice!(txn, @commit_version)
     end
   end
 
@@ -172,13 +172,14 @@ defmodule Bedrock.DataPlane.Demux.MutationSlicerTest do
       assert shards == [0, 5, 10]
     end
 
-    test "returns error for transaction without shard_index" do
+    test "returns empty list for transaction without shard_index (heartbeat)" do
       txn =
         Transaction.encode(%{
           mutations: [{:set, "key", "value"}]
         })
 
-      assert {:error, :no_shard_index} = MutationSlicer.touched_shards(txn)
+      # Transactions without shard_index are treated as heartbeats
+      assert {:ok, []} = MutationSlicer.touched_shards(txn)
     end
   end
 

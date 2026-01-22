@@ -3,7 +3,7 @@ defmodule Bedrock.Service.ManifestTest do
 
   alias Bedrock.Service.Manifest
 
-  defp storage, do: Bedrock.DataPlane.Storage.Basalt
+  defp storage, do: Bedrock.DataPlane.Materializer.Basalt
   defp log, do: Bedrock.DataPlane.Log.Shale
 
   # Helper function to write manifest to temp file and return path
@@ -129,7 +129,7 @@ defmodule Bedrock.Service.ManifestTest do
     test "handles nil params correctly", %{tmp_dir: tmp_dir} do
       # Params field is optional, nil should be valid
       json =
-        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Storage.Basalt", "params": null})
+        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Materializer.Basalt", "params": null})
 
       path = write_json_to_temp_file(json, tmp_dir, "nil_params.json")
 
@@ -141,7 +141,7 @@ defmodule Bedrock.Service.ManifestTest do
     test "fails when params field is invalid type", %{tmp_dir: tmp_dir} do
       # Params should be a map, not a string
       json =
-        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Storage.Basalt", "params": "invalid"})
+        ~s({"cluster": "test_cluster", "id": "test_id", "worker": "Bedrock.DataPlane.Materializer.Basalt", "params": "invalid"})
 
       path = write_json_to_temp_file(json, tmp_dir, "invalid_params.json")
 

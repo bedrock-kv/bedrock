@@ -115,19 +115,38 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
+  # Build active ranges from shard_layout and available materializers.
+  # For each shard in the layout, we need a materializer process that can serve reads.
+  # Shards without materializers will have no read server, causing layout_lookup_failed.
   @spec collect_active_ranges(TransactionSystemLayout.t()) ::
           [{binary(), binary(), [pid()]}]
   defp collect_active_ranges(transaction_system_layout) do
-    Enum.flat_map(transaction_system_layout.storage_teams, fn
-      %{key_range: {start_key, end_key}, storage_ids: storage_ids} ->
-        storage_ids
-        |> Enum.map(&get_storage_server_pid(transaction_system_layout, &1))
-        |> Enum.filter(&(&1 != nil))
-        |> case do
-          [] -> []
-          pids -> [{start_key, end_key, pids}]
-        end
+    shard_layout = Map.get(transaction_system_layout, :shard_layout) || %{}
+    metadata_materializer = Map.get(transaction_system_layout, :metadata_materializer)
+    shard_materializers = Map.get(transaction_system_layout, :shard_materializers) || %{}
+
+    # Convert shard_layout to ranges with materializer servers
+    shard_layout
+    |> Enum.map(fn {end_key, {tag, start_key}} ->
+      read_server = get_materializer_for_shard(tag, metadata_materializer, shard_materializers)
+      {start_key, end_key, read_server}
     end)
+    |> Enum.filter(fn {_start, _end, pids} -> pids != [] end)
+    |> Enum.sort_by(fn {start_key, _end, _pids} -> start_key end)
+  end
+
+  # Get materializer for a shard tag
+  defp get_materializer_for_shard(0, metadata_materializer, _shard_materializers) when is_pid(metadata_materializer) do
+    # System shard (tag 0) uses metadata_materializer
+    [metadata_materializer]
+  end
+
+  defp get_materializer_for_shard(tag, _metadata_materializer, shard_materializers) do
+    # Other shards use their assigned materializer from shard_materializers map
+    case Map.get(shard_materializers, tag) do
+      pid when is_pid(pid) -> [pid]
+      _ -> []
+    end
   end
 
   @spec create_segments_with_pids([{binary(), binary(), [pid()]}]) ::
@@ -184,13 +203,6 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
       :none ->
         Enum.reverse(acc)
-    end
-  end
-
-  defp get_storage_server_pid(%{services: services}, storage_id) do
-    case Map.get(services, storage_id) do
-      %{kind: :storage, status: {:up, pid}} -> pid
-      _ -> nil
     end
   end
 

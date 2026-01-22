@@ -71,29 +71,29 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
 
   @impl true
   @spec handle_call(
-          :next_read_version | :next_commit_version | {:report_successful_commit, Bedrock.version()},
+          {:next_read_version, Bedrock.epoch()}
+          | {:next_commit_version, Bedrock.epoch()}
+          | {:report_successful_commit, Bedrock.epoch(), Bedrock.version()},
           GenServer.from(),
           State.t()
         ) ::
-          {:reply, {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()} | :ok, State.t()}
-  def handle_call(:next_read_version, _from, t) do
-    # Convert to Version.t() only at return
+          {:reply,
+           {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()} | :ok | {:error, :wrong_epoch},
+           State.t()}
+  def handle_call({:next_read_version, epoch}, _from, %{epoch: epoch} = t) do
     read_version = Version.from_integer(t.known_committed_version_int)
     emit_next_read_version(read_version)
     reply(t, {:ok, read_version})
   end
 
-  @impl true
-  def handle_call(:next_commit_version, _from, t) do
+  def handle_call({:next_read_version, _wrong_epoch}, _from, t) do
+    reply(t, {:error, :wrong_epoch})
+  end
+
+  def handle_call({:next_commit_version, epoch}, _from, %{epoch: epoch} = t) do
     current_monotonic_us = System.monotonic_time(:microsecond)
-
-    # Calculate microseconds elapsed since epoch start
     elapsed_us = current_monotonic_us - t.epoch_start_monotonic_us
-
-    # Proposed version = baseline + elapsed microseconds
     proposed_version_int = t.epoch_baseline_version_int + elapsed_us
-
-    # Ensure we always advance by at least 1 from the last assigned version
     commit_version_int = max(proposed_version_int, t.next_commit_version_int)
     next_commit_version_int = commit_version_int + 1
 
@@ -103,7 +103,6 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
         last_commit_version_int: commit_version_int
     }
 
-    # Convert to Version.t() for return
     last_commit_version = Version.from_integer(t.last_commit_version_int)
     commit_version = Version.from_integer(commit_version_int)
 
@@ -111,11 +110,11 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     reply(updated_state, {:ok, last_commit_version, commit_version})
   end
 
-  @impl true
-  @spec handle_call({:report_successful_commit, Bedrock.version()}, GenServer.from(), State.t()) ::
-          {:reply, :ok, State.t()}
-  def handle_call({:report_successful_commit, commit_version}, _from, t) do
-    # Convert incoming Version.t() to integer for comparison
+  def handle_call({:next_commit_version, _wrong_epoch}, _from, t) do
+    reply(t, {:error, :wrong_epoch})
+  end
+
+  def handle_call({:report_successful_commit, epoch, commit_version}, _from, %{epoch: epoch} = t) do
     commit_version_int = Version.to_integer(commit_version)
     updated_known_committed_int = max(t.known_committed_version_int, commit_version_int)
 
@@ -123,6 +122,10 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     emit_successful_commit(commit_version, known_committed_version)
 
     reply(%{t | known_committed_version_int: updated_known_committed_int}, :ok)
+  end
+
+  def handle_call({:report_successful_commit, _wrong_epoch, _commit_version}, _from, t) do
+    reply(t, {:error, :wrong_epoch})
   end
 
   @impl true

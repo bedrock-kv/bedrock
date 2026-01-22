@@ -29,9 +29,9 @@ defmodule Mix.Tasks.Bedrock.AnalyzeIndex do
 
   use Mix.Task
 
-  alias Bedrock.DataPlane.Storage.Olivine.Database
-  alias Bedrock.DataPlane.Storage.Olivine.Index
-  alias Bedrock.DataPlane.Storage.Olivine.IndexDatabase
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
+  alias Bedrock.DataPlane.Materializer.Olivine.Index
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
 
   require Logger
 

@@ -6,7 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
 
   @spec reload_segments_at_path(segment_dir :: String.t()) ::
           {:ok, [Segment.t()]}
-          | {:error, :unable_to_list_segments}
+          | {:error, {:unable_to_list_segments, File.posix()}}
   def reload_segments_at_path(segment_dir) do
     segment_dir
     |> File.ls()
@@ -32,8 +32,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
         end)
         |> then(&{:ok, &1})
 
-      {:error, _posix} ->
-        {:error, :unable_to_list_segments}
+      {:error, posix} ->
+        {:error, {:unable_to_list_segments, posix}}
     end
   end
 end

@@ -20,17 +20,12 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
   def create_test_transaction_system_layout do
     %{
+      epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
@@ -43,24 +38,19 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       end)
 
     %{
+      epoch: 1,
       sequencer: mock_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
 
   defp mock_sequencer_loop(read_version) do
     receive do
-      {:"$gen_call", from, :next_read_version} ->
+      {:"$gen_call", from, {:next_read_version, _epoch}} ->
         GenServer.reply(from, {:ok, read_version})
         mock_sequencer_loop(read_version)
     end
@@ -172,14 +162,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       custom_layout = %{
         sequencer: :custom,
         proxies: [],
-        storage_teams: [
-          %{
-            key_range: {"", <<0xFF, 0xFF>>},
-            storage_ids: ["storage1"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -365,14 +349,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
     test "state fields are preserved across operations" do
       custom_layout = %{
-        storage_teams: [
-          %{
-            key_range: {"", <<0xFF, 0xFF>>},
-            storage_ids: ["storage1"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -500,19 +478,9 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       custom_layout = %{
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy1, :custom_proxy2],
-        storage_teams: [
-          %{
-            key_range: {"", "m"},
-            storage_ids: ["storage1"]
-          },
-          %{
-            key_range: {"m", <<0xFF, 0xFF>>},
-            storage_ids: ["storage2"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}},
-          "storage2" => %{kind: :storage, status: {:up, :pid2}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}},
+          "storage2" => %{kind: :materializer, status: {:up, :pid2}}
         }
       }
 

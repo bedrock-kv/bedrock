@@ -57,10 +57,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
     do: info("Starting director for epoch #{epoch} with NO CONFIG")
 
   def trace(:director_launch, _, %{epoch: epoch, config_summary: summary}),
-    do:
-      info(
-        "Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count}, storage_teams: #{summary.storage_teams_count})"
-      )
+    do: info("Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count})")
 
   def trace(:director_shutdown, _, %{director: director, reason: reason}),
     do: info("Shutting down director #{inspect(director)} (reason: #{reason})")

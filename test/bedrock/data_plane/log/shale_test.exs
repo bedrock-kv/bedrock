@@ -11,7 +11,8 @@ defmodule Bedrock.DataPlane.Log.ShaleTest do
         otp_name: :test_log,
         foreman: self(),
         id: "test_log_1",
-        path: "/tmp/test_log"
+        path: "/tmp/test_log",
+        object_storage: :mock
       ]
 
       # Test that child_spec is delegated to Server and has expected structure

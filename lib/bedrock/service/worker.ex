@@ -7,17 +7,19 @@ defmodule Bedrock.Service.Worker do
 
   use Bedrock.Internal.GenServerApi
 
+  alias Bedrock.Internal.Id
+
   @type ref :: pid() | atom() | {atom(), node()}
   @type id :: Bedrock.service_id()
   @type fact_name :: :supported_info | :kind | :id | :health | :otp_name | :pid
   @type fact_value ::
-          [fact_name()] | :log | :storage | Bedrock.service_id() | health() | otp_name() | pid()
+          [fact_name()] | :log | :materializer | Bedrock.service_id() | health() | otp_name() | pid()
   @type timeout_in_ms :: Bedrock.timeout_in_ms()
   @type health :: {:ok, pid()} | :stopped | {:error, :timeout | :unavailable}
   @type otp_name :: atom()
 
   @spec random_id() :: binary()
-  def random_id, do: 5 |> :crypto.strong_rand_bytes() |> Base.encode32(case: :lower)
+  def random_id, do: Id.random()
 
   @spec info(
           worker_ref :: ref(),
@@ -32,7 +34,7 @@ defmodule Bedrock.Service.Worker do
           recovery_epoch :: Bedrock.epoch(),
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
-          {:ok, worker_pid :: pid(), recovery_info :: [kind: :log | :storage, version: Bedrock.version()]}
+          {:ok, worker_pid :: pid(), recovery_info :: [kind: :log | :materializer, version: Bedrock.version()]}
           | {:error, :newer_epoch_exists}
           | {:error, :timeout}
   def lock_for_recovery(worker, epoch, opts \\ []),

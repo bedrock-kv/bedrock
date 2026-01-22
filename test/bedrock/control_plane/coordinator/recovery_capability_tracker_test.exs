@@ -37,7 +37,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTrackerTest do
 
   describe "check_for_recovery_state_changes/3" do
     test "returns unchanged when hash matches" do
-      node_capabilities = %{node() => [:log, :storage]}
+      node_capabilities = %{node() => [:log, :materializer]}
       service_directory = %{}
 
       tracker = RecoveryCapabilityTracker.new()
@@ -55,7 +55,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTrackerTest do
 
     test "returns changed when capabilities differ" do
       node_capabilities1 = %{node() => [:log]}
-      node_capabilities2 = %{node() => [:log, :storage]}
+      node_capabilities2 = %{node() => [:log, :materializer]}
       service_directory = %{}
 
       tracker = RecoveryCapabilityTracker.new()
@@ -91,7 +91,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTrackerTest do
 
   describe "update_recovery_state_hash/3" do
     test "updates hash based on capabilities and service directory" do
-      node_capabilities = %{node() => [:log, :storage]}
+      node_capabilities = %{node() => [:log, :materializer]}
 
       service_directory = %{
         "service1" => {:log, {:log_worker, node()}}
@@ -126,7 +126,7 @@ defmodule Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTrackerTest do
 
   describe "update_capability_hash/2 (deprecated)" do
     test "delegates to update_recovery_state_hash with empty service directory" do
-      node_capabilities = %{node() => [:log, :storage]}
+      node_capabilities = %{node() => [:log, :materializer]}
 
       tracker = RecoveryCapabilityTracker.new()
 

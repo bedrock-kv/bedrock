@@ -4,6 +4,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
 
   @moduletag :tmp_dir
 
@@ -13,6 +15,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
     id = "boundary_log_#{System.unique_integer([:positive])}"
     foreman = self()
     path = Path.join(tmp_dir, "log_segments")
+    object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
 
     File.mkdir_p!(path)
 
@@ -20,7 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
     {:ok, pid} =
       GenServer.start_link(
         Server,
-        {cluster, otp_name, id, foreman, path, true},
+        {cluster, otp_name, id, foreman, path, object_storage, true},
         name: otp_name
       )
 

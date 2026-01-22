@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ApiTest do
   describe "service_info type validation" do
     test "validates service_info type" do
       # Test that the type is correctly defined
-      service_info = {"service_id", :storage, {:worker, :node@host}}
+      service_info = {"service_id", :materializer, {:worker, :node@host}}
 
       assert match?(
                {id, kind, {name, node}}
@@ -17,7 +17,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ApiTest do
   describe "service registration API validation" do
     test "register_services validates service_info tuple format" do
       valid_services = [
-        {"service_1", :storage, {:worker1, :node1@host}},
+        {"service_1", :materializer, {:worker1, :node1@host}},
         {"service_2", :log, {:worker2, :node2@host}},
         {"service_3", :sequencer, {:worker3, :node3@host}}
       ]

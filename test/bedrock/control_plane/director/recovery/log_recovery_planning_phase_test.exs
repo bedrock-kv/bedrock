@@ -4,7 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase
-  alias Bedrock.ControlPlane.Director.Recovery.VacancyCreationPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.DataPlane.Version
 
   # Helper functions for common test setup
@@ -13,7 +13,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       with_log_recovery_info(recovery_attempt(), log_recovery_info),
       %{
         node_tracking: nil,
-        old_transaction_system_layout: %{logs: old_logs, storage_teams: []},
+        old_transaction_system_layout: %{logs: old_logs},
         cluster_config: %{
           parameters: %{desired_logs: desired_logs},
           transaction_system_layout: %{logs: old_logs}
@@ -23,7 +23,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
   end
 
   defp log_info(oldest, last),
-    do: %{oldest_version: Version.from_integer(oldest), last_version: Version.from_integer(last)}
+    do: %{
+      oldest_version: Version.from_integer(oldest),
+      last_version: Version.from_integer(last),
+      minimum_durable_version: Version.from_integer(oldest)
+    }
 
   describe "execute/1" do
     test "successfully determines logs to copy and advances state" do
@@ -31,11 +35,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       old_logs = %{{:log, 1} => ["tag_a"], {:log, 2} => ["tag_b"]}
       {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 3)
 
-      assert {%{old_log_ids_to_copy: old_log_ids, version_vector: version_vector}, VacancyCreationPhase} =
+      assert {%{old_log_ids_to_copy: old_log_ids, version_vector: version_vector, durable_version: durable_version},
+              LogRecruitmentPhase} =
                LogRecoveryPlanningPhase.execute(recovery_attempt, context)
 
       assert is_list(old_log_ids) and length(old_log_ids) > 0
       assert is_tuple(version_vector)
+      # durable_version is min of minimum_durable_versions (5 and 10)
+      assert durable_version == Version.from_integer(5)
     end
 
     test "stalls recovery when unable to meet log quorum" do
@@ -53,8 +60,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
       expected_version = {Version.from_integer(10), Version.from_integer(50)}
 
-      assert {%{old_log_ids_to_copy: [{:log, 1}], version_vector: ^expected_version}, VacancyCreationPhase} =
+      assert {%{old_log_ids_to_copy: [{:log, 1}], version_vector: ^expected_version, durable_version: durable_version},
+              LogRecruitmentPhase} =
                LogRecoveryPlanningPhase.execute(recovery_attempt, context)
+
+      assert durable_version == Version.from_integer(10)
     end
   end
 
@@ -376,6 +386,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       # Should fail because all combinations produce invalid ranges
       assert {:error, :unable_to_meet_log_quorum} =
                LogRecoveryPlanningPhase.determine_old_logs_to_copy(old_logs, recovery_info, 2)
+    end
+  end
+
+  describe "calculate_durable_version/1" do
+    test "returns minimum of all available minimum_durable_versions" do
+      log_recovery_info = %{
+        {:log, 1} => %{minimum_durable_version: Version.from_integer(100)},
+        {:log, 2} => %{minimum_durable_version: Version.from_integer(50)},
+        {:log, 3} => %{minimum_durable_version: Version.from_integer(75)}
+      }
+
+      assert Version.from_integer(50) == LogRecoveryPlanningPhase.calculate_durable_version(log_recovery_info)
+    end
+
+    test "ignores :unavailable minimum_durable_versions" do
+      log_recovery_info = %{
+        {:log, 1} => %{minimum_durable_version: Version.from_integer(100)},
+        {:log, 2} => %{minimum_durable_version: :unavailable},
+        {:log, 3} => %{minimum_durable_version: Version.from_integer(75)}
+      }
+
+      assert Version.from_integer(75) == LogRecoveryPlanningPhase.calculate_durable_version(log_recovery_info)
+    end
+
+    test "returns Version.zero when all are :unavailable" do
+      log_recovery_info = %{
+        {:log, 1} => %{minimum_durable_version: :unavailable},
+        {:log, 2} => %{minimum_durable_version: :unavailable}
+      }
+
+      assert Version.zero() == LogRecoveryPlanningPhase.calculate_durable_version(log_recovery_info)
+    end
+
+    test "returns Version.zero for empty log recovery info" do
+      assert Version.zero() == LogRecoveryPlanningPhase.calculate_durable_version(%{})
     end
   end
 

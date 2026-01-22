@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
         )
 
       {:reply, {:ok, last_commit, commit_version}, new_state} =
-        Server.handle_call(:next_commit_version, self(), initial_state)
+        Server.handle_call({:next_commit_version, 1}, self(), initial_state)
 
       # Lamport clock chain: returns previous last_commit_version and new version
       assert last_commit == Version.from_integer(100)
@@ -76,7 +76,7 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
         )
 
       {:reply, {:ok, version}, ^state} =
-        Server.handle_call(:next_read_version, self(), state)
+        Server.handle_call({:next_read_version, 1}, self(), state)
 
       # returns known_committed_version, not assigned or next versions
       assert version == Version.from_integer(103)
@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
 
       # Report commit version 103
       {:reply, :ok, state1} =
-        Server.handle_call({:report_successful_commit, Version.from_integer(103)}, self(), initial_state)
+        Server.handle_call({:report_successful_commit, 1, Version.from_integer(103)}, self(), initial_state)
 
       assert %State{
                known_committed_version_int: 103,
@@ -102,14 +102,14 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
 
       # Report older commit version 102 - should not decrease known_committed_version
       {:reply, :ok, state2} =
-        Server.handle_call({:report_successful_commit, Version.from_integer(102)}, self(), state1)
+        Server.handle_call({:report_successful_commit, 1, Version.from_integer(102)}, self(), state1)
 
       # unchanged (monotonic)
       assert %State{known_committed_version_int: 103} = state2
 
       # Report newer commit version 104
       {:reply, :ok, state3} =
-        Server.handle_call({:report_successful_commit, Version.from_integer(104)}, self(), state2)
+        Server.handle_call({:report_successful_commit, 1, Version.from_integer(104)}, self(), state2)
 
       # updated
       assert %State{known_committed_version_int: 104} = state3
@@ -120,9 +120,9 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       state = create_state()
 
       # Assign several versions
-      {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
-      {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
-      {:reply, _, state} = Server.handle_call(:next_commit_version, self(), state)
+      {:reply, _, state} = Server.handle_call({:next_commit_version, 1}, self(), state)
+      {:reply, _, state} = Server.handle_call({:next_commit_version, 1}, self(), state)
+      {:reply, _, state} = Server.handle_call({:next_commit_version, 1}, self(), state)
 
       assert %State{
                next_commit_version_int: next_commit,
@@ -138,10 +138,10 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
 
       # Report some commits (out of order)
       {:reply, :ok, state} =
-        Server.handle_call({:report_successful_commit, Version.from_integer(102)}, self(), state)
+        Server.handle_call({:report_successful_commit, 1, Version.from_integer(102)}, self(), state)
 
       {:reply, :ok, state} =
-        Server.handle_call({:report_successful_commit, Version.from_integer(101)}, self(), state)
+        Server.handle_call({:report_successful_commit, 1, Version.from_integer(101)}, self(), state)
 
       assert %State{
                next_commit_version_int: next_commit,
@@ -154,6 +154,68 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
       # invariants maintained
       assert 102 <= last_commit
       assert last_commit < next_commit
+    end
+  end
+
+  describe "epoch validation for next_read_version" do
+    test "accepts matching epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:ok, _version}, ^state} =
+        Server.handle_call({:next_read_version, 42}, self(), state)
+    end
+
+    test "rejects mismatched epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:next_read_version, 41}, self(), state)
+    end
+  end
+
+  describe "epoch validation for next_commit_version" do
+    test "accepts matching epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:ok, _last_commit, _commit_version}, _new_state} =
+        Server.handle_call({:next_commit_version, 42}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too old)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:next_commit_version, 41}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too new)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:next_commit_version, 43}, self(), state)
+    end
+  end
+
+  describe "epoch validation for report_successful_commit" do
+    test "accepts matching epoch" do
+      state = create_state(epoch: 42)
+
+      {:reply, :ok, _new_state} =
+        Server.handle_call({:report_successful_commit, 42, Version.from_integer(100)}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too old)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:report_successful_commit, 41, Version.from_integer(100)}, self(), state)
+    end
+
+    test "rejects mismatched epoch (too new)" do
+      state = create_state(epoch: 42)
+
+      {:reply, {:error, :wrong_epoch}, ^state} =
+        Server.handle_call({:report_successful_commit, 43, Version.from_integer(100)}, self(), state)
     end
   end
 

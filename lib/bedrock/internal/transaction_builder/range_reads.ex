@@ -9,7 +9,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
 
   import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version: 2]
 
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Materializer
   alias Bedrock.Internal.TransactionBuilder.State
   alias Bedrock.Internal.TransactionBuilder.StorageRacing
   alias Bedrock.Internal.TransactionBuilder.Tx
@@ -42,7 +42,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
            | {:failure,
               %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
   def get_range(state, {min_key, max_key_ex} = range, batch_size, opts \\ []) do
-    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
+    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Materializer.get_range/5)
 
     case ensure_read_version(state, opts) do
       {:ok, state} ->
@@ -76,7 +76,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
            | {:failure,
               %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
   def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ []) do
-    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Storage.get_range/5)
+    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Materializer.get_range/5)
 
     case ensure_read_version(state, opts) do
       {:ok, state} ->

@@ -1,0 +1,9 @@
+// Service identity for Bedrock services
+namespace Bedrock.SystemKeys;
+
+table OtpRef {
+  otp_name: string;
+  node: string;
+}
+
+root_type OtpRef;

@@ -10,14 +10,15 @@ defmodule Bedrock.Service.Foreman.Server do
   alias Bedrock.Service.Foreman.State
 
   @spec required_opt_keys() :: [atom()]
-  def required_opt_keys, do: [:cluster, :path, :capabilities, :otp_name]
+  def required_opt_keys, do: [:cluster, :path, :capabilities, :otp_name, :object_storage]
 
   @spec child_spec(
           opts :: [
             cluster: Cluster.t(),
             path: Path.t(),
             capabilities: [Cluster.capability()],
-            otp_name: atom()
+            otp_name: atom(),
+            object_storage: term()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -30,7 +31,8 @@ defmodule Bedrock.Service.Foreman.Server do
           cluster: Cluster.t(),
           path: Path.t(),
           capabilities: [Cluster.capability()],
-          otp_name: atom()
+          otp_name: atom(),
+          object_storage: term()
         }) :: {:ok, State.t(), {:continue, :spin_up}} | {:stop, :missing_required_params}
   def init(args) do
     args
@@ -48,7 +50,8 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_call(:workers, _from, t), do: t |> do_fetch_workers() |> then(&reply(t, {:ok, &1}))
 
   @impl true
-  def handle_call(:storage_workers, _from, t), do: t |> do_fetch_storage_workers() |> then(&reply(t, {:ok, &1}))
+  def handle_call(:materializer_workers, _from, t),
+    do: t |> do_fetch_materializer_workers() |> then(&reply(t, {:ok, &1}))
 
   @impl true
   def handle_call(:get_all_running_services, _from, t),

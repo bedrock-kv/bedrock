@@ -3,13 +3,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
   Creates the initial transaction system layout for a new cluster.
 
   Runs only when no logs existed in the previous layout. Creates log vacancy placeholders
-  for the desired number of logs and exactly two storage teams with fixed key range
-  boundaries. Uses vacancy placeholders instead of assigning specific services immediately.
+  for the desired number of logs and the default two-shard layout. Uses vacancy placeholders
+  instead of assigning specific services immediately.
 
   Log vacancies are assigned initial version ranges [0, 1] to establish the starting point
-  for transaction processing. Storage teams divide the keyspace with a fundamental user/system
-  boundary - one team handles user data (empty string to 0xFF), the other handles system data
-  (0xFF to end-of-keyspace), with keys above the user space reserved for system metadata.
+  for transaction processing. The shard layout divides the keyspace with a fundamental
+  user/system boundary - one shard handles user data (empty string to 0xFF), the other
+  handles system data (0xFF to end-of-keyspace).
 
   Creating vacancies rather than immediate service assignment allows later phases
   to optimize placement across available nodes and handle assignment failures
@@ -22,9 +22,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
-  import Bedrock, only: [key_range: 2]
+  import Bedrock, only: [end_of_keyspace: 0, key_range: 2]
   import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
-  import Bedrock.ControlPlane.Config.StorageTeamDescriptor, only: [storage_team_descriptor: 3]
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   alias Bedrock.DataPlane.Version
@@ -35,17 +34,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
 
     log_vacancies = Enum.map(1..context.cluster_config.parameters.desired_logs, &{:vacancy, &1})
 
-    storage_team_vacancies = Enum.map(1..context.cluster_config.parameters.desired_replication_factor, &{:vacancy, &1})
+    # Default shard layout: user shard (tag 1) and system shard (tag 0)
+    shard_layout = %{
+      <<0xFF>> => {1, <<>>},
+      end_of_keyspace() => {0, <<0xFF>>}
+    }
 
     key_ranges = [
-      {0, key_range(<<0xFF>>, Bedrock.end_of_keyspace())},
+      {0, key_range(<<0xFF>>, end_of_keyspace())},
       {1, key_range(<<>>, <<0xFF>>)}
     ]
-
-    storage_teams =
-      Enum.map(key_ranges, fn {tag, key_range} ->
-        storage_team_descriptor(tag, key_range, storage_team_vacancies)
-      end)
 
     resolver_descriptors =
       key_ranges
@@ -63,7 +61,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
       |> Map.put(:old_log_ids_to_copy, [])
       |> Map.put(:version_vector, {Version.zero(), Version.zero()})
       |> Map.put(:logs, logs)
-      |> Map.put(:storage_teams, storage_teams)
+      |> Map.put(:shard_layout, shard_layout)
       |> Map.put(:resolvers, resolver_descriptors)
 
     {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}

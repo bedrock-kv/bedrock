@@ -72,7 +72,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
   defp handle_sequencer_result({:ok, sequencer}, recovery_attempt) do
     updated_recovery_attempt = %{recovery_attempt | sequencer: sequencer}
 
-    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase}
+    {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase}
   end
 
   defp handle_sequencer_result({:error, reason}, recovery_attempt) do

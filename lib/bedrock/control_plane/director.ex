@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director do
   @type running_service_info :: %{
           id: String.t(),
           otp_name: atom(),
-          kind: :log | :storage,
+          kind: :log | :materializer,
           pid: pid()
         }
 
@@ -91,7 +91,7 @@ defmodule Bedrock.ControlPlane.Director do
           director :: ref(),
           node(),
           Worker.id(),
-          :log | :storage,
+          :log | :materializer,
           timeout_in_ms()
         ) ::
           {:ok, running_service_info()}

@@ -16,9 +16,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       proxies: [self()],
       resolvers: [{<<0>>, self()}],
       logs: %{"log_1" => [1, 2]},
-      storage_teams: [],
       services: %{
         "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
+      },
+      shard_layout: %{
+        <<0xFF>> => {1, <<>>},
+        <<0xFF, 0xFF>> => {0, <<0xFF>>}
       }
     }
   end
@@ -42,7 +45,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       expected_layout = mock_transaction_system_layout()
       recovery_attempt = base_recovery_attempt()
 
-      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _ -> {:ok, 1, 0} end)
+      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _, _ -> {:ok, 1, 0} end)
 
       # Pattern match both result and next phase in single assertion
       assert {%{transaction_system_layout: ^expected_layout}, :completed} =
@@ -51,7 +54,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "fails when system transaction fails" do
       recovery_attempt = base_recovery_attempt()
-      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _ -> {:error, :timeout} end)
+      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _, _ -> {:error, :timeout} end)
 
       # Pattern match tuple destructuring with expected stall reason
       assert {_, {:stalled, {:recovery_system_failed, :timeout}}} =

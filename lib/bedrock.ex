@@ -23,7 +23,8 @@ defmodule Bedrock do
           optional(:mutations) => [mutation()] | nil,
           optional(:write_conflicts) => [key_range()] | nil,
           optional(:read_conflicts) => {version(), [key_range()]} | nil,
-          optional(:commit_version) => version() | nil
+          optional(:commit_version) => version() | nil,
+          optional(:shard_index) => [{non_neg_integer(), non_neg_integer()}] | nil
         }
 
   @type mutation ::
@@ -54,7 +55,7 @@ defmodule Bedrock do
 
   @type range_tag :: non_neg_integer()
 
-  @type service :: :coordination | :log | :storage
+  @type service :: :coordination | :log | :materializer
   @type service_id :: String.t()
   @type lock_token :: binary()
 

@@ -9,7 +9,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
   import Bedrock.Internal.TransactionBuilder.ReadVersions, only: [ensure_read_version: 2]
 
-  alias Bedrock.DataPlane.Storage
+  alias Bedrock.DataPlane.Materializer
   alias Bedrock.Internal.TransactionBuilder.State
   alias Bedrock.Internal.TransactionBuilder.StorageRacing
   alias Bedrock.Internal.TransactionBuilder.Tx
@@ -57,7 +57,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   end
 
   defp get_key_from_storage(t, key, opts) do
-    storage_get_key_fn = Keyword.get(opts, :storage_get_key_fn, &Storage.get/4)
+    storage_get_key_fn = Keyword.get(opts, :storage_get_key_fn, &Materializer.get/4)
 
     case ensure_read_version(t, opts) do
       {:ok, t} ->
@@ -98,7 +98,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
                  | :layout_lookup_failed) => [pid()]
               }}}
   def get_key_selector(t, %KeySelector{} = key_selector, opts \\ []) do
-    storage_get_key_selector_fn = Keyword.get(opts, :storage_get_key_selector_fn, &Storage.get/4)
+    storage_get_key_selector_fn = Keyword.get(opts, :storage_get_key_selector_fn, &Materializer.get/4)
 
     case ensure_read_version(t, opts) do
       {:ok, t} ->

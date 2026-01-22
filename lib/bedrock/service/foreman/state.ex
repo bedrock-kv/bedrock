@@ -11,6 +11,7 @@ defmodule Bedrock.Service.Foreman.State do
           health: :starting | :ok | :error,
           otp_name: atom(),
           path: Path.t(),
+          object_storage: term(),
           waiting_for_healthy: [pid()],
           workers: %{Worker.id() => WorkerInfo.t()}
         }
@@ -21,17 +22,25 @@ defmodule Bedrock.Service.Foreman.State do
     :health,
     :otp_name,
     :path,
+    :object_storage,
     :waiting_for_healthy,
     :workers
   ]
 
-  def new_state(%{cluster: cluster, capabilities: capabilities, path: path, otp_name: otp_name}) do
+  def new_state(%{
+        cluster: cluster,
+        capabilities: capabilities,
+        path: path,
+        otp_name: otp_name,
+        object_storage: object_storage
+      }) do
     {:ok,
      %__MODULE__{
        cluster: cluster,
        capabilities: capabilities,
        path: path,
        otp_name: otp_name,
+       object_storage: object_storage,
        #
        health: :starting,
        waiting_for_healthy: [],

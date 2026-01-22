@@ -1,0 +1,13 @@
+// Materializers serving a key range
+namespace Bedrock.SystemKeys;
+
+table OtpRef {
+  otp_name: string;
+  node: string;
+}
+
+table MaterializerList {
+  materializers: [OtpRef];
+}
+
+root_type MaterializerList;

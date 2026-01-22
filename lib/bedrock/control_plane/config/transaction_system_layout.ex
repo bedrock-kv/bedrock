@@ -7,7 +7,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.StorageTeamDescriptor
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Worker
 
@@ -23,33 +22,36 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `commit_proxies` - The full otp names of the commit proxies.
     - `resolvers` - The pids of the transaction resolvers.
     - `logs` - A list of logs that are responsible for storing the transactions on
-       their way to the storage teams. Each log contains a list of the tags
+       their way to the materializers. Each log contains a list of the tags
        that it services, and the full otp name of the log worker process that
        is responsible for the log.
-    - `storage_teams` - A list of storage teams that are responsible for storing the data within
-       the system. Each team represents a shard of the key space, and contains
-       a list of the storage worker ids that are responsible for the shard.
     - `services` - A list of all of the workers within the system, their types, ids and
        the otp names used to communicate with them.
+    - `metadata_materializer` - The pid of the metadata materializer process, or nil if not yet started.
+    - `shard_layout` - A map from end_key to {tag, start_key} describing the shard boundaries.
+    - `shard_materializers` - A map from shard tag to materializer pid.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
   @type resolver_list :: [ResolverDescriptor.t()]
   @type log_map :: %{Log.id() => LogDescriptor.t()}
-  @type storage_team_list :: [StorageTeamDescriptor.t()]
   @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
+  @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
+  @type shard_materializers :: %{Bedrock.range_tag() => pid()}
 
   @type t :: %{
-          id: id(),
-          epoch: non_neg_integer(),
-          director: process_ref() | :unavailable,
-          sequencer: process_ref(),
-          rate_keeper: process_ref(),
-          proxies: proxy_list(),
-          resolvers: resolver_list(),
-          logs: log_map(),
-          storage_teams: storage_team_list(),
-          services: service_map()
+          required(:id) => id(),
+          required(:epoch) => non_neg_integer(),
+          required(:director) => process_ref() | :unavailable,
+          required(:sequencer) => process_ref(),
+          required(:rate_keeper) => process_ref(),
+          required(:proxies) => proxy_list(),
+          required(:resolvers) => resolver_list(),
+          required(:logs) => log_map(),
+          required(:services) => service_map(),
+          optional(:metadata_materializer) => process_ref(),
+          optional(:shard_layout) => shard_layout() | nil,
+          optional(:shard_materializers) => shard_materializers()
         }
 
   @type id :: non_neg_integer()

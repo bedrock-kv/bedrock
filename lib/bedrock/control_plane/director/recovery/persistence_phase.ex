@@ -20,13 +20,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.ClusterBootstrap.Discovery
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.ClusterBootstrap
+  alias Bedrock.SystemKeys.ShardMetadata
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -42,16 +48,111 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         recovery_attempt.cluster
       )
 
-    case submit_system_transaction(system_transaction, recovery_attempt.proxies, context) do
+    case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
         trace_recovery_system_state_persisted()
 
-        {recovery_attempt, :completed}
+        case write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+          :ok ->
+            {recovery_attempt, :completed}
+
+          {:error, :version_mismatch} ->
+            {recovery_attempt, {:stalled, {:recovery_system_failed, :bootstrap_version_mismatch}}}
+
+          {:error, reason} ->
+            {recovery_attempt, {:stalled, {:recovery_system_failed, {:bootstrap_write_failed, reason}}}}
+        end
 
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
         {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
     end
+  end
+
+  defp write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+    cluster = recovery_attempt.cluster
+
+    case get_object_storage_backend(cluster) do
+      {:ok, backend} ->
+        # Bootstrap key is just "state" since object_storage root is already cluster-scoped
+        do_write_bootstrap(backend, "state", recovery_attempt, transaction_system_layout)
+
+      {:error, :no_object_storage} ->
+        # No object storage configured - skip bootstrap write
+        :ok
+    end
+  end
+
+  # Get object_storage backend from cluster's node config
+  defp get_object_storage_backend(cluster) do
+    node_config = cluster.node_config()
+
+    # Check for explicit object_storage config
+    case Keyword.fetch(node_config, :object_storage) do
+      {:ok, backend} ->
+        {:ok, backend}
+
+      :error ->
+        # Derive from path config (same logic as cluster_supervisor)
+        derive_object_storage_from_path(node_config)
+    end
+  end
+
+  defp derive_object_storage_from_path(node_config) do
+    # Try to find a path from any capability config
+    path =
+      Enum.find_value([:log, :storage, :materializer, :coordination], fn capability ->
+        node_config
+        |> Keyword.get(capability, [])
+        |> Keyword.get(:path)
+      end)
+
+    if path do
+      object_storage_root = Path.join(path, "object_storage")
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      {:ok, backend}
+    else
+      {:error, :no_object_storage}
+    end
+  end
+
+  defp do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout) do
+    case ObjectStorage.get_with_version(backend, bootstrap_key) do
+      {:ok, data, version_token} ->
+        {:ok, current_bootstrap} = ClusterBootstrap.read(data)
+        updated_bootstrap = build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout)
+        Discovery.write_bootstrap(backend, bootstrap_key, version_token, updated_bootstrap)
+
+      {:error, :not_found} ->
+        # First boot - create new bootstrap
+        bootstrap = build_initial_bootstrap(recovery_attempt, transaction_system_layout)
+        data = ClusterBootstrap.to_binary(bootstrap)
+        ObjectStorage.put_if_not_exists(backend, bootstrap_key, data)
+    end
+  end
+
+  defp build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout) do
+    %{
+      current_bootstrap
+      | epoch: recovery_attempt.epoch,
+        logs: build_log_entries(transaction_system_layout)
+    }
+  end
+
+  defp build_initial_bootstrap(recovery_attempt, transaction_system_layout) do
+    %{
+      cluster_id: Id.random(),
+      epoch: recovery_attempt.epoch,
+      logs: build_log_entries(transaction_system_layout),
+      coordinators: [%{node: Atom.to_string(node())}]
+    }
+  end
+
+  defp build_log_entries(transaction_system_layout) do
+    Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} ->
+      # For now, log entries don't include OTP refs - that requires service lookup
+      %{id: log_id, otp_ref: nil}
+    end)
   end
 
   @spec build_system_transaction(
@@ -63,18 +164,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
     encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
 
-    encoded_layout =
-      Persistence.encode_transaction_system_layout_for_storage(transaction_system_layout, cluster)
-
     tx = Tx.new()
-    tx = build_monolithic_keys(tx, epoch, encoded_config, encoded_layout)
+    tx = build_monolithic_keys(tx, epoch, encoded_config)
     tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
 
     Tx.commit(tx, nil)
   end
 
-  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map(), map()) :: Tx.t()
-  defp build_monolithic_keys(tx, epoch, encoded_config, encoded_layout) do
+  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map()) :: Tx.t()
+  defp build_monolithic_keys(tx, epoch, encoded_config) do
     tx
     |> Tx.set(SystemKeys.config_monolithic(), :erlang.term_to_binary({epoch, encoded_config}))
     |> Tx.set(SystemKeys.epoch_legacy(), :erlang.term_to_binary(epoch))
@@ -82,7 +180,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       SystemKeys.last_recovery_legacy(),
       :erlang.term_to_binary(System.system_time(:millisecond))
     )
-    |> Tx.set(SystemKeys.layout_monolithic(), :erlang.term_to_binary(encoded_layout))
   end
 
   @spec build_decomposed_keys(
@@ -93,16 +190,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
           module()
         ) ::
           Tx.t()
-  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster) do
-    encoded_sequencer = encode_component_for_storage(transaction_system_layout.sequencer, cluster)
-    encoded_proxies = encode_components_for_storage(transaction_system_layout.proxies, cluster)
+  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, _cluster) do
+    encoded_services = encode_services_for_storage(transaction_system_layout.services)
 
-    encoded_resolvers =
-      encode_components_for_storage(transaction_system_layout.resolvers, cluster)
-
-    encoded_services = encode_services_for_storage(transaction_system_layout.services, cluster)
-
-    # Set cluster keys directly
     tx =
       tx
       |> Tx.set(
@@ -151,47 +241,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         :erlang.term_to_binary(cluster_config.parameters.transaction_window_in_ms)
       )
 
-    # Set layout keys directly
+    # Only durable layout config (services and id)
     tx =
       tx
-      |> Tx.set(SystemKeys.layout_sequencer(), :erlang.term_to_binary(encoded_sequencer))
-      |> Tx.set(SystemKeys.layout_proxies(), :erlang.term_to_binary(encoded_proxies))
-      |> Tx.set(SystemKeys.layout_resolvers(), :erlang.term_to_binary(encoded_resolvers))
       |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
-      |> Tx.set(
-        SystemKeys.layout_director(),
-        :erlang.term_to_binary(encode_component_for_storage(self(), cluster))
-      )
-      |> Tx.set(SystemKeys.layout_rate_keeper(), :erlang.term_to_binary(nil))
       |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
 
-    # Set log keys directly
     tx =
       Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         encoded_descriptor =
           log_descriptor
-          |> encode_log_descriptor_for_storage(cluster)
+          |> encode_log_descriptor_for_storage()
           |> :erlang.term_to_binary()
 
         Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
       end)
 
-    # Set storage keys directly
-    tx =
-      transaction_system_layout.storage_teams
-      |> Enum.with_index()
-      |> Enum.reduce(tx, fn {storage_team, index}, tx ->
-        team_id = "team_#{index}"
+    # Shard keys use ceiling-search pattern
+    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
 
-        encoded_team =
-          storage_team
-          |> encode_storage_team_for_storage(cluster)
-          |> :erlang.term_to_binary()
-
-        Tx.set(tx, SystemKeys.layout_storage_team(team_id), encoded_team)
-      end)
-
-    # Set recovery keys directly and return tx
     tx
     |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
     |> Tx.set(
@@ -200,44 +268,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     )
   end
 
-  @spec encode_component_for_storage(nil | pid() | {Bedrock.key(), pid()}, module()) ::
-          nil | pid() | {Bedrock.key(), pid()}
-  defp encode_component_for_storage(nil, _cluster), do: nil
-  defp encode_component_for_storage(pid, _cluster) when is_pid(pid), do: pid
+  defp encode_services_for_storage(services) when is_map(services), do: services
 
-  defp encode_component_for_storage({start_key, pid}, _cluster) when is_pid(pid), do: {start_key, pid}
-
-  defp encode_components_for_storage(components, cluster) when is_list(components),
-    do: Enum.map(components, &encode_component_for_storage(&1, cluster))
-
-  defp encode_services_for_storage(services, _cluster) when is_map(services), do: services
-
-  @spec encode_log_descriptor_for_storage([term()], module()) :: [term()]
-  defp encode_log_descriptor_for_storage(log_descriptor, _cluster) do
+  @spec encode_log_descriptor_for_storage([term()]) :: [term()]
+  defp encode_log_descriptor_for_storage(log_descriptor) do
     # Log descriptors typically don't contain PIDs directly
     log_descriptor
   end
 
-  @spec encode_storage_team_for_storage(map(), module()) :: map()
-  defp encode_storage_team_for_storage(storage_team, _cluster) do
-    # Storage team descriptors typically don't contain PIDs directly
-    storage_team
+  # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
+  # shard_layout format: %{end_key => {tag, start_key}}
+  @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
+  defp build_shard_keys(tx, nil), do: tx
+  defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
+
+  defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
+    Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
+      # Write shard_key(end_key) -> tag (for ceiling search)
+      tx = Tx.set(tx, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag))
+
+      # Write shard(tag) -> ShardMetadata (FlatBuffer encoded)
+      # born_at is 0 for now - will be set properly once we track shard versions
+      metadata = ShardMetadata.new(start_key, end_key, 0)
+      Tx.set(tx, SystemKeys.shard(tag), metadata)
+    end)
   end
 
-  @spec submit_system_transaction(
-          Transaction.encoded(),
-          [pid()],
-          map()
-        ) ::
+  @spec submit_system_transaction(Transaction.encoded(), [pid()], Bedrock.epoch(), map()) ::
           {:ok, Bedrock.version(), sequence :: non_neg_integer()}
           | {:error, :no_commit_proxies | :timeout | :unavailable}
-  defp submit_system_transaction(_system_transaction, [], _context), do: {:error, :no_commit_proxies}
+  defp submit_system_transaction(_system_transaction, [], _epoch, _context), do: {:error, :no_commit_proxies}
 
-  defp submit_system_transaction(encoded_transaction, proxies, context) when is_list(proxies) do
-    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/2)
+  defp submit_system_transaction(encoded_transaction, proxies, epoch, context) when is_list(proxies) do
+    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/3)
 
     proxies
     |> Enum.random()
-    |> commit_fn.(encoded_transaction)
+    |> commit_fn.(epoch, encoded_transaction)
   end
 end

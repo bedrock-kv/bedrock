@@ -21,8 +21,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   """
   @spec validate_type_safety(TransactionSystemLayout.t()) :: :ok | {:error, term()}
   def validate_type_safety(%{} = tsl) do
-    with :ok <- validate_logs(Map.get(tsl, :logs)),
-         :ok <- validate_storage_teams(Map.get(tsl, :storage_teams)) do
+    with :ok <- validate_logs(Map.get(tsl, :logs)) do
       validate_resolvers(Map.get(tsl, :resolvers))
     end
   end
@@ -100,67 +99,6 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
 
   defp validate_log_ranges(ranges) do
     {:error, {:invalid_log_ranges, "expected [start_int, end_int], got: #{inspect(ranges)}"}}
-  end
-
-  # Validate storage_teams: [StorageTeamDescriptor.t()]
-  defp validate_storage_teams(nil), do: :ok
-  defp validate_storage_teams([]), do: :ok
-
-  defp validate_storage_teams(storage_teams) when is_list(storage_teams) do
-    Enum.reduce_while(storage_teams, :ok, fn storage_team, :ok ->
-      case validate_storage_team(storage_team) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:invalid_storage_teams, reason}}}
-      end
-    end)
-  end
-
-  defp validate_storage_teams(storage_teams) do
-    {:error, {:invalid_storage_teams_structure, "storage_teams must be a list, got: #{inspect(storage_teams)}"}}
-  end
-
-  defp validate_storage_team(%{tag: tag, key_range: key_range, storage_ids: storage_ids})
-       when is_integer(tag) and tag >= 0 do
-    with :ok <- validate_key_range(key_range) do
-      validate_storage_ids(storage_ids)
-    end
-  end
-
-  defp validate_storage_team(storage_team) do
-    {:error, {:invalid_storage_team_structure, "invalid storage team format: #{inspect(storage_team)}"}}
-  end
-
-  defp validate_key_range({start_key, end_key}) when is_binary(start_key) do
-    case end_key do
-      :end -> :ok
-      <<0xFF, 0xFF>> -> :ok
-      end_key when is_binary(end_key) -> :ok
-      _ -> {:error, {:invalid_key_range, "invalid end key: #{inspect(end_key)}"}}
-    end
-  end
-
-  defp validate_key_range(key_range) do
-    {:error, {:invalid_key_range, "invalid key range format: #{inspect(key_range)}"}}
-  end
-
-  defp validate_storage_ids(storage_ids) when is_list(storage_ids) do
-    Enum.reduce_while(storage_ids, :ok, fn storage_id, :ok ->
-      case validate_storage_id(storage_id) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-  end
-
-  defp validate_storage_ids(storage_ids) do
-    {:error, {:invalid_storage_ids, "storage_ids must be a list, got: #{inspect(storage_ids)}"}}
-  end
-
-  defp validate_storage_id(storage_id) when is_binary(storage_id), do: :ok
-  defp validate_storage_id({:vacancy, tag}) when is_integer(tag) and tag > 0, do: :ok
-
-  defp validate_storage_id(storage_id) do
-    {:error, {:invalid_storage_id, "expected string or {:vacancy, pos_integer}, got: #{inspect(storage_id)}"}}
   end
 
   # Validate resolvers: [ResolverDescriptor.t()]

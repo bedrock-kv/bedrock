@@ -23,20 +23,31 @@ defmodule Bedrock.DataPlane.CommitProxy do
 
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.DataPlane.CommitProxy.ResolverLayout
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
 
   @type ref :: pid() | atom() | {atom(), node()}
 
+  @doc """
+  Unlocks a commit proxy and provides the transaction system layout.
+
+  Called by the Director during recovery to transition the commit proxy from
+  `:locked` to `:running` mode with full routing information including shard
+  layout and log mappings needed to route transactions.
+  """
   @spec recover_from(
           commit_proxy_ref :: ref(),
           lock_token :: binary(),
-          transaction_system_layout :: TransactionSystemLayout.t()
+          sequencer :: pid(),
+          resolver_layout :: ResolverLayout.t(),
+          routing_data :: RoutingData.t()
         ) :: :ok | {:error, :timeout} | {:error, :unavailable}
-  def recover_from(commit_proxy, lock_token, transaction_system_layout),
-    do: call(commit_proxy, {:recover_from, lock_token, transaction_system_layout}, :infinity)
+  def recover_from(commit_proxy, lock_token, sequencer, resolver_layout, routing_data),
+    do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_data}, :infinity)
 
-  @spec commit(commit_proxy_ref :: ref(), transaction :: Transaction.encoded()) ::
-          {:ok, version :: Bedrock.version(), index :: non_neg_integer()} | {:error, :timeout | :unavailable}
-  def commit(commit_proxy, transaction), do: call(commit_proxy, {:commit, transaction}, :infinity)
+  @spec commit(commit_proxy_ref :: ref(), epoch :: Bedrock.epoch(), transaction :: Transaction.encoded()) ::
+          {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
+          | {:error, :wrong_epoch | :timeout | :unavailable}
+  def commit(commit_proxy, epoch, transaction), do: call(commit_proxy, {:commit, epoch, transaction}, :infinity)
 end

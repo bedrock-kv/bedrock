@@ -12,7 +12,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       # Valid TSL with correct types
       valid_tsl = %{
         logs: %{},
-        storage_teams: [],
         resolvers: []
       }
 
@@ -33,7 +32,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
           # Binary versions instead of integers
           "log_1" => [<<1, 2, 3>>, <<4, 5, 6>>]
         },
-        storage_teams: [],
         resolvers: []
       }
 

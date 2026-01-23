@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     config_summary =
       if old_transaction_system_layout do
         %{
-          epoch: old_transaction_system_layout.epoch,
+          epoch: old_transaction_system_layout[:epoch],
           has_transaction_system_layout: not is_nil(old_transaction_system_layout),
           logs_count: map_size(old_transaction_system_layout[:logs] || %{})
         }
@@ -93,15 +93,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
         director: director,
         reason: reason
       }
-    )
-  end
-
-  @spec trace_leader_waiting_for_consensus() :: :ok
-  def trace_leader_waiting_for_consensus do
-    Telemetry.execute(
-      [:bedrock, :control_plane, :coordinator, :leader_waiting_consensus],
-      %{},
-      %{}
     )
   end
 

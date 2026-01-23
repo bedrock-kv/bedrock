@@ -52,7 +52,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       {:ok, _version, _sequence} ->
         trace_recovery_system_state_persisted()
 
-        case write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+        case write_state_to_object_storage(recovery_attempt, context.cluster_config, transaction_system_layout) do
           :ok ->
             {recovery_attempt, :completed}
 
@@ -69,13 +69,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do
+  defp write_state_to_object_storage(recovery_attempt, config, transaction_system_layout) do
     cluster = recovery_attempt.cluster
 
     case get_object_storage_backend(cluster) do
       {:ok, backend} ->
-        # Bootstrap key is just "state" since object_storage root is already cluster-scoped
-        do_write_bootstrap(backend, "state", recovery_attempt, transaction_system_layout)
+        # ClusterBootstrap is the sole source of truth for coordinator cold boot
+        do_write_bootstrap(backend, "bootstrap", recovery_attempt, config, transaction_system_layout)
 
       {:error, :no_object_storage} ->
         # No object storage configured - skip bootstrap write
@@ -116,42 +116,73 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout) do
+  defp do_write_bootstrap(backend, bootstrap_key, recovery_attempt, config, transaction_system_layout) do
     case ObjectStorage.get_with_version(backend, bootstrap_key) do
       {:ok, data, version_token} ->
         {:ok, current_bootstrap} = ClusterBootstrap.read(data)
-        updated_bootstrap = build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout)
+
+        updated_bootstrap =
+          build_updated_bootstrap(current_bootstrap, recovery_attempt, config, transaction_system_layout)
+
         Discovery.write_bootstrap(backend, bootstrap_key, version_token, updated_bootstrap)
 
       {:error, :not_found} ->
         # First boot - create new bootstrap
-        bootstrap = build_initial_bootstrap(recovery_attempt, transaction_system_layout)
+        bootstrap = build_initial_bootstrap(recovery_attempt, config, transaction_system_layout)
         data = ClusterBootstrap.to_binary(bootstrap)
         ObjectStorage.put_if_not_exists(backend, bootstrap_key, data)
     end
   end
 
-  defp build_updated_bootstrap(current_bootstrap, recovery_attempt, transaction_system_layout) do
+  defp build_updated_bootstrap(current_bootstrap, recovery_attempt, config, transaction_system_layout) do
     %{
       current_bootstrap
       | epoch: recovery_attempt.epoch,
-        logs: build_log_entries(transaction_system_layout)
+        logs: build_log_entries(transaction_system_layout),
+        parameters: build_parameters(config),
+        policies: build_policies(config)
     }
   end
 
-  defp build_initial_bootstrap(recovery_attempt, transaction_system_layout) do
+  defp build_initial_bootstrap(recovery_attempt, config, transaction_system_layout) do
     %{
       cluster_id: Id.random(),
       epoch: recovery_attempt.epoch,
       logs: build_log_entries(transaction_system_layout),
-      coordinators: [%{node: Atom.to_string(node())}]
+      coordinators: [%{node: Atom.to_string(node())}],
+      parameters: build_parameters(config),
+      policies: build_policies(config)
+    }
+  end
+
+  defp build_parameters(config) do
+    params = config.parameters
+
+    %{
+      desired_logs: params.desired_logs,
+      desired_replication_factor: params.desired_replication_factor,
+      desired_commit_proxies: params.desired_commit_proxies,
+      desired_coordinators: params.desired_coordinators,
+      desired_read_version_proxies: params.desired_read_version_proxies,
+      ping_rate_in_hz: params.ping_rate_in_hz,
+      retransmission_rate_in_hz: params.retransmission_rate_in_hz,
+      transaction_window_in_ms: params.transaction_window_in_ms,
+      empty_transaction_timeout_ms: Map.get(params, :empty_transaction_timeout_ms, 1_000)
+    }
+  end
+
+  defp build_policies(config) do
+    policies = config.policies
+
+    %{
+      allow_volunteer_nodes_to_join: policies.allow_volunteer_nodes_to_join || false
     }
   end
 
   defp build_log_entries(transaction_system_layout) do
-    Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} ->
-      # For now, log entries don't include OTP refs - that requires service lookup
-      %{id: log_id, otp_ref: nil}
+    Enum.map(transaction_system_layout.logs, fn {log_id, shard_tags} ->
+      # shard_tags is the LogDescriptor - a list of range_tags (shard tags) this log serves
+      %{id: log_id, otp_ref: nil, shard_tags: shard_tags}
     end)
   end
 

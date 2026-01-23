@@ -123,12 +123,6 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     end
   end
 
-  describe "cluster_state_path/0" do
-    test "builds correct path" do
-      assert Keys.cluster_state_path() == "state"
-    end
-  end
-
   describe "chunk_path/2" do
     test "builds correct path with inverted version" do
       path = Keys.chunk_path("a", 1000)

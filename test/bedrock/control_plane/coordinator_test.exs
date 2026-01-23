@@ -1,8 +1,6 @@
 defmodule Bedrock.ControlPlane.CoordinatorTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.Common.GenServerTestHelpers
-
   alias Bedrock.ControlPlane.Coordinator
 
   describe "API functions" do
@@ -16,9 +14,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
                 from,
                 {:ok, %{coordinators: [:node1], parameters: nil, policies: nil}}
               )
-
-            {:"$gen_call", from, {:update_config, _config}} ->
-              GenServer.reply(from, {:ok, :txn_123})
 
             {:"$gen_call", from, :fetch_transaction_system_layout} ->
               layout = %{
@@ -34,9 +29,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
               }
 
               GenServer.reply(from, {:ok, layout})
-
-            {:"$gen_call", from, {:update_transaction_system_layout, _layout}} ->
-              GenServer.reply(from, {:ok, :txn_456})
 
             {:"$gen_call", from, {:register_services, _services}} ->
               GenServer.reply(from, {:ok, :txn_789})
@@ -67,24 +59,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       assert is_map(config)
     end
 
-    test "update_config/2 sends properly formatted call message" do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      test_pid = self()
-
-      # Spawn a process that will make the call and we'll capture the message
-      spawn(fn ->
-        Coordinator.update_config(test_pid, config)
-      end)
-
-      # Use our helper macro to assert on the exact call message format
-      assert_call_received({:update_config, %{coordinators: [:node1], parameters: nil, policies: nil}})
-    end
-
-    test "update_config/3 with custom timeout", %{coordinator: coordinator} do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      assert {:ok, :txn_123} = Coordinator.update_config(coordinator, config, 2000)
-    end
-
     test "fetch_transaction_system_layout/1 with default timeout", %{coordinator: coordinator} do
       assert {:ok, %{id: "layout_1", epoch: 1}} =
                Coordinator.fetch_transaction_system_layout(coordinator)
@@ -93,16 +67,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     test "fetch_transaction_system_layout/2 with custom timeout", %{coordinator: coordinator} do
       assert {:ok, layout} = Coordinator.fetch_transaction_system_layout(coordinator, 1500)
       assert is_map(layout)
-    end
-
-    test "update_transaction_system_layout/2 with default timeout", %{coordinator: coordinator} do
-      layout = create_test_layout()
-      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout)
-    end
-
-    test "update_transaction_system_layout/3 with custom timeout", %{coordinator: coordinator} do
-      layout = create_test_layout()
-      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout, 3000)
     end
 
     test "register_services/2 with default timeout", %{coordinator: coordinator} do
@@ -188,9 +152,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
             {:"$gen_call", from, :fetch_config} ->
               GenServer.reply(from, {:error, :unavailable})
 
-            {:"$gen_call", from, {:update_config, _}} ->
-              GenServer.reply(from, {:error, :not_leader})
-
             {:"$gen_call", from, {:register_services, _}} ->
               GenServer.reply(from, {:error, :failed})
           after
@@ -203,11 +164,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "handles unavailable error", %{coordinator: coordinator} do
       assert {:error, :unavailable} = Coordinator.fetch_config(coordinator)
-    end
-
-    test "handles not_leader error", %{coordinator: coordinator} do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      assert {:error, :not_leader} = Coordinator.update_config(coordinator, config)
     end
 
     test "handles failed error", %{coordinator: coordinator} do
@@ -262,20 +218,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
   end
 
   # Helper functions
-
-  defp create_test_layout do
-    %{
-      id: "test_layout",
-      epoch: 2,
-      director: nil,
-      sequencer: nil,
-      rate_keeper: nil,
-      proxies: [],
-      resolvers: [],
-      logs: %{},
-      services: %{}
-    }
-  end
 
   defp create_test_services do
     [

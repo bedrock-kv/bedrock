@@ -75,7 +75,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   defp fresh_cluster?(%{old_transaction_system_layout: nil}), do: true
   defp fresh_cluster?(%{old_transaction_system_layout: %{logs: logs}}) when map_size(logs) == 0, do: true
-
   defp fresh_cluster?(_context), do: false
 
   defp handle_fresh_cluster(recovery_attempt, context) do

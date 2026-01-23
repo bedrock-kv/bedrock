@@ -192,19 +192,6 @@ defmodule Bedrock.ObjectStorage.Keys do
   # Path builders
 
   @doc """
-  Builds the cluster state path.
-
-  ## Examples
-
-      iex> Keys.cluster_state_path()
-      "state"
-  """
-  @spec cluster_state_path() :: String.t()
-  def cluster_state_path do
-    "state"
-  end
-
-  @doc """
   Builds a chunk path for a shard.
 
   ## Examples

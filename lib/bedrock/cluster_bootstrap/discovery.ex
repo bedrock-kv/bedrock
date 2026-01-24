@@ -21,12 +21,9 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
   alias Bedrock.ObjectStorage
   alias Bedrock.SystemKeys.ClusterBootstrap
 
-  @type bootstrap :: %{
-          cluster_id: String.t(),
-          epoch: pos_integer(),
-          logs: list(),
-          coordinators: [%{node: String.t()}]
-        }
+  # Bootstrap structure matching the FlatBuffer schema.
+  # parameters and policies are optional for backward compatibility.
+  @type bootstrap :: map()
 
   @type version_token :: String.t() | nil
 

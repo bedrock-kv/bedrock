@@ -79,7 +79,11 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
     {:error, {:invalid_log_id, "expected string or {:vacancy, pos_integer}, got: #{inspect(log_id)}"}}
   end
 
-  # Log ranges should be [start_int, end_int] where both are integers
+  # Log ranges can be:
+  # - Empty list [] for consistent hashing (shard→log mapping computed at runtime)
+  # - [start_int, end_int] for legacy shard tag ranges (integers, NOT Version.t() binaries)
+  defp validate_log_ranges([]), do: :ok
+
   defp validate_log_ranges([start_range, end_range])
        when is_integer(start_range) and is_integer(end_range) and start_range <= end_range do
     # Critical check: ensure these are integers, NOT Version.t() binaries
@@ -98,7 +102,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   end
 
   defp validate_log_ranges(ranges) do
-    {:error, {:invalid_log_ranges, "expected [start_int, end_int], got: #{inspect(ranges)}"}}
+    {:error, {:invalid_log_ranges, "expected [] or [start_int, end_int], got: #{inspect(ranges)}"}}
   end
 
   # Validate resolvers: [ResolverDescriptor.t()]

@@ -37,20 +37,32 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert {:error, :lock_required} =
                Recovery.recover_from(
                  unlocked_state,
-                 :source,
+                 [:source],
                  version(1),
                  version(2)
                )
     end
 
-    test "successfully recovers with no transactions", %{state: state} do
+    test "successfully recovers with no transactions (empty source list)", %{state: state} do
+      expected_version = version(1)
+
+      assert {:ok, %{mode: :running, oldest_version: ^expected_version, last_version: ^expected_version}} =
+               Recovery.recover_from(
+                 state,
+                 [],
+                 expected_version,
+                 expected_version
+               )
+    end
+
+    test "successfully recovers with no transactions (source log returns empty)", %{state: state} do
       source_log = setup_mock_log([])
       expected_version = version(1)
 
       assert {:ok, %{mode: :running, oldest_version: ^expected_version, last_version: ^expected_version}} =
                Recovery.recover_from(
                  state,
-                 source_log,
+                 [source_log],
                  expected_version,
                  expected_version
                )
@@ -64,7 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert {:ok, %{mode: :running, oldest_version: ^v, last_version: ^v, active_segment: segment, writer: writer}} =
                Recovery.recover_from(
                  state,
-                 nil,
+                 [],
                  v,
                  v
                )
@@ -87,7 +99,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert {:ok, %{mode: :running, oldest_version: ^first_version, last_version: ^last_version}} =
                Recovery.recover_from(
                  state,
-                 source_log,
+                 [source_log],
                  first_version,
                  last_version
                )
@@ -99,7 +111,35 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert {:error, {:source_log_unavailable, ^source_log}} =
                Recovery.recover_from(
                  state,
-                 source_log,
+                 [source_log],
+                 version(1),
+                 version(2)
+               )
+    end
+
+    test "tries multiple sources when first is unavailable", %{state: state} do
+      unavailable_source = setup_failing_mock_log(:unavailable)
+      available_source = setup_mock_log([])
+      first_version = version(1)
+
+      # First source fails, second succeeds
+      assert {:ok, %{mode: :running}} =
+               Recovery.recover_from(
+                 state,
+                 [unavailable_source, available_source],
+                 first_version,
+                 first_version
+               )
+    end
+
+    test "returns error when all sources unavailable", %{state: state} do
+      source1 = setup_failing_mock_log(:unavailable)
+      source2 = setup_failing_mock_log(:unavailable)
+
+      assert {:error, {:source_log_unavailable, _}} =
+               Recovery.recover_from(
+                 state,
+                 [source1, source2],
                  version(1),
                  version(2)
                )

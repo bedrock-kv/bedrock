@@ -180,9 +180,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   defp build_log_entries(transaction_system_layout) do
-    Enum.map(transaction_system_layout.logs, fn {log_id, shard_tags} ->
-      # shard_tags is the LogDescriptor - a list of range_tags (shard tags) this log serves
-      %{id: log_id, otp_ref: nil, shard_tags: shard_tags}
+    Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} ->
+      # With consistent hashing, shard→log mapping is computed at runtime via ShardRouter.
+      # The shard_tags field is kept for backward compatibility but is always empty.
+      %{id: log_id, otp_ref: nil, shard_tags: []}
     end)
   end
 

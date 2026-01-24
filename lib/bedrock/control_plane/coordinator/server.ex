@@ -56,6 +56,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   require Logger
 
+  # The FlatBuffer-generated ClusterBootstrap.read/1 can return errors per the library spec,
+  # but Dialyzer doesn't see this because the generated wrapper lacks a @spec.
+  # Suppress the false positive since defensive error handling is appropriate here.
+  @dialyzer {:no_match, parse_bootstrap_data: 2}
+
   @spec child_spec(opts :: [cluster: module()]) :: Supervisor.child_spec()
   def child_spec(opts) do
     cluster = opts[:cluster] || raise "Missing :cluster option"
@@ -431,40 +436,46 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @spec load_state_from_object_storage(module()) ::
           {Bedrock.epoch() | nil, map() | nil, map() | nil}
   defp load_state_from_object_storage(cluster) do
-    case get_object_storage_backend(cluster) do
-      {:ok, backend} ->
-        case ObjectStorage.get(backend, "bootstrap") do
-          {:ok, data} ->
-            case ClusterBootstrap.read(data) do
-              {:ok, bootstrap} ->
-                epoch = bootstrap.epoch
-                config = build_config_from_bootstrap(bootstrap, cluster)
-                old_tsl = build_old_tsl_from_bootstrap(bootstrap)
+    with {:ok, backend} <- get_object_storage_backend(cluster),
+         {:ok, data} <- fetch_bootstrap_data(backend, cluster),
+         {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
+      epoch = bootstrap.epoch
+      config = build_config_from_bootstrap(bootstrap, cluster)
+      old_tsl = build_old_tsl_from_bootstrap(bootstrap)
 
-                Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
-                {epoch, config, old_tsl}
+      Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
+      {epoch, config, old_tsl}
+    else
+      {:error, :no_object_storage} -> {nil, nil, nil}
+      {:error, :not_found} -> {nil, nil, nil}
+      {:error, _reason} -> {nil, nil, nil}
+    end
+  end
 
-              {:error, reason} ->
-                Logger.warning("Bedrock [#{cluster}]: Failed to parse cluster bootstrap: #{inspect(reason)}")
+  defp fetch_bootstrap_data(backend, cluster) do
+    case ObjectStorage.get(backend, "bootstrap") do
+      {:ok, data} ->
+        {:ok, data}
 
-                {nil, nil, nil}
-            end
+      {:error, :not_found} ->
+        Logger.info("Bedrock [#{cluster}]: No cluster bootstrap in object storage, starting fresh")
+        {:error, :not_found}
 
-          {:error, :not_found} ->
-            Logger.info("Bedrock [#{cluster}]: No cluster bootstrap in object storage, starting fresh")
-            {nil, nil, nil}
+      {:error, reason} ->
+        Logger.warning("Bedrock [#{cluster}]: Failed to load cluster bootstrap from object storage: #{inspect(reason)}")
 
-          {:error, reason} ->
-            Logger.warning(
-              "Bedrock [#{cluster}]: Failed to load cluster bootstrap from object storage: #{inspect(reason)}"
-            )
+        {:error, reason}
+    end
+  end
 
-            {nil, nil, nil}
-        end
+  defp parse_bootstrap_data(data, cluster) do
+    case ClusterBootstrap.read(data) do
+      {:ok, bootstrap} ->
+        {:ok, bootstrap}
 
-      {:error, :no_object_storage} ->
-        # No object storage configured - start with empty state
-        {nil, nil, nil}
+      {:error, reason} ->
+        Logger.warning("Bedrock [#{cluster}]: Failed to parse cluster bootstrap: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
@@ -472,48 +483,47 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   defp build_config_from_bootstrap(bootstrap, cluster) do
     {:ok, coordinator_nodes} = cluster.fetch_coordinator_nodes()
 
-    parameters =
-      case bootstrap[:parameters] do
-        nil ->
-          # Default parameters if not present in bootstrap
-          %{
-            nodes: coordinator_nodes,
-            desired_coordinators: length(coordinator_nodes),
-            desired_logs: 1,
-            desired_replication_factor: 1,
-            desired_commit_proxies: 1,
-            desired_read_version_proxies: 1,
-            ping_rate_in_hz: 10,
-            retransmission_rate_in_hz: 20,
-            transaction_window_in_ms: 5_000
-          }
-
-        params ->
-          %{
-            nodes: coordinator_nodes,
-            desired_coordinators: params[:desired_coordinators] || length(coordinator_nodes),
-            desired_logs: params[:desired_logs] || 1,
-            desired_replication_factor: params[:desired_replication_factor] || 1,
-            desired_commit_proxies: params[:desired_commit_proxies] || 1,
-            desired_read_version_proxies: params[:desired_read_version_proxies] || 1,
-            ping_rate_in_hz: params[:ping_rate_in_hz] || 10,
-            retransmission_rate_in_hz: params[:retransmission_rate_in_hz] || 20,
-            transaction_window_in_ms: params[:transaction_window_in_ms] || 5_000
-          }
-      end
-
-    policies =
-      case bootstrap[:policies] do
-        nil -> %{allow_volunteer_nodes_to_join: true}
-        p -> %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
-      end
-
     %{
       coordinators: coordinator_nodes,
-      parameters: parameters,
-      policies: policies
+      parameters: build_parameters(bootstrap[:parameters], coordinator_nodes),
+      policies: build_policies(bootstrap[:policies])
     }
   end
+
+  defp build_parameters(nil, coordinator_nodes), do: default_parameters(coordinator_nodes)
+
+  defp build_parameters(params, coordinator_nodes) do
+    defaults = default_parameters(coordinator_nodes)
+
+    %{
+      nodes: coordinator_nodes,
+      desired_coordinators: params[:desired_coordinators] || defaults.desired_coordinators,
+      desired_logs: params[:desired_logs] || defaults.desired_logs,
+      desired_replication_factor: params[:desired_replication_factor] || defaults.desired_replication_factor,
+      desired_commit_proxies: params[:desired_commit_proxies] || defaults.desired_commit_proxies,
+      desired_read_version_proxies: params[:desired_read_version_proxies] || defaults.desired_read_version_proxies,
+      ping_rate_in_hz: params[:ping_rate_in_hz] || defaults.ping_rate_in_hz,
+      retransmission_rate_in_hz: params[:retransmission_rate_in_hz] || defaults.retransmission_rate_in_hz,
+      transaction_window_in_ms: params[:transaction_window_in_ms] || defaults.transaction_window_in_ms
+    }
+  end
+
+  defp default_parameters(coordinator_nodes) do
+    %{
+      nodes: coordinator_nodes,
+      desired_coordinators: length(coordinator_nodes),
+      desired_logs: 1,
+      desired_replication_factor: 1,
+      desired_commit_proxies: 1,
+      desired_read_version_proxies: 1,
+      ping_rate_in_hz: 10,
+      retransmission_rate_in_hz: 20,
+      transaction_window_in_ms: 5_000
+    }
+  end
+
+  defp build_policies(nil), do: %{allow_volunteer_nodes_to_join: true}
+  defp build_policies(p), do: %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
 
   # Build old_transaction_system_layout from ClusterBootstrap logs
   # Recovery only uses the logs field to determine which logs to copy from

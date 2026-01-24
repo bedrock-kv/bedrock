@@ -185,7 +185,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @spec handle_call(
           {:info, [atom()]}
           | {:lock_for_recovery, Bedrock.epoch()}
-          | {:recover_from, pid(), Bedrock.version(), Bedrock.version()}
+          | {:recover_from, [pid()], Bedrock.version(), Bedrock.version()}
           | {:push, binary(), Bedrock.version()}
           | {:pull, Bedrock.version(), keyword()}
           | :ping,
@@ -208,10 +208,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:recover_from, source_log, first_version, last_version}, {_director, _}, t) do
-    trace_recover_from(source_log, first_version, last_version)
+  def handle_call({:recover_from, source_logs, first_version, last_version}, {_director, _}, t) do
+    trace_recover_from(source_logs, first_version, last_version)
 
-    case recover_from(t, source_log, first_version, last_version) do
+    case recover_from(t, source_logs, first_version, last_version) do
       {:ok, t} -> reply(t, {:ok, self()})
       {:error, reason} -> reply(t, {:error, {:failed_to_recover, reason}})
     end

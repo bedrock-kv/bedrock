@@ -52,8 +52,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.InitializationPhase do
         resolver_descriptor(start_key, {:vacancy, index})
       end)
 
-    log_tags = Enum.map(key_ranges, &elem(&1, 0))
-    logs = Map.new(log_vacancies, &{&1, log_tags})
+    # With consistent hashing, shard→log mapping is computed at runtime via ShardRouter,
+    # not stored. Logs use empty list [] for their descriptor.
+    logs = Map.new(log_vacancies, &{&1, []})
 
     updated_recovery_attempt =
       recovery_attempt

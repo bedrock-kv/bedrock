@@ -247,22 +247,22 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles recover_from request", %{server: pid} do
-      source_log = self()
+      source_logs = [self()]
       first_version = Version.from_integer(1)
       last_version = Version.from_integer(10)
 
       catch_exit do
-        GenServer.call(pid, {:recover_from, source_log, first_version, last_version}, 500)
+        GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500)
       end
     end
 
     test "handles recover_from with invalid version range", %{server: pid} do
-      source_log = self()
+      source_logs = [self()]
       first_version = Version.from_integer(10)
       last_version = Version.from_integer(1)
 
       catch_exit do
-        GenServer.call(pid, {:recover_from, source_log, first_version, last_version}, 500)
+        GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500)
       end
     end
   end

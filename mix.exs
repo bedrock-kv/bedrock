@@ -95,7 +95,10 @@ defmodule Bedrock.MixProject do
   defp docs do
     [
       main: "Bedrock",
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "guides/durability-profile.md"
+      ]
     ]
   end
 

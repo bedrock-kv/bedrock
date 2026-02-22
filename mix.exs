@@ -72,7 +72,11 @@ defmodule Bedrock.MixProject do
       {:bedrock_raft, "~> 0.9"},
       {:flatbuffer, "~> 0.3"},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.2"}
+      {:telemetry, "~> 1.2"},
+      {:ex_aws, "~> 2.5"},
+      {:ex_aws_s3, "~> 2.5"},
+      {:hackney, "~> 1.18"},
+      {:sweet_xml, "~> 0.7"}
     ])
   end
 
@@ -98,7 +102,8 @@ defmodule Bedrock.MixProject do
       main: "Bedrock",
       extras: [
         "README.md",
-        "guides/durability-profile.md"
+        "guides/durability-profile.md",
+        "guides/object-storage-s3.md"
       ]
     ]
   end

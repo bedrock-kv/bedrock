@@ -23,3 +23,21 @@ end
 ## Example
 
 [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjallum%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fclass_scheduling.livemd)
+
+## S3/MinIO Tests
+
+S3-focused tests use a local MinIO process and are tagged with `:s3`.
+
+Install MinIO test binaries:
+
+```bash
+MIX_ENV=test mix minio_server.download --arch darwin-arm64 --version latest
+```
+
+Run S3 tests:
+
+```bash
+mix test --include s3
+```
+
+If MinIO is not available, tests tagged `:s3` are skipped automatically.

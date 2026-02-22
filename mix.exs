@@ -85,6 +85,7 @@ defmodule Bedrock.MixProject do
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
         {:mox, "~> 1.1", only: :test},
+        {:minio_server, "~> 0.4.0", only: [:dev, :test]},
         {:excoveralls, "~> 0.18", only: :test},
         {:benchee, "~> 1.3", only: :dev},
         {:ex_doc, "~> 0.39", only: :dev, runtime: false, warn_if_outdated: true},

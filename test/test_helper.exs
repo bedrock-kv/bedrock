@@ -1,4 +1,30 @@
-ExUnit.start()
+minio_available? =
+  try do
+    ExUnit.CaptureIO.capture_io(fn ->
+      {:ok, _} = Bedrock.Test.Minio.start_link()
+      :ok = Bedrock.Test.Minio.wait_for_ready()
+    end)
+
+    true
+  rescue
+    RuntimeError -> false
+    MatchError -> false
+  end
+
+Application.put_env(:bedrock, :minio_available, minio_available?)
+
+excludes =
+  if minio_available? do
+    []
+  else
+    [:s3]
+  end
+
+if !minio_available? do
+  IO.puts("MinIO not available - tests tagged :s3 will be skipped")
+end
+
+ExUnit.start(exclude: excludes)
 Faker.start()
 
 # Removed global telemetry handler - tests should set up their own handlers as needed

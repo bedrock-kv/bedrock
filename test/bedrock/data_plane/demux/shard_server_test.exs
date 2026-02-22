@@ -211,6 +211,56 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert {:error, {:storage_read_failed, :truncated_chunk}} =
                ShardServer.pull(server, Version.zero(), timeout: 100, limit: 10)
     end
+
+    test "replays persisted chunks from object storage using version binaries", %{test_dir: test_dir} do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 700
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1_000)
+      v1200 = Version.from_integer(1_200)
+      v1400 = Version.from_integer(1_400)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+      ShardServer.push(server, v1400, slice)
+
+      assert_receive {:durable, ^shard_id, ^v1200}, 1_500
+
+      :ok = GenServer.stop(server)
+
+      {:ok, replay_server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100
+        )
+
+      on_exit(fn ->
+        if Process.alive?(replay_server), do: GenServer.stop(replay_server)
+      end)
+
+      assert {:ok, txns} = ShardServer.pull(replay_server, Version.from_integer(900), timeout: 500, limit: 10)
+
+      versions =
+        txns
+        |> Enum.map(fn {version, _slice} -> Version.to_integer(version) end)
+        |> Enum.sort()
+
+      assert 1_000 in versions
+      assert 1_200 in versions
+    end
   end
 
   describe "flushing" do

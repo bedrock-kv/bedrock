@@ -291,9 +291,12 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   defp get_from_storage(state, from_version, limit) do
+    from_version_int = version_to_integer(from_version)
+
     transactions =
       state.chunk_reader
-      |> ChunkReader.read_from_version(from_version, limit: limit)
+      |> ChunkReader.read_from_version(from_version_int, limit: limit)
+      |> Enum.map(fn {version_int, slice} -> {Version.from_integer(version_int), slice} end)
       |> Enum.to_list()
 
     {:ok, transactions}
@@ -301,6 +304,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     e in ChunkReader.ReadError -> {:error, {:storage_read_failed, e.reason}}
     e -> {:error, {:storage_read_failed, e}}
   end
+
+  defp version_to_integer(<<_::unsigned-big-64>> = version), do: Version.to_integer(version)
+  defp version_to_integer(version) when is_integer(version) and version >= 0, do: version
 
   defp maybe_flush(state) do
     cond do

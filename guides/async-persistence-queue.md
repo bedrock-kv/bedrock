@@ -43,3 +43,12 @@ Measurements include lag/backlog counts (`pending`, `scheduled`, `in_flight`,
 
 This keeps `push/3` non-blocking while preserving explicit durability
 watermark progression semantics.
+
+## WAL Trim Safety Boundary
+
+`Log.Shale.Server` treats `min_durable_version` as a monotonic watermark and
+only trims WAL segments that are fully behind that boundary.
+
+- Older watermark updates are ignored (no regression).
+- Segment trimming is gated on confirmed durable watermark progression.
+- Segments that straddle the boundary are retained.

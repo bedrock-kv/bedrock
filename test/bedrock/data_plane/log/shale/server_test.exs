@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Cluster
+  alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Version
@@ -316,6 +317,62 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # Now should return actual version
       assert {:ok, %{minimum_durable_version: ^version}} =
                GenServer.call(pid, {:info, [:minimum_durable_version]})
+    end
+
+    test "does not regress min_durable_version when receiving an older watermark", %{server: pid} do
+      newer = Version.from_integer(200)
+      older = Version.from_integer(100)
+
+      send(pid, {:min_durable_version, newer})
+      :pong = GenServer.call(pid, :ping)
+
+      send(pid, {:min_durable_version, older})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == newer
+    end
+
+    test "trims only WAL segments fully behind durable watermark", %{server: pid, path: path} do
+      v10 = Version.from_integer(10)
+      v20 = Version.from_integer(20)
+      v30 = Version.from_integer(30)
+      v15 = Version.from_integer(15)
+
+      tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
+      tx20 = TransactionTestSupport.new_log_transaction(20, %{"k20" => "v20"})
+      tx30 = TransactionTestSupport.new_log_transaction(30, %{"k30" => "v30"})
+
+      seg10_path = Path.join(path, Segment.encode_file_name(10))
+      seg20_path = Path.join(path, Segment.encode_file_name(20))
+      seg30_path = Path.join(path, Segment.encode_file_name(30))
+
+      File.write!(seg10_path, <<0>>)
+      File.write!(seg20_path, <<0>>)
+      File.write!(seg30_path, <<0>>)
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+            segments: [
+              %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
+              %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
+            ],
+            oldest_version: v10,
+            min_durable_version: nil
+        }
+      end)
+
+      send(pid, {:min_durable_version, v15})
+      :pong = GenServer.call(pid, :ping)
+      state = :sys.get_state(pid)
+
+      assert state.min_durable_version == v15
+      assert Enum.map(state.segments, & &1.min_version) == [v20]
+      assert state.oldest_version == v20
+      refute File.exists?(seg10_path)
+      assert File.exists?(seg20_path)
     end
   end
 

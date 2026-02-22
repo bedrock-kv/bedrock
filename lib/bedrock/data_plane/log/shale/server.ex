@@ -176,7 +176,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   def handle_info({:min_durable_version, version}, t) do
-    noreply(%{t | min_durable_version: version})
+    t
+    |> advance_min_durable_version(version)
+    |> noreply()
   end
 
   @impl true
@@ -372,6 +374,62 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       {:ok, demux} -> {:ok, demux}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp advance_min_durable_version(t, incoming_version) do
+    min_durable_version =
+      case t.min_durable_version do
+        nil -> incoming_version
+        existing when incoming_version > existing -> incoming_version
+        existing -> existing
+      end
+
+    if min_durable_version == t.min_durable_version do
+      t
+    else
+      t
+      |> Map.put(:min_durable_version, min_durable_version)
+      |> trim_durable_segments()
+    end
+  end
+
+  defp trim_durable_segments(%{segment_recycler: nil} = t), do: t
+  defp trim_durable_segments(%{segments: []} = t), do: t
+  defp trim_durable_segments(%{min_durable_version: nil} = t), do: t
+
+  defp trim_durable_segments(t) do
+    segments_oldest_first = Enum.reverse(t.segments)
+
+    {segments_to_trim_oldest_first, remaining_segments_oldest_first} =
+      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, t.min_durable_version))
+
+    Enum.each(segments_to_trim_oldest_first, fn segment ->
+      :ok = Segment.return_to_recycler(segment, t.segment_recycler)
+    end)
+
+    remaining_segments = Enum.reverse(remaining_segments_oldest_first)
+
+    t
+    |> Map.put(:segments, remaining_segments)
+    |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+  end
+
+  defp segment_fully_durable?(segment, min_durable_version) do
+    loaded_segment = Segment.ensure_transactions_are_loaded(segment)
+
+    case Segment.last_version(loaded_segment) do
+      nil -> true
+      last_version -> last_version <= min_durable_version
+    end
+  end
+
+  defp determine_oldest_version(nil, []), do: Version.zero()
+
+  defp determine_oldest_version(active_segment, segments) do
+    [active_segment | segments]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&Segment.oldest_version/1)
+    |> Enum.min()
   end
 
   defp handle_resource_exhaustion(t, reason) do

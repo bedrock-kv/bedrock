@@ -7,7 +7,7 @@ future non-blocking shard persistence.
 This foundational slice is intentionally additive:
 
 - It introduces queue/worker infrastructure without changing current Demux or
-  `ShardServer` durability behavior.
+  external APIs.
 - It emits queue lag and backpressure telemetry for capacity planning.
 - It includes deterministic unit tests for queue ordering and retry scheduling.
 
@@ -33,5 +33,13 @@ Measurements include lag/backlog counts (`pending`, `scheduled`, `in_flight`,
 
 ## Follow-On Integration
 
-Later slices route shard chunk persistence through these primitives and tie
-durability watermark progression to confirmed object-store writes.
+`ShardServer` now routes chunk flush work through `PersistenceWorker`:
+
+1. `push/3` updates in-memory buffer and enqueues a flush batch when thresholds
+   are exceeded.
+2. Worker persists chunk payloads out-of-band.
+3. `ShardServer` advances durable watermark only after receiving
+   `{:flush_persisted, max_version}` confirmation.
+
+This keeps `push/3` non-blocking while preserving explicit durability
+watermark progression semantics.

@@ -7,6 +7,38 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
 
+  defmodule DelayedLocalFilesystem do
+    @moduledoc false
+    @behaviour ObjectStorage
+
+    @impl true
+    def put(config, key, data, opts \\ []), do: LocalFilesystem.put(config, key, data, opts)
+
+    @impl true
+    def get(config, key), do: LocalFilesystem.get(config, key)
+
+    @impl true
+    def delete(config, key), do: LocalFilesystem.delete(config, key)
+
+    @impl true
+    def list(config, prefix, opts \\ []), do: LocalFilesystem.list(config, prefix, opts)
+
+    @impl true
+    def put_if_not_exists(config, key, data, opts \\ []) do
+      delay_ms = Keyword.get(config, :delay_ms, 0)
+      Process.sleep(delay_ms)
+      LocalFilesystem.put_if_not_exists(config, key, data, opts)
+    end
+
+    @impl true
+    def get_with_version(config, key), do: LocalFilesystem.get_with_version(config, key)
+
+    @impl true
+    def put_if_version_matches(config, key, version_token, data, opts \\ []) do
+      LocalFilesystem.put_if_version_matches(config, key, version_token, data, opts)
+    end
+  end
+
   setup do
     test_dir = Path.join(System.tmp_dir!(), "shard_server_test_#{:erlang.unique_integer([:positive])}")
     File.mkdir_p!(test_dir)
@@ -164,6 +196,59 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       # Should receive durability report (use assert_receive with timeout for reliability)
       assert_receive {:durable, 99, durable_version}, 1000
       assert durable_version >= v1000
+    end
+
+    test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir} do
+      backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 200)
+      shard_id = :erlang.unique_integer([:positive]) + 200
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+
+      # With async persistence, latest_version remains callable even while flush
+      # work is still running in the background worker.
+      assert v1200 == GenServer.call(server, :latest_version, 50)
+    end
+
+    test "durable watermark advances only after confirmed persistence", %{test_dir: test_dir} do
+      backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 150)
+      shard_id = :erlang.unique_integer([:positive]) + 300
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+
+      Process.sleep(25)
+      assert ShardServer.durable_version(server) == nil
+      refute_received {:durable, ^shard_id, _}
+
+      assert_receive {:durable, ^shard_id, ^v1000}, 1_500
+      assert ShardServer.durable_version(server) == v1000
     end
   end
 

@@ -14,9 +14,11 @@ The profile currently evaluates:
 
 1. `desired_replication_factor >= 3`
 2. `desired_logs >= 3`
-3. persistent `coordinator.path`
-4. persistent log path
-5. persistent materializer path
+3. coordinator persistence enabled (`coordinator.persistent == true`, or
+   implied by a coordinator path when unset)
+4. persistent `coordinator.path`
+5. persistent log path
+6. persistent materializer path
 
 ## Result Shape
 
@@ -37,6 +39,24 @@ The profile currently evaluates:
 
 This allows downstream adapters to fail fast in strict deployments while still
 supporting gradual rollout in relaxed mode.
+
+## Runtime Startup Enforcement
+
+`Bedrock.Internal.ClusterSupervisor` enforces this profile at startup:
+
+- `:relaxed` mode (default): logs warning and continues.
+- `:strict` mode: raises and fails startup when checks fail.
+
+Mode configuration is additive:
+
+- top-level `:durability_mode` (`:strict | :relaxed`)
+- or `durability: [mode: :strict | :relaxed]`
+
+Desired sizing parameters can be provided via:
+
+- coordinator cluster config (`parameters.desired_replication_factor`,
+  `parameters.desired_logs`)
+- or node config fallback (`durability: [...]`).
 
 ## Telemetry Events
 

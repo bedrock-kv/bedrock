@@ -9,7 +9,7 @@ defmodule Bedrock.Durability.TelemetryTest do
     @moduledoc false
     def node_config do
       [
-        coordinator: [path: "/var/lib/bedrock/coordinator"],
+        coordinator: [path: "/var/lib/bedrock/coordinator", persistent: true],
         log: [path: "/var/lib/bedrock/log"],
         materializer: [path: "/var/lib/bedrock/storage"]
       ]
@@ -67,9 +67,10 @@ defmodule Bedrock.Durability.TelemetryTest do
 
       {measurements, metadata} = expect_telemetry([:bedrock, :durability, :profile, :failed])
 
-      assert measurements.failed_checks == 5
+      assert measurements.failed_checks == 6
       assert metadata.status == :failed
       assert :desired_logs_too_low in metadata.reasons
+      assert :coordinator_persistence_disabled in metadata.reasons
       assert :missing_materializer_path in metadata.reasons
       assert metadata.target_type == :cluster_module
       assert metadata.target_module == UndersizedCluster

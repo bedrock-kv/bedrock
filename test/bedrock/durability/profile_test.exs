@@ -8,7 +8,7 @@ defmodule Bedrock.Durability.ProfileTest do
     @moduledoc false
     def node_config do
       [
-        coordinator: [path: "/var/lib/bedrock/coordinator"],
+        coordinator: [path: "/var/lib/bedrock/coordinator", persistent: true],
         log: [path: "/var/lib/bedrock/log"],
         materializer: [path: "/var/lib/bedrock/storage"]
       ]
@@ -43,6 +43,7 @@ defmodule Bedrock.Durability.ProfileTest do
       assert profile.reasons == []
       assert profile.checks.desired_replication_factor.status == :ok
       assert profile.checks.desired_logs.status == :ok
+      assert profile.checks.coordinator_persistence.status == :ok
       assert profile.checks.coordinator_path.status == :ok
       assert profile.checks.log_path.status == :ok
       assert profile.checks.materializer_path.status == :ok
@@ -57,6 +58,7 @@ defmodule Bedrock.Durability.ProfileTest do
                Enum.sort([
                  :desired_replication_factor_too_low,
                  :desired_logs_too_low,
+                 :coordinator_persistence_disabled,
                  :missing_coordinator_path,
                  :missing_log_path,
                  :missing_materializer_path
@@ -88,6 +90,35 @@ defmodule Bedrock.Durability.ProfileTest do
       assert profile.status == :failed
       assert :desired_replication_factor_too_low in profile.reasons
       assert :desired_logs_too_low in profile.reasons
+    end
+
+    test "fails when coordinator persistence is explicitly disabled" do
+      profile =
+        Durability.profile(%{
+          node_config: [
+            coordinator: [path: "/var/lib/bedrock/coordinator", persistent: false],
+            log: [path: "/var/lib/bedrock/log"],
+            materializer: [path: "/var/lib/bedrock/storage"]
+          ],
+          cluster_config: %{parameters: %{desired_replication_factor: 3, desired_logs: 3}}
+        })
+
+      assert profile.status == :failed
+      assert profile.checks.coordinator_persistence.status == :failed
+      assert :coordinator_persistence_disabled in profile.reasons
+    end
+
+    test "uses node durability parameters when cluster config is unavailable" do
+      profile =
+        Durability.profile(
+          coordinator: [path: "/var/lib/bedrock/coordinator", persistent: true],
+          log: [path: "/var/lib/bedrock/log"],
+          materializer: [path: "/var/lib/bedrock/storage"],
+          durability: [desired_replication_factor: 3, desired_logs: 3]
+        )
+
+      assert profile.status == :ok
+      assert profile.reasons == []
     end
   end
 

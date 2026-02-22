@@ -15,12 +15,14 @@ defmodule Bedrock.Durability.Profile do
   @type check_name ::
           :desired_replication_factor
           | :desired_logs
+          | :coordinator_persistence
           | :coordinator_path
           | :log_path
           | :materializer_path
   @type reason ::
           :desired_replication_factor_too_low
           | :desired_logs_too_low
+          | :coordinator_persistence_disabled
           | :missing_coordinator_path
           | :missing_log_path
           | :missing_materializer_path
@@ -53,12 +55,13 @@ defmodule Bedrock.Durability.Profile do
   def evaluate(target) do
     %{node_config: node_config, cluster_config: cluster_config} = resolve_target(target)
 
-    desired_replication_factor = desired_parameter(cluster_config, :desired_replication_factor, 1)
-    desired_logs = desired_parameter(cluster_config, :desired_logs, 1)
+    desired_replication_factor = desired_parameter(cluster_config, node_config, :desired_replication_factor, 1)
+    desired_logs = desired_parameter(cluster_config, node_config, :desired_logs, 1)
 
     coordinator_path = role_path(node_config, :coordinator)
     log_path = role_path(node_config, :log)
     materializer_path = role_path(node_config, :materializer)
+    coordinator_persistent = coordinator_persistent?(node_config, coordinator_path)
 
     checks = %{
       desired_replication_factor:
@@ -68,6 +71,7 @@ defmodule Bedrock.Durability.Profile do
           :desired_replication_factor_too_low
         ),
       desired_logs: minimum_check(desired_logs, @default_min_logs, :desired_logs_too_low),
+      coordinator_persistence: boolean_check(coordinator_persistent, true, :coordinator_persistence_disabled),
       coordinator_path: presence_check(coordinator_path, :missing_coordinator_path),
       log_path: presence_check(log_path, :missing_log_path),
       materializer_path: presence_check(materializer_path, :missing_materializer_path)
@@ -117,8 +121,15 @@ defmodule Bedrock.Durability.Profile do
     }
   end
 
-  defp desired_parameter(cluster_config, key, default) do
+  defp desired_parameter(cluster_config, node_config, key, default) do
     case get_in(cluster_config || %{}, [:parameters, key]) do
+      value when is_integer(value) and value > 0 -> value
+      _ -> desired_parameter_from_node_config(node_config, key, default)
+    end
+  end
+
+  defp desired_parameter_from_node_config(node_config, key, default) do
+    case Keyword.get(node_config, key) || node_config |> Keyword.get(:durability, []) |> Keyword.get(key) do
       value when is_integer(value) and value > 0 -> value
       _ -> default
     end
@@ -153,6 +164,15 @@ defmodule Bedrock.Durability.Profile do
     |> Keyword.get(:path)
   end
 
+  defp coordinator_persistent?(node_config, coordinator_path) do
+    coordinator_config = Keyword.get(node_config, :coordinator, [])
+
+    case Keyword.fetch(coordinator_config, :persistent) do
+      {:ok, value} -> value == true
+      :error -> is_binary(coordinator_path) and coordinator_path != ""
+    end
+  end
+
   defp minimum_check(actual, min_expected, failure_reason) when is_integer(actual) and is_integer(min_expected) do
     if actual >= min_expected do
       %{status: :ok, expected: min_expected, actual: actual, reason: nil}
@@ -166,6 +186,14 @@ defmodule Bedrock.Durability.Profile do
       %{status: :ok, expected: :present, actual: :present, reason: nil}
     else
       %{status: :failed, expected: :present, actual: :missing, reason: failure_reason}
+    end
+  end
+
+  defp boolean_check(actual, expected, failure_reason) when is_boolean(actual) and is_boolean(expected) do
+    if actual == expected do
+      %{status: :ok, expected: expected, actual: actual, reason: nil}
+    else
+      %{status: :failed, expected: expected, actual: actual, reason: failure_reason}
     end
   end
 end

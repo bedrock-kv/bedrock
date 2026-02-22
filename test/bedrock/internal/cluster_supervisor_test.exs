@@ -146,4 +146,52 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       )
     end
   end
+
+  describe "durability profile enforcement" do
+    test "fails startup checks in strict mode when requirements are unmet" do
+      assert {:error, reasons} =
+               ClusterSupervisor.enforce_durability_profile(
+                 durability_mode: :strict,
+                 coordinator: [],
+                 log: [],
+                 materializer: [],
+                 durability: [desired_replication_factor: 1, desired_logs: 1]
+               )
+
+      assert :desired_replication_factor_too_low in reasons
+      assert :desired_logs_too_low in reasons
+      assert :missing_coordinator_path in reasons
+    end
+
+    test "warns in relaxed mode when requirements are unmet" do
+      assert {:warn, reasons} =
+               ClusterSupervisor.enforce_durability_profile(
+                 durability_mode: :relaxed,
+                 coordinator: [],
+                 log: [],
+                 materializer: [],
+                 durability: [desired_replication_factor: 1, desired_logs: 1]
+               )
+
+      assert :coordinator_persistence_disabled in reasons
+      assert :missing_materializer_path in reasons
+    end
+
+    test "passes in strict mode when requirements are met" do
+      assert :ok =
+               ClusterSupervisor.enforce_durability_profile(
+                 durability_mode: :strict,
+                 coordinator: [path: "/var/lib/bedrock/coordinator", persistent: true],
+                 log: [path: "/var/lib/bedrock/log"],
+                 materializer: [path: "/var/lib/bedrock/storage"],
+                 durability: [desired_replication_factor: 3, desired_logs: 3]
+               )
+    end
+
+    test "supports nested durability mode config" do
+      assert :strict == ClusterSupervisor.durability_mode(durability: [mode: :strict])
+      assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :relaxed])
+      assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :unsupported])
+    end
+  end
 end

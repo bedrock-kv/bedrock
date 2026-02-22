@@ -37,3 +37,21 @@ The profile currently evaluates:
 
 This allows downstream adapters to fail fast in strict deployments while still
 supporting gradual rollout in relaxed mode.
+
+## Telemetry Events
+
+Profile evaluations emit one of:
+
+- `[:bedrock, :durability, :profile, :ok]`
+- `[:bedrock, :durability, :profile, :failed]`
+
+Measurements:
+
+- `failed_checks` - number of failed checks
+
+Metadata:
+
+- `status` - `:ok | :failed`
+- `reasons` - list of failure reason atoms
+- `target_type` - input type (`:cluster_module | :node_config | :profile_input`)
+- `target_module` - cluster module when applicable

@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
 
   defmodule DelayedLocalFilesystem do
@@ -159,6 +160,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, transactions} = ShardServer.pull(server, Version.zero(), timeout: 100, limit: 3)
 
       assert length(transactions) == 3
+    end
+
+    test "returns storage_read_failed when chunk data is corrupted", %{server: server, backend: backend} do
+      corrupted_key = Keys.chunk_path("0", 1_000)
+      :ok = ObjectStorage.put(backend, corrupted_key, <<1, 2, 3, 4>>)
+
+      assert {:error, {:storage_read_failed, :truncated_chunk}} =
+               ShardServer.pull(server, Version.zero(), timeout: 100, limit: 10)
     end
   end
 

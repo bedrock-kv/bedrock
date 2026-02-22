@@ -29,6 +29,12 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     key
   end
 
+  defp write_raw_chunk(backend, shard, max_version, data) do
+    key = Keys.chunk_path(shard, max_version)
+    :ok = ObjectStorage.put(backend, key, data)
+    key
+  end
+
   describe "new/2" do
     test "creates reader", %{backend: backend} do
       reader = ChunkReader.new(backend, "shard")
@@ -88,6 +94,28 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
       assert {min1, max1} == {200, 250}
       assert {min2, max2} == {100, 150}
+    end
+
+    test "raises on corrupted chunk headers by default", %{backend: backend} do
+      write_raw_chunk(backend, "shard", 200, <<1, 2, 3, 4>>)
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert_raise ChunkReader.ReadError, fn ->
+        reader |> ChunkReader.list_chunk_metadata() |> Enum.to_list()
+      end
+    end
+
+    test "can skip corrupted chunk headers with on_error: :skip", %{backend: backend} do
+      write_chunk(backend, "shard", [{100, "ok"}])
+      write_raw_chunk(backend, "shard", 200, <<1, 2, 3, 4>>)
+
+      reader = ChunkReader.new(backend, "shard")
+      metadata = reader |> ChunkReader.list_chunk_metadata(on_error: :skip) |> Enum.to_list()
+
+      assert length(metadata) == 1
+      {_, min_version, max_version} = hd(metadata)
+      assert {min_version, max_version} == {100, 100}
     end
   end
 
@@ -210,6 +238,17 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
       # Taking just first 2 should work
       transactions = Enum.take(stream, 2)
       assert length(transactions) == 2
+    end
+
+    test "raises when encountering corrupted chunk data", %{backend: backend} do
+      write_chunk(backend, "shard", [{100, "a"}])
+      write_raw_chunk(backend, "shard", 200, <<1, 2, 3, 4>>)
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert_raise ChunkReader.ReadError, fn ->
+        reader |> ChunkReader.read_from_version(0) |> Enum.to_list()
+      end
     end
   end
 

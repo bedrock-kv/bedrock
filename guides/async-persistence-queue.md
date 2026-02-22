@@ -52,3 +52,15 @@ only trims WAL segments that are fully behind that boundary.
 - Older watermark updates are ignored (no regression).
 - Segment trimming is gated on confirmed durable watermark progression.
 - Segments that straddle the boundary are retained.
+
+## Recovery and Corruption Handling
+
+Chunk replay now fails fast on decode/header corruption instead of silently
+skipping damaged objects.
+
+- `ChunkReader` raises `ChunkReader.ReadError` by default when chunk metadata or
+  content cannot be decoded.
+- `ShardServer.pull/3` surfaces this as
+  `{:error, {:storage_read_failed, reason}}`.
+- `ChunkReader.list_chunk_metadata/2` supports `on_error: :skip` only for
+  explicit best-effort tooling paths.

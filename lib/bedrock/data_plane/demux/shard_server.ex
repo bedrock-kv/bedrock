@@ -297,6 +297,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
     {:ok, transactions}
   rescue
+    e in ChunkReader.ReadError -> {:error, {:storage_read_failed, e.reason}}
     e -> {:error, {:storage_read_failed, e}}
   end
 

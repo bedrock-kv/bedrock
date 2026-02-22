@@ -12,16 +12,31 @@ minio_available? =
   end
 
 Application.put_env(:bedrock, :minio_available, minio_available?)
+System.put_env("BEDROCK_MINIO_AVAILABLE", if(minio_available?, do: "1", else: "0"))
+
+distributed_requested? =
+  Enum.any?(System.argv(), fn arg ->
+    arg == "distributed" or String.starts_with?(arg, "distributed:")
+  end)
+
+distributed_enabled? =
+  System.get_env("BEDROCK_INCLUDE_DISTRIBUTED") in ["1", "true", "TRUE"] or distributed_requested?
 
 excludes =
-  if minio_available? do
-    []
-  else
-    [:s3]
-  end
+  []
+  |> then(fn excludes ->
+    if minio_available?, do: excludes, else: [:s3 | excludes]
+  end)
+  |> then(fn excludes ->
+    if distributed_enabled?, do: excludes, else: [:distributed | excludes]
+  end)
 
 if !minio_available? do
   IO.puts("MinIO not available - tests tagged :s3 will be skipped")
+end
+
+if !distributed_enabled? do
+  IO.puts("Distributed tests disabled - set BEDROCK_INCLUDE_DISTRIBUTED=1 or pass --include distributed")
 end
 
 ExUnit.start(exclude: excludes)

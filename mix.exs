@@ -104,7 +104,8 @@ defmodule Bedrock.MixProject do
         "README.md",
         "guides/durability-profile.md",
         "guides/object-storage-s3.md",
-        "guides/async-persistence-queue.md"
+        "guides/async-persistence-queue.md",
+        "guides/distributed-durability-tests.md"
       ]
     ]
   end

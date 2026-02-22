@@ -72,6 +72,42 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       assert ShardServer.latest_version(server_a) == version
       assert ShardServer.latest_version(server_b) == version
     end
+
+    test "applies shard_server_opts to newly created shard servers", %{
+      backend: backend,
+      log: log_pid,
+      shard_base: shard_base
+    } do
+      {:ok, tuned_server} =
+        Server.start_link(
+          cluster: "test-cluster",
+          object_storage: backend,
+          log: log_pid,
+          shard_server_opts: [
+            version_gap: 100,
+            persistence_retry_backoff_ms: 1,
+            persistence_retry_tick_ms: 1
+          ]
+        )
+
+      on_exit(fn ->
+        if Process.alive?(tuned_server), do: GenServer.stop(tuned_server)
+      end)
+
+      shard_id = shard_base + 30
+      txn = make_transaction([{:set, "k", "v"}], [{shard_id, 1}])
+      version = <<0, 0, 0, 0, 0, 0, 3, 232>>
+
+      :ok = Server.push(tuned_server, version, txn)
+
+      {:ok, shard_server} = Server.get_shard_server(tuned_server, shard_id)
+      assert %{version_gap: 100, persistence_worker: persistence_worker} = :sys.get_state(shard_server)
+
+      assert %{
+               retry_tick_ms: 1,
+               queue: %{retry_base_backoff_ms: 1}
+             } = :sys.get_state(persistence_worker)
+    end
   end
 
   describe "get_shard_server/2" do

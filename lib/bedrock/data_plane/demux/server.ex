@@ -48,6 +48,7 @@ defmodule Bedrock.DataPlane.Demux.Server do
     :object_storage,
     :log,
     shard_servers: %{},
+    shard_server_opts: [],
     durability: nil,
     last_seen_version: nil
   ]
@@ -109,12 +110,14 @@ defmodule Bedrock.DataPlane.Demux.Server do
     cluster = Keyword.fetch!(opts, :cluster)
     object_storage = Keyword.fetch!(opts, :object_storage)
     log = Keyword.fetch!(opts, :log)
+    shard_server_opts = Keyword.get(opts, :shard_server_opts, [])
 
     state = %__MODULE__{
       cluster: cluster,
       object_storage: object_storage,
       log: log,
       shard_servers: %{},
+      shard_server_opts: shard_server_opts,
       durability: Durability.new(),
       last_seen_version: nil
     }
@@ -198,12 +201,13 @@ defmodule Bedrock.DataPlane.Demux.Server do
   end
 
   defp create_shard_server(state, shard_id) do
-    opts = [
-      shard_id: shard_id,
-      demux: self(),
-      cluster: state.cluster,
-      object_storage: state.object_storage
-    ]
+    opts =
+      [
+        shard_id: shard_id,
+        demux: self(),
+        cluster: state.cluster,
+        object_storage: state.object_storage
+      ] ++ state.shard_server_opts
 
     # Start ShardServer linked to this process - crash propagates up
     case ShardServer.start_link(opts) do

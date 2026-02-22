@@ -42,3 +42,18 @@ config :bedrock, Bedrock.ObjectStorage,
        ]
      ]}
 ```
+
+## Conditional Semantics
+
+`Bedrock.ObjectStorage.S3` uses native S3 preconditions for optimistic
+concurrency and conditional create:
+
+- `put_if_not_exists/4` uses `If-None-Match: *` and returns
+  `{:error, :already_exists}` when the key already exists.
+- `get_with_version/2` returns an opaque version token derived from the
+  object's `ETag`.
+- `put_if_version_matches/5` uses `If-Match` with the token from
+  `get_with_version/2` and returns `{:error, :version_mismatch}` for stale
+  tokens.
+
+These semantics are validated against MinIO in tests tagged `:s3`.

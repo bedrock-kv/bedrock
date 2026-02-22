@@ -9,11 +9,11 @@ defmodule Bedrock.ObjectStorage.S3 do
   @behaviour Bedrock.ObjectStorage
 
   @impl true
-  def put(config, key, data, _opts \\ []) do
+  def put(config, key, data, opts \\ []) do
     bucket = Keyword.fetch!(config, :bucket)
 
     bucket
-    |> ExAws.S3.put_object(key, data)
+    |> ExAws.S3.put_object(key, data, put_object_opts(opts))
     |> ExAws.request(request_config(config))
     |> case do
       {:ok, _response} -> :ok
@@ -65,38 +65,74 @@ defmodule Bedrock.ObjectStorage.S3 do
   end
 
   @impl true
-  def put_if_not_exists(config, key, data, _opts \\ []) do
-    case get(config, key) do
-      {:error, :not_found} -> put(config, key, data)
-      {:ok, _data} -> {:error, :already_exists}
-      {:error, reason} -> {:error, reason}
+  def put_if_not_exists(config, key, data, opts \\ []) do
+    bucket = Keyword.fetch!(config, :bucket)
+
+    bucket
+    |> ExAws.S3.put_object(key, data, put_object_opts(opts, if_none_match: "*"))
+    |> ExAws.request(request_config(config))
+    |> case do
+      {:ok, _response} ->
+        :ok
+
+      {:error, {:http_error, 412, _details}} ->
+        {:error, :already_exists}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @impl true
   def get_with_version(config, key) do
-    case get(config, key) do
-      {:ok, data} ->
-        hash = :sha256 |> :crypto.hash(data) |> Base.encode16(case: :lower)
-        {:ok, data, "sha256:#{hash}"}
+    bucket = Keyword.fetch!(config, :bucket)
 
-      error ->
-        error
+    bucket
+    |> ExAws.S3.get_object(key)
+    |> ExAws.request(request_config(config))
+    |> case do
+      {:ok, %{body: body, headers: headers}} ->
+        case extract_etag(headers) do
+          nil ->
+            case head_etag(config, key) do
+              {:ok, etag} -> {:ok, body, etag}
+              {:error, reason} -> {:error, reason}
+            end
+
+          etag ->
+            {:ok, body, etag}
+        end
+
+      {:ok, %{body: body}} ->
+        case head_etag(config, key) do
+          {:ok, etag} -> {:ok, body, etag}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, {:http_error, 404, _details}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @impl true
   def put_if_version_matches(config, key, version_token, data, opts \\ []) do
-    case get_with_version(config, key) do
-      {:ok, _current_data, current_token} ->
-        if current_token == version_token do
-          put(config, key, data, opts)
-        else
-          {:error, :version_mismatch}
-        end
+    bucket = Keyword.fetch!(config, :bucket)
 
-      {:error, :not_found} ->
+    bucket
+    |> ExAws.S3.put_object(key, data, put_object_opts(opts, if_match: version_token))
+    |> ExAws.request(request_config(config))
+    |> case do
+      {:ok, _response} ->
+        :ok
+
+      {:error, {:http_error, 404, _details}} ->
         {:error, :not_found}
+
+      {:error, {:http_error, 412, _details}} ->
+        resolve_conditional_write_failure(config, key)
 
       {:error, reason} ->
         {:error, reason}
@@ -151,7 +187,80 @@ defmodule Bedrock.ObjectStorage.S3 do
     end
   end
 
+  defp resolve_conditional_write_failure(config, key) do
+    bucket = Keyword.fetch!(config, :bucket)
+
+    bucket
+    |> ExAws.S3.head_object(key)
+    |> ExAws.request(request_config(config))
+    |> case do
+      {:ok, _response} ->
+        {:error, :version_mismatch}
+
+      {:error, {:http_error, 404, _details}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp head_etag(config, key) do
+    bucket = Keyword.fetch!(config, :bucket)
+
+    bucket
+    |> ExAws.S3.head_object(key)
+    |> ExAws.request(request_config(config))
+    |> case do
+      {:ok, %{headers: headers}} ->
+        case extract_etag(headers) do
+          nil -> {:error, :version_mismatch}
+          etag -> {:ok, etag}
+        end
+
+      {:ok, _response} ->
+        {:error, :version_mismatch}
+
+      {:error, {:http_error, 404, _details}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp extract_etag(headers) when is_list(headers) do
+    Enum.find_value(headers, fn
+      {name, value} when is_binary(name) ->
+        if String.downcase(name) == "etag", do: value
+
+      {name, value} when is_atom(name) ->
+        if String.downcase(to_string(name)) == "etag", do: value
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp extract_etag(headers) when is_map(headers) do
+    Enum.find_value(headers, fn {name, value} ->
+      if String.downcase(to_string(name)) == "etag", do: value
+    end)
+  end
+
+  defp extract_etag(_headers), do: nil
+
   defp request_config(config), do: Keyword.get(config, :config, [])
+
+  defp put_object_opts(opts, conditional_opts \\ []) do
+    content_type_opt =
+      case Keyword.get(opts, :content_type) do
+        nil -> []
+        content_type -> [content_type: content_type]
+      end
+
+    conditional_opts ++ content_type_opt
+  end
 
   defp maybe_put_continuation_token(opts, nil), do: opts
   defp maybe_put_continuation_token(opts, token), do: Keyword.put(opts, :continuation_token, token)

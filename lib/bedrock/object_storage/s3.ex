@@ -119,23 +119,26 @@ defmodule Bedrock.ObjectStorage.S3 do
 
   @impl true
   def put_if_version_matches(config, key, version_token, data, opts \\ []) do
-    bucket = Keyword.fetch!(config, :bucket)
+    with {:ok, current_token} <- head_etag(config, key),
+         true <- current_token == version_token or {:error, :version_mismatch} do
+      bucket = Keyword.fetch!(config, :bucket)
 
-    bucket
-    |> ExAws.S3.put_object(key, data, put_object_opts(opts, if_match: version_token))
-    |> ExAws.request(request_config(config))
-    |> case do
-      {:ok, _response} ->
-        :ok
+      bucket
+      |> ExAws.S3.put_object(key, data, put_object_opts(opts, if_match: version_token))
+      |> ExAws.request(request_config(config))
+      |> case do
+        {:ok, _response} ->
+          :ok
 
-      {:error, {:http_error, 404, _details}} ->
-        {:error, :not_found}
+        {:error, {:http_error, 404, _details}} ->
+          {:error, :not_found}
 
-      {:error, {:http_error, 412, _details}} ->
-        resolve_conditional_write_failure(config, key)
+        {:error, {:http_error, 412, _details}} ->
+          resolve_conditional_write_failure(config, key)
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 

@@ -43,6 +43,22 @@ config :bedrock, Bedrock.ObjectStorage,
      ]}
 ```
 
+You can also use shorthand backend selection with top-level S3 options:
+
+```elixir
+config :bedrock, Bedrock.ObjectStorage,
+  backend: :s3,
+  s3: [
+    bucket: "bedrock",
+    access_key_id: "minio_key",
+    secret_access_key: "minio_secret",
+    scheme: "http://",
+    region: "local",
+    host: "127.0.0.1",
+    port: 9000
+  ]
+```
+
 ## Conditional Semantics
 
 `Bedrock.ObjectStorage.S3` uses native S3 preconditions for optimistic

@@ -159,4 +159,4 @@ jobs:
       run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
 
     - name: Run distributed durability suite
-      run: mix test --include s3 --include distributed test/bedrock/distributed/minio_durability_test.exs
+      run: mix test --include distributed test/bedrock/distributed/minio_durability_test.exs

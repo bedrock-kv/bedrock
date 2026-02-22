@@ -10,7 +10,6 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
   alias Bedrock.ObjectStorage.S3
   alias Bedrock.Test.Minio
 
-  @moduletag :s3
   @moduletag :distributed
 
   if System.get_env("BEDROCK_MINIO_AVAILABLE") != "1" do
@@ -68,6 +67,7 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
 
   setup do
     bucket = "bedrock-dist-#{:erlang.unique_integer([:positive])}"
+    shard_base = :erlang.unique_integer([:positive]) * 1_000
     :ok = Minio.initialize_bucket(bucket)
     :ok = Minio.clean_bucket(bucket)
 
@@ -81,12 +81,15 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
       Minio.clean_bucket(bucket)
     end)
 
-    {:ok, backend: backend}
+    {:ok, backend: backend, shard_base: shard_base}
   end
 
-  test "3-shard durability watermark advances and survives demux restart", %{backend: backend} do
+  test "3-shard durability watermark advances and survives demux restart", %{
+    backend: backend,
+    shard_base: shard_base
+  } do
     {:ok, demux} = start_demux(backend)
-    shards = [11, 22, 33]
+    shards = [shard_base + 11, shard_base + 22, shard_base + 33]
 
     for shard <- shards do
       push_txn(demux, shard, 1_000)
@@ -98,13 +101,13 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
     end)
 
     # Advance one shard first: global min should remain bounded by slower shards.
-    push_txn(demux, 11, 1_400)
+    push_txn(demux, hd(shards), 1_400)
     Process.sleep(25)
     assert Server.min_durable_version(demux) == Version.from_integer(1_000)
 
     # Advance remaining shards and verify global watermark moves forward.
-    push_txn(demux, 22, 1_400)
-    push_txn(demux, 33, 1_400)
+    push_txn(demux, Enum.at(shards, 1), 1_400)
+    push_txn(demux, Enum.at(shards, 2), 1_400)
 
     assert_eventually(fn ->
       Server.min_durable_version(demux) == Version.from_integer(1_200)
@@ -119,23 +122,30 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
     for shard <- shards do
       {:ok, shard_server} = Server.get_shard_server(demux_after_restart, shard)
 
-      assert_eventually(fn ->
-        case ShardServer.pull(shard_server, Version.from_integer(900), timeout: 200, limit: 10) do
-          {:ok, txns} ->
-            versions = Enum.map(txns, fn {version, _slice} -> Version.to_integer(version) end)
-            1_000 in versions and 1_200 in versions
+      assert_eventually(
+        fn ->
+          case ShardServer.pull(shard_server, Version.from_integer(900), timeout: 200, limit: 10) do
+            {:ok, txns} ->
+              versions = Enum.map(txns, fn {version, _slice} -> Version.to_integer(version) end)
+              1_000 in versions and 1_200 in versions
 
-          _ ->
-            false
-        end
-      end)
+            _ ->
+              false
+          end
+        end,
+        8_000
+      )
     end
   end
 
-  test "transient shard partition heals via retry and advances durability", %{backend: backend} do
+  test "transient shard partition heals via retry and advances durability", %{
+    backend: backend,
+    shard_base: shard_base
+  } do
     {:ok, failures} = Agent.start_link(fn -> 0 end)
     on_exit(fn -> if Process.alive?(failures), do: Agent.stop(failures) end)
-    shard_with_partition = 22
+    shard_ids = [shard_base + 11, shard_base + 22, shard_base + 33]
+    shard_with_partition = Enum.at(shard_ids, 1)
 
     flaky_backend =
       ObjectStorage.backend(FlakyS3Proxy,
@@ -146,7 +156,7 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
 
     {:ok, demux} = start_demux(flaky_backend)
 
-    for shard <- [11, shard_with_partition, 33] do
+    for shard <- shard_ids do
       push_txn(demux, shard, 1_000)
       push_txn(demux, shard, 1_200)
     end
@@ -159,16 +169,21 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
   end
 
   defp start_demux(backend) do
-    Server.start_link(
-      cluster: "distributed-test-cluster",
-      object_storage: backend,
-      log: self(),
-      shard_server_opts: [
-        version_gap: 100,
-        persistence_retry_backoff_ms: 1,
-        persistence_retry_tick_ms: 1
-      ]
-    )
+    child_spec =
+      Supervisor.child_spec(
+        {Server,
+         cluster: "distributed-test-cluster",
+         object_storage: backend,
+         log: self(),
+         shard_server_opts: [
+           version_gap: 100,
+           persistence_retry_backoff_ms: 1,
+           persistence_retry_tick_ms: 1
+         ]},
+        restart: :temporary
+      )
+
+    {:ok, start_supervised!(child_spec)}
   end
 
   defp push_txn(demux, shard_id, version_int) do

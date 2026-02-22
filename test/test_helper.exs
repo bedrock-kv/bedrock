@@ -14,9 +14,36 @@ minio_available? =
 Application.put_env(:bedrock, :minio_available, minio_available?)
 System.put_env("BEDROCK_MINIO_AVAILABLE", if(minio_available?, do: "1", else: "0"))
 
+distributed_tag? = fn tag ->
+  tag == "distributed" or String.starts_with?(tag, "distributed:")
+end
+
+argv = System.argv()
+
 distributed_requested? =
-  Enum.any?(System.argv(), fn arg ->
-    arg == "distributed" or String.starts_with?(arg, "distributed:")
+  argv
+  |> Enum.with_index()
+  |> Enum.any?(fn {arg, index} ->
+    cond do
+      arg in ["--include", "--only"] ->
+        case Enum.at(argv, index + 1) do
+          nil -> false
+          tag -> distributed_tag?.(tag)
+        end
+
+      String.starts_with?(arg, "--include=") ->
+        arg
+        |> String.replace_prefix("--include=", "")
+        |> distributed_tag?.()
+
+      String.starts_with?(arg, "--only=") ->
+        arg
+        |> String.replace_prefix("--only=", "")
+        |> distributed_tag?.()
+
+      true ->
+        false
+    end
   end)
 
 distributed_enabled? =

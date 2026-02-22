@@ -131,7 +131,7 @@ mix test --include s3 --exclude distributed
 Run distributed durability suite:
 
 ```bash
-BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include s3 --include distributed test/bedrock/distributed/minio_durability_test.exs
+BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include distributed test/bedrock/distributed/minio_durability_test.exs
 ```
 
 ## Migration Notes

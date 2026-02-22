@@ -9,7 +9,6 @@ Test module:
 
 Tags:
 
-- `:s3`
 - `:distributed`
 
 ## Local Execution
@@ -23,7 +22,7 @@ MIX_ENV=test mix minio_server.download --arch darwin-arm64 --version latest
 2. Run the distributed suite explicitly:
 
 ```bash
-BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include s3 --include distributed test/bedrock/distributed/minio_durability_test.exs
+BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include distributed test/bedrock/distributed/minio_durability_test.exs
 ```
 
 By default, `:distributed` tests are excluded unless explicitly enabled.

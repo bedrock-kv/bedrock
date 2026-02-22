@@ -3,6 +3,9 @@
 `Bedrock.ObjectStorage.S3` provides an S3-compatible backend for object
 storage operations.
 
+For cross-component durability behavior (profiles, queueing, watermarking,
+trim safety, and migration notes), see `guides/durability-foundation.md`.
+
 ## Backend Configuration
 
 Configure via `Bedrock.ObjectStorage.backend/2`:

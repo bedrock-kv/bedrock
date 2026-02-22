@@ -102,6 +102,7 @@ defmodule Bedrock.MixProject do
       main: "Bedrock",
       extras: [
         "README.md",
+        "guides/durability-foundation.md",
         "guides/durability-profile.md",
         "guides/object-storage-s3.md",
         "guides/async-persistence-queue.md",

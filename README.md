@@ -24,6 +24,14 @@ end
 
 [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjallum%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fclass_scheduling.livemd)
 
+## Durability Foundation Guides
+
+- [Durability Foundation Overview](guides/durability-foundation.md)
+- [Durability Profile Contract](guides/durability-profile.md)
+- [S3 Object Storage Backend](guides/object-storage-s3.md)
+- [Async Persistence Queue](guides/async-persistence-queue.md)
+- [Distributed Durability Suite](guides/distributed-durability-tests.md)
+
 ## S3/MinIO Tests
 
 S3-focused tests use a local MinIO process and are tagged with `:s3`.

@@ -3,6 +3,10 @@
 `Bedrock.Durability` provides a machine-checkable contract for evaluating and
 enforcing durability profile requirements.
 
+For consolidated operator guidance across profile checks, S3 persistence, WAL
+boundaries, and migration sequencing, see
+`guides/durability-foundation.md`.
+
 ## API
 
 - `Bedrock.Durability.profile/1`

@@ -64,3 +64,24 @@ skipping damaged objects.
   `{:error, {:storage_read_failed, reason}}`.
 - `ChunkReader.list_chunk_metadata/2` supports `on_error: :skip` only for
   explicit best-effort tooling paths.
+
+## Observability Signals
+
+Queue and persistence telemetry now provide direct instrumentation points:
+
+- Queue pressure:
+  - `[:bedrock, :demux, :persistence_queue, :enqueue]`
+  - `[:bedrock, :demux, :persistence_queue, :dequeue]`
+  - `[:bedrock, :demux, :persistence_queue, :backpressure]`
+  - `[:bedrock, :demux, :persistence_queue, :retry_scheduled]`
+  - `[:bedrock, :demux, :persistence_queue, :retry_dropped]`
+- Persistence outcomes:
+  - `[:bedrock, :demux, :persistence, :write, :ok]`
+  - `[:bedrock, :demux, :persistence, :write, :error]`
+  - `[:bedrock, :demux, :persistence, :watermark, :advanced]`
+
+Suggested alerts:
+
+- sustained non-zero queue backpressure events;
+- increasing retry scheduling without matching write success;
+- stalled watermark advancement for active shards.

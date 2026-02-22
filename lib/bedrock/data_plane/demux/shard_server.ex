@@ -26,6 +26,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   use GenServer
 
+  alias Bedrock.DataPlane.Demux.PersistenceTelemetry
   alias Bedrock.DataPlane.Demux.PersistenceWorker
   alias Bedrock.DataPlane.Demux.ShardServer.State
   alias Bedrock.DataPlane.Version
@@ -333,6 +334,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     {max_flushed_version, _} = hd(to_flush)
 
     payload = %{
+      shard_id: state.shard_id,
       transactions: to_flush,
       max_version: max_flushed_version
     }
@@ -370,6 +372,12 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
           if previous_durable_version != durable_version do
             report_durability(state.demux, state.shard_id, durable_version)
+
+            PersistenceTelemetry.emit_watermark_advanced(
+              state.shard_id,
+              durable_version,
+              length(buffer)
+            )
           end
 
           maybe_flush(state)
@@ -437,12 +445,19 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   defp persist_flush_payload(owner_pid, payload, object_storage, shard_tag) do
+    started_at = System.monotonic_time(:microsecond)
+    batch_size = length(payload.transactions)
+
     case persist_transactions(object_storage, shard_tag, payload.transactions) do
       :ok ->
+        duration_us = System.monotonic_time(:microsecond) - started_at
+        PersistenceTelemetry.emit_write_ok(payload.shard_id, batch_size, duration_us)
         send(owner_pid, {:flush_persisted, payload.max_version})
         :ok
 
       {:error, reason} ->
+        duration_us = System.monotonic_time(:microsecond) - started_at
+        PersistenceTelemetry.emit_write_error(payload.shard_id, batch_size, duration_us, reason)
         {:error, reason}
     end
   end

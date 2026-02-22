@@ -40,6 +40,48 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
   end
 
+  defmodule FlakyLocalFilesystem do
+    @moduledoc false
+    @behaviour ObjectStorage
+
+    @impl true
+    def put(config, key, data, opts \\ []), do: LocalFilesystem.put(config, key, data, opts)
+
+    @impl true
+    def get(config, key), do: LocalFilesystem.get(config, key)
+
+    @impl true
+    def delete(config, key), do: LocalFilesystem.delete(config, key)
+
+    @impl true
+    def list(config, prefix, opts \\ []), do: LocalFilesystem.list(config, prefix, opts)
+
+    @impl true
+    def put_if_not_exists(config, key, data, opts \\ []) do
+      attempts = Keyword.fetch!(config, :attempts)
+
+      attempt =
+        Agent.get_and_update(attempts, fn count ->
+          next = count + 1
+          {next, next}
+        end)
+
+      if attempt == 1 do
+        {:error, :transient_write_failure}
+      else
+        LocalFilesystem.put_if_not_exists(config, key, data, opts)
+      end
+    end
+
+    @impl true
+    def get_with_version(config, key), do: LocalFilesystem.get_with_version(config, key)
+
+    @impl true
+    def put_if_version_matches(config, key, version_token, data, opts \\ []) do
+      LocalFilesystem.put_if_version_matches(config, key, version_token, data, opts)
+    end
+  end
+
   setup do
     test_dir = Path.join(System.tmp_dir!(), "shard_server_test_#{:erlang.unique_integer([:positive])}")
     File.mkdir_p!(test_dir)
@@ -261,6 +303,113 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
   end
 
+  describe "persistence telemetry" do
+    test "emits write success and watermark advancement telemetry", %{test_dir: test_dir} do
+      test_pid = self()
+      shard_id = :erlang.unique_integer([:positive]) + 400
+      handler_id = "shard-persistence-success-#{shard_id}"
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:bedrock, :demux, :persistence, :write, :ok],
+            [:bedrock, :demux, :persistence, :watermark, :advanced]
+          ],
+          &__MODULE__.handle_telemetry_event/4,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+
+      assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :ok], write_meas, write_meta}, 1_500
+      assert write_meta.shard_id == shard_id
+      assert write_meas.batch_size >= 1
+      assert write_meas.duration_us >= 0
+
+      assert_receive {:telemetry, [:bedrock, :demux, :persistence, :watermark, :advanced], wm_meas, wm_meta}, 1_500
+      assert wm_meta.shard_id == shard_id
+      assert wm_meta.durable_version == v1000
+      assert wm_meas.buffered_transactions >= 0
+    end
+
+    test "emits retry telemetry for transient object write failures", %{test_dir: test_dir} do
+      test_pid = self()
+      shard_id = :erlang.unique_integer([:positive]) + 500
+      handler_id = "shard-persistence-retry-#{shard_id}"
+      {:ok, attempts} = Agent.start_link(fn -> 0 end)
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:bedrock, :demux, :persistence, :write, :error],
+            [:bedrock, :demux, :persistence_queue, :retry_scheduled],
+            [:bedrock, :demux, :persistence, :write, :ok]
+          ],
+          &__MODULE__.handle_telemetry_event/4,
+          test_pid
+        )
+
+      on_exit(fn ->
+        :telemetry.detach(handler_id)
+        if Process.alive?(attempts), do: Agent.stop(attempts)
+      end)
+
+      backend = ObjectStorage.backend(FlakyLocalFilesystem, root: test_dir, attempts: attempts)
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          version_gap: 100,
+          persistence_retry_backoff_ms: 1,
+          persistence_retry_tick_ms: 1
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+
+      assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :error], _meas, error_meta}, 1_500
+      assert error_meta.shard_id == shard_id
+      assert error_meta.reason == {:write_failed, :transient_write_failure}
+
+      assert_receive {:telemetry, [:bedrock, :demux, :persistence_queue, :retry_scheduled], retry_meas, retry_meta},
+                     1_500
+
+      assert retry_meas.attempt == 1
+      assert retry_meas.delay_ms >= 1
+      assert retry_meta.reason == {:write_failed, :transient_write_failure}
+
+      assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :ok], _ok_meas, ok_meta}, 1_500
+      assert ok_meta.shard_id == shard_id
+    end
+  end
+
   describe "waiting/notification" do
     test "notifies waiting pullers when data arrives", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
@@ -295,5 +444,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert_receive {:pull_result, {:ok, transactions}}, 1_000
       assert length(transactions) >= 1
     end
+  end
+
+  def handle_telemetry_event(event, measurements, metadata, pid) do
+    send(pid, {:telemetry, event, measurements, metadata})
   end
 end

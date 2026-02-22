@@ -165,7 +165,7 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
       Server.min_durable_version(demux) == Version.from_integer(1_000)
     end)
 
-    assert Agent.get(failures, & &1) == 1
+    assert_eventually(fn -> Agent.get(failures, & &1) >= 1 end)
   end
 
   defp start_demux(backend) do

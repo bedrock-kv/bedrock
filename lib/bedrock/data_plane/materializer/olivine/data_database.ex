@@ -120,7 +120,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
     end
   end
 
-  @spec flush(t(), size_in_bytes :: pos_integer()) :: t()
+  @spec flush(t(), size_in_bytes :: pos_integer()) ::
+          {:ok, t()} | {:error, {:data_file_write_failed, File.posix()} | {:data_file_sync_failed, File.posix()}}
   def flush(db, size_in_bytes) do
     mark = <<size_in_bytes::47, 0::17>>
 
@@ -137,10 +138,22 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
       |> Enum.reverse()
 
     tx_size_bytes = :erlang.iolist_size(write_iolist)
-    :file.pwrite(db.file, size_in_bytes - tx_size_bytes, write_iolist)
+    write_offset = size_in_bytes - tx_size_bytes
 
-    :ets.select_delete(db.buffer, [{{:"$1", :_}, [{:<, :"$1", mark}], [true]}])
-    db
+    case :file.pwrite(db.file, write_offset, write_iolist) do
+      :ok ->
+        case :file.sync(db.file) do
+          :ok ->
+            :ets.select_delete(db.buffer, [{{:"$1", :_}, [{:<, :"$1", mark}], [true]}])
+            {:ok, db}
+
+          {:error, reason} ->
+            {:error, {:data_file_sync_failed, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:data_file_write_failed, reason}}
+    end
   end
 
   # Private helper functions

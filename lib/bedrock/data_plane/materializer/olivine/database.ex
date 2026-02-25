@@ -76,30 +76,44 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Database do
           data_size_in_bytes :: pos_integer(),
           collected_pages :: [%{Page.id() => {Page.t(), Page.id()}}]
         ) ::
-          {:ok, t(), metadata :: map()} | {:error, term()}
+          {:ok, t(), metadata :: map()}
+          | {:error, {:data_flush_failed, term()}}
+          | {:error, {:index_flush_failed, term()}}
   def advance_durable_version(
         {data_db, index_db},
         version,
         previous_durable_version,
         data_size_in_bytes,
         collected_pages
-      ) do
+  ) do
     start_time = System.monotonic_time(:microsecond)
 
-    {write_time_μs, updated_data_db} = :timer.tc(fn -> DataDatabase.flush(data_db, data_size_in_bytes) end)
+    {write_time_μs, data_flush_result} = :timer.tc(fn -> DataDatabase.flush(data_db, data_size_in_bytes) end)
 
-    {insert_time_μs, updated_index_db} =
-      :timer.tc(fn -> IndexDatabase.flush(index_db, version, previous_durable_version, collected_pages) end)
+    case data_flush_result do
+      {:ok, updated_data_db} ->
+        {insert_time_μs, index_flush_result} =
+          :timer.tc(fn -> IndexDatabase.flush(index_db, version, previous_durable_version, collected_pages) end)
 
-    total_duration_μs = System.monotonic_time(:microsecond) - start_time
+        case index_flush_result do
+          {:ok, updated_index_db} ->
+            total_duration_μs = System.monotonic_time(:microsecond) - start_time
 
-    metadata = %{
-      insert_time_μs: insert_time_μs,
-      write_time_μs: write_time_μs,
-      total_duration_μs: total_duration_μs
-    }
+            metadata = %{
+              insert_time_μs: insert_time_μs,
+              write_time_μs: write_time_μs,
+              total_duration_μs: total_duration_μs
+            }
 
-    {:ok, {updated_data_db, updated_index_db}, metadata}
+            {:ok, {updated_data_db, updated_index_db}, metadata}
+
+          {:error, reason} ->
+            {:error, {:index_flush_failed, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:data_flush_failed, reason}}
+    end
   end
 
   @doc """

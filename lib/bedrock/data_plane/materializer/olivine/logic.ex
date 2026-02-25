@@ -227,32 +227,35 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
         current_durable_version = Database.durable_version(state.database)
 
-        {:ok, updated_database, db_pipeline} =
-          Database.advance_durable_version(
-            state.database,
-            eviction_version,
-            current_durable_version,
-            data_db.file_offset,
-            collected_pages
-          )
+        case Database.advance_durable_version(
+               state.database,
+               eviction_version,
+               current_durable_version,
+               data_db.file_offset,
+               collected_pages
+             ) do
+          {:ok, updated_database, db_pipeline} ->
+            updated_state = %{state | index_manager: updated_index_manager, database: updated_database}
 
-        updated_state = %{state | index_manager: updated_index_manager, database: updated_database}
+            duration = System.monotonic_time(:microsecond) - start_time
+            lag_time_μs = calculate_lag_time_μs(window_edge, eviction_version)
 
-        duration = System.monotonic_time(:microsecond) - start_time
-        lag_time_μs = calculate_lag_time_μs(window_edge, eviction_version)
+            OlivineTelemetry.trace_window_advanced(:evicted, eviction_version,
+              duration_μs: duration,
+              evicted_count: evicted_count,
+              lag_time_μs: lag_time_μs,
+              window_target_version: window_edge,
+              data_size_in_bytes: data_db.file_offset,
+              durable_version_duration_μs: db_pipeline.total_duration_μs,
+              db_insert_time_μs: db_pipeline.insert_time_μs,
+              db_write_time_μs: db_pipeline.write_time_μs
+            )
 
-        OlivineTelemetry.trace_window_advanced(:evicted, eviction_version,
-          duration_μs: duration,
-          evicted_count: evicted_count,
-          lag_time_μs: lag_time_μs,
-          window_target_version: window_edge,
-          data_size_in_bytes: data_db.file_offset,
-          durable_version_duration_μs: db_pipeline.total_duration_μs,
-          db_insert_time_μs: db_pipeline.insert_time_μs,
-          db_write_time_μs: db_pipeline.write_time_μs
-        )
+            {:ok, updated_state}
 
-        {:ok, updated_state}
+          {:error, reason} ->
+            {:error, {:durable_version_advance_failed, reason}}
+        end
     end
   end
 

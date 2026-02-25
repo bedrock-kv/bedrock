@@ -179,12 +179,12 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       Keyword.get(node_config, :durability_mode) ||
         node_config
         |> Keyword.get(:durability, [])
-        |> Keyword.get(:mode, :relaxed)
+        |> Keyword.get(:mode, :strict)
 
     case mode do
       :strict -> :strict
       :relaxed -> :relaxed
-      _unsupported -> :relaxed
+      _unsupported -> :strict
     end
   end
 

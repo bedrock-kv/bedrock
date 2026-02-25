@@ -191,7 +191,8 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
     test "supports nested durability mode config" do
       assert :strict == ClusterSupervisor.durability_mode(durability: [mode: :strict])
       assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :relaxed])
-      assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :unsupported])
+      assert :strict == ClusterSupervisor.durability_mode(durability: [mode: :unsupported])
+      assert :strict == ClusterSupervisor.durability_mode([])
     end
   end
 end

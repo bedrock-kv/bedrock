@@ -76,6 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
       transaction = TransactionTestSupport.new_log_transaction(0, %{"a" => "1"})
       caller = self()
+
       ack_fn = fn result ->
         send(caller, {:ack_result, result})
         :ok

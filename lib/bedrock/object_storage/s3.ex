@@ -91,29 +91,26 @@ defmodule Bedrock.ObjectStorage.S3 do
     |> ExAws.S3.get_object(key)
     |> ExAws.request(request_config(config))
     |> case do
-      {:ok, %{body: body, headers: headers}} ->
-        case extract_etag(headers) do
-          nil ->
-            case head_etag(config, key) do
-              {:ok, etag} -> {:ok, body, etag}
-              {:error, reason} -> {:error, reason}
-            end
-
-          etag ->
-            {:ok, body, etag}
-        end
-
-      {:ok, %{body: body}} ->
-        case head_etag(config, key) do
-          {:ok, etag} -> {:ok, body, etag}
-          {:error, reason} -> {:error, reason}
-        end
+      {:ok, %{body: body} = response} ->
+        with_etag(config, key, body, Map.get(response, :headers, []))
 
       {:error, {:http_error, 404, _details}} ->
         {:error, :not_found}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp with_etag(config, key, body, headers) do
+    case extract_etag(headers) do
+      nil ->
+        with {:ok, etag} <- head_etag(config, key) do
+          {:ok, body, etag}
+        end
+
+      etag ->
+        {:ok, body, etag}
     end
   end
 

@@ -120,7 +120,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DatabaseTest do
     end
 
     @tag :tmp_dir
-    test "returns structured error when index flush fails and durable version is unchanged", %{db: {data_db, index_db} = db} do
+    test "returns structured error when index flush fails and durable version is unchanged", %{
+      db: {data_db, index_db} = db
+    } do
       :ok = :file.close(index_db.file)
 
       previous_version = Database.durable_version(db)

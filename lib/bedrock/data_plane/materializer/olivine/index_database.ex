@@ -153,32 +153,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexDatabase do
     write_offset = if mode == :overwrite, do: index_db.last_block_offset, else: index_db.file_offset
     new_offset = write_offset + :erlang.iolist_size(record)
 
-    case :file.pwrite(index_db.file, write_offset, record) do
-      :ok ->
-        case maybe_truncate(index_db.file, mode, new_offset) do
-          :ok ->
-            case :file.sync(index_db.file) do
-              :ok ->
-                {:ok,
-                 %{
-                   index_db
-                   | file_offset: new_offset,
-                     durable_version: new_version,
-                     last_block_empty: current_block_empty,
-                     last_block_offset: write_offset,
-                     last_block_previous_version: previous_version
-                 }}
-
-              {:error, posix} ->
-                {:error, {:index_file_sync_failed, posix}}
-            end
-
-          {:error, {:truncate_failed, posix}} ->
-            {:error, {:index_file_truncate_failed, posix}}
-        end
-
-      {:error, posix} ->
-        {:error, {:index_file_write_failed, posix}}
+    with :ok <- write_record_bytes(index_db.file, write_offset, record),
+         :ok <- maybe_truncate(index_db.file, mode, new_offset),
+         :ok <- sync_file(index_db.file) do
+      {:ok,
+       %{
+         index_db
+         | file_offset: new_offset,
+           durable_version: new_version,
+           last_block_empty: current_block_empty,
+           last_block_offset: write_offset,
+           last_block_previous_version: previous_version
+       }}
     end
   end
 
@@ -189,7 +175,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexDatabase do
          :ok <- :file.truncate(file) do
       :ok
     else
-      {:error, posix} -> {:error, {:truncate_failed, posix}}
+      {:error, posix} -> {:error, {:index_file_truncate_failed, posix}}
+    end
+  end
+
+  defp write_record_bytes(file, write_offset, record) do
+    case :file.pwrite(file, write_offset, record) do
+      :ok -> :ok
+      {:error, posix} -> {:error, {:index_file_write_failed, posix}}
+    end
+  end
+
+  defp sync_file(file) do
+    case :file.sync(file) do
+      :ok -> :ok
+      {:error, posix} -> {:error, {:index_file_sync_failed, posix}}
     end
   end
 

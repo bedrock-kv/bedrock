@@ -138,6 +138,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
       |> Enum.reverse()
 
     tx_size_bytes = :erlang.iolist_size(write_iolist)
+
     write_result =
       if tx_size_bytes == 0 do
         :ok

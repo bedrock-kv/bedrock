@@ -85,7 +85,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Database do
         previous_durable_version,
         data_size_in_bytes,
         collected_pages
-  ) do
+      ) do
     start_time = System.monotonic_time(:microsecond)
 
     {write_time_μs, data_flush_result} = :timer.tc(fn -> DataDatabase.flush(data_db, data_size_in_bytes) end)

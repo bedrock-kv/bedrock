@@ -355,42 +355,39 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     end
   end
 
+  defp handle_flush_persisted(%{pending_flush_max_version: nil} = state, _max_flushed_version), do: state
+
+  defp handle_flush_persisted(state, max_flushed_version) when max_flushed_version != state.pending_flush_max_version,
+    do: state
+
   defp handle_flush_persisted(state, max_flushed_version) do
-    case state.pending_flush_max_version do
-      nil ->
-        state
+    previous_durable_version = state.durable_version
+    durable_version = max_version(previous_durable_version, max_flushed_version)
+    buffer = drop_persisted_from_buffer(state.buffer, durable_version)
 
-      expected_max_version ->
-        # Ignore stale completion notifications if they do not match the
-        # current in-flight flush marker.
-        if max_flushed_version == expected_max_version do
-          previous_durable_version = state.durable_version
-          durable_version = max_version(previous_durable_version, max_flushed_version)
-          buffer = drop_persisted_from_buffer(state.buffer, durable_version)
+    updated_state = %{
+      state
+      | buffer: buffer,
+        durable_version: durable_version,
+        flush_in_progress: false,
+        pending_flush_max_version: nil
+    }
 
-          state = %{
-            state
-            | buffer: buffer,
-              durable_version: durable_version,
-              flush_in_progress: false,
-              pending_flush_max_version: nil
-          }
+    maybe_emit_watermark_advanced(updated_state, previous_durable_version, durable_version, buffer)
+    maybe_flush(updated_state)
+  end
 
-          if previous_durable_version != durable_version do
-            report_durability(state.demux, state.shard_id, durable_version)
+  defp maybe_emit_watermark_advanced(_state, previous_durable_version, durable_version, _buffer)
+       when previous_durable_version == durable_version, do: :ok
 
-            PersistenceTelemetry.emit_watermark_advanced(
-              state.shard_id,
-              durable_version,
-              length(buffer)
-            )
-          end
+  defp maybe_emit_watermark_advanced(state, _previous_durable_version, durable_version, buffer) do
+    report_durability(state.demux, state.shard_id, durable_version)
 
-          maybe_flush(state)
-        else
-          state
-        end
-    end
+    PersistenceTelemetry.emit_watermark_advanced(
+      state.shard_id,
+      durable_version,
+      length(buffer)
+    )
   end
 
   # Time-based flush: if oldest buffered version is older than flush interval, flush all

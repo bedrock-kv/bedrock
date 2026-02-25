@@ -32,7 +32,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
     dir = Path.dirname(file_path)
     file_name = String.to_charlist(Path.join(dir, "data"))
 
-    with {:ok, file} <- :file.open(file_name, [:raw, :binary, :read, :append]),
+    with {:ok, file} <- :file.open(file_name, [:raw, :binary, :read, :write]),
          {:ok, offset} <- :file.position(file, {:eof, 0}) do
       buffer = :ets.new(:buffer, [:ordered_set, :protected, {:read_concurrency, true}])
 
@@ -138,9 +138,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
       |> Enum.reverse()
 
     tx_size_bytes = :erlang.iolist_size(write_iolist)
-    write_offset = size_in_bytes - tx_size_bytes
+    write_result =
+      if tx_size_bytes == 0 do
+        :ok
+      else
+        write_offset = size_in_bytes - tx_size_bytes
+        :file.pwrite(db.file, write_offset, write_iolist)
+      end
 
-    case :file.pwrite(db.file, write_offset, write_iolist) do
+    case write_result do
       :ok ->
         case :file.sync(db.file) do
           :ok ->

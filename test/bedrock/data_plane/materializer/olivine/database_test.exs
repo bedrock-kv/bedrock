@@ -113,8 +113,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DatabaseTest do
       version = <<0, 0, 0, 0, 0, 0, 0, 1>>
       previous_version = Database.durable_version(db)
 
-      assert {:error, {:data_flush_failed, {:data_file_write_failed, _reason}}} =
+      assert {:error, {:data_flush_failed, {failure_kind, _reason}}} =
                Database.advance_durable_version(db, version, previous_version, data_db.file_offset, [%{}])
+
+      assert failure_kind in [:data_file_write_failed, :data_file_sync_failed]
     end
 
     @tag :tmp_dir

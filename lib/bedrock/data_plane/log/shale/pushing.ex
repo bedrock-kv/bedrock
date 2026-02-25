@@ -112,6 +112,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
             with :ok <- Writer.close(t.writer) do
               write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
             end
+
+          {:error, _reason} = error ->
+            error
         end
 
       {:error, reason} ->

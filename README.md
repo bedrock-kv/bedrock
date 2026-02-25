@@ -32,6 +32,21 @@ end
 - [Async Persistence Queue](guides/async-persistence-queue.md)
 - [Distributed Durability Suite](guides/distributed-durability-tests.md)
 
+## Durability Defaults
+
+- Runtime durability mode defaults to `:strict`.
+- Unsupported durability mode values resolve to `:strict`.
+- Use explicit relaxed mode for local development or single-node rollout only:
+
+```elixir
+config :bedrock, MyCluster,
+  durability_mode: :relaxed
+```
+
+Commit acknowledgments are gated by WAL durability: a log server acknowledges
+only after the WAL append is written and fsynced. Async object persistence
+remains separate and does not gate commit ACKs.
+
 ## S3/MinIO Tests
 
 S3-focused tests use a local MinIO process and are tagged with `:s3`.

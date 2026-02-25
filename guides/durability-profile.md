@@ -48,13 +48,21 @@ supporting gradual rollout in relaxed mode.
 
 `Bedrock.Internal.ClusterSupervisor` enforces this profile at startup:
 
-- `:relaxed` mode (default): logs warning and continues.
-- `:strict` mode: raises and fails startup when checks fail.
+- `:strict` mode (default): raises and fails startup when checks fail.
+- `:relaxed` mode: logs warning and continues.
+- unsupported values resolve to `:strict`.
 
 Mode configuration is additive:
 
 - top-level `:durability_mode` (`:strict | :relaxed`)
 - or `durability: [mode: :strict | :relaxed]`
+
+Explicit development override:
+
+```elixir
+config :bedrock, MyCluster,
+  durability_mode: :relaxed
+```
 
 Desired sizing parameters can be provided via:
 

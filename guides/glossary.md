@@ -80,7 +80,7 @@ A database system that stores data as key-value pairs across multiple machines, 
 
 ### **Durability Guarantee**
 
-The promise that once a transaction is committed and acknowledged, it will survive system failures and be permanently stored.
+The promise that once a transaction is committed and acknowledged, it will survive system failures and be permanently stored. In Bedrock, log acknowledgment means WAL append + fsync has completed on required log replicas; async object persistence may still be catching up.
 
 ---
 

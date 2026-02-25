@@ -2,6 +2,7 @@ defmodule Bedrock.Docs.DurabilityFoundationExamplesTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Durability
+  alias Bedrock.Internal.ClusterSupervisor
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Config
   alias Bedrock.ObjectStorage.S3
@@ -33,6 +34,13 @@ defmodule Bedrock.Docs.DurabilityFoundationExamplesTest do
     assert :desired_logs_too_low in reasons
 
     assert :ok = Durability.require(node_config, :relaxed)
+  end
+
+  test "runtime durability mode defaults to strict with explicit relaxed override" do
+    assert :strict == ClusterSupervisor.durability_mode([])
+    assert :strict == ClusterSupervisor.durability_mode(durability: [mode: :unsupported])
+    assert :relaxed == ClusterSupervisor.durability_mode(durability_mode: :relaxed)
+    assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :relaxed])
   end
 
   test "s3 shorthand configuration example normalizes to S3 backend tuple" do

@@ -25,6 +25,7 @@ The current foundation covers:
 5. Durable watermark progression only after confirmed object-store writes.
 6. WAL trimming gated by confirmed monotonic durable watermark.
 7. Fail-fast corruption handling during object-backed replay.
+8. WAL commit acknowledgment only after append + fsync on required log replicas.
 
 ## End-to-End Durability Flow
 
@@ -38,6 +39,12 @@ The current foundation covers:
 This preserves hot-path responsiveness while keeping durability and trim behavior
 explicit and monotonic.
 
+WAL commit ACK semantics are independent from async object persistence:
+
+- transaction commit ACK is gated by log WAL append + fsync;
+- object persistence and watermark advancement happen asynchronously afterward;
+- WAL trimming remains gated by confirmed durable watermark progression.
+
 ## Runtime Guardrails
 
 Profile checks validate:
@@ -46,7 +53,9 @@ Profile checks validate:
 - persistent coordinator configuration;
 - persistent path configuration for coordinator, log, and materializer roles.
 
-Configuration is additive:
+Configuration is additive. Runtime default mode is `:strict`.
+
+Explicit relaxed override for development or single-node rollout:
 
 ```elixir
 config :bedrock, MyCluster,
@@ -57,15 +66,15 @@ config :bedrock, MyCluster,
   ]
 ```
 
-Strict mode fails fast when requirements are not met:
+Strict mode (default) fails fast when requirements are not met:
 
 ```elixir
 config :bedrock, MyCluster,
   durability_mode: :strict
 ```
 
-Use `:relaxed` during rollout and switch to `:strict` once infrastructure and
-telemetry are stable.
+Use `:relaxed` only when intentionally accepting profile warnings during staged
+rollout.
 
 ## S3 Backend Configuration
 
@@ -139,10 +148,10 @@ BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include distributed test/bedrock/distri
 1. Local filesystem remains the default object storage backend.
 2. S3 migration is additive: enable backend config without removing existing
    LocalFilesystem paths until cutover is validated.
-3. Start with `durability_mode: :relaxed` to surface profile gaps via warnings
-   and telemetry.
-4. Promote to `durability_mode: :strict` after profile and durability gates are
-   consistently passing.
+3. Runtime default is `:strict`; under-provisioned profiles fail startup unless
+   `durability_mode: :relaxed` is set explicitly.
+4. Use explicit `:relaxed` only for staged rollout, then remove it once profile
+   and durability gates are consistently passing.
 5. Keep WAL trim and durability telemetry on dashboards during the transition.
 
 ## Known Limitations

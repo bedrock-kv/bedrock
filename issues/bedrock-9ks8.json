@@ -6,13 +6,15 @@
   "blocks": [
     "bedrock-q67"
   ],
+  "closed_at": "2026-03-04T13:45:20Z",
+  "close_reason": "All 4 children closed. Snapshot format evolution complete.",
   "created": "2026-01-09T14:23:29.61039-05:00",
   "description": "Materializer needs to upload snapshots to object storage efficiently.\n\nPrerequisites: bedrock-wxf (ObjectStorage) is complete.\n\nDeliverables (as subtasks):\n- bedrock-9ks8.1: Footer-based index format (single file, streamable)\n- bedrock-9ks8.2: Streaming upload capability\n- bedrock-9ks8.3: Olivine compaction changes\n- bedrock-9ks8.4: Snapshot loading for cold start\n\nNOTE: 70% of groundwork exists (footer-based scanning, snapshot blocks, compaction).\n\nReady for implementation - start with 9ks8.1 (format design).",
   "id": "bedrock-9ks8",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Snapshot Format Evolution",
   "type": "epic",
-  "updated_at": "2026-03-04T12:58:33Z"
+  "updated_at": "2026-03-04T13:45:20Z"
 }

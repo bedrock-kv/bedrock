@@ -6,14 +6,16 @@
   "blocks": [
     "bedrock-9ckr.1"
   ],
+  "closed_at": "2026-03-04T13:45:20Z",
+  "close_reason": "min_durable_version wired through Demux→Shale. WAL trimming gated on confirmed durability watermark.",
   "created": "2026-01-09T13:58:01.968721-05:00",
   "description": "Shale currently never trims segments automatically (only during recovery). Add durable_up_to parameter to Log.pull that reports durability progress, and automatically discard segments when safe. Files: shale/server.ex, shale/facts.ex, shale/segment_recycler.ex",
   "id": "bedrock-1e6",
   "labels": [],
   "parent": "bedrock-9ckr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Add durable_up_to parameter and automatic segment trimming in Shale",
   "type": "task",
-  "updated_at": "2026-03-04T12:58:33Z"
+  "updated_at": "2026-03-04T13:45:20Z"
 }

@@ -1,8 +1,6 @@
 {
   "assignee": "21417+jallum@users.noreply.github.com",
-  "blocked_by": [
-    "bedrock-jrow"
-  ],
+  "blocked_by": [],
   "blocks": [],
   "created": "2026-01-23T09:31:10.206948-05:00",
   "description": "## Context\n\nFollowing the \"Object Storage as Source of Truth\" refactor, TSL and config are no longer restored from Raft. The `leader_waiting_consensus` state was originally needed to wait for state restoration, but is now unnecessary:\n- TSL is OUTPUT of recovery (not input)\n- Config is loaded from object storage at init\n\n## Changes Made\n\n### `lib/bedrock/control_plane/coordinator/server.ex`\n- Simplified leadership change handler - starts Director immediately on becoming leader\n- Removed `try_to_start_director_after_first_consensus` function\n- Removed `start_director_after_consensus` function\n- Simplified `consensus_reached` handler - no longer triggers director startup\n- Updated `attempt_director_recovery` - removed `:leader_waiting_consensus` checks\n\n### `lib/bedrock/control_plane/coordinator/state.ex`\n- Simplified `leader_startup_state` type: `:not_leader | :leader_ready | :recovery_failed`\n- Removed `:leader_waiting_consensus` state\n\n### `lib/bedrock/control_plane/coordinator.ex`\n- Updated moduledoc to reflect simplified states\n\n## New Leadership Flow\n\n```\nBefore: leadership_changed → :leader_waiting_consensus → (wait) → :leader_ready → start Director\nAfter:  leadership_changed → start Director immediately\n```\n\n## Verification Status\n\n- Unit tests pass ✓\n- Fresh cluster start works ✓\n- Reconnect (second start) - BLOCKED (see bedrock-jrow)\n\nCannot fully verify until reconnect scenario works.",

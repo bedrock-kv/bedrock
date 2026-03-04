@@ -5,14 +5,16 @@
     "bedrock-rij"
   ],
   "blocks": [],
+  "closed_at": "2026-03-04T13:45:21Z",
+  "close_reason": "VersionDeterminationPhase removed in recovery refactor. Demux durability tracking implemented in durability.ex and shard_server.",
   "created": "2026-01-17T11:36:07.74954-05:00",
   "description": "Replace storage-team based VersionDeterminationPhase with demux-based approach.\n\n## Current State\n\nVersionDeterminationPhase queries storage teams for their durable versions and calculates the minimum across quorum.\n\n## New Approach\n\n- Demux tracks lowest version safely stored in ObjectStorage\n- Recovery uses: demux durable version → log quorum version\n- The range between these is what needs to be replayed\n\n## Recovery Version Determination\n\nWith m=2, n=3 logs:\n- If log A died, B is at 100, C is at 105\n- 100 is the highest reliable version (both B and C have it)\n- Reconstruction of A needs mix of transactions from B and C\n\n## Phases to Modify\n\n- VersionDeterminationPhase: Query demux instead of storage teams\n- LogRecoveryPlanningPhase: Already does log quorum calculation\n\n## Key Files\n\n- lib/bedrock/control_plane/director/recovery/version_determination_phase.ex\n- lib/bedrock/control_plane/director/recovery/log_recovery_planning_phase.ex",
   "id": "bedrock-9ckr.1",
   "labels": [],
   "parent": "bedrock-9ckr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Demux tracks durable versions for recovery version determination",
   "type": "task",
-  "updated_at": "2026-03-04T12:58:33Z"
+  "updated_at": "2026-03-04T13:45:21Z"
 }

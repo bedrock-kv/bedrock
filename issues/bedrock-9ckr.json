@@ -4,13 +4,15 @@
   "blocks": [
     "bedrock-q67"
   ],
+  "closed_at": "2026-03-04T13:45:21Z",
+  "close_reason": "Epic complete. Both subtasks done: rij (snapshot-based trimming replaced by Demux), 1e6 (durable_up_to tracking implemented).",
   "created": "2026-01-09T15:14:49.433917-05:00",
   "description": "Manages log segment lifecycle, durability tracking, and trimming. Logs need to trim old segments once data is durable in object storage.\n\nSubtasks:\n- bedrock-rij: Periodic metadata snapshots (to bound recovery replay)\n- bedrock-1e6: durable_up_to tracking and automatic segment trimming\n\nKey files: shale/server.ex, shale/segment_recycler.ex, shale/facts.ex",
   "id": "bedrock-9ckr",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Log Lifecycle and Trimming",
   "type": "epic",
-  "updated_at": "2026-03-04T12:58:33Z"
+  "updated_at": "2026-03-04T13:45:21Z"
 }

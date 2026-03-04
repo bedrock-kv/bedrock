@@ -1,7 +1,6 @@
 {
   "assignee": "21417+jallum@users.noreply.github.com",
   "blocked_by": [
-    "bedrock-7wge",
     "bedrock-jrow"
   ],
   "blocks": [],
@@ -13,5 +12,5 @@
   "status": "open",
   "title": "Remove Leader Startup State Machine",
   "type": "task",
-  "updated_at": "2026-03-04T12:58:33Z"
+  "updated_at": "2026-03-04T13:45:21Z"
 }

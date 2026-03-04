@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T19:46:55.316564-05:00",
+  "close_reason": "Fixed two bugs: (1) Queue lease was never released, preventing subsequent dequeue attempts within 5 seconds (2) Stale pointers not cleaned up when updating to future vesting_time. All scheduled/delayed jobs now process correctly.",
+  "created": "2026-01-02T19:27:35.187419-05:00",
+  "description": "Jobs enqueued with :at or :in options are not being processed after their vesting_time passes. The scanner should pick them up but doesn't seem to. Test shows 4 pending jobs at end when all should be processed.",
+  "id": "bedrock-0ya",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Scheduled/delayed jobs not being processed",
+  "type": "bug",
+  "updated_at": "2026-01-02T19:46:55.316564-05:00"
+}

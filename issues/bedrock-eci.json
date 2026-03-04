@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:54:37.283537-05:00",
+  "close_reason": "Added verify_lease/3 helper, updated 3 call sites (extend_lease, complete, resolve_item_key)",
+  "created": "2026-01-01T22:42:30.783334-05:00",
+  "description": "'get, decode, verify ID, execute' pattern repeated 4 times:\n- release_queue_lease (123-139)\n- extend_lease (322-325)\n- complete (376-395)\n- resolve_item_key (425-437)\n\nFix: Extract verify_and_use_lease/4 helper function.",
+  "id": "bedrock-eci",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Extract lease validation helper",
+  "type": "task",
+  "updated_at": "2026-01-01T22:54:37.283537-05:00"
+}

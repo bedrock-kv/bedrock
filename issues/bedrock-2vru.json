@@ -1,0 +1,23 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T18:50:01.176062-05:00",
+  "close_reason": "Fixed format mismatch: routing_data now correctly decodes layout_log as erlang term (log descriptor), not OtpRef. Service refs are runtime state, not persisted.",
+  "created": "2026-01-19T18:48:10.344811-05:00",
+  "description": "",
+  "id": "bedrock-2vru",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\n`routing_data.ex:174` tries to parse `layout_log` values as `OtpRef` flatbuffers:\n```elixir\n{:layout_log, log_id} -\u003e\n  service_ref = OtpRef.to_tuple(value)  # Expects OtpRef flatbuffer\n```\n\nBut `persistence_phase.ex:222` writes log descriptors as erlang terms:\n```elixir\nencoded_descriptor = log_descriptor |\u003e :erlang.term_to_binary()\nTx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)\n```\n\nThis causes `ArgumentError: insufficient_data` when flatbuffer tries to parse erlang binary as flatbuffer.\n\n## Fix Options\n\n1. **Reader should decode erlang term** - routing_data should use `:erlang.binary_to_term()` and not expect service refs in layout_log\n2. **Writer should include OtpRef** - persistence_phase should write OtpRef-encoded service references\n\nOption 1 is likely correct since log_services are runtime state, not durable config. The log descriptor (tags) is what's persisted.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T23:48:19Z"
+    }
+  ],
+  "priority": 1,
+  "status": "closed",
+  "title": "Fix layout_log format mismatch between persistence and routing_data",
+  "type": "bug",
+  "updated_at": "2026-01-19T18:50:01.176062-05:00"
+}

@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-7wge",
+    "bedrock-ewiw",
+    "bedrock-pebe"
+  ],
+  "blocks": [
+    "bedrock-kzep"
+  ],
+  "closed_at": "2026-01-21T20:51:33.49148-05:00",
+  "created": "2026-01-21T20:39:09.659319-05:00",
+  "description": "Remove the now-unused API handlers.\nFiles:\n- lib/bedrock/control_plane/coordinator/server.ex:\n  - Remove handle_call({:update_config, ...})\n  - Remove handle_call({:update_transaction_system_layout, ...})\n  - Keep handle_call(:fetch_config, ...) - reads from state loaded at init\n  - Keep handle_call(:fetch_transaction_system_layout, ...) - reads from state",
+  "id": "bedrock-00x2",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Clean up coordinator API - remove TSL/config update handlers",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

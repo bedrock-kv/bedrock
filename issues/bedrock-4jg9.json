@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-jkcm",
+    "bedrock-yerr"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-19T14:37:51.918261-05:00",
+  "close_reason": "Removed StorageTeamDescriptor and storage_teams field. All production code updated to use shard_layout. Tests pass (0 failures, 48 skipped - obsolete storage team tests tracked in bedrock-474j).",
+  "created": "2026-01-10T07:54:46.513562-05:00",
+  "description": "## Summary\n\nFinal cleanup: Remove obsolete storage_teams infrastructure after migration is complete.\n\n## Files to Modify (5 files)\n\n**storage_team_descriptor.ex** - DELETE entirely\n- Module becomes obsolete\n- Helper functions (`upsert`, `find_by_tag`, `remove_by_tag`) no longer needed\n\n**transaction_system_layout.ex** (line 51)\n- Remove `storage_teams` field definition\n- Update type specs\n\n**recovery_attempt.ex** (lines 53, 78, 106)\n- Remove `storage_teams` field\n- Update initialization\n\n**tsl_type_validator.ex** (lines 106-164)\n- Remove `validate_storage_teams` function\n- Add `validate_shards` if needed\n\n**Telemetry/tracing files** (3 files)\n- Update counters: `storage_teams_count` → `shards_count`\n- Update trace messages\n\n## Prerequisites\n\nMust complete after:\n- bedrock-yerr (ETS ceiling search)\n- bedrock-jkcm (recovery phases migration)",
+  "id": "bedrock-4jg9",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove StorageTeamDescriptor and storage_teams field",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

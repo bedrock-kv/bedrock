@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T14:50:08.554493-05:00",
+  "close_reason": "Deleted 4 obsolete test files testing storage team-based reads: layout_index_test.exs, point_reads_test.exs, range_reads_test.exs, range_reads_selector_test.exs. Implementation files kept (they raise on use - correct behavior until materializer integration).",
+  "created": "2026-01-19T14:34:32.451765-05:00",
+  "description": "Storage teams have been retired. Several test files were skipped during the removal:\n\n- test/bedrock/internal/transaction_builder/transaction_builder/layout_index_test.exs\n- test/bedrock/internal/transaction_builder/transaction_builder/point_reads_test.exs\n- test/bedrock/internal/transaction_builder/transaction_builder/range_reads_test.exs\n- test/bedrock/internal/transaction_builder/transaction_builder/range_reads_selector_test.exs\n\nThese tests tested direct storage reads via LayoutIndex which is no longer supported. Options:\n1. Delete the tests entirely if the functionality is obsolete\n2. Rewrite tests for materializer-based reads once that's implemented\n3. Keep LayoutIndex tests but update assertions to expect empty segments",
+  "id": "bedrock-474j",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Review/remove skipped storage team tests",
+  "type": "task",
+  "updated_at": "2026-01-19T14:50:08.554493-05:00"
+}

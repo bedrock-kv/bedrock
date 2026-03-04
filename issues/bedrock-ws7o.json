@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-29aa"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-19T15:43:59.625255-05:00",
+  "close_reason": "Added Demux.Server.push call after successful WAL write in Shale push handler",
+  "created": "2026-01-19T15:02:07.412519-05:00",
+  "description": "After successful WAL write in push handler:\n- Call Demux.push(state.demux, version, transaction)\n- This is async (cast), won't block commit response\n\nTest: After push succeeds, Demux receives the transaction.",
+  "id": "bedrock-ws7o",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Shale: push transactions to Demux after WAL commit",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

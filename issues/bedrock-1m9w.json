@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-7wge"
+  ],
+  "blocks": [
+    "bedrock-kzep"
+  ],
+  "closed_at": "2026-01-21T20:49:53.899061-05:00",
+  "created": "2026-01-21T20:39:08.875218-05:00",
+  "description": "Update coordinator server to load state from object storage.\nFiles:\n- lib/bedrock/control_plane/coordinator/server.ex:\n  - In init/1, load ClusterState from object storage\n  - Remove has_persisted_tsl_in_raft check\n  - Remove try_to_start_director_after_first_consensus TSL waiting logic\n  - Start director immediately after becoming leader",
+  "id": "bedrock-1m9w",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Load state from object storage on coordinator init",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

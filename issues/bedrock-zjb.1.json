@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:17:41.18793-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.450556-05:00",
+  "description": "Quick wins - remove fields that are never read:\n- Lease.priority (lease.ex:20,23,50) - never accessed, priority is in item_key tuple\n- Item.metadata (item.ex:16,30,44,68) - write-only, never read\n\nUpdate tests accordingly.",
+  "id": "bedrock-zjb.1",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove unused struct fields",
+  "type": "task",
+  "updated_at": "2026-01-01T21:17:41.18793-05:00"
+}

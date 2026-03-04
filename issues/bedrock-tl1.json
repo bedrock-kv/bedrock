@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-jde"
+  ],
+  "closed_at": "2026-01-01T22:46:19.316568-05:00",
+  "close_reason": "Wired up backoff_fn through Consumer → Manager → Store.requeue. backoff_fn is now used for retry delays while snooze still uses explicit base_delay.",
+  "created": "2026-01-01T22:42:28.643986-05:00",
+  "description": "Config.backoff_fn (config.ex line 15, 28) is defined but never used. Store.requeue/3 (line 460) hardcodes exponential backoff instead of using the configured function.\n\nFix: Pass backoff_fn through to Store.requeue and use it for delay calculation.",
+  "id": "bedrock-tl1",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Wire up Config.backoff_fn in Store.requeue",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

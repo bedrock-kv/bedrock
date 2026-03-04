@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T16:57:57.154059-05:00",
+  "close_reason": "Completed umbrella restructuring: renamed bedrock to bedrock_core, extracted bedrock_shale (log driver) and bedrock_olivine (storage driver), created bedrock convenience package, updated publishing script, and added centralized version management. All 1921 tests pass.",
+  "created": "2026-01-01T16:38:45.993602-05:00",
+  "description": "",
+  "id": "bedrock-3a3",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Restructure bedrock umbrella: extract olivine, shale, create bedrock_core",
+  "type": "feature",
+  "updated_at": "2026-01-01T16:57:57.154059-05:00"
+}

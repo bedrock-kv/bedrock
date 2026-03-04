@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-awr3",
+    "bedrock-znki"
+  ],
+  "closed_at": "2026-01-23T15:46:51.5322-05:00",
+  "close_reason": "Simplified to majority quorum and removed shard_tags",
+  "created": "2026-01-23T15:34:42.483669-05:00",
+  "description": "## Goal\nStop assigning shard_tags to logs during initialization - tags are computed, not stored.\n\n## File\n`lib/bedrock/control_plane/director/recovery/initialization_phase.ex`\n\n## Changes\n```elixir\n# Before: logs = Map.new(log_vacancies, \u0026{\u00261, log_tags})\n# After:  logs = Map.new(log_vacancies, \u0026{\u00261, %{}})\n```\n\nRemove any log_tags computation/assignment. Shard-to-log mapping is now computed via consistent hashing when needed.",
+  "id": "bedrock-dwjr",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove shard_tags from InitializationPhase",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

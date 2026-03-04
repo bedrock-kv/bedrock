@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T17:19:48.139991-05:00",
+  "close_reason": "Added 'unless Code.ensure_loaded?(MockRepo)' guards to bedrock_hca and bedrock_directory test_helper.exs files. No more redefinition warnings in test suite.",
+  "created": "2026-01-01T17:18:52.813396-05:00",
+  "description": "MockRepo is defined in bedrock_core, bedrock_hca, and bedrock_directory test_helper.exs files. When umbrella tests run, this causes 'redefining module MockRepo' warnings. Need to guard the defmock calls or use unique names.",
+  "id": "bedrock-afs",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix MockRepo redefinition warnings in test suite",
+  "type": "task",
+  "updated_at": "2026-01-01T17:19:48.139991-05:00"
+}

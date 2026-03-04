@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-3tb"
+  ],
+  "blocks": [
+    "bedrock-4ww"
+  ],
+  "closed_at": "2026-01-11T13:09:39.491597-05:00",
+  "close_reason": "Removed monolithic TSL key (layout_monolithic) from persistence_phase.ex and system_keys.ex. Commit 01308944.",
+  "created": "2026-01-09T13:58:02.10638-05:00",
+  "description": "## Summary\n\nRemove the monolithic TSL key from coordinator persistence. Ephemeral PIDs were already removed from decomposed system keys in commit 8065bbdc.\n\n## Current State\n\n- Decomposed keys (layout_services, layout_id, layout_log, shard_keys) no longer contain ephemeral PIDs\n- The monolithic key (`layout_monolithic()`) still stores encoded full TSL for legacy/handoff\n- No backward compatibility is needed\n\n## Files to Modify\n\n**persistence_phase.ex** (line 86)\n- Remove `Tx.set(SystemKeys.layout_monolithic(), ...)` call\n\n**system_keys.ex** (lines 140-141, 195)\n- Remove `layout_monolithic/0` function\n- Remove from legacy keys list\n\n**coordinator/** (if any reads)\n- Check if coordinator reads the monolithic key during handoff/recovery\n- Remove any reads if present\n\n## Verification\n\n- Recovery still works without monolithic key\n- Coordinator handoff still works (or is removed if unused)\n- All tests pass",
+  "id": "bedrock-aum",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Coordinator stores only log identities (mini-TSL)",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

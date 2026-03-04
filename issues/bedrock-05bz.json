@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T12:38:39.999834-05:00",
+  "close_reason": "Buffer and flush implemented as part of ShardServer skeleton",
+  "created": "2026-01-19T12:33:11.083882-05:00",
+  "description": "",
+  "id": "bedrock-05bz",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "ShardServer: Buffer + flush trigger",
+  "type": "task",
+  "updated_at": "2026-01-19T12:38:39.999834-05:00"
+}

@@ -1,0 +1,30 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-21mq"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-19T18:58:41.676443-05:00",
+  "close_reason": "Implemented in commit 594a894f: Shale.Server now detects emfile/enfile/enomem errors during initialization and retries with exponential backoff (1s-30s) instead of crash-looping",
+  "created": "2026-01-19T18:31:08.343626-05:00",
+  "description": "",
+  "id": "bedrock-8ten",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nWhen the system runs out of file descriptors (`emfile` error), Shale.Server crashes during initialization when trying to read WAL segment files:\n\n```\n** (RuntimeError) Unable to read WAL segment files from path: /var/.../qlfgfjyw. \nCheck directory permissions and filesystem health.\n```\n\nThe GenServer then restarts and immediately crashes again, creating a crash loop that:\n1. Consumes supervisor restart budget\n2. Makes diagnosis harder (floods logs)\n3. Doesn't give the system time to recover file descriptors\n\n## Expected Behavior\n\n- Detect `emfile` errors specifically\n- Back off with exponential delay before retrying\n- Log a clear message about file descriptor exhaustion\n- Consider staying in a degraded/unavailable state rather than crash-looping\n\n## Location\n\n`lib/bedrock/data_plane/log/shale/server.ex:119` - `handle_continue(:initialization)`\n\n## Reproduction\n\nRun Livebook with default macOS file descriptor limits (~256) and start multiple Bedrock clusters or workers until `emfile` errors appear.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T23:31:17Z"
+    },
+    {
+      "text": "## Additional Context\n\nUser has `ulimit -n 1048575` (1M+ file descriptors) yet still hit exhaustion. This suggests a file descriptor leak rather than just a low system limit. \n\nMay need a separate investigation bead for the leak itself - this bead focuses on graceful handling when exhaustion occurs.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T23:32:35Z"
+    }
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "Shale: handle file descriptor exhaustion gracefully instead of crash-looping",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

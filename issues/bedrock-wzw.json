@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:13:07.11773-05:00",
+  "close_reason": "Replaced sleeps with Process.monitor/assert_receive for shutdown, message passing for pull confirmation, refute_receive for no-crash verification",
+  "created": "2026-01-02T20:36:58.029288-05:00",
+  "description": "Replace 4 instances of Process.sleep at lines 94, 119, 417, 453. Lines 94, 119 wait for process shutdown - use Process.monitor and assert_receive {:DOWN, ...}. Lines 417, 453 wait for async pulling operations.",
+  "id": "bedrock-wzw",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor basalt/pulling_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:13:07.11773-05:00"
+}

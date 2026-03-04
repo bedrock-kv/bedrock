@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-3na6"
+  ],
+  "closed_at": "2026-01-10T20:58:51.533296-05:00",
+  "close_reason": "Completed: finalize_batch returns routing_data instead of metadata. Removed metadata field from State, server updates routing_data directly. All 2098 tests pass.",
+  "created": "2026-01-10T20:31:49.367278-05:00",
+  "description": "## Problem\n\nCurrently finalize_batch has a bug: routing data updates are lost.\n\nThe flow:\n1. `apply_metadata_updates` correctly updates routing_data (log_map, log_services via mutations)\n2. BUT we return `plan.metadata` (non-routing stuff from MetadataMerge)\n3. Server stores this in `state.metadata` \n4. The updated routing_data fields are lost!\n\n## Analysis\n\nWe have redundant data:\n- `state.metadata` - list of non-routing metadata (shards, resolvers)\n- `state.routing_data` - shard_table, log_map, log_services, replication_factor\n\nThe `metadata` field serves no purpose:\n1. Once mutations are applied to routing_data, the raw mutations can be discarded\n2. MetadataMerge stores shard/resolver details, but nothing uses them\n3. We're maintaining metadata but losing the important routing updates\n\n## Solution\n\n1. Remove `metadata` field from State\n2. Change `finalize_batch` return from `{:ok, n, n, metadata}` to `{:ok, n, n, routing_data}`\n3. Server stores updated `routing_data` (not metadata)\n4. Remove `:metadata_update` message - just update routing_data directly\n5. MetadataMerge can be removed (non-routing metadata not currently used)\n\n## Files\n\n- state.ex - remove metadata field\n- finalization.ex - return routing_data not metadata\n- server.ex - store routing_data, remove :metadata_update handler\n- metadata_merge.ex - remove (or keep for future use)\n- tests - update expectations",
+  "id": "bedrock-otoq",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Return routing_data from finalize_batch instead of metadata",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

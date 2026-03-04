@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-5ih",
+    "bedrock-7b8"
+  ],
+  "closed_at": "2026-01-01T16:46:42.813512-05:00",
+  "close_reason": "Completed rename: git mv apps/bedrock apps/bedrock_core, updated mix.exs app name and package name, updated bedrock_hca and bedrock_directory deps to use bedrock_core. All 1921 tests pass.",
+  "created": "2026-01-01T16:38:58.115895-05:00",
+  "description": "",
+  "id": "bedrock-dq7",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Rename apps/bedrock to apps/bedrock_core",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

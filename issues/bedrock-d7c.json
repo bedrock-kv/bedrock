@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:43:05.771944-05:00",
+  "close_reason": "Replaced Process.sleep(50) with :sys.get_state(manager) - a sync call that ensures prior async messages are processed",
+  "created": "2026-01-02T20:37:35.346898-05:00",
+  "description": "Replace Process.sleep at line 242 with message-based synchronization in apps/bedrock_job_queue/test/bedrock/job_queue/consumer_integration_test.exs.",
+  "id": "bedrock-d7c",
+  "labels": [],
+  "parent": "bedrock-97v",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor consumer_integration_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-02T20:43:05.771944-05:00"
+}

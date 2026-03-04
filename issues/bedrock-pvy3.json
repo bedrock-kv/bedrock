@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:52:13.568033-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-11T13:39:50.419771-05:00",
+  "description": "Remove the metadata_snapshot_path option from cluster_bootstrap - not needed for now.",
+  "id": "bedrock-pvy3",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove metadata_snapshot_path from ClusterBootstrap",
+  "type": "task",
+  "updated_at": "2026-01-11T13:52:13.568033-05:00"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2025-12-31T20:38:32.135318-05:00",
+  "close_reason": "Closed",
+  "created": "2025-11-21T13:49:27.207039-05:00",
+  "description": "",
+  "id": "bedrock-57j",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Deploy to hex",
+  "type": "task",
+  "updated_at": "2025-12-31T20:38:32.135318-05:00"
+}

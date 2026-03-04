@@ -1,0 +1,23 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-22xb",
+    "bedrock-iqju",
+    "bedrock-mrrk",
+    "bedrock-yz03"
+  ],
+  "blocks": [
+    "bedrock-yqdo"
+  ],
+  "closed_at": "2026-01-10T16:44:26.136291-05:00",
+  "close_reason": "Removed logs_by_id from FinalizationPlan, updated push_to_logs to use log_services, changed push_transaction_to_logs_direct from 5-arg to 4-arg signature",
+  "created": "2026-01-10T15:48:26.001141-05:00",
+  "description": "Remove transaction_system_layout from finalization, use RoutingData for everything.\n\n## Current Usage\n\nfinalize_batch/4 receives TSL and uses:\n- TSL.logs for building log_map (now in routing_data)\n- TSL.services for looking up log PIDs (now in routing_data.log_services)\n\n## Changes to finalization.ex\n\n1. Remove TSL from finalize_batch signature:\n   ```elixir\n   # Old\n   def finalize_batch(batch, transaction_system_layout, resolver_layout, opts)\n   \n   # New  \n   def finalize_batch(batch, resolver_layout, routing_data, opts)\n   ```\n\n2. Update FinalizationPlan:\n   - Remove `logs_by_id` field\n   - Uses routing_data fields (shard_table, log_map, log_services, replication_factor)\n\n3. In `build_transactions_for_logs`:\n   - Use `Map.values(routing_data.log_map)` for log list\n\n4. In `push_to_logs`:\n   - Use `routing_data.log_services[log_id]` to get log ref\n   - No separate metadata map needed\n\n## Key Code Change\n\n```elixir\ndefp push_to_logs(plan) do\n  log_ids = Map.values(plan.log_map) |\u003e Enum.uniq()\n  \n  logs_with_refs = Enum.map(log_ids, fn log_id -\u003e\n    {log_id, Map.fetch!(plan.log_services, log_id)}\n  end)\n  \n  # Push to each log...\nend\n```\n\n## Testing\n\n- Update finalization tests to not pass TSL\n- Verify routing uses routing_data fields\n- Verify push uses routing_data.log_services",
+  "id": "bedrock-yml6",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Finalization: Remove TSL param, use log_map and log_services",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

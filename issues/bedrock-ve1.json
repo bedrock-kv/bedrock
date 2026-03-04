@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-adr",
+    "bedrock-sbl"
+  ],
+  "closed_at": "2026-01-01T23:12:20.138824-05:00",
+  "close_reason": "Added :now and :duration_ms options to QueueLease.new/3, updated Store and tests",
+  "created": "2026-01-01T22:51:09.324853-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/lib/bedrock/job_queue/queue_lease.ex`\n\n## Current Code (line 28-37)\n```elixir\ndef new(queue_id, holder, duration_ms \\\\ @default_duration_ms) do\n  now = System.system_time(:millisecond)\n  # ...\nend\n```\n\n## Required Changes\nAccept keyword opts with `:now` and `:duration_ms`:\n```elixir\n@spec new(String.t(), binary(), pos_integer() | keyword()) :: t()\ndef new(queue_id, holder, duration_or_opts \\\\ [])\n\ndef new(queue_id, holder, duration_ms) when is_integer(duration_ms) do\n  new(queue_id, holder, duration_ms: duration_ms)\nend\n\ndef new(queue_id, holder, opts) when is_list(opts) do\n  duration = Keyword.get(opts, :duration_ms, @default_duration_ms)\n  now = Keyword.get(opts, :now, System.system_time(:millisecond))\n  # ...\nend\n```\n\n## Impact\n- Tests can pass `now: fixed_time` for deterministic queue lease creation\n- Eliminates need for struct manipulation in tests",
+  "id": "bedrock-ve1",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add :now injection to QueueLease.new/3",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

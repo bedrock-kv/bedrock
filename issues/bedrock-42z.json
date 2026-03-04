@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-0wi"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:16:39.274688-05:00",
+  "close_reason": "Updated to use fixed timestamps with :now parameter",
+  "created": "2026-01-01T22:51:57.148712-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue_test.exs`\n\n## Tests to Update (lines 29-41)\n\n### 1. \"visible? returns true when vesting_time has passed\" (lines 29-33)\n```elixir\n# Current\npast = System.system_time(:millisecond) - 1000\nitem = Item.new(\"tenant_1\", \"test\", %{}, vesting_time: past)\nassert Item.visible?(item)\n\n# Should be\nnow = 10_000\nitem = Item.new(\"tenant_1\", \"test\", %{}, vesting_time: 9_000)\nassert Item.visible?(item, now)\n```\n\n### 2. \"visible? returns false when vesting_time is in future\" (lines 36-40)\n```elixir\n# Current\nfuture = System.system_time(:millisecond) + 10_000\nitem = Item.new(\"tenant_1\", \"test\", %{}, vesting_time: future)\nrefute Item.visible?(item)\n\n# Should be\nnow = 10_000\nitem = Item.new(\"tenant_1\", \"test\", %{}, vesting_time: 20_000)\nrefute Item.visible?(item, now)\n```\n\n## Principle\nUse deterministic timestamps throughout.",
+  "id": "bedrock-42z",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update job_queue_test.exs Item tests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

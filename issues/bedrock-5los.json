@@ -1,0 +1,25 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-lxj5"
+  ],
+  "closed_at": "2026-01-17T15:56:47.132453-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-17T15:42:35.050147-05:00",
+  "description": "",
+  "id": "bedrock-5los",
+  "labels": [],
+  "comments": [
+    {
+      "text": "Add get_with_version/2 and put_if_version_matches/5 to ObjectStorage behaviour.\n\n## API\n\n- get_with_version(backend, key) -\u003e {:ok, data, version_token} | error\n- put_if_version_matches(backend, key, version_token, data, opts) -\u003e :ok | {:error, :version_mismatch}\n\n## Version Token Format\n\n- LocalFilesystem: sha256:\u003ccontent_hash\u003e\n- S3 (future): ETag from response headers  \n- GCS (future): gen:\u003cgeneration_number\u003e\n\n## Files\n\n- lib/bedrock/object_storage.ex (add callbacks + API)\n- lib/bedrock/object_storage/local_filesystem.ex (implement)\n- test/bedrock/object_storage/local_filesystem_test.exs (tests)",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-17T20:42:57Z"
+    }
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "Add conditional update support to ObjectStorage (version tokens)",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

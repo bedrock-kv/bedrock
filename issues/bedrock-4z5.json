@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-kmt"
+  ],
+  "blocks": [
+    "bedrock-dav"
+  ],
+  "closed_at": "2026-01-01T20:11:10.390763-05:00",
+  "close_reason": "Item and Lease structs already implemented in bedrock-kmt",
+  "created": "2026-01-01T20:06:43.70448-05:00",
+  "description": "Core data model structs for job queue items and leases, following QuiCK paper patterns",
+  "id": "bedrock-4z5",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Implement Item and Lease structs",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

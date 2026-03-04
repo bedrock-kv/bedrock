@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-tl1"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:08:21.157299-05:00",
+  "close_reason": "Removed 7 unused Config fields: scan_interval_ms, max_time_per_queue_ms, item_lease_duration_ms, queue_lease_duration_ms, max_retries, backoff_fn, telemetry_prefix",
+  "created": "2026-01-01T22:42:35.05856-05:00",
+  "description": "Config.ex defines 7 fields that are never used:\n- scan_interval_ms\n- max_time_per_queue_ms\n- item_lease_duration_ms\n- queue_lease_duration_ms\n- max_retries\n- backoff_fn (bug - should be used)\n- telemetry_prefix\n\nFix: Remove unused fields or implement the features they configure.",
+  "id": "bedrock-jde",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove unused Config fields",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

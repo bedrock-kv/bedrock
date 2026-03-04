@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-9l47"
+  ],
+  "blocks": [
+    "bedrock-l3gk"
+  ],
+  "closed_at": "2026-01-23T15:55:37.965951-05:00",
+  "close_reason": "Updated LogReplayPhase to pass all survivors and added multi-source recovery to Shale",
+  "created": "2026-01-23T15:34:37.577861-05:00",
+  "description": "## Goal\nEnable log server to rebuild from multiple source logs, filtering by shard index.\n\n## File\n`lib/bedrock/data_plane/log/shale/recovery.ex`\n\n## Current Behavior\n`pull_transactions/4` pulls from a single source log.\n\n## New Behavior\n- Accept multiple source logs instead of single source\n- Pull transactions from all sources in version order\n- Use shard index embedded in transactions to filter for assigned shards\n- Compute assigned shards via ShardRouter.get_log_indices\n- Reconstruct personalized transaction stream\n\n## Key Insight\nTransactions contain a SHARD_INDEX section that identifies which mutations belong to which shards. The replacement log uses this to extract only mutations for shards it serves (determined by consistent hash).\n\n## Depends On\nTask 2 (LogReplayPhase must pass survivor list)",
+  "id": "bedrock-qrek",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Add multi-source coalescing to Shale recovery",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

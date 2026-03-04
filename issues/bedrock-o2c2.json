@@ -1,0 +1,17 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-7wge"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-21T20:51:13.98794-05:00",
+  "created": "2026-01-21T20:39:09.273121-05:00",
+  "description": "Ensure director writes to object storage and remove Raft TSL updates.\nFiles:\n- lib/bedrock/control_plane/director/recovery/persistence_phase.ex - Verify writes to object storage\n- Remove any Coordinator.update_transaction_system_layout calls",
+  "id": "bedrock-o2c2",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Update director to write state to object storage only",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-as6j"
+  ],
+  "closed_at": "2026-01-09T22:46:41.919722-05:00",
+  "close_reason": "Added {:flatbuffer, \"~\u003e 0.3\"} to mix.exs deps",
+  "created": "2026-01-09T17:40:01.019831-05:00",
+  "description": "Add the flatbuffer library (https://hex.pm/packages/flatbuffer) to enable schema-based serialization for system keys. This replaces :erlang.term_to_binary which can accidentally serialize PIDs.\n\nRuntime schema definition - no codegen step needed.\n\nFiles: mix.exs (add dep), mix.lock (after mix deps.get).",
+  "id": "bedrock-wcf9",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 1,
+  "status": "closed",
+  "title": "Add flatbuffer dependency to project",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

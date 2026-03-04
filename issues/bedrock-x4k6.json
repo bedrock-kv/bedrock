@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T18:51:38.703233-05:00",
+  "close_reason": "Fixed in commit 15cff010: validation added to Shale.Server, Demux now crashes on missing shard_index, test helpers updated",
+  "created": "2026-01-19T15:54:43.774645-05:00",
+  "description": "Transactions without SHARD_INDEX are currently accepted by Log and written to WAL, then silently dropped by Demux. This is data loss.\n\nFix:\n1. Add validation in Shale push handler - reject before WAL write\n2. Update test transactions to include shard_index\n3. Make Demux crash if it ever sees a transaction without shard_index (should never happen)",
+  "id": "bedrock-x4k6",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Reject transactions without shard_index at Log boundary",
+  "type": "bug",
+  "updated_at": "2026-01-19T18:51:38.703233-05:00"
+}

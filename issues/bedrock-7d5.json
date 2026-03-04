@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T08:52:02.963293-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-02T08:50:13.116365-05:00",
+  "description": "## Problem\n\nLogger crashes with formatter error when logging job IDs:\n\n```\nFORMATTER ERROR: bad return value\nLogger.Formatter, got [[\u003c\u003c150, 220, 30, 126...\u003e\u003e]] after \"Discarding job \"\n```\n\n## Root Cause\n\nJob IDs are 16-byte binaries from `:crypto.strong_rand_bytes(16)`. When used in string interpolation for logging, these non-UTF8 binaries cause the Logger formatter to fail.\n\n## Location\n\n`apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/manager.ex:195`:\n```elixir\nLogger.info(\"Discarding job #{lease.item_id}: #{inspect(reason)}\")\n```\n\n## Fix\n\nEncode binary IDs before logging:\n```elixir\nLogger.info(\"Discarding job #{Base.encode16(lease.item_id)}: #{inspect(reason)}\")\n```",
+  "id": "bedrock-7d5",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Fix Logger formatter error with binary job IDs",
+  "type": "bug",
+  "updated_at": "2026-01-02T08:52:02.963293-05:00"
+}

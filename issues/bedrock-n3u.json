@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-q67"
+  ],
+  "closed_at": "2026-01-19T14:10:11.957883-05:00",
+  "close_reason": "All children complete. Recovery now reads cluster topology from logs via metadata materializer instead of coordinator.",
+  "created": "2026-01-09T13:57:48.566113-05:00",
+  "description": "Enables recovery to read cluster topology from logs instead of relying solely on the coordinator. This is the FDB pattern where any log can bootstrap the cluster.\n\nCompleted work:\n- Store logical identities (not PIDs)\n- Reduce coordinator to mini-TSL (log identities only)\n- Metadata routed to all logs (bedrock-3tb)\n- System key schema for metadata distribution\n\nRemaining work:\n- bedrock-jkcm: Recovery bootstraps from metadata shard materializer (reads config from object storage, starts materializer, queries for shard layout)\n\nThis epic is complete when jkcm is done.",
+  "id": "bedrock-n3u",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Metadata Distribution Prerequisites",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-6lv"
+  ],
+  "blocks": [
+    "bedrock-0qm"
+  ],
+  "closed_at": "2026-01-08T09:12:48.665177-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-07T17:16:51.666715-05:00",
+  "description": "",
+  "id": "bedrock-knm",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Update create_finalization_plan to accept initial metadata",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

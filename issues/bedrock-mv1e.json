@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-01-19T22:36:55.490749-05:00",
+  "description": "",
+  "id": "bedrock-mv1e",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Current Problem\n\nMaterializer startup is over-orchestrated by the Director:\n1. Director creates materializer\n2. Director locks materializer for recovery\n3. Director builds filtered TSL with specific logs\n4. Director unlocks materializer\n5. Director waits for catchup\n6. Director queries for shard layout\n\nThis tight coupling makes it hard to:\n- Start materializers for new shards\n- Have materializers self-heal\n- Scale to many shards\n\n## Proposed Simplification\n\nMaterializers should be self-organizing. On startup, they need:\n1. **Cluster bootstrap info** - logs map, replication factor\n2. **Shard ID** - which shard this materializer serves\n\nMaterializer then:\n- Filters logs by shard tag (logs that include its shard)\n- Starts pulling from those logs\n- No locking/unlocking ceremony needed\n\n## Benefits\n- Director just creates materializers, doesn't orchestrate their internal state\n- Materializers can restart and self-recover\n- Simpler to add materializers for new shards\n- Aligns with shard-centric architecture vision\n\n## Questions\n1. How does materializer get cluster bootstrap info? (Registry? Passed at creation?)\n2. Should materializers register themselves somewhere for discovery?\n3. How does this interact with the locking model for existing cluster recovery?\n\n## Related\n- bedrock-wa0h: Spin up materializers for all shards during recovery\n- bedrock-q67: Shard-Centric Storage Architecture",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T03:37:06Z"
+    }
+  ],
+  "priority": 2,
+  "status": "open",
+  "title": "Simplify materializer startup: self-organizing from cluster bootstrap",
+  "type": "task",
+  "updated_at": "2026-01-19T22:36:55.490749-05:00"
+}

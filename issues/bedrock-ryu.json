@@ -1,0 +1,22 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-c2d",
+    "bedrock-fet",
+    "bedrock-h3w",
+    "bedrock-iph",
+    "bedrock-l3k"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-02T18:52:20.48767-05:00",
+  "close_reason": "Implemented use Bedrock.JobQueue pattern with Supervisor, Internal, and updated Consumer/Manager/Worker chain",
+  "created": "2026-01-02T18:33:41.38232-05:00",
+  "description": "Update existing tests to use new pattern. Update coffee_shop_queue.livemd to define CoffeeShop.JobQueue module.",
+  "id": "bedrock-ryu",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Update tests and livebook for new JobQueue pattern",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

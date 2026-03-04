@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:50:59.460112-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-11T13:42:01.556295-05:00",
+  "description": "OtpRefList is defined but never used anywhere in the codebase.\n\n**Delete:**\n- priv/schemas/otp_ref_list.fbs\n- lib/bedrock/system_keys/otp_ref_list.ex",
+  "id": "bedrock-0h3g",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove unused OtpRefList schema and module",
+  "type": "task",
+  "updated_at": "2026-01-11T13:50:59.460112-05:00"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T21:13:05.58309-05:00",
+  "close_reason": "Fixed by correcting the property test. strinc does NOT preserve ordering when one key is prefix of another - this is an inherent limitation of prefix range semantics. Added documenting test and updated property test to only check equal-length keys.",
+  "created": "2026-01-02T21:07:08.309508-05:00",
+  "description": "Property test failure in Bedrock.KeyTest at apps/bedrock_core/test/bedrock/key_test.exs:226\n\n**Test**: 'property ordering properties strinc preserves ordering (when both valid)'\n\n**Failed after 78 successful runs with values:**\n- key1: \",\" (comma, ASCII 44)\n- key2: \u003c\u003c44, 187\u003e\u003e (comma followed by byte 187)\n\n**Assertion failure:**\n```\nassert strinc1 \u003c strinc2\nleft:  \"-\"\nright: \",\\xBC\"\n```\n\n**Reproduction seed**: 81475\n\nThe strinc function should preserve ordering such that if key1 \u003c key2, then strinc(key1) \u003c strinc(key2). This property is violated for certain binary inputs near byte boundaries.",
+  "id": "bedrock-w84",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "strinc property test fails: ordering not preserved for binary keys",
+  "type": "bug",
+  "updated_at": "2026-01-02T21:13:05.58309-05:00"
+}

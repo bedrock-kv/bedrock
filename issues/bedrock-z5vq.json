@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:50:30.136967-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-11T13:47:58.08759-05:00",
+  "description": "Replace the cond/String.starts_with? implementation with binary pattern matching in function heads.",
+  "id": "bedrock-z5vq",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor SystemKeys.parse_key to use pattern matching",
+  "type": "task",
+  "updated_at": "2026-01-11T13:50:30.136967-05:00"
+}

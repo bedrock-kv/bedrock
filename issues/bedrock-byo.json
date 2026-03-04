@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-icz"
+  ],
+  "closed_at": "2026-01-02T16:06:47.699479-05:00",
+  "close_reason": "Coffee Shop Job Queue Livebook Tutorial complete",
+  "created": "2026-01-02T15:39:12.920216-05:00",
+  "description": "",
+  "id": "bedrock-byo",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Coffee Shop Job Queue Livebook Tutorial",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:49:44.151562-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-11T13:48:10.399069-05:00",
+  "description": "all_layout_keys/0 is only used in its own tests, no production code. Remove the function and its tests.",
+  "id": "bedrock-xrt7",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove unused all_layout_keys/0 from SystemKeys",
+  "type": "task",
+  "updated_at": "2026-01-11T13:49:44.151562-05:00"
+}

@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-wxf.3",
+    "bedrock-wxf.4"
+  ],
+  "blocks": [],
+  "created": "2026-01-16T17:31:54.209658-05:00",
+  "description": "[DEFERRED] Merge small chunks into larger files.",
+  "id": "bedrock-wxf.6",
+  "labels": [],
+  "parent": "bedrock-wxf",
+  "priority": 4,
+  "status": "open",
+  "title": "Background compaction",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

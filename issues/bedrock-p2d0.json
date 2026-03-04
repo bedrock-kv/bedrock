@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-noim"
+  ],
+  "closed_at": "2026-01-10T11:53:49.825969-05:00",
+  "close_reason": "Implemented epoch validation for next_commit_version and report_successful_commit. Client API updated with optional epoch parameter.",
+  "created": "2026-01-10T09:17:59.045077-05:00",
+  "description": "Modify sequencer to validate epoch on all operations:\n\n1. get_commit_version (transaction ID allocation) - must include epoch, reject if mismatch\n2. report_successful_commit (state update) - must include epoch, reject if mismatch\n\nThe epoch must match whatever the sequencer was configured with at boot time. This prevents stale/future generation proxies from corrupting state.\n\nPart of minimal TSL work - proxies will have epoch at bootstrap and pass it through to sequencer calls.",
+  "id": "bedrock-p2d0",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Sequencer requires epoch for transaction ID and state updates",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

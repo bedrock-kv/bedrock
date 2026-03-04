@@ -1,0 +1,23 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-805"
+  ],
+  "blocks": [
+    "bedrock-oii",
+    "bedrock-sbl",
+    "bedrock-tuq"
+  ],
+  "closed_at": "2026-01-01T23:13:16.461048-05:00",
+  "close_reason": "Replaced defdelegate with explicit functions passing opts to Expirable",
+  "created": "2026-01-01T22:51:09.412125-05:00",
+  "description": "## Files\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/lease.ex`\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/queue_lease.ex`\n\n## Current Code\n```elixir\ndefdelegate expired?(lease), to: Expirable\ndefdelegate remaining_ms(lease), to: Expirable\n```\n\n## Required Changes\nAfter updating Expirable, update delegates to support optional :now:\n```elixir\n@spec expired?(t()) :: boolean()\n@spec expired?(t(), non_neg_integer()) :: boolean()\ndef expired?(lease, now \\\\ System.system_time(:millisecond)) do\n  Expirable.expired?(lease, now)\nend\n\n@spec remaining_ms(t()) :: non_neg_integer()\n@spec remaining_ms(t(), non_neg_integer()) :: non_neg_integer()\ndef remaining_ms(lease, now \\\\ System.system_time(:millisecond)) do\n  Expirable.remaining_ms(lease, now)\nend\n```\n\n## Dependencies\nDepends on: Expirable module update",
+  "id": "bedrock-zhx",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update Lease/QueueLease delegates for :now parameter",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

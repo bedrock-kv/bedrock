@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:08:16.231587-05:00",
+  "close_reason": "Flattened directory structure for bedrock_shale (lib/bedrock/data_plane/log/shale/* → lib/shale/*) and bedrock_olivine (lib/bedrock/data_plane/storage/olivine/* → lib/olivine/*). Module names preserved. All 1921 tests pass.",
+  "created": "2026-01-01T18:02:15.257649-05:00",
+  "description": "",
+  "id": "bedrock-5tz",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Flatten directory structure for bedrock_shale and bedrock_olivine",
+  "type": "task",
+  "updated_at": "2026-01-01T18:08:16.231587-05:00"
+}

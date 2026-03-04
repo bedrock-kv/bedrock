@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T14:14:36.701325-05:00",
+  "close_reason": "No delegation patterns found - handle_calls are already direct",
+  "created": "2026-01-11T13:34:35.228677-05:00",
+  "description": "Several handle_call clauses in commit_proxy/server.ex exist solely to delegate to other functions. Rearrange the code so the delegated functions match the call parameters directly, eliminating the intermediate delegation layer.\n\nThis reduces boilerplate and makes the code flow more direct.",
+  "id": "bedrock-n868",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Simplify handle_call delegations in CommitProxy.Server",
+  "type": "task",
+  "updated_at": "2026-01-11T14:14:36.701325-05:00"
+}

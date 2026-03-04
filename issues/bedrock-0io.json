@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:08:17.116742-05:00",
+  "close_reason": "Removed unnecessary Process.sleep - GenServer message queue handles sequencing",
+  "created": "2026-01-02T20:37:35.569029-05:00",
+  "description": "Replace Process.sleep at line 28 with message-based synchronization in apps/bedrock_log_shale/test/shale/simple_pull_test.exs.",
+  "id": "bedrock-0io",
+  "labels": [],
+  "parent": "bedrock-zup",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor shale/simple_pull_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:08:17.116742-05:00"
+}

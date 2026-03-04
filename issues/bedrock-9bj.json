@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-9pg"
+  ],
+  "blocks": [
+    "bedrock-3tb",
+    "bedrock-q67"
+  ],
+  "closed_at": "2026-01-10T22:52:51.955429-05:00",
+  "close_reason": "Implemented SHARD_INDEX section with mutation splitting, stable sort, and shard index building",
+  "created": "2026-01-09T14:23:29.243529-05:00",
+  "description": "## Summary\n\nAdd SHARD_INDEX section to transaction wire format so Demux can split the log stream by shard without re-computing shard tags.\n\n## Design\n\n**New section**: SHARD_INDEX (tag 0x05)\n- Payload: `[entry_count: varint, (tag: varint, count: varint)...]`\n- Offset implied (mutations contiguous after stable sort)\n\n**Mutation ordering**: Stable sort by shard tag before encoding\n- Groups mutations by shard\n- Preserves relative order within shard (critical for correctness)\n- Cross-shard reordering safe (disjoint keyspaces)\n\n**Cross-shard clear_range**: Split into clamped sub-ranges\n- `CLEAR_RANGE \"a\" to \"z\"` spanning shards 0,1 becomes:\n  - Shard 0: `CLEAR_RANGE \"a\" to \"m\"` (clamped)\n  - Shard 1: `CLEAR_RANGE \"m\" to \"z\"` (clamped)\n\n## Files to Modify\n\n| File | Changes |\n|------|---------|\n| transaction.ex | Add SHARD_INDEX section, varint helpers, encode/decode |\n| finalization.ex | Split mutations by shard, stable sort, build index |\n| shard_router.ex | Add `lookup_shards_with_ranges/3` for boundaries |\n\n## Data Flow\n\n```\nfinalization: build_transactions_for_logs()\n  ├── Split mutations by shard (clamp cross-shard ranges)\n  ├── Stable sort by shard tag\n  ├── Build shard index [(tag, count), ...]\n  └── Encode with SHARD_INDEX section\n        └── Demux reads index, splits by shard\n```",
+  "id": "bedrock-9bj",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Transaction Wire Format with Shard Tagging",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

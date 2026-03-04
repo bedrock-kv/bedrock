@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:24:06.702252-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.748796-05:00",
+  "description": "ItemKey and PointerKey are trivial wrappers around Bedrock.Encoding.Tuple:\n- ItemKey.pack/unpack just calls Tuple.pack/unpack\n- PointerKey.pack/unpack just calls Tuple.pack/unpack\n- PointerKey has unused functions: all_range/0, queue_range/1\n\nOptions:\n1. Delete both modules, use Tuple directly in Store\n2. Keep PointerKey.visible_range/1 as a helper in Store\n\nUpdate store.ex key_encoding references and tests.",
+  "id": "bedrock-zjb.4",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove encoding wrapper modules",
+  "type": "task",
+  "updated_at": "2026-01-01T21:24:06.702252-05:00"
+}

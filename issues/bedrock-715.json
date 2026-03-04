@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:09:20.661485-05:00",
+  "close_reason": "Removed sleeps from on_exit cleanup - retries handle file lock release",
+  "created": "2026-01-02T20:37:35.237571-05:00",
+  "description": "Replace 2 instances of Process.sleep at lines 18, 26 with message-based synchronization in apps/bedrock_storage_olivine/test/olivine/logic_test.exs.",
+  "id": "bedrock-715",
+  "labels": [],
+  "parent": "bedrock-6ma",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor logic_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:09:20.661485-05:00"
+}

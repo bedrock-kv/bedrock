@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:02:21.917572-05:00",
+  "close_reason": "Fixed by handling empty binary and guarding against \u003e8 byte binaries in decode_counter",
+  "created": "2026-01-02T19:52:16.919783-05:00",
+  "description": "",
+  "id": "bedrock-tj4",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Stats counter overflow shows huge numbers instead of 0",
+  "type": "bug",
+  "updated_at": "2026-01-02T20:02:21.917572-05:00"
+}

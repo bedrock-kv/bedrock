@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-9ks8.1"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-18T14:09:18.938319-05:00",
+  "close_reason": "Implemented snapshot loading for cold start - discovers and restores latest snapshot from ObjectStorage before Database.open",
+  "created": "2026-01-17T07:04:13.452481-05:00",
+  "description": "Load snapshot from ObjectStorage on materializer startup (cold start). Read footer to get index, then load needed blocks to restore state.",
+  "id": "bedrock-9ks8.4",
+  "labels": [],
+  "parent": "bedrock-9ks8",
+  "priority": 2,
+  "status": "closed",
+  "title": "Snapshot loading for materializer cold start",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

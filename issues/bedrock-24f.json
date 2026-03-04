@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-ayh"
+  ],
+  "closed_at": "2026-01-02T09:30:24.290004-05:00",
+  "close_reason": "Already implemented in Worker.execute_with_timeout/2 (lines 54-77). Uses Task.yield + Task.shutdown(:brutal_kill). Jobs can define custom timeout via timeout/0 callback, defaults to 30s. Test fixture SlowJob exists but no integration test - could add one later.",
+  "created": "2026-01-02T09:27:21.439314-05:00",
+  "description": "**QuiCK Paper Reference:** Algorithm 3, line 2: `process item (bounded by execution_bound_t)`\n\n**Current Behavior:**\nWorker.execute/2 runs the handler without any timeout. A hung or infinite-loop job blocks the worker indefinitely.\n\n**Expected Behavior (per QuiCK):**\nJobs should have a bounded execution time. If exceeded, the job should be interrupted and requeued.\n\n**Files to modify:**\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/worker.ex`\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/config.ex` (add execution_bound config)\n\n**Risk:** High - Hung jobs can exhaust worker pool",
+  "id": "bedrock-24f",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Add execution timeout for worker jobs",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

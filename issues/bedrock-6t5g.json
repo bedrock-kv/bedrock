@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-yerr"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:07:50.455505-05:00",
+  "close_reason": "Removed vestigial storage_teams code from data plane: FinalizationPlan.storage_teams field, key_or_range_to_tags/2, find_logs_for_tags/2, RoutingData.new/1 and helpers. Commit 3438abae.",
+  "created": "2026-01-11T07:23:26.065464-05:00",
+  "description": "## Summary\n\nFollow-up to bedrock-yerr: Remove dead code from data plane now that ShardRouter is the active hot path.\n\n## Files to Modify\n\n**finalization.ex**\n- Remove `storage_teams` from FinalizationPlan struct (lines 118, 129, 150, 278)\n- Delete `key_or_range_to_tags/2` function (lines 810-830) - test-only\n- Delete `find_logs_for_tags/2` function (lines 832-841) - test-only\n\n**routing_data.ex**\n- Delete or mark `new/1` function as test-only (lines 50-62) - production uses `new_empty/0`\n- Delete `build_shard_table/1` helper if only used by `new/1`\n- Delete `infer_replication_factor/2` helper if only used by `new/1`\n\n**Tests**\n- Update finalization/data_transformation_test.exs to remove tests for deleted functions\n- Or keep `key_or_range_to_tags` tests if they validate useful edge cases for ShardRouter\n\n## Context\n\nbedrock-yerr replaced the hot path with ShardRouter + ETS ceiling search. The old storage_teams-based routing code is no longer called in production but was left in place. This cleanup removes the dead code.\n\n## Verification\n\n- All tests pass after removal\n- Commit proxy still routes mutations correctly (integration tests)",
+  "id": "bedrock-6t5g",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove vestigial storage_teams code from data plane",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

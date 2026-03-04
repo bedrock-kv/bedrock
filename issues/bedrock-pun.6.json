@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:07:53.40228-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:58:22.811817-05:00",
+  "description": "Currently peek and obtain_lease are separate operations. QuiCK has atomic dequeue that does both in one call. Consider adding Store.dequeue/4 that combines peek + obtain_lease for simpler API.",
+  "id": "bedrock-pun.6",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 3,
+  "status": "closed",
+  "title": "Add atomic dequeue operation (peek + lease combined)",
+  "type": "task",
+  "updated_at": "2026-01-01T21:07:53.40228-05:00"
+}

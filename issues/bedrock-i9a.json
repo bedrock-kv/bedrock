@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:19:31.767536-05:00",
+  "close_reason": "Converted job queue tests from Mox stubs to proper expectations with parameter verification and deterministic ordering",
+  "created": "2026-01-02T19:54:23.100025-05:00",
+  "description": "",
+  "id": "bedrock-i9a",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Convert job queue tests from Mox stubs to proper expectations",
+  "type": "task",
+  "updated_at": "2026-01-02T20:19:31.767536-05:00"
+}

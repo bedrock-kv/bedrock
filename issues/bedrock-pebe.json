@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-7wge"
+  ],
+  "blocks": [
+    "bedrock-00x2"
+  ],
+  "closed_at": "2026-01-21T20:48:09.607294-05:00",
+  "created": "2026-01-21T20:39:08.463723-05:00",
+  "description": "Remove update_config command from Raft.\nFiles:\n- lib/bedrock/control_plane/coordinator/commands.ex - Remove type\n- lib/bedrock/control_plane/coordinator/durability.ex - Remove process_command clause, remove durably_write_config",
+  "id": "bedrock-pebe",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Remove config from Raft commands",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

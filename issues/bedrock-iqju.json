@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-mrrk"
+  ],
+  "blocks": [
+    "bedrock-yml6"
+  ],
+  "closed_at": "2026-01-10T15:53:50.552196-05:00",
+  "close_reason": "Absorbed by bedrock-22xb (consolidate MetadataMerge into RoutingData)",
+  "created": "2026-01-10T15:48:25.679532-05:00",
+  "description": "Extend MetadataMerge to update routing_data.log_map alongside metadata.log_services.\n\n## Current Behavior\n\nWhen `{:set, layout_log(log_id), otp_ref}` arrives:\n- Stores in `metadata.log_services[log_id]` = service_ref\n\n## New Behavior\n\nWhen `{:set, layout_log(log_id), otp_ref}` arrives:\n1. Store in `metadata.log_services` (current behavior)\n2. Also call `RoutingData.insert_log(routing_data, log_id, next_index)`\n\n## Challenge: Index Assignment\n\nlog_map uses indices: `%{0 =\u003e \"log-1\", 1 =\u003e \"log-2\", ...}`\n\nOptions:\n1. Parse index from log_id if it encodes one\n2. Assign indices in order of arrival (simple)\n3. Store index in the metadata value itself\n\n**Recommended**: Check if SystemKeys.layout_log encodes an index, or the value contains index info.\n\n## Changes to metadata_merge.ex\n\n```elixir\ndefp apply_mutation({:set, key, value}, metadata, routing_data) do\n  case SystemKeys.parse_key(key) do\n    {:layout_log, log_id} -\u003e\n      service_ref = OtpRef.to_tuple(value)\n      # NEW: Also update log_map\n      index = extract_log_index(log_id, value)  # or next available\n      RoutingData.insert_log(routing_data, log_id, index)\n      put_in(metadata, [Access.key(:log_services, %{}), log_id], service_ref)\n    # ...\n  end\nend\n```\n\n## Testing\n\n- Verify log_map is updated when layout_log mutation processed\n- Verify indices are assigned correctly\n- Verify remove on clear",
+  "id": "bedrock-iqju",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "MetadataMerge: Update log_map when processing layout_log",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

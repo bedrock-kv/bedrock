@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-07T09:19:58.852261-05:00",
+  "close_reason": "Epic complete: Implemented system metadata mutation distribution via resolver. Added is_metadata_mutation? helper, MetadataAccumulator module, extended resolver state with proxy tracking and metadata window, updated resolver server to accumulate and distribute metadata, updated public API, integrated metadata flow in commit proxy finalization, and added metadata state to commit proxy server.",
+  "created": "2026-01-07T05:29:12.319293-05:00",
+  "description": "Extend the Resolver to act as a central distribution point for system metadata mutations (keys with \\xFF prefix). The resolver will accept metadata mutations from commit proxies, accumulate them in a version-ordered window, track per-proxy progress, and return differential updates.",
+  "id": "bedrock-wsq",
+  "labels": [
+    "metadata"
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "System Metadata Mutation Distribution via Resolver",
+  "type": "epic",
+  "updated_at": "2026-01-07T09:19:58.852261-05:00"
+}

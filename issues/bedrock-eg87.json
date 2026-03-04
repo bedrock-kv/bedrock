@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-21T17:47:46.750807-05:00",
+  "close_reason": "Simplified path layout: chunks=c/{shard}/{version}, snapshots=s/{shard}/{version}",
+  "created": "2026-01-21T17:43:19.540163-05:00",
+  "description": "Rework object_storage path layout for more compact paths:\n- Chunks: shards/{shard_tag}/chunks/{version} → c/{shard}/{version}\n- Snapshots: shards/{shard_tag}/snapshots/{version} → s/{shard}/{version}\n\nBoth shard IDs and versions use base36 encoding. Versions are 13-char padded for lexicographic sorting.",
+  "id": "bedrock-eg87",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Simplify object_storage path layout to c/{shard}/{version} and s/{shard}/{version}",
+  "type": "task",
+  "updated_at": "2026-01-21T17:47:46.750807-05:00"
+}

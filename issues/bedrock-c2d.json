@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-ryu"
+  ],
+  "closed_at": "2026-01-02T18:52:20.486466-05:00",
+  "close_reason": "Implemented use Bedrock.JobQueue pattern with Supervisor, Internal, and updated Consumer/Manager/Worker chain",
+  "created": "2026-01-02T18:33:40.040121-05:00",
+  "description": "Pass workers map through opts instead of Application.get_env. Manager stores workers in state, passes to Worker.execute/2.",
+  "id": "bedrock-c2d",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Update Consumer/Manager/Worker to accept workers in opts",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T13:28:04.703624-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-01T11:34:25.17403-05:00",
+  "description": "",
+  "id": "bedrock-4jo",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Upgrade to Elixir 1.19.4 and OTP 28+",
+  "type": "task",
+  "updated_at": "2026-01-01T13:28:04.703624-05:00"
+}

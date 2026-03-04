@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-24l",
+    "bedrock-i2v"
+  ],
+  "closed_at": "2026-01-02T17:43:05.853571-05:00",
+  "close_reason": "Removed Registry and wildcards. Workers now configured via static config. Worker receives meta with topic/queue_id/item_id/attempt.",
+  "created": "2026-01-02T17:30:11.288984-05:00",
+  "description": "Step 1: Simplify dispatch\n- Remove Bedrock.JobQueue.Registry.Default from application.ex\n- Remove register/3 from public API\n- Add :workers config lookup in Worker\n- Change perform/1 to perform/2 (payload, meta)\n\nFiles:\n- lib/bedrock/job_queue.ex\n- lib/bedrock/job_queue/consumer/worker.ex\n- lib/bedrock/job_queue/job.ex\n- lib/bedrock/job_queue/application.ex",
+  "id": "bedrock-dod",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Remove Registry/wildcards, use static config mapping",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

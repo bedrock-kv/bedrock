@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-gfff"
+  ],
+  "closed_at": "2026-01-17T12:30:25.022314-05:00",
+  "close_reason": "Implemented ClusterBootstrap.Discovery with Internal.Id centralization and comprehensive tests",
+  "created": "2026-01-17T11:35:56.353035-05:00",
+  "description": "At boot, a bedrock node should read ClusterBootstrap from ObjectStorage to determine if it is a coordinator.\n\n## Boot Sequence\n\n1. Read ClusterBootstrap from ObjectStorage\n2. Check if this node is in the coordinators list\n3. If yes → start Coordinator process\n4. Coordinators form Raft quorum\n5. Leader starts Director\n6. Director locks logs using epoch\n\n## First Boot (No ClusterBootstrap Exists)\n\nSingle-node, single-coordinator system creates initial ClusterBootstrap.\n\n## Schema Changes Required\n\nAdd `coordinators` field to ClusterBootstrap FlatBuffer schema:\n\n```fbs\ntable CoordinatorInfo {\n  node: string;\n}\n\ntable ClusterBootstrap {\n  cluster_id: string;\n  epoch: ulong;\n  logs: [LogInfo];\n  coordinators: [CoordinatorInfo];  // NEW\n}\n```\n\n## Key Files\n\n- priv/schemas/cluster_bootstrap.fbs\n- lib/bedrock/internal/cluster_supervisor.ex\n- lib/bedrock/system_keys/cluster_bootstrap.ex",
+  "id": "bedrock-9w4e",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Node reads ClusterBootstrap at boot to determine coordinator role",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:14:44.403893-05:00",
+  "close_reason": "Replaced sleeps: monitor+assert_receive for supervisor restart, message-based foreman failure, removed unnecessary sleeps before GenServer.call (call synchronizes)",
+  "created": "2026-01-02T20:36:57.905539-05:00",
+  "description": "Replace 5 instances of Process.sleep at lines 134, 225, 242, 422, 677 with message-based synchronization. Line 134 waits for supervisor restart - use Process.monitor and assert_receive {:DOWN, ...}. Others wait for background operations.",
+  "id": "bedrock-zgz",
+  "labels": [],
+  "parent": "bedrock-6ma",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor genserver_integration_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:14:44.403893-05:00"
+}

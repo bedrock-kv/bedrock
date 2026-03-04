@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-cs5i",
+    "bedrock-sujw"
+  ],
+  "closed_at": "2026-01-19T13:36:24.924991-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-18T15:01:36.595992-05:00",
+  "description": "Add new fields to support materializer-based recovery:\n\nRecoveryAttempt (lib/bedrock/control_plane/config/recovery_attempt.ex):\n- metadata_materializer: pid() | nil\n- shard_layout: %{end_key =\u003e {tag, start_key}}\n\nTransactionSystemLayout (lib/bedrock/control_plane/config/transaction_system_layout.ex):\n- metadata_materializer: process_ref() | nil\n- shard_layout: %{Bedrock.key() =\u003e {tag, start_key}} | nil\n\nKeep storage_teams: [] for backward compatibility (removed in bedrock-4jg9).",
+  "id": "bedrock-lgcs",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Update RecoveryAttempt and TSL data structures",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

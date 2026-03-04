@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-9hd"
+  ],
+  "closed_at": "2026-01-01T22:59:08.634254-05:00",
+  "close_reason": "Removed WorkerPool wrapper (~60 lines), Manager now uses DynamicSupervisor directly",
+  "created": "2026-01-01T22:42:32.206264-05:00",
+  "description": "WorkerPool (~60 lines) is a thin wrapper around DynamicSupervisor:\n- dispatch(): just calls DynamicSupervisor.start_child\n- available_workers(): persistent_term hack + count query\n\nFix: Eliminate WorkerPool, have Manager call DynamicSupervisor directly. Store max_children in Manager state.",
+  "id": "bedrock-cth",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove WorkerPool wrapper",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

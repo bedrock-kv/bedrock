@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-jwii"
+  ],
+  "blocks": [
+    "bedrock-9bj",
+    "bedrock-q67"
+  ],
+  "closed_at": "2026-01-10T22:14:07.3792-05:00",
+  "close_reason": "ShardMetadata FlatBuffer, shard_key/shard system keys, and ShardRouter consistent hashing are implemented. Log assignment computed via golden ratio (not stored). Parents/object_storage_prefix deferred to future work.",
+  "created": "2026-01-09T14:23:29.487714-05:00",
+  "description": "Everything shard-aware needs the shard identity structure and system key schema. Deliverables: Shard identity (id, range, born_at, parents, log_assignment, object_storage_prefix), system keys for shard map, metadata shard bootstrap, shard-to-log routing. BLOCKERS: (1) Metadata distribution broken - finalization.ex:402 has no-op merge_fn that discards all metadata updates, (2) Tag system is static (hardcoded 0,1 in initialization_phase.ex), (3) No ShardIdentity struct - only StorageTeamDescriptor which lacks genealogy/log_assignment, (4) Log assignment not persisted in system keys. Partial foundations exist: StorageTeamDescriptor, range_tag type, log-to-tag mapping in finalization.",
+  "id": "bedrock-9pg",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Shard Definition and System Keys",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

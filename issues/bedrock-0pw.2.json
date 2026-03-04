@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T14:38:26.109604-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T14:36:44.809819-05:00",
+  "description": "Add import Bedrock.Internal.GenServer.Replies to lib/bedrock/data_plane/proxy.ex and replace {:noreply, state} with noreply(state).",
+  "id": "bedrock-0pw.2",
+  "labels": [],
+  "parent": "bedrock-0pw",
+  "priority": 3,
+  "status": "closed",
+  "title": "Convert proxy.ex to use GenServer.Replies",
+  "type": "task",
+  "updated_at": "2026-01-01T14:38:26.109604-05:00"
+}

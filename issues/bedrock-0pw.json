@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T14:38:26.13355-05:00",
+  "close_reason": "done - all sub-issues completed",
+  "created": "2026-01-01T14:36:36.188868-05:00",
+  "description": "Ensure all GenServer modules import and use Bedrock.Internal.GenServer.Replies instead of constructing raw reply tuples. This improves consistency and maintainability.",
+  "id": "bedrock-0pw",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Standardize GenServer.Replies usage across all GenServers",
+  "type": "epic",
+  "updated_at": "2026-01-01T14:38:26.13355-05:00"
+}

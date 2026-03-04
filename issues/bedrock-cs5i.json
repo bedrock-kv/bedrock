@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-lgcs"
+  ],
+  "blocks": [
+    "bedrock-jkcm"
+  ],
+  "closed_at": "2026-01-19T14:08:31.31676-05:00",
+  "close_reason": "Reworked TopologyPhase (removed storage unlocking, added materializer/shard_layout to TSL) and LockingPhase (only extracts log service IDs)",
+  "created": "2026-01-18T15:01:50.320919-05:00",
+  "description": "Update phases to remove storage_teams handling:\n\nTopologyPhase (lib/bedrock/control_plane/director/recovery/topology_phase.ex):\n- Remove storage_teams validation and unlocking\n- Add metadata_materializer to services map\n- Include shard_layout in TSL construction\n- Set storage_teams: [] for backward compatibility\n\nLockingPhase (lib/bedrock/control_plane/director/recovery/locking_phase.ex):\n- Remove storage service extraction from extract_old_system_services/2\n- Only extract log service IDs from old layout",
+  "id": "bedrock-cs5i",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Rework TopologyPhase and LockingPhase",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

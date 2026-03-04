@@ -1,0 +1,17 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-wxf.1"
+  ],
+  "blocks": [],
+  "created": "2026-01-16T17:31:54.365198-05:00",
+  "description": "[DEFERRED] LRU cache for frequently read objects.",
+  "id": "bedrock-wxf.7",
+  "labels": [],
+  "parent": "bedrock-wxf",
+  "priority": 4,
+  "status": "open",
+  "title": "Disk caching",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

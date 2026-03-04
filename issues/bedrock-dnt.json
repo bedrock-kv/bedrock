@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T09:34:33.02134-05:00",
+  "close_reason": "Implemented queue lease before dequeue. Manager now obtains queue lease first via Store.obtain_queue_lease, skips if already leased by another consumer.",
+  "created": "2026-01-02T09:27:21.517928-05:00",
+  "description": "**QuiCK Paper Reference:** Algorithm 2, line 1: `if not id ← obtain_lease(p, p_duration) then return CONFLICT`\n\n**Current Behavior:**\nManager.process_queue/3 directly calls Store.peek + Store.obtain_lease without first obtaining a queue lease. Multiple consumers can race to dequeue from the same queue simultaneously.\n\n**Expected Behavior (per QuiCK):**\nTwo-tier leasing: First obtain exclusive queue lease, THEN dequeue items. This prevents thundering herd on hot queues.\n\n**Code exists but unused:**\n- `Store.obtain_queue_lease/6` is implemented\n- `QueueLease` struct exists\n- Manager doesn't call it\n\n**Files to modify:**\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/manager.ex`\n\n**Risk:** Medium - Thundering herd on popular queues, wasted work from lease conflicts",
+  "id": "bedrock-dnt",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Manager should obtain queue lease before dequeuing",
+  "type": "bug",
+  "updated_at": "2026-01-02T09:34:33.02134-05:00"
+}

@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-jwii"
+  ],
+  "closed_at": "2026-01-10T10:32:38.805685-05:00",
+  "close_reason": "Added parse_key/1 function with TDD - 13 new tests, all passing",
+  "created": "2026-01-10T09:27:01.061817-05:00",
+  "description": "system_keys.ex has key GENERATION functions but merge_fn needs PARSING functions.\n\n## Current State\n\nKey generation exists:\n```elixir\ndef layout_log(log_id), do: \"\\xff/system/layout/logs/#{log_id}\"\ndef shard_key(end_key), do: \"\\xff/system/shard_keys/#{end_key}\"\n```\n\n## What's Missing\n\nKey parsing for merge_fn:\n```elixir\ndef parse_key(\"\\xff/system/layout/logs/\" \u003c\u003e log_id), do: {:layout_log, log_id}\ndef parse_key(\"\\xff/system/shard_keys/\" \u003c\u003e end_key), do: {:shard_key, end_key}\ndef parse_key(\"\\xff/system/layout/resolvers/\" \u003c\u003e end_key), do: {:layout_resolver, end_key}\n# etc.\n```\n\n## Why Needed\n\nmerge_fn receives mutations like:\n- key: `\\xff/system/layout/logs/log-abc123`\n- value: (FlatBuffer encoded OtpRef)\n\nIt needs to:\n1. Parse key → {:layout_log, \"log-abc123\"}\n2. Decode value using OtpRef.decode/1\n3. Update state.log_services[\"log-abc123\"] = decoded_pid\n\n## Files\n\n- lib/bedrock/system_keys.ex - add parse_key/1 function\n\n## Blocks\n\nbedrock-jwii (merge_fn implementation)",
+  "id": "bedrock-eq69",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 1,
+  "status": "closed",
+  "title": "Add key parsing functions to system_keys.ex",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

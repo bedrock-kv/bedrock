@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-9ks8"
+  ],
+  "closed_at": "2026-01-16T18:41:53.06411-05:00",
+  "close_reason": "Core ObjectStorage foundation complete: behaviour, LocalFilesystem backend, Keys, Chunk format/writer/reader, Snapshot storage, ClusterState. Deferred work (S3/GCS, caching, compaction) moved to independent tickets.",
+  "created": "2026-01-09T14:23:29.365452-05:00",
+  "description": "Both Demux (writes chunks) and Materializer (reads/writes snapshots) depend on this abstraction. Deliverables: ObjectStorage behaviour, conditional PUT/get/list API, local filesystem impl, S3/GCS impls, disk caching. REQUIRES PLANNING: This epic needs additional planning and subtask creation before work can begin.",
+  "id": "bedrock-wxf",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Object Storage Foundation",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-01-17T17:36:37.849729-05:00",
+  "description": "",
+  "id": "bedrock-zi44",
+  "labels": [
+    "future"
+  ],
+  "priority": 4,
+  "status": "open",
+  "title": "Snapshot upload policy (scheduled/threshold)",
+  "type": "task",
+  "updated_at": "2026-01-17T17:36:37.849729-05:00"
+}

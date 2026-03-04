@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:28:55.091492-05:00",
+  "close_reason": "Created comprehensive usage example at examples/basic_usage.exs",
+  "created": "2026-01-01T22:09:33.11254-05:00",
+  "description": "",
+  "id": "bedrock-cu5",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Create usage example with sample Job modules",
+  "type": "task",
+  "updated_at": "2026-01-01T22:28:55.091492-05:00"
+}

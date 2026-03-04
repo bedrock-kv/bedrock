@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-32x",
+    "bedrock-knm",
+    "bedrock-mf0"
+  ],
+  "closed_at": "2026-01-07T19:18:12.95066-05:00",
+  "close_reason": "Added metadata field to FinalizationPlan struct with empty map default",
+  "created": "2026-01-07T17:16:51.553536-05:00",
+  "description": "",
+  "id": "bedrock-6lv",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Add metadata field to FinalizationPlan struct",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

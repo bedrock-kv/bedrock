@@ -1,0 +1,22 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-oii",
+    "bedrock-sbl",
+    "bedrock-tuq",
+    "bedrock-zhx"
+  ],
+  "closed_at": "2026-01-01T23:09:19.510845-05:00",
+  "close_reason": "Added opts parameter with :now option to expired?/2 and remaining_ms/2",
+  "created": "2026-01-01T22:51:09.055646-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/lib/bedrock/job_queue/expirable.ex`\n\n## Current Code\n```elixir\ndef expired?(%{expires_at: exp}) do\n  System.system_time(:millisecond) \u003e= exp\nend\n\ndef remaining_ms(%{expires_at: exp}) do\n  max(0, exp - System.system_time(:millisecond))\nend\n```\n\n## Required Changes\nAdd optional `now` parameter with default:\n```elixir\ndef expired?(struct, now \\\\ System.system_time(:millisecond))\ndef expired?(%{expires_at: exp}, now), do: now \u003e= exp\n\ndef remaining_ms(struct, now \\\\ System.system_time(:millisecond))\ndef remaining_ms(%{expires_at: exp}, now), do: max(0, exp - now)\n```\n\n## Impact\n- `Lease.expired?/1` and `Lease.remaining_ms/1` delegate to this module\n- `QueueLease.expired?/1` and `QueueLease.remaining_ms/1` delegate to this module\n- Delegates need to be updated to accept and pass the `now` parameter",
+  "id": "bedrock-805",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add :now injection to Expirable module",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

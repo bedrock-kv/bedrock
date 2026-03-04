@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:22:04.426572-05:00",
+  "close_reason": "Replaced Process.sleep with assert_eventually helper for faster, more robust async tests",
+  "created": "2026-01-01T22:51:57.359907-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue/consumer_integration_test.exs`\n\n## Issue\nUses `Process.sleep(100)` and `Process.sleep(50)` for timing, which is:\n1. Non-deterministic\n2. Slow\n3. Flaky under load\n\n## Current Usage (multiple locations)\n```elixir\nsend(manager, {:queue_ready, \"tenant_1\"})\nProcess.sleep(100)\n# Check result\n```\n\n## Investigation Needed\nDetermine if this test can use deterministic time injection, or if the Process.sleep is unavoidable due to async message processing. Possible solutions:\n1. Use test telemetry/events to know when processing completes\n2. Poll with eventually/assert_eventually patterns\n3. Accept that integration tests may need some async waits\n\n## Priority\nLower priority than unit test fixes - integration tests often legitimately need async coordination.",
+  "id": "bedrock-wtb",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 3,
+  "status": "closed",
+  "title": "Review consumer_integration_test.exs for time issues",
+  "type": "task",
+  "updated_at": "2026-01-01T23:22:04.426572-05:00"
+}

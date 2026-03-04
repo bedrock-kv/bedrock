@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:43:11.751851-05:00",
+  "close_reason": "All test sleep refactoring complete for bedrock_job_queue",
+  "created": "2026-01-02T20:41:26.625562-05:00",
+  "description": "Refactor tests in bedrock_job_queue to use send/assert_receive instead of Process.sleep/:timer.sleep.",
+  "id": "bedrock-97v",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "bedrock_job_queue: Replace sleep-based test synchronization with message passing",
+  "type": "epic",
+  "updated_at": "2026-01-02T20:43:11.751851-05:00"
+}

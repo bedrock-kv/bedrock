@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-00x2",
+    "bedrock-1m9w",
+    "bedrock-7wge"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-21T20:52:36.354505-05:00",
+  "created": "2026-01-21T20:39:10.267323-05:00",
+  "description": "Update tests to reflect simplified architecture.\nFiles:\n- test/bedrock/control_plane/coordinator/cold_boot_test.exs - Update for new flow\n- test/bedrock/control_plane/coordinator/* - Remove tests for removed commands\n- Add integration test for reconnect scenario",
+  "id": "bedrock-kzep",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Update coordinator tests for new flow",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

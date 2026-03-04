@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:10:58.751226-05:00",
+  "close_reason": "Removed unnecessary 200ms wait - Task.async_stream is synchronous. Kept mock sleeps (they simulate slow operations, not wait for events).",
+  "created": "2026-01-02T20:36:59.639372-05:00",
+  "description": "Replace 3 instances of Process.sleep at lines 279, 285, 328 with message-based synchronization. These wait for lock acquisition/release operations in concurrent scenarios.",
+  "id": "bedrock-2u0",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor service_locking_integration_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:10:58.751226-05:00"
+}

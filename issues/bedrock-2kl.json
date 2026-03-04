@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:21:03.347917-05:00",
+  "close_reason": "Removed all 13 timer.sleep calls - sync operations (GenServer.call, :sys.get_state) handle synchronization",
+  "created": "2026-01-02T20:36:57.660192-05:00",
+  "description": "Replace 14 instances of :timer.sleep at lines 213, 257, 280, 293, 309, 389, 416, 426, 430, 459, 484, 507, 538. These wait for GenServer casts to be processed - should use a sync call or send/assert_receive pattern.",
+  "id": "bedrock-2kl",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor transaction_builder_test.exs: replace timer.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:21:03.347917-05:00"
+}

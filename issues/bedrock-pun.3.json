@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:08:06.719079-05:00",
+  "close_reason": "wontfix",
+  "created": "2026-01-01T20:58:22.51008-05:00",
+  "description": "When multiple enqueuers update the same pointer with min(), conflicts can occur. QuiCK uses two-phase: first write item, then update pointer in separate transaction. Evaluate if needed for our use case.",
+  "id": "bedrock-pun.3",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 3,
+  "status": "closed",
+  "title": "Add enqueue conflict avoidance (two-phase)",
+  "type": "task",
+  "updated_at": "2026-01-01T21:08:06.719079-05:00"
+}

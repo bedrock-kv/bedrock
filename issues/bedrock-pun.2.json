@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:02:31.495929-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:58:22.419111-05:00",
+  "description": "Stale pointers accumulate when queues become empty. QuiCK tracks last_active_time per pointer and garbage collects after a grace period. Add periodic cleanup of pointers where no items exist.",
+  "id": "bedrock-pun.2",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add pointer garbage collection with grace period",
+  "type": "task",
+  "updated_at": "2026-01-01T21:02:31.495929-05:00"
+}

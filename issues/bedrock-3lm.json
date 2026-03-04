@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:50:10.570651-05:00",
+  "close_reason": "Already has good moduledoc",
+  "created": "2026-01-01T18:48:50.447468-05:00",
+  "description": "",
+  "id": "bedrock-3lm",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Review/add main moduledoc for bedrock_core",
+  "type": "task",
+  "updated_at": "2026-01-01T18:50:10.570651-05:00"
+}

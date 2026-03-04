@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T14:35:31.35582-05:00",
+  "close_reason": "won't do - current import pattern is already optimal",
+  "created": "2026-01-01T13:20:18.155727-05:00",
+  "description": "Refactor GenServer.Replies to be a macro module (using __using__/1) instead of a regular module. This will allow consumers to use defp for their reply helper functions instead of def, improving encapsulation.",
+  "id": "bedrock-acv",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "GH-47: Make GenServer.Replies into a macro module",
+  "type": "task",
+  "updated_at": "2026-01-01T14:35:31.35582-05:00"
+}

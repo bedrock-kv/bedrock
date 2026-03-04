@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-byo"
+  ],
+  "blocks": [
+    "bedrock-a6q"
+  ],
+  "closed_at": "2026-01-02T16:06:47.668337-05:00",
+  "close_reason": "Test script and Livebook complete",
+  "created": "2026-01-02T15:39:27.262608-05:00",
+  "description": "Create coffee_shop_queue.livemd with: Mix.install, cluster/repo setup, 6 job modules demonstrating all return patterns",
+  "id": "bedrock-icz",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Create Livebook with setup and job definitions",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-9w4e"
+  ],
+  "blocks": [
+    "bedrock-jkcm",
+    "bedrock-lxj5"
+  ],
+  "closed_at": "2026-01-17T14:13:38.409355-05:00",
+  "close_reason": "Implemented Config module with backend/0, bootstrap_key/0, bootstrap_key!/0. Added discover/1 convenience wrapper to Discovery.",
+  "created": "2026-01-16T18:38:57.234297-05:00",
+  "description": "Define how to configure the ObjectStorage backend at startup. Options: application env, startup args, hybrid. Need to solve chicken-and-egg for cold start (need config to read config). Should support LocalFilesystem for dev/test and S3/GCS for production.",
+  "id": "bedrock-gfff",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "ObjectStorage backend configuration",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

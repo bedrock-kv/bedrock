@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-07T05:47:27.485337-05:00",
+  "close_reason": "Replaced Process.sleep with message-based synchronization",
+  "created": "2026-01-02T20:37:47.833261-05:00",
+  "description": "Replace 2 instances of Process.sleep at lines 121, 131 with message-based synchronization in apps/bedrock_core/test/bedrock/control_plane/director_test.exs. Line 121 is a long sleep in a match clause, line 131 waits for background operation.",
+  "id": "bedrock-9b6",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor director_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-07T05:47:27.485337-05:00"
+}

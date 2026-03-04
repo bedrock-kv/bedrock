@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:01:06.104443-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:58:22.60859-05:00",
+  "description": "Current linear scan of pointers is unfair - earlier queues always get priority. QuiCK uses random start position with wrap-around and water-filling algorithm to ensure fair distribution of work across queues.",
+  "id": "bedrock-pun.4",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add scanner randomization for fairness",
+  "type": "task",
+  "updated_at": "2026-01-01T21:01:06.104443-05:00"
+}

@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-mrrk"
+  ],
+  "blocks": [
+    "bedrock-yml6",
+    "bedrock-yqdo"
+  ],
+  "closed_at": "2026-01-10T16:27:22.357233-05:00",
+  "close_reason": "Consolidated MetadataMerge routing into RoutingData.apply_mutations/2. Added 11 tests for apply_mutations, updated MetadataMerge to 2-arg merge for non-routing metadata only.",
+  "created": "2026-01-10T15:53:27.501557-05:00",
+  "description": "Fold MetadataMerge module into RoutingData and add log_services field.\n\n## Rationale\n\nAll of this is \"routing data\" - information needed to route mutations to logs:\n- shard_table: key → shard tag\n- log_map: index → log_id  \n- log_services: log_id → {otp_name, node}\n- replication_factor: how many logs per mutation\n\nThe current split (RoutingData struct + metadata.log_services) is arbitrary.\n\n## New RoutingData struct\n\n```elixir\ndefmodule RoutingData do\n  @type t :: %__MODULE__{\n    shard_table: :ets.table(),\n    log_map: %{non_neg_integer() =\u003e Log.id()},\n    log_services: %{Log.id() =\u003e {atom(), node()}},\n    replication_factor: pos_integer()\n  }\n  \n  defstruct [:shard_table, :log_map, :log_services, :replication_factor]\nend\n```\n\n## Move from MetadataMerge\n\nFold `MetadataMerge.merge/3` into `RoutingData.apply_mutations/2`:\n\n```elixir\n@spec apply_mutations(t(), [{version, [mutation]}]) :: t()\ndef apply_mutations(%__MODULE__{} = routing_data, updates) do\n  Enum.reduce(updates, routing_data, fn {_version, mutations}, acc -\u003e\n    Enum.reduce(mutations, acc, \u0026apply_mutation/2)\n  end)\nend\n\ndefp apply_mutation({:set, key, value}, routing_data) do\n  case SystemKeys.parse_key(key) do\n    {:shard_key, end_key} -\u003e\n      tag = :erlang.binary_to_term(value)\n      insert_shard(routing_data, end_key, tag)\n      \n    {:layout_log, log_id} -\u003e\n      service_ref = OtpRef.to_tuple(value)\n      # Update BOTH log_map and log_services\n      routing_data\n      |\u003e insert_log(log_id)\n      |\u003e put_log_service(log_id, service_ref)\n      \n    _ -\u003e routing_data\n  end\nend\n```\n\n## What stays in metadata map\n\nOnly non-routing metadata:\n- `shards` - detailed shard metadata (storage team info)\n- `resolvers` - if dynamically updating resolver layout (separate concern)\n\n## Changes\n\n1. Add `log_services` field to RoutingData struct\n2. Add `put_log_service/3`, `delete_log_service/2` methods\n3. Move mutation application logic from MetadataMerge to RoutingData\n4. Delete MetadataMerge module (or gut it to just handle non-routing metadata)\n5. Update finalization to use `routing_data.log_services`\n\n## Files\n\n- routing_data.ex - add log_services, apply_mutations, mutation handling\n- metadata_merge.ex - delete or reduce to non-routing metadata only\n- finalization.ex - use routing_data.log_services instead of metadata.log_services\n- Tests - consolidate metadata_merge tests into routing_data tests",
+  "id": "bedrock-22xb",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Consolidate MetadataMerge into RoutingData with log_services",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

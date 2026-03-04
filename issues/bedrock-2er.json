@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:03:30.383123-05:00",
+  "close_reason": "Merged PointerGC into Scanner, removed separate PointerGC process (78 lines deleted)",
+  "created": "2026-01-01T22:42:33.632993-05:00",
+  "description": "PointerGC is a separate GenServer with timer-based loop, same pattern as Scanner. Both scan the pointer index.\n\nFix: Merge GC logic into Scanner's scan cycle to reduce process count and simplify supervision.",
+  "id": "bedrock-2er",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Merge PointerGC into Scanner",
+  "type": "task",
+  "updated_at": "2026-01-01T23:03:30.383123-05:00"
+}

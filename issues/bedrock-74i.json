@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-uxn"
+  ],
+  "closed_at": "2026-01-07T06:11:37.226084-05:00",
+  "close_reason": "Created ResolverLayout module with Single and Sharded struct variants, from_layout/1 factory function, and calculate_resolver_ends/1. Added comprehensive tests.",
+  "created": "2026-01-07T04:39:44.449854-05:00",
+  "description": "New file resolver_layout.ex with two struct variants for pattern matching. Move calculate_resolver_ends from LayoutOptimization.",
+  "id": "bedrock-74i",
+  "labels": [
+    "commit-proxy"
+  ],
+  "parent": "bedrock-67u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Create ResolverLayout struct with Single and Sharded variants",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

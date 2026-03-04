@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:17:29.518642-05:00",
+  "close_reason": "Changed from :rest_for_one to :one_for_one - processes communicate via stable names",
+  "created": "2026-01-01T22:42:35.771066-05:00",
+  "description": "Consumer uses :rest_for_one strategy but processes are largely independent:\n- WorkerPool, Manager, Scanner, PointerGC don't depend on each other's state\n\nFix: Change to :one_for_one (restart only crashed process).",
+  "id": "bedrock-f76",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix Consumer supervision strategy",
+  "type": "task",
+  "updated_at": "2026-01-01T23:17:29.518642-05:00"
+}

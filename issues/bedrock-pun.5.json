@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:00:18.490114-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:58:22.71622-05:00",
+  "description": "Long-running jobs need to renew their lease before expiry. QuiCK supports lease extension. Add Store.extend_lease/4 that updates vesting_time and lease_expires_at without re-leasing.",
+  "id": "bedrock-pun.5",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add extend_lease operation",
+  "type": "task",
+  "updated_at": "2026-01-01T21:00:18.490114-05:00"
+}

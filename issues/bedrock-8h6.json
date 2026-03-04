@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T09:38:02.527038-05:00",
+  "close_reason": "Implemented min_vesting_time optimization per QuiCK Algorithm 2. Added Store.min_vesting_time/3 and Store.update_queue_pointer/4. Manager now updates pointer after dequeuing to prevent rescanning queues with only future-scheduled items.",
+  "created": "2026-01-02T09:27:39.391385-05:00",
+  "description": "**QuiCK Paper Reference:** Algorithm 2, lines 6-10:\n```\nmin_vesting_time = read minimum vesting time in QDB\nif 0 ≤ min_vesting_time or is_active then\n  vesting_delay = MAX(0, min_vesting_time - now)\n  requeue(p, vesting_delay)\n```\n\n**Current Behavior:**\nAfter processing a queue, no pointer management is done. Scanner will rescan the same queue on next cycle even if remaining items have future vesting times.\n\n**Expected Behavior (per QuiCK):**\nAfter dequeuing, read the minimum vesting_time of remaining items and requeue the pointer with that delay. This prevents rescanning queues that only have future-scheduled items.\n\n**Files to modify:**\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/manager.ex`\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/store.ex` (add min_vesting_time query)\n\n**Risk:** Low - Optimization to reduce unnecessary scans",
+  "id": "bedrock-8h6",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Add pointer requeue with min_vesting_time optimization",
+  "type": "task",
+  "updated_at": "2026-01-02T09:38:02.527038-05:00"
+}

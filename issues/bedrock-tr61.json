@@ -1,0 +1,28 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-21T18:59:17.341949-05:00",
+  "close_reason": "Bootstrap written to object_storage via PersistencePhase with simplified paths (c/{shard}/{version}, s/{shard}/{version})",
+  "created": "2026-01-20T16:23:32.29839-05:00",
+  "description": "",
+  "id": "bedrock-tr61",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nCurrently, ClusterBootstrap is only written to object storage if `StorageConfig.bootstrap_key()` is configured via application env. This is separate from the cluster config, so fresh clusters don't write bootstrap data to object storage.\n\nThis prevents cold-boot scenarios where a node needs to discover cluster state from object storage without coordinator contact.\n\n## Current State\n\nIn `PersistencePhase.write_bootstrap_to_object_storage/2`:\n```elixir\ndefp write_bootstrap_to_object_storage(recovery_attempt, transaction_system_layout) do\n  backend = StorageConfig.backend()\n  bootstrap_key = StorageConfig.bootstrap_key()\n\n  # bootstrap_key is optional - skip write if not configured\n  if bootstrap_key do\n    do_write_bootstrap(backend, bootstrap_key, recovery_attempt, transaction_system_layout)\n  else\n    :ok  # \u003c-- Silently skips!\n  end\nend\n```\n\n`StorageConfig` reads from `Application.get_env(:bedrock, ObjectStorage, [])`, not from cluster config.\n\n## Proposed Fix\n\nUse the cluster's object_storage config (from Foreman) instead of global application config:\n\n1. Pass object_storage backend through recovery_attempt or context\n2. Use a deterministic bootstrap key like `{cluster_name}/bootstrap`\n3. Always write bootstrap after successful recovery\n\n## Files Involved\n- lib/bedrock/control_plane/director/recovery/persistence_phase.ex\n- lib/bedrock/object_storage/config.ex (possibly remove or deprecate)\n- lib/bedrock/internal/cluster_supervisor.ex (source of object_storage config)\n\n## Acceptance Criteria\n- [ ] ClusterBootstrap written to object storage after each successful recovery\n- [ ] Bootstrap uses cluster's configured object_storage backend\n- [ ] Cold-boot discovery can find and read the bootstrap file",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T21:23:44Z"
+    },
+    {
+      "text": "## Design Decision\n\nBootstrap key should be derived from cluster config with a sensible default, not require global application env.\n\nProposed default: `\"{cluster_name}/state\"` (e.g., `\"tutorial/state\"`)\n\nThe cluster already has:\n- `cluster.name` - from cluster config\n- `object_storage` backend - configured via cluster_supervisor\n\nSo PersistencePhase should:\n1. Get object_storage from recovery_attempt/context (already available via Foreman)\n2. Derive bootstrap key from cluster name\n3. Always write bootstrap on successful recovery\n\nNo need for StorageConfig or global application env.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-21T21:28:53Z"
+    }
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "Write ClusterBootstrap to object storage after recovery for cold-boot",
+  "type": "task",
+  "updated_at": "2026-01-21T18:59:17.341949-05:00"
+}

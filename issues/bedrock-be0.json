@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:05:51.969697-05:00",
+  "close_reason": "Removed Registry wrapper module (66 lines), inlined pattern matching into Worker",
+  "created": "2026-01-01T22:42:34.348011-05:00",
+  "description": "Registry.ex (~66 lines) is a thin wrapper around Elixir's built-in Registry. Only value-add is matches_pattern?/2 function.\n\nFix: Remove Registry module, inline matches_pattern? into Worker, use Elixir Registry directly.",
+  "id": "bedrock-be0",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove Registry wrapper module",
+  "type": "task",
+  "updated_at": "2026-01-01T23:05:51.969697-05:00"
+}

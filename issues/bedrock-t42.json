@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-74b"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-02T19:23:26.734856-05:00",
+  "close_reason": "Simplified to single enqueue/4 with :at and :in opts",
+  "created": "2026-01-02T19:18:31.601322-05:00",
+  "description": "",
+  "id": "bedrock-t42",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Simplify enqueue API to single function with opts",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

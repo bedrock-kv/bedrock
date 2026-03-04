@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-mz0i"
+  ],
+  "blocks": [
+    "bedrock-ffhk"
+  ],
+  "closed_at": "2026-01-19T12:42:41.399943-05:00",
+  "close_reason": "Implemented in Demux.Server - sends {:min_durable_version, version} to log when durability advances",
+  "created": "2026-01-18T15:01:36.455298-05:00",
+  "description": "Implement the feedback loop where logs track minimum_durable_version from demux:\n\n1. Demux tracks which version has been durably stored by all downstream materializers\n2. Demux reports this back to its log periodically or on request\n3. Log server tracks and exposes minimum_durable_version (currently returns :unavailable)\n\nFiles:\n- lib/bedrock/data_plane/log/shale/facts.ex - Replace :unavailable with actual tracking\n- lib/bedrock/data_plane/log/shale/server.ex - Track durable version from demux feedback\n\nThis enables log trimming: logs can trim to the minimum durable version common across all logs.",
+  "id": "bedrock-bh2y",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Implement demux → log durability reporting (minimum_durable_version)",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

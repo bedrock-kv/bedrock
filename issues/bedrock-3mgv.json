@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-ubr0"
+  ],
+  "blocks": [
+    "bedrock-h2ts"
+  ],
+  "created": "2026-01-21T19:10:23.222165-05:00",
+  "description": "",
+  "id": "bedrock-3mgv",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Create Mix.Tasks.Livebook.Test module with CLI arg parsing",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

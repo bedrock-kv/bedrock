@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-07T06:20:26.606147-05:00",
+  "close_reason": "All child tasks completed. Implemented single-resolver fast path that bypasses Task.async and async_stream overhead. Created ResolverLayout struct with Single and Sharded variants for pattern matching. Updated resolve_conflicts to use explicit parameters. Deleted LayoutOptimization module and renamed precomputed_layout to resolver_layout throughout codebase.",
+  "created": "2026-01-07T04:39:32.43853-05:00",
+  "description": "",
+  "id": "bedrock-67u",
+  "labels": [
+    "commit-proxy"
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "Single-resolver fast path in commit proxy finalization",
+  "type": "epic",
+  "updated_at": "2026-01-07T06:20:26.606147-05:00"
+}

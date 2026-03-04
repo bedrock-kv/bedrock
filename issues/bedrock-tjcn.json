@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-9l47",
+    "bedrock-jrow",
+    "bedrock-znki"
+  ],
+  "closed_at": "2026-01-23T15:46:51.529004-05:00",
+  "close_reason": "Simplified to majority quorum and removed shard_tags",
+  "created": "2026-01-23T15:34:25.224578-05:00",
+  "description": "## Goal\nReplace per-shard quorum logic with simple majority quorum.\n\n## File\n`lib/bedrock/control_plane/director/recovery/log_recovery_planning_phase.ex`\n\n## Changes\n- Remove per-shard quorum logic (`group_logs_by_shard`, `evaluate_shard_combinations`)\n- Replace with simple majority check: `locked_count \u003e total_count / 2`\n- Compute version_vector as `{max(oldest), min(newest)}` across all survivors\n- Store `survivor_log_ids` in recovery_attempt for replay phase\n\n## Implementation\n```elixir\ndef execute(%RecoveryAttempt{} = recovery_attempt, context) do\n  old_log_ids = Map.keys(context.old_transaction_system_layout[:logs] || %{})\n  log_recovery_info = recovery_attempt.log_recovery_info_by_id\n  locked_count = map_size(log_recovery_info)\n  total_count = length(old_log_ids)\n\n  # Simple majority quorum\n  if locked_count \u003e total_count / 2 do\n    version_vector = compute_version_vector(log_recovery_info)\n    durable_version = compute_durable_version(log_recovery_info)\n    survivor_ids = Map.keys(log_recovery_info)\n    # ... update recovery_attempt\n    {recovery_attempt, :ok}\n  else\n    {recovery_attempt, {:stalled, {:error, :unable_to_meet_log_quorum}}}\n  end\nend\n```",
+  "id": "bedrock-tjcn",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Simplify LogRecoveryPlanningPhase to majority quorum",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

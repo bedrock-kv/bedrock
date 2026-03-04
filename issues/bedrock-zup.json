@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-07T05:50:51.719788-05:00",
+  "close_reason": "All child issues completed - sleep-based test synchronization replaced with message passing in bedrock_log_shale",
+  "created": "2026-01-02T20:41:26.532604-05:00",
+  "description": "Refactor tests in bedrock_log_shale to use send/assert_receive instead of Process.sleep/:timer.sleep.",
+  "id": "bedrock-zup",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "bedrock_log_shale: Replace sleep-based test synchronization with message passing",
+  "type": "epic",
+  "updated_at": "2026-01-07T05:50:51.719788-05:00"
+}

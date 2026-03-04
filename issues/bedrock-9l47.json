@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-tjcn"
+  ],
+  "blocks": [
+    "bedrock-qrek"
+  ],
+  "closed_at": "2026-01-23T15:55:37.963855-05:00",
+  "close_reason": "Updated LogReplayPhase to pass all survivors and added multi-source recovery to Shale",
+  "created": "2026-01-23T15:34:30.925727-05:00",
+  "description": "## Goal\nChange replay phase to pass all survivor logs to each replacement, enabling shard-filtered coalescing.\n\n## File\n`lib/bedrock/control_plane/director/recovery/log_replay_phase.ex`\n\n## Current Behavior\nPairs new logs with old logs 1:1 for copying.\n\n## New Behavior\n- Pass all survivor log IDs to each replacement log\n- Replacement log pulls from all and filters by shard index\n- Same version range for all replacements\n\n## Depends On\nTask 1 (LogRecoveryPlanningPhase must provide survivor_log_ids)",
+  "id": "bedrock-9l47",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Update LogReplayPhase to pass all survivors to replacements",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

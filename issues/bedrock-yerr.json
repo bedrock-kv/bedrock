@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-as6j"
+  ],
+  "blocks": [
+    "bedrock-4jg9",
+    "bedrock-6t5g"
+  ],
+  "closed_at": "2026-01-10T08:15:28.37067-05:00",
+  "close_reason": "Integrated ShardRouter with finalization.ex for ETS ceiling search and golden ratio routing",
+  "created": "2026-01-10T07:54:30.358383-05:00",
+  "description": "## Summary\n\nReplace storage_teams iteration with ETS ceiling search for mutation routing. This is the hot path - every mutation routes through here.\n\n## Files to Modify\n\n**finalization.ex**\n- Replace `key_or_range_to_tags/2` (lines 719-737) with ETS ceiling search on `shard_keys`\n- Replace `find_logs_for_tags/2` (lines 740-748) with golden ratio algorithm\n- Update `FinalizationPlan` struct to use ETS table ref instead of `storage_teams` list\n\n**layout_index.ex**  \n- Update `collect_active_ranges/1` (lines 120-131) to read from shard_keys ETS\n- Index building happens at startup, needs shard data available\n\n## Implementation\n\n1. Create ETS ordered_set table for shard_keys in commit proxy\n2. Implement ceiling search: `ets:next/2` to find first key \u003e= target\n3. Implement golden ratio log selection algorithm\n4. Update FinalizationPlan to carry ETS table ref\n5. Update routing functions to use new lookup\n\n## Dependencies\n\nDepends on bedrock-as6j (schema design) - shard_keys format defined there.",
+  "id": "bedrock-yerr",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Implement ETS ceiling search for shard routing in finalization",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

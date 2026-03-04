@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-bh2y"
+  ],
+  "blocks": [
+    "bedrock-683b"
+  ],
+  "closed_at": "2026-01-19T13:28:31.973146-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-18T15:01:50.053872-05:00",
+  "description": "Move durable_version calculation from VersionDeterminationPhase to LogRecoveryPlanningPhase.\n\nFile: lib/bedrock/control_plane/director/recovery/log_recovery_planning_phase.ex\n\nAdd durable_version calculation from log_recovery_info_by_id:\n```elixir\ndurable_version =\n  log_recovery_info_by_id\n  |\u003e Map.values()\n  |\u003e Enum.map(\u0026Map.get(\u00261, :minimum_durable_version))\n  |\u003e Enum.reject(\u0026(\u00261 == :unavailable))\n  |\u003e Enum.min(fn -\u003e Version.zero() end)\n```\n\nChange next phase return from VacancyCreationPhase to LogRecruitmentPhase.\n\nDepends on: demux → log durability reporting being implemented.",
+  "id": "bedrock-ffhk",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Move version determination to LogRecoveryPlanningPhase",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

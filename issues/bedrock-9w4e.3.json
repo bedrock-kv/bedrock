@@ -1,0 +1,17 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-17T12:30:20.95126-05:00",
+  "close_reason": "Updated ClusterBootstrap moduledoc with coordinators field documentation and boot sequence",
+  "created": "2026-01-17T12:25:40.634027-05:00",
+  "description": "Update docstring and examples in ClusterBootstrap module to include coordinators field usage.",
+  "id": "bedrock-9w4e.3",
+  "labels": [],
+  "parent": "bedrock-9w4e",
+  "priority": 3,
+  "status": "closed",
+  "title": "Update ClusterBootstrap module docs for coordinators field",
+  "type": "task",
+  "updated_at": "2026-01-17T12:30:20.95126-05:00"
+}

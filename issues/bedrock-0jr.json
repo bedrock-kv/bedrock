@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:22:10.905259-05:00",
+  "close_reason": "All 12 child tasks completed - time injection added to all modules, tests updated to use fixed timestamps",
+  "created": "2026-01-01T22:50:35.416754-05:00",
+  "description": "## Problem\n\nThe job queue modules use direct `System.system_time(:millisecond)` calls throughout the codebase, making tests non-deterministic and forcing workarounds like struct manipulation or `Process.sleep`.\n\n## Goal\n\nMake time functions injectable using the `:now` keyword option pattern established in `Store.peek/4` and `Store.dequeue/5`. This allows tests to pass fixed time values for deterministic behavior.\n\n## Pattern Reference\n\nFrom `apps/bedrock_job_queue/lib/bedrock/job_queue/store.ex`:\n```elixir\ndef peek(repo, root, queue_id, opts \\\\ []) do\n  now = Keyword.get(opts, :now, System.system_time(:millisecond))\n  # ... use now instead of System.system_time(:millisecond)\nend\n```\n\n## Files Requiring Updates\n\n### Source Files\n1. `expirable.ex` - `expired?/1` and `remaining_ms/1` need `:now` parameter\n2. `item.ex` - `new/4` already accepts opts, needs `:now`; `leased?/1` needs `:now` parameter\n3. `lease.ex` - `new/3` needs `:now` in opts\n4. `queue_lease.ex` - `new/3` needs `:now` in opts\n\n### Test Files\nAll tests that use time-relative patterns need updating to use explicit `:now` values instead of:\n- `System.system_time(:millisecond) - 1000` (past)\n- `System.system_time(:millisecond) + 10_000` (future)\n- Direct struct manipulation for expiration",
+  "id": "bedrock-0jr",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Rework time handling in job queue for deterministic testing",
+  "type": "epic",
+  "updated_at": "2026-01-01T23:22:10.905259-05:00"
+}

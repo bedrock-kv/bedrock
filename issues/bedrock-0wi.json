@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-42z",
+    "bedrock-7t2"
+  ],
+  "closed_at": "2026-01-01T23:09:57.706827-05:00",
+  "close_reason": "Added :now option to Item.new/4 and Item.leased?/2",
+  "created": "2026-01-01T22:51:09.14883-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/lib/bedrock/job_queue/item.ex`\n\n## Current Code (lines 88-89)\n```elixir\ndef leased?(%__MODULE__{lease_expires_at: exp}) when not is_nil(exp) do\n  System.system_time(:millisecond) \u003c exp\nend\n```\n\n## Required Changes\nAdd optional `now` parameter:\n```elixir\n@spec leased?(t()) :: boolean()\n@spec leased?(t(), non_neg_integer()) :: boolean()\ndef leased?(item, now \\\\ System.system_time(:millisecond))\n\ndef leased?(%__MODULE__{lease_id: nil}, _now), do: false\n\ndef leased?(%__MODULE__{lease_expires_at: exp}, now) when not is_nil(exp) do\n  now \u003c exp\nend\n\ndef leased?(_, _now), do: false\n```\n\n## Notes\n- `Item.new/4` already accepts `:vesting_time` in opts, which is the pattern to follow\n- `Item.visible?/2` already has `:now` injection - keep consistent",
+  "id": "bedrock-0wi",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Add :now injection to Item.leased?/1",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T09:36:02.947265-05:00",
+  "close_reason": "Implemented selection_frac (default 0.5) and selection_max (default 10) in Scanner. Per QuiCK Algorithm 1, Scanner now randomly selects only a fraction of visible queues to reduce contention between multiple scanners.",
+  "created": "2026-01-02T09:27:21.600669-05:00",
+  "description": "**QuiCK Paper Reference:** Algorithm 1, line 8:\n`pointers ← select min(selection_max, ⌈size(peeked_list) * selection_frac⌉) pointers from peeked_list, uniformly at random`\n\n**Current Behavior:**\nScanner notifies Manager about ALL visible queues found in each scan cycle.\n\n**Expected Behavior (per QuiCK):**\n- Peek up to `peek_max` pointers\n- Select only a random fraction (`selection_frac`) for processing\n- This reduces contention between multiple consumers\n\n**QuiCK parameters (page 11):**\n- peek_max: 20K\n- selection_max: 2K  \n- selection_frac: 0.02 (2%)\n\n**Files to modify:**\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/scanner.ex`\n\n**Risk:** Low - Performance optimization, reduces contention at scale",
+  "id": "bedrock-j8t",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Scanner should use selection_frac for random pointer selection",
+  "type": "task",
+  "updated_at": "2026-01-02T09:36:02.947265-05:00"
+}

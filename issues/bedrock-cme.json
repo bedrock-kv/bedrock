@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-c91"
+  ],
+  "closed_at": "2026-01-03T09:38:04.644443-05:00",
+  "close_reason": "Converted to do: syntax",
+  "created": "2026-01-03T09:35:34.447553-05:00",
+  "description": "Convert 2 functions to single-line do: syntax\n\n1. expired?/2 (line 18-21):\n```elixir\ndef expired?(%{expires_at: exp}, opts), do: Keyword.get(opts, :now, System.system_time(:millisecond)) \u003e= exp\n```\n\n2. remaining_ms/2 (line 34-37):\n```elixir\ndef remaining_ms(%{expires_at: exp}, opts), do: max(0, exp - Keyword.get(opts, :now, System.system_time(:millisecond)))\n```\n\nFile: apps/bedrock_job_queue/lib/bedrock/job_queue/expirable.ex",
+  "id": "bedrock-cme",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Convert expirable.ex to do: syntax",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

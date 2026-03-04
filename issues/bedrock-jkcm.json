@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-683b",
+    "bedrock-as6j",
+    "bedrock-cs5i",
+    "bedrock-gfff"
+  ],
+  "blocks": [
+    "bedrock-4jg9"
+  ],
+  "closed_at": "2026-01-19T14:10:02.56169-05:00",
+  "close_reason": "Recovery now bootstraps from metadata materializer. New flow: SequencerStartup → MaterializerBootstrap → CommitProxyStartup. Removed storage_teams handling, added shard_layout to TSL.",
+  "created": "2026-01-10T07:54:39.78206-05:00",
+  "description": "## Summary\n\nRecovery reads ClusterBootstrap from ObjectStorage and bootstraps from metadata shard materializer instead of using storage_teams.\n\n## Current vs New Recovery Flow\n\n### Current (16 phases):\n```\nTSLValidation → Initialization → Locking → LogRecoveryPlanning → LogRecruitment → LogReplay\n    → SequencerStartup → CommitProxyStartup → ResolverStartup\n    → VacancyCreation → VersionDetermination → StorageRecruitment\n    → Topology → Persistence → Monitoring\n```\n\n### New (13 phases):\n```\nTSLValidation → Initialization → Locking → LogRecoveryPlanning → LogRecruitment → LogReplay\n    → SequencerStartup → MaterializerBootstrap (NEW)\n    → CommitProxyStartup → ResolverStartup\n    → Topology (reworked) → Persistence → Monitoring\n```\n\n## Key Design Decisions\n\n### 1. Durable Version from Logs (not storage_teams)\nLogs track minimum_durable_version based on demux feedback:\n1. Demux distributes transactions to shard materializers\n2. Materializers durably store and report back to demux\n3. Demux reports highest durable version back to its log\n4. Logs expose minimum_durable_version\n5. Recovery takes minimum across all logs for cluster-wide durable version\n\n### 2. Metadata Materializer Bootstrap\nThe metadata shard materializer is an Olivine instance for the \\xff keyspace:\n1. Running instance exists: Query it for shard layout\n2. No instance, snapshot exists: Restore from ObjectStorage\n3. Fresh cluster: Create initial shard layout in memory\n\n### 3. Phases to Remove\n- VacancyCreationPhase - storage_teams retired\n- StorageRecruitmentPhase - materializers self-organize from logs\n- VersionDeterminationPhase - moves to LogRecoveryPlanningPhase\n\n## Implementation broken into subtasks (see children)",
+  "id": "bedrock-jkcm",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Recovery bootstraps from metadata shard materializer",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

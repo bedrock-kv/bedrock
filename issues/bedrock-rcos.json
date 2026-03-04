@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-yz03"
+  ],
+  "blocks": [
+    "bedrock-yqdo"
+  ],
+  "closed_at": "2026-01-10T16:30:36.381603-05:00",
+  "close_reason": "Updated batching to use state.sequencer directly",
+  "created": "2026-01-10T15:48:26.103038-05:00",
+  "description": "Update batching.ex to use state.sequencer instead of state.transaction_system_layout.sequencer.\n\n## Current Code\n\n```elixir\n# In batching.ex\nsequencer = state.transaction_system_layout.sequencer\n```\n\n## New Code\n\n```elixir\n# In batching.ex\nsequencer = state.sequencer\n```\n\n## Simple Change\n\nThis is a straightforward field access update. Search for all uses of\n`transaction_system_layout.sequencer` in batching.ex and replace with\n`state.sequencer`.\n\n## Testing\n\nExisting tests should pass after State is updated with sequencer field.",
+  "id": "bedrock-rcos",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Batching: Use state.sequencer directly",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

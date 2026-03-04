@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-jwii",
+    "bedrock-otoq",
+    "bedrock-yqdo"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-10T20:59:03.023453-05:00",
+  "close_reason": "Completed: Commit proxy now starts with minimal params (epoch, sequencer, resolver_layout). TSL removed, routing_data returned from finalize_batch, metadata field removed from State. All tests pass.",
+  "created": "2026-01-10T09:23:36.645943-05:00",
+  "description": "Remove full TSL from commit proxy startup. Proxy needs only: epoch, sequencer, resolver_layout.\n\n## Key Insight: Pipeline Order Makes This Work\n\n```\nresolve_conflicts → apply_mutations → prepare_for_logging → push_to_logs\n                    ↑                  ↑                     ↑\n                    populates          uses routing_data     uses routing_data\n                    routing_data       (just updated!)       .log_services\n```\n\n`apply_mutations` runs BEFORE routing/pushing, so metadata populates routing before it's needed.\n\n## Bootstrap Strategy: \"Eat Our Own Dogfood\"\n\nFirst transaction from Director writes all system keys. Resolver returns these as\nmetadata mutations. RoutingData.apply_mutations processes them, populating:\n- shard_table (from shard_key mutations)\n- log_map (from layout_log mutations)\n- log_services (from layout_log mutations)\n\nBy the time routing happens, routing_data has everything needed.\n\n## Consolidated RoutingData\n\nAll routing info lives in one struct:\n```elixir\n%RoutingData{\n  shard_table: ets_table,      # key → tag\n  log_map: %{0 =\u003e \"log-1\"},    # index → log_id\n  log_services: %{\"log-1\" =\u003e {:log_1, :node}},  # log_id → how to reach\n  replication_factor: 3\n}\n```\n\nMetadataMerge is folded into RoutingData.apply_mutations/2.\n\n## Required Start Params\n\n```elixir\n%{\n  epoch: epoch,\n  sequencer: sequencer_pid,\n  resolver_layout: resolver_layout\n  # routing_data starts empty via new_empty/0\n}\n```\n\n## Sub-tickets\n\n1. bedrock-mrrk: RoutingData foundation (new_empty, insert_log, log_services field)\n2. bedrock-22xb: Consolidate MetadataMerge into RoutingData\n3. bedrock-yz03: State - remove TSL, add sequencer field\n4. bedrock-rcos: Batching - use state.sequencer\n5. bedrock-yml6: Finalization - remove TSL, use routing_data\n6. bedrock-yqdo: Server - simplify startup",
+  "id": "bedrock-3na6",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Minimal commit proxy startup: epoch, sequencer, resolver_layout only",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

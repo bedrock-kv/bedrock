@@ -1,0 +1,22 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-22xb",
+    "bedrock-iqju",
+    "bedrock-yml6",
+    "bedrock-yqdo",
+    "bedrock-yz03"
+  ],
+  "closed_at": "2026-01-10T16:21:16.087406-05:00",
+  "close_reason": "Implemented with TDD: 20 new tests for new_empty, insert_log, remove_log, put_log_service, delete_log_service, set_replication_factor",
+  "created": "2026-01-10T15:48:25.574066-05:00",
+  "description": "Add methods to RoutingData for dynamic population from metadata.\n\n## Changes to routing_data.ex\n\n### New field: log_services\n\n```elixir\ndefstruct [:shard_table, :log_map, :log_services, :replication_factor]\n```\n\n### new_empty/0\n\nCreates empty routing data:\n```elixir\ndef new_empty do\n  table = :ets.new(:shard_keys, [:ordered_set, :public])\n  %__MODULE__{\n    shard_table: table,\n    log_map: %{},\n    log_services: %{},\n    replication_factor: 1\n  }\nend\n```\n\n### insert_log/2\n\nAdds log to log_map at next available index:\n```elixir\ndef insert_log(%__MODULE__{log_map: log_map} = rd, log_id) do\n  next_index = map_size(log_map)\n  %{rd | log_map: Map.put(log_map, next_index, log_id)}\nend\n```\n\n### remove_log/2\n\nRemoves log and reindexes:\n```elixir\ndef remove_log(%__MODULE__{log_map: log_map} = rd, log_id) do\n  new_map = log_map\n    |\u003e Enum.reject(fn {_k, v} -\u003e v == log_id end)\n    |\u003e Enum.sort_by(\u0026elem(\u00261, 0))\n    |\u003e Enum.with_index()\n    |\u003e Map.new(fn {{_old_idx, id}, new_idx} -\u003e {new_idx, id} end)\n  %{rd | log_map: new_map}\nend\n```\n\n### put_log_service/3 and delete_log_service/2\n\n```elixir\ndef put_log_service(%__MODULE__{} = rd, log_id, service_ref) do\n  %{rd | log_services: Map.put(rd.log_services, log_id, service_ref)}\nend\n\ndef delete_log_service(%__MODULE__{} = rd, log_id) do\n  %{rd | log_services: Map.delete(rd.log_services, log_id)}\nend\n```\n\n### set_replication_factor/2\n\n```elixir\ndef set_replication_factor(%__MODULE__{} = rd, factor) do\n  %{rd | replication_factor: factor}\nend\n```\n\n## Testing\n\n- new_empty/0 creates valid empty struct with all fields\n- insert_log/2 assigns sequential indices\n- remove_log/2 removes and reindexes\n- put_log_service/3 and delete_log_service/2 manage services map\n- set_replication_factor/2 updates factor",
+  "id": "bedrock-mrrk",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "RoutingData: Add new_empty/0, insert_log/2, remove_log/2",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

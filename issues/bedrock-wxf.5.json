@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-wxf.1"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-16T17:53:20.42318-05:00",
+  "close_reason": "Implemented Snapshot module with write, read, read_latest, list, latest_version, delete, delete_older_than, exists?, count. Supports conditional writes and materializer cold start scenario. All 24 tests pass.",
+  "created": "2026-01-16T17:31:54.055347-05:00",
+  "description": "Path: /{cluster}/shards/{tag}/snapshots/{inverted_version}. Write snapshot with conditional put. Read latest snapshot (list + get). Tests: write/read round-trip, conditional write conflict.",
+  "id": "bedrock-wxf.5",
+  "labels": [],
+  "parent": "bedrock-wxf",
+  "priority": 2,
+  "status": "closed",
+  "title": "Snapshot storage",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

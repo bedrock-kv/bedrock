@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-5los",
+    "bedrock-gfff"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-17T16:14:03.250848-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-16T18:39:02.674323-05:00",
+  "description": "After successful recovery, write updated ClusterBootstrap to ObjectStorage.\n\n## What to Write\n\nClusterBootstrap FlatBuffer containing:\n- cluster_id\n- epoch (new epoch from this recovery)\n- logs (current log set with OTP refs)\n- coordinators (current coordinator nodes)\n\n## Integration Point\n\nAdd to PersistencePhase or create new phase after system transaction succeeds.\n\n## Key Change\n\nUse ClusterBootstrap FlatBuffer format (not ClusterState Erlang binary).\nClusterState module can be removed once this is complete.\n\n## Key Files\n\n- lib/bedrock/control_plane/director/recovery/persistence_phase.ex\n- lib/bedrock/system_keys/cluster_bootstrap.ex\n- lib/bedrock/object_storage/cluster_state.ex (to be removed)",
+  "id": "bedrock-lxj5",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Recovery writes cluster state to object storage",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

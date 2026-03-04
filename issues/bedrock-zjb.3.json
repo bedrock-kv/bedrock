@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:20:00.237365-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.650648-05:00",
+  "description": "Lease and QueueLease have identical implementations of:\n- expired?/1 (lease.ex:62-65, queue_lease.ex:41-44)\n- remaining_ms/1 (lease.ex:71-74, queue_lease.ex:49-52)\n\nExtract to shared module Bedrock.JobQueue.LeaseHelpers or use a protocol.\n~15 lines reduction + DRY.",
+  "id": "bedrock-zjb.3",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 2,
+  "status": "closed",
+  "title": "Extract shared lease expiration helpers",
+  "type": "task",
+  "updated_at": "2026-01-01T21:20:00.237365-05:00"
+}

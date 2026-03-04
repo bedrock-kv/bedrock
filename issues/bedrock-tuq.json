@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-805",
+    "bedrock-v5h",
+    "bedrock-zhx"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:16:39.276222-05:00",
+  "close_reason": "Updated to use fixed timestamps with :now parameter",
+  "created": "2026-01-01T22:51:57.258608-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue_test.exs`\n\n## Tests to Update (lines 66-78)\n\n### 1. \"expired? returns false for fresh lease\" (lines 66-70)\n```elixir\n# Current\nlease = Lease.new(item, \"holder\")\nrefute Lease.expired?(lease)\n\n# Should be\nnow = 10_000\nlease = Lease.new(item, \"holder\", now: now)\nrefute Lease.expired?(lease, now)\n```\n\n### 2. \"expired? returns true for old lease\" (lines 73-77)\n```elixir\n# Current (uses struct manipulation)\nlease = %{Lease.new(item, \"holder\") | expires_at: System.system_time(:millisecond) - 1000}\nassert Lease.expired?(lease)\n\n# Should be\nnow = 10_000\nlease = Lease.new(item, \"holder\", duration_ms: 5000, now: 4_000)  # expires at 9000\nassert Lease.expired?(lease, now)  # 10000 \u003e 9000\n```\n\n## Principle\nEliminate struct manipulation - use :now injection.",
+  "id": "bedrock-tuq",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update job_queue_test.exs Lease tests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

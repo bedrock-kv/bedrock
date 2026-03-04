@@ -1,0 +1,25 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-8ten"
+  ],
+  "closed_at": "2026-01-19T18:45:33.003386-05:00",
+  "close_reason": "Fixed FD leaks in segment_recycler.ex and writer.ex by ensuring file descriptors are closed on error paths",
+  "created": "2026-01-19T18:32:39.406729-05:00",
+  "description": "",
+  "id": "bedrock-21mq",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Root Cause Found\n\nTwo file descriptor leaks in Shale:\n\n### 1. `segment_recycler.ex:176-184` - `allocate_file/2`\n```elixir\ndef allocate_file(path, size_in_bytes) do\n  with {:ok, fd} \u003c- File.open(path, [:write, :binary, :raw, :exclusive]),\n       :ok \u003c- :file.allocate(fd, 0, size_in_bytes),  # If this fails, fd leaks!\n       :ok \u003c- File.close(fd) do\n    {:ok, path}\n  else\n    {:error, :eisdir} -\u003e raise \"not implemented\"\n    {:error, :enoent} -\u003e {:error, :path_does_not_exist}\n  end\nend\n```\n\n### 2. `writer.ex:27-36` - `open/1`\n```elixir\nwith {:ok, stat} \u003c- File.stat(path_to_file),\n     {:ok, fd} \u003c- File.open(path_to_file, [:write, :read, :raw, :binary]),\n     :ok \u003c- :file.pwrite(fd, 0, @empty_segment_header) do  # If this fails, fd leaks!\n  {:ok, %__MODULE__{...}}\nend\n```\n\n### Fix\nBoth need try/after or explicit cleanup in else clauses to ensure fd is closed on any error after File.open succeeds.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T23:43:53Z"
+    }
+  ],
+  "priority": 1,
+  "status": "closed",
+  "title": "Investigate file descriptor leak exhausting 1M+ handles",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

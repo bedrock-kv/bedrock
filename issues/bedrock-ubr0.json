@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-3mgv"
+  ],
+  "created": "2026-01-21T19:10:23.032179-05:00",
+  "description": "",
+  "id": "bedrock-ubr0",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Add earmark_parser dependency to mix.exs",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

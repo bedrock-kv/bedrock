@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-10T12:23:25.947659-05:00",
+  "close_reason": "Used module function instead of anonymous function for telemetry handler",
+  "created": "2026-01-10T12:22:27.841823-05:00",
+  "description": "",
+  "id": "bedrock-cxps",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix telemetry local function warning in tests",
+  "type": "task",
+  "updated_at": "2026-01-10T12:23:25.947659-05:00"
+}

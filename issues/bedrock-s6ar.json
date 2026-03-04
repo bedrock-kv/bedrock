@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-jrow"
+  ],
+  "closed_at": "2026-01-23T12:56:29.028423-05:00",
+  "close_reason": "Committed KeyError fix for TSL epoch field",
+  "created": "2026-01-23T09:24:38.137488-05:00",
+  "description": "## Problem\n\nWhen loading cluster bootstrap data from object storage on restart, the code crashed with KeyError because it used dot notation (e.g., `bootstrap.parameters`) on maps where optional fields might not exist.\n\n## Root Cause\n\nFlatBuffers tables have optional fields. When decoded, missing fields aren't present in the map. Using `bootstrap.parameters` raises KeyError if `:parameters` key doesn't exist.\n\n## Changes\n\n### `lib/bedrock/control_plane/coordinator/server.ex`\n\n`build_config_from_bootstrap/2`:\n- Changed `if bootstrap.parameters do` → `case bootstrap[:parameters] do`\n- Changed `bootstrap.parameters.X` → `params[:X]` using local variable\n- Changed `if bootstrap.policies do` → `case bootstrap[:policies] do`\n- Changed `bootstrap.policies.X` → `p[:X]` using local variable\n\n`build_old_tsl_from_bootstrap/1`:\n- Changed `bootstrap.logs` → `bootstrap[:logs] || []`\n- Changed `log_info.id` → `log_info[:id]`\n- Changed `log_info.shard_tags` → `log_info[:shard_tags]`\n\n### `lib/bedrock/control_plane/coordinator/telemetry.ex`\n\n`trace_director_launch/2`:\n- Changed `old_transaction_system_layout.epoch` → `old_transaction_system_layout[:epoch]`\n\n## Result\n\n- Fresh start: Works ✓\n- Reconnect: No longer crashes on bootstrap load, but still fails later in LogRecoveryPlanningPhase (separate issue - shard_tags problem tracked in parent task)\n\n## Testing\n\n```bash\n# Fresh start - should pass\nrm -rf $TMPDIR/bedrock_99999 $TMPDIR/bedrock_debug_cluster\nmix run scripts/debug_cluster.exs --scenario=fresh --timeout=30000 --keep-alive=false\n\n# Reconnect - no longer crashes on load, but still stalls in recovery\nrm -rf $TMPDIR/bedrock_99999 $TMPDIR/bedrock_debug_cluster  \nmix run scripts/debug_cluster.exs --scenario=reconnect --timeout=30000 --keep-alive=false\n```",
+  "id": "bedrock-s6ar",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Fix KeyError crashes when loading bootstrap without optional fields",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

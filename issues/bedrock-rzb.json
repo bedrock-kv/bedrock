@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-4oc"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T15:53:16.35836-05:00",
+  "close_reason": "All quality checks pass: compile, tests, format, credo, dialyzer",
+  "created": "2026-01-01T15:41:56.739075-05:00",
+  "description": "",
+  "id": "bedrock-rzb",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Verify umbrella builds and tests pass",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

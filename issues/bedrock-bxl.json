@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:02:54.269099-05:00",
+  "close_reason": "Works as designed. With concurrency=2, top priority jobs start simultaneously. Output order depends on IO timing, not priority. Priority IS correct - cleanup (200) runs last after ready (10) and brewing (50) complete. Consider using concurrency=1 in examples to demonstrate priority ordering.",
+  "created": "2026-01-02T19:52:17.0099-05:00",
+  "description": "",
+  "id": "bedrock-bxl",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Priority ordering not visible with concurrent workers",
+  "type": "task",
+  "updated_at": "2026-01-02T20:02:54.269099-05:00"
+}

@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-5ih",
+    "bedrock-7b8"
+  ],
+  "blocks": [
+    "bedrock-aw2"
+  ],
+  "closed_at": "2026-01-01T16:54:14.733435-05:00",
+  "close_reason": "Created bedrock convenience app at apps/bedrock with dependencies on bedrock_core, bedrock_shale, bedrock_olivine. All 1921 tests pass.",
+  "created": "2026-01-01T16:38:58.39881-05:00",
+  "description": "",
+  "id": "bedrock-ae5",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Create bedrock convenience app that assembles common pieces",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

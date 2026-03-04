@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T08:52:02.964591-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-02T08:50:13.228987-05:00",
+  "description": "## Problem\n\nWarning during test runs:\n```\nwarning: redefining module MockRepo (current version defined in memory)\n```\n\n## Root Cause\n\nMockRepo is defined 4 times across the umbrella:\n- apps/bedrock_hca/test/test_helper.exs\n- apps/bedrock_directory/test/test_helper.exs  \n- apps/bedrock_job_queue/test/test_helper.exs\n- apps/bedrock_core/test/test_helper.exs\n\nWhen tests run together or the test suite is compiled in the same VM session, Mox.defmock gets called multiple times.\n\n## Fix Options\n\n1. **Shared mock module**: Create `apps/bedrock/test/support/mocks.ex` and require it from each app's test_helper.exs\n\n2. **Conditional definition**: Use `Code.ensure_loaded?/1` to skip if already defined:\n```elixir\nunless Code.ensure_loaded?(MockRepo) do\n  Mox.defmock(MockRepo, for: Bedrock.Repo)\nend\n```\n\nOption 2 is simpler and works with the current structure.",
+  "id": "bedrock-72s",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix MockRepo redefinition warning in umbrella tests",
+  "type": "bug",
+  "updated_at": "2026-01-02T08:52:02.964591-05:00"
+}

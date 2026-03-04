@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T12:31:02.833529-05:00",
+  "close_reason": "Created mutation_slicer module with tests",
+  "created": "2026-01-19T12:28:54.279933-05:00",
+  "description": "",
+  "id": "bedrock-64jn",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Demux: mutation_slicer module",
+  "type": "task",
+  "updated_at": "2026-01-19T12:31:02.833529-05:00"
+}

@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-24f"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-02T09:32:13.630098-05:00",
+  "close_reason": "Implemented LeaseExtender module that periodically extends leases during job execution. Manager now spawns an extender alongside each job task and stops it when the job completes. Default interval is lease_duration/3 (10s for 30s lease).",
+  "created": "2026-01-02T09:27:03.62227-05:00",
+  "description": "**QuiCK Paper Reference:** Algorithm 3, lines 10-12\n\n**Current Behavior:**\nWorkers execute jobs without extending their lease. If a job takes longer than the lease duration (default 30s), the lease expires and the item becomes visible again, causing duplicate execution.\n\n**Expected Behavior (per QuiCK):**\n```\ndo in parallel\n  Periodically extend_lease(item) in QDB\n```\n\nA separate thread/task should periodically extend the lease while the job is being processed.\n\n**Files to modify:**\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/manager.ex`\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/worker.ex`\n\n**Risk:** High - Long jobs will be executed multiple times",
+  "id": "bedrock-ayh",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Add parallel lease extension for long-running jobs",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

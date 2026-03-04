@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-2or"
+  ],
+  "closed_at": "2026-01-02T20:57:05.384838-05:00",
+  "close_reason": "Fixed by filtering :clear tombstones in filter_cleared_keys and scan_pending_writes",
+  "created": "2026-01-02T16:37:16.21041-05:00",
+  "description": "## Summary\n\nWhen keys are cleared within a transaction using `repo.clear(key)`, subsequent range queries in the same transaction can return `{key, :clear}` tuples instead of filtering out the deleted keys.\n\n## Root Cause\n\nIn `Bedrock.Internal.TransactionBuilder.Tx`, cleared keys are stored as tombstones:\n\n```elixir\n# tx.ex line 411\ndefp put_clear(t, k), do: %{t | writes: :gb_trees.enter(k, :clear, t.writes)}\n```\n\nWhen `merge_storage_range_with_writes` merges storage results with pending writes, these `:clear` values pass through `apply_atomic_to_storage_value` unchanged:\n\n```elixir\n# tx.ex line 502\ndef apply_atomic_to_storage_value(value, _storage_value), do: value\n# If value is :clear, it passes through\n```\n\nThe `filter_cleared_keys` function only handles `{:clear_range, start, end}` mutations, not individual `:clear` tombstones.\n\n## Impact\n\nAny code that does a range query and expects binary values will crash when encountering `:clear`:\n\n```elixir\nrepo.get_range(keyspace, limit: 10)\n|\u003e Enum.map(fn {_key, value} -\u003e :erlang.binary_to_term(value) end)\n# ** (ArgumentError) errors were found at the given arguments:\n#   * 1st argument: not a binary\n#     :erlang.binary_to_term(:clear)\n```\n\n## Current Workaround\n\nThe job queue Store module filters `:clear` values manually:\n\n```elixir\nkeyspaces.items\n|\u003e repo.get_range(limit: limit)\n|\u003e Stream.reject(fn {_key, value} -\u003e value == :clear end)  # Workaround\n|\u003e Stream.map(fn {_key, value} -\u003e decode(value) end)\n```\n\n## Proposed Fix\n\nFilter `:clear` values in `merge_storage_with_bounded_writes` before returning results:\n\n```elixir\nmerged_results =\n  acc\n  |\u003e filter_cleared_keys(tx_clear_ranges)\n  |\u003e Enum.reject(fn {_key, value} -\u003e value == :clear end)  # Add this\n  |\u003e Enum.reverse()\n```\n\nOr handle it in `scan_pending_writes` to not include `:clear` values in the first place.\n\n## Files to Modify\n\n- `apps/bedrock_core/lib/bedrock/internal/transaction_builder/tx.ex`\n\n## TDD Approach\n\n1. Write failing test that does:\n   - Start transaction\n   - Write key A\n   - Clear key A  \n   - Range query including key A\n   - Assert key A is NOT in results (currently fails - returns `{key_a, :clear}`)\n\n2. Fix the bug\n\n3. Verify test passes\n\n## Related\n\n- Workaround commit: e490e4a2 (bedrock_job_queue Store.ex)\n- Regression tests: 69b2a322 (bedrock_job_queue store_test.exs)",
+  "id": "bedrock-xma",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Range queries return :clear tombstone values instead of filtering them",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

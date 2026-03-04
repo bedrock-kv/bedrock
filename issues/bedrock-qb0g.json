@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-01-19T20:38:09.83293-05:00",
+  "description": "",
+  "id": "bedrock-qb0g",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Background\n\nCurrently, `PersistencePhase` builds the entire system transaction by pulling data from `recovery_attempt` and `transaction_system_layout`. This creates indirection where phases set state, then PersistencePhase reads it back and builds mutations.\n\nFor example, the shard_keys flow:\n1. `MaterializerBootstrapPhase` determines `shard_layout`\n2. `TopologyPhase` copies it to `transaction_system_layout.shard_layout`\n3. `PersistencePhase` reads from TSL and calls `build_shard_keys()`\n\nThis indirection led to the \"Empty shard_keys table\" bug (fixed in `fresh_cluster?`).\n\n## Proposed Refactor\n\nThread a `Tx` (write-only transaction) through recovery phases. Each phase adds its own mutations directly:\n\n```elixir\n# MaterializerBootstrapPhase\ndef execute(recovery_attempt, context) do\n  shard_layout = determine_shard_layout(...)\n  \n  tx = recovery_attempt.pending_tx\n  |\u003e build_shard_keys(shard_layout)\n  \n  {%{recovery_attempt | pending_tx: tx, shard_layout: shard_layout}, NextPhase}\nend\n```\n\n## Benefits\n\n- Each phase owns its mutations - logic lives with data source\n- Eliminates risk of PersistencePhase forgetting to build keys\n- Removes indirection through TSL for write-only data\n- Clearer responsibility boundaries\n\n## Considerations\n\n- Need to handle phase retry (reset Tx or ensure idempotency)\n- May want to keep some state in recovery_attempt for other purposes (validation, etc.)\n- PersistencePhase becomes simpler - just submits the accumulated Tx\n\n## Files to Modify\n\n- `lib/bedrock/control_plane/config/recovery_attempt.ex` - Add `pending_tx` field\n- `lib/bedrock/control_plane/director/recovery/initialization_phase.ex` - Initialize Tx, add shard_keys\n- `lib/bedrock/control_plane/director/recovery/materializer_bootstrap_phase.ex` - Add shard_keys for existing clusters\n- `lib/bedrock/control_plane/director/recovery/topology_phase.ex` - Add layout keys\n- `lib/bedrock/control_plane/director/recovery/persistence_phase.ex` - Simplify to just submit Tx",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T01:38:29Z"
+    }
+  ],
+  "priority": 3,
+  "status": "open",
+  "title": "Refactor: Thread Tx through recovery phases instead of building in PersistencePhase",
+  "type": "task",
+  "updated_at": "2026-01-19T20:38:09.83293-05:00"
+}

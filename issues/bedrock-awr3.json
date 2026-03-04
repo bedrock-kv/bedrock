@@ -1,0 +1,22 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-13gy",
+    "bedrock-dwjr",
+    "bedrock-l3gk"
+  ],
+  "blocks": [
+    "bedrock-znki"
+  ],
+  "closed_at": "2026-01-23T15:59:10.0443-05:00",
+  "close_reason": "Cleanup complete - removed old shard-aware functions, updated tests",
+  "created": "2026-01-23T15:41:37.728299-05:00",
+  "description": "## Goal\nFinal cleanup after recovery refactor - remove all vestigial shard-aware code that's no longer used.\n\n## No Backward Compatibility\nWe're not maintaining backward compatibility. Old code paths should be deleted, not deprecated.\n\n## Code to Remove\n\n### In `log_recovery_planning_phase.ex`:\n- `group_logs_by_shard/2`\n- `all_logs_by_shard/1`\n- `evaluate_shard_combinations/2`\n- `evaluate_single_shard_combination/3`\n- `calculate_cross_shard_version_vector/1`\n- Any range_tag type references no longer needed\n\n### In `telemetry.ex`:\n- `healthy_teams`/`degraded_teams` range_tag tracking (lines 75-76)\n- Update or remove shard-based telemetry events\n\n### Tests to Remove:\n- Any tests for `group_logs_by_shard`\n- Any tests for `evaluate_shard_combinations`\n- Any tests expecting stored shard_tags in log descriptors\n- Tests for per-shard quorum validation\n\n### Types to Clean Up:\n- LogDescriptor type if it was `[Bedrock.range_tag()]`\n- Any shard-aware recovery types\n\n## Verification\n- `mix compile --warnings-as-errors` - no unused function warnings\n- `mix test` - all tests pass\n- No references to removed functions remain",
+  "id": "bedrock-awr3",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Cleanup: Remove old shard-aware recovery machinery",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

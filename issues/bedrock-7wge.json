@@ -1,0 +1,27 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-00x2",
+    "bedrock-1m9w",
+    "bedrock-bz69",
+    "bedrock-ewiw",
+    "bedrock-f3ar",
+    "bedrock-kzep",
+    "bedrock-monq",
+    "bedrock-o2c2",
+    "bedrock-pebe",
+    "bedrock-rhoq"
+  ],
+  "closed_at": "2026-01-23T13:04:53.052221-05:00",
+  "close_reason": "Follow-on refinements committed. Reconnect blocked on recovery refactor (bedrock-znki).",
+  "created": "2026-01-21T20:38:51.580214-05:00",
+  "description": "On reconnect/restart, the coordinator hangs waiting for TSL restoration from Raft that never comes. Root cause: send_recovery_consensus_for_committed_transactions only processes waiting_list, which is empty on cold boot.\n\nKey insight: TSL is OUTPUT of recovery, not input. PIDs are ephemeral. No point restoring TSL from Raft.\n\nApproach:\n- Remove TSL and config from Raft entirely\n- Object storage is single source of truth for cluster state\n- Raft only handles: epoch consensus, node resource registration",
+  "id": "bedrock-7wge",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Simplify Coordinator Cold Boot - Object Storage as Source of Truth",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

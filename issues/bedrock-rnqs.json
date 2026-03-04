@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T13:55:33.492377-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-11T13:32:22.360089-05:00",
+  "description": "MetadataMerge is vestigial - called once but result discarded. The metadata field in FinalizationPlan is set but never read.\n\n**Remove:**\n- lib/bedrock/data_plane/commit_proxy/metadata_merge.ex (entire module)\n- metadata field from FinalizationPlan struct\n- metadata_merge_fn from opts\n- MetadataMerge.merge/3 call in finalize_batch/3\n\n**Keep:**\n- RoutingData.apply_mutations/2 (actively used for shard_key and layout_log mutations)",
+  "id": "bedrock-rnqs",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Remove vestigial MetadataMerge and metadata field from FinalizationPlan",
+  "type": "task",
+  "updated_at": "2026-01-11T13:55:33.492377-05:00"
+}

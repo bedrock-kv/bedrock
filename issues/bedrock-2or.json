@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-xma"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-03T11:15:39.887629-05:00",
+  "close_reason": "Removed :clear value filtering workarounds from peek, min_vesting_time, and queue_empty? now that core fix is in. Removed associated regression tests.",
+  "created": "2026-01-02T16:41:09.14818-05:00",
+  "description": "## Summary\n\nRemove the `:clear` value filtering workaround from `bedrock_job_queue` once the root cause is fixed in `bedrock_core`.\n\n## Current Workaround\n\nThe Store module manually filters `:clear` values in three places:\n\n### 1. `peek/4` (line ~191)\n```elixir\nkeyspaces.items\n|\u003e repo.get_range(limit: max_scan)\n|\u003e Stream.reject(fn {_key, value} -\u003e value == :clear end)  # Remove this\n|\u003e Stream.map(fn {_key, value} -\u003e decode(value) end)\n```\n\n### 2. `min_vesting_time/4` (line ~508)\n```elixir\nkeyspaces.items\n|\u003e repo.get_range(limit: limit)\n|\u003e Stream.reject(fn {_key, value} -\u003e value == :clear end)  # Remove this\n|\u003e Enum.reduce(nil, fn {_key, value}, acc -\u003e ... end)\n```\n\n### 3. `queue_empty?/3` (line ~620)\n```elixir\nkeyspaces.items\n|\u003e repo.get_range(limit: 1)\n|\u003e Enum.reject(fn {_key, value} -\u003e value == :clear end)  # Remove this\n|\u003e Enum.empty?()\n```\n\n## After Core Fix\n\nOnce bedrock-xma is resolved, these workarounds become unnecessary. Remove them and simplify the code back to:\n\n```elixir\n# peek/4\nkeyspaces.items\n|\u003e repo.get_range(limit: max_scan)\n|\u003e Stream.map(fn {_key, value} -\u003e decode(value) end)\n\n# min_vesting_time/4\nkeyspaces.items\n|\u003e repo.get_range(limit: limit)\n|\u003e Enum.reduce(nil, fn {_key, value}, acc -\u003e ... end)\n\n# queue_empty?/3\nrepo.get_range(keyspaces.items, limit: 1) == []\n```\n\n## Files to Modify\n\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/store.ex`\n\n## Verification\n\nThe regression tests in `store_test.exs` should still pass after removal - they test that the Store handles `:clear` values correctly. Once the core fix is in, the Store won't receive `:clear` values anymore, so the tests will pass trivially.",
+  "id": "bedrock-2or",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove :clear value workaround after core fix",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

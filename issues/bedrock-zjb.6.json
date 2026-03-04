@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:24:55.276707-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.95149-05:00",
+  "description": "Minor cleanups in consumer modules:\n- scanner.ex:21 - remove unused 'require Logger'\n- manager.ex:162-178 - consolidate 3 job action functions to 1\n- manager.ex:144-148 - collapse :ok and {:ok, _} cases\n- pointer_gc.ex:69 - add error logging for failed GC\n\nLower priority - less impact than Store changes.",
+  "id": "bedrock-zjb.6",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 3,
+  "status": "closed",
+  "title": "Clean up consumer module redundancy",
+  "type": "task",
+  "updated_at": "2026-01-01T21:24:55.276707-05:00"
+}

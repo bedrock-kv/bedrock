@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-c91"
+  ],
+  "closed_at": "2026-01-03T09:38:04.63865-05:00",
+  "close_reason": "Converted to do: syntax",
+  "created": "2026-01-03T09:35:34.245989-05:00",
+  "description": "Convert 2 functions to single-line do: syntax\n\n1. start_link/1 (line 61-63):\n```elixir\ndef start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))\n```\n\n2. process_pending/1 guard clause (line 124-126):\n```elixir\ndefp process_pending(%{pending_queues: queues} = state) when map_size(queues) == 0, do: state\n```\n\nFile: apps/bedrock_job_queue/lib/bedrock/job_queue/consumer/manager.ex",
+  "id": "bedrock-sse",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Convert manager.ex to do: syntax",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

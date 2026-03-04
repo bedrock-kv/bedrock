@@ -1,0 +1,17 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-wxf.1"
+  ],
+  "blocks": [],
+  "created": "2026-01-16T17:31:54.519236-05:00",
+  "description": "[DEFERRED] Production backends for S3 and GCS.",
+  "id": "bedrock-wxf.8",
+  "labels": [],
+  "parent": "bedrock-wxf",
+  "priority": 4,
+  "status": "open",
+  "title": "S3/GCS implementations",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

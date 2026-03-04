@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:38:03.5716-05:00",
+  "close_reason": "Duplicate of bedrock-l3r",
+  "created": "2026-01-02T20:36:59.786229-05:00",
+  "description": "Replace 2 instances of Process.sleep at lines 177, 300. Line 177 waits for async operation. Line 300 is in a catch-all receive clause for timeout simulation - may be intentional.",
+  "id": "bedrock-ano",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor coordinator_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-02T20:38:03.5716-05:00"
+}

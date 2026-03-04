@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-29aa"
+  ],
+  "closed_at": "2026-01-19T15:39:57.618289-05:00",
+  "close_reason": "Added object_storage, demux, demux_supervisor, min_durable_version fields to Shale.State. Updated child_spec and init to require object_storage parameter.",
+  "created": "2026-01-19T15:02:07.14393-05:00",
+  "description": "Add new fields to Shale.State struct:\n- object_storage: ObjectStorage backend (passed in init)\n- demux: Demux.Server pid\n- demux_supervisor: Demux.Supervisor pid  \n- min_durable_version: version | nil\n\nUpdate child_spec and init to accept object_storage.\n\nTest: State struct accepts new fields.",
+  "id": "bedrock-7347",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Shale: add object_storage, demux, min_durable_version to State",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:16:12.142977-05:00",
+  "close_reason": "Replaced sleep with :sys.get_state in helper, removed other sleeps - sync calls (GenServer.call, :sys.get_state) handle synchronization",
+  "created": "2026-01-02T20:36:57.784638-05:00",
+  "description": "Replace 8 instances of :timer.sleep at lines 52, 68, 130, 154, 160, 184, 243, 293 with message-based synchronization. These wait for async operations to complete.",
+  "id": "bedrock-544",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor transaction_builder_integration_test.exs: replace timer.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:16:12.142977-05:00"
+}

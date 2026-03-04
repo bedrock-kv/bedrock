@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-pjum"
+  ],
+  "blocks": [
+    "bedrock-o4jx"
+  ],
+  "closed_at": "2026-01-19T17:18:49.717338-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-19T17:10:28.433196-05:00",
+  "description": "",
+  "id": "bedrock-ykgw",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Phase 4: Update telemetry event paths",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

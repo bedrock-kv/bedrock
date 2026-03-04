@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:50:10.595156-05:00",
+  "close_reason": "Already has good moduledoc",
+  "created": "2026-01-01T18:48:50.566135-05:00",
+  "description": "",
+  "id": "bedrock-54x",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Review/add main moduledoc for bedrock_hca",
+  "type": "task",
+  "updated_at": "2026-01-01T18:50:10.595156-05:00"
+}

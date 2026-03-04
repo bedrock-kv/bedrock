@@ -1,0 +1,16 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T12:32:56.627768-05:00",
+  "close_reason": "Implemented Durability module with gb_sets for O(log N) min tracking",
+  "created": "2026-01-19T12:28:54.439295-05:00",
+  "description": "",
+  "id": "bedrock-ui6s",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Demux: durability module (gb_sets)",
+  "type": "task",
+  "updated_at": "2026-01-19T12:32:56.627768-05:00"
+}

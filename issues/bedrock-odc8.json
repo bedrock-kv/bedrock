@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T14:35:45.5625-05:00",
+  "close_reason": "Removed redundant comments, kept WHY/architecture comments",
+  "created": "2026-01-11T13:55:38.967267-05:00",
+  "description": "Compare this branch against develop and review comments added in recent changes. Remove comments that:\n- Describe what the code obviously does\n- Could be replaced with better naming\n- Could be replaced with function extraction\n\nGood comments explain WHY, not WHAT.",
+  "id": "bedrock-odc8",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Review and remove unnecessary comments added in recent changes",
+  "type": "task",
+  "updated_at": "2026-01-11T14:35:45.5625-05:00"
+}

@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-0qm",
+    "bedrock-jwii"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-10T22:07:32.974742-05:00",
+  "close_reason": "Removed ephemeral PIDs from system keys. System keys now only store durable config; ephemeral refs passed via unlock/init.",
+  "created": "2026-01-09T13:58:01.602722-05:00",
+  "description": "## Goal\n\nClean separation: system keys store only durable config, ephemeral process refs passed at runtime.\n\n## Design\n\n**Stored in system keys (durable):**\n- `layout_log/\u003clog_id\u003e` → OtpRef `{name, node}` (how to reach log)\n- `shard_key/\u003cend_key\u003e` → tag (routing)\n- `shard/\u003ctag\u003e` → ShardMetadata\n- `layout_services` → directory of named processes (logs, storage servers)\n- `cluster/*` → cluster config\n\n**NOT stored (ephemeral, passed via unlock/init):**\n- Sequencer, commit proxies, resolvers, director, rate keeper\n- Director creates these during recovery, passes refs via unlock\n\n## Changes\n\n1. persistence_phase.ex - Remove ephemeral key writes (sequencer, proxies, resolvers, director, rate_keeper)\n2. system_keys.ex - Remove/deprecate ephemeral key functions\n3. metadata_merge.ex - Remove layout_resolver handling\n4. Verify log servers register with OtpRef-compatible names\n\n## Status\n\nInfrastructure ~75% complete. Logs already use OtpRef pattern.",
+  "id": "bedrock-hv5",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove ephemeral PIDs from system keys, use OtpRef for durable services",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

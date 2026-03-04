@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-03T10:20:59.167413-05:00",
+  "close_reason": "Implemented Directory layer for job queue root. Supervisor now creates/opens a Directory at startup and caches the keyspace in persistent_term. Internal.root_keyspace reads from cache.",
+  "created": "2026-01-03T10:14:32.222177-05:00",
+  "description": "Currently the job queue uses raw keyspace prefixes like `Keyspace.new(\"job_queue/\\#{module_name}/\")`. This should use the Directory layer for proper data organization.\n\nChanges needed:\n1. Add setup/initialization that creates the Directory within a transaction\n2. Store/cache the directory's keyspace for use by consumers\n3. Update Internal.root_keyspace to return the directory-based keyspace\n4. Update Supervisor to ensure directory exists at startup\n\nFiles to modify:\n- lib/bedrock/job_queue/internal.ex\n- lib/bedrock/job_queue/supervisor.ex\n- Possibly add a new setup module",
+  "id": "bedrock-udh",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Use Directory for job queue root instead of raw Keyspace",
+  "type": "task",
+  "updated_at": "2026-01-03T10:20:59.167413-05:00"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T20:39:15.06498-05:00",
+  "close_reason": "Implemented deterministic lease IDs via derive_id/3 in Lease and QueueLease. Made holder_id injectable in Manager. All 49 tests pass.",
+  "created": "2026-01-02T20:28:31.190062-05:00",
+  "description": "",
+  "id": "bedrock-897",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Derive lease IDs deterministically for testability",
+  "type": "task",
+  "updated_at": "2026-01-02T20:39:15.06498-05:00"
+}

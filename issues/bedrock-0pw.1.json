@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T14:38:26.08394-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T14:36:44.723913-05:00",
+  "description": "Add import Bedrock.Internal.GenServer.Replies to the embedded Server module in lib/bedrock/data_plane/log/shale/segment_recycler.ex and replace raw tuples with reply/noreply/stop helpers.",
+  "id": "bedrock-0pw.1",
+  "labels": [],
+  "parent": "bedrock-0pw",
+  "priority": 3,
+  "status": "closed",
+  "title": "Convert segment_recycler.ex to use GenServer.Replies",
+  "type": "task",
+  "updated_at": "2026-01-01T14:38:26.08394-05:00"
+}

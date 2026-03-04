@@ -1,0 +1,14 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-01-21T19:10:14.409832-05:00",
+  "description": "",
+  "id": "bedrock-ligk",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Livebook example executor for testing",
+  "type": "epic",
+  "updated_at": "2026-01-21T19:10:14.409832-05:00"
+}

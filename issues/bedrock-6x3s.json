@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T14:26:09.347338-05:00",
+  "close_reason": "Epoch is now a required parameter on all Sequencer public API calls",
+  "created": "2026-01-11T13:38:39.478996-05:00",
+  "description": "The sequencer's public interface should require epoch on all calls. Currently:\n\n**Issues:**\n- `:next_read_version` has no epoch check at all\n- `:next_commit_version` and `:report_successful_commit` have delegation patterns where epoch-checking clauses delegate to epoch-less clauses\n\n**Changes:**\n1. Add epoch parameter to `:next_read_version` call\n2. Update all callers to pass epoch\n3. Inline the logic into the epoch-checking handle_call clauses\n4. Remove the epoch-less handle_call clauses (no more delegation)\n\nEpoch is a required parameter for all sequencer operations.",
+  "id": "bedrock-6x3s",
+  "labels": [
+    "cleanup"
+  ],
+  "parent": "bedrock-n3u",
+  "priority": 3,
+  "status": "closed",
+  "title": "Enforce epoch checks on all Sequencer.Server public calls",
+  "type": "task",
+  "updated_at": "2026-01-11T14:26:09.347338-05:00"
+}

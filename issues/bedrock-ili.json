@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:56:20.252791-05:00",
+  "close_reason": "Added update_pointer/4 and update_stats/4 helpers, updated 5 call sites",
+  "created": "2026-01-01T22:42:31.485548-05:00",
+  "description": "Pointer update pattern repeated 4x (lines 160, 285, 356, 478).\nStats update pattern repeated 4x (lines 164, 289, 483, 642).\n\nFix: Extract update_pointer/4 and update_stats/4 helpers.",
+  "id": "bedrock-ili",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Extract pointer and stats update helpers",
+  "type": "task",
+  "updated_at": "2026-01-01T22:56:20.252791-05:00"
+}

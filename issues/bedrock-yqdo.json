@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-22xb",
+    "bedrock-mrrk",
+    "bedrock-rcos",
+    "bedrock-yml6",
+    "bedrock-yz03"
+  ],
+  "blocks": [
+    "bedrock-3na6"
+  ],
+  "closed_at": "2026-01-10T20:32:06.311672-05:00",
+  "close_reason": "Server startup simplified: accepts sequencer, resolver_layout, optional routing_data. recover_from just unlocks. Tests pass.",
+  "created": "2026-01-10T15:48:25.893109-05:00",
+  "description": "Simplify commit proxy server startup to accept minimal params.\n\n## Current child_spec\n\nAccepts transaction_system_layout and builds everything from it.\n\n## New child_spec\n\n```elixir\ndef child_spec(opts) do\n  epoch = Keyword.fetch!(opts, :epoch)\n  sequencer = Keyword.fetch!(opts, :sequencer)\n  resolver_layout = Keyword.fetch!(opts, :resolver_layout)\n  \n  # Start with empty routing, will be populated via metadata\n  routing_data = RoutingData.new_empty()\n  \n  %{\n    id: __MODULE__,\n    start: {__MODULE__, :start_link, [epoch, sequencer, resolver_layout, routing_data]}\n  }\nend\n```\n\n## Changes to server.ex\n\n1. Update `child_spec/1` to accept minimal params\n2. Update `init/1` to use empty RoutingData\n3. Simplify or remove `recover_from/3`:\n   - No TSL to receive\n   - Just unlock and start running\n   - May just need `unlock/1` that transitions locked → running\n4. Update `start_link/1` signature\n\n## Recovery Flow\n\nOld: Director sends TSL via recover_from/3\nNew: Director starts proxy with params, sends system tx, metadata populates routing\n\n## Testing\n\n- Verify proxy starts with minimal params\n- Verify routing data populates via first transaction",
+  "id": "bedrock-yqdo",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Server: Simplify startup with epoch, sequencer, resolver_layout",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

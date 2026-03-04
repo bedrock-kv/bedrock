@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-805",
+    "bedrock-ve1",
+    "bedrock-zhx"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:14:46.26682-05:00",
+  "close_reason": "Updated to use fixed timestamps with :now parameter",
+  "created": "2026-01-01T22:51:56.94733-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue/store_test.exs`\n\n## Tests to Update\n\n### 1. \"fresh queue lease is not expired\" (lines 177-181)\n```elixir\n# Current\nlease = QueueLease.new(\"tenant_1\", \"holder\", 5000)\nrefute QueueLease.expired?(lease)\nassert QueueLease.remaining_ms(lease) \u003e 0\n\n# Should be\nnow = 10_000\nlease = QueueLease.new(\"tenant_1\", \"holder\", duration_ms: 5000, now: now)\nrefute QueueLease.expired?(lease, now)\nassert QueueLease.remaining_ms(lease, now) == 5000\n```\n\n### 2. \"expired queue lease reports expired\" (lines 184-188)\n```elixir\n# Current (uses struct manipulation)\nlease = %{QueueLease.new(\"tenant_1\", \"holder\", 5000) | expires_at: System.system_time(:millisecond) - 1000}\nassert QueueLease.expired?(lease)\nassert QueueLease.remaining_ms(lease) == 0\n\n# Should be\nnow = 10_000\nlease = QueueLease.new(\"tenant_1\", \"holder\", duration_ms: 5000, now: 4_000)\nassert QueueLease.expired?(lease, now)\nassert QueueLease.remaining_ms(lease, now) == 0\n```\n\n## Principle\nEliminate struct manipulation - use :now injection throughout.",
+  "id": "bedrock-sbl",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update store_test.exs QueueLease expiration tests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

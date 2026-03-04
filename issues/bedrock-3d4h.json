@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-11T14:31:48.13533-05:00",
+  "close_reason": "Renamed TransactionSystemLayoutPhase to TopologyPhase",
+  "created": "2026-01-11T13:19:00.69719-05:00",
+  "description": "## Summary\n\nRename the recovery phase from `transaction_system_layout_phase` to `topology_phase` for clarity. The TSL concept is really about runtime topology - mapping service IDs to PIDs.\n\n## Files to Modify\n\n**Rename file:**\n- `transaction_system_layout_phase.ex` → `topology_phase.ex`\n- Module: `TransactionSystemLayoutPhase` → `TopologyPhase`\n\n**Update references:**\n- `persistence_phase.ex` - imports/transitions\n- `tsl_validation_phase.ex` - transitions  \n- `recovery.ex` or phase sequencing\n- Any telemetry/tracing that references the phase name\n- Tests\n\n## Notes\n\n- The `TransactionSystemLayout` struct itself could be renamed to `Topology` in a follow-up task\n- Keep module documentation accurate after rename",
+  "id": "bedrock-3d4h",
+  "labels": [
+    "cleanup"
+  ],
+  "priority": 3,
+  "status": "closed",
+  "title": "Rename transaction_system_layout_phase to topology_phase",
+  "type": "task",
+  "updated_at": "2026-01-11T14:31:48.13533-05:00"
+}

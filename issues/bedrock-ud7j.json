@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-h2ts"
+  ],
+  "blocks": [
+    "bedrock-6whx"
+  ],
+  "created": "2026-01-21T19:10:23.601023-05:00",
+  "description": "",
+  "id": "bedrock-ud7j",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Implement sequential block execution with shared bindings",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

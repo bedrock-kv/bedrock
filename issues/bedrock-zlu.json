@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-05T17:19:37.088366-05:00",
+  "close_reason": "Added wait_until helper for async state polling. Removed sleeps where :sys.get_state synchronizes. Kept 2 intentional time delays for sweep retention testing.",
+  "created": "2026-01-02T20:36:56.766446-05:00",
+  "description": "Replace 9 instances of Process.sleep at lines 295, 327, 338, 351, 370, 378, 501, 503, 530 with message-based synchronization. These sleeps wait for async Task operations to register in server state - should use send/assert_receive pattern instead.",
+  "id": "bedrock-zlu",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor resolver/server_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-05T17:19:37.088366-05:00"
+}

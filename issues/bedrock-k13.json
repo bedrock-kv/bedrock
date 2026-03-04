@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:51:09.792638-05:00",
+  "close_reason": "Added moduledoc describing WAL functionality",
+  "created": "2026-01-01T18:48:50.487299-05:00",
+  "description": "",
+  "id": "bedrock-k13",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Review/add main moduledoc for bedrock_log_shale",
+  "type": "task",
+  "updated_at": "2026-01-01T18:51:09.792638-05:00"
+}

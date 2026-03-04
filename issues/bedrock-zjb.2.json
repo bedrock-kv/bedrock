@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:18:55.633269-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.553547-05:00",
+  "description": "Store has duplicate clause patterns for complete and requeue:\n- complete: lines 383-410 (item_key != nil) and 413-436 (item_key == nil) \n- requeue: lines 448-462 (item_key != nil) and 464-491 (item_key == nil)\n\nBoth pairs do the same thing - just fetch item_key from stored lease if not provided.\nConsolidate each to single clause using: item_key = lease.item_key || stored_lease.item_key\n\n~50 lines reduction.",
+  "id": "bedrock-zjb.2",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 2,
+  "status": "closed",
+  "title": "Consolidate Store complete/requeue dual clauses",
+  "type": "task",
+  "updated_at": "2026-01-01T21:18:55.633269-05:00"
+}

@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-7wge"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-23T13:07:29.298298-05:00",
+  "close_reason": "Committed in 8b6df167",
+  "created": "2026-01-23T13:04:24.692144-05:00",
+  "description": "Refactored object_storage/keys.ex to use simpler paths and base36 encoding. Deleted cluster_state.ex (consolidated into bootstrap).",
+  "id": "bedrock-bz69",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Simplify object storage key paths with base36 encoding",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

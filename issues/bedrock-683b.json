@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-ffhk",
+    "bedrock-sujw"
+  ],
+  "blocks": [
+    "bedrock-jkcm"
+  ],
+  "closed_at": "2026-01-19T13:57:59.891859-05:00",
+  "close_reason": "Deleted VacancyCreationPhase, StorageRecruitmentPhase, and VersionDeterminationPhase. Updated LogRecruitmentPhase to transition to LogReplayPhase.",
+  "created": "2026-01-18T15:01:50.187636-05:00",
+  "description": "Delete phases that are no longer needed with materializer-based recovery:\n\nDELETE:\n- lib/bedrock/control_plane/director/recovery/vacancy_creation_phase.ex\n- lib/bedrock/control_plane/director/recovery/storage_recruitment_phase.ex  \n- lib/bedrock/control_plane/director/recovery/version_determination_phase.ex\n\nDELETE TESTS:\n- test/bedrock/control_plane/director/recovery/vacancy_creation_phase_test.exs\n- test/bedrock/control_plane/director/recovery/storage_recruitment_phase_test.exs\n- test/bedrock/control_plane/director/recovery/version_determination_phase_test.exs\n\nRationale:\n- VacancyCreation: No longer creating storage team vacancies\n- StorageRecruitment: Materializers self-organize from logs, not recruited by recovery\n- VersionDetermination: Moved to LogRecoveryPlanningPhase (queries logs, not storage_teams)",
+  "id": "bedrock-683b",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Remove obsolete recovery phases",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

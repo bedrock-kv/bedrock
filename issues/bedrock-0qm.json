@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-32x",
+    "bedrock-knm",
+    "bedrock-mf0"
+  ],
+  "blocks": [
+    "bedrock-3tb",
+    "bedrock-hv5"
+  ],
+  "closed_at": "2026-01-09T14:37:56.255642-05:00",
+  "close_reason": "All sub-tasks completed: metadata field added to FinalizationPlan, create_finalization_plan accepts initial_metadata, extract_result_or_handle_error returns plan.metadata, and metadata_merge_fn injection added to resolve_conflicts",
+  "created": "2026-01-07T17:16:52.022642-05:00",
+  "description": "",
+  "id": "bedrock-0qm",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update finalize_batch to pass metadata through plan",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

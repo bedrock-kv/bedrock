@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-ryu"
+  ],
+  "closed_at": "2026-01-02T18:52:20.482863-05:00",
+  "close_reason": "Implemented use Bedrock.JobQueue pattern with Supervisor, Internal, and updated Consumer/Manager/Worker chain",
+  "created": "2026-01-02T18:33:38.872235-05:00",
+  "description": "Add macro that injects child_spec/1, start_link/1, enqueue/*, stats/* functions. Stores @repo, @workers, @otp_app as module attributes.",
+  "id": "bedrock-h3w",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Add __using__ macro to Bedrock.JobQueue",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:08:16.766323-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:57:29.496928-05:00",
+  "description": "",
+  "id": "bedrock-pun",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Align job queue with QuiCK paper design",
+  "type": "epic",
+  "updated_at": "2026-01-01T21:08:16.766323-05:00"
+}

@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:24:55.275311-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:59.849072-05:00",
+  "description": "Repeated patterns in Store that could be helpers:\n- item_key/1: {item.priority, item.vesting_time, item.id} - 5 occurrences\n- reposition_item/5: clear old key, write new key - 3 occurrences  \n- update_pointer/4: pack pointer key, call repo.min - 4 occurrences\n- verify_lease_ownership/4: fetch lease, check ID match - 5 occurrences\n\nLower priority since these are internal helpers, not public API changes.",
+  "id": "bedrock-zjb.5",
+  "labels": [],
+  "parent": "bedrock-zjb",
+  "priority": 3,
+  "status": "closed",
+  "title": "Extract Store helper functions",
+  "type": "task",
+  "updated_at": "2026-01-01T21:24:55.275311-05:00"
+}

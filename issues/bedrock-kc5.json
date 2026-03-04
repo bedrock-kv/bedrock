@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:51:09.83981-05:00",
+  "close_reason": "No module needed - uses Bedrock from bedrock_core",
+  "created": "2026-01-01T18:48:50.645474-05:00",
+  "description": "",
+  "id": "bedrock-kc5",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Review/add main moduledoc for bedrock (convenience package)",
+  "type": "task",
+  "updated_at": "2026-01-01T18:51:09.83981-05:00"
+}

@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T09:43:16.903888-05:00",
+  "close_reason": "Implemented last_active_time tracking on pointers per QuiCK paper. Changed update_pointer to use repo.max with current timestamp, and gc_stale_pointers now checks if now - last_active_time \u003e= grace_period before deleting.",
+  "created": "2026-01-02T09:27:39.553448-05:00",
+  "description": "**QuiCK Paper Reference:** Page 8:\n`Each pointer to an empty queue stores the last active time we've observed work items in the corresponding queue zone. We delete the pointer only if a sufficient amount of time has passed since it was 'active'.`\n\n**Current Behavior:**\ngc_stale_pointers uses pointer's vesting_time staleness instead of tracking when queue was last active.\n\n**Expected Behavior (per QuiCK):**\nPointers should store `last_active_time` (when items were last seen). GC deletes only if `now - last_active_time \u003e= min_inactive`.\n\n**Files to modify:**\n- Pointer value storage (currently empty `\u003c\u003c\u003e\u003e`)\n- `apps/bedrock_job_queue/lib/bedrock/job_queue/store.ex` (update_pointer, gc_stale_pointers)\n\n**Risk:** Very Low - Minor optimization for GC accuracy",
+  "id": "bedrock-7p1",
+  "labels": [],
+  "priority": 4,
+  "status": "closed",
+  "title": "Add last_active_time tracking on pointers for smarter GC",
+  "type": "task",
+  "updated_at": "2026-01-02T09:43:16.903888-05:00"
+}

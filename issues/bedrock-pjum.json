@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-2kw4"
+  ],
+  "blocks": [
+    "bedrock-ykgw"
+  ],
+  "closed_at": "2026-01-19T17:17:44.848871-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-19T17:10:28.329401-05:00",
+  "description": "",
+  "id": "bedrock-pjum",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Phase 3: Rename Foreman public API functions",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

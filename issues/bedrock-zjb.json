@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:25:01.023328-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T21:15:35.209707-05:00",
+  "description": "Apply systematic simplifications identified through code review:\n- Remove unused fields from structs\n- Consolidate duplicated Store patterns\n- Extract shared lease helpers\n- Remove over-engineered encoding wrappers\n- Clean up consumer module redundancy",
+  "id": "bedrock-zjb",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Simplify job queue implementation",
+  "type": "epic",
+  "updated_at": "2026-01-01T21:25:01.023328-05:00"
+}

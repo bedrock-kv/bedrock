@@ -1,0 +1,20 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-ae5"
+  ],
+  "blocks": [
+    "bedrock-7pn"
+  ],
+  "closed_at": "2026-01-01T16:55:11.476865-05:00",
+  "close_reason": "Updated publish.sh with new app order: bedrock_core -\u003e bedrock_shale/bedrock_olivine -\u003e bedrock_hca -\u003e bedrock_directory -\u003e bedrock",
+  "created": "2026-01-01T16:38:58.494087-05:00",
+  "description": "",
+  "id": "bedrock-aw2",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Update publishing script and conditional deps",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

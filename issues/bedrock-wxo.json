@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-sda"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-02T16:06:33.016066-05:00",
+  "close_reason": "Test script validated, Livebook created and verified",
+  "created": "2026-01-02T15:39:27.704111-05:00",
+  "description": "Verify each code cell works independently and full flow works end-to-end",
+  "id": "bedrock-wxo",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Test Livebook in iex and validate all cells work",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

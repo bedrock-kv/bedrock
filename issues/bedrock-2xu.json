@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T18:50:10.621136-05:00",
+  "close_reason": "Already has good moduledoc",
+  "created": "2026-01-01T18:48:50.60671-05:00",
+  "description": "",
+  "id": "bedrock-2xu",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Review/add main moduledoc for bedrock_directory",
+  "type": "task",
+  "updated_at": "2026-01-01T18:50:10.621136-05:00"
+}

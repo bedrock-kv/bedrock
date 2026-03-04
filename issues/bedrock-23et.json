@@ -1,0 +1,28 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T21:11:55.005442-05:00",
+  "close_reason": "Fixed: CommitProxy.recover_from now takes log_services parameter and TopologyPhase passes them during unlock",
+  "created": "2026-01-19T20:39:46.802381-05:00",
+  "description": "",
+  "id": "bedrock-23et",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nDuring cluster startup, the system transaction commit fails with `:log_push_failed`. This occurs after the shard_keys fix, indicating it's a separate issue.\n\n## Error Location\n\n```\n** (stop) :log_push_failed\n    (bedrock 0.4.1) lib/bedrock/data_plane/commit_proxy/server.ex:271: \n    anonymous fn/7 in Bedrock.DataPlane.CommitProxy.Server.finalize_batch_async/2\n```\n\n## Observed Behavior\n\nFrom trace logs:\n1. Shard keys are correctly inserted into ETS: `[{\u003c\u003c255\u003e\u003e, 1}, {\u003c\u003c255, 255\u003e\u003e, 0}]`\n2. 24 mutations are accumulated (correct)\n3. Then `:log_push_failed` error occurs\n4. Director terminates: `{:shutdown, {:component_failure, #PID\u003c...\u003e, :log_push_failed}}`\n\n## Investigation Areas\n\n1. Check `commit_proxy/server.ex:271` - what triggers `:log_push_failed`?\n2. Is the log service ready to accept pushes at this point?\n3. Is there a race condition between log startup and system transaction?\n4. Check log service state during the push attempt\n\n## Related\n\nThis issue was uncovered after fixing the \"Empty shard_keys table\" bug (nil `old_transaction_system_layout` not treated as fresh cluster).",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T01:39:56Z"
+    },
+    {
+      "text": "## Root Cause Analysis\n\nThe commit proxy starts with empty `routing_data` including empty `log_services`. When unlocked via `recover_from/4`, only `sequencer` and `resolver_layout` are set - `log_services` stays empty.\n\n**Flow for first transaction (system tx):**\n1. CommitProxy starts with `routing_data = RoutingData.new_empty()` (empty log_services)\n2. TopologyPhase unlocks proxy: `recover_from(proxy, lock_token, sequencer, resolver_layout)`\n3. Proxy enters `:running` mode but `log_services` is still empty\n4. PersistencePhase submits system transaction\n5. `finalize_batch` runs, creates plan with empty `log_services`\n6. `push_to_logs` → `push_transaction_to_logs_direct` with `required_acknowledgments = map_size(log_services) = 0`\n7. async_stream over empty map returns `{0, []}` immediately\n8. `{0, []}` doesn't match `{:ok, 0}` (never halted), nor `{0, []} when 0 \u003c 0`\n9. Falls through to `_other` → `{:error, :log_push_failed}`\n\n## Proposed Fix\n\nPass initial `log_services` when unlocking the commit proxy:\n\n1. **commit_proxy.ex / server.ex**: Add `recover_from/5` that accepts `routing_data` or `log_services`\n   ```elixir\n   def recover_from(proxy, lock_token, sequencer, resolver_layout, log_services)\n   ```\n\n2. **topology_phase.ex**: Extract log services from TSL.services when unlocking\n   ```elixir\n   log_services = \n     transaction_system_layout.services\n     |\u003e Enum.filter(fn {_id, desc} -\u003e desc.kind == :log end)\n     |\u003e Enum.map(fn {id, desc} -\u003e {id, extract_service_ref(desc)} end)\n     |\u003e Map.new()\n   ```\n\n3. **routing_data.ex**: Initialize with provided log_services\n\n## Secondary Issue\n\nThe `_other` case in `push_transaction_to_logs_direct` is a catch-all that produces an unhelpful error. Consider:\n- Adding explicit handling for empty `log_services`\n- Better error message like `{:error, {:no_log_services, %{}}}`",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T01:48:46Z"
+    }
+  ],
+  "priority": 2,
+  "status": "closed",
+  "title": "Investigate :log_push_failed error during system transaction commit",
+  "type": "bug",
+  "updated_at": "2026-01-19T21:11:55.005442-05:00"
+}

@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-k2m"
+  ],
+  "closed_at": "2026-01-01T22:27:16.44571-05:00",
+  "close_reason": "Fixed by using stateful mock store that tracks puts and returns them on gets",
+  "created": "2026-01-01T22:25:29.529403-05:00",
+  "description": "Store.complete tests fail because expect_lease_get returns a pre-created lease with a different UUID than what Store.obtain_lease actually creates. When Store.complete checks stored_lease.id == lease.id, they don't match and it returns {:error, :lease_mismatch}. \n\nFailing tests (all same root cause):\n- happy path calls Store.complete when job returns :ok\n- happy path calls Store.complete when job returns {:ok, result}\n- discard handling calls Store.complete when job returns {:discard, reason}\n- missing handler discards job when no handler registered for topic\n\nFix options:\n1. Use stubs for reads and expects only for writes\n2. Store the lease from put expectation and return it in get expectation\n3. Mock at Store level instead of Repo level",
+  "id": "bedrock-ltv",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Fix lease ID mismatch in integration tests",
+  "type": "bug",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

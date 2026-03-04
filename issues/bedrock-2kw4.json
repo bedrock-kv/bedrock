@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-e8bf"
+  ],
+  "blocks": [
+    "bedrock-pjum"
+  ],
+  "closed_at": "2026-01-19T17:17:01.426786-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-19T17:10:28.228069-05:00",
+  "description": "",
+  "id": "bedrock-2kw4",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Phase 2: Change :storage atom to :materializer",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

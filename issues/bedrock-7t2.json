@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-0wi"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:14:07.608877-05:00",
+  "close_reason": "Updated Item visibility tests to use fixed timestamps with :now parameter",
+  "created": "2026-01-01T22:51:56.756331-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue/store_test.exs`\n\n## Tests to Update (lines 83-104)\n\n### 1. \"items with past vesting_time and no lease are visible\" (lines 84-88)\n```elixir\n# Current\npast = System.system_time(:millisecond) - 1000\nitem = Item.new(\"queue\", \"topic\", %{}, vesting_time: past)\nassert Item.visible?(item)\n\n# Should be\nnow = 10_000\nitem = Item.new(\"queue\", \"topic\", %{}, vesting_time: 9_000)\nassert Item.visible?(item, now)\n```\n\n### 2. \"items with future vesting_time are not visible\" (lines 91-95)\n```elixir\n# Current  \nfuture = System.system_time(:millisecond) + 10_000\nitem = Item.new(\"queue\", \"topic\", %{}, vesting_time: future)\nrefute Item.visible?(item)\n\n# Should be\nnow = 10_000\nitem = Item.new(\"queue\", \"topic\", %{}, vesting_time: 20_000)\nrefute Item.visible?(item, now)\n```\n\n### 3. \"items with lease are not visible\" (lines 98-102)\n```elixir\n# Current\npast = System.system_time(:millisecond) - 1000\nitem = %{Item.new(\"queue\", \"topic\", %{}, vesting_time: past) | lease_id: \u003c\u003c1, 2, 3\u003e\u003e}\nrefute Item.visible?(item)\n\n# Should be\nnow = 10_000\nitem = %{Item.new(\"queue\", \"topic\", %{}, vesting_time: 9_000) | lease_id: \u003c\u003c1, 2, 3\u003e\u003e}\nrefute Item.visible?(item, now)\n```\n\n## Principle\nUse fixed timestamp values instead of relative wall-clock time.",
+  "id": "bedrock-7t2",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update store_test.exs Item visibility tests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

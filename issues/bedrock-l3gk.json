@@ -1,0 +1,21 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-qrek"
+  ],
+  "blocks": [
+    "bedrock-awr3",
+    "bedrock-znki"
+  ],
+  "closed_at": "2026-01-23T15:59:05.601488-05:00",
+  "close_reason": "Cleanup complete - updated tests for new majority quorum model",
+  "created": "2026-01-23T15:34:54.962988-05:00",
+  "description": "## Goal\nAdd new tests for the majority quorum recovery model.\n\n## Files\n`test/bedrock/control_plane/director/recovery/`\n\n## New Tests to Add\n- Majority quorum validation (pass/fail scenarios)\n- Version vector computation from multiple logs\n- Shard-filtered coalescing in log replay\n- End-to-end reconnect scenario\n\n## Verification\n```bash\nmix test test/bedrock/control_plane/director/recovery/\n\nrm -rf $TMPDIR/bedrock_99999 $TMPDIR/bedrock_debug_cluster\nmix run scripts/debug_cluster.exs --scenario=reconnect --timeout=30000\n```\n\nNote: Old test removal is handled by bedrock-awr3 (cleanup task).",
+  "id": "bedrock-l3gk",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Update recovery tests for majority quorum model",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

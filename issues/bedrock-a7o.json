@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-3pu",
+    "bedrock-63n"
+  ],
+  "blocks": [
+    "bedrock-ohh"
+  ],
+  "closed_at": "2026-01-07T06:19:13.485471-05:00",
+  "close_reason": "Deleted LayoutOptimization module. Renamed precomputed_layout to resolver_layout in State, Server, and Finalization. Updated all tests to use ResolverLayout.from_layout. Removed unused create_resolver_task from Batching.",
+  "created": "2026-01-07T04:39:45.236266-05:00",
+  "description": "Remove layout_optimization.ex (functionality moved to ResolverLayout). Update all references from precomputed_layout to resolver_layout.",
+  "id": "bedrock-a7o",
+  "labels": [
+    "commit-proxy"
+  ],
+  "parent": "bedrock-67u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Delete LayoutOptimization module, rename precomputed_layout to resolver_layout",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

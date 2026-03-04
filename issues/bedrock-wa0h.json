@@ -1,0 +1,28 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T22:42:13.571449-05:00",
+  "close_reason": "Implemented in 5e4444be - fresh clusters now create materializers for all shards",
+  "created": "2026-01-19T22:26:20.247525-05:00",
+  "description": "",
+  "id": "bedrock-wa0h",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nCurrently during cluster startup:\n- System shard (tag 0) gets a materializer via MaterializerBootstrapPhase\n- User shard (tag 1) has NO materializer created\n- Reads to user shard keys fail with :layout_lookup_failed\n\nThe LayoutIndex correctly routes reads to materializers from shard_materializers map, but this map is empty for non-system shards.\n\n## Current Flow (Fresh Cluster)\n\n1. MaterializerBootstrapPhase.handle_fresh_cluster sets:\n   - metadata_materializer: nil\n   - shard_layout with system and user shards\n   - shard_materializers: %{} (Empty!)\n\n2. LayoutIndex.collect_active_ranges uses shard_materializers to find read servers\n3. No materializers for user shard =\u003e no read path =\u003e reads fail\n\n## Proposed Solutions\n\n### Option A: Extend MaterializerBootstrapPhase\n- After setting shard_layout, create a materializer for each shard tag\n- Store in shard_materializers map: %{0 =\u003e pid0, 1 =\u003e pid1, ...}\n- Use existing Foreman.new_worker flow\n\n### Option B: Separate MaterializerStartupPhase\n- New phase after logs exist that creates materializers\n- Could be parallel or sequential creation\n- More explicit separation of concerns\n\n## Questions to Resolve\n1. When exactly should materializers be created? (after logs exist? during first transaction?)\n2. Should materializers be created on-demand or eagerly?\n3. Where should materializer PIDs be tracked? (TSL, recovery_attempt, separate registry?)\n4. How does this interact with shard splitting/migration in the future?\n\n## Files Involved\n- materializer_bootstrap_phase.ex\n- layout_index.ex\n- Possibly new files for materializer lifecycle",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T03:27:10Z"
+    },
+    {
+      "text": "Implementing simple fix: create materializers for all shards in handle_fresh_cluster.\n\nChanges to materializer_bootstrap_phase.ex:\n- handle_fresh_cluster now accepts context and creates materializers\n- extract_shard_tags: gets unique shard tags from layout\n- create_materializers_for_shards: creates materializer for each shard\n- create_and_start_materializer: creates worker, locks, unlocks with logs\n- start_materializer_pulling: builds TSL for shard and starts pulling\n\nThe architectural simplification (bedrock-mv1e) can happen later as a refactor.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-20T03:41:06Z"
+    }
+  ],
+  "priority": 1,
+  "status": "closed",
+  "title": "Spin up materializers for all shards during recovery",
+  "type": "task",
+  "updated_at": "2026-01-19T22:42:13.571449-05:00"
+}

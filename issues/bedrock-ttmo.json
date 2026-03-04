@@ -1,0 +1,23 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T16:16:29.755523-05:00",
+  "close_reason": "Fixed in commit e36d73e3",
+  "created": "2026-01-19T16:12:20.860019-05:00",
+  "description": "",
+  "id": "bedrock-ttmo",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nBedrock.DataPlane.Demux.ShardServerTest 'flushes when version gap exceeded' test intermittently fails when run as part of the full test suite, but passes when run in isolation.\n\n## Symptoms\n\n```\n1) test flushing flushes when version gap exceeded (Bedrock.DataPlane.Demux.ShardServerTest)\n   test/bedrock/data_plane/demux/shard_server_test.exs:134\n   Assertion failed, no matching message after 0ms\n   The process mailbox is empty.\n   code: assert_received {:durable, 99, durable_version}\n```\n\n## Root Cause\n\nTiming-dependent test. The test uses :timer.sleep(50) to wait for the flush operation to complete and send the durability message. Under load (when running full test suite), 50ms may not be sufficient.\n\n## File Location\n\ntest/bedrock/data_plane/demux/shard_server_test.exs:134\n\n## Suggested Fix\n\nReplace :timer.sleep with assert_receive with a longer timeout:\n\n```elixir\n# Instead of:\n:timer.sleep(50)\nassert_received {:durable, 99, durable_version}\n\n# Use:\nassert_receive {:durable, 99, durable_version}, 1000\n```",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T21:12:46Z"
+    }
+  ],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix flaky ShardServerTest - flushing test timeout",
+  "type": "bug",
+  "updated_at": "2026-01-19T16:16:29.755523-05:00"
+}

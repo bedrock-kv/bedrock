@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-ryu"
+  ],
+  "closed_at": "2026-01-02T18:52:20.485419-05:00",
+  "close_reason": "Implemented use Bedrock.JobQueue pattern with Supervisor, Internal, and updated Consumer/Manager/Worker chain",
+  "created": "2026-01-02T18:33:39.066862-05:00",
+  "description": "Move enqueue/stats logic to Internal module. Functions accept job_queue_module as first arg to get config.",
+  "id": "bedrock-iph",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Create Bedrock.JobQueue.Internal",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T21:06:10.097767-05:00",
+  "close_reason": "done",
+  "created": "2026-01-01T20:58:07.885723-05:00",
+  "description": "QuiCK uses two-level leasing: first acquire a queue lease, then item leases within that queue. This prevents thundering herd on popular queues. Currently we go straight to item-level leasing.",
+  "id": "bedrock-pun.1",
+  "labels": [],
+  "parent": "bedrock-pun",
+  "priority": 2,
+  "status": "closed",
+  "title": "Implement two-tier leasing (queue lease + item lease)",
+  "type": "task",
+  "updated_at": "2026-01-01T21:06:10.097767-05:00"
+}

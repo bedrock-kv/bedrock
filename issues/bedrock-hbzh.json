@@ -1,0 +1,23 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-19T16:16:29.750176-05:00",
+  "close_reason": "Fixed in commit e36d73e3",
+  "created": "2026-01-19T16:12:20.732081-05:00",
+  "description": "",
+  "id": "bedrock-hbzh",
+  "labels": [],
+  "comments": [
+    {
+      "text": "## Problem\n\nBedrock.DataPlane.Demux.ServerTest tests intermittently fail when run as part of the full test suite, but pass when run in isolation.\n\n## Symptoms\n\n```\n[error] Failed to get ShardServer for shard 0: {:already_started, #PID\u003c0.4513.0\u003e}\n\n** (MatchError) no match of right hand side value:\n    {:error, {:already_started, #PID\u003c0.6742.0\u003e}}\ncode: {:ok, shard_server} = Server.get_shard_server(server, 0)\n```\n\nAffected tests:\n- test push/3 routes transaction to correct ShardServer\n- test push/3 routes to multiple ShardServers  \n- test durability tracking tracks minimum durable version\n\n## Root Cause\n\nTest isolation issue. The tests have async: false but ShardServer processes from previous tests or concurrent test modules may still be running with conflicting names/state.\n\n## File Location\n\ntest/bedrock/data_plane/demux/server_test.exs\n\n## Suggested Fix\n\n1. Ensure unique shard IDs per test to avoid conflicts\n2. Add explicit cleanup in test setup/teardown\n3. Consider using unique process names per test run\n4. Investigate if ShardServer is using global registration that persists across tests",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-19T21:12:46Z"
+    }
+  ],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix flaky Demux.ServerTest - ShardServer already_started errors",
+  "type": "bug",
+  "updated_at": "2026-01-19T16:16:29.750176-05:00"
+}

@@ -1,0 +1,21 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-az5"
+  ],
+  "closed_at": "2026-01-07T06:35:55.349972-05:00",
+  "close_reason": "Implemented and tests passing",
+  "created": "2026-01-07T05:29:36.25714-05:00",
+  "description": "New module at resolver/metadata_accumulator.ex with functions: new/0, append/3, mutations_since/2, prune_before/2. Manages the version-ordered window of metadata mutations.",
+  "id": "bedrock-2ls",
+  "labels": [
+    "metadata"
+  ],
+  "parent": "bedrock-wsq",
+  "priority": 2,
+  "status": "closed",
+  "title": "Create MetadataAccumulator module",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

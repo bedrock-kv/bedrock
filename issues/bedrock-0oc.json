@@ -1,0 +1,23 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-az5"
+  ],
+  "blocks": [
+    "bedrock-ebn"
+  ],
+  "closed_at": "2026-01-07T06:41:40.716287-05:00",
+  "close_reason": "Implemented metadata accumulation and distribution in resolver server",
+  "created": "2026-01-07T05:29:36.482738-05:00",
+  "description": "Update resolver/server.ex handle_call and handle_continue to: accept metadata in request, track proxy progress, accumulate non-aborted metadata, return differential updates (all for new proxies, since-last-seen for known), prune window based on min(all last_seen).",
+  "id": "bedrock-0oc",
+  "labels": [
+    "metadata"
+  ],
+  "parent": "bedrock-wsq",
+  "priority": 2,
+  "status": "closed",
+  "title": "Implement resolver server metadata accumulation and distribution",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

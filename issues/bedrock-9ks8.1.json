@@ -1,0 +1,23 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-xh5z"
+  ],
+  "blocks": [
+    "bedrock-9ks8.2",
+    "bedrock-9ks8.3",
+    "bedrock-9ks8.4"
+  ],
+  "closed_at": "2026-01-17T16:58:27.821398-05:00",
+  "close_reason": "Implemented CompactionWriter behaviour with SplitFile/Bundle writers, modified Database.compact to use writer, added SnapshotBundle.split utility",
+  "created": "2026-01-17T07:04:13.004006-05:00",
+  "description": "Design single-file snapshot format with index as footer. This enables streaming writes (data first, index last) and efficient loading (read footer, seek to needed blocks).",
+  "id": "bedrock-9ks8.1",
+  "labels": [],
+  "parent": "bedrock-9ks8",
+  "priority": 2,
+  "status": "closed",
+  "title": "Footer-based snapshot format",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

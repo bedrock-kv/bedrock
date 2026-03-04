@@ -1,0 +1,18 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-29aa"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-19T15:45:39.217683-05:00",
+  "close_reason": "Added handle_info for {:min_durable_version, version} and updated Facts to return actual value",
+  "created": "2026-01-19T15:02:07.547418-05:00",
+  "description": "Add handle_info for {:min_durable_version, version}:\n- Update state.min_durable_version\n- Update Facts.minimum_durable_version/1 to return actual value (currently hardcoded :unavailable)\n\nTest: Sending message updates state; Facts returns correct value.",
+  "id": "bedrock-r5cj",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Shale: handle min_durable_version from Demux",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

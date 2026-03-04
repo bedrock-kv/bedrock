@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:44:07.934551-05:00",
+  "close_reason": "Added error handling for WorkerPool.dispatch result - logs warning on failure, relies on lease expiration for retry",
+  "created": "2026-01-01T22:42:28.028259-05:00",
+  "description": "Manager.dispatch_jobs/2 (line 132) calls WorkerPool.dispatch() but doesn't check the result. If DynamicSupervisor rejects the child (max_children exceeded), the job is silently lost.\n\nFix: Check dispatch result and handle :max_children error appropriately.",
+  "id": "bedrock-zbd",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Fix unchecked dispatch result in Manager",
+  "type": "bug",
+  "updated_at": "2026-01-01T22:44:07.934551-05:00"
+}

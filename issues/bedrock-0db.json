@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-02T18:52:37.535699-05:00",
+  "close_reason": "use Bedrock.JobQueue pattern implemented with supervision tree support, tests and examples updated",
+  "created": "2026-01-02T18:33:20.061126-05:00",
+  "description": "Add use Bedrock.JobQueue macro pattern (like Bedrock.Repo) so users define their own JobQueue module that configures repo/workers and can be added to a supervision tree.",
+  "id": "bedrock-0db",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Add use Bedrock.JobQueue pattern",
+  "type": "epic",
+  "updated_at": "2026-01-02T18:52:37.535699-05:00"
+}

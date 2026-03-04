@@ -1,0 +1,18 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-c91"
+  ],
+  "closed_at": "2026-01-03T09:38:04.647205-05:00",
+  "close_reason": "Converted to do: syntax",
+  "created": "2026-01-03T09:35:35.323084-05:00",
+  "description": "Convert 3 functions to single-line do: syntax\n\n1. pointer_keyspace/1 (line 65-67):\n```elixir\ndef pointer_keyspace(root), do: Keyspace.partition(root, \"pointers/\", key_encoding: TupleEncoding)\n```\n\n2. queue_lease_keyspace/1 (line 73-75):\n```elixir\ndef queue_lease_keyspace(root), do: Keyspace.partition(root, \"queue_leases/\")\n```\n\n3. resolve_item_key/3 guard clause (line 432-434):\n```elixir\ndefp resolve_item_key(_repo, _keyspaces, %Lease{item_key: item_key}) when item_key != nil, do: {:ok, item_key}\n```\n\nFile: apps/bedrock_job_queue/lib/bedrock/job_queue/store.ex",
+  "id": "bedrock-k1f",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Convert store.ex to do: syntax",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

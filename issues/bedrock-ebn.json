@@ -1,0 +1,23 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-0oc"
+  ],
+  "blocks": [
+    "bedrock-vkh"
+  ],
+  "closed_at": "2026-01-07T06:46:42.429563-05:00",
+  "close_reason": "Updated public API to include metadata_per_tx and return metadata_updates",
+  "created": "2026-01-07T05:29:36.593684-05:00",
+  "description": "Update resolver.ex resolve_transactions spec and implementation to include metadata mutations in request tuple and return {:ok, [aborted], metadata_updates}.",
+  "id": "bedrock-ebn",
+  "labels": [
+    "metadata"
+  ],
+  "parent": "bedrock-wsq",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update Resolver public API for metadata",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

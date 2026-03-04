@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:51:34.208029-05:00",
+  "close_reason": "Consolidated 6 encode/decode functions into 2 generic functions",
+  "created": "2026-01-01T22:42:29.352078-05:00",
+  "description": "Store.ex lines 591-628 has 6 identical encode/decode functions:\n- encode_item/decode_item\n- encode_lease/decode_lease  \n- encode_queue_lease/decode_queue_lease\n\nAll use identical :erlang.term_to_binary/:erlang.binary_to_term.\n\nFix: Replace with generic encode/1 and decode/1 functions.",
+  "id": "bedrock-qne",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Consolidate Store encode/decode functions",
+  "type": "task",
+  "updated_at": "2026-01-01T22:51:34.208029-05:00"
+}

@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-815",
+    "bedrock-ebn"
+  ],
+  "blocks": [
+    "bedrock-2dq"
+  ],
+  "closed_at": "2026-01-07T06:54:51.741892-05:00",
+  "close_reason": "Integrated metadata flow in commit proxy finalization: updated finalize_batch to 4-arg signature, pass metadata to resolvers, extract metadata from transactions, return metadata updates. All tests updated and passing.",
+  "created": "2026-01-07T05:29:36.70662-05:00",
+  "description": "Update finalization.ex: extract metadata from mutations, include in resolver request, capture response. Change signature to finalize_batch(batch, layout, metadata, opts) -\u003e {:ok, n_aborts, n_oks, updated_metadata}.",
+  "id": "bedrock-vkh",
+  "labels": [
+    "metadata"
+  ],
+  "parent": "bedrock-wsq",
+  "priority": 2,
+  "status": "closed",
+  "title": "Integrate metadata flow in commit proxy finalization",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

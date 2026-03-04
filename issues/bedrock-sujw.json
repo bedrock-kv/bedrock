@@ -1,0 +1,20 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-lgcs"
+  ],
+  "blocks": [
+    "bedrock-683b"
+  ],
+  "closed_at": "2026-01-19T13:49:39.762657-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-18T15:01:36.73224-05:00",
+  "description": "New recovery phase: lib/bedrock/control_plane/director/recovery/materializer_bootstrap_phase.ex\n\nBootstrap the metadata shard materializer:\n1. Find running materializer in available_services\n2. If not found, restore from ObjectStorage snapshot (uses Olivine.Logic.maybe_load_snapshot)\n3. If fresh cluster, create initial shard layout in memory\n\nQuery materializer for shard layout via get_range on \\xff/system/shard_keys/*.\n\nReturns next phase: CommitProxyStartupPhase",
+  "id": "bedrock-sujw",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Add MaterializerBootstrapPhase",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

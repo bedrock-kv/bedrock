@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-07T05:47:27.480991-05:00",
+  "close_reason": "Replaced Process.sleep with message-based synchronization",
+  "created": "2026-01-02T20:37:48.143926-05:00",
+  "description": "Replace Process.sleep at line 49 with message-based synchronization in apps/bedrock_core/test/bedrock/data_plane/sequencer/microsecond_versioning_test.exs.",
+  "id": "bedrock-7ra",
+  "labels": [],
+  "parent": "bedrock-64q",
+  "priority": 3,
+  "status": "closed",
+  "title": "Refactor microsecond_versioning_test.exs: replace Process.sleep with message passing",
+  "type": "task",
+  "updated_at": "2026-01-07T05:47:27.480991-05:00"
+}

@@ -1,0 +1,17 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T16:57:51.450325-05:00",
+  "close_reason": "Created versions.exs at project root with centralized version management. All 6 app mix.exs files updated to use Code.eval_file to import versions. All tests pass.",
+  "created": "2026-01-01T16:48:19.121864-05:00",
+  "description": "",
+  "id": "bedrock-3a3.1",
+  "labels": [],
+  "parent": "bedrock-3a3",
+  "priority": 2,
+  "status": "closed",
+  "title": "Create centralized versions.exs for umbrella apps",
+  "type": "task",
+  "updated_at": "2026-01-01T16:57:51.450325-05:00"
+}

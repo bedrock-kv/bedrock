@@ -1,0 +1,19 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [
+    "bedrock-awr3",
+    "bedrock-znki"
+  ],
+  "closed_at": "2026-01-23T15:46:51.534094-05:00",
+  "close_reason": "Simplified to majority quorum and removed shard_tags",
+  "created": "2026-01-23T15:34:48.48735-05:00",
+  "description": "## Goal\nStop persisting shard_tags in bootstrap - they're computed, not stored.\n\n## File\n`lib/bedrock/control_plane/director/recovery/persistence_phase.ex`\n\n## Changes\n```elixir\ndefp build_log_entries(transaction_system_layout) do\n  Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} -\u003e\n    %{id: log_id, otp_ref: nil, shard_tags: []}  # Empty tags\n  end)\nend\n```\n\nNo need to persist computed shard assignments - they're derived from consistent hashing.",
+  "id": "bedrock-13gy",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Simplify PersistencePhase to use empty shard_tags",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

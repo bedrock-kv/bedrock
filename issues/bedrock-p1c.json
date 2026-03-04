@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:19:11.684665-05:00",
+  "close_reason": "Created Payload module with encode/decode, updated Item and Worker to use it",
+  "created": "2026-01-01T22:42:36.501308-05:00",
+  "description": "Payload encoding split between modules:\n- Item.encode_payload/1 (item.ex:102-103) - encodes at enqueue\n- Worker.decode_payload/1 (worker.ex:101-108) - decodes at execution\n\nFix: Create Payload module with encode/decode used by both.",
+  "id": "bedrock-p1c",
+  "labels": [],
+  "priority": 3,
+  "status": "closed",
+  "title": "Centralize payload encoding",
+  "type": "task",
+  "updated_at": "2026-01-01T23:19:11.684665-05:00"
+}

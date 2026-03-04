@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-10T12:30:29.713317-05:00",
+  "close_reason": "Extracted routing_data into RoutingData struct module",
+  "created": "2026-01-10T11:33:34.120631-05:00",
+  "description": "## Summary\n\nExtract routing data management from scattered locations into a cohesive `RoutingData` struct module.\n\n## Current State\n\n`routing_data` is a tuple `{shard_table, log_map, replication_factor}` with logic spread across:\n\n- **server.ex**: setup (`build_routing_data/1`, `build_shard_table/1`, `build_log_map/1`, `infer_replication_factor/2`) and cleanup (`cleanup_shard_table/1`)\n- **finalization.ex**: query (`get_tags_for_mutation/2`, `tag_to_integer/1`, `distribute_mutation_to_logs_via_shard_router/3`)\n- **metadata_merge.ex**: update (ETS insert/delete for shard_keys)\n- **shard_router.ex**: low-level ETS operations and caching\n\n## Proposed RoutingData Module\n\n```elixir\ndefmodule Bedrock.DataPlane.CommitProxy.RoutingData do\n  @type t :: %__MODULE__{\n    shard_table: :ets.table(),\n    log_map: %{non_neg_integer() =\u003e Log.id()},\n    replication_factor: pos_integer()\n  }\n\n  # Lifecycle\n  def new(transaction_system_layout)\n  def cleanup(routing_data)\n\n  # Shard updates (from MetadataMerge)\n  def insert_shard(routing_data, end_key, tag)\n  def delete_shard(routing_data, end_key)\n\n  # Queries (wrapping ShardRouter)\n  def lookup_shard(routing_data, key)\n  def lookup_shards_for_range(routing_data, start_key, end_key)\n  def get_logs_for_key(routing_data, key)\n  def get_logs_for_tags(routing_data, tags)\nend\n```\n\n## Files to Modify\n\n| File | Changes |\n|------|---------|\n| `lib/bedrock/data_plane/commit_proxy/routing_data.ex` | **NEW** - struct + all routing functions |\n| `lib/bedrock/data_plane/commit_proxy/server.ex` | Remove build/cleanup, use RoutingData |\n| `lib/bedrock/data_plane/commit_proxy/state.ex` | Change from 3 fields to single `routing_data: RoutingData.t()` |\n| `lib/bedrock/data_plane/commit_proxy/finalization.ex` | Use RoutingData queries |\n| `lib/bedrock/data_plane/commit_proxy/metadata_merge.ex` | Use RoutingData updates |\n\n## Benefits\n\n- Single source of truth for routing data lifecycle\n- Cleaner State struct (1 field vs 3)\n- Encapsulated ETS management\n- Easier testing\n",
+  "id": "bedrock-oant",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Refactor routing_data tuple into RoutingData struct module",
+  "type": "task",
+  "updated_at": "2026-01-10T12:30:29.713317-05:00"
+}

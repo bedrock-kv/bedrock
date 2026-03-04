@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-as6j",
+    "bedrock-eq69"
+  ],
+  "blocks": [
+    "bedrock-3na6",
+    "bedrock-9pg",
+    "bedrock-hv5"
+  ],
+  "closed_at": "2026-01-10T11:01:11.68708-05:00",
+  "close_reason": "Implemented MetadataMerge module with TDD - 13 new tests, parses system keys and updates ETS shard_table + metadata",
+  "created": "2026-01-09T15:45:05.029927-05:00",
+  "description": "The metadata distribution pipeline needs a real merge_fn that populates routing data.\n\n## What merge_fn must do\n\nParse system key mutations and update proxy State:\n\n1. **Shard routing** - `\\xff/system/shard_keys/{end_key}` → update ETS shard_table\n2. **Log routing** - `\\xff/system/layout/logs/{log_id}` → update log_map and log_services\n3. **Replication factor** - derive from log count or explicit key\n\n## Why this matters\n\nWith minimal proxy startup (just epoch, sequencer, resolver_layout), ALL routing data comes from metadata returned by resolver. The merge_fn populates the routing tables BEFORE log push happens.\n\n## Flow\n\n1. Transaction → resolver (with commit version)\n2. Resolver returns metadata mutations\n3. merge_fn applies mutations → routing data now available\n4. Log push uses routing data from State\n\n## Files\n\n- server.ex - implement merge_fn in handle_info(:metadata_update, ...)\n- state.ex - log_services field (already has shard_table, log_map, replication_factor)\n- system_keys.ex - key parsing helpers\n\n## Prerequisite\n\nDepends on bedrock-as6j (system key schema) - DONE",
+  "id": "bedrock-jwii",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 1,
+  "status": "closed",
+  "title": "Implement real metadata_merge_fn in commit proxy",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

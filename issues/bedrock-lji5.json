@@ -1,0 +1,23 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-17T15:45:01.688483-05:00",
+  "close_reason": "Closed",
+  "created": "2026-01-17T14:12:48.938977-05:00",
+  "description": "",
+  "id": "bedrock-lji5",
+  "labels": [],
+  "comments": [
+    {
+      "text": "Two unused variable warnings in test/bedrock/object_storage/chunk_writer_test.exs:\n\n- Line 112: {:ok, writer, status} = ChunkWriter.maybe_flush(writer) - variable 'writer' shadows outer scope\n- Line 120: {:ok, writer, status} = ChunkWriter.maybe_flush(writer) - variable 'writer' shadows outer scope\n\nFix: Prefix with underscore (_writer) since the returned writer is not used in these tests.",
+      "author": "Jason Allum",
+      "timestamp": "2026-01-17T19:12:59Z"
+    }
+  ],
+  "priority": 3,
+  "status": "closed",
+  "title": "Fix unused variable warnings in ChunkWriterTest",
+  "type": "bug",
+  "updated_at": "2026-01-17T15:45:01.688483-05:00"
+}

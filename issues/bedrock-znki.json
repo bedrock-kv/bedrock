@@ -1,0 +1,22 @@
+{
+  "assignee": "21417+jallum@users.noreply.github.com",
+  "blocked_by": [
+    "bedrock-13gy",
+    "bedrock-awr3",
+    "bedrock-dwjr",
+    "bedrock-l3gk",
+    "bedrock-tjcn"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-24T11:19:57.544962-05:00",
+  "close_reason": "All fixes verified - reconnect scenario passes. See commit for details of 8 bugs fixed.",
+  "created": "2026-01-23T09:14:35.14528-05:00",
+  "description": "## Context\n\nThe recovery code was designed for the old storage-team model where:\n- Storage teams had pre-assigned shard tags\n- Logs had static shard tag assignments stored in TSL\n- Recovery grouped logs by shard tags and validated quorum per-shard\n\nWe've moved to a consistent-hashing model where:\n- Shard-to-log assignment is computed dynamically via consistent hashing\n- Parameters: hash function, shard_id, replication_factor, stable log list\n- Each log receives transactions with mutations for its hash-assigned shards (or empty txns for Lamport alignment)\n- Demux aggressively pushes to object storage, minimizing the durable/latest gap\n\n## Problem\n\nThe current `LogRecoveryPlanningPhase` fails on cluster restart because:\n1. It expects `shard_tags` per-log in the TSL (vestigial from old model)\n2. It groups logs by shard and requires per-shard quorum\n3. With consistent hashing, these tags aren't stored - mapping is computed\n\n## New Recovery Model\n\n### Key Principles\n1. **Progress check**: M of N logs surviving = can make progress (replication covers shards)\n2. **Durable version**: `min(durable_version)` across surviving logs\n3. **Recovery version**: `min(highest_version)` across surviving logs\n4. **Rebuilding lost log A'**: Read from surviving logs B, C that have A's shards (via consistent hash)\n\n### Recovery Flow\n1. Lock surviving logs, collect version info\n2. Compute durable_version and recovery_version\n3. If rebuilding: use consistent hash to determine which surviving logs have data for lost shards\n4. Copy data from durable_version to recovery_version into new log set\n\n### Single-Log Case (replication_factor=1)\n- If log survives: lock it, continue from its state\n- If log lost: restart from durable_version (currently tracked locally - consider object storage marker)\n\n## Tasks\n\n1. Remove shard_tags from TSL log entries (vestigial)\n2. Simplify LogRecoveryPlanningPhase - focus on log-level quorum, not shard-level\n3. Add consistent-hash-aware log selection for rebuild scenarios\n4. Consider: durability markers in object storage (for disaster recovery)\n5. Update tests for new recovery model\n\n## References\n- Consistent hashing: used by CommitProxy for shard distribution\n- Demux: handles object storage persistence\n- Old model: inspired by FoundationDB recovery",
+  "id": "bedrock-znki",
+  "labels": [],
+  "priority": 1,
+  "status": "closed",
+  "title": "Refactor recovery to match consistent-hashing log assignment",
+  "type": "epic",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

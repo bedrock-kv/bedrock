@@ -1,0 +1,23 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-wcf9"
+  ],
+  "blocks": [
+    "bedrock-jkcm",
+    "bedrock-jwii",
+    "bedrock-yerr"
+  ],
+  "closed_at": "2026-01-10T07:54:58.44766-05:00",
+  "close_reason": "Schema design complete. Created FlatBuffer schemas, wrapper modules, updated system_keys.ex key patterns, persistence_phase.ex writes new shard_keys format. Follow-up tickets created for storage_teams removal.",
+  "created": "2026-01-09T16:07:20.479256-05:00",
+  "description": "## Summary\n\nDesign the system key value schema for metadata distribution. The current decomposed layout keys are written but never read - this designs the target format.\n\n## Key Design Decisions\n\n### Routing\n- **Uniform ceiling search**: All keys (user and metadata) routed via ceiling search on `shard_keys/{end_key}` → tag\n- **Golden ratio log distribution**: `get_log_indices(tag, log_count, replication_factor)` - deterministic, stable if log order preserved\n- **No special cases**: Metadata keys (`\\xff...`) naturally resolve to tag 0\n\n### Identity Format\n- **All services store OtpRef**: `{otp_name, node}` tuple\n- **Durable IDs in key path**: `\\xff/system/layout/logs/{log_id}` stores just OtpRef\n\n### Key Patterns (Category 2 - Cluster-Wide Metadata)\n| Key | Value |\n|-----|-------|\n| `\\xff/system/cluster/epoch` | uint64 |\n| `\\xff/system/layout/sequencer` | OtpRef |\n| `\\xff/system/layout/proxies` | [OtpRef] |\n| `\\xff/system/layout/resolvers/{end_key}` | OtpRef |\n| `\\xff/system/layout/logs/{log_id}` | OtpRef |\n| `\\xff/system/shard_keys/{end_key}` | uint32 (tag) |\n| `\\xff/system/shards/{tag}` | ShardMetadata |\n| `\\xff/system/materializer_keys/{end_key}` | MaterializerList |\n\n### ShardMetadata (minimal)\n```elixir\n%Bedrock.ShardMetadata{\n  key_range: {start_key, end_key},\n  born_at: version(),\n  ended_at: version() | nil\n}\n```\nTag in key path. Genealogy deferred to split/merge implementation.\n\n### Bootstrap (Object Storage)\n```\nbedrock://bootstrap/cluster_identity → ClusterBootstrap\n```\nContains: cluster_id, epoch, logs list, metadata_snapshot_path\n\n### Encoding\nFlatBuffers via `:flatbuffer` hex package (https://hex.pm/packages/flatbuffer). Runtime schema definition (no codegen).\n\n## Implementation Notes\n\n### 1. shard_keys replaces storage_teams\n`shard_keys` fully replaces `storage_teams`. Remove:\n- `StorageTeamDescriptor` module\n- `key_or_range_to_tags`, `find_logs_for_tags` in finalization.ex\n- `storage_teams` field in TransactionSystemLayout\n\nRouting uses ceiling search on `shard_keys`, log selection uses golden ratio algorithm.\n\n### 2. Initial shard_keys written during recovery\n- `initialization_phase.ex` determines initial shards (tags, key ranges)\n- `persistence_phase.ex` writes `\\xff/system/shard_keys/{end_key}` → tag for each shard\n- Director provides initial shard_keys to proxy via `recover_from/3`\n\n### 3. Ceiling search via ETS ordered_set\n- Proxy maintains `shard_keys` in ETS `ordered_set` table\n- Ceiling lookup via `ets:next/2`\n- Updated when metadata mutations arrive via `merge_fn`\n\n### 4. FlatBuffers runtime usage\n- Use `:flatbuffer` from hex.pm\n- Define schema in Elixir code, encode/decode at runtime\n- No codegen step, no .fbs files\n\n### 5. Log ordering for golden ratio\n- Sort log_ids lexicographically once at initialization\n- Build `%{index =\u003e log_id}` map for O(1) lookup\n- Golden ratio returns indices, map converts to log_ids\n\n## Files\n- NEW: `lib/bedrock/control_plane/config/shard_metadata.ex`\n- MOD: `lib/bedrock/system_keys.ex` (key parsing, encoding/decoding)\n- MOD: `lib/bedrock/control_plane/director/recovery/persistence_phase.ex`\n- DEL: `lib/bedrock/control_plane/config/storage_team_descriptor.ex`\n\n## Full Plan\nSee: ~/.claude/plans/nifty-launching-starfish.md\n\n## Open Items (from critical review)\n1. ~~shard_keys replaces storage_teams~~ RESOLVED\n2. ~~Initial shard_keys written by persistence_phase~~ RESOLVED\n3. ~~Ceiling search implementation~~ RESOLVED (ETS ordered_set)\n4. ~~FlatBuffers usage pattern~~ RESOLVED (runtime via :flatbuffer)\n5. ~~Log ordering for golden ratio~~ RESOLVED (sort + index map)\n6. Cross-shard transaction ordering (out of scope - existing behavior)\n7. Metadata read path for proxies (out of scope - jwii ticket)\n8. Recovery quorum semantics (out of scope - existing behavior)",
+  "id": "bedrock-as6j",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 1,
+  "status": "closed",
+  "title": "Design system key value schema for metadata distribution",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

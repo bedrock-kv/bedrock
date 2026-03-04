@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-ve1"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-01T23:16:00.620472-05:00",
+  "close_reason": "Added :now option to Store.obtain_queue_lease/6, updated tests to use fixed timestamps",
+  "created": "2026-01-01T22:51:57.039781-05:00",
+  "description": "## File\n`apps/bedrock_job_queue/test/bedrock/job_queue/store_test.exs`\n\n## Tests to Update\n\n### 1. \"fails when queue already leased\" (lines 215-223)\nThe test creates a non-expired lease but relies on wall-clock time to determine it's not expired. After Expirable is updated, the Store functions may need :now passed through.\n\n### 2. \"succeeds after previous lease expires\" (lines 226-238)\n```elixir\n# Current (uses struct manipulation)\nexpired = %{QueueLease.new(\"tenant_1\", \"holder1\", 5000) | expires_at: System.system_time(:millisecond) - 1000}\n\n# Should be\nnow = 10_000\nexpired = QueueLease.new(\"tenant_1\", \"holder1\", duration_ms: 5000, now: 4_000)\n# Then pass now: 10_000 to the store operation\n```\n\n## Note\nThis may require updating `Store.obtain_queue_lease/5` to accept a `:now` option if it checks lease expiration internally.",
+  "id": "bedrock-adr",
+  "labels": [],
+  "parent": "bedrock-0jr",
+  "priority": 2,
+  "status": "closed",
+  "title": "Update store_test.exs obtain_queue_lease tests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

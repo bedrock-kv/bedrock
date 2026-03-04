@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "closed_at": "2026-01-01T22:52:44.79659-05:00",
+  "close_reason": "Added Item.key/1 helper and updated 5 call sites in Store",
+  "created": "2026-01-01T22:42:30.094313-05:00",
+  "description": "Item key pattern {priority, vesting_time, id} is reconstructed in 5 locations:\n- Store.enqueue (156)\n- Store.obtain_lease (252, 278)\n- Store.extend_lease (347)\n- Store.requeue (474)\n\nFix: Add Item.key/1 and Item.key/2 helpers to centralize key construction.",
+  "id": "bedrock-q5j",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "Extract Item.key helper functions",
+  "type": "task",
+  "updated_at": "2026-01-01T22:52:44.79659-05:00"
+}

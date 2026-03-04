@@ -1,0 +1,24 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-0qm",
+    "bedrock-9bj"
+  ],
+  "blocks": [
+    "bedrock-4ww",
+    "bedrock-aum",
+    "bedrock-rij"
+  ],
+  "closed_at": "2026-01-10T22:56:53.513735-05:00",
+  "close_reason": "Design decision: metadata treated like any other shard, no special routing needed",
+  "created": "2026-01-09T13:58:01.72453-05:00",
+  "description": "Ensure the metadata shard (shard 0, FF-prefixed keys) is always routed to ALL logs, not just a subset. This enables any log to bootstrap the cluster during recovery (like FDB's TxnStateStore pattern). Prerequisite: shard tagging in wire format (bedrock-9bj). Implementation: special-case shard 0 in log assignment to include all log IDs. Files: finalization.ex (find_logs_for_tags), log assignment logic.",
+  "id": "bedrock-3tb",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Route metadata mutations to all logs",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

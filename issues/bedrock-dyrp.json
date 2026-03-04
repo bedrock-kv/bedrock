@@ -1,0 +1,19 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-noim"
+  ],
+  "blocks": [],
+  "closed_at": "2026-01-10T12:21:12.802758-05:00",
+  "close_reason": "Simplified commit proxy API to require epoch parameter",
+  "created": "2026-01-10T09:20:05.363177-05:00",
+  "description": "Update client to include expected epoch when sending transactions to commit proxy:\n\n1. Client learns epoch during connection/handshake\n2. Client includes epoch in commit requests\n3. Commit proxy validates epoch matches current generation\n4. Reject transactions from stale/future epoch clients\n\nThis is the outermost layer of epoch validation - prevents clients from wrong generation from even reaching the sequencer.\n\nDepends on: bedrock-noim (commit proxy must handle epoch first)",
+  "id": "bedrock-dyrp",
+  "labels": [],
+  "parent": "bedrock-n3u",
+  "priority": 2,
+  "status": "closed",
+  "title": "Client sends expected epoch with commit proxy requests",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

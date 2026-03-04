@@ -1,0 +1,22 @@
+{
+  "assignee": "",
+  "blocked_by": [
+    "bedrock-mrrk"
+  ],
+  "blocks": [
+    "bedrock-rcos",
+    "bedrock-yml6",
+    "bedrock-yqdo"
+  ],
+  "closed_at": "2026-01-10T16:29:12.734824-05:00",
+  "close_reason": "Added sequencer field to State struct. TSL kept temporarily for backward compat.",
+  "created": "2026-01-10T15:48:25.788659-05:00",
+  "description": "Simplify State struct to remove transaction_system_layout dependency.\n\n## Current State Fields (relevant)\n\n```elixir\ndefstruct [\n  :transaction_system_layout,  # REMOVE\n  :routing_data,\n  :resolver_layout,\n  :metadata,\n  # ...\n]\n```\n\n## New State Fields\n\n```elixir\ndefstruct [\n  :epoch,           # NEW: direct field\n  :sequencer,       # NEW: direct field (was TSL.sequencer)\n  :routing_data,    # Keep (now starts empty via new_empty/0)\n  :resolver_layout, # Keep\n  :metadata,        # Keep\n  # ...\n]\n```\n\n## Changes to state.ex\n\n1. Remove `:transaction_system_layout` from defstruct\n2. Add `:epoch` field\n3. Add `:sequencer` field\n4. Update any typespec\n\n## Impact\n\n- batching.ex uses `state.transaction_system_layout.sequencer` → change to `state.sequencer`\n- server.ex uses TSL for routing_data → change to use new_empty/0",
+  "id": "bedrock-yz03",
+  "labels": [],
+  "priority": 2,
+  "status": "closed",
+  "title": "State: Remove TSL, add sequencer field directly",
+  "type": "task",
+  "updated_at": "2026-03-04T12:58:33Z"
+}

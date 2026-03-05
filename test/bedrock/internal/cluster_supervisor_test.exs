@@ -54,8 +54,8 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
         # which calls children_for_capabilities -> module_for_capability
         ClusterSupervisor.init(
           {:test_node, Bedrock.MockCluster, nil,
-           [capabilities: capabilities, coordinator: [path: "/tmp"], worker: [path: "/tmp"]], "bedrock.cluster",
-           %Descriptor{cluster_name: "test", coordinator_nodes: [:test_node]}}
+           [capabilities: capabilities, coordinator: [path: "/tmp"], worker: [path: "/tmp"], durability_mode: :relaxed],
+           "bedrock.cluster", %Descriptor{cluster_name: "test", coordinator_nodes: [:test_node]}}
         )
       end
     end

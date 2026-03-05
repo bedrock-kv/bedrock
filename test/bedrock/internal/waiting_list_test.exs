@@ -127,6 +127,102 @@ defmodule Bedrock.Internal.WaitingListTest do
     end
   end
 
+  describe "remove_all_less_than/2" do
+    test "removes all entries where version is less than threshold" do
+      reply_fn1 = simple_reply_fn()
+      reply_fn2 = simple_reply_fn()
+      reply_fn3 = simple_reply_fn()
+
+      map = %{
+        5 => [{1200, reply_fn1, :data5}],
+        10 => [{1300, reply_fn2, :data10}],
+        15 => [{1400, reply_fn3, :data15}]
+      }
+
+      {new_map, removed} = WaitingList.remove_all_less_than(map, 12)
+
+      # Only version 15 should remain
+      assert Map.keys(new_map) == [15]
+      assert new_map[15] == [{1400, reply_fn3, :data15}]
+
+      # Versions 5 and 10 should be removed
+      assert length(removed) == 2
+      assert {1200, reply_fn1, :data5} in removed
+      assert {1300, reply_fn2, :data10} in removed
+    end
+
+    test "removes nothing when all versions are >= threshold" do
+      reply_fn = simple_reply_fn()
+
+      map = %{
+        10 => [{1200, reply_fn, :data10}],
+        20 => [{1300, reply_fn, :data20}]
+      }
+
+      {new_map, removed} = WaitingList.remove_all_less_than(map, 5)
+
+      assert new_map == map
+      assert removed == []
+    end
+
+    test "removes all when all versions are < threshold" do
+      reply_fn1 = simple_reply_fn()
+      reply_fn2 = simple_reply_fn()
+
+      map = %{
+        5 => [{1200, reply_fn1, :data5}],
+        10 => [{1300, reply_fn2, :data10}]
+      }
+
+      {new_map, removed} = WaitingList.remove_all_less_than(map, 100)
+
+      assert new_map == %{}
+      assert length(removed) == 2
+    end
+
+    test "handles empty map" do
+      {new_map, removed} = WaitingList.remove_all_less_than(%{}, 100)
+
+      assert new_map == %{}
+      assert removed == []
+    end
+
+    test "handles exact boundary - excludes equal versions" do
+      reply_fn1 = simple_reply_fn()
+      reply_fn2 = simple_reply_fn()
+
+      map = %{
+        10 => [{1200, reply_fn1, :data10}],
+        11 => [{1300, reply_fn2, :data11}]
+      }
+
+      # threshold=10 means remove versions < 10, keep versions >= 10
+      {new_map, removed} = WaitingList.remove_all_less_than(map, 10)
+
+      assert new_map |> Map.keys() |> Enum.sort() == [10, 11]
+      assert removed == []
+    end
+
+    test "flattens entries from multiple versions" do
+      reply_fn1 = simple_reply_fn()
+      reply_fn2 = simple_reply_fn()
+      reply_fn3 = simple_reply_fn()
+
+      # Version 5 has multiple entries
+      map = %{
+        5 => [{1200, reply_fn1, :data5a}, {1250, reply_fn2, :data5b}],
+        10 => [{1300, reply_fn3, :data10}]
+      }
+
+      {_new_map, removed} = WaitingList.remove_all_less_than(map, 8)
+
+      # Should get both entries from version 5
+      assert length(removed) == 2
+      assert {1200, reply_fn1, :data5a} in removed
+      assert {1250, reply_fn2, :data5b} in removed
+    end
+  end
+
   describe "find/2" do
     test "finds first entry for version" do
       reply_fn1 = simple_reply_fn()

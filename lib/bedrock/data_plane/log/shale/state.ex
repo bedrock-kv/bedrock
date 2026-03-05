@@ -11,7 +11,10 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
 
   @type mode :: :locked | :running | :recovering
 
+  @type init_state :: :initialized | {:retrying, attempt :: pos_integer()}
+
   @type t :: %__MODULE__{
+          init_state: init_state(),
           cluster: module(),
           director: Director.ref() | nil,
           epoch: Bedrock.epoch() | nil,
@@ -19,6 +22,10 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           foreman: Foreman.ref(),
           path: String.t(),
           segment_recycler: SegmentRecycler.server() | nil,
+          object_storage: module() | nil,
+          demux: pid() | nil,
+          demux_supervisor: pid() | nil,
+          min_durable_version: Bedrock.version() | nil,
           #
           last_version: Bedrock.version(),
           writer: Writer.t() | nil,
@@ -42,13 +49,18 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             ]
           }
         }
-  defstruct cluster: nil,
+  defstruct init_state: :initialized,
+            cluster: nil,
             director: nil,
             epoch: nil,
             foreman: nil,
             id: nil,
             path: nil,
             segment_recycler: nil,
+            object_storage: nil,
+            demux: nil,
+            demux_supervisor: nil,
+            min_durable_version: nil,
             #
             last_version: nil,
             writer: nil,

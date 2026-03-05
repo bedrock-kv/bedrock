@@ -17,6 +17,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
 
     def name, do: "test_cluster"
     def otp_name(component), do: :"test_#{component}"
+    def node_config, do: []
   end
 
   @doc """
@@ -41,7 +42,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       })
 
     old_transaction_system_layout =
-      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}, storage_teams: []})
+      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}})
 
     %{
       node_capabilities: node_capabilities,
@@ -84,19 +85,19 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       required_services: %{},
       locked_service_ids: MapSet.new(),
       log_recovery_info_by_id: %{},
-      storage_recovery_info_by_id: %{},
+      materializer_recovery_info_by_id: %{},
       old_log_ids_to_copy: [],
       version_vector: {Version.from_integer(0), Version.from_integer(0)},
       durable_version: Version.from_integer(0),
-      degraded_teams: [],
       logs: %{},
-      storage_teams: [],
       resolvers: [],
       proxies: [],
       sequencer: nil,
       transaction_services: %{},
       service_pids: %{},
-      transaction_system_layout: nil
+      transaction_system_layout: nil,
+      metadata_materializer: nil,
+      shard_layout: nil
     }
 
     struct(base, overrides)
@@ -134,14 +135,14 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
           last_version: Version.from_integer(100)
         }
       },
-      storage_recovery_info_by_id: %{
+      materializer_recovery_info_by_id: %{
         "storage_1" => %{
-          kind: :storage,
+          kind: :materializer,
           durable_version: Version.from_integer(95),
           oldest_durable_version: Version.zero()
         },
         "storage_2" => %{
-          kind: :storage,
+          kind: :materializer,
           durable_version: Version.from_integer(95),
           oldest_durable_version: Version.zero()
         }
@@ -193,11 +194,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   end
 
   @doc """
-  Sets storage teams.
-  """
-  def with_storage_teams(recovery_attempt, teams), do: Map.put(recovery_attempt, :storage_teams, teams)
-
-  @doc """
   Sets the sequencer PID.
   """
   def with_sequencer(recovery_attempt, sequencer), do: Map.put(recovery_attempt, :sequencer, sequencer)
@@ -228,7 +224,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   Sets storage recovery info by ID.
   """
   def with_storage_recovery_info(recovery_attempt, info),
-    do: Map.put(recovery_attempt, :storage_recovery_info_by_id, info)
+    do: Map.put(recovery_attempt, :materializer_recovery_info_by_id, info)
 
   @doc """
   Sets log recovery info by ID.
@@ -286,17 +282,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
 
           logs when is_map(logs) ->
             logs
-        end,
-      storage_teams:
-        case Keyword.get(opts, :storage_teams) do
-          nil ->
-            []
-
-          count when is_integer(count) ->
-            for i <- 1..count, do: %{tag: "team_#{i}", storage_ids: ["storage_#{i}"]}
-
-          teams when is_list(teams) ->
-            teams
         end
     }
 
@@ -314,9 +299,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
             {"log_#{i}", %{kind: :log, status: {:up, spawn(fn -> :ok end)}}}
           end
 
-        {:storage, count} when is_integer(count) ->
+        {:materializer, count} when is_integer(count) ->
           for i <- 1..count, into: %{} do
-            {"storage_#{i}", %{kind: :storage, status: {:up, spawn(fn -> :ok end)}}}
+            {"storage_#{i}", %{kind: :materializer, status: {:up, spawn(fn -> :ok end)}}}
           end
 
         {_, services} when is_map(services) ->
@@ -344,9 +329,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
             {"log_#{i}", %{kind: :log, status: {:up, spawn(fn -> :ok end)}}}
           end
 
-        {:storage, count} when is_integer(count) ->
+        {:materializer, count} when is_integer(count) ->
           for i <- 1..count, into: %{} do
-            {"storage_#{i}", %{kind: :storage, status: {:up, spawn(fn -> :ok end)}}}
+            {"storage_#{i}", %{kind: :materializer, status: {:up, spawn(fn -> :ok end)}}}
           end
 
         {_, services} when is_map(services) ->
@@ -507,7 +492,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   defp add_mock_function(:service_discovery, context) do
     discover_services_fn = fn
       :log -> %{"log_1" => %{kind: :log, status: {:up, self()}}}
-      :storage -> %{"storage_1" => %{kind: :storage, status: {:up, self()}}}
+      :materializer -> %{"storage_1" => %{kind: :materializer, status: {:up, self()}}}
       _ -> %{}
     end
 

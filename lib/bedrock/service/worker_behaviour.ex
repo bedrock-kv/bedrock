@@ -1,13 +1,13 @@
 defmodule Bedrock.Service.WorkerBehaviour do
   @moduledoc false
 
-  @callback kind() :: :log | :storage
+  @callback kind() :: :log | :materializer
   @callback one_time_initialization(Path.t()) :: :ok | {:error, File.posix()}
 
   defmacro __using__(opts) do
     kind = opts[:kind] || raise "Must declare a :kind"
 
-    if kind not in [:log, :storage] do
+    if kind not in [:log, :materializer] do
       raise "Invalid :kind: #{inspect(kind)}"
     end
 

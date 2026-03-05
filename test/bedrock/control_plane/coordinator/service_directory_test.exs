@@ -12,7 +12,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
   describe "register_services command" do
     test "registers multiple services to empty directory" do
       services = [
-        {"service_1", :storage, {:worker1, :node1@host}},
+        {"service_1", :materializer, {:worker1, :node1@host}},
         {"service_2", :log, {:worker2, :node2@host}}
       ]
 
@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
 
       assert %State{
                service_directory: %{
-                 "service_1" => {:storage, {:worker1, :node1@host}},
+                 "service_1" => {:materializer, {:worker1, :node1@host}},
                  "service_2" => {:log, {:worker2, :node2@host}}
                }
              } = result_state
@@ -29,7 +29,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
 
     test "adds new service to existing directory" do
       existing_directory = %{
-        "existing_service" => {:storage, {:existing_worker, :existing_node@host}}
+        "existing_service" => {:materializer, {:existing_worker, :existing_node@host}}
       }
 
       services = [{"new_service", :log, {:new_worker, :new_node@host}}]
@@ -38,14 +38,14 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
 
       assert %State{
                service_directory: %{
-                 "existing_service" => {:storage, {:existing_worker, :existing_node@host}},
+                 "existing_service" => {:materializer, {:existing_worker, :existing_node@host}},
                  "new_service" => {:log, {:new_worker, :new_node@host}}
                }
              } = result_state
     end
 
     test "overwrites existing service with same id" do
-      existing_directory = %{"service_1" => {:storage, {:old_worker, :old_node@host}}}
+      existing_directory = %{"service_1" => {:materializer, {:old_worker, :old_node@host}}}
 
       services = [{"service_1", :log, {:new_worker, :new_node@host}}]
       command = {:register_services, %{services: services}}
@@ -60,7 +60,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
   describe "deregister_services command" do
     test "removes specified service from directory" do
       existing_directory = %{
-        "service_1" => {:storage, {:worker1, :node1@host}},
+        "service_1" => {:materializer, {:worker1, :node1@host}},
         "service_2" => {:log, {:worker2, :node2@host}}
       }
 
@@ -73,13 +73,13 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
     end
 
     test "ignores non-existent service ids" do
-      existing_directory = %{"service_1" => {:storage, {:worker, :node@host}}}
+      existing_directory = %{"service_1" => {:materializer, {:worker, :node@host}}}
 
       command = {:deregister_services, %{service_ids: ["non_existent"]}}
       result_state = Durability.process_command(initial_state(existing_directory), command)
 
       assert %State{
-               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+               service_directory: %{"service_1" => {:materializer, {:worker, :node@host}}}
              } = result_state
     end
   end
@@ -88,7 +88,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
     test "does not automatically notify director when services change" do
       # Use test process as director to receive any notifications
       test_state = %State{service_directory: %{}, director: self()}
-      services = [{"service_1", :storage, {:worker, :node@host}}]
+      services = [{"service_1", :materializer, {:worker, :node@host}}]
       command = {:register_services, %{services: services}}
 
       # Process the command (this should NOT send notification)
@@ -96,7 +96,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
 
       # Verify the service was added but no notification was sent
       assert %State{
-               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+               service_directory: %{"service_1" => {:materializer, {:worker, :node@host}}}
              } = result_state
 
       # Assert no notification is received
@@ -104,14 +104,14 @@ defmodule Bedrock.ControlPlane.Coordinator.ServiceDirectoryTest do
     end
 
     test "does not crash when director is unavailable" do
-      services = [{"service_1", :storage, {:worker, :node@host}}]
+      services = [{"service_1", :materializer, {:worker, :node@host}}]
       command = {:register_services, %{services: services}}
 
       # This should not crash
       result_state = Durability.process_command(initial_state(), command)
 
       assert %State{
-               service_directory: %{"service_1" => {:storage, {:worker, :node@host}}}
+               service_directory: %{"service_1" => {:materializer, {:worker, :node@host}}}
              } = result_state
     end
   end

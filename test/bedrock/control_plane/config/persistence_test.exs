@@ -121,7 +121,7 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
       config =
         put_in(base_config(), [:transaction_system_layout, :services], %{
           "log-1" => %{kind: :log, last_seen: {:some_otp_name, :some_node}, status: {:up, worker_pid}},
-          "storage-1" => %{kind: :storage, status: :down}
+          "storage-1" => %{kind: :materializer, status: :down}
         })
 
       encoded = Persistence.encode_for_storage(config, TestCluster)
@@ -228,7 +228,7 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
           proxies: [],
           services: %{
             "storage-1" => %{
-              kind: :storage,
+              kind: :materializer,
               last_seen: {:storage_worker_1, :node1},
               status: :down
             }
@@ -251,7 +251,7 @@ defmodule Bedrock.ControlPlane.Config.PersistenceTest do
                policies: %{allow_volunteer_nodes: true},
                transaction_system_layout: %{
                  services: %{
-                   "storage-1" => %{status: :down, kind: :storage}
+                   "storage-1" => %{status: :down, kind: :materializer}
                  }
                }
              } = decoded

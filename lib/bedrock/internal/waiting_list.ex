@@ -84,6 +84,33 @@ defmodule Bedrock.Internal.WaitingList do
   end
 
   @doc """
+  Remove all entries where version is less than the given threshold.
+  For range-match patterns (Demux/ShardServer long-pull).
+  Returns {new_map, removed_entries} where entries are flattened across all
+  matching versions.
+
+  ## Example
+
+      iex> map = %{5 => [{...}], 10 => [{...}], 15 => [{...}]}
+      iex> {new_map, removed} = WaitingList.remove_all_less_than(map, 12)
+      iex> Map.keys(new_map)
+      [15]  # only version 15 remains
+  """
+  @spec remove_all_less_than(t(), version()) :: {t(), [entry()]}
+  def remove_all_less_than(map, threshold_version) do
+    {removed_entries, remaining_map} =
+      Enum.reduce(map, {[], %{}}, fn {version, entries}, {removed_acc, map_acc} ->
+        if version < threshold_version do
+          {entries ++ removed_acc, map_acc}
+        else
+          {removed_acc, Map.put(map_acc, version, entries)}
+        end
+      end)
+
+    {remaining_map, removed_entries}
+  end
+
+  @doc """
   Find first entry for a version without removing it.
   Returns entry or nil.
   """

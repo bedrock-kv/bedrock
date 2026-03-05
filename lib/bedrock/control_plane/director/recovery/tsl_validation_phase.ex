@@ -9,7 +9,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   - `logs` field has integer ranges (not Version.t() binaries)
   - `version_vector` field contains Version.t() binaries (not integers)
   - `durable_version` field contains Version.t() binary (not integer)
-  - `storage_teams` structure is valid
   - `resolvers` structure is valid
 
   ## Error Handling

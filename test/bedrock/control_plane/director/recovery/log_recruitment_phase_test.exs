@@ -17,8 +17,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   defp create_recovery_context(old_logs, available_services \\ %{}, opts \\ []) do
     [
       old_transaction_system_layout: %{
-        logs: old_logs,
-        storage_teams: []
+        logs: old_logs
       }
     ]
     |> create_test_context()
@@ -50,7 +49,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       end)
     end
 
-    test "proceeds to storage recruitment when log vacancies are successfully filled" do
+    test "proceeds to log replay when log vacancies are successfully filled" do
       recovery_attempt = %{
         cluster: TestCluster,
         epoch: 1,
@@ -72,7 +71,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       context = create_recovery_context(%{{:log, 1} => %{}}, available_services, lock_service_fn: lock_service_fn)
 
-      assert {%{logs: logs}, Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase} =
+      assert {%{logs: logs}, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase} =
                LogRecruitmentPhase.execute(recovery_attempt, context)
 
       assert %{{:log, 2} => _, {:log, 3} => _} = logs

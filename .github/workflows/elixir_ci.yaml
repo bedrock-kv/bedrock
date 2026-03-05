@@ -5,6 +5,9 @@ on:
     branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
 
 env:
   MIX_ENV: test
@@ -75,12 +78,85 @@ jobs:
       uses: actions/cache@v3
       with:
         path: priv/plts
-        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-
+        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-v2-${{ hashFiles('**/mix.lock') }}
 
     - name: Dialyzer
       run: mix dialyzer
 
     - name: Run tests
       run: mix coveralls.github
+
+  s3_test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    name: S3 MinIO tests (OTP 28 / Elixir 1.19)
+    env:
+      MIX_ENV: test
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Elixir and Erlang
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: "1.19.4"
+        otp-version: "28.3"
+        install-hex: true
+        install-rebar: true
+
+    - name: Restore deps and _build cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          deps
+          _build
+        key: s3-${{ runner.os }}-1.19.4-28.3-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          s3-${{ runner.os }}-1.19.4-28.3-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Download MinIO test binary
+      run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
+
+    - name: Run S3 integration tests
+      run: mix test --include s3 --exclude distributed
+
+  distributed_durability:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    name: Distributed durability tests (scheduled)
+    env:
+      MIX_ENV: test
+      BEDROCK_INCLUDE_DISTRIBUTED: "1"
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Elixir and Erlang
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: "1.19.4"
+        otp-version: "28.3"
+        install-hex: true
+        install-rebar: true
+
+    - name: Restore deps and _build cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          deps
+          _build
+        key: distributed-${{ runner.os }}-1.19.4-28.3-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          distributed-${{ runner.os }}-1.19.4-28.3-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Download MinIO test binary
+      run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
+
+    - name: Run distributed durability suite
+      run: mix test --include distributed test/bedrock/distributed/minio_durability_test.exs

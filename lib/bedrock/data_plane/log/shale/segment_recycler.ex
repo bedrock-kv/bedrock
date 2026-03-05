@@ -173,13 +173,26 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
 
     @spec allocate_file(String.t(), non_neg_integer()) :: {:ok, String.t()} | {:error, atom()}
     def allocate_file(path, size_in_bytes) do
-      with {:ok, fd} <- File.open(path, [:write, :binary, :raw, :exclusive]),
-           :ok <- :file.allocate(fd, 0, size_in_bytes),
-           :ok <- File.close(fd) do
-        {:ok, path}
-      else
-        {:error, :eisdir} -> raise "not implemented"
-        {:error, :enoent} -> {:error, :path_does_not_exist}
+      case File.open(path, [:write, :binary, :raw, :exclusive]) do
+        {:ok, fd} ->
+          # Ensure fd is always closed, even if allocate fails
+          try do
+            case :file.allocate(fd, 0, size_in_bytes) do
+              :ok -> {:ok, path}
+              {:error, reason} -> {:error, reason}
+            end
+          after
+            File.close(fd)
+          end
+
+        {:error, :eisdir} ->
+          raise "not implemented"
+
+        {:error, :enoent} ->
+          {:error, :path_does_not_exist}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end

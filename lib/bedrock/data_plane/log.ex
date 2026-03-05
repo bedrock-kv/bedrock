@@ -158,24 +158,32 @@ defmodule Bedrock.DataPlane.Log do
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
-  Initiates a recovery process from the given `source_log` spanning the
+  Initiates a recovery process from the given source log(s) spanning the
   transactions specified by the given first/last versions. If the first version
   is 0, a special _initial transaction_ is applied to the log. This transaction
   is defined by `initial_transaction/0`.
 
   The function ensures that the transaction log is consistent with the
-  `source_log` by pulling from that log and applying the transactions.
+  source logs by pulling from them and applying the transactions.
 
   ## Parameters:
 
     - `log`: Reference to the target log where recovery should be applied.
-    - `source_log`: Reference to the source log from which transactions are
-      recovered. nil is sent for the initial recovery, since there is no
-      source log.
+    - `source_logs`: List of source log references from which transactions are
+      recovered, or a single ref for backward compatibility. Empty list or nil
+      is sent for initial recovery when there are no source logs.
     - `first_version`: The starting point of the recovery. Transactions _after_
       this version are applied.
     - `last_version`: The ending point of the recovery. Transactions up to and
       including this version are applied.
+
+  ## Multi-Source Recovery (Consistent Hashing)
+
+  When multiple source logs are provided, the log pulls transactions from all
+  sources and uses the shard index embedded in each transaction to filter for
+  mutations belonging to shards this log serves (determined by ShardRouter).
+  This supports the consistent hashing model where shard→log mapping is computed
+  rather than stored.
 
   ## Return Values:
 
@@ -185,13 +193,19 @@ defmodule Bedrock.DataPlane.Log do
   """
   @spec recover_from(
           log :: ref(),
-          source_log :: ref() | nil,
+          source_logs :: [ref()] | ref() | nil,
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           {:ok, pid()} | {:error, :unavailable}
-  def recover_from(log, source_log, first_version, last_version),
-    do: call(log, {:recover_from, source_log, first_version, last_version}, :infinity)
+  def recover_from(log, source_logs, first_version, last_version),
+    do: call(log, {:recover_from, normalize_source_logs(source_logs), first_version, last_version}, :infinity)
+
+  # Normalize source_logs to always be a list for consistent handling
+  defp normalize_source_logs(nil), do: []
+  defp normalize_source_logs([]), do: []
+  defp normalize_source_logs(logs) when is_list(logs), do: logs
+  defp normalize_source_logs(single_log), do: [single_log]
 
   @doc """
   Ask the transaction log worker for various facts about itself.

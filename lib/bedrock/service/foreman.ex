@@ -26,18 +26,18 @@ defmodule Bedrock.Service.Foreman do
   @spec new_worker(
           foreman :: ref(),
           id :: Worker.id(),
-          kind :: :log | :storage,
+          kind :: :log | :materializer,
           opts :: [timeout: timeout()]
         ) ::
           {:ok, Worker.ref()} | {:error, :timeout}
   def new_worker(foreman, id, kind, opts \\ []), do: call(foreman, {:new_worker, id, kind}, opts[:timeout] || :infinity)
 
   @doc """
-  Return a list of running storage workers only.
+  Return a list of running materializer workers only.
   """
-  @spec storage_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
+  @spec materializer_workers(foreman :: ref(), opts :: [timeout: timeout()]) ::
           {:ok, [Worker.ref()]} | {:error, :unavailable | :timeout | :unknown}
-  def storage_workers(foreman, opts \\ []), do: call(foreman, :storage_workers, opts[:timeout] || :infinity)
+  def materializer_workers(foreman, opts \\ []), do: call(foreman, :materializer_workers, opts[:timeout] || :infinity)
 
   @doc """
   Wait until the foreman signals that it (and all of it's workers) are
@@ -103,13 +103,13 @@ defmodule Bedrock.Service.Foreman do
 
   Each service is returned as a compact tuple of {service_id, kind, name} where:
   - service_id is the real service identifier from the worker's manifest
-  - kind is :log or :storage
+  - kind is :log or :materializer
   - name is the OTP name atom for the worker
 
   The coordinator will expand this to full service info using node(from) and the provided service_id.
   """
   @spec get_all_running_services(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          {:ok, [{service_id :: String.t(), kind :: :log | :storage, name :: atom()}]}
+          {:ok, [{service_id :: String.t(), kind :: :log | :materializer, name :: atom()}]}
           | {:error, :unavailable | :timeout | :unknown}
   def get_all_running_services(foreman, opts \\ []),
     do: call(foreman, :get_all_running_services, opts[:timeout] || :infinity)

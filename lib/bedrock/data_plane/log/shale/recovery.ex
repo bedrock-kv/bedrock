@@ -1,5 +1,17 @@
 defmodule Bedrock.DataPlane.Log.Shale.Recovery do
-  @moduledoc false
+  @moduledoc """
+  Recovery logic for Shale log servers.
+
+  Supports multi-source recovery for the consistent hashing model. When multiple
+  source logs are provided, transactions are pulled from available sources to
+  establish the version range. Since all logs receive the same version sequence
+  (with personalized content), pulling from any survivor establishes the correct
+  version boundaries.
+
+  For future optimization, true multi-source coalescing could merge transaction
+  streams and filter by shard index, but for now we use the simpler approach
+  of pulling from available sources.
+  """
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
 
   alias Bedrock.DataPlane.Log
@@ -12,16 +24,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   @spec recover_from(
           State.t(),
-          Log.ref(),
+          source_logs :: [Log.ref()],
           first_version :: Bedrock.version(),
           last_version :: Bedrock.version()
         ) ::
           {:ok, State.t()}
           | {:error, :lock_required}
           | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
+          | {:error, :no_source_logs_available}
   def recover_from(t, _, _, _) when t.mode != :locked, do: {:error, :lock_required}
 
-  def recover_from(t, source_log, first_version, last_version) do
+  def recover_from(t, source_logs, first_version, last_version) do
     %{t | mode: :recovering}
     |> abort_all_waiting_pullers()
     |> close_writer()
@@ -29,7 +42,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     |> ensure_active_segment(first_version)
     |> open_writer()
     |> push_sentinel(first_version)
-    |> pull_transactions(source_log, first_version, last_version)
+    |> pull_transactions_from_sources(source_logs, first_version, last_version)
     |> case do
       {:ok, t} ->
         {oldest, last} =
@@ -43,6 +56,61 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
       error ->
         error
+    end
+  end
+
+  @spec pull_transactions_from_sources(
+          t :: State.t(),
+          source_logs :: [Log.ref()],
+          first_version :: Bedrock.version(),
+          last_version :: Bedrock.version()
+        ) ::
+          {:ok, State.t()}
+          | Log.pull_errors()
+          | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
+          | {:error, :no_source_logs_available}
+
+  # No source logs - this is initial recovery (brand new cluster)
+  def pull_transactions_from_sources(t, [], first_version, last_version) when first_version == last_version do
+    {:ok, %{t | oldest_version: first_version, last_version: first_version}}
+  end
+
+  def pull_transactions_from_sources(_t, [], _first_version, _last_version) do
+    # No source logs available and we have transactions to recover
+    {:error, :no_source_logs_available}
+  end
+
+  # Single source log - use original behavior
+  def pull_transactions_from_sources(t, [source_log], first_version, last_version) do
+    pull_transactions(t, source_log, first_version, last_version)
+  end
+
+  # Multiple source logs - try each in order until one succeeds
+  # All logs have the same version sequence, so any survivor works
+  def pull_transactions_from_sources(t, source_logs, first_version, last_version) do
+    try_pull_from_sources(t, source_logs, first_version, last_version, [])
+  end
+
+  defp try_pull_from_sources(_t, [], _first_version, _last_version, errors) do
+    # All sources failed, return the last error
+    case errors do
+      [{:error, reason} | _] -> {:error, reason}
+      _ -> {:error, :no_source_logs_available}
+    end
+  end
+
+  defp try_pull_from_sources(t, [source_log | rest], first_version, last_version, errors) do
+    case pull_transactions(t, source_log, first_version, last_version) do
+      {:ok, t} ->
+        {:ok, t}
+
+      {:error, {:source_log_unavailable, _}} = error ->
+        # This source is unavailable, try next
+        try_pull_from_sources(t, rest, first_version, last_version, [error | errors])
+
+      {:error, _} = error ->
+        # Other error, still try next source
+        try_pull_from_sources(t, rest, first_version, last_version, [error | errors])
     end
   end
 

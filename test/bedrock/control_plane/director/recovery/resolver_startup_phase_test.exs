@@ -55,7 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       {result, next_phase} = ResolverStartupPhase.execute(recovery_attempt, context)
 
       # Should transition to next phase with expected results
-      assert {%{resolvers: resolvers}, Bedrock.ControlPlane.Director.Recovery.TransactionSystemLayoutPhase} =
+      assert {%{resolvers: resolvers}, Bedrock.ControlPlane.Director.Recovery.TopologyPhase} =
                {result, next_phase}
 
       assert length(resolvers) == 2

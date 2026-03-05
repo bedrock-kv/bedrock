@@ -7,7 +7,7 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
   describe "service directory state changes" do
     test "put_service_directory replaces entire service directory" do
       initial_state = %State{
-        service_directory: %{"old" => {:storage, {:old_worker, :old_node@host}}}
+        service_directory: %{"old" => {:materializer, {:old_worker, :old_node@host}}}
       }
 
       new_directory = %{"new" => {:log, {:new_worker, :new_node@host}}}
@@ -19,7 +19,7 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
 
     test "update_service_directory applies updater function" do
       initial_state = %State{
-        service_directory: %{"service_1" => {:storage, {:worker1, :node1@host}}}
+        service_directory: %{"service_1" => {:materializer, {:worker1, :node1@host}}}
       }
 
       updater = fn directory ->

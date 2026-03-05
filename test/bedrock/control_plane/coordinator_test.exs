@@ -1,8 +1,6 @@
 defmodule Bedrock.ControlPlane.CoordinatorTest do
   use ExUnit.Case, async: true
 
-  import Bedrock.Test.Common.GenServerTestHelpers
-
   alias Bedrock.ControlPlane.Coordinator
 
   describe "API functions" do
@@ -17,9 +15,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
                 {:ok, %{coordinators: [:node1], parameters: nil, policies: nil}}
               )
 
-            {:"$gen_call", from, {:update_config, _config}} ->
-              GenServer.reply(from, {:ok, :txn_123})
-
             {:"$gen_call", from, :fetch_transaction_system_layout} ->
               layout = %{
                 id: "layout_1",
@@ -30,14 +25,10 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
                 proxies: [],
                 resolvers: [],
                 logs: %{},
-                storage_teams: [],
                 services: %{}
               }
 
               GenServer.reply(from, {:ok, layout})
-
-            {:"$gen_call", from, {:update_transaction_system_layout, _layout}} ->
-              GenServer.reply(from, {:ok, :txn_456})
 
             {:"$gen_call", from, {:register_services, _services}} ->
               GenServer.reply(from, {:ok, :txn_789})
@@ -68,24 +59,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
       assert is_map(config)
     end
 
-    test "update_config/2 sends properly formatted call message" do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      test_pid = self()
-
-      # Spawn a process that will make the call and we'll capture the message
-      spawn(fn ->
-        Coordinator.update_config(test_pid, config)
-      end)
-
-      # Use our helper macro to assert on the exact call message format
-      assert_call_received({:update_config, %{coordinators: [:node1], parameters: nil, policies: nil}})
-    end
-
-    test "update_config/3 with custom timeout", %{coordinator: coordinator} do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      assert {:ok, :txn_123} = Coordinator.update_config(coordinator, config, 2000)
-    end
-
     test "fetch_transaction_system_layout/1 with default timeout", %{coordinator: coordinator} do
       assert {:ok, %{id: "layout_1", epoch: 1}} =
                Coordinator.fetch_transaction_system_layout(coordinator)
@@ -94,16 +67,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     test "fetch_transaction_system_layout/2 with custom timeout", %{coordinator: coordinator} do
       assert {:ok, layout} = Coordinator.fetch_transaction_system_layout(coordinator, 1500)
       assert is_map(layout)
-    end
-
-    test "update_transaction_system_layout/2 with default timeout", %{coordinator: coordinator} do
-      layout = create_test_layout()
-      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout)
-    end
-
-    test "update_transaction_system_layout/3 with custom timeout", %{coordinator: coordinator} do
-      layout = create_test_layout()
-      assert {:ok, :txn_456} = Coordinator.update_transaction_system_layout(coordinator, layout, 3000)
     end
 
     test "register_services/2 with default timeout", %{coordinator: coordinator} do
@@ -128,7 +91,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "register_node_resources/4 with default timeout", %{coordinator: coordinator} do
       client_pid = self()
-      compact_services = [{:log, :log_server}, {:storage, :storage_server}]
+      compact_services = [{:log, :log_server}, {:materializer, :storage_server}]
       capabilities = [:can_host_logs, :can_host_storage]
 
       assert {:ok, :txn_def} =
@@ -155,13 +118,13 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     test "service_info structure" do
       service_info = {"service_id", :log, {:service_name, :node1}}
       assert {service_id, kind, {name, node}} = service_info
-      assert is_binary(service_id) and kind in [:log, :storage] and is_atom(name) and is_atom(node)
+      assert is_binary(service_id) and kind in [:log, :materializer] and is_atom(name) and is_atom(node)
     end
 
     test "compact_service_info structure" do
-      compact_info = {:storage, :storage_server}
+      compact_info = {:materializer, :storage_server}
       assert {kind, name} = compact_info
-      assert kind in [:log, :storage] and is_atom(name)
+      assert kind in [:log, :materializer] and is_atom(name)
     end
   end
 
@@ -189,9 +152,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
             {:"$gen_call", from, :fetch_config} ->
               GenServer.reply(from, {:error, :unavailable})
 
-            {:"$gen_call", from, {:update_config, _}} ->
-              GenServer.reply(from, {:error, :not_leader})
-
             {:"$gen_call", from, {:register_services, _}} ->
               GenServer.reply(from, {:error, :failed})
           after
@@ -204,11 +164,6 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "handles unavailable error", %{coordinator: coordinator} do
       assert {:error, :unavailable} = Coordinator.fetch_config(coordinator)
-    end
-
-    test "handles not_leader error", %{coordinator: coordinator} do
-      config = %{coordinators: [:node1], parameters: nil, policies: nil}
-      assert {:error, :not_leader} = Coordinator.update_config(coordinator, config)
     end
 
     test "handles failed error", %{coordinator: coordinator} do
@@ -254,7 +209,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
     test "registers gateway with services and capabilities", %{coordinator: coordinator} do
       gateway_pid = self()
-      compact_services = [{:log, :log_1}, {:log, :log_2}, {:storage, :storage_1}]
+      compact_services = [{:log, :log_1}, {:log, :log_2}, {:materializer, :storage_1}]
       capabilities = [:can_host_logs, :can_host_storage, :high_memory]
 
       assert {:ok, {:node_resources_registered, 3, 3}} =
@@ -264,25 +219,10 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
 
   # Helper functions
 
-  defp create_test_layout do
-    %{
-      id: "test_layout",
-      epoch: 2,
-      director: nil,
-      sequencer: nil,
-      rate_keeper: nil,
-      proxies: [],
-      resolvers: [],
-      logs: %{},
-      storage_teams: [],
-      services: %{}
-    }
-  end
-
   defp create_test_services do
     [
       {"service_1", :log, {:log_server, :node1}},
-      {"service_2", :storage, {:storage_server, :node2}}
+      {"service_2", :materializer, {:storage_server, :node2}}
     ]
   end
 
@@ -290,7 +230,7 @@ defmodule Bedrock.ControlPlane.CoordinatorTest do
     [
       {"log_1", :log, {:log_server_1, :node1}},
       {"log_2", :log, {:log_server_2, :node1}},
-      {"storage_1", :storage, {:storage_server_1, :node2}}
+      {"storage_1", :materializer, {:storage_server_1, :node2}}
     ]
   end
 

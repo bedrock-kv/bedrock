@@ -31,10 +31,11 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   def worker_info_for_id(id, path, otp_namer),
     do: %WorkerInfo{id: id, path: path, otp_name: otp_namer.(id), health: :stopped}
 
-  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t()) :: [WorkerInfo.t()]
-  def try_to_start_workers(worker_info, cluster) do
+  @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t(), object_storage :: term()) ::
+          [WorkerInfo.t()]
+  def try_to_start_workers(worker_info, cluster, object_storage) do
     worker_info
-    |> Task.async_stream(&try_to_start_worker(&1, cluster))
+    |> Task.async_stream(&try_to_start_worker(&1, cluster, object_storage))
     |> Enum.map(fn
       {:ok, worker_info} -> worker_info
       {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
@@ -46,16 +47,18 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     @moduledoc false
 
     @type t :: %__MODULE__{}
-    defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error]
+    defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error, :object_storage]
   end
 
-  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t()) :: WorkerInfo.t()
-  def try_to_start_worker(worker_info, cluster) do
+  @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t(), object_storage :: term()) ::
+          WorkerInfo.t()
+  def try_to_start_worker(worker_info, cluster, object_storage) do
     %StartWorkerOp{
       id: worker_info.id,
       path: worker_info.path,
       otp_name: worker_info.otp_name,
-      cluster: cluster
+      cluster: cluster,
+      object_storage: object_storage
     }
     |> load_manifest()
     |> build_child_spec()
@@ -83,21 +86,22 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   end
 
   @spec build_child_spec(StartWorkerOp.t()) :: StartWorkerOp.t()
-  defp build_child_spec(%{error: nil} = op) do
+  def build_child_spec(%{error: nil} = op) do
     [
       cluster: op.cluster,
       path: op.path,
       id: op.id,
       otp_name: op.otp_name,
       foreman: op.cluster.otp_name(:foreman),
-      params: op.manifest.params
+      params: op.manifest.params,
+      object_storage: op.object_storage
     ]
     |> op.manifest.worker.child_spec()
     |> Map.put(:restart, :transient)
     |> then(&%{op | child_spec: &1})
   end
 
-  defp build_child_spec(op), do: op
+  def build_child_spec(op), do: op
 
   @spec start_supervised_child(StartWorkerOp.t()) :: StartWorkerOp.t()
   defp start_supervised_child(%{error: nil} = op) do

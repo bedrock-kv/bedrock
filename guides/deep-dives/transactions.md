@@ -317,7 +317,7 @@ This is the most complex phase involving multiple distributed components working
 1. Build transaction for each log based on tag coverage
 2. Encode transactions for each log server
 3. Push transactions to ALL log servers in parallel
-4. Wait for acknowledgment from ALL log servers
+4. Wait for acknowledgment from ALL log servers (ack sent only after WAL append + fsync)
 5. If any log fails, trigger recovery (fail-fast approach)
 
 **Key Code Locations**:
@@ -325,7 +325,7 @@ This is the most complex phase involving multiple distributed components working
 - Log push coordination: `lib/bedrock/data_plane/commit_proxy/finalization.ex:744`
 - Individual log push: `lib/bedrock/data_plane/log.ex:56`
 
-**Durability Guarantee**: ALL logs must acknowledge before transaction is considered committed.
+**Durability Guarantee**: ALL logs must acknowledge only after WAL append + fsync before transaction is considered committed.
 
 #### Step 4.7: Notify Sequencer of Success
 
@@ -460,7 +460,7 @@ This is the most complex phase involving multiple distributed components working
 ### Durability
 
 - Committed transactions survive system failures
-- ALL log servers must acknowledge before commit confirmation
+- ALL log servers must WAL-fsync acknowledge before commit confirmation
 - Storage servers eventually reflect all committed transactions
 
 ## Client Usage Examples

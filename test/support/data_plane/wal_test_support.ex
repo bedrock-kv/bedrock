@@ -16,6 +16,8 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @doc """
@@ -197,8 +199,9 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   def create_test_transaction(version_int, key_value_pairs) do
     version = Version.from_integer(version_int)
     mutations = Enum.map(key_value_pairs, fn {k, v} -> {:set, k, v} end)
+    shard_index = if mutations == [], do: [], else: [{0, length(mutations)}]
 
-    encoded = Transaction.encode(%{mutations: mutations})
+    encoded = Transaction.encode(%{mutations: mutations, shard_index: shard_index})
     {:ok, with_version} = Transaction.add_commit_version(encoded, version)
     with_version
   end
@@ -215,6 +218,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   @doc """
   Creates a test log server for integration testing.
   """
+  @dialyzer {:nowarn_function, create_test_log: 0}
   @spec create_test_log() :: {:ok, pid()}
   def create_test_log do
     # Use system temp directory with unique subdirectory
@@ -229,6 +233,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
     cluster = Bedrock.Cluster
     otp_name = :"test_log_#{System.unique_integer([:positive])}"
     id = "test_log_#{System.unique_integer([:positive])}"
+    object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(test_dir, "object_storage"))
 
     log_opts = [
       cluster: cluster,
@@ -236,6 +241,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
       id: id,
       foreman: self(),
       path: test_dir,
+      object_storage: object_storage,
       # Start in :running mode
       start_unlocked: true
     ]

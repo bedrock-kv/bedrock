@@ -20,20 +20,20 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
     test "add_services_to_directory/2 adds new services to existing directory" do
       state = %State{
         services: %{
-          "existing-service" => {:storage, {:existing, :node1}}
+          "existing-service" => {:materializer, {:existing, :node1}}
         }
       }
 
       service_infos = [
         {"new-service-1", :log, {:log_1, :node2}},
-        {"new-service-2", :storage, {:storage_2, :node3}}
+        {"new-service-2", :materializer, {:storage_2, :node3}}
       ]
 
       assert %State{
                services: %{
-                 "existing-service" => {:storage, {:existing, :node1}},
+                 "existing-service" => {:materializer, {:existing, :node1}},
                  "new-service-1" => {:log, {:log_1, :node2}},
-                 "new-service-2" => {:storage, {:storage_2, :node3}}
+                 "new-service-2" => {:materializer, {:storage_2, :node3}}
                }
              } = Server.add_services_to_directory(state, service_infos)
     end
@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
     test "add_services_to_directory/2 overwrites existing services with same ID" do
       state = %State{
         services: %{
-          "service-1" => {:storage, {:old_name, :old_node}}
+          "service-1" => {:materializer, {:old_name, :old_node}}
         }
       }
 
@@ -81,7 +81,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
   describe "director initialization with services" do
     test "director accepts services parameter in child_spec" do
       services = %{
-        "test-service" => {:storage, {:test_storage, :node1}}
+        "test-service" => {:materializer, {:test_storage, :node1}}
       }
 
       child_spec = Server.child_spec(base_child_spec_opts() ++ [services: services])

@@ -1,0 +1,46 @@
+// Bootstrap info stored in object storage
+namespace Bedrock.SystemKeys;
+
+table OtpRef {
+  otp_name: string;
+  node: string;
+}
+
+table LogInfo {
+  id: string;
+  otp_ref: OtpRef;
+  shard_tags: [uint];  // Which shards this log serves
+}
+
+table CoordinatorInfo {
+  node: string;
+}
+
+// Cluster configuration parameters
+table ClusterParameters {
+  desired_logs: uint;
+  desired_replication_factor: uint;
+  desired_commit_proxies: uint;
+  desired_coordinators: uint;
+  desired_read_version_proxies: uint;
+  ping_rate_in_hz: uint;
+  retransmission_rate_in_hz: uint;
+  transaction_window_in_ms: uint;
+  empty_transaction_timeout_ms: uint;
+}
+
+// Cluster policies
+table ClusterPolicies {
+  allow_volunteer_nodes_to_join: bool;
+}
+
+table ClusterBootstrap {
+  cluster_id: string;
+  epoch: ulong;
+  logs: [LogInfo];
+  coordinators: [CoordinatorInfo];
+  parameters: ClusterParameters;
+  policies: ClusterPolicies;
+}
+
+root_type ClusterBootstrap;

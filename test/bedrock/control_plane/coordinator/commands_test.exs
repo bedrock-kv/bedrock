@@ -5,7 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.CommandsTest do
 
   # Test data
   @valid_services [
-    {"service_1", :storage, {:worker1, :node1@host}},
+    {"service_1", :materializer, {:worker1, :node1@host}},
     {"service_2", :log, {:worker2, :node2@host}}
   ]
 
@@ -19,17 +19,17 @@ defmodule Bedrock.ControlPlane.Coordinator.CommandsTest do
 
     test "accepts valid service info format" do
       assert {:register_services, _} =
-               Commands.register_services([{"svc", :storage, {:worker, :node@host}}])
+               Commands.register_services([{"svc", :materializer, {:worker, :node@host}}])
     end
 
     test "rejects invalid service info with descriptive errors" do
       invalid_services = [
-        {[:invalid_id, :storage, {:worker, :node@host}], "service ID must be string"},
+        {[:invalid_id, :materializer, {:worker, :node@host}], "service ID must be string"},
         {["service", "invalid_kind", {:worker, :node@host}], "kind must be atom"},
-        {["service", :storage, "invalid_ref"], "worker ref must be {name, node} tuple"},
-        {["service", :storage, {"invalid_name", :node@host}], "worker name must be atom"},
-        {["service", :storage, {:worker, "invalid_node"}], "worker node must be atom"},
-        {["service", :storage], "incomplete service tuple"}
+        {["service", :materializer, "invalid_ref"], "worker ref must be {name, node} tuple"},
+        {["service", :materializer, {"invalid_name", :node@host}], "worker name must be atom"},
+        {["service", :materializer, {:worker, "invalid_node"}], "worker node must be atom"},
+        {["service", :materializer], "incomplete service tuple"}
       ]
 
       for {service_list, _description} <- invalid_services do

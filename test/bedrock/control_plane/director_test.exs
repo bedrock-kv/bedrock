@@ -64,7 +64,7 @@ defmodule Bedrock.ControlPlane.DirectorTest do
                Director.request_worker_creation(director, :test_node, "worker_1", :log)
 
       assert {:ok, %{id: "test", otp_name: :test, kind: :log, pid: _}} =
-               Director.request_worker_creation(director, :test_node, "worker_1", :storage, 5000)
+               Director.request_worker_creation(director, :test_node, "worker_1", :materializer, 5000)
     end
 
     test "notify_services_registered/2 sends service registration notification", %{
@@ -72,7 +72,7 @@ defmodule Bedrock.ControlPlane.DirectorTest do
     } do
       service_infos = [
         {"service_1", :log, {:log_server_1, :node1}},
-        {"service_2", :storage, {:storage_server_1, :node1}}
+        {"service_2", :materializer, {:storage_server_1, :node1}}
       ]
 
       result = Director.notify_services_registered(director, service_infos)
@@ -102,11 +102,11 @@ defmodule Bedrock.ControlPlane.DirectorTest do
       }
 
       assert %{id: id, otp_name: name, kind: kind, pid: pid} = info
-      assert is_binary(id) and is_atom(name) and kind in [:log, :storage] and is_pid(pid)
+      assert is_binary(id) and is_atom(name) and kind in [:log, :materializer] and is_pid(pid)
     end
 
     test "running_service_info_by_id structure supports lookup" do
-      info = %{id: "test_service", otp_name: :test_service, kind: :storage, pid: self()}
+      info = %{id: "test_service", otp_name: :test_service, kind: :materializer, pid: self()}
       by_id = %{"test_service" => info}
 
       assert %{"test_service" => ^info} = by_id

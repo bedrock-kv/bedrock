@@ -22,8 +22,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       epoch: 1,
       node_capabilities: node_capabilities,
       old_transaction_system_layout: %{
-        logs: %{},
-        storage_teams: []
+        logs: %{}
       },
       config: %{
         coordinators: [],
@@ -34,7 +33,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         },
         transaction_system_layout: %{
           logs: %{},
-          storage_teams: [],
           services: %{}
         }
       },
@@ -235,19 +233,18 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "existing cluster stalls unable to meet log quorum when logs unavailable" do
+    test "existing cluster stalls when sequencer fails to start" do
       recovery_attempt = create_existing_cluster_recovery_attempt()
 
       context =
         create_test_context(
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
+            logs: %{"existing_log_1" => [0, 100]}
           }
         )
 
-      # With selective locking, we now fail more specifically when trying to create new workers
-      assert {{:stalled, {:insufficient_replication, [0]}}, _stalled_attempt} =
+      # Without full mocking, recovery fails at sequencer start.
+      assert {{:error, {:failed_to_start, :sequencer, _, _}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -296,8 +293,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
             services: %{
               "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
               "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage},
-              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :storage}
+              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
+              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
             }
           }
         })
@@ -323,9 +320,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       coordinator_services = %{
         "log_worker_1" => {:log, {:log_worker_1, :node1}},
         "log_worker_2" => {:log, {:log_worker_2, :node1}},
-        "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
-        "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
-        "storage_worker_3" => {:storage, {:storage_worker_3, :node1}}
+        "storage_worker_1" => {:materializer, {:storage_worker_1, :node1}},
+        "storage_worker_2" => {:materializer, {:storage_worker_2, :node1}},
+        "storage_worker_3" => {:materializer, {:storage_worker_3, :node1}}
       }
 
       context = create_coordinator_format_context(coordinator_services)
@@ -338,33 +335,56 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "recovery with coordinator-format services handles existing cluster (regression test)" do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
-        logs: %{"existing_log_1" => [0, 100]},
-        storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}]
+        logs: %{"existing_log_1" => [0, 100]}
       }
+
+      durable_version = Version.from_integer(100)
 
       recovery_attempt =
         existing_cluster_recovery()
         |> Map.put(:epoch, 2)
+        |> Map.put(:durable_version, durable_version)
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
+      # Include materializer so MaterializerBootstrapPhase passes
+      materializer_pid = spawn(fn -> Process.sleep(5000) end)
+
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:storage, {:storage_worker_1, :node1}}
+        "storage_1" => {:materializer, {:storage_worker_1, :node1}},
+        "metadata_materializer" => {:materializer, {:materializer, :node1}}
       }
 
       context =
-        create_coordinator_format_context(coordinator_services,
-          old_transaction_system_layout: old_layout
+        coordinator_services
+        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
+        |> Map.update!(
+          :available_services,
+          &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
         )
+        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
+          {:ok, %{durable_version: durable_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+        end)
 
-      # Should stall at insufficient replication but complete service setup first
-      assert {{:stalled, {:insufficient_replication, [0]}}, stalled_attempt} =
-               Recovery.run_recovery_attempt(recovery_attempt, context)
+      # Stalls at TopologyPhase validation due to no resolvers.
+      log =
+        capture_log(fn ->
+          assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
+                   Recovery.run_recovery_attempt(recovery_attempt, context)
 
-      # Verify service tracking was populated during recovery
-      assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
-      assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+          # Verify service tracking was populated during recovery
+          assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
+          assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+        end)
+
+      # Materializer bootstrap phase should log catchup completion
+      assert log =~ "Materializer caught up to version"
     end
 
     test "newer epoch exists returns error instead of stall" do
@@ -375,15 +395,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       context =
         [
           old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => [0, 100]},
-            storage_teams: [%{tag: 0, key_range: {"", <<0xFF, 0xFF>>}, storage_ids: ["existing_storage_1"]}]
+            logs: %{"existing_log_1" => [0, 100]}
           }
         ]
         |> create_test_context()
         |> with_multiple_nodes()
         |> Map.put(:available_services, %{
           "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-          "existing_storage_1" => {:storage, {:storage_worker_1, :node1}}
+          "existing_storage_1" => {:materializer, {:storage_worker_1, :node1}}
         })
         |> Map.put(:lock_service_fn, fn _service, _epoch ->
           {:error, :newer_epoch_exists}
@@ -429,17 +448,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     })
     |> with_storage_recovery_info(%{
       "existing_storage_1" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       },
       "storage_worker_2" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       },
       "storage_worker_3" => %{
-        kind: :storage,
+        kind: :materializer,
         durable_version: Version.from_integer(95),
         oldest_durable_version: Version.zero()
       }
@@ -510,12 +529,12 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   defp with_available_storage_services(context) do
     storage_services = %{
-      "storage_worker_1" => {:storage, {:storage_worker_1, :node1}},
-      "storage_worker_2" => {:storage, {:storage_worker_2, :node1}},
-      "storage_worker_3" => {:storage, {:storage_worker_3, :node1}},
-      "storage_worker_4" => {:storage, {:storage_worker_4, :node1}},
-      "storage_worker_5" => {:storage, {:storage_worker_5, :node1}},
-      "storage_worker_6" => {:storage, {:storage_worker_6, :node1}}
+      "storage_worker_1" => {:materializer, {:storage_worker_1, :node1}},
+      "storage_worker_2" => {:materializer, {:storage_worker_2, :node1}},
+      "storage_worker_3" => {:materializer, {:storage_worker_3, :node1}},
+      "storage_worker_4" => {:materializer, {:storage_worker_4, :node1}},
+      "storage_worker_5" => {:materializer, {:storage_worker_5, :node1}},
+      "storage_worker_6" => {:materializer, {:storage_worker_6, :node1}}
     }
 
     Map.update(context, :available_services, storage_services, &Map.merge(&1, storage_services))

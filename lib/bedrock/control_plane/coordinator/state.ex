@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
 
-  @type leader_startup_state :: :not_leader | :leader_waiting_consensus | :leader_ready | :recovery_failed
+  @type leader_startup_state :: :not_leader | :leader_ready | :recovery_failed
 
   @type t :: %__MODULE__{
           cluster: module(),

@@ -13,38 +13,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   @type ack_fn :: (term() -> :ok)
   @type waiting_list :: %{Raft.transaction_id() => ack_fn()}
 
-  @spec durably_write_config(State.t(), Commands.command(), ack_fn()) ::
-          {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
-  def durably_write_config(t, command, ack_fn) do
-    case Raft.add_transaction(t.raft, command) do
-      {:ok, raft, txn_id} ->
-        {:ok,
-         t
-         |> set_raft(raft)
-         |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
-
-      {:error, _reason} = error ->
-        ack_fn.(error)
-        error
-    end
-  end
-
-  @spec durably_write_transaction_system_layout(State.t(), Commands.command(), ack_fn()) ::
-          {:ok, State.t()} | {:error, :not_leader} | {:error, :director_not_set}
-  def durably_write_transaction_system_layout(t, command, ack_fn) do
-    case Raft.add_transaction(t.raft, command) do
-      {:ok, raft, txn_id} ->
-        {:ok,
-         t
-         |> set_raft(raft)
-         |> wait_for_durable_write_to_complete(ack_fn, txn_id)}
-
-      {:error, _reason} = error ->
-        ack_fn.(error)
-        error
-    end
-  end
-
   @spec durably_write_service_registration(State.t(), Commands.command(), ack_fn()) ::
           {:ok, State.t()} | {:error, :not_leader}
   def durably_write_service_registration(t, command, ack_fn) do
@@ -92,16 +60,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   end
 
   @spec process_command(State.t(), Commands.command()) :: State.t()
-  def process_command(t, {:update_config, %{config: config}}) do
-    put_config(t, config)
-  end
-
-  def process_command(t, {:update_transaction_system_layout, %{transaction_system_layout: transaction_system_layout}}) do
-    t
-    |> put_transaction_system_layout(transaction_system_layout)
-    |> put_epoch(transaction_system_layout.epoch)
-  end
-
   def process_command(t, {:end_epoch, _previous_epoch}) do
     DirectorManagement.shutdown_director_if_running(t)
   end

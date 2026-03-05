@@ -56,8 +56,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhaseTest do
       recovery_attempt = create_recovery_attempt(TestCluster, 42, {10, 100})
       context = %{start_supervised_fn: start_supervised_fn}
 
-      # Should transition to next phase with sequencer set
-      assert {%{sequencer: ^sequencer_pid}, Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase} =
+      # Should transition to MaterializerBootstrapPhase with sequencer set
+      assert {%{sequencer: ^sequencer_pid}, Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase} =
                SequencerStartupPhase.execute(recovery_attempt, context)
 
       # Verify the child spec passed to start_supervised_fn

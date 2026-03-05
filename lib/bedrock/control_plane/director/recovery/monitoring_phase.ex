@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
     service_pids =
       layout.services
-      |> Enum.filter(fn {_service_id, service} -> service.kind != :storage end)
+      |> Enum.filter(fn {_service_id, service} -> service.kind != :materializer end)
       |> Enum.map(fn {_service_id, %{status: {:up, pid}}} -> pid end)
 
     Enum.concat([

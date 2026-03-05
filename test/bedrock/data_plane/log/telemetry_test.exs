@@ -113,15 +113,15 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
   describe "trace_recover_from/3" do
     test "emits telemetry event with recovery details" do
-      source_log = :some_log_ref
+      source_logs = [:some_log_ref, :another_log_ref]
       first_version = Version.from_integer(0)
       last_version = Version.from_integer(100)
 
-      assert :ok = Telemetry.trace_recover_from(source_log, first_version, last_version)
+      assert :ok = Telemetry.trace_recover_from(source_logs, first_version, last_version)
 
       assert_received {:telemetry_event, [:bedrock, :log, :recover_from], %{},
                        %{
-                         source_log: :some_log_ref,
+                         source_logs: [:some_log_ref, :another_log_ref],
                          first_version: ^first_version,
                          last_version: ^last_version
                        }}
@@ -129,15 +129,15 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
 
     test "includes trace metadata" do
       Telemetry.trace_metadata(%{recovery_id: "rec1"})
-      source_log = :log
+      source_logs = [:log1, :log2]
       first_version = Version.zero()
       last_version = Version.from_integer(50)
 
-      assert :ok = Telemetry.trace_recover_from(source_log, first_version, last_version)
+      assert :ok = Telemetry.trace_recover_from(source_logs, first_version, last_version)
 
       assert_received {:telemetry_event, [:bedrock, :log, :recover_from], %{}, metadata}
       assert metadata.recovery_id == "rec1"
-      assert metadata.source_log == :log
+      assert metadata.source_logs == [:log1, :log2]
       assert metadata.first_version == first_version
       assert metadata.last_version == last_version
     end

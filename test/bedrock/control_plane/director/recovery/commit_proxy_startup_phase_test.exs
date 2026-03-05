@@ -163,12 +163,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
       # Extract and validate all instances from the child specs
       instances =
         Enum.map(captured_specs, fn child_spec ->
-          # Pattern match the entire expected structure
+          # Pattern match the entire expected structure (10-element init tuple)
           assert %{
                    id: {Server, TestCluster, 42, instance},
                    start:
                      {GenServer, :start_link,
-                      [Server, {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token"}]}
+                      [
+                        Server,
+                        {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token", _sequencer,
+                         _resolver_layout, _routing_data}
+                      ]}
                  } = child_spec
 
           instance
@@ -206,7 +210,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
                %{
                  start:
                    {GenServer, :start_link,
-                    [_, {_cluster, _director, _epoch, _max_latency, _max_per_batch, 2500, _lock_token}]}
+                    [
+                      _,
+                      {_cluster, _director, _epoch, _max_latency, _max_per_batch, 2500, _lock_token, _sequencer,
+                       _resolver_layout, _routing_data}
+                    ]}
                }
              ] = Agent.get(agent, & &1)
     end

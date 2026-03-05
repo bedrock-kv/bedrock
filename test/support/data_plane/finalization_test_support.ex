@@ -3,6 +3,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   Shared test utilities and fixtures for finalization tests.
   """
 
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -99,10 +100,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
       logs: %{"log_1" => [0, 1]},
       services: %{
         "log_1" => %{kind: :log, status: {:up, log_server}}
-      },
-      storage_teams: [
-        %{tag: 0, key_range: {<<>>, <<0xFF, 0xFF>>}, storage_ids: ["storage_1"]}
-      ]
+      }
     }
   end
 
@@ -125,14 +123,59 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   @doc """
-  Creates sample storage teams configuration for testing.
+  Builds routing data from a transaction system layout.
+  Used by finalize_batch opts.
   """
-  def sample_storage_teams do
-    [
-      %{tag: 0, key_range: {<<"a">>, <<"m">>}, storage_ids: ["storage_1"]},
-      %{tag: 1, key_range: {<<"m">>, <<"z">>}, storage_ids: ["storage_2"]},
-      %{tag: 2, key_range: {<<"z">>, <<0xFF, 0xFF>>}, storage_ids: ["storage_3"]}
-    ]
+  def build_routing_data(transaction_system_layout) do
+    logs = Map.get(transaction_system_layout, :logs, %{})
+    services = Map.get(transaction_system_layout, :services, %{})
+    shard_layout = Map.get(transaction_system_layout, :shard_layout, default_shard_layout())
+
+    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
+
+    # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
+    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
+      :ets.insert(table, {end_key, tag})
+    end)
+
+    log_map =
+      logs
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    # Build log_services from services map - extract log refs
+    log_services =
+      logs
+      |> Map.keys()
+      |> Enum.reduce(%{}, fn log_id, acc ->
+        case Map.get(services, log_id) do
+          %{kind: :log, status: {:up, pid}} when is_pid(pid) ->
+            # For test purposes, store pid as service ref
+            Map.put(acc, log_id, pid)
+
+          %{kind: :log, status: {:up, {name, node}}} ->
+            Map.put(acc, log_id, {name, node})
+
+          _ ->
+            acc
+        end
+      end)
+
+    replication_factor = max(1, map_size(logs))
+
+    %RoutingData{
+      shard_table: table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    }
+  end
+
+  # Default shard layout covering entire keyspace with a single shard (tag 0)
+  defp default_shard_layout do
+    %{<<0xFF, 0xFF>> => {0, <<>>}}
   end
 
   # Helper function to create test resolver task

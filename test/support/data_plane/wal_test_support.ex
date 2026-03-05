@@ -218,6 +218,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   @doc """
   Creates a test log server for integration testing.
   """
+  @dialyzer {:nowarn_function, create_test_log: 0}
   @spec create_test_log() :: {:ok, pid()}
   def create_test_log do
     # Use system temp directory with unique subdirectory

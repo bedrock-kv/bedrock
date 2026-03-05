@@ -88,19 +88,23 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
     demux_pid = self()
 
+    registry_name = :"shard_server_test_registry_#{:erlang.unique_integer([:positive])}"
+    {:ok, _} = Registry.start_link(keys: :unique, name: registry_name)
+
     {:ok, pid} =
       ShardServer.start_link(
         shard_id: 0,
         demux: demux_pid,
         cluster: "test-cluster",
         object_storage: backend,
+        registry: registry_name,
         # Large gap to prevent flushing in most tests
         version_gap: 1_000_000
       )
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
 
-    %{server: pid, backend: backend, demux: demux_pid, test_dir: test_dir}
+    %{server: pid, backend: backend, demux: demux_pid, test_dir: test_dir, registry: registry_name}
   end
 
   defp make_slice(mutations) do
@@ -111,13 +115,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "start_link/1" do
-    test "starts successfully with required options", %{backend: backend} do
+    test "starts successfully with required options", %{backend: backend, registry: registry} do
       {:ok, pid} =
         ShardServer.start_link(
           shard_id: 99,
           demux: self(),
           cluster: "test",
-          object_storage: backend
+          object_storage: backend,
+          registry: registry
         )
 
       assert Process.alive?(pid)
@@ -212,7 +217,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
                ShardServer.pull(server, Version.zero(), timeout: 100, limit: 10)
     end
 
-    test "replays persisted chunks from object storage using version binaries", %{test_dir: test_dir} do
+    test "replays persisted chunks from object storage using version binaries", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 700
 
@@ -222,6 +230,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100
         )
 
@@ -244,6 +253,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100
         )
 
@@ -264,7 +274,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "flushing" do
-    test "flushes when version gap exceeded", %{test_dir: test_dir} do
+    test "flushes when version gap exceeded", %{test_dir: test_dir, registry: registry} do
       # Create a server with small version gap for flush testing
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
 
@@ -274,6 +284,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           # Small gap for testing flushing
           version_gap: 100
         )
@@ -299,7 +310,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert durable_version >= v1000
     end
 
-    test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir} do
+    test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir, registry: registry} do
       backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 200)
       shard_id = :erlang.unique_integer([:positive]) + 200
 
@@ -309,6 +320,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100
         )
 
@@ -324,7 +336,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert v1200 == GenServer.call(server, :latest_version, 50)
     end
 
-    test "durable watermark advances only after confirmed persistence", %{test_dir: test_dir} do
+    test "durable watermark advances only after confirmed persistence", %{test_dir: test_dir, registry: registry} do
       backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 150)
       shard_id = :erlang.unique_integer([:positive]) + 300
 
@@ -334,6 +346,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100
         )
 
@@ -354,7 +367,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "persistence telemetry" do
-    test "emits write success and watermark advancement telemetry", %{test_dir: test_dir} do
+    test "emits write success and watermark advancement telemetry", %{test_dir: test_dir, registry: registry} do
       test_pid = self()
       shard_id = :erlang.unique_integer([:positive]) + 400
       handler_id = "shard-persistence-success-#{shard_id}"
@@ -380,6 +393,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100
         )
 
@@ -401,7 +415,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert wm_meas.buffered_transactions >= 0
     end
 
-    test "emits retry telemetry for transient object write failures", %{test_dir: test_dir} do
+    test "emits retry telemetry for transient object write failures", %{test_dir: test_dir, registry: registry} do
       test_pid = self()
       shard_id = :erlang.unique_integer([:positive]) + 500
       handler_id = "shard-persistence-retry-#{shard_id}"
@@ -432,6 +446,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
+          registry: registry,
           version_gap: 100,
           persistence_retry_backoff_ms: 1,
           persistence_retry_tick_ms: 1
@@ -461,7 +476,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "waiting/notification" do
-    test "notifies waiting pullers when data arrives", %{test_dir: test_dir} do
+    test "notifies waiting pullers when data arrives", %{test_dir: test_dir, registry: registry} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
 
       {:ok, server} =
@@ -470,6 +485,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test",
           object_storage: backend,
+          registry: registry,
           # High gap to prevent flushing
           version_gap: 1_000_000
         )

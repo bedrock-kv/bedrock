@@ -123,7 +123,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexDatabase do
           new_durable_version :: Bedrock.version(),
           previous_durable_version :: Bedrock.version(),
           collected_pages :: [%{Page.id() => {Page.t(), Page.id()}}]
-        ) :: t()
+        ) ::
+          {:ok, t()}
+          | {:error, {:index_file_write_failed, File.posix()}}
+          | {:error, {:index_file_truncate_failed, File.posix()}}
+          | {:error, {:index_file_sync_failed, File.posix()}}
   def flush(index_db, new_durable_version, previous_durable_version, collected_pages) do
     pages_map = merge_collected_pages(collected_pages)
     current_block_empty = map_size(pages_map) == 0
@@ -149,22 +153,44 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexDatabase do
     write_offset = if mode == :overwrite, do: index_db.last_block_offset, else: index_db.file_offset
     new_offset = write_offset + :erlang.iolist_size(record)
 
-    :ok = :file.pwrite(index_db.file, write_offset, record)
-
-    # Truncate file when overwriting to remove any stale data
-    if mode == :overwrite do
-      {:ok, _} = :file.position(index_db.file, new_offset)
-      :ok = :file.truncate(index_db.file)
+    with :ok <- write_record_bytes(index_db.file, write_offset, record),
+         :ok <- maybe_truncate(index_db.file, mode, new_offset),
+         :ok <- sync_file(index_db.file) do
+      {:ok,
+       %{
+         index_db
+         | file_offset: new_offset,
+           durable_version: new_version,
+           last_block_empty: current_block_empty,
+           last_block_offset: write_offset,
+           last_block_previous_version: previous_version
+       }}
     end
+  end
 
-    %{
-      index_db
-      | file_offset: new_offset,
-        durable_version: new_version,
-        last_block_empty: current_block_empty,
-        last_block_offset: write_offset,
-        last_block_previous_version: previous_version
-    }
+  defp maybe_truncate(_file, :append, _new_offset), do: :ok
+
+  defp maybe_truncate(file, :overwrite, new_offset) do
+    with {:ok, _} <- :file.position(file, new_offset),
+         :ok <- :file.truncate(file) do
+      :ok
+    else
+      {:error, posix} -> {:error, {:index_file_truncate_failed, posix}}
+    end
+  end
+
+  defp write_record_bytes(file, write_offset, record) do
+    case :file.pwrite(file, write_offset, record) do
+      :ok -> :ok
+      {:error, posix} -> {:error, {:index_file_write_failed, posix}}
+    end
+  end
+
+  defp sync_file(file) do
+    case :file.sync(file) do
+      :ok -> :ok
+      {:error, posix} -> {:error, {:index_file_sync_failed, posix}}
+    end
   end
 
   defp build_record(version, previous_version, pages_map) do

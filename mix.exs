@@ -72,7 +72,11 @@ defmodule Bedrock.MixProject do
       {:bedrock_raft, "~> 0.9"},
       {:flatbuffer, "~> 0.3"},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.2"}
+      {:telemetry, "~> 1.2"},
+      {:ex_aws, "~> 2.5"},
+      {:ex_aws_s3, "~> 2.5"},
+      {:hackney, "~> 1.18"},
+      {:sweet_xml, "~> 0.7"}
     ])
   end
 
@@ -85,6 +89,7 @@ defmodule Bedrock.MixProject do
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
         {:mox, "~> 1.1", only: :test},
+        {:minio_server, "~> 0.4.0", only: [:dev, :test]},
         {:excoveralls, "~> 0.18", only: :test},
         {:benchee, "~> 1.3", only: :dev},
         {:ex_doc, "~> 0.39", only: :dev, runtime: false, warn_if_outdated: true},
@@ -95,7 +100,14 @@ defmodule Bedrock.MixProject do
   defp docs do
     [
       main: "Bedrock",
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "guides/durability-foundation.md",
+        "guides/durability-profile.md",
+        "guides/object-storage-s3.md",
+        "guides/async-persistence-queue.md",
+        "guides/distributed-durability-tests.md"
+      ]
     ]
   end
 

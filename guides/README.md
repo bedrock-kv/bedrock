@@ -37,3 +37,4 @@ For comprehensive technical coverage:
 ## Reference
 
 - **[Glossary](glossary.md)** - Complete terminology reference with cross-linked definitions
+- **[Durability Foundation](durability-foundation.md)** - Consolidated S3 durability architecture, operations, and migration guidance

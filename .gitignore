@@ -43,3 +43,7 @@ CLAUDE.md
 AGENTS.md
 .beads
 .gitattributes
+
+# Local env/tooling
+.tool-versions
+minio/

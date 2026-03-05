@@ -16,6 +16,16 @@ defmodule Bedrock.ObjectStorage do
   - `get_with_version/2` - Retrieve an object with version token
   - `put_if_version_matches/5` - Store an object only if version matches (conditional update)
 
+  ## Canonical Error Reasons
+
+  Backends may return storage-specific errors. The public API normalizes known
+  errors to canonical reasons:
+
+  - `:not_found`
+  - `:already_exists`
+  - `:version_mismatch`
+  - `:access_denied`
+
   ## Path Structure
 
   Object keys follow a hierarchical structure:
@@ -35,7 +45,13 @@ defmodule Bedrock.ObjectStorage do
   @type data :: iodata()
   @type content_type :: String.t()
   @type opts :: keyword()
-  @type error :: {:error, :not_found | :already_exists | :access_denied | term()}
+  @type error_reason ::
+          :not_found
+          | :already_exists
+          | :version_mismatch
+          | :access_denied
+          | term()
+  @type error :: {:error, error_reason()}
   @type backend :: {module(), keyword()}
   @type version_token :: String.t()
 
@@ -153,6 +169,21 @@ defmodule Bedrock.ObjectStorage do
             ) :: :ok | error()
 
   @doc """
+  Normalizes backend-specific error reasons to canonical ObjectStorage reasons.
+
+  Canonical reasons:
+
+  - `:not_found`
+  - `:already_exists`
+  - `:version_mismatch`
+  - `:access_denied`
+  """
+  @spec normalize_error({:error, term()}) :: error()
+  def normalize_error({:error, reason}) do
+    {:error, normalize_reason(reason)}
+  end
+
+  @doc """
   Creates an opaque backend reference for the given module and config.
 
   ## Examples
@@ -171,7 +202,10 @@ defmodule Bedrock.ObjectStorage do
   @spec put(backend :: {module(), keyword()}, key :: key(), data :: data(), opts :: opts()) ::
           :ok | error()
   def put({module, config}, key, data, opts \\ []) do
-    module.put(config, key, data, opts)
+    case module.put(config, key, data, opts) do
+      :ok -> :ok
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
 
   @doc """
@@ -180,7 +214,10 @@ defmodule Bedrock.ObjectStorage do
   @spec get(backend :: {module(), keyword()}, key :: key()) ::
           {:ok, data()} | error()
   def get({module, config}, key) do
-    module.get(config, key)
+    case module.get(config, key) do
+      {:ok, data} -> {:ok, data}
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
 
   @doc """
@@ -189,7 +226,10 @@ defmodule Bedrock.ObjectStorage do
   @spec delete(backend :: {module(), keyword()}, key :: key()) ::
           :ok | error()
   def delete({module, config}, key) do
-    module.delete(config, key)
+    case module.delete(config, key) do
+      :ok -> :ok
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
 
   @doc """
@@ -212,7 +252,10 @@ defmodule Bedrock.ObjectStorage do
         ) ::
           :ok | error()
   def put_if_not_exists({module, config}, key, data, opts \\ []) do
-    module.put_if_not_exists(config, key, data, opts)
+    case module.put_if_not_exists(config, key, data, opts) do
+      :ok -> :ok
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
 
   @doc """
@@ -221,7 +264,10 @@ defmodule Bedrock.ObjectStorage do
   @spec get_with_version(backend :: {module(), keyword()}, key :: key()) ::
           {:ok, data(), version_token()} | error()
   def get_with_version({module, config}, key) do
-    module.get_with_version(config, key)
+    case module.get_with_version(config, key) do
+      {:ok, data, version_token} -> {:ok, data, version_token}
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
 
   @doc """
@@ -235,6 +281,22 @@ defmodule Bedrock.ObjectStorage do
           opts :: opts()
         ) :: :ok | error()
   def put_if_version_matches({module, config}, key, version_token, data, opts \\ []) do
-    module.put_if_version_matches(config, key, version_token, data, opts)
+    case module.put_if_version_matches(config, key, version_token, data, opts) do
+      :ok -> :ok
+      {:error, _reason} = error -> normalize_error(error)
+    end
   end
+
+  defp normalize_reason(:enoent), do: :not_found
+  defp normalize_reason(:enotdir), do: :not_found
+  defp normalize_reason(:eexist), do: :already_exists
+  defp normalize_reason(:eacces), do: :access_denied
+  defp normalize_reason(:eperm), do: :access_denied
+  defp normalize_reason({:http_error, 401}), do: :access_denied
+  defp normalize_reason({:http_error, 403}), do: :access_denied
+  defp normalize_reason({:http_error, 404}), do: :not_found
+  defp normalize_reason({:http_error, 409}), do: :already_exists
+  defp normalize_reason({:http_error, 412}), do: :version_mismatch
+  defp normalize_reason({:precondition_failed, _reason}), do: :version_mismatch
+  defp normalize_reason(reason), do: reason
 end

@@ -2,7 +2,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Shale.Pushing
+  alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
@@ -52,6 +54,38 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
       # Transaction should be in pending pushes
       assert Map.has_key?(new_state.pending_pushes, Version.from_integer(10))
+    end
+
+    test "acknowledges sync failure as push error" do
+      path = Path.join(System.tmp_dir!(), "shale_push_sync_fail_#{System.unique_integer([:positive])}.log")
+      File.write!(path, :binary.copy(<<0>>, 1024))
+
+      on_exit(fn ->
+        File.rm(path)
+      end)
+
+      assert {:ok, writer} = Writer.open(path, sync_fun: fn _fd -> {:error, :eio} end)
+
+      state = %State{
+        mode: :ready,
+        last_version: Version.from_integer(0),
+        pending_pushes: %{},
+        writer: writer,
+        active_segment: %Segment{path: path, min_version: Version.zero(), transactions: []}
+      }
+
+      transaction = TransactionTestSupport.new_log_transaction(0, %{"a" => "1"})
+      caller = self()
+
+      ack_fn = fn result ->
+        send(caller, {:ack_result, result})
+        :ok
+      end
+
+      assert {:error, :eio} = Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
+      assert_receive {:ack_result, {:error, :eio}}
+
+      assert :ok = Writer.close(writer)
     end
   end
 

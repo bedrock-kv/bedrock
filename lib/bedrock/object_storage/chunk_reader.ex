@@ -43,6 +43,16 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
           shard_tag: String.t()
         }
 
+  defmodule ReadError do
+    @moduledoc false
+    defexception [:reason, :key]
+
+    @impl true
+    def message(%__MODULE__{reason: reason, key: key}) do
+      "failed to read chunk #{inspect(key)}: #{inspect(reason)}"
+    end
+  end
+
   defstruct [:backend, :shard_tag]
 
   @doc """
@@ -76,16 +86,23 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   Lists chunk metadata (key and version range) without reading full chunks.
 
   Returns a lazy stream of `{key, min_version, max_version}` tuples.
-  Requires reading the header of each chunk.
+  Requires reading the header of each chunk. By default, header decode failures
+  raise `ChunkReader.ReadError` to avoid silent replay gaps.
+
+  ## Options
+
+  - `:on_error` - `:raise` (default) or `:skip`
   """
   @spec list_chunk_metadata(t(), keyword()) :: Enumerable.t()
   def list_chunk_metadata(%__MODULE__{} = reader, opts \\ []) do
+    on_error = Keyword.get(opts, :on_error, :raise)
+
     reader
-    |> list_chunks(opts)
+    |> list_chunks(Keyword.delete(opts, :on_error))
     |> Stream.map(fn key ->
       case read_chunk_header(reader, key) do
         {:ok, header} -> {key, header.min_version, header.max_version}
-        {:error, _} -> nil
+        {:error, reason} -> handle_chunk_error(key, reason, on_error)
       end
     end)
     |> Stream.reject(&is_nil/1)
@@ -292,9 +309,8 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
             find_starting_chunk(reader, rest, target_version)
         end
 
-      {:error, _} ->
-        # Skip failed chunk, try next
-        find_starting_chunk(reader, rest, target_version)
+      {:error, reason} ->
+        raise ReadError, reason: reason, key: key
     end
   end
 
@@ -318,9 +334,8 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
         transactions = Chunk.extract_transactions(chunk)
         read_next_transaction({reader, rest_chunks, transactions, limit})
 
-      {:error, _} ->
-        # Skip failed chunk
-        read_next_transaction({reader, rest_chunks, [], limit})
+      {:error, reason} ->
+        raise ReadError, reason: reason, key: key
     end
   end
 
@@ -331,9 +346,14 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
         transactions = Chunk.extract_transactions(chunk)
         read_next_transaction({reader, rest_chunks, transactions, limit})
 
-      {:error, _} ->
-        # Skip failed chunk
-        read_next_transaction({reader, rest_chunks, [], limit})
+      {:error, reason} ->
+        raise ReadError, reason: reason, key: key
     end
+  end
+
+  defp handle_chunk_error(_key, _reason, :skip), do: nil
+
+  defp handle_chunk_error(key, reason, :raise) do
+    raise ReadError, reason: reason, key: key
   end
 end

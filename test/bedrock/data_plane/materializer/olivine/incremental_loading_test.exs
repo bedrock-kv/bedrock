@@ -38,6 +38,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
     with_version
   end
 
+  defp data_size_in_bytes({data_db, _index_db}), do: data_db.file_offset
+
   describe "incremental loading edge cases" do
     @tag :tmp_dir
 
@@ -96,7 +98,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_v1,
           index_manager_v1.current_version,
           Database.durable_version(database_v1),
-          1000,
+          data_size_in_bytes(database_v1),
           [modified_pages_v1]
         )
 
@@ -107,7 +109,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_after_v1,
           index_manager_v2.current_version,
           index_manager_v1.current_version,
-          1000,
+          data_size_in_bytes(database_after_v1),
           [modified_pages_v2]
         )
 
@@ -118,7 +120,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_after_v2,
           index_manager_v3.current_version,
           index_manager_v2.current_version,
-          1000,
+          data_size_in_bytes(database_after_v2),
           [modified_pages_v3]
         )
 
@@ -228,7 +230,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_v1,
           index_manager_v1.current_version,
           Database.durable_version(database_v1),
-          1000,
+          data_size_in_bytes(database_v1),
           [modified_pages_v1]
         )
 
@@ -239,7 +241,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_after_v1,
           index_manager_v2.current_version,
           index_manager_v1.current_version,
-          1000,
+          data_size_in_bytes(database_after_v1),
           [modified_pages_v2]
         )
 
@@ -250,7 +252,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
           database_after_v2,
           index_manager_v3.current_version,
           index_manager_v2.current_version,
-          1000,
+          data_size_in_bytes(database_after_v2),
           [modified_pages_v3]
         )
 

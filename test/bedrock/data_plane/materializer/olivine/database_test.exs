@@ -105,6 +105,34 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DatabaseTest do
 
   describe "durable version management" do
     setup context, do: with_db(context, "durable_version.dets", :durable_test)
+
+    @tag :tmp_dir
+    test "returns structured error when data flush fails", %{db: {data_db, _index_db} = db} do
+      :ok = :file.close(data_db.file)
+
+      version = <<0, 0, 0, 0, 0, 0, 0, 1>>
+      previous_version = Database.durable_version(db)
+
+      assert {:error, {:data_flush_failed, {failure_kind, _reason}}} =
+               Database.advance_durable_version(db, version, previous_version, data_db.file_offset, [%{}])
+
+      assert failure_kind in [:data_file_write_failed, :data_file_sync_failed]
+    end
+
+    @tag :tmp_dir
+    test "returns structured error when index flush fails and durable version is unchanged", %{
+      db: {data_db, index_db} = db
+    } do
+      :ok = :file.close(index_db.file)
+
+      previous_version = Database.durable_version(db)
+      next_version = <<0, 0, 0, 0, 0, 0, 0, 2>>
+
+      assert {:error, {:index_flush_failed, {:index_file_write_failed, _reason}}} =
+               Database.advance_durable_version(db, next_version, previous_version, data_db.file_offset, [%{}])
+
+      assert Database.durable_version(db) == previous_version
+    end
   end
 
   describe "value_loader function" do

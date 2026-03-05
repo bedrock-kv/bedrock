@@ -17,6 +17,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.DataPlane.Materializer.Tracing, as: StorageTracing
   alias Bedrock.DataPlane.Resolver.Tracing, as: ResolverTracing
   alias Bedrock.DataPlane.Sequencer.Tracing, as: SequencerTracing
+  alias Bedrock.Durability, as: DurabilityProfile
   alias Bedrock.Internal.Tracing.RaftTelemetry
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
@@ -108,6 +109,20 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     capabilities = node_capabilities(cluster, otp_app, static_config)
     config = node_config(cluster, otp_app, static_config)
 
+    case enforce_durability_profile(config) do
+      :ok ->
+        :ok
+
+      {:warn, reasons} ->
+        Logger.warning(
+          "Bedrock durability profile failed in relaxed mode; continuing startup",
+          reasons: reasons
+        )
+
+      {:error, reasons} ->
+        raise "Bedrock strict durability profile check failed: #{inspect(reasons)}"
+    end
+
     config
     |> Keyword.get(:trace, [])
     |> Enum.each(fn
@@ -144,6 +159,34 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   defp mode_for_capabilities([]), do: :passive
   defp mode_for_capabilities(_), do: :active
+
+  @spec enforce_durability_profile(Keyword.t()) ::
+          :ok | {:warn, [atom()]} | {:error, [atom()]}
+  def enforce_durability_profile(node_config) when is_list(node_config) do
+    profile = DurabilityProfile.profile(node_config)
+    mode = durability_mode(node_config)
+
+    case {mode, profile.status} do
+      {_, :ok} -> :ok
+      {:relaxed, :failed} -> {:warn, profile.reasons}
+      {:strict, :failed} -> {:error, profile.reasons}
+    end
+  end
+
+  @spec durability_mode(Keyword.t()) :: :strict | :relaxed
+  def durability_mode(node_config) when is_list(node_config) do
+    mode =
+      Keyword.get(node_config, :durability_mode) ||
+        node_config
+        |> Keyword.get(:durability, [])
+        |> Keyword.get(:mode, :strict)
+
+    case mode do
+      :strict -> :strict
+      :relaxed -> :relaxed
+      _unsupported -> :strict
+    end
+  end
 
   defp children_for_capabilities(_cluster, [], _config), do: []
 

@@ -17,18 +17,15 @@ defmodule Bedrock.ControlPlane.Coordinator do
 
   ## Leader Readiness States
 
-  New leaders transition through readiness states to ensure state consistency
-  before Director recovery:
+  Leaders track their readiness state for Director recovery:
 
   - `:not_leader` - This node is not the cluster leader
-  - `:leader_waiting_consensus` - Leader elected but waiting for first consensus to ensure fully processed state
   - `:leader_ready` - This node is leader and ready to attempt Director recovery
   - `:recovery_failed` - Director recovery failed; waiting for meaningful capability changes
 
-  Upon election, leaders enter `:leader_waiting_consensus` state, waiting for the first
-  consensus round to ensure all Raft log entries have been processed and state is current.
-  Once consensus completes, they transition to `:leader_ready` and attempt Director recovery
-  with fully up-to-date state.
+  Upon election, leaders immediately transition to `:leader_ready` and attempt Director
+  recovery. Config is loaded from object storage at init, and TSL is the output of recovery
+  (not an input), so there's no need to wait for state restoration.
 
   ## Capability-Based Recovery Retry
 
@@ -58,16 +55,15 @@ defmodule Bedrock.ControlPlane.Coordinator do
           {:ok, config :: Config.t()} | {:error, :unavailable | :timeout}
   def fetch_config(coordinator, timeout \\ 5_000), do: call(coordinator, :fetch_config, timeout)
 
-  @spec update_config(
-          coordinator_ref :: ref(),
-          config :: Config.t(),
-          timeout_ms :: timeout_in_ms()
-        ) ::
-          {:ok, txn_id :: term()}
-          | {:error, :unavailable}
-          | {:error, :failed}
-          | {:error, :not_leader}
-  def update_config(coordinator, config, timeout \\ 5_000), do: call(coordinator, {:update_config, config}, timeout)
+  @doc """
+  Notify the coordinator of a config update.
+
+  This is called by the Director during recovery to update the coordinator's
+  cached config (e.g., recovery_attempt state). Config is persisted to object
+  storage by the Director's persistence phase, not via Raft consensus.
+  """
+  @spec notify_config(coordinator_ref :: ref(), config :: Config.t()) :: :ok
+  def notify_config(coordinator, config), do: GenServer.cast(coordinator, {:notify_config, config})
 
   @spec fetch_transaction_system_layout(
           coordinator_ref :: ref(),
@@ -78,17 +74,20 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def fetch_transaction_system_layout(coordinator, timeout \\ 5_000),
     do: call(coordinator, :fetch_transaction_system_layout, timeout)
 
-  @spec update_transaction_system_layout(
+  @doc """
+  Notify the coordinator of a new transaction system layout.
+
+  This is called by the Director after recovery completes to update the coordinator's
+  cached TSL and broadcast it to all Link subscribers. Unlike the old Raft-based
+  update, this is a direct notification without consensus - the TSL is persisted
+  to object storage by the Director's persistence phase.
+  """
+  @spec notify_transaction_system_layout(
           coordinator_ref :: ref(),
-          transaction_system_layout :: TransactionSystemLayout.t(),
-          timeout_ms :: timeout_in_ms()
-        ) ::
-          {:ok, txn_id :: term()}
-          | {:error, :unavailable}
-          | {:error, :failed}
-          | {:error, :not_leader}
-  def update_transaction_system_layout(coordinator, transaction_system_layout, timeout \\ 5_000),
-    do: call(coordinator, {:update_transaction_system_layout, transaction_system_layout}, timeout)
+          transaction_system_layout :: TransactionSystemLayout.t()
+        ) :: :ok
+  def notify_transaction_system_layout(coordinator, transaction_system_layout),
+    do: GenServer.cast(coordinator, {:notify_transaction_system_layout, transaction_system_layout})
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}

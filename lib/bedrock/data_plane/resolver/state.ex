@@ -5,9 +5,18 @@ defmodule Bedrock.DataPlane.Resolver.State do
   Maintains the interval tree for conflict detection, version tracking, and
   waiting queue for out-of-order transactions. Includes lock token for
   authentication.
+
+  ## Metadata Distribution
+
+  The resolver also tracks system metadata mutations (keys with \\xFF prefix)
+  and distributes differential updates to commit proxies:
+
+  - `proxy_progress` - Maps proxy PIDs to their last seen metadata version
+  - `metadata_window` - Accumulated metadata mutations in version order
   """
 
   alias Bedrock.DataPlane.Resolver.Conflicts
+  alias Bedrock.DataPlane.Resolver.MetadataAccumulator
 
   @type mode :: :running
 
@@ -22,7 +31,9 @@ defmodule Bedrock.DataPlane.Resolver.State do
           director: pid(),
           sweep_interval_ms: pos_integer(),
           version_retention_ms: pos_integer(),
-          last_sweep_time: integer()
+          last_sweep_time: integer(),
+          proxy_progress: %{pid() => Bedrock.version()},
+          metadata_window: MetadataAccumulator.t()
         }
   defstruct conflicts: nil,
             oldest_version: nil,
@@ -34,5 +45,7 @@ defmodule Bedrock.DataPlane.Resolver.State do
             director: nil,
             sweep_interval_ms: nil,
             version_retention_ms: nil,
-            last_sweep_time: nil
+            last_sweep_time: nil,
+            proxy_progress: %{},
+            metadata_window: nil
 end

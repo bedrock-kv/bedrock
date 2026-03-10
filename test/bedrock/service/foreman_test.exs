@@ -2,7 +2,7 @@ defmodule Bedrock.Service.ForemanTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Shale
-  alias Bedrock.DataPlane.Storage.Basalt
+  alias Bedrock.DataPlane.Materializer.Basalt
   alias Bedrock.Service.Foreman.Impl
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
@@ -13,7 +13,7 @@ defmodule Bedrock.Service.ForemanTest do
     Map.merge(
       %State{
         cluster: TestCluster,
-        capabilities: [:storage, :log],
+        capabilities: [:materializer, :log],
         health: :ok,
         otp_name: :test_foreman,
         path: "/tmp/test",
@@ -56,10 +56,10 @@ defmodule Bedrock.Service.ForemanTest do
     }
   end
 
-  describe "do_fetch_storage_workers/1" do
+  describe "do_fetch_materializer_workers/1" do
     test "returns empty list when no workers exist" do
       state = base_state()
-      assert [] = Impl.do_fetch_storage_workers(state)
+      assert [] = Impl.do_fetch_materializer_workers(state)
     end
 
     test "returns only storage workers when mixed workers exist" do
@@ -72,7 +72,7 @@ defmodule Bedrock.Service.ForemanTest do
           }
         })
 
-      result = Impl.do_fetch_storage_workers(state)
+      result = Impl.do_fetch_materializer_workers(state)
       assert length(result) == 2
       assert :storage_1_worker in result
       assert :storage_2_worker in result
@@ -92,7 +92,7 @@ defmodule Bedrock.Service.ForemanTest do
           }
         })
 
-      assert [] = Impl.do_fetch_storage_workers(state)
+      assert [] = Impl.do_fetch_materializer_workers(state)
     end
 
     test "handles workers with manifest but nil worker module" do
@@ -115,19 +115,19 @@ defmodule Bedrock.Service.ForemanTest do
           }
         })
 
-      assert [] = Impl.do_fetch_storage_workers(state)
+      assert [] = Impl.do_fetch_materializer_workers(state)
     end
   end
 
-  describe "storage_worker?/1" do
+  describe "materializer_worker?/1" do
     test "returns true for storage worker" do
       worker = worker_info("storage_1", manifest: storage_manifest("storage_1"))
-      assert Impl.storage_worker?(worker)
+      assert Impl.materializer_worker?(worker)
     end
 
     test "returns false for log worker" do
       worker = worker_info("log_1", manifest: log_manifest("log_1"))
-      refute Impl.storage_worker?(worker)
+      refute Impl.materializer_worker?(worker)
     end
 
     test "returns false for invalid manifests" do
@@ -139,8 +139,8 @@ defmodule Bedrock.Service.ForemanTest do
           health: :stopped
         )
 
-      refute Impl.storage_worker?(nil_manifest_worker)
-      refute Impl.storage_worker?(nil_worker_manifest)
+      refute Impl.materializer_worker?(nil_manifest_worker)
+      refute Impl.materializer_worker?(nil_worker_manifest)
     end
   end
 
@@ -178,7 +178,7 @@ defmodule Bedrock.Service.ForemanTest do
 
       result = Impl.do_get_all_running_services(state)
       assert length(result) == 2
-      assert {"storage_1", :storage, :storage_1_worker} in result
+      assert {"storage_1", :materializer, :storage_1_worker} in result
       assert {"log_1", :log, :log_1_worker} in result
     end
 
@@ -196,7 +196,7 @@ defmodule Bedrock.Service.ForemanTest do
           }
         })
 
-      assert [{"storage_1", :storage, :storage_1_worker}] = Impl.do_get_all_running_services(state)
+      assert [{"storage_1", :materializer, :storage_1_worker}] = Impl.do_get_all_running_services(state)
     end
 
     test "filters out invalid workers (nil manifest or unhealthy)" do
@@ -213,7 +213,7 @@ defmodule Bedrock.Service.ForemanTest do
           }
         })
 
-      assert [{"storage_1", :storage, :storage_1_worker}] = Impl.do_get_all_running_services(state)
+      assert [{"storage_1", :materializer, :storage_1_worker}] = Impl.do_get_all_running_services(state)
     end
   end
 
@@ -222,7 +222,7 @@ defmodule Bedrock.Service.ForemanTest do
       storage_worker = worker_info("storage_1", manifest: storage_manifest("storage_1"))
       log_worker = worker_info("log_1", manifest: log_manifest("log_1"))
 
-      assert {"storage_1", :storage, :storage_1_worker} =
+      assert {"storage_1", :materializer, :storage_1_worker} =
                Impl.compact_service_info_from_worker_info(storage_worker)
 
       assert {"log_1", :log, :log_1_worker} =
@@ -234,7 +234,7 @@ defmodule Bedrock.Service.ForemanTest do
       log_worker = worker_info("log_1", manifest: log_manifest("log_1"))
       current_node = Node.self()
 
-      assert {"storage_1", :storage, {:storage_1_worker, ^current_node}} =
+      assert {"storage_1", :materializer, {:storage_1_worker, ^current_node}} =
                Impl.service_info_from_worker_info(storage_worker)
 
       assert {"log_1", :log, {:log_1_worker, ^current_node}} =
@@ -256,7 +256,7 @@ defmodule Bedrock.Service.ForemanTest do
 
   describe "integration with WorkerBehaviour" do
     test "storage worker module returns correct kind" do
-      assert Basalt.kind() == :storage
+      assert Basalt.kind() == :materializer
     end
 
     test "log worker module returns correct kind" do

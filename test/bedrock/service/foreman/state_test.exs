@@ -8,19 +8,22 @@ defmodule Bedrock.Service.Foreman.StateTest do
     test "creates a new state with required params" do
       # Simple cluster identifier
       cluster = :test_cluster
+      object_storage = {Bedrock.ObjectStorage.LocalFilesystem, root: "/tmp/object_storage"}
 
       params = %{
         cluster: cluster,
-        capabilities: [:log, :storage],
+        capabilities: [:log, :materializer],
         path: "/tmp/test",
-        otp_name: :test_foreman
+        otp_name: :test_foreman,
+        object_storage: object_storage
       }
 
       assert {:ok, state} = State.new_state(params)
       assert state.cluster == cluster
-      assert state.capabilities == [:log, :storage]
+      assert state.capabilities == [:log, :materializer]
       assert state.path == "/tmp/test"
       assert state.otp_name == :test_foreman
+      assert state.object_storage == object_storage
       assert state.health == :starting
       assert state.waiting_for_healthy == []
       assert state.workers == %{}

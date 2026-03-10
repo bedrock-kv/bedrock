@@ -86,7 +86,7 @@ The Data Plane receives coordination from the Control Plane during recovery and 
 3. **Transaction Submission**: Transaction Builder submits complete transaction to Commit Proxy
 4. **Conflict Detection**: Commit Proxy coordinates with Resolvers to detect version conflicts
 5. **Commit Coordination**: Commit Proxy orchestrates two-phase commit across required Log servers
-6. **Durability Confirmation**: Log servers acknowledge transaction persistence before commit confirmation
+6. **Durability Confirmation**: Log servers acknowledge only after WAL append + fsync before commit confirmation
 7. **Storage Propagation**: Storage servers follow transaction logs to maintain local MVCC state
 
 ## Consistency Guarantees
@@ -97,7 +97,7 @@ Data Plane components collectively provide several consistency guarantees:
 
 **Conflict Serializable isolation**: Resolver conflict detection prevents concurrent transactions from creating inconsistent states while maintaining optimistic concurrency benefits.
 
-**Durability Assurance**: Commit Proxy coordination with Log servers ensures committed transactions persist across system failures and can be recovered.
+**Durability Assurance**: Commit Proxy coordination with Log servers ensures commit ACK happens only after required WAL fsync across log replicas.
 
 **Version Ordering**: Global version assignment creates a total ordering that enables deterministic transaction replay and consistent recovery.
 
@@ -109,7 +109,7 @@ Data Plane components balance consistency with performance:
 - **Batching Optimization**: Commit Proxy batching amortizes coordination costs while adding latency for transaction grouping
 - **Conflict Detection Scaling**: Multiple Resolvers handle different key ranges to distribute conflict detection workload
 - **Read Scaling**: Multiple Commit Proxy and Storage instances provide horizontal read capacity
-- **Write Durability Cost**: Universal Log acknowledgment ensures durability but limits write throughput to slowest replica
+- **Write Durability Cost**: Universal WAL-fsync acknowledgment ensures durability but limits write throughput to slowest replica
 
 ## Design Principles
 
@@ -117,7 +117,7 @@ The Data Plane follows these design principles:
 
 - **Single Version Authority**: One Sequencer prevents version conflicts while requiring careful fault tolerance
 - **Optimistic Concurrency**: Conflict detection at commit time reduces lock contention and deadlock risks  
-- **Universal Acknowledgment**: All required replicas must acknowledge before commit completion
+- **Universal Acknowledgment**: All required replicas must WAL-fsync acknowledge before commit completion
 - **Separation of Concerns**: Clean interfaces between version management, conflict detection, and persistence
 
 ## See Also

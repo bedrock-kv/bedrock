@@ -54,6 +54,24 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     )
   end
 
+  # Poll until condition is met (for async state changes)
+  defp wait_until(condition_fn, timeout \\ 1000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(condition_fn, deadline)
+  end
+
+  defp do_wait_until(condition_fn, deadline) do
+    if condition_fn.() do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) < deadline do
+        do_wait_until(condition_fn, deadline)
+      else
+        raise "Condition not met before timeout"
+      end
+    end
+  end
+
   # Common setup helper for server startup
   defp start_test_server(additional_opts \\ []) do
     lock_token = :crypto.strong_rand_bytes(32)
@@ -231,8 +249,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     } do
       valid_transactions = [simple_binary_transaction()]
 
-      assert {:ok, []} =
-               Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions)
+      assert {:ok, [], _metadata_updates} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions, [[]])
     end
 
     test "rejects invalid transaction summaries", %{
@@ -243,7 +261,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
 
       assert {:error, error_message} =
-               Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions)
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions, [[], []])
 
       assert error_message =~ "invalid transaction format: all transactions must be binary"
     end
@@ -259,8 +277,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
         simple_binary_transaction(["write_key"])
       ]
 
-      assert {:ok, aborted_indices} =
-               Resolver.resolve_transactions(server, 1, zero_version, next_version, binary_transactions)
+      assert {:ok, aborted_indices, _metadata_updates} =
+               Resolver.resolve_transactions(server, 1, zero_version, next_version, binary_transactions, [[], [], []])
 
       assert is_list(aborted_indices)
     end
@@ -289,14 +307,13 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       task =
         Task.async(fn ->
-          Resolver.resolve_transactions(server, 1, next_version, future_version, [test_transaction])
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [test_transaction], [[]])
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 1
 
-      assert [{deadline, _reply_fn, {^future_version, [^test_transaction]}}] =
+      assert [{deadline, _reply_fn, {^future_version, [^test_transaction], [[]], _proxy_pid}}] =
                Map.get(state.waiting, next_version)
 
       assert is_integer(deadline)
@@ -320,13 +337,13 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
             next_version,
             future_version,
             [test_transaction],
+            [[]],
             timeout: 60_000
           )
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 1
 
       assert [{_old_deadline, reply_fn, data}] = Map.get(state.waiting, next_version)
       expired_deadline = Bedrock.Internal.Time.monotonic_now_in_ms() - 1_000
@@ -335,8 +352,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       :sys.replace_state(server, fn _ -> expired_state end)
 
       send(server, :timeout)
-      Process.sleep(50)
-
+      # :sys.get_state synchronizes after send
       assert %{waiting: waiting} = :sys.get_state(server)
       assert map_size(waiting) == 0
 
@@ -348,8 +364,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert map_size(waiting) == 0
 
       send(server, :timeout)
-      Process.sleep(50)
-
+      # :sys.get_state synchronizes after send
       assert %{waiting: ^waiting} = :sys.get_state(server)
       assert map_size(waiting) == 0
     end
@@ -364,21 +379,19 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       task1 =
         Task.async(fn ->
-          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction1], timeout: 60_000)
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction1], [[]], timeout: 60_000)
         end)
 
-      Process.sleep(50)
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       later_version = Version.increment(future_version)
 
       task2 =
         Task.async(fn ->
-          Resolver.resolve_transactions(server, 1, future_version, later_version, [transaction2], timeout: 60_000)
+          Resolver.resolve_transactions(server, 1, future_version, later_version, [transaction2], [[]], timeout: 60_000)
         end)
 
-      Process.sleep(50)
-
+      wait_until(fn -> map_size(:sys.get_state(server).waiting) == 2 end)
       state = :sys.get_state(server)
-      assert map_size(state.waiting) == 2
       assert Map.has_key?(state.waiting, next_version)
       assert Map.has_key?(state.waiting, future_version)
 
@@ -404,7 +417,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       # Send B - will be waitlisted with key=next_version
       task_b =
         Task.async(fn ->
-          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction_b])
+          Resolver.resolve_transactions(server, 1, next_version, future_version, [transaction_b], [[]])
         end)
 
       # Wait for B to be waitlisted
@@ -416,10 +429,17 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert Map.has_key?(state_before.waiting, next_version)
 
       # Process transaction A - this should trigger processing of B
-      assert {:ok, []} =
-               Resolver.resolve_transactions(server, 1, zero_version, next_version, [
-                 simple_binary_transaction(["key_a"])
-               ])
+      assert {:ok, [], _metadata_updates} =
+               Resolver.resolve_transactions(
+                 server,
+                 1,
+                 zero_version,
+                 next_version,
+                 [
+                   simple_binary_transaction(["key_a"])
+                 ],
+                 [[]]
+               )
 
       # Wait for A to start processing
       expect_transaction_processing_start(zero_version, next_version)
@@ -435,7 +455,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       expect_transaction_completed(future_version, future_version)
 
       # B should complete successfully
-      assert {:ok, []} = Task.await(task_b, 1000)
+      assert {:ok, [], _metadata_updates} = Task.await(task_b, 1000)
 
       # Final check - waitlist should be empty
       final_state = :sys.get_state(server)
@@ -477,8 +497,10 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     end
 
     test "resolver state includes sweep configuration", %{resolver: resolver} do
-      assert {:ok, _aborted} =
-               Resolver.resolve_transactions(resolver, 1, Version.zero(), Version.from_integer(1000), [], timeout: 1000)
+      assert {:ok, _aborted, _metadata_updates} =
+               Resolver.resolve_transactions(resolver, 1, Version.zero(), Version.from_integer(1000), [], [],
+                 timeout: 1000
+               )
 
       assert Process.alive?(resolver)
     end
@@ -492,22 +514,25 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       old_tx = simple_binary_transaction(["key1"])
       recent_tx = simple_binary_transaction(["key2"])
 
-      assert {:ok, _} = Resolver.resolve_transactions(resolver, 1, Version.zero(), old_version, [old_tx], timeout: 1000)
+      assert {:ok, _, _} =
+               Resolver.resolve_transactions(resolver, 1, Version.zero(), old_version, [old_tx], [[]], timeout: 1000)
 
-      assert {:ok, _} =
-               Resolver.resolve_transactions(resolver, 1, old_version, recent_version, [recent_tx], timeout: 1000)
+      assert {:ok, _, _} =
+               Resolver.resolve_transactions(resolver, 1, old_version, recent_version, [recent_tx], [[]], timeout: 1000)
 
-      # Wait for sweep to occur (sweep interval is 100ms, retention is 200ms)
+      # Wait for time to pass so versions become old relative to retention period
       Process.sleep(150)
       send(resolver, :timeout)
-      Process.sleep(50)
+      # Next sync call will process after timeout message
 
       # Verify resolver is still functioning after sweep
       newer_version = Version.from_integer(400_000)
       newer_tx = simple_binary_transaction(["key3"])
 
-      assert {:ok, _} =
-               Resolver.resolve_transactions(resolver, 1, recent_version, newer_version, [newer_tx], timeout: 1000)
+      assert {:ok, _, _} =
+               Resolver.resolve_transactions(resolver, 1, recent_version, newer_version, [newer_tx], [[]],
+                 timeout: 1000
+               )
     end
 
     test "sweep configuration works with transaction processing", %{resolver: resolver} do
@@ -523,14 +548,16 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       tx3 = simple_binary_transaction(["key3"])
 
       # Process transactions in sequence
-      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, Version.zero(), version1, [tx1], timeout: 1000)
-      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, version1, version2, [tx2], timeout: 1000)
+      assert {:ok, [], _} =
+               Resolver.resolve_transactions(resolver, 1, Version.zero(), version1, [tx1], [[]], timeout: 1000)
+
+      assert {:ok, [], _} = Resolver.resolve_transactions(resolver, 1, version1, version2, [tx2], [[]], timeout: 1000)
 
       # Wait for sweep to potentially occur (longer than sweep interval)
       Process.sleep(150)
 
       # Process another transaction - should work fine regardless of sweep
-      assert {:ok, []} = Resolver.resolve_transactions(resolver, 1, version2, version3, [tx3], timeout: 1000)
+      assert {:ok, [], _} = Resolver.resolve_transactions(resolver, 1, version2, version3, [tx3], [[]], timeout: 1000)
       assert Process.alive?(resolver)
     end
   end
@@ -577,7 +604,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
         tasks =
           for {tx, last_v, next_v} <- transactions_with_specs do
             Task.async(fn ->
-              Resolver.resolve_transactions(server, 1, last_v, next_v, [tx])
+              Resolver.resolve_transactions(server, 1, last_v, next_v, [tx], [[]])
             end)
           end
 
@@ -592,7 +619,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
         results = Enum.map(tasks, &Task.await(&1, 5000))
 
         # All should succeed
-        assert Enum.all?(results, &match?({:ok, []}, &1))
+        assert Enum.all?(results, &match?({:ok, [], _}, &1))
 
         # Verify the completion order matches expected version sequence
         expected_versions = Enum.map(transaction_specs, fn {_last, next} -> next end)
@@ -617,6 +644,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           1,
           Version.zero(),
           Version.from_integer(1),
+          [],
           [],
           timeout: 0
         )

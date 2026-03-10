@@ -20,17 +20,12 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
   def create_test_transaction_system_layout do
     %{
+      epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
@@ -43,24 +38,19 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       end)
 
     %{
+      epoch: 1,
       sequencer: mock_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
 
   defp mock_sequencer_loop(read_version) do
     receive do
-      {:"$gen_call", from, :next_read_version} ->
+      {:"$gen_call", from, {:next_read_version, _epoch}} ->
         GenServer.reply(from, {:ok, read_version})
         mock_sequencer_loop(read_version)
     end
@@ -172,14 +162,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       custom_layout = %{
         sequencer: :custom,
         proxies: [],
-        storage_teams: [
-          %{
-            key_range: {"", <<0xFF, 0xFF>>},
-            storage_ids: ["storage1"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -210,7 +194,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       pid = start_transaction_builder()
 
       GenServer.cast(pid, {:set_key, "test_key", "test_value"})
-      :timer.sleep(10)
 
       result = GenServer.call(pid, {:get, "test_key"})
       assert result == {:ok, "test_value"}
@@ -254,7 +237,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       initial_mutations = get_transaction_mutations(pid)
 
       GenServer.cast(pid, {:set_key, "test_key", "test_value"})
-      :timer.sleep(10)
 
       final_mutations = get_transaction_mutations(pid)
       assert final_mutations == initial_mutations ++ [{:set, "test_key", "test_value"}]
@@ -277,7 +259,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       assert length(state_before.stack) == 1
 
       GenServer.cast(pid, :rollback)
-      :timer.sleep(10)
 
       state_after = :sys.get_state(pid)
       assert Enum.empty?(state_after.stack)
@@ -290,7 +271,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       GenServer.cast(pid, {:set_key, "key1", "value1"})
       GenServer.cast(pid, {:set_key, "key2", "value2"})
       GenServer.cast(pid, {:set_key, "key3", "value3"})
-      :timer.sleep(10)
 
       mutations = get_transaction_mutations(pid)
 
@@ -306,7 +286,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       GenServer.cast(pid, {:set_key, "key1", "value1"})
       GenServer.cast(pid, {:set_key, "key1", "updated_value"})
-      :timer.sleep(10)
 
       mutations = get_transaction_mutations(pid)
       assert mutations == [{:set, "key1", "updated_value"}]
@@ -370,14 +349,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
     test "state fields are preserved across operations" do
       custom_layout = %{
-        storage_teams: [
-          %{
-            key_range: {"", <<0xFF, 0xFF>>},
-            storage_ids: ["storage1"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}}
         }
       }
 
@@ -386,7 +359,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       GenServer.cast(pid, {:set_key, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
       GenServer.cast(pid, {:set_key, "key2", "value2"})
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
 
@@ -413,7 +385,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       assert length(double_nested_state.stack) == 2
 
       GenServer.cast(pid, :rollback)
-      :timer.sleep(10)
 
       after_rollback_state = :sys.get_state(pid)
       assert length(after_rollback_state.stack) == 1
@@ -423,11 +394,9 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       pid = start_transaction_builder()
 
       GenServer.cast(pid, {:set_key, "key1", "value1"})
-      :timer.sleep(5)
       assert length(get_transaction_mutations(pid)) == 1
 
       GenServer.cast(pid, {:set_key, "key2", "value2"})
-      :timer.sleep(5)
 
       mutations = get_transaction_mutations(pid)
       assert length(mutations) == 2
@@ -456,8 +425,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       :ok = GenServer.call(pid, :nested_transaction)
       :ok = GenServer.call(pid, :nested_transaction)
 
-      :timer.sleep(50)
-
       assert Process.alive?(pid)
 
       refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 10
@@ -481,8 +448,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
         GenServer.cast(pid, :rollback)
       end
 
-      :timer.sleep(20)
-
       assert Process.alive?(pid)
       final_state = :sys.get_state(pid)
       assert length(final_state.stack) == 2
@@ -504,7 +469,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       assert_valid_state(pid)
 
       GenServer.cast(pid, {:set_key, "test", "value"})
-      :timer.sleep(10)
 
       mutations = get_transaction_mutations(pid)
       assert [{:set, "test", "value"}] = mutations
@@ -514,19 +478,9 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       custom_layout = %{
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy1, :custom_proxy2],
-        storage_teams: [
-          %{
-            key_range: {"", "m"},
-            storage_ids: ["storage1"]
-          },
-          %{
-            key_range: {"m", <<0xFF, 0xFF>>},
-            storage_ids: ["storage2"]
-          }
-        ],
         services: %{
-          "storage1" => %{kind: :storage, status: {:up, :pid1}},
-          "storage2" => %{kind: :storage, status: {:up, :pid2}}
+          "storage1" => %{kind: :materializer, status: {:up, :pid1}},
+          "storage2" => %{kind: :materializer, status: {:up, :pid2}}
         }
       }
 
@@ -535,7 +489,6 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       GenServer.cast(pid, {:set_key, "key", "value"})
       :ok = GenServer.call(pid, :nested_transaction)
       GenServer.cast(pid, :rollback)
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
       assert state.transaction_system_layout == custom_layout

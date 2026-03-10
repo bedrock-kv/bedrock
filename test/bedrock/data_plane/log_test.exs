@@ -45,11 +45,11 @@ defmodule Bedrock.DataPlane.LogTest do
         Log.recover_from(test_pid, source_log, first_version, last_version)
       end)
 
-      # Use our helper macro to assert on the exact call message format
-      assert_call_received({:recover_from, :source_log_ref, 100, 200})
+      # Log.recover_from normalizes single refs to lists
+      assert_call_received({:recover_from, [:source_log_ref], 100, 200})
     end
 
-    test "handles unavailable log" do
+    test "handles unavailable log (nil becomes empty list)" do
       test_pid = self()
 
       # Spawn a process that will make the call and we'll capture the message
@@ -57,8 +57,22 @@ defmodule Bedrock.DataPlane.LogTest do
         Log.recover_from(test_pid, nil, 0, 50)
       end)
 
-      # Use our helper macro to assert on the exact call message format
-      assert_call_received({:recover_from, nil, 0, 50})
+      # Log.recover_from normalizes nil to empty list
+      assert_call_received({:recover_from, [], 0, 50})
+    end
+
+    test "accepts list of source logs directly" do
+      source_logs = [:log1, :log2]
+      first_version = 100
+      last_version = 200
+      test_pid = self()
+
+      spawn(fn ->
+        Log.recover_from(test_pid, source_logs, first_version, last_version)
+      end)
+
+      # Lists are passed through unchanged
+      assert_call_received({:recover_from, [:log1, :log2], 100, 200})
     end
   end
 

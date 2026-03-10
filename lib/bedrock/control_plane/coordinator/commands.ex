@@ -6,31 +6,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   structured commands instead of raw data.
   """
 
-  alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-
   @type command ::
           end_epoch_command()
-          | update_config_command()
-          | update_transaction_system_layout_command()
           | set_node_resources_command()
           | merge_node_resources_command()
           | register_services_command()
           | deregister_services_command()
 
   @type end_epoch_command :: {:end_epoch, Bedrock.epoch() | nil}
-
-  @type update_config_command ::
-          {:update_config,
-           %{
-             config: Config.t()
-           }}
-
-  @type update_transaction_system_layout_command ::
-          {:update_transaction_system_layout,
-           %{
-             transaction_system_layout: TransactionSystemLayout.t()
-           }}
 
   @type set_node_resources_command ::
           {:set_node_resources,
@@ -68,20 +51,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   """
   @spec end_epoch(Bedrock.epoch() | nil) :: end_epoch_command()
   def end_epoch(previous_epoch), do: {:end_epoch, previous_epoch}
-
-  @doc """
-  Create a command to update cluster configuration via consensus.
-  """
-  @spec update_config(Config.t()) :: update_config_command()
-  def update_config(config), do: {:update_config, %{config: config}}
-
-  @doc """
-  Create a command to update transaction system layout via consensus.
-  """
-  @spec update_transaction_system_layout(TransactionSystemLayout.t()) ::
-          update_transaction_system_layout_command()
-  def update_transaction_system_layout(transaction_system_layout),
-    do: {:update_transaction_system_layout, %{transaction_system_layout: transaction_system_layout}}
 
   @doc """
   Create a command to SET node resources (services and capabilities) via consensus.

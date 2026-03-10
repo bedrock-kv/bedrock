@@ -29,11 +29,17 @@ defmodule Bedrock.Test.DataPlane.TransactionTestSupport do
   """
   @spec new_log_transaction(
           Bedrock.version() | integer(),
-          %{Bedrock.key() => Bedrock.value() | nil} | [{Bedrock.key(), Bedrock.key() | nil}]
+          %{Bedrock.key() => Bedrock.value() | nil} | [{Bedrock.key(), Bedrock.key() | nil}],
+          keyword()
         ) :: Transaction.encoded()
-  def new_log_transaction(version, key_values) when is_map(key_values) do
+  def new_log_transaction(version, key_values, opts \\ [])
+
+  def new_log_transaction(version, key_values, opts) when is_map(key_values) do
     mutations = convert_writes_to_mutations(key_values)
-    transaction = %{mutations: mutations}
+    shard_id = Keyword.get(opts, :shard_id, 0)
+    shard_index = if mutations == [], do: [], else: [{shard_id, length(mutations)}]
+
+    transaction = %{mutations: mutations, shard_index: shard_index}
     encoded = Transaction.encode(transaction)
 
     # Ensure version is in binary format
@@ -46,8 +52,8 @@ defmodule Bedrock.Test.DataPlane.TransactionTestSupport do
     with_version
   end
 
-  def new_log_transaction(version, key_values) when is_list(key_values) do
-    new_log_transaction(version, Map.new(key_values))
+  def new_log_transaction(version, key_values, opts) when is_list(key_values) do
+    new_log_transaction(version, Map.new(key_values), opts)
   end
 
   @doc """

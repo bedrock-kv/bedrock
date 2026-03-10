@@ -13,11 +13,14 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.ControlPlane.Director.Recovery.Tracing, as: RecoveryTracing
   alias Bedrock.DataPlane.CommitProxy.Tracing, as: CommitProxyTracing
   alias Bedrock.DataPlane.Log.Tracing, as: LogTracing
+  alias Bedrock.DataPlane.Materializer.Olivine.Tracing, as: OlivineTracing
+  alias Bedrock.DataPlane.Materializer.Tracing, as: StorageTracing
   alias Bedrock.DataPlane.Resolver.Tracing, as: ResolverTracing
   alias Bedrock.DataPlane.Sequencer.Tracing, as: SequencerTracing
-  alias Bedrock.DataPlane.Storage.Olivine.Tracing, as: OlivineTracing
-  alias Bedrock.DataPlane.Storage.Tracing, as: StorageTracing
+  alias Bedrock.Durability, as: DurabilityProfile
   alias Bedrock.Internal.Tracing.RaftTelemetry
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Service.Foreman
   alias Cluster.Link.Tracing, as: LinkTracing
 
@@ -106,6 +109,20 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     capabilities = node_capabilities(cluster, otp_app, static_config)
     config = node_config(cluster, otp_app, static_config)
 
+    case enforce_durability_profile(config) do
+      :ok ->
+        :ok
+
+      {:warn, reasons} ->
+        Logger.warning(
+          "Bedrock durability profile failed in relaxed mode; continuing startup",
+          reasons: reasons
+        )
+
+      {:error, reasons} ->
+        raise "Bedrock strict durability profile check failed: #{inspect(reasons)}"
+    end
+
     config
     |> Keyword.get(:trace, [])
     |> Enum.each(fn
@@ -143,6 +160,34 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   defp mode_for_capabilities([]), do: :passive
   defp mode_for_capabilities(_), do: :active
 
+  @spec enforce_durability_profile(Keyword.t()) ::
+          :ok | {:warn, [atom()]} | {:error, [atom()]}
+  def enforce_durability_profile(node_config) when is_list(node_config) do
+    profile = DurabilityProfile.profile(node_config)
+    mode = durability_mode(node_config)
+
+    case {mode, profile.status} do
+      {_, :ok} -> :ok
+      {:relaxed, :failed} -> {:warn, profile.reasons}
+      {:strict, :failed} -> {:error, profile.reasons}
+    end
+  end
+
+  @spec durability_mode(Keyword.t()) :: :strict | :relaxed
+  def durability_mode(node_config) when is_list(node_config) do
+    mode =
+      Keyword.get(node_config, :durability_mode) ||
+        node_config
+        |> Keyword.get(:durability, [])
+        |> Keyword.get(:mode, :strict)
+
+    case mode do
+      :strict -> :strict
+      :relaxed -> :relaxed
+      _unsupported -> :strict
+    end
+  end
+
   defp children_for_capabilities(_cluster, [], _config), do: []
 
   defp children_for_capabilities(cluster, capabilities, config) do
@@ -167,6 +212,14 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       # Merge configs with capability-specific taking precedence
       merged_config = Keyword.merge(module_config, capability_configs)
 
+      # For Foreman, ensure object_storage is set (with a default based on path)
+      merged_config =
+        if module == Foreman do
+          ensure_object_storage(merged_config)
+        else
+          merged_config
+        end
+
       {module,
        [
          cluster: cluster,
@@ -175,8 +228,28 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end)
   end
 
+  defp ensure_object_storage(config) do
+    case Keyword.fetch(config, :object_storage) do
+      {:ok, _object_storage} ->
+        config
+
+      :error ->
+        # Create default object_storage based on the path
+        path = Keyword.get(config, :path)
+
+        if path do
+          object_storage_root = Path.join(path, "object_storage")
+          object_storage = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+          Keyword.put(config, :object_storage, object_storage)
+        else
+          # No path means we can't create a default - raise to signal configuration issue
+          raise "Missing :path configuration for Foreman - cannot create default object_storage"
+        end
+    end
+  end
+
   defp module_for_capability(:coordination), do: Coordinator
-  defp module_for_capability(:storage), do: Foreman
+  defp module_for_capability(:materializer), do: Foreman
   defp module_for_capability(:log), do: Foreman
 
   defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")

@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, "~> 0.4"},
+  {:bedrock, "~> 0.5"},
   {:kino, "~> 0.16.0"},
 ])
 
@@ -36,14 +36,14 @@ defmodule Tutorial.Cluster do
       # might only store data, others might coordinate cluster operations, and some might handle 
       # both. For production deployments, you'd typically split these roles across different 
       # machines for better performance and reliability.
-      capabilities: [:coordination, :log, :storage],
+      capabilities: [:coordination, :log, :materializer],
 
       # Optional tracing of internal operations
       trace: [], # :coordinator, :recovery, :commit_proxy, :log, :storage, etc.
 
       # Where does coordinator, storage, log data go?
       coordinator: [path: working_dir],
-      storage: [path: working_dir],
+      materializer: [path: working_dir],
       log: [path: working_dir]
     ]
 end

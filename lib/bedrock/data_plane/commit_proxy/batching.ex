@@ -4,11 +4,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   import Bedrock.DataPlane.CommitProxy.Batch,
     only: [new_batch: 3, add_transaction: 4, set_finalized_at: 2]
 
-  import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 1]
+  import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 2]
 
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.CommitProxy.ConflictSharding
-  alias Bedrock.DataPlane.CommitProxy.LayoutOptimization
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
 
@@ -24,11 +22,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
           | {:error, :sequencer_unavailable}
   def single_transaction_batch(t, transaction, reply_fn \\ fn _result -> :ok end)
 
-  def single_transaction_batch(%{transaction_system_layout: %{sequencer: nil}}, _transaction, _reply_fn),
-    do: {:error, :sequencer_unavailable}
+  def single_transaction_batch(%{sequencer: nil}, _transaction, _reply_fn), do: {:error, :sequencer_unavailable}
 
   def single_transaction_batch(state, transaction, reply_fn) when is_binary(transaction) do
-    case next_commit_version(state.transaction_system_layout.sequencer) do
+    case next_commit_version(state.sequencer, state.epoch) do
       {:ok, last_commit_version, commit_version} ->
         {:ok,
          timestamp()
@@ -36,29 +33,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
          |> add_transaction(transaction, reply_fn, nil)
          |> set_finalized_at(timestamp())}
 
-      {:error, :unavailable} ->
-        {:error, :sequencer_unavailable}
+      {:error, reason} ->
+        {:error, {:sequencer_unavailable, reason}}
     end
-  end
-
-  @spec create_resolver_task(Transaction.encoded(), LayoutOptimization.precomputed_layout()) :: Task.t()
-  def create_resolver_task(transaction, %{resolver_refs: [single_ref], resolver_ends: _ends}) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      %{single_ref => sections}
-    end)
-  end
-
-  def create_resolver_task(transaction, %{resolver_refs: refs, resolver_ends: ends}) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
-    end)
   end
 
   @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}
   def start_batch_if_needed(%{batch: nil} = t) do
-    case next_commit_version(t.transaction_system_layout.sequencer) do
+    case next_commit_version(t.sequencer, t.epoch) do
       {:ok, last_commit_version, commit_version} ->
         %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
 

@@ -22,12 +22,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :first_time_initialization],
         [:bedrock, :recovery, :creating_vacancies],
         [:bedrock, :recovery, :durable_version_chosen],
-        [:bedrock, :recovery, :team_health],
         [:bedrock, :recovery, :suitable_logs_chosen],
         [:bedrock, :recovery, :all_log_vacancies_filled],
-        [:bedrock, :recovery, :all_storage_team_vacancies_filled],
         [:bedrock, :recovery, :replaying_old_logs],
-        [:bedrock, :recovery, :storage_unlocking],
         [:bedrock, :recovery, :log_recruitment_completed],
         [:bedrock, :recovery, :log_validation_started],
         [:bedrock, :recovery, :log_service_status],
@@ -73,43 +70,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   def trace(:first_time_initialization, _, _), do: info("Initializing a brand new system")
 
   def trace(:creating_vacancies, measurements, _) do
-    case {measurements[:n_log_vacancies], measurements[:n_storage_team_vacancies]} do
-      {0, 0} ->
-        info("No vacancies to create")
-
-      {0, n_storage_team_vacancies} ->
-        info("Creating #{n_storage_team_vacancies} storage team vacancies")
-
-      {n_log_vacancies, 0} ->
-        info("Creating #{n_log_vacancies} log vacancies")
-
-      {n_log_vacancies, n_storage_team_vacancies} ->
-        info("Creating #{n_log_vacancies} log vacancies and #{n_storage_team_vacancies} storage team vacancies")
+    case measurements[:n_log_vacancies] do
+      0 -> info("No vacancies to create")
+      n_log_vacancies -> info("Creating #{n_log_vacancies} log vacancies")
     end
   end
 
   def trace(:durable_version_chosen, _, %{durable_version: durable_version}),
     do: info("Durable version chosen: #{Version.to_string(durable_version)}")
 
-  def trace(:team_health, _, metadata) do
-    case {metadata[:healthy_teams], metadata[:degraded_teams]} do
-      {[], []} ->
-        info("No teams available")
-
-      {healthy, []} ->
-        info("All teams healthy (#{healthy |> Enum.sort() |> Enum.join(", ")})")
-
-      {[], degraded} ->
-        info("All teams degraded (#{degraded |> Enum.sort() |> Enum.join(", ")})")
-
-      {healthy, degraded} ->
-        info("Healthy teams are #{Enum.join(healthy, ", ")}, with some teams degraded (#{Enum.join(degraded, ", ")})")
-    end
-  end
-
   def trace(:all_log_vacancies_filled, _, _), do: info("All log vacancies filled")
-
-  def trace(:all_storage_team_vacancies_filled, _, _), do: info("All storage team vacancies filled")
 
   def trace(:replaying_old_logs, _, %{
         old_log_ids: old_log_ids,
@@ -132,9 +102,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
     info("Version vector: #{inspect(log_version_vector)}")
   end
-
-  def trace(:storage_unlocking, _, %{storage_worker_id: storage_worker_id}),
-    do: info("Storage worker #{storage_worker_id} unlocking")
 
   def trace(:log_recruitment_completed, _, %{
         log_ids: log_ids,
@@ -192,7 +159,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
     TSL Components being validated:
       - Logs: #{inspect(Map.get(tsl, :logs), limit: 10)}
-      - Storage Teams: #{inspect(Map.get(tsl, :storage_teams), limit: 5)}
       - Resolvers: #{inspect(Map.get(tsl, :resolvers), limit: 5)}
 
     This indicates the TSL data was corrupted, likely due to improper integer-to-binary

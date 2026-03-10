@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
   alias Bedrock.Service.Worker
 
   @type worker_creation_error ::
-          {:node_lacks_capability, node(), :log | :storage}
+          {:node_lacks_capability, node(), :log | :materializer}
           | {:worker_creation_failed, any()}
           | {:worker_info_failed, any()}
 
@@ -138,7 +138,7 @@ defmodule Bedrock.ControlPlane.Director.Nodes do
     end)
   end
 
-  @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :storage) ::
+  @spec request_worker_creation(State.t(), node(), Worker.id(), :log | :materializer) ::
           {:ok, Director.running_service_info()} | {:error, worker_creation_error()}
   def request_worker_creation(t, node, worker_id, kind) do
     nodes_with_capability = Map.get(t.node_capabilities, kind, [])

@@ -19,17 +19,12 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
 
   def create_test_transaction_system_layout do
     %{
+      epoch: 1,
       sequencer: :test_sequencer,
       proxies: [:test_proxy1, :test_proxy2],
-      storage_teams: [
-        %{
-          key_range: {"", <<0xFF, 0xFF>>},
-          storage_ids: ["storage1", "storage2"]
-        }
-      ],
       services: %{
-        "storage1" => %{kind: :storage, status: {:up, :test_storage1_pid}},
-        "storage2" => %{kind: :storage, status: {:up, :test_storage2_pid}}
+        "storage1" => %{kind: :materializer, status: {:up, :test_storage1_pid}},
+        "storage2" => %{kind: :materializer, status: {:up, :test_storage2_pid}}
       }
     }
   end
@@ -49,7 +44,8 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
 
   defp perform_operation_and_wait(pid, operation) do
     GenServer.cast(pid, operation)
-    :timer.sleep(10)
+    # Sync by draining message queue
+    _ = :sys.get_state(pid)
   end
 
   defp assert_key_value(pid, key, expected_value) do
@@ -65,8 +61,7 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       pid = start_transaction_builder()
 
       GenServer.cast(pid, {:set_key, "test_key", "test_value"})
-      :timer.sleep(10)
-
+      # assert_key_value uses GenServer.call which synchronizes
       assert_key_value(pid, "test_key", "test_value")
 
       state = :sys.get_state(pid)
@@ -127,7 +122,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
 
       GenServer.cast(pid, {:set_key, "nested_key", "nested_value"})
       GenServer.cast(pid, {:set_key, "base_key", "overwritten_value"})
-      :timer.sleep(10)
 
       assert_key_value(pid, "base_key", "overwritten_value")
       assert_key_value(pid, "nested_key", "nested_value")
@@ -151,13 +145,11 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
 
       GenServer.cast(pid, {:set_key, "temporary_key", "temporary_value"})
       GenServer.cast(pid, {:set_key, "persistent_key", "modified_value"})
-      :timer.sleep(10)
 
       assert_key_value(pid, "persistent_key", "modified_value")
       assert_key_value(pid, "temporary_key", "temporary_value")
 
       GenServer.cast(pid, :rollback)
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
       assert %{stack: []} = state
@@ -181,7 +173,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       assert_key_value(pid, "level2", "value2")
 
       GenServer.cast(pid, :rollback)
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
       assert %{stack: [_]} = state
@@ -240,7 +231,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "key2", "value2"})
       setup_nested_transaction(pid)
       GenServer.cast(pid, {:set_key, "key3", "value3"})
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
       assert %{state: :valid, stack: [_, _]} = state
@@ -281,7 +271,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       custom_layout = %{
         sequencer: :custom_sequencer,
         proxies: [:custom_proxy],
-        storage_teams: [],
         services: %{}
       }
 
@@ -290,7 +279,6 @@ defmodule Bedrock.Internal.TransactionBuilderIntegrationTest do
       GenServer.cast(pid, {:set_key, "key", "value"})
       setup_nested_transaction(pid)
       GenServer.cast(pid, {:set_key, "key2", "value2"})
-      :timer.sleep(10)
 
       state = :sys.get_state(pid)
       assert %{transaction_system_layout: ^custom_layout} = state

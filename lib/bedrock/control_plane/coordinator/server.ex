@@ -11,8 +11,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.ControlPlane.Coordinator.Durability,
     only: [
-      durably_write_config: 3,
-      durably_write_transaction_system_layout: 3,
       durably_write_service_registration: 3,
       durable_write_completed: 3
     ]
@@ -22,6 +20,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       put_leader_node: 2,
       put_epoch: 2,
       put_leader_startup_state: 2,
+      put_config: 2,
+      put_transaction_system_layout: 2,
       update_raft: 2,
       add_tsl_subscriber: 2,
       remove_tsl_subscriber: 2,
@@ -34,7 +34,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       trace_started: 2,
       trace_election_completed: 1,
       trace_consensus_reached: 1,
-      trace_leader_waiting_for_consensus: 0,
       trace_leader_ready_starting_director: 1,
       trace_recovery_capability_change_detected: 0,
       trace_recovery_retry_attempt: 1,
@@ -47,12 +46,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.Log.TupleInMemoryLog
+  alias Bedrock.SystemKeys.ClusterBootstrap
 
   require Logger
+
+  # The FlatBuffer-generated ClusterBootstrap.read/1 can return errors per the library spec,
+  # but Dialyzer doesn't see this because the generated wrapper lacks a @spec.
+  # Suppress the false positive since defensive error handling is appropriate here.
+  @dialyzer {:no_match, parse_bootstrap_data: 2}
 
   @spec child_spec(opts :: [cluster: module()]) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -81,12 +88,18 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     with {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
+      # Load config and old TSL from object storage (source of truth)
+      {loaded_epoch, loaded_config, loaded_tsl} = load_state_from_object_storage(cluster)
+
       {:ok,
        %State{
          cluster: cluster,
          my_node: my_node,
          otp_name: otp_name,
          supervisor_otp_name: cluster.otp_name(:sup),
+         epoch: loaded_epoch,
+         config: loaded_config,
+         transaction_system_layout: loaded_tsl,
          raft:
            Raft.new(
              my_node,
@@ -121,28 +134,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   def handle_call(:fetch_config, _from, t), do: reply(t, {:ok, t.config})
 
   def handle_call(:fetch_transaction_system_layout, _from, t), do: reply(t, {:ok, t.transaction_system_layout})
-
-  def handle_call({:update_config, config}, from, t) do
-    command = Commands.update_config(config)
-
-    t
-    |> durably_write_config(command, ack_fn(from))
-    |> case do
-      {:ok, t} -> noreply(t)
-      {:error, _reason} = error -> reply(t, error)
-    end
-  end
-
-  def handle_call({:update_transaction_system_layout, transaction_system_layout}, from, t) do
-    command = Commands.update_transaction_system_layout(transaction_system_layout)
-
-    t
-    |> durably_write_transaction_system_layout(command, ack_fn(from))
-    |> case do
-      {:ok, t} -> noreply(t)
-      {:error, _reason} = error -> reply(t, error)
-    end
-  end
 
   def handle_call({:register_services, services}, from, t) do
     caller_node = Node.self()
@@ -226,19 +217,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     if_result =
       if new_leader == t.my_node do
-        # We became leader - normally wait for first consensus to ensure state is fully processed
-        updated_with_state = put_leader_startup_state(updated_t, :leader_waiting_consensus)
+        # We became leader - start Director immediately
+        # TSL is OUTPUT of recovery (not input), config is loaded from object storage at init
+        service_count = map_size(updated_t.service_directory)
+        trace_leader_ready_starting_director(service_count)
 
-        # Check if we have any transactions waiting for consensus
-        # In a cold boot scenario, waiting_list will be empty and we should proceed immediately
-        if map_size(updated_with_state.waiting_list) == 0 do
-          # No transactions to wait for - proceed directly to director startup
-          try_to_start_director_after_first_consensus(updated_with_state)
-        else
-          # Transactions exist - wait for consensus_reached as normal
-          trace_leader_waiting_for_consensus()
-          updated_with_state
-        end
+        updated_t
+        |> put_leader_startup_state(:leader_ready)
+        |> update_recovery_capability_hash()
+        |> attempt_director_recovery(:leadership_change)
       else
         # Someone else is leader - clean up director if we have one
         updated_t
@@ -267,9 +254,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
     updated_t = durable_write_completed(t, log, durable_txn_id)
 
-    # Check if capability changes should trigger recovery retry, or if this is the first consensus after becoming leader
+    # Check if capability changes should trigger recovery retry
     updated_t
-    |> try_to_start_director_after_first_consensus()
     |> maybe_retry_recovery_on_capability_change()
     |> noreply()
   end
@@ -289,6 +275,23 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_cast({:ping, _}, t) do
     noreply(t)
+  end
+
+  def handle_cast({:notify_transaction_system_layout, transaction_system_layout}, t) do
+    # Direct notification from Director - update state and broadcast to subscribers
+    # No Raft consensus needed - TSL is persisted to object storage by Director
+    t
+    |> put_transaction_system_layout(transaction_system_layout)
+    |> put_epoch(transaction_system_layout.epoch)
+    |> noreply()
+  end
+
+  def handle_cast({:notify_config, config}, t) do
+    # Direct notification from Director - update cached config
+    # No Raft consensus needed - config is persisted to object storage by Director
+    t
+    |> put_config(config)
+    |> noreply()
   end
 
   def handle_cast({:forward_register_node_resources, node, services, capabilities, original_from}, t) do
@@ -419,57 +422,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   defp maybe_retry_recovery_on_capability_change(t), do: t
 
-  @spec try_to_start_director_after_first_consensus(State.t()) :: State.t()
-  defp try_to_start_director_after_first_consensus(%{leader_startup_state: :leader_waiting_consensus} = t)
-       when t.leader_node == t.my_node do
-    # Check if we have TSL state (either nil for new system or restored from Raft)
-    # This prevents the race condition where director starts before TSL restoration
-    case t.transaction_system_layout do
-      nil ->
-        # TSL is nil - check if this is a genuinely new system or if we need to wait for restoration
-        if has_persisted_tsl_in_raft(t) do
-          # We have persisted TSL but it's not restored yet - keep waiting for TSL consensus
-          Logger.info("Bedrock [#{t.cluster}]: Leader waiting for TSL restoration from Raft before starting director")
-          t
-        else
-          # No persisted TSL - this is genuinely a new system, safe to start director
-          start_director_after_consensus(t)
-        end
-
-      _tsl ->
-        # TSL is available (restored or default) - safe to start director
-        start_director_after_consensus(t)
-    end
-  end
-
-  defp try_to_start_director_after_first_consensus(t) do
-    # Not waiting for consensus, or already ready
-    t
-  end
-
-  defp start_director_after_consensus(t) do
-    service_count = map_size(t.service_directory)
-    trace_leader_ready_starting_director(service_count)
-
-    t
-    |> put_leader_startup_state(:leader_ready)
-    |> update_recovery_capability_hash()
-    |> attempt_director_recovery(:leadership_change)
-  end
-
-  defp has_persisted_tsl_in_raft(t) do
-    # Check if Raft log contains any TSL update transactions
-    # This indicates we have persisted TSL that should be restored
-    log = Raft.log(t.raft)
-
-    # Look for any TSL update commands in committed transactions
-    log
-    |> Log.transactions_to(:newest_safe)
-    |> Enum.any?(fn {_txn_id, command} ->
-      match?({:update_transaction_system_layout, _}, command)
-    end)
-  end
-
   @spec expand_compact_services([{String.t(), atom(), atom()}], node()) :: [
           Commands.service_info()
         ]
@@ -477,5 +429,144 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     Enum.map(compact_services, fn {service_id, kind, name} ->
       {service_id, kind, {name, caller_node}}
     end)
+  end
+
+  # Object Storage loading functions
+
+  @spec load_state_from_object_storage(module()) ::
+          {Bedrock.epoch() | nil, map() | nil, map() | nil}
+  defp load_state_from_object_storage(cluster) do
+    with {:ok, backend} <- get_object_storage_backend(cluster),
+         {:ok, data} <- fetch_bootstrap_data(backend, cluster),
+         {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
+      epoch = bootstrap.epoch
+      config = build_config_from_bootstrap(bootstrap, cluster)
+      old_tsl = build_old_tsl_from_bootstrap(bootstrap)
+
+      Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
+      {epoch, config, old_tsl}
+    else
+      {:error, :no_object_storage} -> {nil, nil, nil}
+      {:error, :not_found} -> {nil, nil, nil}
+      {:error, _reason} -> {nil, nil, nil}
+    end
+  end
+
+  defp fetch_bootstrap_data(backend, cluster) do
+    case ObjectStorage.get(backend, "bootstrap") do
+      {:ok, data} ->
+        {:ok, data}
+
+      {:error, :not_found} ->
+        Logger.info("Bedrock [#{cluster}]: No cluster bootstrap in object storage, starting fresh")
+        {:error, :not_found}
+
+      {:error, reason} ->
+        Logger.warning("Bedrock [#{cluster}]: Failed to load cluster bootstrap from object storage: #{inspect(reason)}")
+
+        {:error, reason}
+    end
+  end
+
+  defp parse_bootstrap_data(data, cluster) do
+    case ClusterBootstrap.read(data) do
+      {:ok, bootstrap} ->
+        {:ok, bootstrap}
+
+      {:error, reason} ->
+        Logger.warning("Bedrock [#{cluster}]: Failed to parse cluster bootstrap: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  # Build a Config struct from ClusterBootstrap data
+  defp build_config_from_bootstrap(bootstrap, cluster) do
+    {:ok, coordinator_nodes} = cluster.fetch_coordinator_nodes()
+
+    %{
+      coordinators: coordinator_nodes,
+      parameters: build_parameters(bootstrap[:parameters], coordinator_nodes),
+      policies: build_policies(bootstrap[:policies])
+    }
+  end
+
+  defp build_parameters(nil, coordinator_nodes), do: default_parameters(coordinator_nodes)
+
+  defp build_parameters(params, coordinator_nodes) do
+    defaults = default_parameters(coordinator_nodes)
+
+    %{
+      nodes: coordinator_nodes,
+      desired_coordinators: params[:desired_coordinators] || defaults.desired_coordinators,
+      desired_logs: params[:desired_logs] || defaults.desired_logs,
+      desired_replication_factor: params[:desired_replication_factor] || defaults.desired_replication_factor,
+      desired_commit_proxies: params[:desired_commit_proxies] || defaults.desired_commit_proxies,
+      desired_read_version_proxies: params[:desired_read_version_proxies] || defaults.desired_read_version_proxies,
+      ping_rate_in_hz: params[:ping_rate_in_hz] || defaults.ping_rate_in_hz,
+      retransmission_rate_in_hz: params[:retransmission_rate_in_hz] || defaults.retransmission_rate_in_hz,
+      transaction_window_in_ms: params[:transaction_window_in_ms] || defaults.transaction_window_in_ms
+    }
+  end
+
+  defp default_parameters(coordinator_nodes) do
+    %{
+      nodes: coordinator_nodes,
+      desired_coordinators: length(coordinator_nodes),
+      desired_logs: 1,
+      desired_replication_factor: 1,
+      desired_commit_proxies: 1,
+      desired_read_version_proxies: 1,
+      ping_rate_in_hz: 10,
+      retransmission_rate_in_hz: 20,
+      transaction_window_in_ms: 5_000
+    }
+  end
+
+  defp build_policies(nil), do: %{allow_volunteer_nodes_to_join: true}
+  defp build_policies(p), do: %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
+
+  # Build old_transaction_system_layout from ClusterBootstrap logs
+  # Recovery only uses the logs field to determine which logs to copy from
+  defp build_old_tsl_from_bootstrap(bootstrap) do
+    logs =
+      Map.new(bootstrap[:logs] || [], fn log_info ->
+        # LogDescriptor is just [range_tag] - a list of shard tags
+        {log_info[:id], log_info[:shard_tags] || []}
+      end)
+
+    %{logs: logs}
+  end
+
+  @spec get_object_storage_backend(module()) :: {:ok, ObjectStorage.backend()} | {:error, :no_object_storage}
+  defp get_object_storage_backend(cluster) do
+    node_config = cluster.node_config()
+
+    # Check for explicit object_storage config
+    case Keyword.fetch(node_config, :object_storage) do
+      {:ok, backend} ->
+        {:ok, backend}
+
+      :error ->
+        # Derive from path config (same logic as cluster_supervisor and persistence_phase)
+        derive_object_storage_from_path(node_config)
+    end
+  end
+
+  defp derive_object_storage_from_path(node_config) do
+    # Try to find a path from any capability config
+    path =
+      Enum.find_value([:coordinator, :log, :storage, :materializer, :coordination], fn capability ->
+        node_config
+        |> Keyword.get(capability, [])
+        |> Keyword.get(:path)
+      end)
+
+    if path do
+      object_storage_root = Path.join(path, "object_storage")
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      {:ok, backend}
+    else
+      {:error, :no_object_storage}
+    end
   end
 end

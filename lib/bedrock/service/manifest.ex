@@ -59,7 +59,8 @@ defmodule Bedrock.Service.Manifest do
              | :invalid_cluster_name
              | :invalid_worker_name
              | :worker_module_does_not_implement_behaviour
-             | :invalid_params}
+             | :invalid_params
+             | {:file_read_error, atom()}}
   def load_from_file(path_to_manifest) do
     with {:ok, file_contents} <- load_file_contents(path_to_manifest),
          {:ok, json} <- Jason.decode(file_contents),
@@ -78,7 +79,8 @@ defmodule Bedrock.Service.Manifest do
     end
   end
 
-  @spec load_file_contents(String.t()) :: {:ok, String.t()} | {:error, :manifest_does_not_exist}
+  @spec load_file_contents(String.t()) ::
+          {:ok, String.t()} | {:error, :manifest_does_not_exist | {:file_read_error, atom()}}
   defp load_file_contents(path) do
     path
     |> File.read()
@@ -87,6 +89,7 @@ defmodule Bedrock.Service.Manifest do
       {:error, :enoent} -> {:error, :manifest_does_not_exist}
       {:error, :enotdir} -> {:error, :manifest_does_not_exist}
       {:error, :eisdir} -> {:error, :manifest_does_not_exist}
+      {:error, reason} -> {:error, {:file_read_error, reason}}
     end
   end
 

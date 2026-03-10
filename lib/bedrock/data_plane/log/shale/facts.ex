@@ -40,7 +40,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
   defp gather_info(:supported_info, _), do: supported_info()
 
   # Transaction Log facts
-  defp gather_info(:minimum_durable_version, _t), do: :unavailable
+  defp gather_info(:minimum_durable_version, %{min_durable_version: nil}), do: :unavailable
+  defp gather_info(:minimum_durable_version, %{min_durable_version: v}), do: v
 
   defp gather_info(:oldest_version, t), do: t.oldest_version
   defp gather_info(:last_version, t), do: t.last_version

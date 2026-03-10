@@ -137,28 +137,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec persist_config(State.t()) :: State.t()
   def persist_config(t) do
-    case Coordinator.update_config(t.coordinator, t.config) do
-      {:ok, txn_id} ->
-        trace_recovery_attempt_persisted(txn_id)
-        t
-
-      {:error, reason} ->
-        trace_recovery_attempt_persist_failed(reason)
-        t
-    end
+    # Notify coordinator of config update directly (no Raft consensus).
+    # Config is persisted to object storage by the persistence phase.
+    Coordinator.notify_config(t.coordinator, t.config)
+    trace_recovery_attempt_persisted(:notified)
+    t
   end
 
   @spec persist_new_transaction_system_layout(State.t()) :: State.t()
   def persist_new_transaction_system_layout(t) do
-    case Coordinator.update_transaction_system_layout(t.coordinator, t.transaction_system_layout) do
-      {:ok, txn_id} ->
-        trace_recovery_layout_persisted(txn_id)
-        t
-
-      {:error, reason} ->
-        trace_recovery_layout_persist_failed(reason)
-        t
-    end
+    # Notify coordinator of new TSL directly (no Raft consensus).
+    # TSL is already persisted to object storage by the persistence phase.
+    Coordinator.notify_transaction_system_layout(t.coordinator, t.transaction_system_layout)
+    trace_recovery_layout_persisted(:notified)
+    t
   end
 
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::

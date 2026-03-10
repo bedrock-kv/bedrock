@@ -48,10 +48,10 @@ defmodule Bedrock.ClusterTest do
         @moduledoc false
         use Cluster,
           name: "test_capabilities",
-          config: [capabilities: [:coordination, :storage]]
+          config: [capabilities: [:coordination, :materializer]]
       end
 
-      assert [:coordination, :storage] = TestClusterCapabilities.node_capabilities()
+      assert [:coordination, :materializer] = TestClusterCapabilities.node_capabilities()
     end
 
     test "sets coordinator ping timeout from static config" do
@@ -114,12 +114,12 @@ defmodule Bedrock.ClusterTest do
         use Cluster,
           name: "test_precedence",
           otp_app: :test_app,
-          config: [capabilities: [:storage]]
+          config: [capabilities: [:materializer]]
       end
 
       Application.put_env(:test_app, TestClusterPrecedence, capabilities: [:coordination])
 
-      assert [:storage] = TestClusterPrecedence.node_capabilities()
+      assert [:materializer] = TestClusterPrecedence.node_capabilities()
     end
   end
 

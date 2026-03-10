@@ -332,6 +332,55 @@ defmodule Bedrock.DataPlane.TransactionTest do
     end
   end
 
+  describe "metadata_mutation?/1" do
+    test "returns true for :set mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:set, <<0xFF, "key">>, "value"})
+      assert Transaction.metadata_mutation?({:set, <<0xFF>>, "value"})
+      assert Transaction.metadata_mutation?({:set, <<0xFF, 0x02, "metadata">>, "data"})
+    end
+
+    test "returns false for :set mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:set, "user_key", "value"})
+      refute Transaction.metadata_mutation?({:set, <<0x00, 0xFF>>, "value"})
+      refute Transaction.metadata_mutation?({:set, "", "value"})
+    end
+
+    test "returns true for :clear mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:clear, <<0xFF, "key">>})
+      assert Transaction.metadata_mutation?({:clear, <<0xFF>>})
+    end
+
+    test "returns false for :clear mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:clear, "user_key"})
+      refute Transaction.metadata_mutation?({:clear, <<>>})
+    end
+
+    test "returns true for :clear_range if either key has \\xFF prefix" do
+      # Start key has prefix
+      assert Transaction.metadata_mutation?({:clear_range, <<0xFF, "start">>, "end"})
+      # End key has prefix
+      assert Transaction.metadata_mutation?({:clear_range, "start", <<0xFF, "end">>})
+      # Both have prefix
+      assert Transaction.metadata_mutation?({:clear_range, <<0xFF, "a">>, <<0xFF, "z">>})
+    end
+
+    test "returns false for :clear_range without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:clear_range, "start", "end"})
+      refute Transaction.metadata_mutation?({:clear_range, <<0x00>>, <<0xFE>>})
+    end
+
+    test "returns true for :atomic mutations with \\xFF prefix" do
+      assert Transaction.metadata_mutation?({:atomic, :add, <<0xFF, "counter">>, <<1>>})
+      assert Transaction.metadata_mutation?({:atomic, :min, <<0xFF, "val">>, <<5>>})
+      assert Transaction.metadata_mutation?({:atomic, :max, <<0xFF, "val">>, <<10>>})
+    end
+
+    test "returns false for :atomic mutations without \\xFF prefix" do
+      refute Transaction.metadata_mutation?({:atomic, :add, "counter", <<1>>})
+      refute Transaction.metadata_mutation?({:atomic, :min, "val", <<5>>})
+    end
+  end
+
   describe "binary format structure" do
     test "has correct magic number and version" do
       encoded = Transaction.encode(legacy_transaction())
@@ -350,6 +399,105 @@ defmodule Bedrock.DataPlane.TransactionTest do
       for binary <- binaries do
         assert {:ok, ^transaction} = Transaction.decode(binary)
       end
+    end
+  end
+
+  describe "shard_index section" do
+    test "encodes and extracts empty shard index" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: []
+      }
+
+      binary = Transaction.encode(transaction)
+      # Empty shard index should not be encoded
+      assert {:ok, nil} = Transaction.shard_index(binary)
+    end
+
+    test "encodes and extracts single entry shard index" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: [{0, 5}]
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, [{0, 5}]} = Transaction.shard_index(binary)
+    end
+
+    test "encodes and extracts multi-entry shard index" do
+      transaction = %{
+        mutations: [
+          {:set, "a", "v1"},
+          {:set, "b", "v2"},
+          {:set, "c", "v3"},
+          {:set, "x", "v4"},
+          {:set, "y", "v5"}
+        ],
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: [{0, 3}, {1, 2}]
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, [{0, 3}, {1, 2}]} = Transaction.shard_index(binary)
+    end
+
+    test "shard_index returns nil when section not present" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, []},
+        write_conflicts: []
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, nil} = Transaction.shard_index(binary)
+    end
+
+    test "shard_index! raises on invalid transaction" do
+      assert_raise RuntimeError, ~r/Failed to extract shard index/, fn ->
+        Transaction.shard_index!(<<1, 2, 3>>)
+      end
+    end
+
+    test "encodes and extracts shard index with large values" do
+      # Test varint encoding with larger values
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: [{1000, 500}, {2000, 300}]
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, [{1000, 500}, {2000, 300}]} = Transaction.shard_index(binary)
+    end
+
+    test "transaction with shard_index decodes mutations correctly" do
+      mutations = [
+        {:set, "a", "v1"},
+        {:set, "b", "v2"},
+        {:clear, "c"}
+      ]
+
+      transaction = %{
+        mutations: mutations,
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: [{0, 2}, {1, 1}]
+      }
+
+      binary = Transaction.encode(transaction)
+
+      # Mutations should decode correctly
+      assert {:ok, stream} = Transaction.mutations(binary)
+      assert Enum.to_list(stream) == mutations
+
+      # Shard index should also be available
+      assert {:ok, [{0, 2}, {1, 1}]} = Transaction.shard_index(binary)
     end
   end
 end

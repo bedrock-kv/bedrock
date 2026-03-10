@@ -17,8 +17,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   Stalls if insufficient nodes exist for worker creation or if recruited services fail
   to lock. However, immediately halts with error if any service is locked by a newer
-  epoch (this director has been superseded). Transitions to storage recruitment with
-  complete log service assignments.
+  epoch (this director has been superseded). Transitions to log replay with complete
+  log service assignments.
 
   """
 
@@ -72,7 +72,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
         |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
 
-      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.StorageRecruitmentPhase}
+      {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
     else
       {:error, :newer_epoch_exists} = error ->
         {recovery_attempt, error}

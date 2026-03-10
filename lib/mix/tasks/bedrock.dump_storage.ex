@@ -37,8 +37,8 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
 
   use Mix.Task
 
-  alias Bedrock.DataPlane.Storage
-  alias Bedrock.DataPlane.Storage.Olivine
+  alias Bedrock.DataPlane.Materializer
+  alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
@@ -143,7 +143,7 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
   defp fetch_all_keys_values(storage_pid, config) do
     # First, get the current durable version from the storage
     version =
-      case Storage.info(storage_pid, [:durable_version]) do
+      case Materializer.info(storage_pid, [:durable_version]) do
         {:ok, info_map} ->
           case Map.get(info_map, :durable_version) do
             nil ->
@@ -166,7 +166,7 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
     # Note: Using 0xFF repeated to get maximum possible key
     max_key = <<0xFF, 0xFF>>
 
-    case Storage.get_range(storage_pid, <<>>, max_key, version, []) do
+    case Materializer.get_range(storage_pid, <<>>, max_key, version, []) do
       {:ok, {entries, _has_more}} ->
         Mix.shell().info("Found #{length(entries)} key-value pairs")
 

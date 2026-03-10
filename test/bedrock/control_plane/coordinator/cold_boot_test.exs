@@ -2,6 +2,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
+  alias Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTracker
   alias Bedrock.ControlPlane.Coordinator.Server
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.Raft
@@ -54,27 +55,21 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       # Simulate leadership election - this node becomes leader
       leadership_event = {:raft, :leadership_changed, {my_node, 1}}
 
-      # In a cold boot scenario with no transactions, the coordinator should immediately
-      # proceed to director startup instead of hanging waiting for consensus
+      # Upon leadership election, the coordinator should immediately proceed to director startup
+      # (no waiting for consensus - TSL is output of recovery, config loaded from object storage at init)
 
       # The director startup will fail because there's no supervisor in the test environment,
-      # but we can verify that it ATTEMPTED to start the director (didn't hang)
-
+      # but we can verify that it ATTEMPTED to start the director
       result = catch_exit(Server.handle_info(leadership_event, state))
 
       # Verify it attempted director startup - the exit indicates it tried to call the supervisor
-      # If it had hung in :leader_waiting_consensus, we wouldn't get here
       assert match?({:noproc, _}, result) or match?({:EXIT, :noproc}, result) or match?({:normal, _}, result),
              "Expected director startup attempt, got: #{inspect(result)}"
-
-      # The key point: In a cold boot with no transactions, the coordinator no longer hangs
-      # waiting for consensus that will never come. Instead, it immediately proceeds to
-      # director recovery, which is the correct behavior.
     end
 
-    test "leader election with existing committed transactions sends consensus messages" do
-      # This test demonstrates what SHOULD happen: if there are committed transactions
-      # in the Raft log, they should trigger consensus_reached messages
+    test "leader election with existing committed transactions starts director immediately" do
+      # With the new flow, the coordinator starts the director immediately on leadership
+      # election - it no longer waits for consensus first
 
       my_node = Node.self()
       raft_log = InMemoryLog.new(:tuple)
@@ -116,11 +111,11 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       # Simulate leadership election
       leadership_event = {:raft, :leadership_changed, {my_node, 1}}
 
-      {:noreply, _updated_state} = Server.handle_info(leadership_event, state)
+      # Director startup will fail because no supervisor, but verify it attempted to start
+      result = catch_exit(Server.handle_info(leadership_event, state))
 
-      # In this case, the existing handle_continue logic should send consensus messages
-      # But the test shows this only works if the leader is elected during init,
-      # not if leadership changes after init
+      assert match?({:noproc, _}, result) or match?({:EXIT, :noproc}, result) or match?({:normal, _}, result),
+             "Expected director startup attempt, got: #{inspect(result)}"
     end
   end
 
@@ -170,8 +165,9 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
   end
 
   describe "consensus_reached behavior" do
-    test "consensus_reached calls try_to_start_director_after_first_consensus" do
-      # This test verifies that when consensus IS reached, the director starts
+    test "consensus_reached processes durable writes without starting director" do
+      # Since director is started immediately on leadership change, consensus_reached
+      # now only processes durable writes and checks for capability changes
       my_node = Node.self()
       raft_log = InMemoryLog.new(:tuple)
 
@@ -182,6 +178,21 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
 
       raft = Raft.new(my_node, [], raft_log, RaftAdapter)
 
+      # Simulate receiving an ack for the waiting transaction
+      ack_received = :erlang.make_ref()
+
+      # Initialize recovery_tracker with the current hash so no "change" is detected
+      # This simulates the normal state where hash was set when leadership was acquired
+      node_capabilities = %{}
+      service_directory = %{}
+
+      recovery_tracker =
+        RecoveryCapabilityTracker.update_recovery_state_hash(
+          RecoveryCapabilityTracker.new(),
+          node_capabilities,
+          service_directory
+        )
+
       state = %State{
         cluster: TestCluster,
         my_node: my_node,
@@ -189,30 +200,31 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
         supervisor_otp_name: :test_sup,
         raft: raft,
         leader_node: my_node,
-        # Waiting for first consensus
-        leader_startup_state: :leader_waiting_consensus,
+        # Already leader_ready (director started on leadership change)
+        leader_startup_state: :leader_ready,
         epoch: 1,
-        waiting_list: %{{0, 1} => fn result -> send(self(), {:ack, result}) end},
+        waiting_list: %{{0, 1} => fn _result -> send(self(), {:ack, ack_received}) end},
         config: nil,
         transaction_system_layout: nil,
-        service_directory: %{},
-        node_capabilities: %{},
+        service_directory: service_directory,
+        node_capabilities: node_capabilities,
         director: :unavailable,
         last_durable_txn_id: {0, 0},
-        tsl_subscribers: MapSet.new()
+        tsl_subscribers: MapSet.new(),
+        recovery_tracker: recovery_tracker
       }
 
       # Simulate consensus_reached
       consensus_event = {:raft, :consensus_reached, raft_log, {0, 1}, :latest}
 
-      # The director startup will fail because there's no supervisor in the test environment,
-      # but we can verify that it ATTEMPTED to start the director (didn't stay waiting)
-      result = catch_exit(Server.handle_info(consensus_event, state))
+      # consensus_reached should process the durable write and clear the waiting_list
+      {:noreply, updated_state} = Server.handle_info(consensus_event, state)
 
-      # Verify it attempted director startup - the exit indicates it tried to call the supervisor
-      # If it had stayed in :leader_waiting_consensus, we wouldn't get here
-      assert match?({:noproc, _}, result) or match?({:EXIT, :noproc}, result) or match?({:normal, _}, result),
-             "Expected director startup attempt after consensus, got: #{inspect(result)}"
+      # Verify the waiting_list was cleared (transaction was acknowledged)
+      assert updated_state.waiting_list == %{}
+
+      # Verify the ack was sent
+      assert_received {:ack, ^ack_received}
     end
   end
 end

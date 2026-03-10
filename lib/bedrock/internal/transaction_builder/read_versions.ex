@@ -4,27 +4,26 @@ defmodule Bedrock.Internal.TransactionBuilder.ReadVersions do
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.Internal.TransactionBuilder.State
 
-  @type sequencer_fn() :: (pid() -> {:ok, Bedrock.version()} | {:error, atom()})
+  @type sequencer_fn() :: (pid(), Bedrock.epoch(), keyword() -> {:ok, Bedrock.version()} | {:error, atom()})
   @type next_read_version_fn() :: (State.t() ->
                                      {:ok, Bedrock.version()}
                                      | {:error, atom()})
 
   @spec next_read_version(State.t()) ::
           {:ok, Bedrock.version()}
-          | {:error, :unavailable | :timeout | :unknown}
+          | {:error, :unavailable | :timeout | :unknown | :wrong_epoch}
   @spec next_read_version(State.t(), opts) ::
           {:ok, Bedrock.version()}
-          | {:error, :unavailable | :timeout | :unknown}
+          | {:error, :unavailable | :timeout | :unknown | :wrong_epoch}
         when opts: [
                sequencer_fn: sequencer_fn()
              ]
   def next_read_version(t, opts \\ []) do
-    sequencer_fn = Keyword.get(opts, :sequencer_fn, &Sequencer.next_read_version/2)
-    # Use the transaction's fetch timeout (default 100ms) for sequencer calls
-    # This ensures we fail fast on stale sequencer PIDs from old incarnations
+    sequencer_fn = Keyword.get(opts, :sequencer_fn, &Sequencer.next_read_version/3)
     timeout_in_ms = t.fetch_timeout_in_ms
+    epoch = t.transaction_system_layout.epoch
 
-    sequencer_fn.(t.transaction_system_layout.sequencer, timeout_in_ms: timeout_in_ms)
+    sequencer_fn.(t.transaction_system_layout.sequencer, epoch, timeout_in_ms: timeout_in_ms)
   end
 
   @doc """

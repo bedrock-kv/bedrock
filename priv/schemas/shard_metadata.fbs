@@ -1,0 +1,11 @@
+// Shard metadata - tag is in the key path
+namespace Bedrock.SystemKeys;
+
+table ShardMetadata {
+  start_key: [ubyte];
+  end_key: [ubyte];
+  born_at: ulong;    // version when created
+  ended_at: ulong;   // version when split/merged, 0 = active
+}
+
+root_type ShardMetadata;

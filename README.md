@@ -15,14 +15,14 @@ by adding `bedrock` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.4"}
+    {:bedrock, "~> 0.5"}
   ]
 end
 ```
 
 ## Example
 
-[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjallum%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fclass_scheduling.livemd)
+[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fbedrock-kv%2Fbedrock%2Frefs%2Fheads%2Fdevelop%2Flivebooks%2Fclass_scheduling.livemd)
 
 ## Durability Foundation Guides
 

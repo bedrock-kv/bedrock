@@ -71,7 +71,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Looks up the shard tag for a key using ETS ceiling search.
 
   The ETS table must be an ordered_set with entries in one of two formats:
@@ -128,7 +128,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
   defp extract_tag({tag, _log_indices}), do: tag
   defp extract_tag(tag), do: tag
 
-  @doc """
+  @doc ~S"""
   Looks up all shard tags that overlap with a key range.
 
   Used for range mutations (clear_range) that may span multiple shards.
@@ -146,7 +146,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
 
   ## Examples
 
-      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\\xff", 3}
+      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\xff", 3}
       iex> lookup_shards_for_range(table, "a", "c")
       [0]
       iex> lookup_shards_for_range(table, "c", "f")
@@ -200,7 +200,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
     |> Enum.reverse()
   end
 
-  @doc """
+  @doc ~S"""
   Returns shards overlapping a key range, with their boundaries.
 
   Unlike `lookup_shards_for_range/3` which returns only tags, this function
@@ -220,8 +220,8 @@ defmodule Bedrock.DataPlane.ShardRouter do
 
   ## Examples
 
-      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\\xff", 3}
-      # Shards: 0 = ["", "d"), 1 = ["d", "h"), 2 = ["h", "m"), 3 = ["m", "\\xff")
+      # Table has: {"d", 0}, {"h", 1}, {"m", 2}, {"\xff", 3}
+      # Shards: 0 = ["", "d"), 1 = ["d", "h"), 2 = ["h", "m"), 3 = ["m", "\xff")
       iex> lookup_shards_with_ranges(table, "a", "c")
       [{0, "", "d"}]
       iex> lookup_shards_with_ranges(table, "c", "j")

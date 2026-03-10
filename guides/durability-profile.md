@@ -46,7 +46,7 @@ supporting gradual rollout in relaxed mode.
 
 ## Runtime Startup Enforcement
 
-`Bedrock.Internal.ClusterSupervisor` enforces this profile at startup:
+The internal cluster supervisor enforces this profile at startup:
 
 - `:strict` mode (default): raises and fails startup when checks fail.
 - `:relaxed` mode: logs warning and continues.

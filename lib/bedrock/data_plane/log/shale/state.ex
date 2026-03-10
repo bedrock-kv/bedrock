@@ -1,5 +1,7 @@
 defmodule Bedrock.DataPlane.Log.Shale.State do
-  @moduledoc false
+  @moduledoc """
+  Internal state struct for Shale log servers.
+  """
 
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Log.Shale.Segment

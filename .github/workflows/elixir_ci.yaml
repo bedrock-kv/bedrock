@@ -84,7 +84,7 @@ jobs:
       run: mix dialyzer
 
     - name: Run tests
-      run: mix coveralls.github
+      run: ${{ github.event_name == 'schedule' && 'mix test' || 'mix coveralls.github' }}
 
   s3_test:
     if: github.event_name != 'schedule'

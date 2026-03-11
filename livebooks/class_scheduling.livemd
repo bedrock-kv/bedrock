@@ -6,7 +6,7 @@ Mix.install([
   {:kino, "~> 0.16.0"},
 ])
 
-# If you've used any of these tutorials before, and want to see the latest-greatest, you'll want 
+# If you've used any of these tutorials before, and want to see the latest-greatest, you'll want
 # to use the "Setup without cache" option from the menu above.
 ```
 
@@ -32,11 +32,15 @@ defmodule Tutorial.Cluster do
     otp_app: :tutorial_app,
     name: "tutorial",
     config: [
-      # What is this node allowed to be? In Bedrock, nodes can have different capabilities. Some 
-      # might only store data, others might coordinate cluster operations, and some might handle 
-      # both. For production deployments, you'd typically split these roles across different 
+      # What is this node allowed to be? In Bedrock, nodes can have different capabilities. Some
+      # might only store data, others might coordinate cluster operations, and some might handle
+      # both. For production deployments, you'd typically split these roles across different
       # machines for better performance and reliability.
       capabilities: [:coordination, :log, :materializer],
+
+      # Single-node tutorials don't meet production durability requirements (replication, etc.)
+      # so we relax the checks here.
+      durability_mode: :relaxed,
 
       # Optional tracing of internal operations
       trace: [], # :coordinator, :recovery, :commit_proxy, :log, :storage, etc.

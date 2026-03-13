@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.LayoutRouting
 
   describe "execute/2" do
     test "for fresh cluster, creates default shard layout and materializers" do
@@ -404,6 +405,61 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         end)
 
       assert log =~ "Materializer caught up to version"
+
+      :ets.delete(received_tsl)
+    end
+
+    test "uses consistent-hash log selection when descriptors are empty" do
+      materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      durable_version = Version.from_integer(100)
+
+      logs = %{
+        "log_c" => [],
+        "log_a" => [],
+        "log_b" => []
+      }
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, logs)
+        |> Map.put(:durable_version, durable_version)
+
+      received_tsl = :ets.new(:consistent_hash_tsl, [:set, :public])
+
+      context =
+        [
+          old_transaction_system_layout: %{
+            logs: logs
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:available_services, %{
+          "metadata_materializer" => {:materializer, {:test_materializer, node()}}
+        })
+        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, tsl ->
+          :ets.insert(received_tsl, {:tsl, tsl})
+          :ok
+        end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
+          {:ok, %{durable_version: durable_version}}
+        end)
+        |> Map.update!(:cluster_config, &merge_parameters(&1, %{desired_replication_factor: 1}))
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+        end)
+
+      assert {_updated_attempt, CommitProxyStartupPhase} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+      [{:tsl, tsl}] = :ets.lookup(received_tsl, :tsl)
+
+      expected_log_ids = LayoutRouting.log_ids_for_shard(logs, 0, 1)
+
+      assert Map.keys(tsl.logs) == expected_log_ids
+      refute tsl.logs == %{}
 
       :ets.delete(received_tsl)
     end

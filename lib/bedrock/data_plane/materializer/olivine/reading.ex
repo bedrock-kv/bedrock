@@ -182,6 +182,27 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   end
 
   @doc """
+  Expires waiting fetches whose deadlines have elapsed and replies to them.
+  """
+  @spec expire_waiting_fetches(t(), any()) :: t()
+  def expire_waiting_fetches(%__MODULE__{} = manager, error_response \\ {:error, :waiting_timeout}) do
+    {updated_waiting_fetches, expired_entries} = WaitingList.expire(manager.waiting_fetches)
+    WaitingList.reply_to_expired(expired_entries, error_response)
+    %{manager | waiting_fetches: updated_waiting_fetches}
+  end
+
+  @doc """
+  Returns the timeout until the next waiting fetch deadline, or nil when none exist.
+  """
+  @spec next_timeout(t()) :: pos_integer() | nil
+  def next_timeout(%__MODULE__{} = manager) do
+    case WaitingList.next_timeout(manager.waiting_fetches) do
+      :infinity -> nil
+      timeout -> max(1, timeout)
+    end
+  end
+
+  @doc """
   Shuts down the read request manager by waiting for active tasks and notifying waiting fetches.
   """
   @spec shutdown(t()) :: :ok
@@ -309,10 +330,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
       wait_ms when is_integer(wait_ms) and wait_ms > 0 ->
         timing = ReadRequest.mark_waitlisted(timing)
         fetch_request = build_waitlist_request(timing.operation, request_args)
-
-        # Store timing for when the waitlisted request is eventually processed
-        waitlist_key = {extract_version(request_args), opts[:reply_fn]}
-        Process.put({:waitlist_timing, waitlist_key}, timing)
 
         updated_manager =
           add_to_waitlist(manager, fetch_request, extract_version(request_args), opts[:reply_fn], wait_ms)

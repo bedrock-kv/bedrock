@@ -163,7 +163,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       {[], nil, updated_intake_queue} ->
         # Queue empty, just wait for new transactions or timeout
         updated_state = %{t | intake_queue: updated_intake_queue}
-        noreply(updated_state)
+        maybe_schedule_read_timeout(updated_state)
 
       {batch, _batch_last_version, updated_intake_queue} ->
         updated_state = %{t | intake_queue: updated_intake_queue}
@@ -187,10 +187,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def handle_continue(:advance_window, %State{} = t) do
     if t.allow_window_advancement do
       {:ok, state_after_window} = Logic.advance_window(t)
-      noreply(state_after_window)
+      maybe_schedule_read_timeout(state_after_window)
     else
       # Compaction in progress - skip window advancement
-      noreply(t)
+      maybe_schedule_read_timeout(t)
     end
   end
 
@@ -217,6 +217,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     %{state | read_request_manager: updated_manager}
   end
 
+  defp expire_waiting_fetches(state) do
+    updated_manager = Reading.expire_waiting_fetches(state.read_request_manager)
+    %{state | read_request_manager: updated_manager}
+  end
+
+  defp maybe_schedule_read_timeout(state) do
+    case Reading.next_timeout(state.read_request_manager) do
+      nil -> noreply(state)
+      timeout -> noreply(state, timeout: timeout)
+    end
+  end
+
   @impl true
   # Discard transactions when locked
   def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t), do: noreply(t)
@@ -234,15 +246,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   @impl true
   def handle_info(:timeout, %State{} = t) do
+    state_after_expiration = expire_waiting_fetches(t)
+
     # First, process a larger batch of transactions for throughput
-    case IntakeQueue.take_batch_by_count(t.intake_queue, @timeout_batch_count) do
+    case IntakeQueue.take_batch_by_count(state_after_expiration.intake_queue, @timeout_batch_count) do
       {[], nil, updated_intake_queue} ->
         # No transactions to process, advance window during this lull
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = %{state_after_expiration | intake_queue: updated_intake_queue}
         noreply(updated_state, continue: :advance_window)
 
       {batch, _batch_last_version, updated_intake_queue} ->
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = %{state_after_expiration | intake_queue: updated_intake_queue}
         # Process larger batch for throughput
         {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         state_after_txns = notify_waiting_fetches(state_with_txns, version)
@@ -257,14 +271,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def handle_info({:transactions_applied, version}, %State{} = t) do
     t
     |> notify_waiting_fetches(version)
-    |> noreply()
+    |> maybe_schedule_read_timeout()
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %State{} = t) do
     updated_manager = Reading.remove_active_task(t.read_request_manager, pid)
     updated_state = %{t | read_request_manager: updated_manager}
-    noreply(updated_state)
+    maybe_schedule_read_timeout(updated_state)
   end
 
   @impl true

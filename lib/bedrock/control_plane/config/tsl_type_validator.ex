@@ -53,12 +53,9 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   defp validate_logs(logs) when is_map(logs) and map_size(logs) == 0, do: :ok
 
   defp validate_logs(logs) when is_map(logs) do
-    Enum.reduce_while(logs, :ok, fn {log_id, log_ranges}, :ok ->
-      case validate_log_entry(log_id, log_ranges) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:invalid_logs, log_id, reason}}}
-      end
-    end)
+    with :ok <- validate_log_entries(logs) do
+      validate_log_descriptor_modes(logs)
+    end
   end
 
   defp validate_logs(logs) do
@@ -70,6 +67,42 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
       validate_log_ranges(log_ranges)
     end
   end
+
+  defp validate_log_entries(logs) do
+    Enum.reduce_while(logs, :ok, fn {log_id, log_ranges}, :ok ->
+      case validate_log_entry(log_id, log_ranges) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:invalid_logs, log_id, reason}}}
+      end
+    end)
+  end
+
+  defp validate_log_descriptor_modes(logs) do
+    grouped_log_ids =
+      Enum.reduce(logs, %{consistent_hashing: [], legacy: []}, fn {log_id, log_ranges}, acc ->
+        mode = log_descriptor_mode(log_ranges)
+        Map.update!(acc, mode, &[log_id | &1])
+      end)
+
+    case grouped_log_ids do
+      %{consistent_hashing: [], legacy: _legacy_log_ids} ->
+        :ok
+
+      %{consistent_hashing: _consistent_hashing_log_ids, legacy: []} ->
+        :ok
+
+      %{consistent_hashing: consistent_hashing_log_ids, legacy: legacy_log_ids} ->
+        {:error,
+         {:mixed_log_descriptor_modes,
+          %{
+            consistent_hashing: Enum.sort(consistent_hashing_log_ids),
+            legacy: Enum.sort(legacy_log_ids)
+          }}}
+    end
+  end
+
+  defp log_descriptor_mode([]), do: :consistent_hashing
+  defp log_descriptor_mode([_start_range, _end_range]), do: :legacy
 
   # Log ID should be either a string (actual log ID) or {:vacancy, integer} tuple
   defp validate_log_id(log_id) when is_binary(log_id), do: :ok

@@ -28,6 +28,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   """
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Internal.LayoutRouting
   alias Bedrock.SystemKeys
 
   @type t :: %__MODULE__{
@@ -90,27 +91,30 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Adds a log to the log_map at the next available index.
+  Adds a log to the log_map using deterministic sorted ordering.
   """
   @spec insert_log(t(), Log.id()) :: t()
   def insert_log(%__MODULE__{log_map: log_map} = routing_data, log_id) do
-    next_index = map_size(log_map)
-    %{routing_data | log_map: Map.put(log_map, next_index, log_id)}
+    new_map =
+      log_map
+      |> Map.values()
+      |> List.insert_at(0, log_id)
+      |> Enum.uniq()
+      |> LayoutRouting.build_log_map()
+
+    %{routing_data | log_map: new_map}
   end
 
   @doc """
-  Removes a log from the log_map and reindexes remaining entries.
-
-  Maintains contiguous indices starting from 0.
+  Removes a log from the log_map and rebuilds a deterministic index mapping.
   """
   @spec remove_log(t(), Log.id()) :: t()
   def remove_log(%__MODULE__{log_map: log_map} = routing_data, log_id) do
     new_map =
       log_map
-      |> Enum.reject(fn {_index, id} -> id == log_id end)
-      |> Enum.sort_by(fn {index, _id} -> index end)
-      |> Enum.with_index()
-      |> Map.new(fn {{_old_index, id}, new_index} -> {new_index, id} end)
+      |> Map.values()
+      |> Enum.reject(&(&1 == log_id))
+      |> LayoutRouting.build_log_map()
 
     %{routing_data | log_map: new_map}
   end

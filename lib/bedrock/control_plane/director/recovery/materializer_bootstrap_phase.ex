@@ -34,6 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
+  alias Bedrock.Internal.LayoutRouting
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -156,7 +157,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   # Start materializer pulling from logs for its shard
   defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-    shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
+    shard_logs = logs_for_shard(recovery_attempt.logs, shard_tag, context)
 
     tsl = %{
       id: TransactionSystemLayout.random_id(),
@@ -279,6 +280,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
+  defp logs_for_shard(logs, shard_id, context) do
+    if consistent_hashing_logs?(logs) do
+      LayoutRouting.log_subset_for_shard(logs, shard_id, desired_replication_factor(context, logs))
+    else
+      filter_logs_for_shard(logs, shard_id)
+    end
+  end
+
+  defp consistent_hashing_logs?(logs) do
+    Enum.all?(logs, fn {_log_id, descriptor} -> descriptor == [] end)
+  end
+
+  defp desired_replication_factor(context, logs) do
+    get_in(context, [:cluster_config, :parameters, :desired_replication_factor]) || map_size(logs)
+  end
+
   # Filter logs to only those relevant for the given shard (by tag)
   defp filter_logs_for_shard(logs, shard_id) do
     logs
@@ -292,7 +309,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp unlock_and_start_pulling(materializer_pid, recovery_attempt, context) do
     # Build TSL with only system shard logs
     system_shard = RecoveryAttempt.system_shard_id()
-    system_logs = filter_logs_for_shard(recovery_attempt.logs, system_shard)
+    system_logs = logs_for_shard(recovery_attempt.logs, system_shard, context)
 
     # TransactionSystemLayout is a type, not a struct, so we build a map
     tsl = %{

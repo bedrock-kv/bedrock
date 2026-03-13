@@ -59,6 +59,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Internal.LayoutRouting
   alias Bedrock.Service.Worker
 
   @doc """
@@ -215,7 +216,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     # Extract what proxies need from TSL
     sequencer = transaction_system_layout.sequencer
     resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
-    routing_data = build_routing_data(transaction_system_layout)
+    routing_data = build_routing_data(transaction_system_layout, context)
 
     proxies
     |> Task.async_stream(
@@ -230,8 +231,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   end
 
   # Build full routing data from TSL for commit proxy unlock
-  @spec build_routing_data(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.t()
-  defp build_routing_data(%{logs: logs, services: services, shard_layout: shard_layout}) do
+  @spec build_routing_data(TransactionSystemLayout.t(), map()) :: CommitProxy.RoutingData.t()
+  defp build_routing_data(%{logs: logs, services: services, shard_layout: shard_layout}, context) do
     # Build shard_table ETS from shard_layout
     shard_table = :ets.new(:commit_proxy_shards, [:ordered_set, :public])
 
@@ -240,12 +241,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     end)
 
     # Build log_map: index -> log_id
-    log_map =
-      logs
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.with_index()
-      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+    log_map = LayoutRouting.build_log_map(logs)
 
     # Build log_services: log_id -> pid or {name, node}
     log_services =
@@ -264,7 +260,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
         end
       end)
 
-    replication_factor = max(1, map_size(logs))
+    replication_factor =
+      LayoutRouting.effective_replication_factor(
+        map_size(logs),
+        desired_replication_factor(context, logs)
+      )
 
     %CommitProxy.RoutingData{
       shard_table: shard_table,
@@ -272,6 +272,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       log_services: log_services,
       replication_factor: replication_factor
     }
+  end
+
+  defp desired_replication_factor(context, logs) do
+    get_in(context, [:cluster_config, :parameters, :desired_replication_factor]) || map_size(logs)
   end
 
   # Validate that recovery state is ready for system transaction

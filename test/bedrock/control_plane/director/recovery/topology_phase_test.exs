@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
   alias Bedrock.ControlPlane.Director.Recovery.TopologyPhase
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.Internal.LayoutRouting
 
   # Helper functions for common test setup
@@ -136,7 +137,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       assert_receive {:routing_data, routing_data}
       assert routing_data.log_map == LayoutRouting.build_log_map(logs)
       assert routing_data.replication_factor == LayoutRouting.effective_replication_factor(3, 1)
-      Bedrock.DataPlane.CommitProxy.RoutingData.cleanup(routing_data)
+      RoutingData.cleanup(routing_data)
     end
   end
 end

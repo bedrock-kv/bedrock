@@ -34,6 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
 
@@ -156,7 +157,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   # Start materializer pulling from logs for its shard
   defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-    shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
+    shard_logs = logs_for_shard(recovery_attempt.logs, shard_tag, context)
 
     tsl = %{
       id: TransactionSystemLayout.random_id(),
@@ -279,7 +280,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Filter logs to only those relevant for the given shard (by tag)
+  # Filter logs to only those relevant for the given shard. Legacy layouts
+  # explicitly store shard tags on log descriptors; consistent-hashing layouts
+  # leave descriptors empty and require runtime routing to pick candidate logs.
+  defp logs_for_shard(logs, _shard_id, _context) when map_size(logs) == 0, do: %{}
+
+  defp logs_for_shard(logs, shard_id, context) do
+    if consistent_hashing_logs?(logs) do
+      logs_for_shard_via_consistent_hash(logs, shard_id, context)
+    else
+      filter_logs_for_shard(logs, shard_id)
+    end
+  end
+
+  defp consistent_hashing_logs?(logs) do
+    Enum.all?(logs, fn {_log_id, descriptor} -> descriptor == [] end)
+  end
+
+  defp logs_for_shard_via_consistent_hash(logs, shard_id, context) do
+    log_ids = logs |> Map.keys() |> Enum.sort()
+    log_count = length(log_ids)
+    replication_factor = replication_factor_for_logs(context, log_count)
+
+    log_id_by_index =
+      log_ids
+      |> Enum.with_index()
+      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+
+    selected_log_ids =
+      shard_id
+      |> ShardRouter.get_log_indices(log_count, replication_factor)
+      |> Enum.map(&Map.fetch!(log_id_by_index, &1))
+
+    Map.take(logs, selected_log_ids)
+  end
+
+  defp replication_factor_for_logs(context, log_count) when log_count > 0 do
+    desired_replication_factor =
+      get_in(context, [:cluster_config, :parameters, :desired_replication_factor]) || log_count
+
+    desired_replication_factor
+    |> min(log_count)
+    |> max(1)
+  end
+
+  # Filter logs to only those relevant for the given shard (legacy tag-based layout)
   defp filter_logs_for_shard(logs, shard_id) do
     logs
     |> Enum.filter(fn {_log_id, tags} ->
@@ -292,7 +337,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp unlock_and_start_pulling(materializer_pid, recovery_attempt, context) do
     # Build TSL with only system shard logs
     system_shard = RecoveryAttempt.system_shard_id()
-    system_logs = filter_logs_for_shard(recovery_attempt.logs, system_shard)
+    system_logs = logs_for_shard(recovery_attempt.logs, system_shard, context)
 
     # TransactionSystemLayout is a type, not a struct, so we build a map
     tsl = %{

@@ -307,6 +307,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
     end
 
     @tag :tmp_dir
+    test "waitlisted reads expire instead of hanging forever", %{tmp_dir: tmp_dir} do
+      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "wait_timeout")
+      state_before_wait = :sys.get_state(pid)
+
+      future_version = Version.from_integer(1)
+
+      assert {:error, :waiting_timeout} =
+               GenServer.call(pid, {:get, "key1", future_version, [wait_ms: 50]}, 2_000)
+
+      state_after_timeout = :sys.get_state(pid)
+      assert state_after_timeout.mode == state_before_wait.mode
+      assert map_size(state_after_timeout.read_request_manager.waiting_fetches) == 0
+    end
+
+    @tag :tmp_dir
     test "info calls via GenServer return correct metadata", %{tmp_dir: tmp_dir} do
       {worker_id, otp_name, pid} = setup_supervised_worker(tmp_dir, "info_msgs")
 

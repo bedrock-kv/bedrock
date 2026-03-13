@@ -7,6 +7,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Version
 
   describe "execute/2" do
@@ -16,12 +17,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       # Track which shards we create materializers for
       created_shards = :ets.new(:created_shards, [:bag, :public])
+      received_tsl = :ets.new(:received_tsl, [:bag, :public])
 
       recovery_attempt =
         recovery_attempt()
         |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
-        |> Map.put(:logs, %{"log_1" => [0, 1]})
+        |> Map.put(:logs, %{"log_1" => []})
 
       # Fresh cluster context - no old logs, but with materializer capability
       context =
@@ -42,7 +44,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
           {:ok, pid}
         end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
+          :ets.insert(received_tsl, {pid, Map.keys(tsl.logs)})
+          :ok
+        end)
 
       log =
         capture_log(fn ->
@@ -72,7 +77,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert 0 in shards
       assert 1 in shards
 
+      assert [{^system_materializer_pid, ["log_1"]}] = :ets.lookup(received_tsl, system_materializer_pid)
+      assert [{^user_materializer_pid, ["log_1"]}] = :ets.lookup(received_tsl, user_materializer_pid)
+
       :ets.delete(created_shards)
+      :ets.delete(received_tsl)
     end
 
     test "stalls when no materializer capable nodes exist" do
@@ -404,6 +413,66 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         end)
 
       assert log =~ "Materializer caught up to version"
+
+      :ets.delete(received_tsl)
+    end
+
+    test "uses consistent-hash log selection when descriptors are empty" do
+      materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      durable_version = Version.from_integer(100)
+
+      logs = %{
+        "log_a" => [],
+        "log_b" => [],
+        "log_c" => []
+      }
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, logs)
+        |> Map.put(:durable_version, durable_version)
+
+      received_tsl = :ets.new(:consistent_hash_tsl, [:set, :public])
+
+      context =
+        [
+          old_transaction_system_layout: %{
+            logs: logs
+          }
+        ]
+        |> create_test_context()
+        |> Map.update!(:cluster_config, &merge_parameters(&1, %{desired_replication_factor: 1}))
+        |> Map.put(:available_services, %{
+          "metadata_materializer" => {:materializer, {:test_materializer, node()}}
+        })
+        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, tsl ->
+          :ets.insert(received_tsl, {:tsl, tsl})
+          :ok
+        end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
+          {:ok, %{durable_version: durable_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+        end)
+
+      assert {_updated_attempt, CommitProxyStartupPhase} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+      [{:tsl, tsl}] = :ets.lookup(received_tsl, :tsl)
+
+      log_ids = logs |> Map.keys() |> Enum.sort()
+
+      expected_log_ids =
+        0
+        |> ShardRouter.get_log_indices(length(log_ids), 1)
+        |> Enum.map(&Enum.at(log_ids, &1))
+
+      assert Map.keys(tsl.logs) == expected_log_ids
+      refute tsl.logs == %{}
 
       :ets.delete(received_tsl)
     end

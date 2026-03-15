@@ -54,6 +54,30 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       RoutingData.cleanup(routing_data)
     end
 
+    test "rebuilds indices in deterministic sorted order" do
+      routing_data = RoutingData.new_empty()
+
+      updated =
+        routing_data
+        |> RoutingData.insert_log("log-c")
+        |> RoutingData.insert_log("log-a")
+        |> RoutingData.insert_log("log-b")
+
+      assert updated.log_map == %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "keeps log ids unique when a layout_log key is replayed" do
+      routing_data = RoutingData.insert_log(RoutingData.new_empty(), "log-a")
+
+      updated = RoutingData.insert_log(routing_data, "log-a")
+
+      assert updated.log_map == %{0 => "log-a"}
+
+      RoutingData.cleanup(routing_data)
+    end
+
     test "does not modify other fields" do
       routing_data = RoutingData.new_empty()
       original_table = routing_data.shard_table
@@ -79,6 +103,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updated = RoutingData.remove_log(routing_data, "log-b")
 
       # Should reindex to maintain contiguous indices
+      assert updated.log_map == %{0 => "log-a", 1 => "log-c"}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "rebuilds remaining logs in deterministic sorted order after removal" do
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_log("log-c")
+        |> RoutingData.insert_log("log-a")
+        |> RoutingData.insert_log("log-b")
+
+      updated = RoutingData.remove_log(routing_data, "log-b")
+
       assert updated.log_map == %{0 => "log-a", 1 => "log-c"}
 
       RoutingData.cleanup(routing_data)
@@ -349,8 +387,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updates = [
         {100,
          [
-           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])},
-           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])}
+           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])},
+           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])}
          ]}
       ]
 
@@ -358,6 +396,22 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
       # log_services are NOT populated from persisted data
+      assert updated.log_services == %{}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "handles replayed layout_log set mutations without duplicating a log id" do
+      routing_data = RoutingData.new_empty()
+
+      updates = [
+        {100, [{:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])}]},
+        {101, [{:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])}]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert updated.log_map == %{0 => "log-1"}
       assert updated.log_services == %{}
 
       RoutingData.cleanup(routing_data)

@@ -3,15 +3,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   describe "execute/2" do
     test "transitions to LockingPhase when TSL validation succeeds" do
       recovery_attempt = %RecoveryAttempt{}
 
-      # Valid TSL with correct types
+      # Valid TSL with consistent-hashing descriptors
       valid_tsl = %{
-        logs: %{},
+        logs: %{"log_1" => [], "log_2" => []},
         resolvers: []
       }
 
@@ -20,7 +21,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
+      assert next_phase == LockingPhase
+    end
+
+    test "transitions to LockingPhase when legacy log descriptors are used consistently" do
+      recovery_attempt = %RecoveryAttempt{}
+
+      valid_tsl = %{
+        logs: %{"log_1" => [0, 1], "log_2" => [2, 3]},
+        resolvers: []
+      }
+
+      context = %{old_transaction_system_layout: valid_tsl}
+
+      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+
+      assert result_attempt == recovery_attempt
+      assert next_phase == LockingPhase
     end
 
     test "stalls recovery when TSL validation fails with corrupted data" do
@@ -41,6 +58,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
       assert result_attempt == recovery_attempt
       assert {:stalled, {:corrupted_tsl, _validation_error}} = next_phase
+    end
+
+    test "stalls recovery when log descriptors mix consistent-hash and legacy modes" do
+      recovery_attempt = %RecoveryAttempt{}
+
+      invalid_tsl = %{
+        logs: %{"log_1" => [], "log_2" => [0, 1]},
+        resolvers: []
+      }
+
+      context = %{old_transaction_system_layout: invalid_tsl}
+
+      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+
+      assert result_attempt == recovery_attempt
+      assert {:stalled, {:corrupted_tsl, {:mixed_log_descriptor_modes, _details}}} = next_phase
     end
 
     test "transitions to InitializationPhase when context has no old_transaction_system_layout" do

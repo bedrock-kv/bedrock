@@ -235,16 +235,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
     test "existing cluster stalls when sequencer fails to start" do
       recovery_attempt = create_existing_cluster_recovery_attempt()
+      old_layout = %{logs: %{"existing_log_1" => [0, 100]}}
+      services = %{"existing_log_1" => {:log, {:log_worker_existing_1, :node1}}}
 
       context =
-        create_test_context(
-          old_transaction_system_layout: %{
-            logs: %{"existing_log_1" => [0, 100]}
-          }
-        )
+        services
+        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
+        |> Map.put(:start_supervised_fn, fn _child_spec, _node -> {:error, :test_start_error} end)
 
-      # Without full mocking, recovery fails at sequencer start.
-      assert {{:error, {:failed_to_start, :sequencer, _, _}}, _stalled_attempt} =
+      assert {{:error, {:failed_to_start, :sequencer, _, :test_start_error}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -332,8 +331,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "recovery with coordinator-format services handles existing cluster (regression test)" do
-      # Validates coordinator services work with existing cluster recovery
+    test "recovery with coordinator-format services completes existing cluster recovery" do
       old_layout = %{
         logs: %{"existing_log_1" => [0, 100]}
       }
@@ -349,41 +347,46 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # Include materializer so MaterializerBootstrapPhase passes
       materializer_pid = spawn(fn -> Process.sleep(5000) end)
+      user_materializer_pid = spawn(fn -> Process.sleep(5000) end)
 
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:materializer, {:storage_worker_1, :node1}},
         "metadata_materializer" => {:materializer, {:materializer, :node1}}
       }
 
       context =
         coordinator_services
         |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
-        |> Map.update!(
-          :available_services,
-          &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
-        )
-        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:node_capabilities, %{
+          log: [:node1@host, :node2@host, :node3@host],
+          storage: [:node1@host, :node2@host, :node3@host],
+          materializer: [:node1@host, :node2@host, :node3@host],
+          coordination: [:node1@host, :node2@host, :node3@host],
+          resolution: [:node1@host, :node2@host, :node3@host]
+        })
+        |> Map.put(:lock_materializer_fn, fn
+          {:materializer, {:materializer, _node}}, _epoch -> {:ok, materializer_pid}
+          {:materializer, {_worker_ref, _node}, 1}, _epoch -> {:ok, user_materializer_pid}
+        end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
-        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
+        |> Map.put(:materializer_info_fn, fn pid, [:durable_version]
+                                             when pid in [materializer_pid, user_materializer_pid] ->
           {:ok, %{durable_version: durable_version}}
         end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
         end)
 
-      # Stalls at TopologyPhase validation due to no resolvers.
       log =
         capture_log(fn ->
-          assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
-                   Recovery.run_recovery_attempt(recovery_attempt, context)
+          assert {:ok, completed_attempt} = Recovery.run_recovery_attempt(recovery_attempt, context)
 
-          # Verify service tracking was populated during recovery
-          assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
-          assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+          assert Map.has_key?(completed_attempt.service_pids, "existing_log_1")
+          assert Map.has_key?(completed_attempt.transaction_services, "existing_log_1")
+          assert completed_attempt.metadata_materializer == materializer_pid
+          assert completed_attempt.shard_materializers == %{0 => materializer_pid, 1 => user_materializer_pid}
         end)
 
-      # Materializer bootstrap phase should log catchup completion
       assert log =~ "Materializer caught up to version"
     end
 
@@ -618,8 +621,11 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_transactions(context) do
-    commit_transaction_fn = fn _proxy, _transaction -> {:ok, 101} end
-    unlock_commit_proxy_fn = fn _proxy, _lock_token, _layout -> :ok end
+    commit_transaction_fn = fn _proxy, _epoch, _transaction ->
+      {:ok, Version.from_integer(101), Version.from_integer(1)}
+    end
+
+    unlock_commit_proxy_fn = fn _proxy, _lock_token, _sequencer, _resolver_layout, _routing_data -> :ok end
     unlock_storage_fn = fn _storage_pid, _durable_version, _layout -> :ok end
 
     context

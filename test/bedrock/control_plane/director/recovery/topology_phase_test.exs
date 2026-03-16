@@ -3,7 +3,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
   alias Bedrock.ControlPlane.Director.Recovery.TopologyPhase
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
+  alias Bedrock.Internal.LayoutRouting
 
   # Helper functions for common test setup
   defp base_recovery_attempt do
@@ -38,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       {result, next_phase} = TopologyPhase.execute(recovery_attempt, context)
 
       # Pattern match the entire expected structure
-      assert next_phase == Bedrock.ControlPlane.Director.Recovery.MonitoringPhase
+      assert next_phase == MonitoringPhase
 
       assert %{
                transaction_system_layout: %{
@@ -99,6 +102,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
              } = result
 
       assert map_size(services) == 2
+    end
+
+    test "uses deterministic routing data and effective replication factor when unlocking commit proxies" do
+      test_pid = self()
+      logs = %{"log_c" => [], "log_a" => [], "log_b" => []}
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_logs(logs)
+        |> with_transaction_services(%{
+          "log_a" => %{status: {:up, self()}, kind: :log, last_seen: {:log_a, :node1}},
+          "log_b" => %{status: {:up, self()}, kind: :log, last_seen: {:log_b, :node1}},
+          "log_c" => %{status: {:up, self()}, kind: :log, last_seen: {:log_c, :node1}}
+        })
+        |> Map.put(:shard_layout, %{<<0xFF, 0xFF>> => {0, <<>>}})
+
+      context =
+        successful_unlock_context()
+        |> with_available_services(%{
+          "log_a" => {:log, {:log_a, :node1}},
+          "log_b" => {:log, {:log_b, :node1}},
+          "log_c" => {:log, {:log_c, :node1}}
+        })
+        |> Map.update!(:cluster_config, &merge_parameters(&1, %{desired_replication_factor: 1}))
+        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, routing_data ->
+          send(test_pid, {:routing_data, routing_data})
+          :ok
+        end)
+
+      assert {_result, MonitoringPhase} =
+               TopologyPhase.execute(recovery_attempt, context)
+
+      assert_receive {:routing_data, routing_data}
+      assert routing_data.log_map == LayoutRouting.build_log_map(logs)
+      assert routing_data.replication_factor == LayoutRouting.effective_replication_factor(3, 1)
+      RoutingData.cleanup(routing_data)
     end
   end
 end

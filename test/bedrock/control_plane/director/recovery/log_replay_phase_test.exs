@@ -44,6 +44,59 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       assert result == :ok
     end
 
+    test "skips replay for retained survivor logs" do
+      test_pid = self()
+      survivor_log_ids = ["survivor"]
+      new_log_ids = ["survivor"]
+      version_vector = {Version.from_integer(0), Version.from_integer(10)}
+
+      recovery_attempt = %{service_pids: %{"survivor" => self()}}
+
+      copy_log_data_fn = fn _new_log_id, _survivor_pids, _first_version, _last_version, _service_pids ->
+        send(test_pid, :copy_called)
+        {:ok, self()}
+      end
+
+      assert :ok =
+               LogReplayPhase.replay_into_new_logs(
+                 survivor_log_ids,
+                 new_log_ids,
+                 version_vector,
+                 recovery_attempt,
+                 %{copy_log_data_fn: copy_log_data_fn}
+               )
+
+      refute_received :copy_called
+    end
+
+    test "replays only newly recruited logs when survivors are retained" do
+      test_pid = self()
+      survivor_pid = spawn(fn -> :ok end)
+      new_log_pid = spawn(fn -> :ok end)
+      survivor_log_ids = ["survivor"]
+      new_log_ids = ["survivor", "new-log"]
+      version_vector = {Version.from_integer(0), Version.from_integer(10)}
+
+      recovery_attempt = %{service_pids: %{"survivor" => survivor_pid, "new-log" => new_log_pid}}
+
+      copy_log_data_fn = fn new_log_id, survivor_pids, _first_version, _last_version, _service_pids ->
+        send(test_pid, {:copy_called, new_log_id, survivor_pids})
+        {:ok, new_log_pid}
+      end
+
+      assert :ok =
+               LogReplayPhase.replay_into_new_logs(
+                 survivor_log_ids,
+                 new_log_ids,
+                 version_vector,
+                 recovery_attempt,
+                 %{copy_log_data_fn: copy_log_data_fn}
+               )
+
+      assert_received {:copy_called, "new-log", [^survivor_pid]}
+      refute_received {:copy_called, "survivor", _}
+    end
+
     # Note: Tests that call Log.recover_from are commented out since
     # they require proper log process mocking which is complex in unit tests
     # The function's core logic is tested through the pair_with_old_log_ids tests

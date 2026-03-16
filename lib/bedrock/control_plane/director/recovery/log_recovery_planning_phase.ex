@@ -14,6 +14,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   With consistent hashing, shard→log mapping is computed (not stored), so per-shard quorum
   validation is no longer needed. Replacement logs can reconstruct their personalized transaction
   stream by pulling from all survivors and filtering by the shard index embedded in transactions.
+  The survivors remain recovery sources only; the new layout is rebuilt from fresh log vacancies
+  so replay targets always transition through `recover_from/4` before the system transaction.
 
   Stalls with `:unable_to_meet_log_quorum` if majority quorum cannot be established
   or no valid version range exists.
@@ -44,6 +46,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
           trace_recovery_suitable_logs_chosen(survivor_ids, version_vector)
 
           durable_version = calculate_durable_version(log_recovery_info)
+          old_logs = context.old_transaction_system_layout[:logs] || %{}
+          logs = recovery_layout_logs(old_logs, desired_logs(context), survivor_ids)
 
           updated_recovery_attempt =
             recovery_attempt
@@ -51,6 +55,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
             |> Map.put(:survivor_log_ids, survivor_ids)
             |> Map.put(:version_vector, version_vector)
             |> Map.put(:durable_version, durable_version)
+            |> Map.put(:logs, logs)
 
           {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase}
 
@@ -129,5 +134,29 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
     |> Enum.map(&Map.get(&1, :minimum_durable_version))
     |> Enum.reject(&(&1 == :unavailable))
     |> Enum.min(fn -> Version.zero() end)
+  end
+
+  defp survivor_logs(old_logs, survivor_ids) when is_map(old_logs) and is_list(survivor_ids) do
+    Map.take(old_logs, survivor_ids)
+  end
+
+  defp recovery_layout_logs(old_logs, desired_logs, survivor_ids) when is_map(old_logs) do
+    if consistent_hash_layout?(old_logs) do
+      1..desired_logs
+      |> Enum.map(&{:vacancy, &1})
+      |> Map.new(&{&1, []})
+    else
+      survivor_logs(old_logs, survivor_ids)
+    end
+  end
+
+  defp consistent_hash_layout?(old_logs) when map_size(old_logs) == 0, do: false
+
+  defp consistent_hash_layout?(old_logs) do
+    Enum.all?(old_logs, fn {_log_id, descriptor} -> descriptor == [] end)
+  end
+
+  defp desired_logs(context) do
+    get_in(context, [:cluster_config, :parameters, :desired_logs]) || 1
   end
 end

@@ -90,12 +90,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       ) do
     copy_log_data_fn = Map.get(context, :copy_log_data_fn, &copy_log_data/5)
     service_pids = recovery_attempt.service_pids
+    replay_target_log_ids = replay_target_log_ids(new_log_ids, survivor_log_ids)
 
     # Build list of survivor PIDs from their IDs
     survivor_pids = Enum.map(survivor_log_ids, &Map.get(service_pids, &1))
     survivor_pids = Enum.reject(survivor_pids, &is_nil/1)
 
-    new_log_ids
+    replay_target_log_ids
     |> Task.async_stream(
       fn new_log_id ->
         new_log_id
@@ -123,6 +124,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
       failures when failures == %{} -> :ok
       failures -> {:error, {:failed_to_copy_some_logs, failures}}
     end
+  end
+
+  defp replay_target_log_ids(new_log_ids, survivor_log_ids) do
+    survivor_log_ids = MapSet.new(survivor_log_ids)
+    Enum.reject(new_log_ids, &MapSet.member?(survivor_log_ids, &1))
   end
 
   # Backward compatibility: delegate to new function

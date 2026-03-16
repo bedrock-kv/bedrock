@@ -88,6 +88,7 @@ defmodule Bedrock.RepoDurabilityTest do
 
   defp ensure_local_node_started! do
     if Node.self() == :nonode@nohost do
+      ensure_epmd_started!()
       node_name = :"bedrock_repo_durability_#{System.unique_integer([:positive])}"
 
       case :net_kernel.start([node_name, :shortnames]) do
@@ -103,6 +104,20 @@ defmodule Bedrock.RepoDurabilityTest do
       end
     else
       :ok
+    end
+  end
+
+  defp ensure_epmd_started! do
+    epmd =
+      System.find_executable("epmd") ||
+        flunk("failed to locate epmd executable required for distributed durability test")
+
+    case System.cmd(epmd, ["-daemon"], stderr_to_stdout: true) do
+      {_output, 0} ->
+        :ok
+
+      {output, status} ->
+        flunk("failed to start epmd for distributed durability test: status=#{status} output=#{inspect(output)}")
     end
   end
 

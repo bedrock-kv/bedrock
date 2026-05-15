@@ -56,6 +56,14 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
     end
   end
 
+  defp readable_transaction_system_layout(read_version) do
+    read_version
+    |> create_test_transaction_system_layout_with_mock_sequencer()
+    |> Map.put(:metadata_materializer, self())
+    |> Map.put(:shard_layout, %{Bedrock.end_of_keyspace() => {0, ""}})
+    |> Map.put(:shard_materializers, %{})
+  end
+
   # Helper functions for common test patterns
   defp get_transaction_mutations(pid) do
     pid
@@ -197,6 +205,38 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       result = GenServer.call(pid, {:get, "test_key"})
       assert result == {:ok, "test_value"}
+    end
+
+    test ":fetch missing key records read conflict" do
+      pid =
+        start_transaction_builder(
+          read_version: 42,
+          transaction_system_layout: readable_transaction_system_layout(42)
+        )
+
+      storage_get_key_fn = fn _storage_pid, _key, _version, _opts -> {:error, :not_found} end
+
+      assert GenServer.call(pid, {:get, "missing", storage_get_key_fn: storage_get_key_fn}) ==
+               {:error, :not_found}
+
+      state = :sys.get_state(pid)
+      assert state.tx.reads["missing"] == :clear
+    end
+
+    test ":fetch missing key with snapshot option does not record read conflict" do
+      pid =
+        start_transaction_builder(
+          read_version: 42,
+          transaction_system_layout: readable_transaction_system_layout(42)
+        )
+
+      storage_get_key_fn = fn _storage_pid, _key, _version, _opts -> {:error, :not_found} end
+
+      assert GenServer.call(pid, {:get, "missing", storage_get_key_fn: storage_get_key_fn, snapshot: true}) ==
+               {:error, :not_found}
+
+      state = :sys.get_state(pid)
+      refute Map.has_key?(state.tx.reads, "missing")
     end
 
     test ":commit call succeeds for empty transaction with version 0" do

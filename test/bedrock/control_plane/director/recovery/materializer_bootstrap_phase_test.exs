@@ -403,11 +403,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       durable_version = Version.from_integer(100)
 
-      # Logs with different shard assignments
-      # log_1 handles shard 0 (system), log_2 handles shard 1 (user)
+      # Logs with different shard assignments.
+      # log_1 handles shard 0 (system), log_2 handles shard 1 (user), and
+      # log_all is untagged so it applies to every shard.
       logs = %{
         "log_1" => [0],
-        "log_2" => [1]
+        "log_2" => [1],
+        "log_all" => []
       }
 
       recovery_attempt =
@@ -446,9 +448,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {_updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          # Verify that only system shard logs were passed to unlock
+          # Verify that only system shard logs and untagged logs were passed to unlock.
           [{:tsl, tsl}] = :ets.lookup(received_tsl, :tsl)
-          assert Map.keys(tsl.logs) == ["log_1"]
+          assert tsl.logs |> Map.keys() |> Enum.sort() == ["log_1", "log_all"]
           refute Map.has_key?(tsl.logs, "log_2")
         end)
 

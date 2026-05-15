@@ -32,6 +32,27 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPullsTest do
       assert remaining_waiting_pullers == %{}
     end
 
+    test "notifies exact and older pullers while keeping newer pullers waiting" do
+      test_pid = self()
+      older_reply = fn message -> send(test_pid, {:older, message}) end
+      exact_reply = fn message -> send(test_pid, {:exact, message}) end
+      newer_reply = fn message -> send(test_pid, {:newer, message}) end
+
+      waiting_pullers = %{
+        1 => [{0, older_reply, []}],
+        2 => [{0, exact_reply, []}],
+        3 => [{0, newer_reply, []}]
+      }
+
+      remaining_waiting_pullers =
+        LongPulls.notify_waiting_pullers(waiting_pullers, 2, :transaction)
+
+      assert_received {:older, {:ok, [:transaction]}}
+      assert_received {:exact, {:ok, [:transaction]}}
+      refute_received {:newer, _}
+      assert remaining_waiting_pullers == %{3 => [{0, newer_reply, []}]}
+    end
+
     test "does nothing if no pullers are waiting" do
       waiting_pullers = %{}
       version = 1

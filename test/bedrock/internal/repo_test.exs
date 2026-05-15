@@ -168,6 +168,25 @@ defmodule Bedrock.Internal.RepoSimpleTest do
       assert type == :rollback
       assert reason == "test_reason"
     end
+
+    test "transact normalizes explicit rollback to error tuple" do
+      transaction_system_layout = %{
+        epoch: 1,
+        sequencer: self(),
+        proxies: [],
+        services: %{},
+        shard_layout: %{},
+        shard_materializers: %{}
+      }
+
+      assert {:error, :rejected} =
+               TestRepo.transact(
+                 fn ->
+                   TestRepo.rollback(:rejected)
+                 end,
+                 transaction_system_layout: transaction_system_layout
+               )
+    end
   end
 
   describe "range/4" do

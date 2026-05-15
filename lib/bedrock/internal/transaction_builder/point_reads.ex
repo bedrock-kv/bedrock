@@ -131,6 +131,13 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
         {state, {:failure, failures_by_reason}}
 
       {state, {:ok, {nil, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.merge_storage_read(state.tx, racing_key, :not_found)}
+          end
+
         {state, {:error, :not_found}}
 
       {state, {:ok, {{key, nil}, _shard_range}}} ->

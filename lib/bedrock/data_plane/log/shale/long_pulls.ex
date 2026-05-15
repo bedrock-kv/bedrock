@@ -13,7 +13,9 @@ defmodule Bedrock.DataPlane.Log.Shale.LongPulls do
   @spec notify_waiting_pullers(WaitingList.t(), Bedrock.version(), Bedrock.transaction()) ::
           WaitingList.t()
   def notify_waiting_pullers(waiting_pullers, version, transaction) do
-    {new_map, entries} = WaitingList.remove_all(waiting_pullers, version)
+    {new_map, exact_entries} = WaitingList.remove_all(waiting_pullers, version)
+    {new_map, older_entries} = WaitingList.remove_all_less_than(new_map, version)
+    entries = exact_entries ++ older_entries
 
     Enum.each(entries, fn {_deadline, reply_to_fn, _opts} ->
       reply_to_fn.({:ok, [transaction]})

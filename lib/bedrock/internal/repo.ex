@@ -276,6 +276,10 @@ defmodule Bedrock.Internal.Repo do
       try_to_rollback(failed_txn)
       {:error, reason}
 
+    {__MODULE__, :rollback, reason} ->
+      try_to_rollback(txn(repo))
+      {:error, reason}
+
     {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->
       try_to_rollback(failed_txn)
       raise RuntimeError, "Transaction operation #{operation} failed for key #{inspect(key)}: #{inspect(reason)}"

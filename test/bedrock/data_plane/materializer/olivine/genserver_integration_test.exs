@@ -666,13 +666,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       {:ok, pid} = start_supervised(child_spec)
       wait_for_health_report(worker_id, pid)
 
-      # Test timeout scenarios - should either succeed or timeout gracefully
-      result = GenServer.call(pid, {:info, :kind}, 1)
+      # Test timeout scenarios - should either succeed or timeout without
+      # killing the materializer. The 1ms deadline is intentionally tight, so
+      # capture the caller exit instead of making the test itself flaky.
+      result =
+        try do
+          GenServer.call(pid, {:info, :kind}, 1)
+        catch
+          :exit, {:timeout, _call} -> :timeout
+          :exit, :timeout -> :timeout
+        end
 
       case result do
         {:ok, :materializer} -> :ok
-        # Process should survive timeout
-        _ -> assert Process.alive?(pid)
+        :timeout -> assert Process.alive?(pid)
       end
 
       # Test malformed messages - process should survive all of these

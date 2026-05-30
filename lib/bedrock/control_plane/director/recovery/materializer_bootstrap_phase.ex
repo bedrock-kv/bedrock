@@ -282,11 +282,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # Filter logs to only those relevant for the given shard (by tag)
   defp filter_logs_for_shard(logs, shard_id) do
     logs
-    |> Enum.filter(fn {_log_id, tags} ->
-      shard_id in tags
-    end)
+    |> Enum.filter(fn {_log_id, tags} -> log_routes_to_shard?(tags, shard_id) end)
     |> Map.new()
   end
+
+  defp log_routes_to_shard?([], _shard_id), do: true
+  defp log_routes_to_shard?(tags, shard_id), do: shard_id in tags
 
   # Unlock materializer with only the logs it needs to start pulling
   defp unlock_and_start_pulling(materializer_pid, recovery_attempt, context) do

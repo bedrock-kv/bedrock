@@ -61,7 +61,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       available_services = %{
         {:log, 2} => {:log, {:log_2, :node1}},
-        {:log, 3} => {:log, {:log_3, :node1}}
+        {:log, 3} => {:log, {:log_3, :node1}},
+        "mat_user_1" => {:materializer, {:user_materializer, :node1}, 1}
       }
 
       lock_service_fn = fn _service, _epoch ->

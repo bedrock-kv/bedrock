@@ -349,10 +349,11 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # Include materializer so MaterializerBootstrapPhase passes
       materializer_pid = spawn(fn -> Process.sleep(5000) end)
+      user_materializer_pid = spawn(fn -> Process.sleep(5000) end)
 
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
-        "storage_1" => {:materializer, {:storage_worker_1, :node1}},
+        "mat_user_1" => {:materializer, {:user_materializer, :node1}, 1},
         "metadata_materializer" => {:materializer, {:materializer, :node1}}
       }
 
@@ -361,15 +362,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
         |> Map.update!(
           :available_services,
-          &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
+          &Map.merge(&1, %{
+            "metadata_materializer" => {:materializer, {:materializer, :node1}},
+            "mat_user_1" => {:materializer, {:user_materializer, :node1}, 1}
+          })
         )
-        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
+        |> Map.put(:lock_materializer_fn, fn
+          {:materializer, {:materializer, :node1}}, _epoch -> {:ok, materializer_pid}
+          {:materializer, {:user_materializer, :node1}, 1}, _epoch -> {:ok, user_materializer_pid}
+        end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
           {:ok, %{durable_version: durable_version}}
         end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
-          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+          {:ok, %{<<0xFF>> => {1, <<>>}, Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
         end)
 
       # Stalls at TopologyPhase validation due to no resolvers.

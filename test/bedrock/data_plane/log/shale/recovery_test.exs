@@ -85,6 +85,32 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       assert writer
     end
 
+    test "self-source recovery preserves the retained log segment and unlocks it", %{state: state} do
+      first_version = version(0)
+      last_version = version(10)
+      {:ok, running_state} = Recovery.recover_from(state, [], first_version, first_version)
+
+      locked_state = %{running_state | mode: :locked}
+      retained_segment_path = locked_state.active_segment.path
+
+      assert {:ok,
+              %{
+                mode: :running,
+                oldest_version: ^first_version,
+                last_version: ^last_version,
+                active_segment: %{path: ^retained_segment_path},
+                writer: writer
+              }} =
+               Recovery.recover_from(
+                 locked_state,
+                 [self()],
+                 first_version,
+                 last_version
+               )
+
+      assert writer
+    end
+
     test "successfully recovers with valid transactions", %{state: state} do
       first_version = version(1)
       last_version = version(2)

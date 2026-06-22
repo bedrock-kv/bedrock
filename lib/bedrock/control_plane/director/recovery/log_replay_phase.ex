@@ -153,13 +153,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
           service_pids :: %{Log.id() => pid()}
         ) :: {:ok, pid()} | {:error, term()}
   def copy_log_data(new_log_id, survivor_pids, first_version, last_version, service_pids) do
-    Log.recover_from(
-      Map.fetch!(service_pids, new_log_id),
-      survivor_pids,
-      first_version,
-      last_version
-    )
+    target_pid = Map.fetch!(service_pids, new_log_id)
+    survivor_pids = normalize_survivor_pids(survivor_pids)
+    Log.recover_from(target_pid, survivor_pids, first_version, last_version)
   end
+
+  defp normalize_survivor_pids(:none), do: []
+  defp normalize_survivor_pids(nil), do: []
+  defp normalize_survivor_pids(survivor_pids) when is_list(survivor_pids), do: survivor_pids
+  defp normalize_survivor_pids(survivor_pid), do: [survivor_pid]
 
   # Legacy pairing function kept for backward compatibility with tests
   @spec pair_with_old_log_ids([Log.id()], [Log.id()]) ::

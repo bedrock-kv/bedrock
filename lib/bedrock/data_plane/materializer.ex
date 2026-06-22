@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.Materializer do
   @type fact_name ::
           Worker.fact_name()
           | :key_ranges
+          | :current_version
           | :durable_version
           | :n_objects
           | :path

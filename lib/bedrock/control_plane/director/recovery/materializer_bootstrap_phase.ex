@@ -32,6 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   import Bedrock, only: [end_of_keyspace: 0]
 
+  alias Bedrock.ControlPlane.Config.ResolverDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
@@ -113,6 +114,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     |> Enum.uniq()
   end
 
+  defp ensure_resolver_descriptors([_ | _] = resolvers, _shard_layout), do: resolvers
+
+  defp ensure_resolver_descriptors([], shard_layout) do
+    shard_layout
+    |> Map.values()
+    |> Enum.map(fn {_tag, start_key} -> start_key end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.with_index(1)
+    |> Enum.map(fn {start_key, index} ->
+      ResolverDescriptor.resolver_descriptor(start_key, {:vacancy, index})
+    end)
+  end
+
   # Create materializers for multiple shards
   defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
     Enum.reduce_while(shard_tags, {:ok, %{}}, fn shard_tag, {:ok, acc} ->
@@ -188,7 +203,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     system_shard = RecoveryAttempt.system_shard_id()
 
     # Step 1-2: Find or create materializer for system shard
-    with {:ok, materializer_pid} <- recover_existing_shard_materializer(system_shard, recovery_attempt, context),
+    with {:ok, materializer_pid} <-
+           recover_existing_shard_materializer(system_shard, recovery_attempt, context, read_version),
          # Step 6: Query shard layout
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, read_version, context),
          # Step 7: Recover every shard materializer required by the layout
@@ -197,13 +213,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              shard_layout,
              %{system_shard => materializer_pid},
              recovery_attempt,
-             context
+             context,
+             read_version
            ) do
       updated_attempt =
         recovery_attempt
         |> Map.put(:metadata_materializer, materializer_pid)
         |> Map.put(:shard_layout, shard_layout)
         |> Map.put(:shard_materializers, shard_materializers)
+        |> Map.put(:resolvers, ensure_resolver_descriptors(recovery_attempt.resolvers, shard_layout))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -322,12 +340,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     else
       info_fn = Map.get(context, :materializer_info_fn, &default_materializer_info/2)
 
-      case info_fn.(pid, [:durable_version]) do
-        {:ok, %{durable_version: v}} when v >= target_version ->
+      case info_fn.(pid, [:current_version]) do
+        {:ok, %{current_version: v}} when v >= target_version ->
           Logger.debug("Materializer caught up to version #{inspect(v)}")
           :ok
 
-        {:ok, %{durable_version: v}} ->
+        {:ok, %{current_version: v}} ->
           Logger.debug("Materializer at version #{inspect(v)}, waiting for #{inspect(target_version)}")
 
           Process.sleep(poll_interval_ms)
@@ -372,34 +390,58 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     get_layout_fn.(materializer_pid, read_version)
   end
 
-  defp recover_existing_shard_materializers(shard_layout, recovered_materializers, recovery_attempt, context) do
+  defp recover_existing_shard_materializers(
+         shard_layout,
+         recovered_materializers,
+         recovery_attempt,
+         context,
+         catchup_version
+       ) do
     shard_layout
     |> extract_shard_tags()
     |> Enum.reduce_while({:ok, recovered_materializers}, fn shard_tag, {:ok, acc} ->
-      recover_existing_shard_materializer_if_missing(shard_tag, acc, recovery_attempt, context)
+      recover_existing_shard_materializer_if_missing(shard_tag, acc, recovery_attempt, context, catchup_version)
     end)
   end
 
-  defp recover_existing_shard_materializer_if_missing(shard_tag, recovered_materializers, recovery_attempt, context) do
+  defp recover_existing_shard_materializer_if_missing(
+         shard_tag,
+         recovered_materializers,
+         recovery_attempt,
+         context,
+         catchup_version
+       ) do
     if Map.has_key?(recovered_materializers, shard_tag) do
       {:cont, {:ok, recovered_materializers}}
     else
-      recover_existing_shard_materializer_for_map(shard_tag, recovered_materializers, recovery_attempt, context)
+      recover_existing_shard_materializer_for_map(
+        shard_tag,
+        recovered_materializers,
+        recovery_attempt,
+        context,
+        catchup_version
+      )
     end
   end
 
-  defp recover_existing_shard_materializer_for_map(shard_tag, recovered_materializers, recovery_attempt, context) do
-    case recover_existing_shard_materializer(shard_tag, recovery_attempt, context) do
+  defp recover_existing_shard_materializer_for_map(
+         shard_tag,
+         recovered_materializers,
+         recovery_attempt,
+         context,
+         catchup_version
+       ) do
+    case recover_existing_shard_materializer(shard_tag, recovery_attempt, context, catchup_version) do
       {:ok, pid} -> {:cont, {:ok, Map.put(recovered_materializers, shard_tag, pid)}}
       {:error, reason} -> {:halt, {:error, {:shard_materializer_recovery_failed, shard_tag, reason}}}
     end
   end
 
-  defp recover_existing_shard_materializer(shard_tag, recovery_attempt, context) do
+  defp recover_existing_shard_materializer(shard_tag, recovery_attempt, context, catchup_version) do
     with {:ok, materializer_service} <- find_or_create_materializer_for_shard(shard_tag, recovery_attempt, context),
          {:ok, materializer_pid} <- lock_materializer(materializer_service, recovery_attempt.epoch, context),
          :ok <- unlock_and_start_pulling(materializer_pid, shard_tag, recovery_attempt, context),
-         :ok <- wait_for_materializer_catchup(materializer_pid, recovery_attempt.durable_version, context) do
+         :ok <- wait_for_materializer_catchup(materializer_pid, catchup_version, context) do
       {:ok, materializer_pid}
     end
   end
@@ -417,13 +459,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, {entries, _more}} ->
         shard_layout =
-          Map.new(entries, fn {key, value} ->
+          entries
+          |> Enum.map(fn {key, value} ->
             # Key format: \xff/system/shard_keys/<end_key>
-            # Value format: {tag, start_key}
-            end_key = extract_end_key_from_shard_key(key)
-            {tag, start_key} = decode_shard_value(value)
-            {end_key, {tag, start_key}}
+            {extract_end_key_from_shard_key(key), decode_shard_value(value)}
           end)
+          |> Enum.sort_by(fn {end_key, _value} -> end_key end)
+          |> Enum.reduce({%{}, <<>>}, fn {end_key, value}, {acc, start_key} ->
+            {tag, recovered_start_key} = normalize_shard_value(value, start_key)
+            {Map.put(acc, end_key, {tag, recovered_start_key}), end_key}
+          end)
+          |> elem(0)
 
         {:ok, shard_layout}
 
@@ -444,4 +490,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp decode_shard_value(value) when is_binary(value) do
     :erlang.binary_to_term(value)
   end
+
+  defp normalize_shard_value({tag, start_key}, _previous_end_key), do: {tag, start_key}
+  defp normalize_shard_value(tag, previous_end_key) when is_integer(tag), do: {tag, previous_end_key}
 end

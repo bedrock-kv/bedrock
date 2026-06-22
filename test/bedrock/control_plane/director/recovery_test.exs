@@ -372,22 +372,25 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           {:materializer, {:user_materializer, :node1}, 1}, _epoch -> {:ok, user_materializer_pid}
         end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
-        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
-          {:ok, %{durable_version: durable_version}}
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: durable_version}}
         end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {1, <<>>}, Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
         end)
 
-      # Stalls at TopologyPhase validation due to no resolvers.
+      # Existing-cluster recovery should synthesize resolver descriptors from
+      # the recovered shard layout so topology validation can complete.
       log =
         capture_log(fn ->
-          assert {{:stalled, {:recovery_system_failed, {:invalid_recovery_state, :no_resolvers}}}, stalled_attempt} =
+          assert {:ok, completed_attempt} =
                    Recovery.run_recovery_attempt(recovery_attempt, context)
 
           # Verify service tracking was populated during recovery
-          assert Map.has_key?(stalled_attempt.service_pids, "existing_log_1")
-          assert Map.has_key?(stalled_attempt.transaction_services, "existing_log_1")
+          assert Map.has_key?(completed_attempt.service_pids, "existing_log_1")
+          assert Map.has_key?(completed_attempt.transaction_services, "existing_log_1")
+          assert map_size(completed_attempt.shard_materializers) == 2
+          assert length(completed_attempt.resolvers) == 2
         end)
 
       # Materializer bootstrap phase should log catchup completion
@@ -625,8 +628,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_transactions(context) do
-    commit_transaction_fn = fn _proxy, _transaction -> {:ok, 101} end
-    unlock_commit_proxy_fn = fn _proxy, _lock_token, _layout -> :ok end
+    commit_transaction_fn = fn _proxy, _epoch, _transaction -> {:ok, 101, 0} end
+    unlock_commit_proxy_fn = fn _proxy, _lock_token, _sequencer, _resolver_layout, _routing_data -> :ok end
     unlock_storage_fn = fn _storage_pid, _durable_version, _layout -> :ok end
 
     context

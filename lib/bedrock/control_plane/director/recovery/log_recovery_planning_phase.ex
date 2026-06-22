@@ -31,7 +31,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
 
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
-    old_log_ids = Map.keys(context.old_transaction_system_layout[:logs] || %{})
+    old_logs = context.old_transaction_system_layout[:logs] || %{}
+    old_log_ids = Map.keys(old_logs)
     log_recovery_info = recovery_attempt.log_recovery_info_by_id
     locked_count = map_size(log_recovery_info)
     total_count = length(old_log_ids)
@@ -49,6 +50,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
             recovery_attempt
             |> Map.put(:old_log_ids_to_copy, survivor_ids)
             |> Map.put(:survivor_log_ids, survivor_ids)
+            |> Map.put(:logs, Map.take(old_logs, survivor_ids))
             |> Map.put(:version_vector, version_vector)
             |> Map.put(:durable_version, durable_version)
 

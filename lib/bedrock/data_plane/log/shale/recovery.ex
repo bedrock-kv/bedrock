@@ -35,6 +35,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   def recover_from(t, _, _, _) when t.mode != :locked, do: {:error, :lock_required}
 
   def recover_from(t, source_logs, first_version, last_version) do
+    source_logs = List.wrap(source_logs)
+
+    if self() in source_logs do
+      recover_from_self(t, first_version, last_version)
+    else
+      recover_from_sources(t, source_logs, first_version, last_version)
+    end
+  end
+
+  defp recover_from_sources(t, source_logs, first_version, last_version) do
     %{t | mode: :recovering}
     |> abort_all_waiting_pullers()
     |> close_writer()
@@ -58,6 +68,33 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
         error
     end
   end
+
+  defp recover_from_self(t, first_version, last_version) do
+    t =
+      t
+      |> abort_all_waiting_pullers()
+      |> close_writer()
+      |> ensure_active_segment(first_version)
+      |> open_writer()
+
+    {:ok,
+     %{
+       t
+       | mode: :running,
+         oldest_version: min_version(t.oldest_version, first_version),
+         last_version: max_version(t.last_version, last_version)
+     }}
+  end
+
+  defp min_version(nil, version), do: version
+  defp min_version(version, nil), do: version
+  defp min_version(left, right) when left <= right, do: left
+  defp min_version(_left, right), do: right
+
+  defp max_version(nil, version), do: version
+  defp max_version(version, nil), do: version
+  defp max_version(left, right) when left >= right, do: left
+  defp max_version(_left, right), do: right
 
   @spec pull_transactions_from_sources(
           t :: State.t(),
@@ -239,6 +276,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       {:error, :allocation_failed} -> raise "Failed to allocate new segment"
     end
   end
+
+  def ensure_active_segment(t, _version), do: t
 
   @spec ensure_active_segment(State.t()) :: State.t()
   def ensure_active_segment(t), do: t

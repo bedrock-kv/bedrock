@@ -136,7 +136,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    t = stop_pulling(t)
+    t =
+      t
+      |> stop_pulling()
+      |> update_mode(:running)
+
     main_process_pid = self()
 
     apply_and_notify_fn = fn transactions ->
@@ -158,7 +162,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       )
 
     t
-    |> update_mode(:running)
     |> put_puller(puller)
     |> then(&{:ok, &1})
   end
@@ -177,6 +180,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   defp supported_info, do: ~w[
+      current_version
       durable_version
       oldest_durable_version
       id
@@ -192,6 +196,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     ]a
 
   defp gather_info(:oldest_durable_version, t), do: Database.durable_version(t.database)
+  defp gather_info(:current_version, t), do: t.index_manager.current_version
   defp gather_info(:durable_version, t), do: Database.durable_version(t.database)
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)

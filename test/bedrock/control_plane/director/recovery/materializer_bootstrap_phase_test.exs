@@ -97,6 +97,55 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(created_shards)
     end
 
+    test "for fresh cluster, unlocks shard materializers with empty log descriptors" do
+      system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      logs = %{
+        {:vacancy, 1} => [],
+        {:vacancy, 2} => []
+      }
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, logs)
+
+      unlocks = :ets.new(:materializer_unlocks, [:bag, :public])
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{
+            log: [Node.self()],
+            materializer: [Node.self()]
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, shard_tag}, _epoch ->
+          pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
+          {:ok, pid}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
+          :ets.insert(unlocks, {:unlock, pid, tsl.logs})
+          :ok
+        end)
+
+      assert {updated_attempt, CommitProxyStartupPhase} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+      assert updated_attempt.metadata_materializer == system_materializer_pid
+
+      assert {:unlock, system_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
+      assert {:unlock, user_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
+
+      :ets.delete(unlocks)
+    end
+
     test "stalls when no materializer capable nodes exist" do
       recovery_attempt =
         recovery_attempt()

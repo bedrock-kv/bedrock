@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-07-11
+
+- **Fix materializer recovery on fresh clusters.** Fresh Bedrock 0.5 layouts use empty log descriptors because shard-to-log routing is computed at runtime, but recovery still filtered materializer unlock logs by shard tag — so an empty descriptor matched no shard and fresh-cluster materializers started with no logs to pull committed transactions from. Recovery now treats empty log descriptors as runtime-routed logs, while legacy tag-filtered descriptors remain scoped to their matching shard.
+
 ## 0.5.0 — 2026-03-10
 
 - **Rename Storage to Materializer.** The `Bedrock.DataPlane.Storage` module tree has been renamed to `Bedrock.DataPlane.Materializer` to better reflect its role — materializing committed state from the write-ahead log. The `:storage` capability is now `:materializer` in cluster config, and the corresponding config key changes accordingly:

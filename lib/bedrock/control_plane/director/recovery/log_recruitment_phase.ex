@@ -89,7 +89,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   defp get_available_log_ids(%{available_services: available_services}) do
     available_services
-    |> Enum.filter(fn {_id, {kind, _}} -> kind == :log end)
+    |> Enum.filter(fn
+      {_id, {:log, _ref}} -> true
+      _service -> false
+    end)
     |> MapSet.new(&elem(&1, 0))
   end
 

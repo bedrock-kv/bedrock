@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T20:09:49Z",
   "created": "2026-07-14T18:57:46Z",
   "description": "Audit of bedrock-ffk (PR #79) found the same bug class fixed there exists one layer down: handle_version_too_new waitlists with opts[:reply_fn] even when nil; on notify, execute_fetch_request(context, nil, ...) runs the fetch synchronously and matches sync {:ok, value} against unguarded {:ok, pid} patterns (reading.ex:369 etc), crashing in Process.monitor. Guard those patterns or reject wait_ms without reply_fn. Also: {:waitlist_timing, key} process-dictionary entries (reading.ex:315) are written but never read/deleted — leak.",
   "id": "bedrock-66h",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix waitlist crash class: nil reply_fn in Reading.execute_fetch_request",
   "type": "task",
-  "updated_at": "2026-07-14T20:04:45Z"
+  "updated_at": "2026-07-14T20:09:49Z"
 }

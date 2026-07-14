@@ -121,6 +121,12 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
+    # Compile before the download task so the project .app (with :inets in
+    # extra_applications) is fresh — Mix prunes code paths from compiled .app
+    # files, and a stale cached .app strips inets out from under :httpc
+    - name: Compile
+      run: mix compile
+
     - name: Download MinIO test binary
       run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
 
@@ -158,6 +164,12 @@ jobs:
 
     - name: Install dependencies
       run: mix deps.get
+
+    # Compile before the download task so the project .app (with :inets in
+    # extra_applications) is fresh — Mix prunes code paths from compiled .app
+    # files, and a stale cached .app strips inets out from under :httpc
+    - name: Compile
+      run: mix compile
 
     - name: Download MinIO test binary
       run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest

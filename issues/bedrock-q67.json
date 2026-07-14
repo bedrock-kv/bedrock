@@ -13,8 +13,8 @@
   "id": "bedrock-q67",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Shard-Centric Storage Architecture",
   "type": "epic",
-  "updated_at": "2026-07-14T21:55:01Z"
+  "updated_at": "2026-07-14T21:56:33Z"
 }

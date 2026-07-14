@@ -396,6 +396,9 @@ defmodule Bedrock.DataPlane.Transaction do
 
       {:found, result} ->
         {:found, result}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

@@ -647,6 +647,14 @@ defmodule Bedrock.DataPlane.TransactionTest do
     test "decode/1 reports truncated write conflict data" do
       assert {:error, :truncated_conflict_data} = Transaction.decode(with_bogus_write_conflicts())
     end
+
+    test "read_write_conflicts/1 reports truncated read conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.read_write_conflicts(with_bogus_read_conflicts())
+    end
+
+    test "read_write_conflicts/1 reports truncated write conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.read_write_conflicts(with_bogus_write_conflicts())
+    end
   end
 
   describe "invalid commit version payload" do

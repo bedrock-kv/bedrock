@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T22:19:13Z",
+  "description": "From bedrock-q67.8 audit: (a) trims apply even while locked/recovering (Demux send path + pull opt before :not_ready rejection) — oldest_version can advance under the director between fact-gathering and recover_from, failing a recovery attempt (retry recovers; no data loss). Gate trim application on mode == :running. (b) durable_up_to \u003e last_version is accepted; a buggy reporter can poison the trim point — reject or log (adjust the v100 test). See PR #93.",
+  "id": "bedrock-8p4",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Shale trim hardening: gate on mode==running; reject durable_up_to beyond last_version",
+  "type": "task",
+  "updated_at": "2026-07-14T22:19:13Z"
+}

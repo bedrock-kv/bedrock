@@ -80,13 +80,14 @@ defmodule Bedrock.Cluster.TSLDeltaRoundTripTest do
     }
   end
 
-  defp start_coordinator(epoch) do
+  defp start_coordinator(epoch, opts \\ []) do
     state = %Coordinator.State{
       cluster: TestCluster,
       my_node: Node.self(),
       leader_node: Node.self(),
       epoch: epoch,
-      otp_name: @coordinator_otp_name
+      otp_name: @coordinator_otp_name,
+      transaction_system_layout: Keyword.get(opts, :tsl)
     }
 
     start_supervised!(%{
@@ -215,5 +216,58 @@ defmodule Bedrock.Cluster.TSLDeltaRoundTripTest do
 
     assert_receive {:tsl_updated, tsl}
     assert tsl.shard_materializers == %{1 => materializer}
+  end
+
+  test "a notify from a deposed director (older epoch) is dropped by the coordinator" do
+    # Coordinator has moved on to epoch 6 (leadership change); a director from
+    # epoch 5 still manages to emit a notify (e.g. an in-flight delta that
+    # raced the leadership change). The coordinator must not regress its epoch
+    # nor broadcast the stale TSL.
+    coordinator = start_coordinator(6)
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+
+    stale_director = start_director(5, coordinator)
+    materializer = spawn(fn -> Process.sleep(:infinity) end)
+
+    # The stale director accepts the delta against its own (old) epoch...
+    assert :ok = Director.apply_tsl_delta(stale_director, %{1 => materializer}, 5)
+
+    # ...but the coordinator drops the resulting notify: nothing is broadcast
+    # and the coordinator's TSL/epoch are unchanged.
+    refute_receive {:tsl_updated, _}, 100
+    assert {:ok, nil} = GenServer.call(coordinator, :fetch_transaction_system_layout)
+    assert {:pong, 6, _leader} = GenServer.call(coordinator, :ping)
+  end
+
+  test "snapshot-on-subscribe does not push the bootstrap-loaded old-TSL stub" do
+    # At init the coordinator may hold a partial old-TSL stub loaded from
+    # object storage (bare %{logs: ...}, recovery input only). Subscribers
+    # must not receive it as if it were a live TSL.
+    coordinator = start_coordinator(5, tsl: %{logs: %{"log_1" => [0]}})
+
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+    refute_receive {:tsl_updated, _}, 100
+
+    # Once a director produces a real TSL, the subscriber hears about it.
+    director = start_director(5, coordinator)
+    materializer = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = Director.apply_tsl_delta(director, %{1 => materializer}, 5)
+
+    assert_receive {:tsl_updated, %{epoch: 5}}
+  end
+
+  test "repeated subscriptions do not accumulate duplicate monitors" do
+    coordinator = start_coordinator(5)
+
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+
+    # Synchronize on the casts having been processed.
+    assert {:pong, 5, _} = GenServer.call(coordinator, :ping)
+
+    {:monitors, monitors} = Process.info(coordinator, :monitors)
+    me = self()
+    assert Enum.count(monitors, &match?({:process, ^me}, &1)) == 1
   end
 end

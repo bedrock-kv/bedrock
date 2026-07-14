@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:09:39Z",
+  "description": "directory.ex 92.5%, 61 uncovered lines. Partition-scoped create/open/move/remove/list/exists, path traversal validation, path/layer accessors, to_keyspace/to_key_range protocol impls, encode/decode node value variants, HCA allocate error path.",
+  "id": "bedrock-ej0",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: Directory partition ops, protocol impls, node-value encoding",
+  "type": "task",
+  "updated_at": "2026-07-14T19:09:39Z"
+}

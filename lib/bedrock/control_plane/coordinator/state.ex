@@ -28,6 +28,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
           node_capabilities: %{node() => [Cluster.capability()]},
           tsl_subscribers: MapSet.t(pid()),
+          tsl_live?: boolean(),
           leader_startup_state: leader_startup_state(),
           recovery_tracker: RecoveryCapabilityTracker.t()
         }
@@ -46,6 +47,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             service_directory: %{},
             node_capabilities: %{},
             tsl_subscribers: MapSet.new(),
+            tsl_live?: false,
             leader_startup_state: :not_leader,
             recovery_tracker: %RecoveryCapabilityTracker{}
 
@@ -92,9 +94,16 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
             State.t()
     def put_transaction_system_layout(t, transaction_system_layout) do
-      updated_state = %{t | transaction_system_layout: transaction_system_layout}
+      updated_state = %{t | transaction_system_layout: transaction_system_layout, tsl_live?: true}
       broadcast_tsl_update(updated_state, transaction_system_layout)
     end
+
+    # Marks the retained TSL as stale (recovery input only). Called when a new
+    # director is launched: the TSL is kept in state so a recovery retry can
+    # use it as input, but it must no longer be served to new TSL subscribers
+    # since its component pids may be dead.
+    @spec mark_tsl_stale(t :: State.t()) :: State.t()
+    def mark_tsl_stale(t), do: %{t | tsl_live?: false}
 
     @spec put_service_directory(t :: State.t(), %{String.t() => {atom(), {atom(), node()}}}) ::
             State.t()

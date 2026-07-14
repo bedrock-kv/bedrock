@@ -5,14 +5,16 @@
     "bedrock-q67.3",
     "bedrock-q67.5"
   ],
+  "closed_at": "2026-07-14T22:07:17Z",
+  "close_reason": "Distributor skeleton merged to feature/q67-distributor (PR #91): GenServer + post-recovery recruitment by director + monitoring/re-recruitment + epoch guard + telemetry. Recruitment logic deferred to q67.5, placeholder to q67.3.",
   "created": "2026-07-14T21:55:40Z",
   "description": "New control-plane role per q67 Phase A (FDB DD analogue). Director recruits post-recovery (FDB: CC recruits DD after accepting-commits), registers in service directory, monitors + re-recruits on death. All shard-map mutations epoch-validated; stale Distributor self-terminates (moveKeysLock analogue). Off the request path: death degrades healing only. Skeleton: GenServer + recruitment in director + monitoring + epoch guard + telemetry. No recruitment logic yet.",
   "id": "bedrock-q67.2",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Distributor: cluster singleton skeleton (recruit, monitor, epoch-validate)",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:33Z"
+  "updated_at": "2026-07-14T22:07:17Z"
 }

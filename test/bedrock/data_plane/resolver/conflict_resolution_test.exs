@@ -92,6 +92,25 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       assert failed_indexes == []
     end
 
+    test "handles CRC-valid transaction with truncated conflict data gracefully" do
+      conflicts = Conflicts.new()
+
+      # Fabricate a transaction whose READ_CONFLICTS section claims 5 ranges
+      # but contains no range data. CRCs remain valid (add_section recomputes
+      # them), so only conflict payload decoding fails. Previously this
+      # crashed the resolver with a CaseClauseError; now it degrades to
+      # a transaction with no conflicts.
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      {:ok, corrupted} = Transaction.add_section(binary, 0x02, <<12_345::signed-big-64, 5::unsigned-big-32>>)
+
+      write_version = Bedrock.DataPlane.Version.from_integer(100)
+
+      assert {:ok, %Conflicts{}} = try_to_resolve_transaction(conflicts, corrupted, write_version)
+
+      {_new_conflicts, failed_indexes} = resolve(conflicts, [corrupted], write_version)
+      assert failed_indexes == []
+    end
+
     test "resolves transaction with read_version and read_conflicts" do
       conflicts = Conflicts.new()
 

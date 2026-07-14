@@ -7,14 +7,15 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
   defp dummy_pid, do: spawn(fn -> Process.sleep(:infinity) end)
 
   # A realistic layout: metadata shard (tag 0) at the top of the keyspace,
-  # plus data shards. Boundaries are distinct so every segment is non-empty.
+  # plus contiguous data shards. shard_layout partitions the keyspace — a
+  # shard's end key is always the next shard's start key.
   defp realistic_layout(metadata_pid, apples_pid, mangoes_pid) do
     %{
       shard_layout: %{
         # data shard: "a" ..< "m", tag 1
         "m" => {1, "a"},
-        # data shard: "n" ..< <<0xFF>>, tag 2 (gap between "m" and "n")
-        <<0xFF>> => {2, "n"},
+        # data shard: "m" ..< <<0xFF>>, tag 2
+        <<0xFF>> => {2, "m"},
         # metadata shard: <<0xFF>> ..< <<0xFF, 0xFF>>, tag 0
         <<0xFF, 0xFF>> => {0, <<0xFF>>}
       },
@@ -32,6 +33,16 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
     }
   end
 
+  # Three contiguous shards where the middle shard's tag has no materializer.
+  # Under total coverage the middle shard is still a segment — with [] pids.
+  defp uncovered_middle_layout(p1, p2) do
+    %{
+      shard_layout: %{"d" => {1, "a"}, "h" => {3, "d"}, "m" => {2, "h"}},
+      metadata_materializer: nil,
+      shard_materializers: %{1 => p1, 2 => p2}
+    }
+  end
+
   describe "lookup_key!/2" do
     setup do
       [metadata, apples, mangoes] = pids = Enum.map(1..3, fn _ -> dummy_pid() end)
@@ -42,12 +53,12 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
 
     test "returns the containing segment and its materializer pid", ctx do
       assert {{"a", "m"}, [ctx.apples]} == LayoutIndex.lookup_key!(ctx.index, "banana")
-      assert {{"n", <<0xFF>>}, [ctx.mangoes]} == LayoutIndex.lookup_key!(ctx.index, "orange")
+      assert {{"m", <<0xFF>>}, [ctx.mangoes]} == LayoutIndex.lookup_key!(ctx.index, "orange")
     end
 
     test "a key equal to a segment's start key belongs to that segment", ctx do
       assert {{"a", "m"}, [ctx.apples]} == LayoutIndex.lookup_key!(ctx.index, "a")
-      assert {{"n", <<0xFF>>}, [ctx.mangoes]} == LayoutIndex.lookup_key!(ctx.index, "n")
+      assert {{"m", <<0xFF>>}, [ctx.mangoes]} == LayoutIndex.lookup_key!(ctx.index, "m")
     end
 
     test "a key equal to a segment's end key belongs to the next segment", ctx do
@@ -71,11 +82,14 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       end
     end
 
-    test "raises for a key in a gap between segments", ctx do
-      # "monkey" falls in the uncovered gap between "m" and "n"
-      assert_raise RuntimeError, ~r/No segment found/, fn ->
-        LayoutIndex.lookup_key!(ctx.index, "monkey")
-      end
+    test "a key in a shard with no materializer returns the segment with [] pids" do
+      p1 = dummy_pid()
+      p2 = dummy_pid()
+      index = LayoutIndex.build_index(uncovered_middle_layout(p1, p2))
+
+      # The uncovered shard is never invisible: callers must see {range, []}
+      # and fail loudly (layout_lookup_failed) rather than silently skip keys.
+      assert {{"d", "h"}, []} == LayoutIndex.lookup_key!(index, "e")
     end
 
     test "raises for any key when the layout has no shards" do
@@ -144,18 +158,12 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       assert [{{"a", "d"}, [ctx.p1]}] == LayoutIndex.lookup_range(ctx.index, "b", "d")
     end
 
-    test "a range covering only a gap between shards returns an empty list" do
-      pid = dummy_pid()
-      # shards a-d and h-m with an uncovered gap d-h
-      layout = %{
-        shard_layout: %{"d" => {1, "a"}, "m" => {2, "h"}},
-        metadata_materializer: nil,
-        shard_materializers: %{1 => pid, 2 => pid}
-      }
+    test "a range covering only an uncovered shard returns that segment with [] pids" do
+      p1 = dummy_pid()
+      p2 = dummy_pid()
+      index = LayoutIndex.build_index(uncovered_middle_layout(p1, p2))
 
-      index = LayoutIndex.build_index(layout)
-
-      assert [] == LayoutIndex.lookup_range(index, "e", "g")
+      assert [{{"d", "h"}, []}] == LayoutIndex.lookup_range(index, "e", "g")
     end
 
     test "an empty layout yields no overlapping segments" do
@@ -188,45 +196,39 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       assert :end_of_keyspace == LayoutIndex.get_next_segment(index, "z")
     end
 
-    test "walks forward across a gap to the nearest later segment" do
-      pid = dummy_pid()
+    test "returns the adjacent uncovered segment instead of skipping it" do
+      p1 = dummy_pid()
+      p2 = dummy_pid()
+      index = LayoutIndex.build_index(uncovered_middle_layout(p1, p2))
 
-      layout = %{
-        shard_layout: %{"d" => {1, "a"}, "m" => {2, "h"}},
-        metadata_materializer: nil,
-        shard_materializers: %{1 => pid, 2 => pid}
-      }
-
-      index = LayoutIndex.build_index(layout)
-
-      # No segment starts exactly at "d" (the gap d-h has no materializer),
-      # but segment {h, m} exists beyond the gap and should be found.
-      assert {:ok, {{"h", "m"}, [^pid]}} = LayoutIndex.get_next_segment(index, "b")
+      # Exact-boundary semantics (bedrock-q67.1, revising bedrock-dwu): the
+      # segment after {a, d} is {d, h} even though it has no materializer.
+      # Skipping it would silently drop live keys during cross-shard
+      # KeySelector resolution.
+      assert {:ok, {{"d", "h"}, []}} = LayoutIndex.get_next_segment(index, "b")
     end
   end
 
-  describe "gap-crossing symmetry (bedrock-dwu regression)" do
+  describe "uncovered-shard adjacency (bedrock-q67.1, revising bedrock-dwu)" do
     setup do
       p1 = dummy_pid()
       p2 = dummy_pid()
-
-      layout = %{
-        shard_layout: %{"d" => {1, "a"}, "m" => {2, "h"}},
-        metadata_materializer: nil,
-        shard_materializers: %{1 => p1, 2 => p2}
-      }
-
-      %{index: LayoutIndex.build_index(layout), p1: p1, p2: p2}
+      %{index: LayoutIndex.build_index(uncovered_middle_layout(p1, p2)), p1: p1, p2: p2}
     end
 
-    test "get_next_segment and get_previous_segment both cross the gap", ctx do
-      # forward: from inside {a, d}, across the uncovered gap d-h, to {h, m}
-      assert {:ok, {{"h", "m"}, [ctx.p2]}} == LayoutIndex.get_next_segment(ctx.index, "b")
-      # backward: from inside {h, m}, across the gap, to {a, d}
-      assert {:ok, {{"a", "d"}, [ctx.p1]}} == LayoutIndex.get_previous_segment(ctx.index, "i")
+    test "next and previous both return the adjacent uncovered segment, never skip it", ctx do
+      # forward: from inside {a, d} to the uncovered {d, h}
+      assert {:ok, {{"d", "h"}, []}} == LayoutIndex.get_next_segment(ctx.index, "b")
+      # backward: from inside {h, m} to the uncovered {d, h}
+      assert {:ok, {{"d", "h"}, []}} == LayoutIndex.get_previous_segment(ctx.index, "i")
     end
 
-    test "gap-crossing still terminates at the ends of the keyspace", ctx do
+    test "navigation out of an uncovered segment reaches its covered neighbors", ctx do
+      assert {:ok, {{"h", "m"}, [ctx.p2]}} == LayoutIndex.get_next_segment(ctx.index, "e")
+      assert {:ok, {{"a", "d"}, [ctx.p1]}} == LayoutIndex.get_previous_segment(ctx.index, "e")
+    end
+
+    test "navigation still terminates at the ends of the keyspace", ctx do
       assert :end_of_keyspace == LayoutIndex.get_next_segment(ctx.index, "i")
       assert :start_of_keyspace == LayoutIndex.get_previous_segment(ctx.index, "b")
     end
@@ -255,24 +257,17 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       assert :start_of_keyspace == LayoutIndex.get_previous_segment(index, "z")
     end
 
-    test "walks back across a gap to the nearest earlier segment" do
+    test "returns the adjacent uncovered segment instead of skipping it" do
       p1 = dummy_pid()
       p2 = dummy_pid()
+      index = LayoutIndex.build_index(uncovered_middle_layout(p1, p2))
 
-      layout = %{
-        shard_layout: %{"d" => {1, "a"}, "m" => {2, "h"}},
-        metadata_materializer: nil,
-        shard_materializers: %{1 => p1, 2 => p2}
-      }
-
-      index = LayoutIndex.build_index(layout)
-
-      assert {:ok, {{"a", "d"}, [^p1]}} = LayoutIndex.get_previous_segment(index, "i")
+      assert {:ok, {{"d", "h"}, []}} = LayoutIndex.get_previous_segment(index, "i")
     end
   end
 
   describe "materializer resolution during build_index/1" do
-    test "shards whose tag has no materializer are excluded from the index" do
+    test "shards whose tag has no materializer become segments with [] pids" do
       pid = dummy_pid()
 
       layout = %{
@@ -283,28 +278,23 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
 
       index = LayoutIndex.build_index(layout)
 
-      # tag 7 has no materializer, so keys in m-z have no segment
       assert {{"a", "m"}, [^pid]} = LayoutIndex.lookup_key!(index, "b")
-
-      assert_raise RuntimeError, ~r/No segment found/, fn ->
-        LayoutIndex.lookup_key!(index, "q")
-      end
+      # tag 7 has no materializer: the shard is still indexed, with no pids
+      assert {{"m", "z"}, []} == LayoutIndex.lookup_key!(index, "q")
     end
 
-    test "the metadata shard is excluded when metadata_materializer is not a pid" do
+    test "the metadata shard becomes a [] segment when metadata_materializer is not a pid" do
       pid = dummy_pid()
 
       layout = %{
-        shard_layout: %{"m" => {1, "a"}, <<0xFF, 0xFF>> => {0, <<0xFF>>}},
+        shard_layout: %{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}},
         metadata_materializer: nil,
         shard_materializers: %{1 => pid}
       }
 
       index = LayoutIndex.build_index(layout)
 
-      assert_raise RuntimeError, ~r/No segment found/, fn ->
-        LayoutIndex.lookup_key!(index, <<0xFF, 0x01>>)
-      end
+      assert {{<<0xFF>>, <<0xFF, 0xFF>>}, []} == LayoutIndex.lookup_key!(index, <<0xFF, 0x01>>)
     end
 
     test "the production default contiguous layout builds exactly two segments (bedrock-tn5 regression)" do
@@ -331,6 +321,23 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       refute Enum.any?(segments, fn {{s, e}, _pids} -> s == e end)
     end
 
+    test "the production default layout with a nil metadata pid still builds two segments" do
+      data_pid = dummy_pid()
+
+      layout = %{
+        shard_layout: %{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}},
+        metadata_materializer: nil,
+        shard_materializers: %{1 => data_pid}
+      }
+
+      index = LayoutIndex.build_index(layout)
+
+      assert [
+               {{<<>>, <<0xFF>>}, [data_pid]},
+               {{<<0xFF>>, <<0xFF, 0xFF>>}, []}
+             ] == LayoutIndex.lookup_range(index, <<>>, <<0xFF, 0xFF>>)
+    end
+
     test "non-pid entries in shard_materializers are treated as missing" do
       layout = %{
         shard_layout: %{"m" => {1, "a"}},
@@ -340,7 +347,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
 
       index = LayoutIndex.build_index(layout)
 
-      assert [] == LayoutIndex.lookup_range(index, <<>>, <<0xFF, 0xFF>>)
+      assert [{{"a", "m"}, []}] == LayoutIndex.lookup_range(index, <<>>, <<0xFF, 0xFF>>)
     end
   end
 end

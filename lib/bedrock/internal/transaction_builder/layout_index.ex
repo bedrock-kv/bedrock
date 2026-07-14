@@ -82,6 +82,11 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   This is useful for cross-shard KeySelector resolution when we need to
   continue processing in the next shard.
+
+  Contract: the adjacent segment is the one starting exactly at the current
+  segment's end key. The index has total coverage (every shard is a segment,
+  possibly with `[]` pids), so an adjacent segment always exists until the
+  end of the keyspace — uncovered segments are returned, never skipped.
   """
   @spec get_next_segment(t(), binary()) ::
           {:ok, {{binary(), binary()}, [pid()]}} | :end_of_keyspace
@@ -100,13 +105,17 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   This is useful for cross-shard KeySelector resolution when we need to
   continue processing in the previous shard.
+
+  Contract: mirrors `get_next_segment/2` — the adjacent segment is the one
+  ending exactly at the current segment's start key, and uncovered segments
+  (`[]` pids) are returned, never skipped.
   """
   @spec get_previous_segment(t(), binary()) ::
           {:ok, {{binary(), binary()}, [pid()]}} | :start_of_keyspace
   def get_previous_segment(%__MODULE__{tree: tree}, key) do
     case segment_for_key(tree, key) do
       {:ok, {current_start, _current_end}, _current_pids} ->
-        find_segment_ending_before(tree, current_start)
+        find_segment_ending_at(tree, current_start)
 
       :not_found ->
         :start_of_keyspace
@@ -115,9 +124,14 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
   # Private implementation functions
 
-  # Build active ranges from shard_layout and available materializers.
-  # For each shard in the layout, we need a materializer process that can serve reads.
-  # Shards without materializers will have no read server, causing layout_lookup_failed.
+  # Build ranges from shard_layout and available materializers.
+  #
+  # Total coverage: every shard in shard_layout becomes a range, even when no
+  # materializer is known for its tag (pids == []). shard_layout partitions the
+  # keyspace, so the resulting index has no gaps — an uncovered shard is a
+  # segment with [] pids, which lookup_key! surfaces to callers so they can
+  # fail loudly (layout_lookup_failed) while the system heals coverage
+  # (bedrock-q67 Phase A: placeholder materializer / Distributor).
   @spec collect_active_ranges(TransactionSystemLayout.t()) ::
           [{binary(), binary(), [pid()]}]
   defp collect_active_ranges(transaction_system_layout) do
@@ -131,7 +145,6 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
       read_server = get_materializer_for_shard(tag, metadata_materializer, shard_materializers)
       {start_key, end_key, read_server}
     end)
-    |> Enum.filter(fn {_start, _end, pids} -> pids != [] end)
     |> Enum.sort_by(fn {start_key, _end, _pids} -> start_key end)
   end
 
@@ -139,6 +152,11 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   defp get_materializer_for_shard(0, metadata_materializer, _shard_materializers) when is_pid(metadata_materializer) do
     # System shard (tag 0) uses metadata_materializer
     [metadata_materializer]
+  end
+
+  defp get_materializer_for_shard(0, _non_pid_metadata_materializer, _shard_materializers) do
+    # System shard with no live metadata materializer: still indexed, uncovered
+    []
   end
 
   defp get_materializer_for_shard(tag, _metadata_materializer, shard_materializers) do
@@ -172,7 +190,6 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
       {segment_end, {segment_start, covering_pids}}
     end)
-    |> Enum.filter(fn {_end_key, {_start_key, pids}} -> pids != [] end)
   end
 
   @spec build_tree_from_segments([{binary(), {binary(), [pid()]}}]) ::
@@ -215,43 +232,46 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
     find_first_segment_at_boundary(iterator, boundary_key)
   end
 
-  @spec find_segment_ending_before(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
+  @spec find_segment_ending_at(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
           {:ok, {{binary(), binary()}, [pid()]}} | :start_of_keyspace
-  defp find_segment_ending_before(tree, boundary_key) do
-    iterator = :gb_trees.iterator(tree)
-    find_last_segment_before_boundary(iterator, boundary_key, :start_of_keyspace)
+  defp find_segment_ending_at(tree, boundary_key) do
+    # The tree is keyed by segment end key, so the previous segment — the one
+    # ending exactly at the current segment's start — is the first entry at or
+    # after boundary_key that isn't the current segment itself. Exact-boundary
+    # semantics: see find_first_segment_at_boundary.
+    boundary_key
+    |> :gb_trees.iterator_from(tree)
+    |> :gb_trees.next()
+    |> case do
+      {^boundary_key, {segment_start, pids}, _next_iter} -> {:ok, {{segment_start, boundary_key}, pids}}
+      _ -> :start_of_keyspace
+    end
   end
 
-  # Find the first segment that starts at or after the boundary key, walking
-  # forward across any materializer-less gaps (mirrors get_previous_segment,
-  # which walks back across gaps).
+  # Find the segment that starts exactly at the boundary key.
+  #
+  # Exact-boundary semantics (bedrock-q67.1, revising the bedrock-dwu gap
+  # walk): the index has total coverage — every shard in shard_layout is a
+  # segment, including shards with no known materializer (pids == []) — so
+  # "gaps" cannot exist between segments. Walking forward past the boundary
+  # would skip a shard, and skipping an uncovered shard during cross-shard
+  # KeySelector resolution would silently drop live keys. Uncovered segments
+  # must be returned so callers fail loudly (layout_lookup_failed) while the
+  # system heals coverage (bedrock-q67 Phase A placeholder/Distributor) —
+  # coverage is never "skipped" by the client.
   defp find_first_segment_at_boundary(iterator, boundary_key) do
     case :gb_trees.next(iterator) do
       {tree_end_key, {segment_start, pids}, next_iter} ->
-        if segment_start >= boundary_key do
-          {:ok, {{segment_start, tree_end_key}, pids}}
-        else
-          find_first_segment_at_boundary(next_iter, boundary_key)
+        cond do
+          segment_start == boundary_key -> {:ok, {{segment_start, tree_end_key}, pids}}
+          # The iterator starts from the current segment (its end key equals
+          # boundary_key); step past it to reach the adjacent segment.
+          segment_start < boundary_key -> find_first_segment_at_boundary(next_iter, boundary_key)
+          true -> :end_of_keyspace
         end
 
       :none ->
         :end_of_keyspace
-    end
-  end
-
-  # Find the last segment that ends at or before the boundary key
-  defp find_last_segment_before_boundary(iterator, boundary_key, current_best) do
-    case :gb_trees.next(iterator) do
-      {tree_end_key, {segment_start, pids}, next_iter} ->
-        if tree_end_key <= boundary_key do
-          new_result = {:ok, {{segment_start, tree_end_key}, pids}}
-          find_last_segment_before_boundary(next_iter, boundary_key, new_result)
-        else
-          find_last_segment_before_boundary(next_iter, boundary_key, current_best)
-        end
-
-      :none ->
-        current_best
     end
   end
 end

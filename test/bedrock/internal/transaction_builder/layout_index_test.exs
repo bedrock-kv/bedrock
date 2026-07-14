@@ -188,7 +188,7 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       assert :end_of_keyspace == LayoutIndex.get_next_segment(index, "z")
     end
 
-    test "returns :end_of_keyspace when the next shard is across a gap" do
+    test "walks forward across a gap to the nearest later segment" do
       pid = dummy_pid()
 
       layout = %{
@@ -200,8 +200,35 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       index = LayoutIndex.build_index(layout)
 
       # No segment starts exactly at "d" (the gap d-h has no materializer),
-      # so there is no adjacent next segment.
-      assert :end_of_keyspace == LayoutIndex.get_next_segment(index, "b")
+      # but segment {h, m} exists beyond the gap and should be found.
+      assert {:ok, {{"h", "m"}, [^pid]}} = LayoutIndex.get_next_segment(index, "b")
+    end
+  end
+
+  describe "gap-crossing symmetry (bedrock-dwu regression)" do
+    setup do
+      p1 = dummy_pid()
+      p2 = dummy_pid()
+
+      layout = %{
+        shard_layout: %{"d" => {1, "a"}, "m" => {2, "h"}},
+        metadata_materializer: nil,
+        shard_materializers: %{1 => p1, 2 => p2}
+      }
+
+      %{index: LayoutIndex.build_index(layout), p1: p1, p2: p2}
+    end
+
+    test "get_next_segment and get_previous_segment both cross the gap", ctx do
+      # forward: from inside {a, d}, across the uncovered gap d-h, to {h, m}
+      assert {:ok, {{"h", "m"}, [ctx.p2]}} == LayoutIndex.get_next_segment(ctx.index, "b")
+      # backward: from inside {h, m}, across the gap, to {a, d}
+      assert {:ok, {{"a", "d"}, [ctx.p1]}} == LayoutIndex.get_previous_segment(ctx.index, "i")
+    end
+
+    test "gap-crossing still terminates at the ends of the keyspace", ctx do
+      assert :end_of_keyspace == LayoutIndex.get_next_segment(ctx.index, "i")
+      assert :start_of_keyspace == LayoutIndex.get_previous_segment(ctx.index, "b")
     end
   end
 
@@ -278,6 +305,30 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
       assert_raise RuntimeError, ~r/No segment found/, fn ->
         LayoutIndex.lookup_key!(index, <<0xFF, 0x01>>)
       end
+    end
+
+    test "the production default contiguous layout builds exactly two segments (bedrock-tn5 regression)" do
+      metadata_pid = dummy_pid()
+      data_pid = dummy_pid()
+
+      # The default layout from initialization_phase.ex: a single data shard
+      # covering <<>> ..< <<0xFF>> and the metadata shard <<0xFF>> ..< <<0xFF, 0xFF>>.
+      # The shared boundary <<0xFF>> must not create a zero-width artifact segment.
+      layout = %{
+        shard_layout: %{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}},
+        metadata_materializer: metadata_pid,
+        shard_materializers: %{1 => data_pid}
+      }
+
+      index = LayoutIndex.build_index(layout)
+      segments = LayoutIndex.lookup_range(index, <<>>, <<0xFF, 0xFF>>)
+
+      assert [
+               {{<<>>, <<0xFF>>}, [data_pid]},
+               {{<<0xFF>>, <<0xFF, 0xFF>>}, [metadata_pid]}
+             ] == segments
+
+      refute Enum.any?(segments, fn {{s, e}, _pids} -> s == e end)
     end
 
     test "non-pid entries in shard_materializers are treated as missing" do

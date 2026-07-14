@@ -156,9 +156,11 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
       ranges
       |> Enum.flat_map(fn {start_key, end_key, _pids} -> [start_key, end_key] end)
       |> Enum.sort()
+      |> Enum.dedup()
 
     boundaries
     |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.reject(fn [segment_start, segment_end] -> segment_start == segment_end end)
     |> Enum.map(fn [segment_start, segment_end] ->
       covering_pids =
         ranges
@@ -220,11 +222,13 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
     find_last_segment_before_boundary(iterator, boundary_key, :start_of_keyspace)
   end
 
-  # Find the first segment that starts at the boundary key
+  # Find the first segment that starts at or after the boundary key, walking
+  # forward across any materializer-less gaps (mirrors get_previous_segment,
+  # which walks back across gaps).
   defp find_first_segment_at_boundary(iterator, boundary_key) do
     case :gb_trees.next(iterator) do
       {tree_end_key, {segment_start, pids}, next_iter} ->
-        if segment_start == boundary_key do
+        if segment_start >= boundary_key do
           {:ok, {{segment_start, tree_end_key}, pids}}
         else
           find_first_segment_at_boundary(next_iter, boundary_key)

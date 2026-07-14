@@ -272,8 +272,8 @@ defmodule Bedrock.Internal.Repo do
       wait_befor_retry(retry_count)
       run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
 
-    {__MODULE__, failed_txn, :rollback, reason} ->
-      try_to_rollback(failed_txn)
+    {__MODULE__, :rollback, reason} ->
+      try_to_rollback(txn(repo))
       {:error, reason}
 
     {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->

@@ -245,7 +245,7 @@ defmodule Bedrock.HighContentionAllocator do
 
   defp decode_counter_key(hca, counter_key) do
     prefix_size = byte_size(hca.counters_keyspace)
-    <<_prefix::binary-size(prefix_size), start::64-big>> = counter_key
+    <<_prefix::binary-size(^prefix_size), start::64-big>> = counter_key
     start
   end
 

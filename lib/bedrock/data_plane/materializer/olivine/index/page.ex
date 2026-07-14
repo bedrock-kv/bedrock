@@ -550,7 +550,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index.Page do
 
     page_size = byte_size(page)
     key_start = page_size - right_key_offset_from_end
-    <<_prefix::binary-size(key_start), key_len::unsigned-big-16, key::binary-size(key_len), _locator::binary>> = page
+    <<_prefix::binary-size(^key_start), key_len::unsigned-big-16, key::binary-size(key_len), _locator::binary>> = page
     key
   end
 

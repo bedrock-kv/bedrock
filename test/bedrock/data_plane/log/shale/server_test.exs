@@ -251,9 +251,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       first_version = Version.from_integer(1)
       last_version = Version.from_integer(10)
 
-      catch_exit do
-        GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500)
-      end
+      catch_exit(GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500))
     end
 
     test "handles recover_from with invalid version range", %{server: pid} do
@@ -261,9 +259,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       first_version = Version.from_integer(10)
       last_version = Version.from_integer(1)
 
-      catch_exit do
-        GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500)
-      end
+      catch_exit(GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500))
     end
   end
 

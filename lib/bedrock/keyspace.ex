@@ -121,7 +121,7 @@ defmodule Bedrock.Keyspace do
     prefix_size = byte_size(prefix)
 
     case key do
-      <<^prefix::binary-size(prefix_size), suffix::binary>> -> {:ok, suffix}
+      <<^prefix::binary-size(^prefix_size), suffix::binary>> -> {:ok, suffix}
       _ -> :error
     end
   end

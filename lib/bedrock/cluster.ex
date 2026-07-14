@@ -14,8 +14,6 @@ defmodule Bedrock.Cluster do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Transaction
 
-  require Logger
-
   @type t :: module()
   @type name :: String.t()
   @type version :: Bedrock.version()

@@ -152,9 +152,6 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
   def insert_bulk(tree, range_value_pairs) do
     case range_value_pairs do
-      [] ->
-        tree
-
       # For small batches, just use regular insert (more efficient)
       pairs when length(pairs) <= 3 ->
         Enum.reduce(pairs, tree, fn {range, value}, acc_tree ->

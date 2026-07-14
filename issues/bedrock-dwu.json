@@ -7,9 +7,15 @@
   "description": "get_next_segment returns :end_of_keyspace at materializer-less gaps even when later segments exist (find_first_segment_at_boundary requires exact segment_start == boundary), while get_previous_segment walks back across gaps. Repro: shards %{\"d\" =\u003e {1,\"a\"}, \"m\" =\u003e {2,\"h\"}}, get_next_segment(index, \"b\") -\u003e :end_of_keyspace despite {h,m}. Decide semantics, make pair symmetric, update characterization test at layout_index_test.exs:191. Related: lookup_range/get_next_segment/get_previous_segment currently have zero lib callers — wire up or remove.",
   "id": "bedrock-dwu",
   "labels": [],
+  "comments": [
+    {
+      "text": "Resolution superseded by bedrock-q67.1 (commit ab62f98d on PR #82): get_next_segment reverted to exact-boundary semantics. Under the total-coverage LayoutIndex design (bedrock-q67 Phase A), uncovered shards are segments with [] pids, not gaps — they must be returned (loud layout_lookup_failed) rather than walked past, since skipping a shard would silently drop live keys. get_previous_segment made exactly symmetric.",
+      "timestamp": "2026-07-14T22:04:12Z"
+    }
+  ],
   "priority": 2,
   "status": "closed",
   "title": "LayoutIndex get_next_segment stops at gaps; asymmetric with get_previous_segment",
   "type": "bug",
-  "updated_at": "2026-07-14T20:06:03Z"
+  "updated_at": "2026-07-14T22:04:12Z"
 }

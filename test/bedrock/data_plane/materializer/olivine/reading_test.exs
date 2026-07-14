@@ -237,6 +237,58 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.ReadingTest do
                updated_manager.waiting_fetches[v2()]
     end
 
+    # Regression test for bedrock-66h: waitlisting a request that has wait_ms
+    # but no reply_fn used to queue a nil reply_fn. When the version was later
+    # applied, notify_waiting_fetches ran the fetch synchronously (nil reply_fn
+    # means "do now"), got {:ok, value} back, matched it against the {:ok, pid}
+    # clause in execute_fetch_request, and crashed in Process.monitor/1 with an
+    # ArgumentError. The fix rejects waitlisting without a reply_fn: the
+    # waitlist's only delivery mechanism IS reply_fn, so a caller that supplied
+    # none could never be notified anyway — it now gets the error immediately,
+    # exactly as if wait_ms had not been set. (The sole production caller,
+    # Olivine's Server, always supplies a reply_fn.)
+    test "with wait_ms but no reply_fn the error is returned immediately and nothing is waitlisted", %{
+      manager: manager,
+      context: context,
+      index_manager: index_manager,
+      database: database
+    } do
+      {manager_after_get, get_result} =
+        Reading.handle_get(manager, context, "key1", v2(), wait_ms: 5_000)
+
+      {manager_after_range, range_result} =
+        Reading.handle_get_range(manager_after_get, context, "range:a", "range:z", v2(), wait_ms: 5_000)
+
+      # Pre-fix, both requests were waitlisted with a nil reply_fn and this
+      # notification crashed with an ArgumentError in Process.monitor/1.
+      new_context = advance_to_v2(index_manager, database)
+      notified_manager = Reading.notify_waiting_fetches(manager_after_range, new_context, v2())
+
+      assert notified_manager.waiting_fetches == %{}
+      assert Reading.get_active_tasks(notified_manager) == MapSet.new()
+
+      # Post-fix, the caller gets the error straight back and no state changes.
+      assert get_result == {:error, :version_too_new}
+      assert range_result == {:error, :version_too_new}
+      assert manager_after_range.waiting_fetches == %{}
+    end
+
+    test "waitlisting does not leak :waitlist_timing process-dictionary entries", %{
+      manager: manager,
+      context: context
+    } do
+      {_manager, :ok} =
+        Reading.handle_get(manager, context, "key1", v2(), wait_ms: 5_000, reply_fn: fn _ -> :ok end)
+
+      timing_keys =
+        Enum.filter(Process.get_keys(), fn
+          {:waitlist_timing, _} -> true
+          _ -> false
+        end)
+
+      assert timing_keys == []
+    end
+
     test "without wait_ms the error is returned immediately", %{manager: manager, context: context} do
       assert {^manager, {:error, :version_too_new}} =
                Reading.handle_get(manager, context, "key1", v2(), [])

@@ -7,8 +7,8 @@
   "id": "bedrock-wey",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Test coverage: Coordinator Durability service registration and director notification",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:39Z"
+  "updated_at": "2026-07-14T19:09:49Z"
 }

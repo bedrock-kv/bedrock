@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T21:55:41Z",
+  "description": "Distributor monitors recruited materializers; on death swaps placeholder into the TSL slot (A4 delta) and requests re-recruitment (A5, with backoff). Stale clients race dead pid -\u003e :unavailable -\u003e retry -\u003e placeholder. Integration test: kill materializer, read succeeds after heal.",
+  "id": "bedrock-q67.7",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Materializer death healing: placeholder swap + re-recruitment",
+  "type": "task",
+  "updated_at": "2026-07-14T21:55:41Z"
+}

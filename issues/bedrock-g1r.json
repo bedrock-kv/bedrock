@@ -7,8 +7,8 @@
   "id": "bedrock-g1r",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Basalt puller sends :transactions_applied to itself; waitlisted fetches never notified",
   "type": "bug",
-  "updated_at": "2026-07-14T19:22:47Z"
+  "updated_at": "2026-07-14T20:04:44Z"
 }

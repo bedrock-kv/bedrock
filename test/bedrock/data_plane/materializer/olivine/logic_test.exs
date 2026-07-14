@@ -3,11 +3,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
   import ExUnit.CaptureLog
 
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
   alias Bedrock.DataPlane.Materializer.Olivine.State
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.KeySelector
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.Snapshot
 
   setup do
     test_dir = Path.join(System.tmp_dir!(), "olivine_logic_test_#{:rand.uniform(100_000)}")
@@ -37,6 +43,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
     {:ok, state} = result
     state
+  end
+
+  # Builds an encoded transaction with a commit version, matching how the
+  # pulling pipeline delivers transactions to apply_transactions/2.
+  defp create_transaction(mutations, version_int) do
+    transaction_map = %{
+      mutations: mutations,
+      read_conflicts: {nil, []},
+      write_conflicts: []
+    }
+
+    encoded = Transaction.encode(transaction_map)
+    {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
+    with_version
   end
 
   describe "startup/4" do
@@ -125,6 +145,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       assert {:ok, %State{mode: :running} = unlocked_state} =
                Logic.unlock_after_recovery(locked_state, durable_version, layout)
 
+      # A puller is installed so the materializer can catch up from the logs
+      assert unlocked_state.pull_task
+
       Logic.shutdown(unlocked_state)
     end
   end
@@ -198,6 +221,277 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "handles state with no puller task" do
       state = %State{pull_task: nil}
       assert %State{pull_task: nil} = Logic.stop_pulling(state)
+    end
+  end
+
+  describe "info/2" do
+    test "returns sensible values for every supported fact", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :info_facts_test)
+
+      assert {:ok, supported} = Logic.info(state, :supported_info)
+      assert is_list(supported)
+      assert Enum.all?(supported, &is_atom/1)
+
+      zero_version = Version.zero()
+      assert {:ok, ^zero_version} = Logic.info(state, :durable_version)
+      assert {:ok, ^zero_version} = Logic.info(state, :oldest_durable_version)
+
+      assert {:ok, "test"} = Logic.info(state, :id)
+      assert {:ok, :info_facts_test} = Logic.info(state, :otp_name)
+      assert {:ok, ^test_dir} = Logic.info(state, :path)
+      assert {:ok, :materializer} = Logic.info(state, :kind)
+
+      self_pid = self()
+      assert {:ok, ^self_pid} = Logic.info(state, :pid)
+
+      # key_ranges reports one {min, max} range per current index
+      assert {:ok, [{min_key, max_key}]} = Logic.info(state, :key_ranges)
+      assert is_binary(min_key) and is_binary(max_key)
+
+      assert {:ok, n_keys} = Logic.info(state, :n_keys)
+      assert is_integer(n_keys) and n_keys >= 0
+
+      assert {:ok, size_in_bytes} = Logic.info(state, :size_in_bytes)
+      assert is_integer(size_in_bytes) and size_in_bytes >= 0
+
+      assert {:ok, utilization} = Logic.info(state, :utilization)
+      assert is_number(utilization) and utilization >= 0
+
+      Logic.shutdown(state)
+    end
+
+    test "returns error tuple for an unsupported fact", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :info_unsupported_test)
+
+      assert {:ok, {:error, :unsupported_info}} = Logic.info(state, :not_a_real_fact)
+
+      Logic.shutdown(state)
+    end
+
+    test "returns a map when given a list of fact names", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :info_list_test)
+
+      assert {:ok, facts} = Logic.info(state, [:kind, :n_keys, :id, :bogus_fact])
+
+      assert %{
+               kind: :materializer,
+               n_keys: 0,
+               id: "test",
+               bogus_fact: {:error, :unsupported_info}
+             } = facts
+
+      Logic.shutdown(state)
+    end
+  end
+
+  describe "apply_transactions/2" do
+    test "applies a single transaction and makes its writes readable", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :apply_single_test)
+
+      txn = create_transaction([{:set, "hello", "world"}], 1)
+
+      assert {:ok, %State{} = updated_state, version} = Logic.apply_transactions(state, [txn])
+      assert version == Version.from_integer(1)
+      assert updated_state.index_manager.current_version == version
+
+      assert {:ok, "world"} = ReadingTestHelpers.get(updated_state, "hello", version)
+
+      Logic.shutdown(updated_state)
+    end
+
+    test "applies a batch and returns the last transaction's commit version", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :apply_batch_test)
+
+      transactions = [
+        create_transaction([{:set, "key_a", "value_a"}], 1),
+        create_transaction([{:set, "key_b", "value_b"}], 2),
+        create_transaction([{:set, "key_c", "value_c"}, {:set, "key_a", "value_a2"}], 3)
+      ]
+
+      assert {:ok, %State{} = updated_state, version} = Logic.apply_transactions(state, transactions)
+      assert version == Version.from_integer(3)
+
+      # All writes visible at the final version, including the overwrite
+      assert {:ok, "value_a2"} = ReadingTestHelpers.get(updated_state, "key_a", version)
+      assert {:ok, "value_b"} = ReadingTestHelpers.get(updated_state, "key_b", version)
+      assert {:ok, "value_c"} = ReadingTestHelpers.get(updated_state, "key_c", version)
+
+      # Earlier version still sees the original value
+      v1 = Version.from_integer(1)
+      assert {:ok, "value_a"} = ReadingTestHelpers.get(updated_state, "key_a", v1)
+
+      Logic.shutdown(updated_state)
+    end
+  end
+
+  describe "advance_window/1" do
+    test "does not evict when nothing has been applied", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :advance_noop_test)
+
+      durable_before = Database.durable_version(state.database)
+
+      assert {:ok, %State{} = updated_state} = Logic.advance_window(state)
+      assert Database.durable_version(updated_state.database) == durable_before
+
+      Logic.shutdown(updated_state)
+    end
+
+    test "does not evict when all versions are within the lag window", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :advance_within_window_test)
+
+      # Both versions are less than window_lag_time_μs apart from the newest,
+      # so nothing falls behind the window edge.
+      txns = [
+        create_transaction([{:set, "a", "1"}], 1),
+        create_transaction([{:set, "b", "2"}], 2)
+      ]
+
+      {:ok, state, _version} = Logic.apply_transactions(state, txns)
+
+      assert {:ok, %State{} = updated_state} = Logic.advance_window(state)
+      assert Database.durable_version(updated_state.database) == Version.zero()
+
+      Logic.shutdown(updated_state)
+    end
+
+    test "evicts versions older than the lag window and advances the durable version", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :advance_evict_test)
+
+      # window_lag_time_μs defaults to 5_000_000. With the newest version at
+      # 12_000_000, the window edge is 7_000_000: version 6_000_000 is evicted,
+      # version 12_000_000 stays in the window.
+      old_txn = create_transaction([{:set, "old_key", "old_value"}], 6_000_000)
+      new_txn = create_transaction([{:set, "new_key", "new_value"}], 12_000_000)
+
+      {:ok, state, _} = Logic.apply_transactions(state, [old_txn])
+      {:ok, state, _} = Logic.apply_transactions(state, [new_txn])
+
+      assert Database.durable_version(state.database) == Version.zero()
+
+      assert {:ok, %State{} = updated_state} = Logic.advance_window(state)
+      assert Database.durable_version(updated_state.database) == Version.from_integer(6_000_000)
+
+      # Evicted data remains readable at the durable version from the database
+      assert {:ok, "old_value"} =
+               ReadingTestHelpers.get(updated_state, "old_key", Version.from_integer(6_000_000))
+
+      Logic.shutdown(updated_state)
+    end
+
+    test "evicting a version smaller than the lag clamps the telemetry window edge", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :advance_underflow_test)
+
+      # Eviction version 1 is smaller than window_lag_time_μs (5_000_000), so
+      # computing the telemetry window edge underflows and must clamp to zero
+      # rather than raising.
+      tiny_txn = create_transaction([{:set, "tiny", "value"}], 1)
+      newer_txn = create_transaction([{:set, "newer", "value"}], 10_000_000)
+
+      {:ok, state, _} = Logic.apply_transactions(state, [tiny_txn])
+      {:ok, state, _} = Logic.apply_transactions(state, [newer_txn])
+
+      assert {:ok, %State{} = updated_state} = Logic.advance_window(state)
+      assert Database.durable_version(updated_state.database) == Version.from_integer(1)
+
+      Logic.shutdown(updated_state)
+    end
+  end
+
+  describe "start_compaction/1" do
+    test "compacts in the background and notifies the caller", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :compaction_test)
+
+      txns = [
+        create_transaction([{:set, "compact_a", "value_a"}], 1),
+        create_transaction([{:set, "compact_b", "value_b"}], 2)
+      ]
+
+      {:ok, state, _version} = Logic.apply_transactions(state, txns)
+
+      expected_durable_version = Database.durable_version(state.database)
+
+      assert {:ok, %Task{} = task} = Logic.start_compaction(state)
+
+      assert_receive {:compaction_ready, _data_fd, _idx_fd, data_path, idx_path, data_offset, idx_offset,
+                      compacted_pages, durable_version, duration_μs, data_size_before, idx_size_before},
+                     10_000
+
+      assert durable_version == expected_durable_version
+      assert is_integer(data_offset) and data_offset >= 0
+      assert is_integer(idx_offset) and idx_offset > 0
+      assert is_integer(duration_μs) and duration_μs >= 0
+      assert is_integer(data_size_before) and data_size_before >= 0
+      assert is_integer(idx_size_before) and idx_size_before >= 0
+      assert is_map(compacted_pages)
+
+      # Compact files were written alongside the originals
+      assert File.exists?(to_string(data_path))
+      assert File.exists?(to_string(idx_path))
+      assert String.ends_with?(to_string(data_path), ".compact")
+      assert String.ends_with?(to_string(idx_path), ".compact")
+
+      assert :ok = Task.await(task, 10_000)
+
+      # The raw fds are owned by the (now finished) task process; just remove
+      # the compact files that were produced.
+      File.rm(to_string(data_path))
+      File.rm(to_string(idx_path))
+
+      Logic.shutdown(state)
+    end
+  end
+
+  describe "maybe_upload_snapshot/4" do
+    test "is a no-op when no snapshot is configured", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :snapshot_nil_test)
+      assert state.snapshot == nil
+
+      assert :ok = Logic.maybe_upload_snapshot(state, ~c"unused", ~c"unused", Version.from_integer(1))
+
+      Logic.shutdown(state)
+    end
+
+    test "uploads a readable snapshot bundle when configured", %{test_dir: test_dir} do
+      object_storage_root = Path.join(test_dir, "object_storage")
+      File.mkdir_p!(object_storage_root)
+
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      snapshot = Snapshot.new(backend, "logic-upload-shard")
+
+      state = create_test_state(Path.join(test_dir, "storage"), :snapshot_upload_test)
+      state = %{state | snapshot: snapshot}
+
+      data_path = Path.join(test_dir, "upload_data")
+      idx_path = Path.join(test_dir, "upload_idx")
+      File.write!(data_path, "data contents")
+      File.write!(idx_path, "idx contents")
+
+      assert :ok =
+               Logic.maybe_upload_snapshot(
+                 state,
+                 String.to_charlist(data_path),
+                 String.to_charlist(idx_path),
+                 Version.from_integer(42)
+               )
+
+      # Upload happens in a fire-and-forget task; poll until it lands
+      assert {:ok, 42, uploaded} = await_snapshot(snapshot, 100)
+      assert IO.iodata_to_binary(uploaded) == "data contents" <> "idx contents"
+
+      Logic.shutdown(state)
+    end
+  end
+
+  defp await_snapshot(_snapshot, 0), do: {:error, :timed_out}
+
+  defp await_snapshot(snapshot, attempts_left) do
+    case Snapshot.read_latest(snapshot) do
+      {:ok, version, data} ->
+        {:ok, version, data}
+
+      {:error, :not_found} ->
+        Process.sleep(50)
+        await_snapshot(snapshot, attempts_left - 1)
     end
   end
 end

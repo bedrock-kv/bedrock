@@ -5,7 +5,8 @@
     "bedrock-q67.4"
   ],
   "blocks": [
-    "bedrock-q67.6"
+    "bedrock-q67.6",
+    "bedrock-q67.7"
   ],
   "created": "2026-07-14T21:55:41Z",
   "description": "Distributor handles {:coverage_demand, tag}: pick node via coordinator service directory capabilities -\u003e that node's Foreman starts materializer worker -\u003e epoch lock/unlock (existing recovery machinery, single authority) -\u003e TSL delta to Director (A4) -\u003e {:covered, tag, pid} to placeholder. Backoff on failure; telemetry for demand/spin-up duration/park/shed counts. Read-version handoff: recruited materializer replays to current; version_too_old after long spin-up is acceptable client-retry.",
@@ -16,5 +17,5 @@
   "status": "open",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:01Z"
+  "updated_at": "2026-07-14T21:56:02Z"
 }

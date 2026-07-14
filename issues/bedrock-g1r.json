@@ -6,9 +6,15 @@
   "description": "basalt/logic.ex:70 does send(self(), {:transactions_applied, version}) inside the apply_and_notify closure, which executes in the puller Task (pulling.ex:142 inside Task.async) — the server's handle_info (server.ex:107, only caller of notify_waiting_fetches) is dead code. Waitlisted fetches hang until client call timeout; waiting_fetches entries leak; task mailbox grows unboundedly. Fix: capture main_process_pid = self() before building the closure (olivine/logic.ex:140-143 pattern). Add server_test.exs regression: unlock + waitlisted get + pulled transaction -\u003e client gets reply. Also: WaitingList timeout returned at logic.ex:118 is discarded — no deadline expiry wired up. Audit-confirmed in PR for bedrock-8dc.",
   "id": "bedrock-g1r",
   "labels": [],
+  "comments": [
+    {
+      "text": "Fixed notification bug in 06cb932d (PR #84): puller closure now sends {:transactions_applied, version} to the server pid captured before Task.async, mirroring Olivine. Regression tests added at logic and server level (TDD: confirmed failing pre-fix). NOTE: waitlist deadline expiry aspect of this ticket was NOT implemented — it's a larger design choice and remains open work if desired.",
+      "timestamp": "2026-07-14T20:07:22Z"
+    }
+  ],
   "priority": 1,
   "status": "in_progress",
   "title": "Basalt puller sends :transactions_applied to itself; waitlisted fetches never notified",
   "type": "bug",
-  "updated_at": "2026-07-14T20:04:44Z"
+  "updated_at": "2026-07-14T20:07:22Z"
 }

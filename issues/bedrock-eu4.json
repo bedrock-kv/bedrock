@@ -7,8 +7,8 @@
   "id": "bedrock-eu4",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Test coverage: Olivine Logic — info facts, apply_transactions, advance_window eviction, compaction",
   "type": "task",
-  "updated_at": "2026-07-14T18:40:48Z"
+  "updated_at": "2026-07-14T18:42:04Z"
 }

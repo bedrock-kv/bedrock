@@ -73,7 +73,13 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
       original = state.distributor
       kill_and_wait(original)
 
-      assert {:noreply, new_state} = Server.handle_info({:DOWN, make_ref(), :process, original, :killed}, state)
+      # A non-:normal exit schedules a delayed re-recruit (the retry timer
+      # puts a floor under a crash-looping distributor).
+      assert {:noreply, down_state} = Server.handle_info({:DOWN, make_ref(), :process, original, :killed}, state)
+      assert down_state.distributor == nil
+      assert_receive {:timeout, :retry_start_distributor}, 2_000
+
+      assert {:noreply, new_state} = Server.handle_info({:timeout, :retry_start_distributor}, down_state)
 
       assert is_pid(new_state.distributor)
       assert new_state.distributor != original
@@ -105,6 +111,30 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
       assert {:noreply, new_state} = Server.handle_info({:DOWN, ref, :process, distributor, :normal}, state)
 
       assert new_state.distributor == nil
+    end
+
+    test "a newer-epoch director does not adopt a stale distributor under the shared name" do
+      # An epoch-5 distributor is still registered under the shared otp name
+      # when an epoch-6 director recruits: the starter's already_started
+      # mapping would hand back the stale pid, so the director must epoch
+      # check it (the stale distributor stops itself) and retry instead.
+      stale_state = Server.maybe_start_distributor(running_state())
+      stale = stale_state.distributor
+      ref = Process.monitor(stale)
+
+      new_director_state = Server.maybe_start_distributor(running_state(%{epoch: 6}))
+
+      assert new_director_state.distributor == nil
+      assert_receive {:DOWN, ^ref, :process, ^stale, :normal}
+      assert_receive {:timeout, :retry_start_distributor}, 2_000
+
+      # Once the stale registration has cleared, the retry recruits a fresh
+      # epoch-6 distributor.
+      assert {:noreply, recruited} = Server.handle_info({:timeout, :retry_start_distributor}, new_director_state)
+
+      assert is_pid(recruited.distributor)
+      assert recruited.distributor != stale
+      assert %DistributorState{epoch: 6} = :sys.get_state(recruited.distributor)
     end
   end
 

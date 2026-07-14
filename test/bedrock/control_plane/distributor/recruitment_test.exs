@@ -138,8 +138,15 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         services: %{"svc" => %{kind: :log}}
       }
 
+      # The cluster-wide recovery durable version is far ahead of the fresh
+      # worker's (empty) store; the unlock below must use the version the
+      # worker itself reported at lock time, not this one.
       {distributor, _director} =
-        start_distributor(recruitment: recruitment, transaction_system_layout: snapshot)
+        start_distributor(
+          recruitment: recruitment,
+          transaction_system_layout: snapshot,
+          durable_version: Version.from_integer(500)
+        )
 
       task = park_read(placeholder_of(distributor), "apple")
 
@@ -152,7 +159,9 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       assert_receive {:lock, {:stub_worker_ref, node}, 42}
       assert node == node()
 
-      # Unlock with the recovery durable version and a TSL filtered to the shard's logs.
+      # Unlock with the durable version the worker reported at lock time
+      # (zero: a new worker's store is empty, so it replays the shard's full
+      # history) and a TSL filtered to the shard's logs.
       zero = Version.zero()
       assert_receive {:unlock, ^stub, ^zero, tsl}
       assert tsl.epoch == 42

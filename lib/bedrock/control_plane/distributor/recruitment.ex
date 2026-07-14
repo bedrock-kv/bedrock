@@ -7,9 +7,10 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   materializer lifecycles pass through a single set of conventions: pick a
   materializer-capable node from the coordinator-supplied capabilities, ask
   that node's Foreman to create a worker, lock it for recovery at the
-  current epoch, and unlock it with the recovery durable version and a
-  transaction system layout filtered to the shard's logs so it starts
-  pulling immediately.
+  current epoch, and unlock it with the durable version the worker itself
+  reported at lock time (zero for a freshly created worker, so it replays
+  the shard's full history) and a transaction system layout filtered to
+  the shard's logs so it starts pulling immediately.
 
   The Foreman/Materializer calls are injectable through the context map
   (`:create_worker_fn`, `:lock_materializer_fn`, `:unlock_materializer_fn`)
@@ -52,8 +53,8 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   def recruit(tag, context) do
     with {:ok, node} <- find_materializer_capable_node(context.node_capabilities),
          {:ok, worker_ref} <- create_materializer_worker(node, tag, context),
-         {:ok, pid} <- lock_materializer({worker_ref, node}, node, context),
-         :ok <- unlock_and_start_pulling(pid, tag, node, context) do
+         {:ok, pid, recovery_info} <- lock_materializer({worker_ref, node}, node, context),
+         :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
       {:ok, pid, node}
     end
   end
@@ -82,23 +83,38 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
 
     case lock_fn.(worker, context.epoch) do
-      {:ok, pid, _info} -> {:ok, pid}
+      {:ok, pid, recovery_info} -> {:ok, pid, recovery_info}
       {:error, reason} -> {:error, {:materializer_lock_failed, reason, node}}
     end
   end
 
   defp default_lock_materializer(worker, epoch), do: Materializer.lock_for_recovery(worker, epoch)
 
-  defp unlock_and_start_pulling(pid, tag, node, context) do
+  defp unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
     tsl = shard_tsl(tag, context)
     unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
 
-    case unlock_fn.(pid, context.durable_version, tsl) do
+    case unlock_fn.(pid, start_version(recovery_info, context), tsl) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason, node}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason, node}}
     end
   end
+
+  # The unlock durable_version tells the materializer which version its own
+  # store already reflects - it starts pulling from the logs *after* that
+  # point. A recruited worker is freshly created (empty), so we must use the
+  # version IT reports at lock time (zero for a new store): unlocking it at
+  # the cluster-wide recovery durable version would silently skip every
+  # transaction before recovery. This matches the bootstrap phase, which
+  # unlocks newly created workers at version zero.
+  defp start_version(recovery_info, context) when is_map(recovery_info),
+    do: Map.get(recovery_info, :durable_version) || context.durable_version
+
+  defp start_version(recovery_info, context) when is_list(recovery_info),
+    do: Keyword.get(recovery_info, :durable_version) || context.durable_version
+
+  defp start_version(_recovery_info, context), do: context.durable_version
 
   defp default_unlock_materializer(pid, durable_version, tsl),
     do: Materializer.unlock_after_recovery(pid, durable_version, tsl, timeout_in_ms: 30_000)

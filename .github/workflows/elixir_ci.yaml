@@ -121,9 +121,10 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
-    # Compile before the download task so the project .app (with :inets in
-    # extra_applications) is fresh — Mix prunes code paths from compiled .app
-    # files, and a stale cached .app strips inets out from under :httpc
+    # Compile before the download task: if the task invocation itself has to
+    # compile stale deps, each dep's compile prunes the VM code paths using
+    # that dep's app list, which can delete :inets out from under the
+    # download's :httpc call (http_util fails to lazy-load)
     - name: Compile
       run: mix compile
 
@@ -165,9 +166,10 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
-    # Compile before the download task so the project .app (with :inets in
-    # extra_applications) is fresh — Mix prunes code paths from compiled .app
-    # files, and a stale cached .app strips inets out from under :httpc
+    # Compile before the download task: if the task invocation itself has to
+    # compile stale deps, each dep's compile prunes the VM code paths using
+    # that dep's app list, which can delete :inets out from under the
+    # download's :httpc call (http_util fails to lazy-load)
     - name: Compile
       run: mix compile
 

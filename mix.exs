@@ -62,9 +62,7 @@ defmodule Bedrock.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      # :inets/:ssl are pruned from the code path by Mix unless declared,
-      # which breaks :httpc callers (e.g. mix minio_server.download)
-      extra_applications: [:logger, :crypto, :inets, :ssl]
+      extra_applications: [:logger, :crypto]
     ]
   end
 

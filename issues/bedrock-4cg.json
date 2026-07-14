@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T19:05:35Z",
   "created": "2026-07-14T19:05:01Z",
   "description": "Add Elixir 1.19.5/OTP 28.3 and 1.20.2/OTP 28.3 entries to the elixir_ci.yaml test matrix alongside the existing 1.17.3/27.2 and 1.19.4/28.3.",
   "id": "bedrock-4cg",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "CI: extend test matrix with Elixir 1.19.5 and 1.20.2",
   "type": "task",
-  "updated_at": "2026-07-14T19:05:01Z"
+  "updated_at": "2026-07-14T19:05:35Z"
 }

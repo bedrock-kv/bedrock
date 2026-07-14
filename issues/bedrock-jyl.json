@@ -7,8 +7,8 @@
   "id": "bedrock-jyl",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "iterate_sections_data doesn't propagate callback errors; read_write_conflicts crashes on corrupt payloads",
   "type": "bug",
-  "updated_at": "2026-07-14T19:23:09Z"
+  "updated_at": "2026-07-14T20:04:44Z"
 }

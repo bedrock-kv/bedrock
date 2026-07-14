@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T22:18:54Z",
+  "description": "handle_call(:fetch_transaction_system_layout) returns the build_old_tsl_from_bootstrap stub (bare %{logs: ...}, no epoch/sequencer/proxies) before recovery completes; snapshot-on-subscribe now guards this (q67.4 audit fix 3b) but the fetch path still serves it. Should return :unavailable pre-recovery. Same wart shape as the fixed snapshot bug.",
+  "id": "bedrock-h3p",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Coordinator fetch_transaction_system_layout returns bootstrap stub pre-recovery",
+  "type": "bug",
+  "updated_at": "2026-07-14T22:18:54Z"
+}

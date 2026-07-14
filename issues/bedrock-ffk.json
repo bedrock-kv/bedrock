@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T18:40:48Z",
+  "description": "reading.ex is 83.8% covered (93 uncovered lines). Existing tests exercise ReadingTestHelpers which duplicates Reading's private logic instead of calling it. Add tests through Reading.handle_get/handle_get_range/notify_waiting_fetches/shutdown covering waitlisting (version_too_new + wait_ms), KeySelector resolution, range limit truncation, shutdown task-draining and waitlist notification.",
+  "id": "bedrock-ffk",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: Olivine Reading — exercise real public API (waitlist, shutdown, KeySelector paths)",
+  "type": "task",
+  "updated_at": "2026-07-14T18:40:48Z"
+}

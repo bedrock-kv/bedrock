@@ -161,6 +161,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # The placeholder is linked (so it dies with the distributor) and its
   # exit is caught via trap_exit above so the distributor can restart it.
+  #
+  # A restarted placeholder loses its `covered` and `demanded` state while
+  # `pending_demands` here survives, so the recruitment flow (bedrock-q67.5)
+  # must tolerate duplicate `{:coverage_demand, tag}` casts for tags already
+  # pending, and should re-deliver coverage if a delivery races a restart
+  # (a `notify_covered` cast to the dead pid is silently dropped).
   @spec start_placeholder(State.t()) :: State.t()
   defp start_placeholder(%State{} = t) do
     {:ok, placeholder} =

@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.3"
+  ],
   "blocks": [],
   "created": "2026-07-14T21:55:41Z",
   "description": "MaterializerBootstrapPhase: keep stall-on-failure for tag 0 only; data shards may complete recovery with placeholder coverage (slot filled with placeholder pid). Cold clusters exercise on-demand machinery on first touch. Update recovery tests; add integration test: recovery completes with a data-shard materializer forced to fail, first read to that shard materializes on demand.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Recovery relaxation: stall only for system shard, placeholder coverage for data shards",
   "type": "task",
-  "updated_at": "2026-07-14T21:55:41Z"
+  "updated_at": "2026-07-14T21:56:01Z"
 }

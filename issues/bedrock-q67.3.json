@@ -3,7 +3,9 @@
   "blocked_by": [
     "bedrock-q67.2"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.6"
+  ],
   "created": "2026-07-14T21:55:40Z",
   "description": "One process per cluster, supervised by Distributor, pid fills every uncovered shard_materializers slot. Speaks Materializer read API (get/get_range with version+opts) so StorageRacing/clients are unchanged. Parks per-tag in WaitingList (budget min(client timeout, hold_ms)); signals {:coverage_demand, tag} to Distributor (deduped); on {:covered, tag, pid} drains queue by re-issuing; sheds {:error, :unavailable} at budget; forwards (not parks) when a live pid is known — staleness shim. Wire deadline expiry properly (lesson: bedrock-tvb).",
   "id": "bedrock-q67.3",

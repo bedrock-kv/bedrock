@@ -127,6 +127,31 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.LogicTest do
     end
 
     @tag :tmp_dir
+    test "sends {:transactions_applied, version} to the process that started the puller", %{tmp_dir: tmp_dir} do
+      {_otp_name, state} = start_state(tmp_dir)
+      version_1 = Version.from_integer(1)
+
+      transaction = TransactionTestSupport.new_log_transaction(version_1, %{"foo" => "bar"})
+      {:ok, fake_log} = FakeLog.start_link(self(), [[transaction]])
+
+      layout = %{
+        logs: %{"log_1" => []},
+        services: %{"log_1" => %{kind: :log, status: {:up, fake_log}, last_seen: nil}}
+      }
+
+      assert {:ok, running_state} = Logic.unlock_after_recovery(state, Version.zero(), layout)
+
+      # The notification must arrive in the process that called
+      # unlock_after_recovery (the server), not in the puller task's own
+      # mailbox: the server's handle_info({:transactions_applied, _}, _) is
+      # the only code path that notifies waitlisted fetches.
+      assert_receive {:transactions_applied, ^version_1}, 5_000
+
+      stopped_state = Logic.stop_pulling(running_state)
+      Logic.shutdown(stopped_state)
+    end
+
+    @tag :tmp_dir
     test "purges transactions newer than the durable version before pulling", %{tmp_dir: tmp_dir} do
       {_otp_name, state} = start_state(tmp_dir)
       version_1 = apply_transaction(state, 1, %{"keep" => "yes"})

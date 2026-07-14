@@ -65,9 +65,13 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Logic do
   @spec unlock_after_recovery(State.t(), term(), map()) :: {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
     with :ok <- Database.purge_transactions_newer_than(t.database, durable_version) do
+      # Capture the server's pid before building the closure: the closure runs
+      # inside the puller task, where self() would be the task, not the server.
+      main_process_pid = self()
+
       apply_and_notify_fn = fn encoded_transactions ->
         version = Database.apply_transactions(t.database, encoded_transactions)
-        send(self(), {:transactions_applied, version})
+        send(main_process_pid, {:transactions_applied, version})
         version
       end
 

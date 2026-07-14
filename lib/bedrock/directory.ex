@@ -107,11 +107,18 @@ defmodule Bedrock.Directory do
 
   defmodule NodeKey do
     @moduledoc false
+    # Packs a directory path by concatenating the tuple encoding of each
+    # element (FDB subspace semantics) rather than encoding the path as a
+    # single nested list. This guarantees that a parent's packed key is a
+    # byte-prefix of every descendant's packed key, which the hierarchy
+    # range scans in list/remove/move rely on. The element terminator byte
+    # (0x00, with 0x00 -> 0x00 0xFF escaping inside elements) ensures that
+    # siblings sharing a name prefix (e.g. "app" vs "apple") do not collide.
     def pack([]), do: <<>>
-    def pack(path) when is_list(path), do: Bedrock.Encoding.Tuple.pack(path)
+    def pack(path) when is_list(path), do: Enum.map_join(path, &Bedrock.Encoding.Tuple.pack/1)
 
     def unpack(<<>>), do: []
-    def unpack(packed), do: Bedrock.Encoding.Tuple.unpack(packed)
+    def unpack(packed), do: Bedrock.Encoding.Tuple.unpack_all(packed)
   end
 
   @type directory :: Node.t() | Partition.t() | Layer.t()
@@ -746,11 +753,11 @@ defmodule Bedrock.Directory do
     with {:ok, value} <- fetch_directory(layer, old_path),
          :ok <- check_not_partition(value) do
       # Use keyspace range for efficient scanning
-      {start_key, end_key} =
-        layer.node_keyspace |> Keyspace.partition(old_path) |> Bedrock.ToKeyRange.to_key_range()
+      {_start_key, _end_key} =
+        range = layer.node_keyspace |> Keyspace.partition(old_path) |> Bedrock.ToKeyRange.to_key_range()
 
-      start_key
-      |> repo.get_range(end_key)
+      range
+      |> repo.get_range()
       |> Enum.each(fn {raw_key, packed_value} ->
         # Unpack the value since we're doing raw key scanning
         value = Bedrock.Encoding.Tuple.unpack(packed_value)
@@ -762,7 +769,7 @@ defmodule Bedrock.Directory do
       end)
 
       # Clear the range using keyspace range
-      repo.clear_range(start_key, end_key)
+      repo.clear_range(range)
       :ok
     end
   end

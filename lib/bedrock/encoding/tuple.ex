@@ -19,6 +19,22 @@ defmodule Bedrock.Encoding.Tuple do
   end
 
   @doc """
+  Unpacks a binary containing zero or more concatenated tuple-encoded values.
+
+  Unlike `unpack/1`, which decodes exactly one value and raises on trailing
+  data, this decodes the whole binary as a flat sequence of values (FDB tuple
+  semantics, without a top-level nested-list wrapper) and returns them as a
+  list.
+  """
+  @spec unpack_all(packed :: binary()) :: [nil | tuple() | list() | number() | binary()]
+  def unpack_all(<<>>), do: []
+
+  def unpack_all(packed) do
+    {value, rest} = unpack_value(packed)
+    [value | unpack_all(rest)]
+  end
+
+  @doc """
   Converts a value to an iolist representation for packing.
   """
   def to_iolist(unpacked, tail \\ []), do: unpacked |> pack_value(tail) |> :lists.reverse()

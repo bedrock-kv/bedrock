@@ -56,13 +56,8 @@ defmodule Bedrock.DirectoryPartitionTest do
 
     stub(MockRepo, :get_range, fn range -> range_get(store, to_range(range), []) end)
 
-    stub(MockRepo, :get_range, fn
-      range, opts when is_list(opts) -> range_get(store, to_range(range), opts)
-      start_key, end_key when is_binary(start_key) and is_binary(end_key) -> range_get(store, {start_key, end_key}, [])
-    end)
-
-    stub(MockRepo, :clear_range, fn
-      start_key, end_key when is_binary(start_key) and is_binary(end_key) -> range_clear(store, {start_key, end_key})
+    stub(MockRepo, :get_range, fn range, opts when is_list(opts) ->
+      range_get(store, to_range(range), opts)
     end)
 
     stub(MockRepo, :clear_range, fn range -> range_clear(store, to_range(range)) end)
@@ -336,6 +331,79 @@ defmodule Bedrock.DirectoryPartitionTest do
 
       assert {:ok, %Directory.Node{layer: "document", version: "v3", metadata: nil}} =
                Directory.open(root, ["layered"])
+    end
+  end
+
+  describe "hierarchy scans over the real store" do
+    # Regression tests for bedrock-j09: directory node keys must be
+    # byte-prefixes of their descendants' node keys so that range scans in
+    # do_list/do_remove/do_move_recursive actually cover the subtree.
+
+    test "list returns the children of a non-root directory", %{root: root} do
+      {:ok, _} = Directory.create(root, ["app"])
+      {:ok, _} = Directory.create(root, ["app", "users"])
+
+      assert {:ok, ["users"]} = Directory.list(root, ["app"])
+    end
+
+    test "list works at deeper nesting levels", %{root: root} do
+      {:ok, _} = Directory.create(root, ["app"])
+      {:ok, _} = Directory.create(root, ["app", "users"])
+      {:ok, _} = Directory.create(root, ["app", "users", "profiles"])
+      {:ok, _} = Directory.create(root, ["app", "users", "settings"])
+
+      assert {:ok, ["users"]} = Directory.list(root, ["app"])
+      assert {:ok, children} = Directory.list(root, ["app", "users"])
+      assert Enum.sort(children) == ["profiles", "settings"]
+    end
+
+    test "list does not report siblings that merely share a name prefix", %{root: root} do
+      {:ok, _} = Directory.create(root, ["app"])
+      {:ok, _} = Directory.create(root, ["apple"])
+      {:ok, _} = Directory.create(root, ["app", "users"])
+
+      assert {:ok, ["users"]} = Directory.list(root, ["app"])
+    end
+
+    test "remove deletes the entire subtree, not just the directory itself", %{root: root} do
+      {:ok, _} = Directory.create(root, ["app"])
+      {:ok, _} = Directory.create(root, ["app", "users"])
+      {:ok, _} = Directory.create(root, ["app", "users", "profiles"])
+
+      assert :ok = Directory.remove(root, ["app"])
+
+      refute Directory.exists?(root, ["app"])
+      refute Directory.exists?(root, ["app", "users"])
+      assert {:error, :directory_does_not_exist} = Directory.open(root, ["app", "users"])
+      assert {:error, :directory_does_not_exist} = Directory.open(root, ["app", "users", "profiles"])
+    end
+
+    # Regression test for bedrock-esg: do_move_recursive must use proper
+    # range arguments for repo.get_range/clear_range and relocate descendants.
+    test "move relocates a directory together with all of its descendants", %{root: root} do
+      {:ok, _} = Directory.create(root, ["app"])
+      {:ok, _} = Directory.create(root, ["app", "users"])
+      {:ok, _} = Directory.create(root, ["app", "users", "profiles"])
+      {:ok, _} = Directory.create(root, ["archive"])
+
+      assert :ok = Directory.move(root, ["app", "users"], ["archive", "users"])
+
+      refute Directory.exists?(root, ["app", "users"])
+      refute Directory.exists?(root, ["app", "users", "profiles"])
+      assert {:ok, %Directory.Node{}} = Directory.open(root, ["archive", "users"])
+      assert {:ok, %Directory.Node{}} = Directory.open(root, ["archive", "users", "profiles"])
+      assert {:ok, ["profiles"]} = Directory.list(root, ["archive", "users"])
+    end
+
+    test "packed parent node keys are byte-prefixes of descendant node keys" do
+      parent = Directory.NodeKey.pack(["app"])
+      child = Directory.NodeKey.pack(["app", "users"])
+      grandchild = Directory.NodeKey.pack(["app", "users", "profiles"])
+      sibling = Directory.NodeKey.pack(["apple"])
+
+      assert binary_part(child, 0, byte_size(parent)) == parent
+      assert binary_part(grandchild, 0, byte_size(child)) == child
+      refute match?(<<^parent::binary, _::binary>>, sibling)
     end
   end
 

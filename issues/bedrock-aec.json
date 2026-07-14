@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T19:17:44Z",
   "created": "2026-07-14T19:09:40Z",
   "description": "transaction.ex 97.5%, 29 uncovered. Truncated-section errors, invalid commit version format, reassemble_sections tag mapping, compare_and_clear mutation roundtrip, read_version/read_conflicts validation raises, extract! raise paths.",
   "id": "bedrock-aec",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Test coverage: Transaction encoding error paths and compare_and_clear",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:50Z"
+  "updated_at": "2026-07-14T19:17:44Z"
 }

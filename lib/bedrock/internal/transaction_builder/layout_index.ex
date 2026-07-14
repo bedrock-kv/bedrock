@@ -178,6 +178,10 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
 
     boundaries
     |> Enum.chunk_every(2, 1, :discard)
+    # Defensive only: dedup above makes boundaries strictly increasing, so no
+    # chunk can be zero-width. Kept as a second guard (bedrock-tn5) because a
+    # zero-width segment would put duplicate keys in the orddict, corrupting
+    # the gb_tree.
     |> Enum.reject(fn [segment_start, segment_end] -> segment_start == segment_end end)
     |> Enum.map(fn [segment_start, segment_end] ->
       covering_pids =

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:09:40Z",
+  "description": "basalt/logic.ex 82.2%, 34 uncovered. fetch_with_waitlist version_too_new path, waitlist notification on transactions_applied, lock_for_recovery epoch guard, stop_pulling, shutdown, unsupported info fact.",
+  "id": "bedrock-8dc",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: Basalt Logic fetch waitlist, recovery lock, info facts",
+  "type": "task",
+  "updated_at": "2026-07-14T19:09:40Z"
+}

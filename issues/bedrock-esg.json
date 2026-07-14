@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:27:47Z",
+  "description": "directory.ex:753,765: repo.get_range(start_key, end_key) — the generated repo parses this as (range, opts) and Internal.Repo.get_range/4 does Keyword.get on a binary -\u003e FunctionClauseError. Same for repo.clear_range(start_key, end_key). Pass {start_key, end_key} tuples. Independent of (but masked together with) the node-key prefix bug. Found in bedrock-ej0 audit.",
+  "id": "bedrock-esg",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "do_move_recursive calls repo.get_range/clear_range with two binaries; crashes real repo",
+  "type": "bug",
+  "updated_at": "2026-07-14T19:27:47Z"
+}

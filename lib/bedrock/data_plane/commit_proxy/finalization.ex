@@ -77,7 +77,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
-  @type sequencer_notify_fn() :: (Sequencer.ref(), Bedrock.version() -> :ok | {:error, term()})
+  @type sequencer_notify_fn() :: (Sequencer.ref(), Bedrock.epoch(), Bedrock.version(), opts :: keyword() ->
+                                    :ok | {:error, term()})
 
   @type resolution_error() ::
           :timeout
@@ -915,6 +916,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     required_acknowledgments = map_size(log_services)
 
+    # Task.async_stream is ordered by default, so zipping results with the
+    # input log_ids preserves the log_id association even for {:exit, reason}
+    # results, whose reason carries no log identity.
+    log_ids = Enum.map(log_services, fn {log_id, _service_ref} -> log_id end)
+
     log_services
     |> async_stream_fn.(
       fn {log_id, service_ref} ->
@@ -924,11 +930,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       end,
       timeout: timeout
     )
+    |> Enum.zip(log_ids)
     |> Enum.reduce_while({0, []}, fn
-      {:ok, {log_id, {:error, reason}}}, {_count, errors} ->
+      {{:ok, {log_id, {:error, reason}}}, _input_log_id}, {_count, errors} ->
         {:halt, {:error, [{log_id, reason} | errors]}}
 
-      {:ok, {_log_id, :ok}}, {count, errors} ->
+      {{:ok, {_log_id, :ok}}, _input_log_id}, {count, errors} ->
         count = 1 + count
 
         if count == required_acknowledgments do
@@ -937,8 +944,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {:cont, {count, errors}}
         end
 
-      {:exit, {log_id, reason}}, {_count, errors} ->
-        {:halt, {:error, [{log_id, reason} | errors]}}
+      # Exit reason already tagged with this position's log_id (repeated
+      # variable enforces equality) - avoid double-tagging.
+      {{:exit, {input_log_id, reason}}, input_log_id}, {_count, errors} ->
+        {:halt, {:error, [{input_log_id, reason} | errors]}}
+
+      # Task.async_stream exit shape: {:exit, reason} - attribute the failure
+      # to the log at this position in the input order.
+      {{:exit, reason}, input_log_id}, {_count, errors} ->
+        {:halt, {:error, [{input_log_id, reason} | errors]}}
     end)
     |> case do
       {:ok, ^required_acknowledgments} ->

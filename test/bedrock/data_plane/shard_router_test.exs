@@ -427,6 +427,14 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       assert result == [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}]
     end
 
+    test "returns [] for range entirely beyond shard coverage", %{table: table} do
+      # Last shard end_key is "\xff" (exclusive); ranges starting at or beyond
+      # it intersect no shard. Regression: this used to raise ArgumentError via
+      # :ets.prev(table, :"$end_of_table").
+      assert ShardRouter.lookup_shards_with_ranges(table, "\xff", "\xff\x00") == []
+      assert ShardRouter.lookup_shards_with_ranges(table, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>) == []
+    end
+
     test "enables correct clamping of clear_range", %{table: table} do
       # Test the use case: clamping clear_range "a" to "z" to shard boundaries
       shards = ShardRouter.lookup_shards_with_ranges(table, "a", "z")

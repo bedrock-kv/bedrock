@@ -216,7 +216,8 @@ defmodule Bedrock.DataPlane.ShardRouter do
   ## Returns
 
   List of `{tag, shard_start, shard_end}` tuples for all shards that
-  overlap [start_key, end_key).
+  overlap [start_key, end_key). Returns `[]` when the range lies entirely
+  beyond shard coverage (start_key >= every shard's exclusive end_key).
 
   ## Examples
 
@@ -232,11 +233,17 @@ defmodule Bedrock.DataPlane.ShardRouter do
           [{non_neg_integer(), binary(), binary()}]
   def lookup_shards_with_ranges(table, start_key, end_key) when is_binary(start_key) and is_binary(end_key) do
     # Find first end_key > start_key (the shard containing start_key)
-    first_end = :ets.next(table, start_key)
+    case :ets.next(table, start_key) do
+      :"$end_of_table" ->
+        # start_key is at or beyond every shard's exclusive upper bound:
+        # the range intersects no shard.
+        []
 
-    # Find the start boundary of the first shard (previous key in table, or "" if first)
-    first_start = find_shard_start(table, first_end)
-    collect_shards_with_ranges(table, first_end, end_key, first_start, [])
+      first_end ->
+        # Find the start boundary of the first shard (previous key in table, or "" if first)
+        first_start = find_shard_start(table, first_end)
+        collect_shards_with_ranges(table, first_end, end_key, first_start, [])
+    end
   end
 
   # Find the start of a shard (the previous end_key in the table, or "" if first)

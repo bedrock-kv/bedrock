@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T20:08:55Z",
+  "close_reason": "Fixed in 92ec9095: reducer zips async_stream results with input log_ids, handles both {:exit, reason} and tagged {:exit, {log_id, reason}} shapes; sequencer_notify_fn typespec corrected to arity-4. Regression test added.",
   "created": "2026-07-14T19:26:14Z",
   "description": "push_transaction_to_logs_direct reducer matches {:exit, {log_id, reason}} but real Task.async_stream exits are {:exit, reason} (e.g. {:exit, :timeout} with on_timeout: :kill_task) — would raise instead of counting a log failure. Also sequencer_notify_fn() typespec says arity-2 but all call sites use arity-4. Found in bedrock-9n6 audit.",
   "id": "bedrock-dg8",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Finalization log-push exit clause won't match real Task.async_stream exits; sequencer_notify_fn typespec arity",
   "type": "bug",
-  "updated_at": "2026-07-14T20:04:45Z"
+  "updated_at": "2026-07-14T20:08:55Z"
 }

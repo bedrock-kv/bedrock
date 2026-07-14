@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.5"
+  ],
   "created": "2026-07-14T21:55:41Z",
   "description": "Director applies shard_materializers deltas post-recovery (new: today TSL is recovery-built only); coordinator broadcasts {:tsl_updated, new_tsl} to Links — receiver already exists (link/server.ex:123-127), implement/verify the sender path coordinator-side and the director-\u003ecoordinator handoff. Epoch-stamped deltas; stale deltas rejected.",
   "id": "bedrock-q67.4",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "TSL delta application and tsl_updated broadcast",
   "type": "task",
-  "updated_at": "2026-07-14T21:55:41Z"
+  "updated_at": "2026-07-14T21:56:01Z"
 }

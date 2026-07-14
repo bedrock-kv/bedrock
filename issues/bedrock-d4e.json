@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:20:26Z",
+  "description": "durability.ex:153 function head already matches :unavailable, so the inner case branch at lines 156-158 is dead. Collapse the case. Also consider covering durable_write_completed/3 (durability.ex:37) — the remaining untested seam. Found in bedrock-wey audit (PR pending).",
+  "id": "bedrock-d4e",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Cleanup: unreachable :unavailable case in Durability.notify_director_of_resource_changes",
+  "type": "task",
+  "updated_at": "2026-07-14T19:20:26Z"
+}

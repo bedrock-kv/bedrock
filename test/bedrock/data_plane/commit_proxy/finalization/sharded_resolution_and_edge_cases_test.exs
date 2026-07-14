@@ -322,6 +322,22 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                )
     end
 
+    test "counts a real Task.async_stream exit shape ({:exit, reason}) as a log failure" do
+      # Task.async_stream emits {:exit, reason} (e.g. {:exit, :timeout} with
+      # on_timeout: :kill_task) - the reason is NOT tagged with the log_id.
+      # Regression: this shape used to fall through the reducer and raise.
+      async_stream_fn = fn _logs, _fun, _opts -> [{:exit, :timeout}] end
+
+      assert {:error, {:log_failures, [{"log_1", :timeout}]}} =
+               Finalization.push_transaction_to_logs_direct(
+                 @last_commit_version,
+                 %{"log_1" => "encoded"},
+                 @commit_version,
+                 log_services: %{"log_1" => self()},
+                 async_stream_fn: async_stream_fn
+               )
+    end
+
     test "fails rather than succeeding vacuously when there are no log services" do
       assert {:error, :log_push_failed} =
                Finalization.push_transaction_to_logs_direct(

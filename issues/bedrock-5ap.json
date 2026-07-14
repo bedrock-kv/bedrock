@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:09:39Z",
+  "description": "layout_index.ex 82.2%, 45 uncovered. gb_trees segment lookups (not_found, boundary walks), overlapping segment collection, metadata vs shard materializer resolution, empty-pid filtering, covering-pid computation.",
+  "id": "bedrock-5ap",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: LayoutIndex segment tree lookups and overlap collection",
+  "type": "task",
+  "updated_at": "2026-07-14T19:09:39Z"
+}

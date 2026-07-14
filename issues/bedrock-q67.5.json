@@ -25,11 +25,15 @@
     {
       "text": "From q67.4 audit: consider link-side epoch stamping/compare on {:tsl_updated, tsl} — a not-quite-dead old leader could overwrite a newer TSL after a link switches coordinators (nil-clear makes naive guarding tricky). Director.apply_tsl_delta/3 contract confirmed: exact-epoch, :unavailable pre-recovery, atomic apply+handoff.",
       "timestamp": "2026-07-14T22:18:54Z"
+    },
+    {
+      "text": "From PR #91 second-pass audit: (1) tighten already_started adoption — Shared.starter_for maps {:error,{:already_started,pid}} to {:ok,pid}, so a new-epoch director can adopt a stale distributor; call check_epoch after adoption and re-recruit if superseded. (2) Do not assume strict cluster-wide singleton-ness during epoch transitions (different-node directors can briefly yield two live distributors; epoch guard fences mutations). (3) Add re-recruitment backoff when real workload lands.",
+      "timestamp": "2026-07-14T22:55:18Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T22:35:49Z"
+  "updated_at": "2026-07-14T22:55:18Z"
 }

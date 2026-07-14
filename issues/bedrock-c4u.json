@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T23:13:56Z",
+  "close_reason": "Fixed in PR #96: tracing test modules attach global named telemetry handlers; concurrent async tests emitting matching events crash the handler and telemetry auto-detaches it. Marked all four tracing test modules async: false.",
   "created": "2026-07-14T23:04:55Z",
   "description": "test/bedrock/data_plane/log/tracing_test.exs is async: true but start/0-stop/0 manipulate a GLOBAL named telemetry handler; concurrent modules touching the same handler make stop return {:error, :not_found} mid-test. Failed PR #91 and #92 CI on the new Elixir 1.20.2 matrix cell. Fix: async: false (or a unique handler id per test if the API allows). Related flake: bedrock-y6e (directory property stub).",
   "id": "bedrock-c4u",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Flaky test: Log.TracingTest races global telemetry handler under async: true",
   "type": "bug",
-  "updated_at": "2026-07-14T23:04:55Z"
+  "updated_at": "2026-07-14T23:13:56Z"
 }

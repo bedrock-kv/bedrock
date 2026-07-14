@@ -126,7 +126,11 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder.Server do
 
     if expired != [], do: emit_placeholder_shed(t.cluster, nil, length(expired), :deadline_expired)
 
-    %{t | waiting: waiting, expiry_timer: nil} |> reschedule_expiry() |> noreply()
+    # Note: this message may be stale - a mutation since the timer fired may
+    # have re-armed `expiry_timer` with a new, still-live timer. Keep the ref
+    # so `reschedule_expiry/1` cancels it rather than leaking a duplicate
+    # timer; expiry itself is idempotent (only past-deadline entries shed).
+    %{t | waiting: waiting} |> reschedule_expiry() |> noreply()
   end
 
   def handle_info(_message, %State{} = t), do: noreply(t)

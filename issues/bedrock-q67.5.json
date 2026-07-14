@@ -34,11 +34,15 @@
     {
       "text": "Implemented in PR #95 (feature/q67-recruitment, base feature/q67-placeholder, merges feature/q67-tsl-delta). Audit items done except the structured {:error, {:uncovered_shard, tag, range}} from StorageRacing: lookup_key! has no tag available and the failure-map shape ripples through PointReads/RangeReads callers; with placeholders filling every slot the {_range, []} branch no longer occurs, so the raise stays as a backstop. Deferred as follow-up.",
       "timestamp": "2026-07-14T22:55:58Z"
+    },
+    {
+      "text": "Second-pass audit (PR #95, commit 69f5a739) corrections: (1) Recruitment now unlocks the recruited worker at the durable_version IT reports at lock time (zero for a fresh store), not the cluster-wide recovery durable_version — unlocking an empty worker at recovery V silently skipped all history before recovery (matches bootstrap, which unlocks new workers at zero; director's recovery durable_version is now only a fallback). (2) maybe_start_distributor epoch-checks an adopted (already_started) distributor: stale one stops itself and we retry; newer-epoch one means this director is superseded and does not recruit (PR91 audit item that was missing). (3) Non-:normal distributor DOWN re-recruits via the 1s retry timer instead of immediately (crash-loop floor, q67.2 audit item 2). RESIDUALS for q67.6/q67.7: (a) partial-failure recruits leak the created worker (locked-but-never-unlocked or pulling-at-old-epoch orphans; no id collision on retry — random ids — but no cleanup until next recovery locks them); (b) with PR#93 trimming live, a recruit replaying from zero will hit :version_too_old once Demux has advanced min_durable_version — the puller circuit-breaks forever and the shard stays honestly unavailable; real healing needs object-storage snapshot load before log replay; (c) recruitment task is unlinked (Task.start) — if brutally killed before casting completion, the tag sticks in pending_demands forever (consider monitoring tasks in q67.7); (d) a task surviving its distributor can still apply_tsl_delta at the same epoch, briefly double-recruiting a tag.",
+      "timestamp": "2026-07-14T23:08:26Z"
     }
   ],
   "priority": 2,
   "status": "closed",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T22:55:58Z"
+  "updated_at": "2026-07-14T23:08:26Z"
 }

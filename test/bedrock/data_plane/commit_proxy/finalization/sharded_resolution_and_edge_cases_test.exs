@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
   - Sharded (multi-resolver) conflict resolution: empty batches, abort merging,
     resolver errors, and resolver task exits
   - Transactions without a mutations section
+  - Log preparation failures for keys outside shard coverage
   - Cross-shard clear_range clamping and atomic mutation routing
   - Log push accounting for task exits and missing log services
   - Reply helpers that carry the commit version to clients
@@ -190,6 +191,31 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
       assert_receive {:tx0, {:ok, @commit_version, 0}}
+    end
+  end
+
+  describe "keys outside shard coverage" do
+    test "clear_range entirely beyond shard coverage fails the batch with a coverage error and aborts the client" do
+      # Default shard layout covers ["", <<0xFF, 0xFF>>); this range starts at
+      # the exclusive upper bound, so no shard covers it. Regression: this used
+      # to crash the finalization task with ArgumentError from :ets.prev.
+      hostile_tx =
+        Transaction.encode(%{
+          mutations: [{:clear_range, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}],
+          write_conflicts: [{<<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}],
+          read_conflicts: nil
+        })
+
+      batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
+
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+
+      opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
+
+      assert {:error, {:storage_team_coverage_error, {<<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}}} =
+               Finalization.finalize_batch(batch, opts)
+
+      assert_receive {:tx0, {:error, :aborted}}
     end
   end
 

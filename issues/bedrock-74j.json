@@ -7,8 +7,8 @@
   "id": "bedrock-74j",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "ShardRouter crashes commit proxy on ranges starting at/beyond last shard boundary",
   "type": "bug",
-  "updated_at": "2026-07-14T19:26:14Z"
+  "updated_at": "2026-07-14T20:04:44Z"
 }

@@ -232,6 +232,23 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       assert is_list(supported)
       assert Enum.all?(supported, &is_atom/1)
 
+      # The advertised facts must at least include the core ones exercised below
+      for fact <- [
+            :durable_version,
+            :oldest_durable_version,
+            :id,
+            :otp_name,
+            :path,
+            :kind,
+            :pid,
+            :key_ranges,
+            :n_keys,
+            :size_in_bytes,
+            :utilization
+          ] do
+        assert fact in supported, "expected #{inspect(fact)} to be advertised in :supported_info"
+      end
+
       zero_version = Version.zero()
       assert {:ok, ^zero_version} = Logic.info(state, :durable_version)
       assert {:ok, ^zero_version} = Logic.info(state, :oldest_durable_version)

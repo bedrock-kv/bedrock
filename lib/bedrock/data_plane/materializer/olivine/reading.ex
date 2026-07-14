@@ -305,17 +305,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   end
 
   defp handle_version_too_new(manager, error, request_args, timing, opts) do
+    reply_fn = opts[:reply_fn]
+
     case opts[:wait_ms] do
-      wait_ms when is_integer(wait_ms) and wait_ms > 0 ->
+      # A waitlisted request can only be delivered through its reply_fn, so
+      # waitlisting without one is meaningless: the caller could never be
+      # notified, and a nil reply_fn would crash notify_waiting_fetches and
+      # shutdown when they invoke it. Return the error immediately instead.
+      wait_ms when is_integer(wait_ms) and wait_ms > 0 and is_function(reply_fn, 1) ->
         timing = ReadRequest.mark_waitlisted(timing)
         fetch_request = build_waitlist_request(timing.operation, request_args)
 
-        # Store timing for when the waitlisted request is eventually processed
-        waitlist_key = {extract_version(request_args), opts[:reply_fn]}
-        Process.put({:waitlist_timing, waitlist_key}, timing)
-
         updated_manager =
-          add_to_waitlist(manager, fetch_request, extract_version(request_args), opts[:reply_fn], wait_ms)
+          add_to_waitlist(manager, fetch_request, extract_version(request_args), reply_fn, wait_ms)
 
         {updated_manager, :ok}
 

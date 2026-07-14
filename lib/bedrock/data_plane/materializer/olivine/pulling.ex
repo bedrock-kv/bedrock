@@ -48,8 +48,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
     :ok
   end
 
+  @spec circuit_breaker_timeout() :: pos_integer()
   def circuit_breaker_timeout, do: 10_000
+
+  @spec retry_delay() :: pos_integer()
   def retry_delay, do: 1_000
+
+  @spec call_timeout() :: pos_integer()
   def call_timeout, do: 5_000
 
   @spec long_pull_loop(puller_state()) :: no_return()

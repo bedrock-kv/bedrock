@@ -34,6 +34,7 @@ defmodule Bedrock.Directory do
     defstruct [:prefix, :path, :layer, :directory_layer, :version, :metadata]
 
     defimpl String.Chars do
+      @spec to_string(Bedrock.Directory.Node.t()) :: String.t()
       def to_string(%{path: path, layer: layer}) do
         path_str = Enum.join(path, "/")
         layer_suffix = if layer && layer != "", do: "@#{inspect(layer)}", else: ""
@@ -42,6 +43,7 @@ defmodule Bedrock.Directory do
     end
 
     defimpl Inspect do
+      @spec inspect(Bedrock.Directory.Node.t(), Inspect.Opts.t()) :: String.t()
       def inspect(%{path: path, layer: layer, prefix: prefix}, _opts) do
         path_str = Enum.join(path, "/")
         layer_suffix = if layer && layer != "", do: "@#{inspect(layer)}", else: ""
@@ -69,10 +71,12 @@ defmodule Bedrock.Directory do
     defstruct [:directory_layer, :path, :prefix, :version, :metadata]
 
     defimpl String.Chars do
+      @spec to_string(Bedrock.Directory.Partition.t()) :: String.t()
       def to_string(%{path: path}), do: "Directory<Partition|#{Enum.join(path, "/")}>"
     end
 
     defimpl Inspect do
+      @spec inspect(Bedrock.Directory.Partition.t(), Inspect.Opts.t()) :: String.t()
       def inspect(%Partition{path: path, prefix: prefix}, _opts),
         do: "#Directory<Partition|path:#{Enum.join(path, "/")},prefix:0x#{:binary.encode_hex(prefix, :lowercase)}>"
     end
@@ -86,6 +90,8 @@ defmodule Bedrock.Directory do
     key/value layout as FoundationDB's directory layer.
     """
 
+    alias Bedrock.Directory.Layer
+
     @type t :: %__MODULE__{
             node_keyspace: Keyspace.t(),
             content_keyspace: Keyspace.t(),
@@ -96,10 +102,12 @@ defmodule Bedrock.Directory do
     defstruct [:node_keyspace, :content_keyspace, :repo, :next_prefix_fn, :path]
 
     defimpl String.Chars do
+      @spec to_string(Layer.t()) :: String.t()
       def to_string(%{path: path}), do: "Directory<Layer|#{Enum.join(path, "/")}>"
     end
 
     defimpl Inspect do
+      @spec inspect(Layer.t(), Inspect.Opts.t()) :: String.t()
       def inspect(%{path: path, repo: repo}, _opts),
         do: "#Directory<Layer|path:#{Enum.join(path, "/")},repo:#{inspect(repo)}>"
     end
@@ -114,9 +122,11 @@ defmodule Bedrock.Directory do
     # range scans in list/remove/move rely on. The element terminator byte
     # (0x00, with 0x00 -> 0x00 0xFF escaping inside elements) ensures that
     # siblings sharing a name prefix (e.g. "app" vs "apple") do not collide.
+    @spec pack([String.t()]) :: binary()
     def pack([]), do: <<>>
     def pack(path) when is_list(path), do: Enum.map_join(path, &Bedrock.Encoding.Tuple.pack/1)
 
+    @spec unpack(binary()) :: [String.t()]
     def unpack(<<>>), do: []
     def unpack(packed), do: Bedrock.Encoding.Tuple.unpack_all(packed)
   end
@@ -412,6 +422,16 @@ defmodule Bedrock.Directory do
   # Helper functions (moved from Layer module)
 
   # Helpers for path validation
+  @spec validate_path([String.t()] | String.t() | tuple() | term()) ::
+          :ok
+          | {:error,
+             :invalid_path_format
+             | :invalid_path_component
+             | :empty_path_component
+             | :invalid_directory_name
+             | :reserved_prefix_in_path
+             | :invalid_utf8_in_path
+             | :null_byte_in_path}
   def validate_path(path) when is_list(path), do: validate_path_components(path)
   def validate_path(path) when is_binary(path), do: validate_path_components([path])
   def validate_path(path) when is_tuple(path), do: validate_path_components(Tuple.to_list(path))
@@ -460,6 +480,7 @@ defmodule Bedrock.Directory do
   defp validate_within_partition!(_), do: raise(ArgumentError, "Invalid path format for partition operation")
 
   # Root directory helpers
+  @spec root?([String.t()]) :: boolean()
   def root?([]), do: true
   def root?(_), do: false
 
@@ -520,6 +541,7 @@ defmodule Bedrock.Directory do
 
   # Prefix collision detection
 
+  @spec is_prefix_free?(Layer.t(), term(), binary()) :: boolean()
   def is_prefix_free?(%Layer{repo: repo, content_keyspace: content_keyspace}, _txn, prefix) when is_binary(prefix) do
     # Check if this prefix would collide with any existing keys
     # A prefix is free if:
@@ -575,6 +597,7 @@ defmodule Bedrock.Directory do
 
   # Core operations implementation
 
+  @spec do_create(Layer.t(), term(), [String.t()], keyword()) :: {:ok, Node.t()} | {:error, atom()}
   def do_create(%Layer{repo: repo} = layer, txn, path, opts) do
     with :ok <- check_version(layer, true),
          :ok <- ensure_version_initialized(layer, txn) do
@@ -634,6 +657,7 @@ defmodule Bedrock.Directory do
     end
   end
 
+  @spec do_open(Layer.t(), term(), [String.t()]) :: {:ok, Node.t() | Partition.t()} | {:error, atom()}
   def do_open(%Layer{repo: repo} = layer, _txn, path) do
     with true <- not root?(path) || {:error, :cannot_open_root},
          value = repo.get(layer.node_keyspace, path),
@@ -675,6 +699,7 @@ defmodule Bedrock.Directory do
     end
   end
 
+  @spec do_exists?(Layer.t(), [String.t()]) :: boolean()
   def do_exists?(%Layer{repo: repo} = layer, path) do
     # Root directory always exists (it's virtual)
     if root?(path) do
@@ -687,6 +712,7 @@ defmodule Bedrock.Directory do
     end
   end
 
+  @spec do_list(Layer.t(), term(), [String.t()]) :: {:ok, [String.t()]} | {:error, atom()}
   def do_list(%Layer{repo: repo} = layer, _txn, path) do
     # Check version compatibility for reads
     case check_version(layer, false) do
@@ -719,6 +745,7 @@ defmodule Bedrock.Directory do
     end
   end
 
+  @spec do_remove(Layer.t(), term(), [String.t()]) :: :ok | {:error, atom()}
   def do_remove(%Layer{repo: repo} = layer, txn, path) do
     with true <- not root?(path) || {:error, :cannot_remove_root},
          :ok <- check_version(layer, true),
@@ -733,6 +760,7 @@ defmodule Bedrock.Directory do
     end
   end
 
+  @spec do_move(Layer.t(), term(), [String.t()], [String.t()]) :: :ok | {:error, atom()}
   def do_move(%Layer{} = layer, txn, old_path, new_path) do
     with true <- not root?(old_path) || {:error, :cannot_move_root},
          true <- not root?(new_path) || {:error, :cannot_move_to_root},
@@ -794,28 +822,34 @@ defmodule Bedrock.Directory do
 
   # Protocol implementations for ToKeyRange
   defimpl Bedrock.ToKeyRange, for: Bedrock.Directory.Node do
+    @spec to_key_range(Bedrock.Directory.Node.t()) :: KeyRange.t()
     def to_key_range(%Bedrock.Directory.Node{prefix: prefix}), do: KeyRange.from_prefix(prefix)
   end
 
   defimpl Bedrock.ToKeyRange, for: Bedrock.Directory.Partition do
+    @spec to_key_range(Bedrock.Directory.Partition.t()) :: KeyRange.t()
     def to_key_range(%Bedrock.Directory.Partition{prefix: prefix}), do: KeyRange.from_prefix(prefix)
   end
 
   defimpl Bedrock.ToKeyRange, for: Bedrock.Directory.Layer do
+    @spec to_key_range(Bedrock.Directory.Layer.t()) :: no_return()
     def to_key_range(%Bedrock.Directory.Layer{}),
       do: raise(ArgumentError, "Cannot get key range from directory layer - use open/create first")
   end
 
   # ToKeyspace protocol implementations
   defimpl Bedrock.ToKeyspace, for: Bedrock.Directory.Node do
+    @spec to_keyspace(Bedrock.Directory.Node.t()) :: Keyspace.t()
     def to_keyspace(%Bedrock.Directory.Node{prefix: prefix}), do: Keyspace.new(prefix)
   end
 
   defimpl Bedrock.ToKeyspace, for: Bedrock.Directory.Partition do
+    @spec to_keyspace(Bedrock.Directory.Partition.t()) :: Keyspace.t()
     def to_keyspace(%Bedrock.Directory.Partition{prefix: prefix}), do: Keyspace.new(prefix)
   end
 
   defimpl Bedrock.ToKeyspace, for: Bedrock.Directory.Layer do
+    @spec to_keyspace(Bedrock.Directory.Layer.t()) :: no_return()
     def to_keyspace(%Bedrock.Directory.Layer{}),
       do: raise(ArgumentError, "Cannot get keyspace from directory layer - use open/create first")
   end

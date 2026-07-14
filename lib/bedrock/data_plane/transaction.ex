@@ -734,6 +734,7 @@ defmodule Bedrock.DataPlane.Transaction do
   # ============================================================================
 
   @doc false
+  @spec encode_overall_header(section_count :: non_neg_integer()) :: binary()
   def encode_overall_header(section_count) do
     <<
       @magic_number::unsigned-big-32,
@@ -744,6 +745,7 @@ defmodule Bedrock.DataPlane.Transaction do
   end
 
   @doc false
+  @spec encode_section(tag :: byte(), payload :: binary()) :: binary()
   def encode_section(tag, payload) do
     payload_size = byte_size(payload)
     section_content = <<tag, payload_size::unsigned-big-24, payload::binary>>
@@ -805,6 +807,7 @@ defmodule Bedrock.DataPlane.Transaction do
   defp encode_varint(n), do: <<1::1, n &&& 0x7F::7, encode_varint(n >>> 7)::binary>>
 
   @doc false
+  @spec encode_conflict_range(Bedrock.key_range()) :: binary()
   def encode_conflict_range({start_key, end_key}) when is_binary(start_key) and is_binary(end_key) do
     start_len = byte_size(start_key)
     end_len = byte_size(end_key)

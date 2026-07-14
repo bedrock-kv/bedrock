@@ -87,6 +87,7 @@ defmodule Bedrock.Internal.Repo do
             snapshot: boolean()
           ]
         ) :: Enumerable.t({any(), any()})
+  @spec get_range(module(), start_key :: key(), end_key :: key()) :: Enumerable.t({any(), any()})
   def get_range(repo_module, start_key, end_key), do: get_range(repo_module, start_key, end_key, [])
 
   def get_range(repo_module, start_key, end_key, opts) do

@@ -25,6 +25,7 @@ defmodule Bedrock.Internal.Atomics do
   import Kernel, except: [min: 2, max: 2]
 
   @doc "Addition with little-endian carry propagation"
+  @spec add(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def add(<<>>, op), do: op
   def add(_, <<>>), do: <<>>
 
@@ -48,6 +49,7 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Bitwise AND - V2 version (missing existing = return operand)"
   # V2 behavior: return operand if existing missing
+  @spec bit_and(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def bit_and(<<>>, op), do: op
   def bit_and(_, <<>>), do: <<>>
   def bit_and(ex, op), do: ex |> bit_and(op, []) |> Enum.reverse() |> :binary.list_to_bin()
@@ -65,6 +67,7 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Bitwise OR operation"
   # Missing = 0, so 0 | anything = anything
+  @spec bit_or(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def bit_or(<<>>, op), do: op
   def bit_or(_, <<>>), do: <<>>
   def bit_or(ex, op), do: ex |> bit_or(op, []) |> Enum.reverse() |> :binary.list_to_bin()
@@ -82,6 +85,7 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Bitwise XOR operation"
   # Missing = 0, so 0 ⊕ anything = anything
+  @spec bit_xor(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def bit_xor(<<>>, op), do: op
   def bit_xor(_, <<>>), do: <<>>
   def bit_xor(ex, op), do: ex |> bit_xor(op, []) |> Enum.reverse() |> :binary.list_to_bin()
@@ -98,6 +102,7 @@ defmodule Bedrock.Internal.Atomics do
   defp bit_xor(_, _, acc), do: acc
 
   @doc "Maximum operation (little-endian integer comparison)"
+  @spec max(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def max(<<>>, op), do: op
   def max(_, <<>>), do: <<>>
 
@@ -113,6 +118,7 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Minimum operation - V2 version (missing existing = return operand)"
   # V2 behavior: return operand if existing missing
+  @spec min(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def min(<<>>, op), do: op
   def min(_, <<>>), do: <<>>
 
@@ -127,16 +133,19 @@ defmodule Bedrock.Internal.Atomics do
   end
 
   @doc "Byte-wise maximum (lexicographic comparison)"
+  @spec byte_max(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def byte_max(<<>>, op), do: op
   def byte_max(ex, op) when ex > op, do: pad_or_truncate(ex, byte_size(op))
   def byte_max(_, op), do: op
 
   @doc "Byte-wise minimum (lexicographic comparison)"
+  @spec byte_min(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def byte_min(<<>>, op), do: op
   def byte_min(ex, op) when ex < op, do: pad_or_truncate(ex, byte_size(op))
   def byte_min(_, op), do: op
 
   @doc "Append if fits within size limit"
+  @spec append_if_fits(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def append_if_fits(<<>>, op), do: op
   def append_if_fits(ex, <<>>), do: ex
 
@@ -152,6 +161,7 @@ defmodule Bedrock.Internal.Atomics do
 
   @doc "Compare and clear - clear if values match"
   # Both empty, clear
+  @spec compare_and_clear(Bedrock.value(), Bedrock.value()) :: Bedrock.value()
   def compare_and_clear(<<>>, <<>>), do: <<>>
   # Match, clear
   def compare_and_clear(ex, op) when ex == op, do: <<>>

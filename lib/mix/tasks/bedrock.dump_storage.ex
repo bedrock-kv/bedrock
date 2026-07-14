@@ -63,6 +63,7 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
     h: :help
   ]
 
+  @spec run([String.t()]) :: :ok
   def run(args) do
     {opts, _args, _invalid} = OptionParser.parse(args, switches: @switches, aliases: @aliases)
 

@@ -27,6 +27,7 @@ defmodule Bedrock.Service.Foreman.State do
     :workers
   ]
 
+  @spec new_state(map()) :: {:ok, State.t()} | {:error, :missing_required_params}
   def new_state(%{
         cluster: cluster,
         capabilities: capabilities,
@@ -50,10 +51,16 @@ defmodule Bedrock.Service.Foreman.State do
 
   def new_state(_), do: {:error, :missing_required_params}
 
+  @spec update_workers(
+          State.t(),
+          (%{Worker.id() => WorkerInfo.t()} -> %{Worker.id() => WorkerInfo.t()})
+        ) :: State.t()
   def update_workers(t, updater), do: %{t | workers: updater.(t.workers)}
 
+  @spec update_health(State.t(), (:starting | :ok | :error -> :starting | :ok | :error)) :: State.t()
   def update_health(t, updater), do: %{t | health: updater.(t.health)}
 
+  @spec put_health(State.t(), :starting | :ok | :error) :: State.t()
   def put_health(t, health), do: %{t | health: health}
 
   @spec update_waiting_for_healthy(State.t(), ([GenServer.from()] -> [GenServer.from()])) ::

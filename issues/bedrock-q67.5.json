@@ -21,11 +21,15 @@
     {
       "text": "From q67.2 audit (wire when adding recruitment): (1) no retry when distributor start genuinely fails — Process.send_after retry; (2) no backoff on re-recruit — crash-looping distributor restarts at full speed; (3) log older-epoch notify_epoch_change as suspicious; (4) consider skipping re-recruit on DOWN reason == :normal once epoch notification is wired (stale-epoch re-recruit is currently self-limiting but wasteful).",
       "timestamp": "2026-07-14T22:13:56Z"
+    },
+    {
+      "text": "From q67.4 audit: consider link-side epoch stamping/compare on {:tsl_updated, tsl} — a not-quite-dead old leader could overwrite a newer TSL after a link switches coordinators (nil-clear makes naive guarding tricky). Director.apply_tsl_delta/3 contract confirmed: exact-epoch, :unavailable pre-recovery, atomic apply+handoff.",
+      "timestamp": "2026-07-14T22:18:54Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T22:13:56Z"
+  "updated_at": "2026-07-14T22:18:54Z"
 }

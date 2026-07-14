@@ -115,12 +115,15 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, reason}, %State{distributor: distributor_pid} = t) do
     # The distributor is off the request path: its death degrades coverage
-    # healing only, so we re-recruit it rather than restarting recovery.
-    Logger.warning("Distributor exited (#{inspect(reason)}); re-recruiting")
+    # healing only, so we re-recruit it rather than restarting recovery. The
+    # retry timer (rather than an immediate restart) puts a floor under a
+    # crash-looping distributor.
+    Logger.warning("Distributor exited (#{inspect(reason)}); re-recruiting in #{@distributor_retry_ms}ms")
+
+    Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
 
     t
     |> Map.put(:distributor, nil)
-    |> maybe_start_distributor()
     |> noreply()
   end
 
@@ -317,8 +320,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
     case starter_fn.(child_spec, node()) do
       {:ok, distributor} ->
-        Process.monitor(distributor)
-        %{t | distributor: distributor}
+        confirm_distributor_epoch(t, distributor)
 
       {:error, reason} ->
         Logger.error("Failed to start distributor: #{inspect(reason)}; retrying in #{@distributor_retry_ms}ms")
@@ -330,8 +332,38 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   def maybe_start_distributor(t), do: t
 
-  # The durable version recovery settled on: where a freshly recruited
-  # materializer starts pulling from the logs (matching the bootstrap phase).
+  # `Shared.starter_for/1` maps `{:error, {:already_started, pid}}` to
+  # `{:ok, pid}`, so a start can *adopt* a distributor left over from another
+  # epoch under the shared otp name. Confirm the epoch before trusting it: a
+  # stale (older-epoch) distributor stops itself on the check, and we retry
+  # once its registration clears; a newer-epoch distributor means this
+  # director is the stale one and must not recruit.
+  @spec confirm_distributor_epoch(State.t(), pid()) :: State.t()
+  defp confirm_distributor_epoch(t, distributor) do
+    case Distributor.check_epoch(distributor, t.epoch) do
+      :ok ->
+        Process.monitor(distributor)
+        %{t | distributor: distributor}
+
+      {:error, :newer_epoch_exists} ->
+        Logger.warning(
+          "Adopted distributor belongs to a newer epoch than #{t.epoch}; " <>
+            "this director has been superseded and will not recruit"
+        )
+
+        t
+
+      {:error, reason} ->
+        Logger.warning("Distributor epoch check failed (#{inspect(reason)}); retrying in #{@distributor_retry_ms}ms")
+
+        Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
+        t
+    end
+  end
+
+  # The durable version recovery settled on. Recruitment unlocks a new
+  # materializer at the version the worker itself reports at lock time;
+  # this cluster-wide value is only its fallback when no report is present.
   @spec recovered_durable_version(State.t()) :: Bedrock.version()
   defp recovered_durable_version(%State{recovery_attempt: %{durable_version: durable_version}})
        when not is_nil(durable_version), do: durable_version

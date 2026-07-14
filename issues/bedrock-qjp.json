@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T21:04:55Z",
   "created": "2026-07-14T21:00:28Z",
   "description": "Spike (2026-07-14) showed Readability.Specs yields 384 findings repo-wide: 115 in lib/, 269 in test/. Decision: specs required for lib code only; test/ excluded via per-check files option in .credo.exs. MultiAlias check has zero findings and can be enabled separately. Remaining: add @spec to the 115 lib findings (top: internal/atomics.ex 30, directory.ex 29, internal/transaction_builder/tx.ex 16).",
   "id": "bedrock-qjp",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Enable Credo Readability.Specs for lib/ (exclude tests); track spec cleanup",
   "type": "task",
-  "updated_at": "2026-07-14T21:00:28Z"
+  "updated_at": "2026-07-14T21:04:55Z"
 }

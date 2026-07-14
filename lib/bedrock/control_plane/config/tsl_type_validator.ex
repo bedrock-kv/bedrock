@@ -85,8 +85,8 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
 
   defp validate_log_ranges([start_range, end_range])
        when is_integer(start_range) and is_integer(end_range) and start_range <= end_range do
-    # The is_integer guards already rule out Version.t() binaries; a
-    # [version, version] range falls through to the catch-all error below.
+    # Version.t() binaries can't match the is_integer guards; a
+    # [version, version] range hits the catch-all error below.
     :ok
   end
 

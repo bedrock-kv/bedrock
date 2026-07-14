@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:20:04Z",
+  "description": "create_segments_with_pids (layout_index.ex:154-174) sorts but doesn't dedup boundaries: contiguous shards produce a zero-width artifact segment with merged pid lists and DUPLICATE keys in the orddict passed to :gb_trees.from_orddict/1 (documented precondition: unique keys — tree undefined). Fires on the default layout from initialization_phase.ex:38 / materializer_bootstrap_phase.ex:65. Contained today only because storage_racing lookup_key! can't match zero-width segments; lookup_range/get_next_segment return wrong pid lists now. Fix: Enum.dedup() after boundary sort (verified against the 28 tests in PR for bedrock-5ap); optionally filter zero-width segments. See audit in PR.",
+  "id": "bedrock-tn5",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "LayoutIndex builds corrupt gb_tree for contiguous shard layouts (production default affected)",
+  "type": "bug",
+  "updated_at": "2026-07-14T19:20:04Z"
+}

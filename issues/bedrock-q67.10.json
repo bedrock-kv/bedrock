@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T21:55:42Z",
+  "description": "Phase B. olivine/pulling.ex and basalt/pulling.ex long-pull the Log directly; switch to Demux.pull(shard_id, start_after) which serves buffer (recent) or ObjectStorage chunks (historical). Gated on B1 (shallow logs).",
+  "id": "bedrock-q67.10",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Materializer pull source: Log -\u003e Demux",
+  "type": "task",
+  "updated_at": "2026-07-14T21:55:42Z"
+}

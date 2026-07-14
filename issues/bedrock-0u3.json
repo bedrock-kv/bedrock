@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T22:59:30Z",
+  "description": "apply_delta_to_shard_materializers has no clause for non-pid/non-:remove values -\u003e FunctionClauseError -\u003e director death -\u003e full recovery. Caller is internal (distributor recruitment), but a malformed delta shouldn't cost a recovery. Validate and return {:error, :invalid_delta}. From PR #92 second-pass audit. Note: recruitment branch (PR #95) merged the tsl-delta branch BEFORE the second-pass fix commit 43250c70 (tsl_live? flag) — re-merge feature/q67-tsl-delta into feature/q67-recruitment before landing #95.",
+  "id": "bedrock-0u3",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Validate TSL deltas: malformed delta value crashes director into full recovery",
+  "type": "task",
+  "updated_at": "2026-07-14T22:59:30Z"
+}

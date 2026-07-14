@@ -55,4 +55,20 @@ defmodule Bedrock.ControlPlane.Distributor do
   """
   @spec notify_epoch_change(ref(), Bedrock.epoch()) :: :ok
   def notify_epoch_change(distributor, new_epoch), do: cast(distributor, {:epoch_changed, new_epoch})
+
+  @doc """
+  Internal/test seam: relays a coverage result to the placeholder, marking
+  the shard tag as covered by the given materializer. The recruitment flow
+  (bedrock-q67.5) will deliver coverage outcomes through this same path.
+  """
+  @spec deliver_coverage(ref(), Bedrock.range_tag(), materializer :: pid()) :: :ok
+  def deliver_coverage(distributor, tag, materializer), do: cast(distributor, {:deliver_coverage, tag, materializer})
+
+  @doc """
+  Internal/test seam: relays a coverage failure to the placeholder, which
+  sheds parked requests for the tag with `{:error, :unavailable}` and
+  clears the demand dedupe so a later request re-triggers recruitment.
+  """
+  @spec fail_coverage(ref(), Bedrock.range_tag(), reason :: term()) :: :ok
+  def fail_coverage(distributor, tag, reason), do: cast(distributor, {:fail_coverage, tag, reason})
 end

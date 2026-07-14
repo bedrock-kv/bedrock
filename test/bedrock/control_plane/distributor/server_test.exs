@@ -3,6 +3,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
   alias Bedrock.ControlPlane.Distributor
   alias Bedrock.ControlPlane.Distributor.State
+  alias Bedrock.DataPlane.Materializer
+  alias Bedrock.Test.ControlPlane.StubMaterializer
 
   defmodule TestCluster do
     @moduledoc false
@@ -67,8 +69,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                director: ^director,
                shard_layout: ^shard_layout,
                materializer_monitors: %{},
-               placeholder: nil
+               placeholder: placeholder
              } = :sys.get_state(pid)
+
+      assert is_pid(placeholder) and Process.alive?(placeholder)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :started], %{},
                       %{cluster: TestCluster, epoch: 42, director: ^director}}
@@ -134,6 +138,119 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # Synchronize on the mailbox to be sure both casts were processed.
       assert :ok = Distributor.check_epoch(pid, 42)
       assert Process.alive?(pid)
+    end
+  end
+
+  describe "placeholder supervision" do
+    test "the placeholder dies with the distributor" do
+      {pid, director} = start_distributor()
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+      ref = Process.monitor(placeholder)
+
+      send(director, :stop)
+
+      assert_receive {:DOWN, ^ref, :process, ^placeholder, :shutdown}
+    end
+
+    test "the placeholder is restarted when it dies" do
+      {pid, _director} = start_distributor()
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+      ref = Process.monitor(placeholder)
+
+      Process.exit(placeholder, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^placeholder, :killed}
+
+      # Synchronize on the distributor's mailbox, then check the new pid.
+      assert :ok = Distributor.check_epoch(pid, 42)
+      assert %State{placeholder: new_placeholder} = :sys.get_state(pid)
+      assert is_pid(new_placeholder)
+      assert new_placeholder != placeholder
+      assert Process.alive?(new_placeholder)
+    end
+  end
+
+  describe "coverage demand and delivery" do
+    defp attach_demand_telemetry(test_pid) do
+      handler_id = "distributor-demand-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:bedrock, :distributor, :coverage_demand],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+    end
+
+    test "coverage_demand is remembered and emits telemetry" do
+      attach_demand_telemetry(self())
+      {pid, _director} = start_distributor()
+
+      GenServer.cast(pid, {:coverage_demand, 7})
+
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{cluster: TestCluster, tag: 7}}
+
+      assert %State{pending_demands: pending} = :sys.get_state(pid)
+      assert MapSet.member?(pending, 7)
+    end
+
+    test "deliver_coverage relays to the placeholder and clears the pending demand" do
+      attach_demand_telemetry(self())
+      shard_layout = %{<<0xFF, 0xFF>> => {1, <<>>}}
+      {pid, _director} = start_distributor(shard_layout: shard_layout)
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+
+      stub =
+        start_supervised!(%{
+          id: {StubMaterializer, System.unique_integer([:positive])},
+          start: {StubMaterializer, :start_link, [%{"apple" => "red"}]}
+        })
+
+      # Park a read against the placeholder, then deliver coverage through
+      # the distributor's internal seam and observe the drain.
+      version = Bedrock.DataPlane.Version.from_integer(1)
+
+      task =
+        Task.async(fn ->
+          Materializer.get(placeholder, "apple", version, timeout: 1_000)
+        end)
+
+      # Wait for the placeholder's demand to be processed by the distributor
+      # before delivering coverage, so the pending set is stable.
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}
+
+      :ok = Distributor.deliver_coverage(pid, 1, stub)
+
+      assert {:ok, "red"} = Task.await(task, 1_000)
+
+      assert %State{pending_demands: pending} = :sys.get_state(pid)
+      refute MapSet.member?(pending, 1)
+    end
+
+    test "fail_coverage relays the failure to the placeholder and clears the pending demand" do
+      attach_demand_telemetry(self())
+      shard_layout = %{<<0xFF, 0xFF>> => {1, <<>>}}
+      {pid, _director} = start_distributor(shard_layout: shard_layout)
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+
+      version = Bedrock.DataPlane.Version.from_integer(1)
+
+      task =
+        Task.async(fn ->
+          Materializer.get(placeholder, "apple", version, timeout: 1_000)
+        end)
+
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}
+
+      :ok = Distributor.fail_coverage(pid, 1, :no_capacity)
+
+      assert {:error, :unavailable} = Task.await(task, 1_000)
+
+      assert %State{pending_demands: pending} = :sys.get_state(pid)
+      refute MapSet.member?(pending, 1)
     end
   end
 

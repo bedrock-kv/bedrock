@@ -11,14 +11,16 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           director: pid(),
           shard_layout: TransactionSystemLayout.shard_layout(),
           materializer_monitors: %{reference() => Bedrock.range_tag()},
-          placeholder: pid() | nil
+          placeholder: pid() | nil,
+          pending_demands: MapSet.t(Bedrock.range_tag())
         }
   defstruct cluster: nil,
             epoch: nil,
             director: nil,
             shard_layout: %{},
             materializer_monitors: %{},
-            placeholder: nil
+            placeholder: nil,
+            pending_demands: MapSet.new()
 
   @doc """
   Validates a caller-supplied epoch against the distributor's own epoch.

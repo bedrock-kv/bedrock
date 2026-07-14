@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T21:12:02Z",
   "created": "2026-07-14T21:11:51Z",
   "description": "MultiAlias check was disabled as 'too strict'; codebase has no violations, so the exclusion is dead config. Removed from .credo.exs; mix credo passes clean.",
   "id": "bedrock-srg",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Remove obsolete Credo Readability.MultiAlias exclusion",
   "type": "task",
-  "updated_at": "2026-07-14T21:11:51Z"
+  "updated_at": "2026-07-14T21:12:02Z"
 }

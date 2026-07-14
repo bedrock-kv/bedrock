@@ -4,14 +4,16 @@
   "blocks": [
     "bedrock-q67.10"
   ],
+  "closed_at": "2026-07-14T22:11:23Z",
+  "close_reason": "Implemented in PR #93: durable_up_to on Log.pull, shale single trim point (monotonic max), automatic segment recycling with telemetry; dead subscriber param removed",
   "created": "2026-07-14T21:55:41Z",
   "description": "Phase B. Add durable_up_to param to Log.pull (reported inline each pull); shale tracks single trim point, returns segments past it to SegmentRecycler; facts already report minimum_durable_version. Prereq for shallow logs + materializer pull source moving to Demux.",
   "id": "bedrock-q67.8",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "durable_up_to on Log.pull + shale automatic segment trimming",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:34Z"
+  "updated_at": "2026-07-14T22:11:23Z"
 }

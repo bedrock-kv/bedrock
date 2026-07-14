@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T21:55:41Z",
+  "description": "Phase B. 2026-01 audit: default metadata_merge_fn was a no-op discarding resolver updates. finalization.ex now has apply_metadata_updates — verify commit-proxy server wiring, system-key parse/merge, and add the integration test (director commits metadata key -\u003e resolver accumulates -\u003e proxy applies). Then move shard-map authority from TSL to system keys; Distributor rebuilds from it (FDB: DD rebuilds from keyServers/serverKeys).",
+  "id": "bedrock-q67.9",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Verify/complete metadata distribution end-to-end; shard map to system-key authority",
+  "type": "task",
+  "updated_at": "2026-07-14T21:55:41Z"
+}

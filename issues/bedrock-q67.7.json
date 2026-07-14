@@ -11,9 +11,15 @@
   "id": "bedrock-q67.7",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "From PR #94 second-pass audit: stale-forward black hole is confirmed q67.7 scope — when a covered materializer dies, placeholder's covered map retains the dead pid; forwards fail {:failure, :unavailable, pid} with no re-park/re-demand. Healing must clear covered[tag] (and TSL slot) on death. Also tolerate the deliver-races-restart drop: deliver_coverage cast to a dead placeholder is silently lost while pending_demands clears — re-demand from the restarted placeholder must re-trigger delivery (dedupe layers verified to desync only in safe directions).",
+      "timestamp": "2026-07-14T22:58:32Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Materializer death healing: placeholder swap + re-recruitment",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:02Z"
+  "updated_at": "2026-07-14T22:58:32Z"
 }

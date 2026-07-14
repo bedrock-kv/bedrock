@@ -4,7 +4,9 @@
     "bedrock-q67.2",
     "bedrock-q67.4"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.6"
+  ],
   "created": "2026-07-14T21:55:41Z",
   "description": "Distributor handles {:coverage_demand, tag}: pick node via coordinator service directory capabilities -\u003e that node's Foreman starts materializer worker -\u003e epoch lock/unlock (existing recovery machinery, single authority) -\u003e TSL delta to Director (A4) -\u003e {:covered, tag, pid} to placeholder. Backoff on failure; telemetry for demand/spin-up duration/park/shed counts. Read-version handoff: recruited materializer replays to current; version_too_old after long spin-up is acceptable client-retry.",
   "id": "bedrock-q67.5",

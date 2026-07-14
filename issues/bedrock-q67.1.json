@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T21:55:40Z",
+  "description": "Interim backstop, lands as amendment to PR #82. Remove both empty-pid filters (layout_index.ex:134,173); every shard becomes a segment (empty pids allowed; nil metadata_materializer -\u003e [] for tag 0). lookup_key! returns {range, []} -\u003e StorageRacing's currently-dead {_range, []} branch fires -\u003e layout_lookup_failed. REVERT get_next_segment gap-skip (bedrock-dwu fix) to exact-boundary semantics — on a total-coverage tree the asymmetry never manifests; skipping uncovered shards in KeySelector resolution would silently drop live keys. Keep the tn5 dedup fix. Update tests: gap tests become uncovered-segment-with-[]-pids tests; add lookup_key! -\u003e layout_lookup_failed regression. TDD.",
+  "id": "bedrock-q67.1",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 1,
+  "status": "open",
+  "title": "LayoutIndex total-coverage backstop: keep pid-less shards, loud failure, exact next-segment",
+  "type": "task",
+  "updated_at": "2026-07-14T21:55:40Z"
+}

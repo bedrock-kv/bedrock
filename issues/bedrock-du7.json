@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T18:57:46Z",
+  "description": "test/support/materializer/olivine/reading_test_helpers.ex reimplements Reading's private logic (execute_get, fetch_from_page, do_now_or_async_with_reply...). Tests using it (key_selector_test.exs, logic_test.exs) exercise the copy, not the module — this masked the sync-path Process.monitor crash fixed in PR #79. Migrate callers to the real Reading public API (reading_test.exs shows the pattern), then delete or shrink the helper.",
+  "id": "bedrock-du7",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Migrate olivine tests off ReadingTestHelpers duplication",
+  "type": "task",
+  "updated_at": "2026-07-14T18:57:46Z"
+}

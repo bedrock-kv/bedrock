@@ -86,6 +86,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
   @doc """
   Finishes the IndexUpdate, returning the final Index, Database, IdAllocator, and key change counts.
   """
+  @spec finish(t()) :: {Index.t(), Database.t(), IdAllocator.t(), %{Page.id() => {Page.t(), Page.id()}}}
   def finish(%__MODULE__{
         index: index,
         id_allocator: id_allocator,

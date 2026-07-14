@@ -57,14 +57,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
       }
     end
 
+    @spec mark_waitlisted(%__MODULE__{}) :: %__MODULE__{}
     def mark_waitlisted(%__MODULE__{} = timing),
       do: %{timing | was_waitlisted: true, wait_start_time: System.monotonic_time(:microsecond)}
 
+    @spec mark_async(%__MODULE__{}) :: %__MODULE__{}
     def mark_async(%__MODULE__{} = timing),
       do: %{timing | was_async: true, task_start_time: System.monotonic_time(:microsecond)}
 
+    @spec mark_result(%__MODULE__{}, term()) :: %__MODULE__{}
     def mark_result(%__MODULE__{} = timing, result), do: %{timing | result: classify_result(result)}
 
+    @spec emit_telemetry(%__MODULE__{}) :: :ok
     def emit_telemetry(%__MODULE__{} = timing) do
       now = System.monotonic_time(:microsecond)
       total_duration = now - timing.start_time

@@ -126,6 +126,7 @@ defmodule Bedrock.Keyspace do
     end
   end
 
+  @spec get_range_from_repo(t(), repo :: module(), opts :: keyword()) :: Enumerable.t()
   def get_range_from_repo(%__MODULE__{prefix: prefix} = keyspace, repo, opts \\ []) do
     prefix_len = byte_size(prefix)
     key_decoder = key_decoder_for(keyspace.key_encoding, prefix_len)
@@ -156,6 +157,7 @@ defmodule Bedrock.Keyspace do
   end
 
   defimpl Inspect do
+    @spec inspect(Bedrock.Keyspace.t(), Inspect.Opts.t()) :: String.t()
     def inspect(%{prefix: prefix, key_encoding: nil, value_encoding: nil}, _opts),
       do: "#Keyspace<#{prefix_str(prefix)}>"
 
@@ -173,6 +175,7 @@ defmodule Bedrock.Keyspace do
   end
 
   defimpl Bedrock.ToKeyRange do
+    @spec to_key_range(Bedrock.Keyspace.t()) :: Bedrock.ToKeyRange.key_range()
     def to_key_range(%{prefix: <<>>}), do: {<<>>, <<0xFF>>}
     def to_key_range(%{prefix: prefix}), do: KeyRange.from_prefix(prefix)
   end

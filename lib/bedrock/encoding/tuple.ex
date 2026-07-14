@@ -37,6 +37,7 @@ defmodule Bedrock.Encoding.Tuple do
   @doc """
   Converts a value to an iolist representation for packing.
   """
+  @spec to_iolist(nil | tuple() | list() | number() | binary(), iolist()) :: iolist()
   def to_iolist(unpacked, tail \\ []), do: unpacked |> pack_value(tail) |> :lists.reverse()
 
   # Type Tags

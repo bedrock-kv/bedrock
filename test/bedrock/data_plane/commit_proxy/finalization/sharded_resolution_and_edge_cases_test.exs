@@ -5,7 +5,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
   - Sharded (multi-resolver) conflict resolution: empty batches, abort merging,
     resolver errors, and resolver task exits
   - Transactions without a mutations section
-  - Log preparation failures for keys outside shard coverage
   - Cross-shard clear_range clamping and atomic mutation routing
   - Log push accounting for task exits and missing log services
   - Reply helpers that carry the commit version to clients

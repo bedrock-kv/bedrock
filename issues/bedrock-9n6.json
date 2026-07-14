@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:09:40Z",
+  "description": "finalization.ex 95.3%, 50 uncovered. Empty-batch resolver plan (transaction_count == 0), resolver error/exit aggregation, plan failure stages, atomic mutation key extraction and shard splitting, binary min/max, log push exit accounting, send_reply_with_commit_version.",
+  "id": "bedrock-9n6",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: CommitProxy Finalization resolver plan edge cases",
+  "type": "task",
+  "updated_at": "2026-07-14T19:09:40Z"
+}

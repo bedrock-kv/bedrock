@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:09:39Z",
+  "description": "durability.ex 74.3%, 44 uncovered. Service registration new/changed detection, capability merge/change detection, director notification (:unavailable vs available, empty changes), durable write submission via Raft incl. error ack path.",
+  "id": "bedrock-wey",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: Coordinator Durability service registration and director notification",
+  "type": "task",
+  "updated_at": "2026-07-14T19:09:39Z"
+}

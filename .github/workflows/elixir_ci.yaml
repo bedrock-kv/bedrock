@@ -26,8 +26,12 @@ jobs:
         include:
           - elixir: "1.17.3"
             otp: "27.2"
+          # Exactly one cell reports coverage: coveralls closes a PR's build
+          # on the first non-parallel upload, so a second reporting cell
+          # would 422 whenever finish times diverge (e.g. uneven caches)
           - elixir: "1.19.4"
             otp: "28.3"
+            coverage: true
           - elixir: "1.19.5"
             otp: "28.3"
           - elixir: "1.20.2"
@@ -88,7 +92,7 @@ jobs:
       run: mix dialyzer
 
     - name: Run tests
-      run: ${{ github.event_name == 'schedule' && 'mix test' || 'mix coveralls.github' }}
+      run: ${{ (github.event_name != 'schedule' && matrix.coverage) && 'mix coveralls.github' || 'mix test' }}
 
   s3_test:
     if: github.event_name != 'schedule'

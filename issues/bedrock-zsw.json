@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T18:51:18Z",
   "created": "2026-07-14T18:40:48Z",
   "description": "index_update.ex is 91.3% covered (46 uncovered lines). Add tests for clear_range spanning multiple pages incl. page 0 as middle page, chain-following edge cases, empty-page handling (page 0 kept vs page deleted+id recycled), track_statistics paths (direct \u003c=10 and MapSet \u003e10), atomic op on missing key.",
   "id": "bedrock-zsw",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Test coverage: Olivine IndexUpdate — range clears across chains, page-0 protection, mutation stats",
   "type": "task",
-  "updated_at": "2026-07-14T18:42:04Z"
+  "updated_at": "2026-07-14T18:51:18Z"
 }

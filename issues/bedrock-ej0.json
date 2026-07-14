@@ -7,8 +7,8 @@
   "id": "bedrock-ej0",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Test coverage: Directory partition ops, protocol impls, node-value encoding",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:39Z"
+  "updated_at": "2026-07-14T19:09:49Z"
 }

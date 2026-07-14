@@ -159,9 +159,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   def handle_call({:register_node_resources, client_pid, compact_services, capabilities}, from, t) do
-    # Always subscribe client for TSL updates (monitor to clean up on death)
-    Process.monitor(client_pid)
-    updated_state = add_tsl_subscriber(t, client_pid)
+    # Always subscribe client for TSL updates (monitor to clean up on death).
+    # Guarded so a link that already subscribed via {:subscribe_tsl_updates, _}
+    # doesn't accumulate a second monitor.
+    updated_state = monitor_and_add_tsl_subscriber(t, client_pid)
 
     # Expand compact services to full format
     caller_node = node(client_pid)
@@ -281,24 +282,37 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     if MapSet.member?(t.tsl_subscribers, subscriber) do
       noreply(t)
     else
-      Process.monitor(subscriber)
-
-      # Bring the new subscriber up to date immediately if we already have a TSL.
-      if t.transaction_system_layout, do: send(subscriber, {:tsl_updated, t.transaction_system_layout})
+      # Bring the new subscriber up to date immediately if we already hold a
+      # director-produced TSL. The old-TSL stub loaded from object storage at
+      # init (bare %{logs: ...}, no :epoch) is recovery input only and must
+      # not be pushed to subscribers.
+      case t.transaction_system_layout do
+        %{epoch: _} = tsl -> send(subscriber, {:tsl_updated, tsl})
+        _ -> :ok
+      end
 
       t
-      |> add_tsl_subscriber(subscriber)
+      |> monitor_and_add_tsl_subscriber(subscriber)
       |> noreply()
     end
   end
 
-  def handle_cast({:notify_transaction_system_layout, transaction_system_layout}, t) do
+  def handle_cast({:notify_transaction_system_layout, %{epoch: tsl_epoch} = transaction_system_layout}, t)
+      when is_nil(t.epoch) or tsl_epoch >= t.epoch do
     # Direct notification from Director - update state and broadcast to subscribers
     # No Raft consensus needed - TSL is persisted to object storage by Director
     t
     |> put_transaction_system_layout(transaction_system_layout)
-    |> put_epoch(transaction_system_layout.epoch)
+    |> put_epoch(tsl_epoch)
     |> noreply()
+  end
+
+  def handle_cast({:notify_transaction_system_layout, _stale_tsl}, t) do
+    # A TSL carrying an epoch older than ours is a delayed cast from a
+    # deposed director (e.g. an in-flight delta or recovery notification that
+    # raced a leadership change). Applying it would regress our epoch and
+    # broadcast dead pids to every subscribed link, so drop it.
+    noreply(t)
   end
 
   def handle_cast({:notify_config, config}, t) do
@@ -333,6 +347,19 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @spec ack_fn(GenServer.from()) :: (term() -> :ok)
   defp ack_fn(from), do: fn result -> GenServer.reply(from, result) end
+
+  # Adds a TSL subscriber, monitoring it exactly once. Idempotent: repeated
+  # subscriptions (or a subscribe cast followed by register_node_resources)
+  # must not accumulate duplicate monitors on the same pid.
+  @spec monitor_and_add_tsl_subscriber(State.t(), pid()) :: State.t()
+  defp monitor_and_add_tsl_subscriber(t, subscriber) do
+    if MapSet.member?(t.tsl_subscribers, subscriber) do
+      t
+    else
+      Process.monitor(subscriber)
+      add_tsl_subscriber(t, subscriber)
+    end
+  end
 
   @spec init_raft_log(module()) ::
           {:ok, DiskRaftLog.t() | TupleInMemoryLog.t()} | {:error, term()}

@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T19:19:47Z",
   "created": "2026-07-14T19:09:40Z",
   "description": "repo.ex 81.4%, 60 uncovered. Public API casts (conflict keys/ranges, clear_range, atomics), transact: nested txns, commit result variants, retryable failure + retry limit raise, rollback on exception, arity-0/1 funs, provided_tsl path skipping cluster.link!.",
   "id": "bedrock-60h",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Test coverage: Repo transaction lifecycle with stub TransactionBuilder",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:50Z"
+  "updated_at": "2026-07-14T19:19:47Z"
 }

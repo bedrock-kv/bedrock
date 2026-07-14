@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T22:58:32Z",
+  "description": "use Bedrock.Internal.GenServerApi generates start_link/1 passing a keyword list to inits expecting tuples — latent broken-but-unused function across ~7 facades (Distributor, Placeholder, Sequencer, ...). child_specs bypass it. Either generate a compatible start_link or stop generating it. Surfaced in PR #94 second-pass audit.",
+  "id": "bedrock-93j",
+  "labels": [],
+  "priority": 4,
+  "status": "open",
+  "title": "GenServerApi-generated start_link/1 is unusable for tuple-init servers",
+  "type": "task",
+  "updated_at": "2026-07-14T22:58:32Z"
+}

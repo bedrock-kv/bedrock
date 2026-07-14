@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:23:09Z",
+  "description": "transaction.ex:392 case only matches {:ok,_}/{:found,_}; read_write_conflicts/1's callback (577-599) returns bare {:error, reason} -\u003e CaseClauseError on CRC-valid-but-corrupt conflict payloads (e.g. count=5, no range data). Violates @spec. Resolver caller (transaction_conflicts.ex:70) has an {:error,_} graceful-degrade branch that's currently unreachable — resolver process crashes instead on wire input from commit proxy. Fix: add {:error, reason} -\u003e {:error, reason} to the case (or wrap callback errors); add regression asserting {:error, :truncated_conflict_data} from read_write_conflicts/1. Audit-verified in PR for bedrock-aec.",
+  "id": "bedrock-jyl",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "iterate_sections_data doesn't propagate callback errors; read_write_conflicts crashes on corrupt payloads",
+  "type": "bug",
+  "updated_at": "2026-07-14T19:23:09Z"
+}

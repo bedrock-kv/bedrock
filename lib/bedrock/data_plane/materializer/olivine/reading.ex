@@ -289,7 +289,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
 
   defp handle_successful_resolution(manager, fetch_task, timing, opts) do
     case do_now_or_async_with_reply(opts[:reply_fn], fetch_task) do
-      {:ok, pid} ->
+      {:ok, pid} when is_pid(pid) ->
         timing = ReadRequest.mark_async(timing)
         # Store timing in process dictionary for task completion
         Process.put({:read_timing, pid}, timing)

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:17:09Z",
+  "description": "Repo.rollback/1 throws {Repo, :rollback, reason} (3-tuple, lib/bedrock/internal/repo.ex:204) but run_retryable_transaction only catches {Repo, failed_txn, :rollback, reason} (4-tuple, line 275). No code throws the 4-tuple, so the catch clause is dead and calling MyRepo.rollback/1 inside transact crashes the caller with an uncaught throw instead of rolling back the transaction and returning {:error, reason} as documented in Bedrock.Repo. Found while writing behavioral tests for bedrock-60h.",
+  "id": "bedrock-j64",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Fix Repo.rollback/1 escaping transact: throw shape mismatch in run_retryable_transaction",
+  "type": "task",
+  "updated_at": "2026-07-14T19:17:09Z"
+}

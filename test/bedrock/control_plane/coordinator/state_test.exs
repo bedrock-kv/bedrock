@@ -39,4 +39,52 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
       assert state.service_directory == %{}
     end
   end
+
+  describe "TSL subscriber state changes" do
+    test "add_tsl_subscriber is idempotent" do
+      state =
+        %State{}
+        |> Changes.add_tsl_subscriber(self())
+        |> Changes.add_tsl_subscriber(self())
+
+      assert state.tsl_subscribers == MapSet.new([self()])
+    end
+
+    test "remove_tsl_subscriber removes only the given subscriber" do
+      other = spawn(fn -> Process.sleep(:infinity) end)
+
+      state =
+        %State{}
+        |> Changes.add_tsl_subscriber(self())
+        |> Changes.add_tsl_subscriber(other)
+        |> Changes.remove_tsl_subscriber(other)
+
+      assert state.tsl_subscribers == MapSet.new([self()])
+    end
+
+    test "broadcast_tsl_update sends {:tsl_updated, tsl} to every subscriber" do
+      tsl = %{epoch: 1, shard_materializers: %{}}
+
+      state = Changes.add_tsl_subscriber(%State{}, self())
+
+      assert ^state = Changes.broadcast_tsl_update(state, tsl)
+      assert_receive {:tsl_updated, ^tsl}
+    end
+
+    test "broadcast_tsl_update tolerates dead subscribers" do
+      dead = spawn(fn -> :ok end)
+      ref = Process.monitor(dead)
+      assert_receive {:DOWN, ^ref, :process, ^dead, _}
+
+      tsl = %{epoch: 1, shard_materializers: %{}}
+
+      state =
+        %State{}
+        |> Changes.add_tsl_subscriber(dead)
+        |> Changes.add_tsl_subscriber(self())
+
+      assert ^state = Changes.broadcast_tsl_update(state, tsl)
+      assert_receive {:tsl_updated, ^tsl}
+    end
+  end
 end

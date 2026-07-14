@@ -13,9 +13,15 @@
   "id": "bedrock-q67.5",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Note from q67.1: StorageRacing's rescue currently conflates 'uncovered shard' and 'key outside keyspace' into layout_lookup_failed. When wiring coverage demand, consider replacing the rescued raise with a structured {:error, {:uncovered_shard, tag, range}} so the placeholder/Distributor path gets the tag without re-lookup.",
+      "timestamp": "2026-07-14T22:05:00Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:02Z"
+  "updated_at": "2026-07-14T22:05:00Z"
 }

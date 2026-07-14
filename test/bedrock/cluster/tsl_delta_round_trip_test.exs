@@ -87,7 +87,8 @@ defmodule Bedrock.Cluster.TSLDeltaRoundTripTest do
       leader_node: Node.self(),
       epoch: epoch,
       otp_name: @coordinator_otp_name,
-      transaction_system_layout: Keyword.get(opts, :tsl)
+      transaction_system_layout: Keyword.get(opts, :tsl),
+      tsl_live?: Keyword.get(opts, :tsl_live?, false)
     }
 
     start_supervised!(%{
@@ -254,6 +255,25 @@ defmodule Bedrock.Cluster.TSLDeltaRoundTripTest do
     assert :ok = Director.apply_tsl_delta(director, %{1 => materializer}, 5)
 
     assert_receive {:tsl_updated, %{epoch: 5}}
+  end
+
+  test "snapshot-on-subscribe does not push a stale pre-recovery TSL while recovery is in flight" do
+    # A director crash keeps the previous (epoch-bearing) TSL in coordinator
+    # state as recovery input, but marks it stale (tsl_live?: false) when the
+    # replacement director is launched. A link that subscribes during that
+    # window must not receive the stale TSL: its component pids may be dead.
+    stale_tsl = Map.put(base_tsl(5), :shard_materializers, %{1 => self()})
+    coordinator = start_coordinator(5, tsl: stale_tsl, tsl_live?: false)
+
+    :ok = Coordinator.subscribe_to_tsl_updates(coordinator, self())
+    refute_receive {:tsl_updated, _}, 100
+
+    # Once the new director's recovery produces a TSL, the subscriber hears it.
+    director = start_director(5, coordinator)
+    materializer = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = Director.apply_tsl_delta(director, %{2 => materializer}, 5)
+
+    assert_receive {:tsl_updated, %{shard_materializers: %{2 => ^materializer}}}
   end
 
   test "repeated subscriptions do not accumulate duplicate monitors" do

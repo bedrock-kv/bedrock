@@ -282,12 +282,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     if MapSet.member?(t.tsl_subscribers, subscriber) do
       noreply(t)
     else
-      # Bring the new subscriber up to date immediately if we already hold a
-      # director-produced TSL. The old-TSL stub loaded from object storage at
-      # init (bare %{logs: ...}, no :epoch) is recovery input only and must
-      # not be pushed to subscribers.
+      # Bring the new subscriber up to date immediately, but only if we hold a
+      # live, director-produced TSL (tsl_live?). Two stale forms are retained
+      # in state as recovery input and must not be pushed to subscribers: the
+      # old-TSL stub loaded from object storage at init (bare %{logs: ...}, no
+      # :epoch), and a full pre-recovery TSL kept while a newly launched
+      # director is still recovering (its component pids may be dead).
       case t.transaction_system_layout do
-        %{epoch: _} = tsl -> send(subscriber, {:tsl_updated, tsl})
+        %{epoch: _} = tsl when t.tsl_live? -> send(subscriber, {:tsl_updated, tsl})
         _ -> :ok
       end
 

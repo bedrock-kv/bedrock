@@ -71,6 +71,18 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
       assert_receive {:tsl_updated, ^tsl}
     end
 
+    test "put_transaction_system_layout marks the TSL live; mark_tsl_stale clears it" do
+      tsl = %{epoch: 1, shard_materializers: %{}}
+
+      state = Changes.put_transaction_system_layout(%State{}, tsl)
+      assert state.tsl_live?
+
+      state = Changes.mark_tsl_stale(state)
+      refute state.tsl_live?
+      # The TSL itself is retained as recovery input.
+      assert state.transaction_system_layout == tsl
+    end
+
     test "broadcast_tsl_update tolerates dead subscribers" do
       dead = spawn(fn -> :ok end)
       ref = Process.monitor(dead)

@@ -326,7 +326,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     end
   end
 
-  defp should_flush?([], _latest, _gap), do: false
   defp should_flush?(_buffer, nil, _gap), do: false
 
   defp should_flush?(buffer, latest, gap) do
@@ -409,8 +408,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   # Flush the entire buffer to object storage
-  defp flush_all(%{buffer: []} = state), do: state
-
   defp flush_all(state) do
     enqueue_flush_batch(state, state.buffer)
   end

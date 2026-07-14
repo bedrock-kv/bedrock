@@ -19,8 +19,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  require Logger
-
   @impl true
   def execute(recovery_attempt, context) do
     trace_recovery_monitoring_components()

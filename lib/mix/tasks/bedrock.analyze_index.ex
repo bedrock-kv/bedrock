@@ -33,8 +33,6 @@ defmodule Mix.Tasks.Bedrock.AnalyzeIndex do
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
 
-  require Logger
-
   @impl Mix.Task
   def run(args) do
     Mix.Task.run("app.start", [])

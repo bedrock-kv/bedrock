@@ -1125,7 +1125,7 @@ defmodule Bedrock.DataPlane.Transaction do
 
   # Helper function to decode varbinary parameters from the new format
   defp decode_varbinary_param(f, data) when f <= @length_direct_max do
-    <<param::binary-size(f), rest::binary>> = data
+    <<param::binary-size(^f), rest::binary>> = data
     {param, rest}
   end
 

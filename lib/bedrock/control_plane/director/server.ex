@@ -24,7 +24,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Recovery.Shared
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Service.Worker
 
   require Logger
@@ -83,7 +85,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     # Services are already provided by coordinator from service directory
     t
     |> ping_all_coordinators()
-    |> try_to_recover()
+    |> advance_recovery()
     |> noreply()
   end
 
@@ -95,6 +97,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
+  def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, reason}, %State{distributor: distributor_pid} = t) do
+    # The distributor is off the request path: its death degrades coverage
+    # healing only, so we re-recruit it rather than restarting recovery.
+    Logger.warning("Distributor exited (#{inspect(reason)}); re-recruiting")
+
+    t
+    |> Map.put(:distributor, nil)
+    |> maybe_start_distributor()
+    |> noreply()
+  end
+
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do
     t
     |> Map.put(:state, :stopped)
@@ -126,7 +139,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     {:ok, updated_t} = request_to_rejoin(t, node, capabilities, Map.values(running_services), now())
 
     updated_t
-    |> try_to_recover()
+    |> advance_recovery()
     |> reply(:ok)
   end
 
@@ -147,7 +160,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_cast({:node_added_worker, node, worker_info}, %State{} = t) do
     t
     |> node_added_worker(node, worker_info, now())
-    |> try_to_recover()
+    |> advance_recovery()
     |> noreply()
   end
 
@@ -201,11 +214,52 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def try_to_recover_if_stalled(%{state: :recovery} = t) do
     # If we're in recovery state, new services might resolve insufficient_nodes
     # So we should retry recovery
-    try_to_recover(t)
+    advance_recovery(t)
   end
 
   def try_to_recover_if_stalled(t) do
     # If not in recovery state, no need to retry
     t
   end
+
+  @doc false
+  @spec advance_recovery(State.t()) :: State.t()
+  def advance_recovery(t) do
+    t
+    |> try_to_recover()
+    |> maybe_start_distributor()
+  end
+
+  # Recruits the Distributor once recovery has completed (FDB: the cluster
+  # controller recruits the data distributor only after the cluster is
+  # accepting commits). The distributor is monitored and re-recruited on
+  # death; it never participates in recovery itself.
+  @doc false
+  @spec maybe_start_distributor(State.t()) :: State.t()
+  def maybe_start_distributor(%State{state: :running, distributor: nil} = t) do
+    shard_layout = (t.transaction_system_layout || %{})[:shard_layout] || %{}
+
+    child_spec =
+      Distributor.child_spec(
+        cluster: t.cluster,
+        epoch: t.epoch,
+        director: self(),
+        shard_layout: shard_layout,
+        otp_name: t.cluster.otp_name(:distributor)
+      )
+
+    starter_fn = :sup |> t.cluster.otp_name() |> Shared.starter_for()
+
+    case starter_fn.(child_spec, node()) do
+      {:ok, distributor} ->
+        Process.monitor(distributor)
+        %{t | distributor: distributor}
+
+      {:error, reason} ->
+        Logger.error("Failed to start distributor: #{inspect(reason)}")
+        t
+    end
+  end
+
+  def maybe_start_distributor(t), do: t
 end

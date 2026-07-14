@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "LayoutIndex total-coverage backstop: keep pid-less shards, loud failure, exact next-segment",
   "type": "task",
-  "updated_at": "2026-07-14T21:55:40Z"
+  "updated_at": "2026-07-14T21:56:33Z"
 }

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T20:07:55Z",
+  "description": "logic.ex:118 discards the timeout returned by WaitingList.insert; the server never sets a GenServer timeout and nothing calls WaitingList expiry — waitlisted fetch deadlines (30s) are inert. Clients now get notified on apply (bedrock-g1r fixed), but entries for keys that never arrive linger until client-side call timeout and are never expired server-side. Wire deadline expiry (mirror whatever olivine does, or GenServer timeout). Split from bedrock-g1r.",
+  "id": "bedrock-tvb",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Basalt waitlist deadline expiry never wired up",
+  "type": "task",
+  "updated_at": "2026-07-14T20:07:55Z"
+}

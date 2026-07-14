@@ -100,11 +100,33 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
 
       assert_receive {:DOWN, ^ref, :process, ^distributor, :normal}
 
-      # The monitoring director would then re-recruit at its current epoch.
+      # A :normal exit means the distributor ceded to a newer epoch: a newer
+      # director owns coverage now, so this director must not re-recruit.
       assert {:noreply, new_state} = Server.handle_info({:DOWN, ref, :process, distributor, :normal}, state)
 
-      assert is_pid(new_state.distributor)
-      assert %DistributorState{epoch: 5} = :sys.get_state(new_state.distributor)
+      assert new_state.distributor == nil
+    end
+  end
+
+  describe "recruitment retry" do
+    test "a failed distributor start schedules a retry" do
+      # Point the starter at a nonexistent supervisor so the start fails.
+      defmodule NoSupCluster do
+        @moduledoc false
+        def otp_name(component), do: :"distributor_recruitment_no_sup_#{component}"
+      end
+
+      state = Server.maybe_start_distributor(running_state(%{cluster: NoSupCluster}))
+
+      assert state.distributor == nil
+      assert_receive {:timeout, :retry_start_distributor}, 2_000
+    end
+
+    test "the retry message re-attempts recruitment" do
+      assert {:noreply, state} = Server.handle_info({:timeout, :retry_start_distributor}, running_state())
+
+      assert is_pid(state.distributor)
+      assert Process.alive?(state.distributor)
     end
   end
 end

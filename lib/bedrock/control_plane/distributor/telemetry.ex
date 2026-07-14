@@ -30,6 +30,45 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_recruitment_started(module(), Bedrock.epoch(), Bedrock.range_tag()) :: :ok
+  def emit_recruitment_started(cluster, epoch, tag) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :recruitment, :started],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag}
+    )
+  end
+
+  @spec emit_recruitment_succeeded(
+          module(),
+          Bedrock.epoch(),
+          Bedrock.range_tag(),
+          node(),
+          duration_us :: non_neg_integer()
+        ) :: :ok
+  def emit_recruitment_succeeded(cluster, epoch, tag, node, duration_us) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :recruitment, :succeeded],
+      %{duration_us: duration_us},
+      %{cluster: cluster, epoch: epoch, tag: tag, node: node}
+    )
+  end
+
+  @spec emit_recruitment_failed(
+          module(),
+          Bedrock.epoch(),
+          Bedrock.range_tag(),
+          reason :: term(),
+          duration_us :: non_neg_integer()
+        ) :: :ok
+  def emit_recruitment_failed(cluster, epoch, tag, reason, duration_us) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :recruitment, :failed],
+      %{duration_us: duration_us},
+      %{cluster: cluster, epoch: epoch, tag: tag, reason: reason}
+    )
+  end
+
   @spec emit_placeholder_parked(module(), Bedrock.range_tag()) :: :ok
   def emit_placeholder_parked(cluster, tag) do
     :telemetry.execute(

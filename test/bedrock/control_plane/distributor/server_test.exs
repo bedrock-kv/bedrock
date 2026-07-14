@@ -185,7 +185,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       on_exit(fn -> :telemetry.detach(handler_id) end)
     end
 
-    test "coverage_demand is remembered and emits telemetry" do
+    test "coverage_demand emits telemetry and fails fast for a tag missing from the layout" do
       attach_demand_telemetry(self())
       {pid, _director} = start_distributor()
 
@@ -193,8 +193,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{cluster: TestCluster, tag: 7}}
 
-      assert %State{pending_demands: pending} = :sys.get_state(pid)
-      assert MapSet.member?(pending, 7)
+      # The tag is not in the (empty) shard layout: the demand fails fast
+      # and enters backoff rather than being remembered as in-flight.
+      assert %State{pending_demands: pending, backoff: backoff} = :sys.get_state(pid)
+      refute MapSet.member?(pending, 7)
+      assert Map.has_key?(backoff, 7)
     end
 
     test "deliver_coverage relays to the placeholder and clears the pending demand" do

@@ -59,7 +59,7 @@ defmodule Bedrock.ControlPlane.Distributor do
   @doc """
   Internal/test seam: relays a coverage result to the placeholder, marking
   the shard tag as covered by the given materializer. The recruitment flow
-  (bedrock-q67.5) will deliver coverage outcomes through this same path.
+  normally delivers coverage outcomes itself when a recruitment completes.
   """
   @spec deliver_coverage(ref(), Bedrock.range_tag(), materializer :: pid()) :: :ok
   def deliver_coverage(distributor, tag, materializer), do: cast(distributor, {:deliver_coverage, tag, materializer})

@@ -29,11 +29,15 @@
     {
       "text": "From PR #91 second-pass audit: (1) tighten already_started adoption — Shared.starter_for maps {:error,{:already_started,pid}} to {:ok,pid}, so a new-epoch director can adopt a stale distributor; call check_epoch after adoption and re-recruit if superseded. (2) Do not assume strict cluster-wide singleton-ness during epoch transitions (different-node directors can briefly yield two live distributors; epoch guard fences mutations). (3) Add re-recruitment backoff when real workload lands.",
       "timestamp": "2026-07-14T22:55:18Z"
+    },
+    {
+      "text": "Implemented in PR #95 (feature/q67-recruitment, base feature/q67-placeholder, merges feature/q67-tsl-delta). Audit items done except the structured {:error, {:uncovered_shard, tag, range}} from StorageRacing: lookup_key! has no tag available and the failure-map shape ripples through PointReads/RangeReads callers; with placeholders filling every slot the {_range, []} branch no longer occurs, so the raise stays as a backstop. Deferred as follow-up.",
+      "timestamp": "2026-07-14T22:55:58Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "On-demand materializer recruitment flow",
   "type": "task",
-  "updated_at": "2026-07-14T22:55:18Z"
+  "updated_at": "2026-07-14T22:55:58Z"
 }

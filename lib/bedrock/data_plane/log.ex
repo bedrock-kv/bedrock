@@ -90,6 +90,11 @@ defmodule Bedrock.DataPlane.Log do
         ignored); there is no per-consumer tracking, since each log has a
         single durability-reporting consumer (its Demux). After reporting
         `durable_up_to: v`, a puller must not ask for versions older than `v`.
+        `v` must be the commit version of a transaction the log holds (or a
+        version at/past its tail): the log retains the segment containing the
+        trim point, but a report falling in the gap between two commit
+        versions may trim the preceding segment and make a subsequent pull
+        from exactly `v` fail with `:version_too_old`.
       - `timeout_in_ms`: Timeout for the operation in milliseconds.
 
   ## Return Values:

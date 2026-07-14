@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T18:40:48Z",
+  "description": "logic.ex is 81.1% covered (76 uncovered lines). Add tests for info/2 fact gathering (all facts + unsupported), apply_transactions, advance_window eviction branch incl. version underflow rescue, start_compaction message contract, maybe_upload_snapshot nil/configured.",
+  "id": "bedrock-eu4",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test coverage: Olivine Logic — info facts, apply_transactions, advance_window eviction, compaction",
+  "type": "task",
+  "updated_at": "2026-07-14T18:40:48Z"
+}

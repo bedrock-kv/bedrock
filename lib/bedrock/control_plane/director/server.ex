@@ -29,9 +29,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Director.Recovery.Shared
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
   require Logger
+
+  @distributor_retry_ms 1_000
 
   @doc false
   @spec child_spec(
@@ -99,6 +102,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
+  def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, :normal}, %State{distributor: distributor_pid} = t) do
+    # A :normal exit means the distributor ceded deliberately (superseded by
+    # a newer epoch): a newer director owns coverage now, so re-recruiting
+    # here would only create a stale distributor.
+    Logger.info("Distributor exited normally (superseded); not re-recruiting")
+
+    t
+    |> Map.put(:distributor, nil)
+    |> noreply()
+  end
+
   def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, reason}, %State{distributor: distributor_pid} = t) do
     # The distributor is off the request path: its death degrades coverage
     # healing only, so we re-recruit it rather than restarting recovery.
@@ -106,6 +120,12 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
     t
     |> Map.put(:distributor, nil)
+    |> maybe_start_distributor()
+    |> noreply()
+  end
+
+  def handle_info({:timeout, :retry_start_distributor}, t) do
+    t
     |> maybe_start_distributor()
     |> noreply()
   end
@@ -279,14 +299,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @doc false
   @spec maybe_start_distributor(State.t()) :: State.t()
   def maybe_start_distributor(%State{state: :running, distributor: nil} = t) do
-    shard_layout = (t.transaction_system_layout || %{})[:shard_layout] || %{}
+    transaction_system_layout = t.transaction_system_layout || %{}
 
     child_spec =
       Distributor.child_spec(
         cluster: t.cluster,
         epoch: t.epoch,
         director: self(),
-        shard_layout: shard_layout,
+        shard_layout: transaction_system_layout[:shard_layout] || %{},
+        transaction_system_layout: transaction_system_layout,
+        durable_version: recovered_durable_version(t),
+        node_capabilities: t.node_capabilities,
         otp_name: t.cluster.otp_name(:distributor)
       )
 
@@ -298,10 +321,20 @@ defmodule Bedrock.ControlPlane.Director.Server do
         %{t | distributor: distributor}
 
       {:error, reason} ->
-        Logger.error("Failed to start distributor: #{inspect(reason)}")
+        Logger.error("Failed to start distributor: #{inspect(reason)}; retrying in #{@distributor_retry_ms}ms")
+
+        Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
         t
     end
   end
 
   def maybe_start_distributor(t), do: t
+
+  # The durable version recovery settled on: where a freshly recruited
+  # materializer starts pulling from the logs (matching the bootstrap phase).
+  @spec recovered_durable_version(State.t()) :: Bedrock.version()
+  defp recovered_durable_version(%State{recovery_attempt: %{durable_version: durable_version}})
+       when not is_nil(durable_version), do: durable_version
+
+  defp recovered_durable_version(_t), do: Version.zero()
 end

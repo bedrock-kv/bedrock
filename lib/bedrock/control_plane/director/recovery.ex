@@ -115,6 +115,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.update!(:config, fn config ->
           Map.delete(config, :recovery_attempt)
         end)
+        # Retain the completed attempt: the distributor needs its
+        # durable_version to unlock materializers it recruits on demand.
+        |> Map.put(:recovery_attempt, completed)
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
         |> persist_new_transaction_system_layout()

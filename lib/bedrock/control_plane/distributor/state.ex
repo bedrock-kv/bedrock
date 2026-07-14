@@ -10,17 +10,29 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           epoch: Bedrock.epoch(),
           director: pid(),
           shard_layout: TransactionSystemLayout.shard_layout(),
+          transaction_system_layout: TransactionSystemLayout.t() | %{},
+          durable_version: Bedrock.version(),
+          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           materializer_monitors: %{reference() => Bedrock.range_tag()},
           placeholder: pid() | nil,
-          pending_demands: MapSet.t(Bedrock.range_tag())
+          pending_demands: MapSet.t(Bedrock.range_tag()),
+          backoff: %{Bedrock.range_tag() => expires_at_ms :: integer()},
+          backoff_ms: pos_integer(),
+          recruitment_overrides: map()
         }
   defstruct cluster: nil,
             epoch: nil,
             director: nil,
             shard_layout: %{},
+            transaction_system_layout: %{},
+            durable_version: nil,
+            node_capabilities: %{},
             materializer_monitors: %{},
             placeholder: nil,
-            pending_demands: MapSet.new()
+            pending_demands: MapSet.new(),
+            backoff: %{},
+            backoff_ms: 5_000,
+            recruitment_overrides: %{}
 
   @doc """
   Validates a caller-supplied epoch against the distributor's own epoch.

@@ -7,8 +7,8 @@
   "id": "bedrock-ffk",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Test coverage: Olivine Reading — exercise real public API (waitlist, shutdown, KeySelector paths)",
   "type": "task",
-  "updated_at": "2026-07-14T18:40:48Z"
+  "updated_at": "2026-07-14T18:42:04Z"
 }

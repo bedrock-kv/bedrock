@@ -277,6 +277,21 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     noreply(t)
   end
 
+  def handle_cast({:subscribe_tsl_updates, subscriber}, t) do
+    if MapSet.member?(t.tsl_subscribers, subscriber) do
+      noreply(t)
+    else
+      Process.monitor(subscriber)
+
+      # Bring the new subscriber up to date immediately if we already have a TSL.
+      if t.transaction_system_layout, do: send(subscriber, {:tsl_updated, t.transaction_system_layout})
+
+      t
+      |> add_tsl_subscriber(subscriber)
+      |> noreply()
+    end
+  end
+
   def handle_cast({:notify_transaction_system_layout, transaction_system_layout}, t) do
     # Direct notification from Director - update state and broadcast to subscribers
     # No Raft consensus needed - TSL is persisted to object storage by Director

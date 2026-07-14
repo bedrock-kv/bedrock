@@ -18,12 +18,14 @@ defmodule Bedrock.ControlPlane.Director.Server do
       try_to_recover: 1
     ]
 
+  import Bedrock.ControlPlane.Director.Telemetry, only: [trace_tsl_delta_applied: 3]
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Director.Recovery.Shared
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
@@ -129,6 +131,18 @@ defmodule Bedrock.ControlPlane.Director.Server do
     end
   end
 
+  def handle_call({:apply_tsl_delta, _delta, epoch}, _from, %State{epoch: current_epoch} = t)
+      when epoch != current_epoch, do: reply(t, {:error, :newer_epoch_exists})
+
+  def handle_call({:apply_tsl_delta, _delta, _epoch}, _from, %State{transaction_system_layout: nil} = t),
+    do: reply(t, {:error, :unavailable})
+
+  def handle_call({:apply_tsl_delta, delta, _epoch}, _from, %State{} = t) do
+    t
+    |> apply_tsl_delta(delta)
+    |> reply(:ok)
+  end
+
   def handle_call({:request_worker_creation, node, worker_id, kind}, _from, t) do
     t
     |> request_worker_creation(node, worker_id, kind)
@@ -192,6 +206,34 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
+
+  # Applies a shard_materializers delta to the retained TSL, hands the new TSL
+  # to the coordinator for broadcast to subscribed Links, and emits telemetry.
+  @spec apply_tsl_delta(State.t(), Director.tsl_delta()) :: State.t()
+  defp apply_tsl_delta(t, delta) do
+    updated_shard_materializers =
+      t.transaction_system_layout
+      |> Map.get(:shard_materializers, %{})
+      |> apply_delta_to_shard_materializers(delta)
+
+    updated_tsl = Map.put(t.transaction_system_layout, :shard_materializers, updated_shard_materializers)
+
+    Coordinator.notify_transaction_system_layout(t.coordinator, updated_tsl)
+    trace_tsl_delta_applied(t.cluster, t.epoch, delta)
+
+    %{t | transaction_system_layout: updated_tsl}
+  end
+
+  @spec apply_delta_to_shard_materializers(
+          TransactionSystemLayout.shard_materializers(),
+          Director.tsl_delta()
+        ) :: TransactionSystemLayout.shard_materializers()
+  defp apply_delta_to_shard_materializers(shard_materializers, delta) do
+    Enum.reduce(delta, shard_materializers, fn
+      {tag, :remove}, acc -> Map.delete(acc, tag)
+      {tag, pid}, acc when is_pid(pid) -> Map.put(acc, tag, pid)
+    end)
+  end
 
   @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
           %{Worker.id() => ServiceDescriptor.t()}

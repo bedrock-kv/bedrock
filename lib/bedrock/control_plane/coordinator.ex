@@ -45,7 +45,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  @type ref :: atom() | {atom(), node()}
+  @type ref :: pid() | atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec config_key() :: atom()
@@ -88,6 +88,21 @@ defmodule Bedrock.ControlPlane.Coordinator do
         ) :: :ok
   def notify_transaction_system_layout(coordinator, transaction_system_layout),
     do: GenServer.cast(coordinator, {:notify_transaction_system_layout, transaction_system_layout})
+
+  @doc """
+  Subscribe a process to `{:tsl_updated, tsl}` broadcasts from this coordinator.
+
+  The coordinator monitors the subscriber and removes it automatically when it
+  dies. If the coordinator already holds a transaction system layout, the
+  subscriber is immediately brought up to date with a `{:tsl_updated, tsl}`
+  message. Subscribing is idempotent.
+
+  Links subscribe on connect (see `Bedrock.Cluster.Link.Discovery`); processes
+  registering node resources are subscribed implicitly as well.
+  """
+  @spec subscribe_to_tsl_updates(coordinator_ref :: ref(), subscriber :: pid()) :: :ok
+  def subscribe_to_tsl_updates(coordinator, subscriber),
+    do: GenServer.cast(coordinator, {:subscribe_tsl_updates, subscriber})
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}

@@ -7,11 +7,12 @@ defmodule Bedrock.Test.DirectoryHelpers do
   import ExUnit.Assertions
   import Mox
 
+  alias Bedrock.Directory.NodeKey
   alias Bedrock.KeyRange
   alias Bedrock.Keyspace
 
   # Version constants
-  @version_key <<254, 6, 1, 118, 101, 114, 115, 105, 111, 110, 0, 0>>
+  @version_key <<254, 1, 118, 101, 114, 115, 105, 111, 110, 0>>
   @current_version <<1::little-32, 0::little-32, 0::little-32>>
 
   @doc """
@@ -124,7 +125,7 @@ defmodule Bedrock.Test.DirectoryHelpers do
   Builds the database key for a directory path using the same format as the current implementation.
   """
   def build_directory_key([]), do: <<254>> |> Keyspace.new() |> Keyspace.prefix()
-  def build_directory_key(path), do: <<254>> |> Keyspace.new() |> Keyspace.pack(Bedrock.Encoding.Tuple.pack(path))
+  def build_directory_key(path), do: <<254>> |> Keyspace.new() |> Keyspace.pack(NodeKey.pack(path))
 
   @doc """
   Helper for prefix collision range check only.

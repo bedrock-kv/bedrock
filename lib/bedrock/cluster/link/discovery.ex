@@ -161,12 +161,22 @@ defmodule Bedrock.Cluster.Link.Discovery do
     t
     |> Map.put(:known_coordinator, coordinator_ref)
     |> monitor_known_coordinator()
+    |> subscribe_to_tsl_updates()
     |> register_node_capabilities()
   end
 
   @spec monitor_known_coordinator(State.t()) :: State.t()
   defp monitor_known_coordinator(t) do
     Process.monitor(t.known_coordinator)
+    t
+  end
+
+  @spec subscribe_to_tsl_updates(State.t()) :: State.t()
+  defp subscribe_to_tsl_updates(t) do
+    # Subscribe for {:tsl_updated, tsl} broadcasts regardless of capabilities.
+    # Nodes registering resources are subscribed implicitly by the coordinator,
+    # but capability-less (pure client) links would otherwise never subscribe.
+    Coordinator.subscribe_to_tsl_updates(t.known_coordinator, self())
     t
   end
 

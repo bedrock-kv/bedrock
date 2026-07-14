@@ -100,82 +100,100 @@ defmodule Bedrock.Directory.PropertyTest do
 
   property "directory prefixes are unique within same layer" do
     check all(paths <- uniq_list_of(valid_directory_path(), min_length: 1, max_length: 3)) do
-      # Sort paths by depth to ensure parents created before children
-      sorted_paths = Enum.sort_by(paths, &length/1)
+      assert_unique_prefixes(paths)
+    end
+  end
 
-      # Track which directories will be successfully created
-      # Root always exists with the new API, so start with it in the set
-      created_dirs =
-        Enum.reduce(sorted_paths, MapSet.new([[]]), fn path, acc ->
-          parent_path = Enum.drop(path, -1)
+  # Regression for bedrock-y6e: when the generated paths include both a parent
+  # and its child, the old :get stub's "key in sorted_paths -> nil" clause
+  # shadowed the created-directories clause, so creating the child failed with
+  # :parent_directory_does_not_exist even though the parent had just been
+  # created. The stub is now stateful (records puts), which this exercises
+  # deterministically.
+  test "regression: creating a child after its parent succeeds" do
+    assert_unique_prefixes([["Q"], ["Q", "G"]])
+  end
 
-          if path == [] or MapSet.member?(acc, parent_path) do
-            MapSet.put(acc, path)
-          else
-            acc
-          end
-        end)
+  defp assert_unique_prefixes(paths) do
+    # Sort paths by depth to ensure parents created before children
+    sorted_paths = Enum.sort_by(paths, &length/1)
 
-      # Prefix counter for deterministic allocation
-      prefix_counter = :counters.new(1, [])
+    # Oracle: which directories SHOULD be successfully created.
+    # Root always exists with the new API, so start with it in the set.
+    created_dirs =
+      Enum.reduce(sorted_paths, MapSet.new([[]]), fn path, acc ->
+        parent_path = Enum.drop(path, -1)
 
-      next_prefix_fn = fn ->
-        n = :counters.get(prefix_counter, 1)
-        :counters.add(prefix_counter, 1, 1)
-        <<n::32>>
-      end
-
-      # Use keyspace-aware stubs
-      stub(MockRepo, :get, fn _keyspace, key ->
-        cond do
-          # Version not initialized
-          key == ["version"] -> nil
-          # Directory doesn't exist yet
-          key in sorted_paths -> nil
-          # Root directory always exists
-          key == [] -> {<<>>, ""}
-          # Parent exists
-          MapSet.member?(created_dirs, key) -> {<<0, 1>>, ""}
-          true -> nil
+        if path == [] or MapSet.member?(acc, parent_path) do
+          MapSet.put(acc, path)
+        else
+          acc
         end
       end)
 
-      stub(MockRepo, :put, fn %Keyspace{}, _key, _value -> :ok end)
+    # Prefix counter for deterministic allocation
+    prefix_counter = :counters.new(1, [])
 
-      layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
-
-      # Create all directories and verify unique prefixes
-      {successful_nodes, all_prefixes} =
-        Enum.reduce(sorted_paths, {[], []}, fn path, {nodes, prefixes} ->
-          should_succeed = MapSet.member?(created_dirs, path)
-
-          case Directory.create(layer, path) do
-            {:ok, node} when should_succeed ->
-              refute node.prefix in prefixes,
-                     "Duplicate prefix #{inspect(node.prefix)} for path #{inspect(path)}"
-
-              {[node | nodes], [node.prefix | prefixes]}
-
-            {:error, :parent_directory_does_not_exist} when not should_succeed ->
-              {nodes, prefixes}
-
-            {:ok, _} when not should_succeed ->
-              flunk("Created #{inspect(path)} but parent doesn't exist")
-
-            {:error, reason} when should_succeed ->
-              flunk("Failed to create #{inspect(path)}: #{inspect(reason)}")
-
-            {:error, reason} ->
-              flunk("Unexpected error for #{inspect(path)}: #{inspect(reason)}")
-          end
-        end)
-
-      # Verify all successfully created nodes have unique prefixes
-      assert length(all_prefixes) == length(Enum.uniq(all_prefixes))
-      # Only count non-root paths since root already exists
-      expected_creations = created_dirs |> MapSet.delete([]) |> MapSet.size()
-      assert length(successful_nodes) == expected_creations
+    next_prefix_fn = fn ->
+      n = :counters.get(prefix_counter, 1)
+      :counters.add(prefix_counter, 1, 1)
+      <<n::32>>
     end
+
+    # Stateful store backing the stubs: :put records what was written so
+    # that :get reflects directories created earlier in this run. Seeded
+    # with the root, which always exists.
+    {:ok, store} = Agent.start_link(fn -> %{[] => {<<>>, ""}} end)
+
+    stub(MockRepo, :get, fn _keyspace, key ->
+      # Version not initialized
+      if key == ["version"] do
+        nil
+      else
+        # Everything else comes from the recorded state (nil if never put)
+        Agent.get(store, &Map.get(&1, key))
+      end
+    end)
+
+    stub(MockRepo, :put, fn %Keyspace{}, key, value ->
+      Agent.update(store, &Map.put(&1, key, value))
+      :ok
+    end)
+
+    layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
+
+    # Create all directories and verify unique prefixes
+    {successful_nodes, all_prefixes} =
+      Enum.reduce(sorted_paths, {[], []}, fn path, {nodes, prefixes} ->
+        should_succeed = MapSet.member?(created_dirs, path)
+
+        case Directory.create(layer, path) do
+          {:ok, node} when should_succeed ->
+            refute node.prefix in prefixes,
+                   "Duplicate prefix #{inspect(node.prefix)} for path #{inspect(path)}"
+
+            {[node | nodes], [node.prefix | prefixes]}
+
+          {:error, :parent_directory_does_not_exist} when not should_succeed ->
+            {nodes, prefixes}
+
+          {:ok, _} when not should_succeed ->
+            flunk("Created #{inspect(path)} but parent doesn't exist")
+
+          {:error, reason} when should_succeed ->
+            flunk("Failed to create #{inspect(path)}: #{inspect(reason)}")
+
+          {:error, reason} ->
+            flunk("Unexpected error for #{inspect(path)}: #{inspect(reason)}")
+        end
+      end)
+
+    # Verify all successfully created nodes have unique prefixes
+    assert length(all_prefixes) == length(Enum.uniq(all_prefixes))
+    # Only count non-root paths since root already exists
+    expected_creations = created_dirs |> MapSet.delete([]) |> MapSet.size()
+    assert length(successful_nodes) == expected_creations
+    Agent.stop(store)
   end
 
   property "directory operations preserve metadata" do

@@ -1,5 +1,8 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.TracingTest do
-  use ExUnit.Case, async: true
+  # Attaches/detaches a globally-named telemetry handler; concurrent async
+  # tests emitting matching events can crash the handler (telemetry then
+  # auto-detaches it), so this module is not async-safe.
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 

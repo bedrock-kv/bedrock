@@ -1,5 +1,12 @@
 defmodule Bedrock.DataPlane.Log.TracingTest do
-  use ExUnit.Case, async: true
+  # This module attaches/detaches a globally-named telemetry handler
+  # ("bedrock_trace_data_plane_log"). While attached, any concurrently-running
+  # async test that emits [:bedrock, :log, *] telemetry (e.g. Shale log server
+  # tests) invokes the handler in a process without the expected Logger
+  # metadata; the handler raises and :telemetry auto-detaches it, making
+  # stop/0 return {:error, :not_found} mid-test. Global mutable state means
+  # this module cannot safely run async.
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 

@@ -7,8 +7,8 @@
   "id": "bedrock-9n6",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Test coverage: CommitProxy Finalization resolver plan edge cases",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:40Z"
+  "updated_at": "2026-07-14T19:09:50Z"
 }

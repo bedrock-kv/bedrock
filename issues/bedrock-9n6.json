@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T19:19:38Z",
+  "close_reason": "Added 16 behavioral tests covering sharded resolver resolution, empty batches, resolver error/exit aggregation, cross-shard clear_range clamping, atomic mutation routing, log push exit accounting, and reply helpers. Module coverage 95.3% -\u003e 99.5% (50 -\u003e 5 uncovered lines). Remaining 5 lines are the storage_team_coverage_error path, unreachable because ShardRouter.lookup_shards_with_ranges crashes on ranges beyond shard coverage (latent bug: :ets.prev with $end_of_table).",
   "created": "2026-07-14T19:09:40Z",
   "description": "finalization.ex 95.3%, 50 uncovered. Empty-batch resolver plan (transaction_count == 0), resolver error/exit aggregation, plan failure stages, atomic mutation key extraction and shard splitting, binary min/max, log push exit accounting, send_reply_with_commit_version.",
   "id": "bedrock-9n6",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Test coverage: CommitProxy Finalization resolver plan edge cases",
   "type": "task",
-  "updated_at": "2026-07-14T19:09:50Z"
+  "updated_at": "2026-07-14T19:19:38Z"
 }

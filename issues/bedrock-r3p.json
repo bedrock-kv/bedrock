@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T19:22:47Z",
+  "description": "database.ex:83 matches %{key_range: {min,max}} but %Database{} struct has no key_range field — clause unreachable with real structs, making logic.ex:107-108 and the server error path dead in production. Decide: add field (shard-aware fetches, as olivine) or delete branch. Bundle: MVCC match_rows_with_with_version_gt (multi_version_concurrency_control.ex:162) uses \u003e= so purge_keys_newer_than_version also deletes the row AT v (safe only via pkv fallback) — rename/doc + fix 'with_with' typo.",
+  "id": "bedrock-r3p",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Basalt Database.fetch :key_out_of_range clause unreachable; MVCC purge naming",
+  "type": "task",
+  "updated_at": "2026-07-14T19:22:47Z"
+}

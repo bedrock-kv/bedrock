@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T18:57:46Z",
+  "description": "During bedrock-eu4 work: IndexManager.info(:n_keys) stays 0 after applying transactions (IndexUpdate.track_statistics defaults false, and finish/1 discards counts), and :key_ranges reports sentinel {\u003c\u003c0xFF,0xFF\u003e\u003e, \"\"} even with data. Possibly a latent accounting bug around keys_added - keys_removed (index_manager.ex:197). Needs a targeted test + decision.",
+  "id": "bedrock-jb4",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Investigate IndexManager n_keys/key_ranges accounting staying at defaults",
+  "type": "task",
+  "updated_at": "2026-07-14T18:57:46Z"
+}

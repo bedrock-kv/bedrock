@@ -7,8 +7,8 @@
   "id": "bedrock-66h",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Fix waitlist crash class: nil reply_fn in Reading.execute_fetch_request",
   "type": "task",
-  "updated_at": "2026-07-14T18:57:46Z"
+  "updated_at": "2026-07-14T20:04:45Z"
 }

@@ -2,7 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [
-    "bedrock-q67.3"
+    "bedrock-q67.3",
+    "bedrock-q67.5"
   ],
   "created": "2026-07-14T21:55:40Z",
   "description": "New control-plane role per q67 Phase A (FDB DD analogue). Director recruits post-recovery (FDB: CC recruits DD after accepting-commits), registers in service directory, monitors + re-recruits on death. All shard-map mutations epoch-validated; stale Distributor self-terminates (moveKeysLock analogue). Off the request path: death degrades healing only. Skeleton: GenServer + recruitment in director + monitoring + epoch guard + telemetry. No recruitment logic yet.",

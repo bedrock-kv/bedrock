@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T23:13:56Z",
+  "close_reason": "Fixed in PR #96: MockRepo :get stub clause order shadowed created state; stub is now stateful (Agent recording puts) with created_dirs kept as the should-succeed oracle; deterministic regression test added.",
   "created": "2026-07-14T20:20:21Z",
   "description": "test/bedrock/directory/property_test.exs:101 'directory prefixes are unique within same layer' — MockRepo :get stub clause 'key in sorted_paths -\u003e nil' shadows the created_dirs clause, so when uniq_list_of generates both a parent and its child (rare), creating the child fails :parent_directory_does_not_exist despite the parent having been created — flunks 'Failed to create ... :parent_directory_does_not_exist'. Seen once on CI (PR #87, OTP 27 job) and twice locally as unreproducible full-suite one-offs. Fix: make the stub stateful (Agent/ETS recording puts; get consults it), or make the generator exclude prefix-related paths. Repro: seed the generator with paths [[\"Q\"],[\"Q\",\"G\"]].",
   "id": "bedrock-y6e",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Flaky property test: directory prefix-uniqueness stub is stateless, fails on parent+child samples",
   "type": "bug",
-  "updated_at": "2026-07-14T20:20:21Z"
+  "updated_at": "2026-07-14T23:13:56Z"
 }

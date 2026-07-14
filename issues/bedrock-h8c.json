@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-14T22:35:49Z",
+  "description": "Collected judgment-call follow-ups from q67.1/q67.3 audits, deferred because they touch code outside those diffs: (1) narrow StorageRacing's blanket rescue RuntimeError (storage_racing.ex:55) — it mislabels operation_fn RuntimeErrors on the cached-fastest in-process path as layout_lookup_failed; (2) placeholder restart has no intensity limit — malformed request (racing_key FunctionClauseError) can crash-cycle it and dump parked waiters each time; add crash counter/backoff and/or a defensive clause replying {:error, :invalid_request}; (3) healthy-TSL invariant: once placeholder fills all slots, assert built indexes never contain []-pid segments; (4) doc nit: lookup_key!/lookup_range @docs should state pids may be []; (5) thread hold_ms config through distributor restart instead of default_hold_ms().",
+  "id": "bedrock-h8c",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "StorageRacing/placeholder hardening: narrow rescue, restart backoff, invariant check",
+  "type": "task",
+  "updated_at": "2026-07-14T22:35:49Z"
+}

@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-14T20:11:41Z",
+  "close_reason": "Fixed in f1f8bb85: NodeKey packs path elements as concatenated tuple encodings (FDB subspace semantics), making parent keys byte-prefixes of descendants. Breaking on-disk node key format change, no migration (pre-1.0). Regression tests via real-store harness.",
   "created": "2026-07-14T19:27:47Z",
   "description": "Encoding.Tuple.pack/1 (tuple.ex:44-45) wraps top-level lists in nested-list tag 0x06...0x00, so pack([\"app\"]) is not a prefix of pack([\"app\",\"users\"]) (diverges at terminator vs next-element byte). do_list/do_remove/do_move_recursive build ranges via KeyRange.from_prefix on the packed parent key -\u003e non-root list returns [], remove orphans descendants, move misses them. Root works only because NodeKey.pack([]) = \u003c\u003c\u003e\u003e. Masked by canned Mox get_range mocks in all existing directory tests; no integration path exercises non-root hierarchy ops. Fix: pack path elements unwrapped (FDB subspace semantics) in NodeKey.pack — needs data-migration story for existing node keys. Then convert canned-mock directory tests to the real-store harness from directory_partition_test.exs so descendant behavior is actually asserted. Audit-confirmed in PR for bedrock-ej0.",
   "id": "bedrock-j09",
   "labels": [],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Directory node keys are not byte-prefixes of children; non-root list/remove/move broken vs real store",
   "type": "bug",
-  "updated_at": "2026-07-14T20:04:45Z"
+  "updated_at": "2026-07-14T20:11:41Z"
 }

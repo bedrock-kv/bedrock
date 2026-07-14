@@ -12,9 +12,15 @@
   "id": "bedrock-q67.3",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "From q67.1 audit: (1) when placeholder ships, narrow StorageRacing's blanket rescue RuntimeError — it mislabels any RuntimeError from an in-process operation_fn (cached-fastest path) as layout_lookup_failed; wrap only lookup_key! or use a dedicated exception. (2) Consider an invariant check/assertion that a healthy TSL never yields []-pid segments once placeholder fills all slots. (3) Doc nit: lookup_key!/lookup_range @docs should state pids may be [] for uncovered shards.",
+      "timestamp": "2026-07-14T22:09:32Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Placeholder materializer: fallback coverage endpoint with bounded parking",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:01Z"
+  "updated_at": "2026-07-14T22:09:32Z"
 }
